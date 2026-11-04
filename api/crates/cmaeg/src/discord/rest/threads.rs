@@ -156,7 +156,9 @@ impl DiscordRest {
         bot: &str,
         request: &CreateThreadRequest,
     ) -> Result<Thread, RestError> {
-        request.validate().map_err(|_| RestError::Rejected)?;
+        request
+            .validate_discord()
+            .map_err(|_| RestError::Rejected)?;
         let parent = target.parent.as_ref().ok_or(RestError::Rejected)?;
         self.ready(token)?;
         let response = self
@@ -252,7 +254,7 @@ fn created(
     let thread = Thread::parse(value, target).map_err(|_| RestError::Unknown)?;
     if thread.owner != bot
         || thread.name != request.name
-        || thread.duration != request.auto_archive_duration
+        || Some(thread.duration) != request.auto_archive_duration
     {
         return Err(RestError::Unknown);
     }

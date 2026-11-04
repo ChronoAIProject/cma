@@ -2,8 +2,8 @@
 
 mod agent_access;
 pub use agent_access::agent_access_router;
-pub use agent_access::agent_tools_router;
 pub use agent_access::agent_delivery_tools_router;
+pub use agent_access::agent_tools_router;
 
 use axum::{
     http::{header, HeaderValue, StatusCode},

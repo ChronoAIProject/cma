@@ -89,6 +89,7 @@ pub(super) async fn router_with_policy(
     let worker = AgentCommandWorker::new(
         store.clone(),
         Arc::new(crate::commands::ResourceCommandExecution {
+            source_guard: None,
             authority: authority.clone(),
             access: access.clone(),
             store: store.clone(),
@@ -111,6 +112,7 @@ pub(super) async fn router_with_policy(
             max_memory_mib: 16384,
         },
         desktop::capacity(),
+        None,
         Arc::new([] as [String; 0]),
         database.stores.agent_lifecycle.clone(),
         None,

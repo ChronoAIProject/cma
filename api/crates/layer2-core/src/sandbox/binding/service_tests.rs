@@ -28,6 +28,7 @@ impl AgentRuntimeRegistry for Registry {
 struct Custody {
     store: Arc<InMemorySandboxStore>,
     keys: Mutex<HashMap<SandboxId, String>>,
+    values: Mutex<HashMap<SandboxId, ProvidedCredential>>,
 }
 #[async_trait::async_trait]
 impl BindingCredentialCustody for Custody {
@@ -68,7 +69,60 @@ impl BindingCredentialCustody for Custody {
             .lock()
             .unwrap()
             .insert(binding.sandbox_id.clone(), key.sha256());
+        self.values
+            .lock()
+            .unwrap()
+            .insert(binding.sandbox_id.clone(), key.clone());
         Ok(())
+    }
+    async fn recover_binding(
+        &self,
+        binding: &ProviderBinding,
+    ) -> Result<ProviderBinding, CoreError> {
+        let key = self
+            .values
+            .lock()
+            .unwrap()
+            .get(&binding.sandbox_id)
+            .cloned()
+            .ok_or_else(|| CoreError::InvalidState("missing custody".into()))?;
+        self.retry_recovered_binding(binding, &key).await
+    }
+    async fn retry_recovered_binding(
+        &self,
+        binding: &ProviderBinding,
+        key: &ProvidedCredential,
+    ) -> Result<ProviderBinding, CoreError> {
+        if self
+            .store
+            .binding(&binding.binding_id)
+            .await
+            .unwrap()
+            .as_ref()
+            != Some(binding)
+            || self.keys.lock().unwrap().get(&binding.sandbox_id) != Some(&key.sha256())
+        {
+            return Err(CoreError::InvalidState("retry authority changed".into()));
+        }
+        let sandbox = self
+            .store
+            .get_sandbox(&binding.sandbox_id)
+            .await
+            .unwrap()
+            .ok_or_else(|| CoreError::InvalidState("missing sandbox".into()))?;
+        let workspace = self
+            .store
+            .get_workspace(&binding.workspace_id)
+            .await
+            .unwrap()
+            .ok_or_else(|| CoreError::InvalidState("missing workspace".into()))?;
+        let next =
+            binding.retry_recovered_hierarchy(&sandbox, &workspace, key, crate::now_rfc3339())?;
+        self.store
+            .save_binding(Some(binding.revision), next.clone())
+            .await
+            .map_err(|_| CoreError::InvalidState("retry changed".into()))?;
+        Ok(next)
     }
     async fn forget_binding(
         &self,
@@ -77,6 +131,7 @@ impl BindingCredentialCustody for Custody {
     ) -> Result<(), CoreError> {
         binding.require_credential_retirement(id)?;
         self.keys.lock().unwrap().remove(id);
+        self.values.lock().unwrap().remove(id);
         Ok(())
     }
 }
@@ -103,6 +158,7 @@ fn fixture() -> Fixture {
     let custody = Arc::new(Custody {
         store: store.clone(),
         keys: Mutex::new(HashMap::new()),
+        values: Mutex::new(HashMap::new()),
     });
     let policy = SandboxPolicy {
         baseline_services: vec![
@@ -249,7 +305,10 @@ impl Fixture {
     }
 }
 
+mod inspection;
+mod preparation;
 mod readiness;
+mod retry;
 mod tools;
 
 #[tokio::test]
@@ -454,3 +513,6 @@ mod event_tests;
 mod existing;
 
 mod continuity;
+
+mod continuation_tests;
+mod retirement;

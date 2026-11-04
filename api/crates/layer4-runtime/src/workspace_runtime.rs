@@ -47,6 +47,11 @@ pub(crate) async fn dispatch(
 async fn dispatch_locked(config: &RuntimeConfig, request: RequestFrame) -> Result<ResponseFrame> {
     match request {
         RequestFrame::PrepareWorkspace(request) => prepare(config, request).await,
+        RequestFrame::RecoverWorkspacePrepare(frame) => {
+            crate::workspace_prepare_recovery::execute(config, &frame.request)
+                .await
+                .map(ResponseFrame::RecoverWorkspacePrepare)
+        }
         RequestFrame::WorkspaceSetup(request) => setup(config, request).await,
         RequestFrame::RemoveWorkspace(request) => remove(config, request),
         _ => Err(RuntimeError::rejected(
@@ -67,7 +72,10 @@ pub(crate) async fn recover_locked(
         config.allow_local_git,
     )? {
         match pending.kind.as_str() {
-            "prepare" => recover_prepare(config, pending).await?,
+            "prepare" => {
+                let _writer = supervisor.removal_writer_guard()?;
+                recover_prepare(config, pending).await?;
+            }
             "setup" => {
                 let request: layer3_adapter::WorkspaceSetupRequest = pending.request()?;
                 if !request.has_valid_sha256()
@@ -139,7 +147,7 @@ async fn execute_prepare(
         Err(error) if error.retryable => Err(error),
         Err(error) if error.code == "workspace_prepare_indeterminate" => {
             let indeterminate = ticket.indeterminate(
-                "workspace preparation left ambiguous staged or published state; remove it before retrying",
+                "workspace preparation left ambiguous staged or published state; explicit Workspace recovery is required",
             )?;
             tracing::warn!(detail = %error, "workspace preparation recovery failed closed");
             Err(indeterminate)
@@ -198,6 +206,24 @@ async fn recover_prepared_receipt(
     }
     if !staged_path.exists() {
         return Ok(None);
+    }
+    // Only the exact journal-owned staging path can be an unfinished clone.
+    // The identity is written after Git succeeds; its absence cannot be healed
+    // by replaying inspection. Preserve the files and settle the preparation.
+    match std::fs::symlink_metadata(staged_path.join(".git/info/cma-workspace-id")) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(RuntimeError::rejected(
+                "workspace_prepare_indeterminate",
+                "staged workspace preparation has no completed identity metadata",
+            ));
+        }
+        Err(error) => {
+            return Err(RuntimeError::unavailable(
+                "workspace_io_failed",
+                format!("inspect staged workspace identity: {error}"),
+            ));
+        }
+        Ok(_) => {}
     }
     let staged = staged_request(request);
     let Some(receipt) = crate::workspace_source::inspect_prepared(

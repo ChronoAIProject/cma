@@ -104,6 +104,7 @@ impl Sandbox {
         fence: u64,
         at: String,
     ) -> Result<(), SandboxModelError> {
+        self.require_unpublished_runtime_quiescence()?;
         if self.retained_home_recovery() != Some(verified) {
             return Err(invalid());
         }

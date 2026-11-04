@@ -109,6 +109,19 @@ pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crat
                 && !receipt.path.is_empty()
                 && valid_git_commit(&receipt.resolved_commit)
         }
+        (
+            RequestFrame::RecoverWorkspacePrepare(frame),
+            ResponseFrame::RecoverWorkspacePrepare(receipt),
+        ) => {
+            let request = &frame.request;
+            receipt.prepared.operation_id == request.operation_id
+                && receipt.prepared.request_sha256 == request.request_sha256
+                && receipt.prepared.workspace_id == request.original.workspace_id
+                && receipt.prepared.name == request.original.name
+                && receipt.preserved_path == request.preserved_path()
+                && valid_sha256(&receipt.original_journal_sha256)
+                && valid_git_commit(&receipt.prepared.resolved_commit)
+        }
         (RequestFrame::WorkspaceSetup(request), ResponseFrame::WorkspaceSetup(receipt)) => {
             receipt.operation_id == request.operation_id
                 && receipt.request_sha256 == request.request_sha256
@@ -119,6 +132,35 @@ pub(super) fn validate(request: &RequestFrame, response: &ResponseFrame) -> crat
             receipt.operation_id == request.operation_id
                 && receipt.request_sha256 == request.request_sha256
                 && receipt.workspace_id == request.workspace_id
+        }
+        (
+            RequestFrame::PrepareAgentResources(request),
+            ResponseFrame::PrepareAgentResources(receipt),
+        ) => {
+            let fence = request.authority_fence;
+            receipt.authority_fence == fence
+                && validate(
+                    &RequestFrame::AddWorktree(crate::wire::FencedRequest::new(
+                        fence,
+                        request.request.worktree.clone(),
+                    )),
+                    &ResponseFrame::AddWorktree(crate::wire::FencedReceipt::new(
+                        fence,
+                        receipt.receipt.worktree.clone(),
+                    )),
+                )
+                .is_ok()
+                && validate(
+                    &RequestFrame::MaterializeAgentHome(crate::wire::FencedRequest::new(
+                        fence,
+                        request.request.home.clone(),
+                    )),
+                    &ResponseFrame::MaterializeAgentHome(crate::wire::FencedReceipt::new(
+                        fence,
+                        receipt.receipt.home.clone(),
+                    )),
+                )
+                .is_ok()
         }
         (RequestFrame::AddWorktree(request), ResponseFrame::AddWorktree(receipt)) => {
             receipt.authority_fence == request.authority_fence

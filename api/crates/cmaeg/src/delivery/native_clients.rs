@@ -3,6 +3,66 @@ use super::relay_client::RelayClient;
 use std::sync::Arc;
 
 impl RelayClient {
+    pub fn with_native_whatsapp_structured_replies(mut self, enabled: bool) -> Self {
+        self.native_whatsapp_structured_replies = enabled;
+        self
+    }
+
+    pub fn with_native_telegram_structured_replies(mut self, enabled: bool) -> Self {
+        self.native_telegram_structured_replies = enabled;
+        self
+    }
+    pub(crate) fn with_discord_voice_decoder(
+        mut self,
+        decoder: Option<crate::discord::voice::Decoder>,
+    ) -> Self {
+        self.discord_voice_decoder = decoder;
+        self
+    }
+
+    pub fn with_native_lark_sticker_replies(mut self, enabled: bool) -> Self {
+        self.native_lark_sticker_replies = enabled;
+        self
+    }
+    /// Independently issue native Discord voice replies after compatible readers deploy.
+    pub fn with_native_discord_voice(mut self, enabled: bool) -> Self {
+        self.native_discord_voice = enabled;
+        self
+    }
+    /// Enable only after every serving and rollback reader supports voice/animation kinds.
+    pub fn with_native_media_presentations(mut self, enabled: bool) -> Self {
+        self.native_media_presentations = enabled;
+        self
+    }
+
+    pub fn with_native_lark_media_card_replacements(mut self, enabled: bool) -> Self {
+        self.native_lark_media_card_replacements = enabled;
+        self
+    }
+
+    pub fn with_native_telegram_albums(mut self, enabled: bool) -> Self {
+        self.native_telegram_albums = enabled;
+        self
+    }
+
+    pub fn with_native_lark_thread_start(mut self, enabled: bool) -> Self {
+        self.native_lark_thread_start = enabled;
+        self
+    }
+    pub fn with_native_lark_multi_image_controls(mut self, enabled: bool) -> Self {
+        self.native_lark_multi_image_controls = enabled;
+        self
+    }
+    pub fn with_native_lark_media_controls(mut self, enabled: bool) -> Self {
+        self.native_lark_media_controls = enabled;
+        self
+    }
+    /// Enable new receipt fields only after every retained-receipt reader is deployed.
+    pub fn with_native_split_text_refs(mut self, enabled: bool) -> Self {
+        self.native_split_text_refs = enabled;
+        self
+    }
+
     pub fn with_native_lark_controls(mut self, controls: bool, forms: bool) -> Self {
         self.native_lark_controls = controls;
         self.native_lark_forms = controls && forms;

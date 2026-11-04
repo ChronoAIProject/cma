@@ -10,6 +10,8 @@ use super::{
     Workspace, Worktree,
 };
 
+mod sandbox;
+pub use sandbox::SandboxStore;
 mod service_traits;
 pub use super::binding::BindingStore;
 pub use service_traits::*;
@@ -172,6 +174,8 @@ pub enum SandboxStoreError {
     WorkspaceHasLiveAgents,
     #[error("workspace provisioning origin is already occupied")]
     WorkspaceOriginConflict,
+    #[error("workspace preparation recovery is not eligible")]
+    WorkspaceRecoveryConflict,
     #[error("sandbox trigger origin is already bound to another request")]
     SandboxOriginConflict,
     #[error("workspace is not ready for agent admission")]
@@ -188,27 +192,6 @@ pub enum SandboxStoreError {
     Unavailable(String),
     #[error("stored sandbox data is not usable: {0}")]
     Corrupt(String),
-}
-
-#[async_trait]
-pub trait SandboxStore: Send + Sync {
-    /// Current server-managed runtime; custom images and lost-runtime recovery stay pinned.
-    fn managed_runtime_version(&self) -> Option<&str> {
-        None
-    }
-
-    async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError>;
-    async fn get_sandbox(&self, id: &SandboxId) -> Result<Option<Sandbox>, SandboxStoreError>;
-    async fn save_sandbox(
-        &self,
-        expected_revision: u64,
-        sandbox: Sandbox,
-    ) -> Result<(), SandboxStoreError>;
-    async fn list_sandboxes(
-        &self,
-        owner: &SubjectId,
-        page: &PageRequest,
-    ) -> Result<Page<Sandbox>, SandboxStoreError>;
 }
 
 #[async_trait]
@@ -266,6 +249,15 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
         &self,
         admission: WorkspaceAdmission,
     ) -> Result<WorkspaceAdmissionResult, SandboxStoreError>;
+
+    /// Explicitly recover only an original never-ready Workspace; all guards are atomic.
+    async fn begin_workspace_prepare_recovery(
+        &self,
+        id: &WorkspaceId,
+        caller: &crate::Caller,
+        operation_id: &str,
+        now: String,
+    ) -> Result<Workspace, SandboxStoreError>;
 
     /// Fence new child admission and durably schedule removal, including child cleanup.
     async fn begin_workspace_removal(
@@ -385,6 +377,7 @@ pub struct InMemorySandboxStore {
 #[derive(Clone, Default)]
 struct State {
     suggestions: HashMap<String, super::suggestions::SuggestionWork>,
+    binding_association_index: std::collections::BTreeMap<(SubjectId, AgentId, String), ()>,
     binding_key_history: std::collections::HashSet<String>,
     bindings: std::collections::BTreeMap<String, super::binding::ProviderBinding>,
     binding_conversations: std::collections::BTreeMap<String, super::binding::BindingConversation>,

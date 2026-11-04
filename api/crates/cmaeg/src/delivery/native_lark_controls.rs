@@ -23,20 +23,56 @@ impl Sender {
         event: &EventRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            self.native_lark_controls_reply_inner(ctx, event, message),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            (
+                crate::tools::reply_targets::receipts::uncertain("native_lark_card_send_timeout"),
+                SendEffects::default(),
+            )
+        })
+    }
+    async fn native_lark_controls_reply_inner(
+        &self,
+        ctx: &SendContext<'_>,
+        event: &EventRefPayload,
+        message: &OutboundMessage,
+    ) -> (IntentReceipt, SendEffects) {
         let effects = SendEffects::default();
         let ReplyAddress::NativeLark(reply) = &event.reply else {
             return (unsupported(), effects);
         };
         let form = interactions::lark_form::requested(message);
+        let media = !message.native_attachments.is_empty();
         if !self.relay.native_lark_controls
             || (form && !self.relay.native_lark_forms)
             || (message.thread_reply && reply.thread_id.is_none())
+            || (media
+                && (!self.relay.native_lark_media_controls
+                    || !self.relay.native_lark_outbound_media_enabled()))
         {
             return (unsupported(), effects);
         }
-        let Ok((_, rendering)) =
-            interactions::native_lark::render(message, "00000000000040008000000000000000", 1, form)
-        else {
+        let retained = if media {
+            match interactions::native_lark::preflight_media(
+                message,
+                self.relay.native_lark_multi_image_controls,
+            ) {
+                Ok(retained) => retained,
+                Err(_) => return (unsupported(), effects),
+            }
+        } else {
+            message.clone()
+        };
+        let Ok((_, rendering)) = interactions::native_lark::render(
+            &retained,
+            "00000000000040008000000000000000",
+            1,
+            form,
+        ) else {
             return (unsupported(), effects);
         };
         let rejected = |reason: &str| {
@@ -63,6 +99,23 @@ impl Sender {
         let Some(consumer) = ctx.channel.consumer(event.consumer.as_ref()) else {
             return (rejected("native_lark_consumer_unavailable"), effects);
         };
+        let uploads = if media {
+            let Ok(files) = crate::media::outbound::prepare(&message.native_attachments).await
+            else {
+                return (rejected("native_lark_media_invalid"), effects);
+            };
+            let mut uploads = Vec::with_capacity(files.len());
+            // Validate all decoded image structures before the first platform write.
+            for (attachment, file) in message.native_attachments.iter().zip(files) {
+                match crate::native_lark::Client::prepare_media(attachment, file).await {
+                    Ok(upload) => uploads.push(upload),
+                    Err(_) => return (rejected("native_lark_media_invalid"), effects),
+                }
+            }
+            uploads
+        } else {
+            Vec::new()
+        };
         let route = interactions::native_lark::route(reply);
         let _ticket = match ctx.gate.enter_route(&route).await {
             Ok(t) => t,
@@ -72,7 +125,7 @@ impl Sender {
             return (refused(rendering, super::gate::expired()), effects);
         }
         let mut prepared = match cards
-            .prepare_native_lark(ctx.channel, event, message, form)
+            .prepare_native_lark(ctx.channel, event, &retained, form)
             .await
         {
             Ok(p) => p,
@@ -81,7 +134,7 @@ impl Sender {
         let Some(_pace) = self.pacing.acquire(&route).await else {
             return (rejected("pacing_capacity"), effects);
         };
-        let token = match self
+        let mut token = match self
             .relay
             .native_lark
             .verified_token(&reply.identity, credentials)
@@ -90,6 +143,50 @@ impl Sender {
             Ok(t) => t,
             Err(_) => return (rejected("native_lark_custody_unverified"), effects),
         };
+        let mut confirmed = Vec::with_capacity(uploads.len());
+        for upload in uploads {
+            if cards.refresh_native_lark(&prepared.card).await.is_err() {
+                return (rejected("native_lark_control_authority_revoked"), effects);
+            }
+            let permit = match ctx.gate.attempt().await {
+                Ok(p) => p,
+                Err(e) => return (refused(rendering, e.outcome()), effects),
+            };
+            let uploaded = self
+                .relay
+                .native_lark
+                .upload_media(&token, reply, upload)
+                .await;
+            drop(permit);
+            ctx.gate.progress();
+            let uploaded = match uploaded {
+                Ok(uploaded) => uploaded,
+                Err(e) => return (refused(rendering, outcome(e)), effects),
+            };
+            confirmed.push(uploaded);
+            // Upload and card delivery are separate writes. Verify current app/bot
+            // custody again before using the confirmed upload in a recipient message.
+            token = match self
+                .relay
+                .native_lark
+                .verified_token(&reply.identity, credentials)
+                .await
+            {
+                Ok(token) => token,
+                Err(_) => return (rejected("native_lark_custody_unverified"), effects),
+            };
+        }
+        // Persist the complete ordered set once. A partial upload never becomes
+        // a recipient message or grants callback/edit authority.
+        if media
+            && cards
+                .attach_native_lark_images(&mut prepared, confirmed)
+                .await
+                .is_err()
+        {
+            return (refused(rendering, unknown()), effects);
+        }
+        // A key upload never authorizes a later card send after source/consumer revocation.
         if cards.refresh_native_lark(&prepared.card).await.is_err() {
             return (rejected("native_lark_control_authority_revoked"), effects);
         }
@@ -136,6 +233,7 @@ impl Sender {
         match cards.bind_native_lark(&mut prepared, receipt).await {
             Ok(reference) => (
                 IntentReceipt {
+                    message_parts: vec![],
                     message_ref: Some(reference),
                     rendering,
                     delivery: DeliveryOutcome::Confirmed {

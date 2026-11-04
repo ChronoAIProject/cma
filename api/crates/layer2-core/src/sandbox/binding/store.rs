@@ -9,6 +9,15 @@ use crate::sandbox::store::SandboxStoreError;
 pub trait BindingStore: Send + Sync {
     /// Current and retained former binding keys cannot acquire ambient authority.
     async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError>;
+    /// Fresh classification for an external security decision. Implementations
+    /// must observe prior acknowledged registrations/rotations across clients;
+    /// ordinary majority lookups alone cannot authorize a negative result.
+    /// Unsupported adapters fail closed instead of silently weakening the read.
+    async fn classify_worker_key_hash(&self, _hash: &str) -> Result<bool, SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "fresh worker credential classification is unavailable".into(),
+        ))
+    }
     /// Unique hash lookup. Retired bindings never authenticate.
     async fn find_by_key_hash(
         &self,
@@ -68,6 +77,7 @@ pub fn validate_binding_write(
         (None, None)
             if next.revision == 1
                 && next.generation == 1
+                && next.generation_guard.is_none()
                 && next.previous.is_none()
                 && (matches!(
                     (&next.state, next.work),
@@ -91,6 +101,7 @@ pub fn validate_binding_write(
                 || current.tool_endpoint != next.tool_endpoint
                 || current.existing_agent != next.existing_agent
                 || current.created_at != next.created_at
+                || current.generation_guard != next.generation_guard
                 || crate::seconds_from_rfc3339(&next.updated_at)
                     < crate::seconds_from_rfc3339(&current.updated_at)
                 || (current.state == BindingState::Retired && next.state != BindingState::Retired)
@@ -220,6 +231,16 @@ pub fn binding_has_work(binding: &ProviderBinding) -> bool {
         binding.work,
         BindingWork::Idle | BindingWork::AwaitingCredential
     )
+}
+
+/// Failed records retain their original intent without being rewritten merely
+/// to rediscover them. Parent/custody recovery is proved only at admission.
+pub fn binding_is_recovery_candidate(binding: &ProviderBinding) -> bool {
+    matches!(binding.state, BindingState::Failed { .. })
+        && binding.work == BindingWork::Idle
+        && binding.previous.is_none()
+        && binding.existing_agent.is_none()
+        && binding.profile.environment.is_some()
 }
 
 pub fn conversation_storage_key(value: &BindingConversation) -> String {

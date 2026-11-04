@@ -28,6 +28,7 @@ mod prepared_replay;
 #[cfg(test)]
 mod prepared_replay_tests;
 mod publication_log;
+mod publication_transaction;
 mod sign_in;
 use publication_log::{final_agent_and_logs, insert_logs};
 mod prepared_open_ready;
@@ -46,6 +47,7 @@ pub(super) struct PublicationReceipt {
 enum ApplyError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
+    PreparedIneligible,
 }
 
 impl From<TransactionEventError> for ApplyError {
@@ -70,7 +72,9 @@ pub(super) async fn commit_agent_work(
     store: &MongoSandboxStore,
     mutation: AgentWorkMutation,
 ) -> Result<(), SandboxStoreError> {
-    commit_agent_work_observed(store, mutation, None).await
+    publication_transaction::commit(store, mutation, None)
+        .await
+        .map(|_| ())
 }
 
 pub(super) async fn commit_prepared_agent_open_ready(
@@ -78,99 +82,7 @@ pub(super) async fn commit_prepared_agent_open_ready(
     mutation: AgentWorkMutation,
     observed: layer2_core::sandbox::store::PreparedAgentOpenContext,
 ) -> Result<bool, SandboxStoreError> {
-    if !prepared_open_ready::eligible(store, &mutation, &observed).await? {
-        return Ok(false);
-    }
-    commit_agent_work_observed(store, mutation, Some(&observed)).await?;
-    Ok(true)
-}
-
-async fn commit_agent_work_observed(
-    store: &MongoSandboxStore,
-    mutation: AgentWorkMutation,
-    observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
-) -> Result<(), SandboxStoreError> {
-    ensure_append_batch_size(mutation.agent_logs.len())?;
-    let mut last_transient = None;
-    let jitter = uuid::Uuid::new_v4().as_u128() as u64;
-    for attempt in 0..TRANSACTION_ATTEMPTS {
-        contention::backoff(attempt, jitter).await;
-        let mut session = match store.client.start_session().await {
-            Ok(session) => session,
-            Err(error) if is_transient(&error) => {
-                last_transient = Some(error);
-                continue;
-            }
-            Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
-        };
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
-                last_transient = Some(error);
-                continue;
-            }
-            return Err(SandboxStoreError::Unavailable(error.to_string()));
-        }
-        let publication = if observed.is_some() {
-            apply_publication_observed(store, &mutation, observed, &mut session).await
-        } else {
-            apply_publication(store, &mutation, &mut session).await
-        };
-        let receipt = match publication {
-            Ok(receipt) => receipt,
-            Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
-                return Err(error);
-            }
-            Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
-                last_transient = Some(error);
-                continue;
-            }
-            Err(ApplyError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
-                return Err(SandboxStoreError::Unavailable(error.to_string()));
-            }
-        };
-        match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => return Ok(()),
-            CommitOutcome::Retry(error) => last_transient = Some(error),
-            CommitOutcome::Unknown(error) => {
-                let snapshot_time = session.operation_time().ok_or_else(|| {
-                    SandboxStoreError::Unavailable(format!(
-                        "agent work publication commit remained unknown without an operation time: {error}"
-                    ))
-                })?;
-                let commit_error = error.to_string();
-                let unresolved_error = commit_error.clone();
-                let store = store.clone();
-                return wait_for_reconciliation("agent work publication commit", async move {
-                    if super::agent_worker_reconcile::reconcile_publication_after_unknown(
-                        &store,
-                        &receipt,
-                        snapshot_time,
-                    )
-                    .await?
-                    {
-                        Ok(())
-                    } else {
-                        Err(SandboxStoreError::Unavailable(format!(
-                            "agent work publication commit remained unknown: {unresolved_error}"
-                        )))
-                    }
-                })
-                .await
-                .map_err(|deadline| {
-                    SandboxStoreError::Unavailable(format!(
-                        "{deadline}; ambiguous commit: {commit_error}"
-                    ))
-                })?;
-            }
-            CommitOutcome::Failed(error) => {
-                return Err(SandboxStoreError::Unavailable(error.to_string()));
-            }
-        }
-    }
-    Err(contention::exhausted(&mutation, last_transient.as_ref()))
+    publication_transaction::commit(store, mutation, Some(&observed)).await
 }
 
 async fn apply_publication(
@@ -195,6 +107,15 @@ async fn apply_publication_observed(
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
+    // Decide eligibility in the publication's own snapshot. The same consumed
+    // preparation revision is fenced below; no independent preflight can turn
+    // a different snapshot into an unnecessary ordinary startup fallback.
+    let prepared_revision = match observed {
+        Some(observed) => {
+            Some(prepared_open_ready::proof_revision(store, &current, observed, session).await?)
+        }
+        None => None,
+    };
     let current_worktree = store
         .worktrees
         .find_one(doc! { "_id": current.worktree_id.as_str() })
@@ -267,7 +188,15 @@ async fn apply_publication_observed(
             mutation,
         )
         .map_err(ApplyError::Domain)?;
-        prepared_open_ready::fence(store, &current, &current_worktree, observed, session).await?;
+        prepared_open_ready::fence(
+            store,
+            &current,
+            &current_worktree,
+            observed,
+            prepared_revision.expect("observed publication proved preparation"),
+            session,
+        )
+        .await?;
     } else if (current.status == AgentStatus::Paused
         && current.work.step == AgentWorkStep::CloseProcess
         && mutation.agent.work.step == AgentWorkStep::PublishStopped

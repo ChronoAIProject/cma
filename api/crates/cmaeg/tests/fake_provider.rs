@@ -1,7 +1,7 @@
 use std::{
     convert::Infallible,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -25,6 +25,8 @@ use tokio::{
 
 #[derive(Debug, Clone)]
 pub struct FakeProviderConfig {
+    pub response_refusal: Option<(u16, String)>,
+    pub inspection_agent: Option<(String, String)>,
     pub response_delay: Duration,
     pub terminal_delay: Duration,
     pub header_delay: Duration,
@@ -39,19 +41,32 @@ pub struct FakeProviderConfig {
     pub busy_once: bool,
     pub busy_retry_after: Option<u64>,
     pub conversation_missing_once: bool,
+    /// Ordered conversation PUT refusals, before the default successful creation.
+    pub conversation_statuses: Vec<(u16, String)>,
+    pub conversation_delete_status: Option<(u16, String)>,
     pub malformed_frame: bool,
     pub disconnect_after: Option<usize>,
     pub reject_binding: bool,
+    /// Exact binding PUT refusals by zero-based attempt; other attempts succeed.
+    pub binding_failures: std::collections::BTreeMap<usize, (u16, Value)>,
     pub text: String,
     pub unknown_event: bool,
     pub in_progress_first: bool,
     /// Statuses that binding deletions answer instead of 204, by binding ID.
     pub unbind_status: std::collections::BTreeMap<String, u16>,
+    /// Model durable exact command admission rather than replaying every POST.
+    pub exact_admission: bool,
+    pub admission_barrier: Option<Arc<tokio::sync::Barrier>>,
+    pub context_status: Option<u16>,
+    pub context_override: Option<Value>,
+    pub context_delay: Duration,
 }
 
 impl Default for FakeProviderConfig {
     fn default() -> Self {
         Self {
+            response_refusal: None,
+            inspection_agent: None,
             response_delay: Duration::ZERO,
             terminal_delay: Duration::ZERO,
             header_delay: Duration::ZERO,
@@ -63,13 +78,21 @@ impl Default for FakeProviderConfig {
             busy_once: false,
             busy_retry_after: None,
             conversation_missing_once: false,
+            conversation_statuses: Vec::new(),
+            conversation_delete_status: None,
             malformed_frame: false,
             disconnect_after: None,
             reject_binding: false,
+            binding_failures: std::collections::BTreeMap::new(),
             text: "hello".into(),
             unknown_event: false,
             in_progress_first: false,
             unbind_status: std::collections::BTreeMap::new(),
+            exact_admission: false,
+            admission_barrier: None,
+            context_status: None,
+            context_override: None,
+            context_delay: Duration::ZERO,
         }
     }
 }
@@ -89,9 +112,12 @@ struct StateData {
     config: FakeProviderConfig,
     /// Every request in arrival order, event-context reads included.
     requests: Mutex<Vec<ReceivedRequest>>,
+    admitted: Mutex<Vec<ReceivedRequest>>,
     busy_once: AtomicBool,
     conversation_missing_once: AtomicBool,
     missing_turn_once: AtomicBool,
+    conversation_attempt: AtomicUsize,
+    binding_attempt: AtomicUsize,
 }
 
 pub struct FakeProvider {
@@ -110,9 +136,12 @@ impl FakeProvider {
         let state = Arc::new(StateData {
             config,
             requests: Mutex::new(Vec::new()),
+            admitted: Mutex::new(Vec::new()),
             busy_once: AtomicBool::new(busy_once),
             conversation_missing_once: AtomicBool::new(missing_once),
             missing_turn_once: AtomicBool::new(missing_turn_once),
+            conversation_attempt: AtomicUsize::new(0),
+            binding_attempt: AtomicUsize::new(0),
         });
         let router = Router::new()
             .route("/.well-known/agent-card.json", get(agent_card))
@@ -122,7 +151,7 @@ impl FakeProvider {
             )
             .route(
                 "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
-                put(ensure_conversation).delete(delete_conversation),
+                put(ensure_conversation).delete(delete_conversation).get(inspect_conversation),
             )
             .route("/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}", get(event_context))
             .route("/api/v2/responses", post(responses))
@@ -162,6 +191,13 @@ impl FakeProvider {
         self.state.requests.lock().unwrap().clone()
     }
 
+    // This fixture is compiled independently by many integration test crates;
+    // only admission/replay tests inspect its accepted-command ledger.
+    #[allow(dead_code)]
+    pub fn admitted(&self) -> Vec<ReceivedRequest> {
+        self.state.admitted.lock().unwrap().clone()
+    }
+
     pub async fn close(mut self) {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
@@ -188,6 +224,14 @@ async fn bind(
         headers,
         body,
     );
+    let attempt = state.binding_attempt.fetch_add(1, Ordering::SeqCst);
+    if let Some((status, response)) = state.config.binding_failures.get(&attempt) {
+        return (
+            StatusCode::from_u16(*status).unwrap(),
+            Json(response.clone()),
+        )
+            .into_response();
+    }
     if state.config.reject_binding {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -231,6 +275,14 @@ async fn ensure_conversation(
         headers,
         body,
     );
+    let attempt = state.conversation_attempt.fetch_add(1, Ordering::SeqCst);
+    if let Some((status, code)) = state.config.conversation_statuses.get(attempt) {
+        return (
+            StatusCode::from_u16(*status).unwrap(),
+            Json(json!({"code":code})),
+        )
+            .into_response();
+    }
     if state
         .conversation_missing_once
         .swap(false, Ordering::SeqCst)
@@ -257,6 +309,13 @@ async fn delete_conversation(
         headers,
         body,
     );
+    if let Some((status, code)) = &state.config.conversation_delete_status {
+        return (
+            StatusCode::from_u16(*status).unwrap(),
+            Json(json!({"code":code})),
+        )
+            .into_response();
+    }
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -266,7 +325,15 @@ async fn responses(
     body: Bytes,
 ) -> Response {
     let attachments = String::from_utf8_lossy(&body).contains("[Attachments:");
+    let candidate = received("POST", "/api/v2/responses".into(), &headers, &body);
     record(&state, "POST", "/api/v2/responses".into(), headers, body);
+    if let Some((status, code)) = &state.config.response_refusal {
+        return (
+            StatusCode::from_u16(*status).unwrap(),
+            Json(json!({"error":{"code":code}})),
+        )
+            .into_response();
+    }
     if attachments {
         if let Some(gate) = &state.config.attachment_gate {
             gate.acquire().await.unwrap().forget();
@@ -294,6 +361,26 @@ async fn responses(
                 .insert("retry-after", seconds.to_string().parse().unwrap());
         }
         return response;
+    }
+    if let Some(barrier) = &state.config.admission_barrier {
+        barrier.wait().await;
+    }
+    {
+        let mut admitted = state.admitted.lock().unwrap();
+        if state.config.exact_admission {
+            if let Some(original) = admitted.iter().find(|original| {
+                original.authorization == candidate.authorization
+                    && original.idempotency_key == candidate.idempotency_key
+            }) {
+                let status = if original.body == candidate.body {
+                    "exact_duplicate"
+                } else {
+                    "agent_command_key_conflict"
+                };
+                return (StatusCode::CONFLICT, Json(json!({"code":status}))).into_response();
+            }
+        }
+        admitted.push(candidate);
     }
     let mut frames = vec![
         "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fake\"}}\n\n".to_owned(),
@@ -343,6 +430,25 @@ async fn responses(
         .unwrap()
 }
 
+async fn inspect_conversation(
+    State(state): State<Arc<StateData>>,
+    Path((binding, conversation)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    record(
+        &state,
+        "GET",
+        format!("/api/v1/cmaeg/bindings/{binding}/conversations/{conversation}"),
+        headers,
+        Bytes::new(),
+    );
+    match &state.config.inspection_agent {
+        Some((agent_id, status)) => Json(json!({"binding_id":binding, "generation":1,
+            "conversation_id":conversation,"agent_id":agent_id,"state":"ready","agent_status":status})).into_response(),
+        None => (StatusCode::NOT_FOUND, Json(json!({"code":"binding_not_found"}))).into_response(),
+    }
+}
+
 fn record(state: &StateData, method: &str, path: String, headers: HeaderMap, body: Bytes) {
     let request = received(method, path, &headers, &body);
     state.requests.lock().unwrap().push(request);
@@ -380,11 +486,17 @@ async fn event_context(
         &headers,
         &[],
     ));
+    if !state.config.context_delay.is_zero() {
+        sleep(state.config.context_delay).await;
+    }
+    if let Some(status) = state.config.context_status {
+        return StatusCode::from_u16(status).unwrap().into_response();
+    }
     let authorization = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok());
     let snapshot = state
-        .requests
+        .admitted
         .lock()
         .unwrap()
         .iter()
@@ -398,7 +510,14 @@ async fn event_context(
                 .then(|| context.clone())
         });
     match snapshot {
-        Some(value) => Json(value).into_response(),
+        Some(mut value) => {
+            if let Some(patch) = &state.config.context_override {
+                for (key, replacement) in patch.as_object().unwrap() {
+                    value[key] = replacement.clone();
+                }
+            }
+            Json(value).into_response()
+        }
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }

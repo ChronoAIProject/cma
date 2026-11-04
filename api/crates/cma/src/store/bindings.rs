@@ -16,9 +16,13 @@ use super::durability::majority_collection;
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore};
 use super::schema::{initialize_collections, DOCUMENT_SCHEMA_VERSION};
 mod admission;
+mod associations;
 mod commands;
 mod conversations;
 mod custody;
+mod key_classification;
+mod reprovision;
+mod retry;
 mod rotation;
 mod tools;
 pub(crate) use custody::MongoBindingCredentials;
@@ -28,6 +32,8 @@ use documents::*;
 #[cfg(test)]
 mod admission_tests;
 #[cfg(test)]
+mod association_tests;
+#[cfg(test)]
 mod existing_tests;
 #[cfg(test)]
 mod mongo_tests;
@@ -35,27 +41,47 @@ mod mongo_tests;
 const BINDINGS: &str = "provider_bindings";
 const CONVERSATIONS: &str = "binding_conversations";
 const TOOL_OPENS: &str = "provider_tool_opens";
+const TOOL_RELAYS: &str = "provider_tool_relays";
 
 #[derive(Clone)]
 pub(super) struct BindingCollections {
     pub(super) records: Collection<Document>,
     pub(super) conversations: Collection<Document>,
     pub(super) tool_opens: Collection<Document>,
+    pub(super) tool_relays: Collection<Document>,
+    pub(super) preparations: Collection<Document>,
 }
 
 impl BindingCollections {
     pub(super) async fn open(database: &Database) -> Result<Self, StoreError> {
-        initialize_collections(database, &[BINDINGS, CONVERSATIONS, TOOL_OPENS]).await?;
+        initialize_collections(
+            database,
+            &[
+                BINDINGS,
+                CONVERSATIONS,
+                TOOL_OPENS,
+                TOOL_RELAYS,
+                reprovision::PREPARATIONS,
+            ],
+        )
+        .await?;
         let value = Self {
             records: majority_collection(database, BINDINGS),
             conversations: majority_collection(database, CONVERSATIONS),
             tool_opens: majority_collection(database, TOOL_OPENS),
+            tool_relays: majority_collection(database, TOOL_RELAYS),
+            preparations: majority_collection(database, reprovision::PREPARATIONS),
         };
         for (collection, keys) in [
             (&value.records, doc! {"pending": 1, "_id": 1}),
+            (
+                &value.records,
+                doc! {"record.state.status": 1, "record.work": 1, "_id": 1},
+            ),
             (&value.records, doc! {"key_history": 1}),
             (&value.records, doc! {"record.owner": 1, "_id": 1}),
             (&value.conversations, doc! {"pending": 1, "_id": 1}),
+            (&value.conversations, doc! {"record.binding_id": 1}),
             (
                 &value.conversations,
                 doc! {"binding_id": 1, "generation": 1, "conversation_id": 1},
@@ -80,6 +106,38 @@ impl BindingCollections {
             )
             .await
             .map_err(|error| StoreError::Unavailable(format!("binding unique index: {error}")))?;
+        value
+            .preparations
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"binding_id":1,"generation":1})
+                    .options(
+                        mongodb::options::IndexOptions::builder()
+                            .unique(true)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("binding preparation index: {error}"))
+            })?;
+        value
+            .conversations
+            .create_index(
+                IndexModel::builder()
+                    .keys(associations::index_keys())
+                    .options(
+                        mongodb::options::IndexOptions::builder()
+                            .name(associations::INDEX.to_owned())
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("binding association index: {error}"))
+            })?;
         // An existing Agent may be borrowed by another channel. Lookup remains
         // unique inside one binding generation; resource lifecycle is retained
         // by the Agent's original owner, independently of these associations.
@@ -120,6 +178,9 @@ impl BindingStore for MongoSandboxStore {
             .await
             .map_err(driver)?
             .is_some())
+    }
+    async fn classify_worker_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError> {
+        key_classification::contains(self, hash).await
     }
     async fn find_by_key_hash(
         &self,
@@ -186,7 +247,12 @@ impl BindingStore for MongoSandboxStore {
         limit: u16,
     ) -> Result<Vec<ProviderBinding>, SandboxStoreError> {
         validate_page_limit(limit)?;
-        let mut query = doc! {"pending": true};
+        let mut query = doc! {"$or": [
+            {"pending": true},
+            {"record.state.status": "failed", "record.work": "idle",
+             "record.previous": null, "record.existing_agent": null,
+             "record.profile.environment": {"$ne": null}},
+        ]};
         if let Some(after) = after {
             query.insert("_id", doc! {"$gt": after});
         }
@@ -292,6 +358,8 @@ fn driver(error: mongodb::error::Error) -> SandboxStoreError {
 mod access_tests;
 #[cfg(test)]
 mod custody_tests;
+#[cfg(test)]
+mod retry_tests;
 #[cfg(test)]
 mod rotation_tests;
 

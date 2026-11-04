@@ -339,6 +339,7 @@ impl AgentCommandService {
         let request = CommandReservation {
             binding: authorized.binding_authority().cloned(),
             envelope: AgentCommandEnvelope {
+                continuation: None,
                 schema_version: AGENT_IO_SCHEMA_VERSION,
                 command_id: command_id.clone(),
                 agent_id: agent.id.clone(),

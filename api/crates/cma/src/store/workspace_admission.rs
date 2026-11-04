@@ -1,8 +1,13 @@
 //! Transactional Mongo admission and removal for workspace aggregates.
-
-mod retry;
-use retry::{exhausted, retry_delay};
-
+pub(super) mod retry;
+use super::sandbox_events::{append_in_transaction, reconcile_event, TransactionEventError};
+use super::sandbox_mongo::{
+    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction, CommitOutcome,
+    MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
+};
+use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
+use super::workspace_removal::apply_removal;
+use super::workspaces::{read_workspace, workspace_document};
 use layer2_core::ids::{SubjectId, WorkspaceId};
 use layer2_core::sandbox::store::{
     SandboxStoreError, WorkspaceAdmission, WorkspaceAdmissionKind, WorkspaceAdmissionResult,
@@ -13,23 +18,10 @@ use layer2_core::sandbox::{
     WorkspaceStatus, WorkspaceWorkStep,
 };
 use mongodb::bson::{doc, Bson};
+pub(super) use retry::ApplyError;
+use retry::{exhausted, retry_delay};
 
-use super::sandbox_events::{append_in_transaction, reconcile_event, TransactionEventError};
-use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction, CommitOutcome,
-    MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
-};
-use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
-use super::workspace_removal::apply_removal;
-use super::workspaces::{read_workspace, workspace_document};
-
-const TRANSACTION_ATTEMPTS: usize = 16;
-
-pub(super) enum ApplyError {
-    Domain(SandboxStoreError),
-    Driver(mongodb::error::Error),
-    Retry(mongodb::error::Error),
-}
+pub(super) const TRANSACTION_ATTEMPTS: usize = 16;
 
 enum AdmissionReceipt {
     Created {
@@ -121,6 +113,16 @@ impl WorkspaceAdmissionStore for MongoSandboxStore {
             }
         }
         Err(exhausted("workspace admission", last_transient))
+    }
+
+    async fn begin_workspace_prepare_recovery(
+        &self,
+        id: &WorkspaceId,
+        caller: &layer2_core::Caller,
+        operation_id: &str,
+        now: String,
+    ) -> Result<Workspace, SandboxStoreError> {
+        super::workspace_prepare_recovery::begin(self, id, caller, operation_id, now).await
     }
 
     async fn begin_workspace_removal(
@@ -310,50 +312,55 @@ async fn apply_admission(
                 .map_err(ApplyError::Domain)?,
         };
     let candidate = &prepared;
-    let revival_event =
-        if admission.kind == WorkspaceAdmissionKind::SandboxProfile {
-            None
-        } else {
-            let mut next = sandbox.clone();
-            let cause = match admission.kind {
-                WorkspaceAdmissionKind::Trigger => SandboxReviveCause::TriggerLaunch,
-                _ => SandboxReviveCause::WorkspaceCreation,
-            };
-            let revival = next
-                .record_creation_admission_with_managed_runtime(
-                    cause,
-                    store.managed_runtime_version.as_deref(),
-                    admission.event_at.clone(),
-                )
-                .map_err(|error| {
-                    ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string()))
-                })?;
-            let updated = store.sandboxes.update_one(doc! {
-            "_id": sandbox.id.as_str(),
-            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-            "channel_reuse_cleanup_execution": { "$exists": false },
-            "revision": signed(sandbox.revision, "sandbox revision")
-                .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
-        }, doc! { "$set": sandbox_replacement_fields(&next).map_err(ApplyError::Domain)? })
-            .session(&mut *session).await.map_err(ApplyError::Driver)?;
-            if updated.matched_count != 1 {
-                return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-            }
-            let event = match revival {
-                Some(event) => Some(Box::new(
-                    append_in_transaction(
-                        store,
-                        session,
-                        &sandbox.id,
-                        admission.event_at.clone(),
-                        event,
-                    )
-                    .await?,
-                )),
-                None => None,
-            };
-            event
+    let revival_event = if admission.kind == WorkspaceAdmissionKind::SandboxProfile {
+        None
+    } else {
+        let mut next = sandbox.clone();
+        let cause = match admission.kind {
+            WorkspaceAdmissionKind::Trigger => SandboxReviveCause::TriggerLaunch,
+            _ => SandboxReviveCause::WorkspaceCreation,
         };
+        let revival = next
+            .record_creation_admission_with_managed_runtime(
+                cause,
+                store.managed_runtime_version.as_deref(),
+                admission.event_at.clone(),
+            )
+            .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
+        let updated = store
+            .sandboxes
+            .update_one(
+                doc! {
+                    "_id": sandbox.id.as_str(),
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                    "channel_reuse_cleanup_execution": { "$exists": false },
+                    "revision": signed(sandbox.revision, "sandbox revision")
+                        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
+                },
+                doc! { "$set": sandbox_replacement_fields(&next).map_err(ApplyError::Domain)? },
+            )
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        if updated.matched_count != 1 {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+        crate::store::sandbox_usage::save::record_saved(store, session, &next, sandbox.revision)
+            .await?;
+        match revival {
+            Some(event) => Some(Box::new(
+                append_in_transaction(
+                    store,
+                    session,
+                    &sandbox.id,
+                    admission.event_at.clone(),
+                    event,
+                )
+                .await?,
+            )),
+            None => None,
+        }
+    };
     store
         .workspaces
         .insert_one(workspace_document(candidate).map_err(ApplyError::Domain)?)
@@ -477,7 +484,7 @@ async fn reconcile_admission(
     }
 }
 
-async fn reconcile_workspace(
+pub(super) async fn reconcile_workspace(
     store: &MongoSandboxStore,
     expected: &Workspace,
 ) -> Result<bool, SandboxStoreError> {

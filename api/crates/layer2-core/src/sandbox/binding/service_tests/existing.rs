@@ -106,6 +106,13 @@ async fn existing_agent_shares_one_mapping_for_all_senders_and_preserves_its_res
         assert_eq!(first.conversation_id, EXISTING_AGENT_CONVERSATION);
         assert_eq!(first.agent_id, original_conversation.agent_id);
         assert_eq!(first.worktree_id, original_conversation.worktree_id);
+        let inspected = f
+            .service
+            .inspect_conversation(&f.caller, "borrowed-one", "unseen-transport-partition")
+            .await
+            .unwrap();
+        assert_eq!(inspected.conversation, first);
+        assert!(inspected.agent_status.is_some());
         // A second attached channel can borrow the same Agent without taking
         // over the original channel's native-tool association.
         let other = attach(&f, "borrowed-two", &first.agent_id, &key(), kind).await;
@@ -334,4 +341,75 @@ async fn existing_agent_rejects_wrong_owner_kind_or_subject_and_retargeting() {
             .await,
         Err(BindingError::Conflict)
     ));
+}
+
+#[tokio::test]
+async fn retiring_borrowed_paused_agent_preserves_the_resumable_parent_and_agent() {
+    let f = fixture();
+    let (original, conversation) = ready_agent(&f, "human").await;
+    let borrowed = attach(
+        &f,
+        "borrowed-paused",
+        &conversation.agent_id,
+        &key(),
+        "human",
+    )
+    .await;
+    f.service
+        .ensure_conversation(&f.caller, &borrowed.binding_id, "sender-conversation")
+        .await
+        .unwrap();
+    let mut agent = f
+        .store
+        .get_agent(&conversation.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let revision = agent.revision;
+    agent
+        .transition(AgentStatus::Paused, crate::now_rfc3339(), None)
+        .unwrap();
+    f.store.save_agent(revision, agent.clone()).await.unwrap();
+    let mut sandbox = f
+        .store
+        .get_sandbox(&original.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let revision = sandbox.revision;
+    sandbox.status = SandboxStatus::Paused;
+    sandbox.lifecycle.checkpoints.latest = Some(
+        crate::sandbox::lifecycle_test_support::checkpoint(1, &crate::now_rfc3339()),
+    );
+    sandbox.revision += 1;
+    f.store
+        .save_sandbox(revision, sandbox.clone())
+        .await
+        .unwrap();
+    f.service
+        .retire(&f.caller, &borrowed.binding_id)
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        let current = f
+            .service
+            .read(&f.caller, &borrowed.binding_id)
+            .await
+            .unwrap();
+        f.service.reconcile_binding(&current).await.unwrap();
+    }
+    assert_eq!(
+        f.service
+            .read(&f.caller, &borrowed.binding_id)
+            .await
+            .unwrap()
+            .work,
+        BindingWork::Idle
+    );
+    assert_eq!(f.store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
+    assert_eq!(
+        f.store.get_sandbox(&sandbox.id).await.unwrap().unwrap(),
+        sandbox
+    );
+    assert!(sandbox.revive_eligibility().is_ok());
 }

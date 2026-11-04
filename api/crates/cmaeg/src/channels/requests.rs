@@ -17,6 +17,9 @@ pub struct ChannelCreateRequest {
     /// optional for existing non-native creation contracts.
     #[serde(default)]
     pub record_id: Option<RecordId>,
+    /// Immutable opt-in to durable execution for this channel's Custom source.
+    #[serde(default)]
+    pub durable_custom_execution: bool,
     pub schema_version: u16,
     pub name: String,
     pub profile: EventWorkerProfile,
@@ -35,6 +38,9 @@ pub struct ChannelCreateRequest {
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelUpdateRequest {
+    /// Optional echo for older clients; a supplied value must match the saved mode.
+    #[serde(default)]
+    pub durable_custom_execution: Option<bool>,
     pub schema_version: u16,
     pub name: String,
     pub profile: EventWorkerProfile,
@@ -69,6 +75,9 @@ pub enum SourceRequest {
     NativeLark(cmaeg_core::channel::NativeLarkSource),
     /// Native Meta WhatsApp Cloud API; independent of NyxID relay sources.
     Whatsapp {
+        /// Incoming private edits and deletions for WhatsApp Business App coexistence accounts.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        message_events: bool,
         /// Owner consent to create and publish managed static native Flow assets.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         forms_enabled: bool,
@@ -85,6 +94,9 @@ pub enum SourceRequest {
         /// Owner consent to close/reopen only the exact admitted forum topic.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         topic_lifecycle: bool,
+        /// Owner consent to create and manage new topics in the original forum supergroup.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        topic_creation: bool,
         /// Retain original message routing for edits and attributable reactions.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         message_events: bool,

@@ -13,6 +13,7 @@ pub(in crate::store) mod agent_replay_tests;
 mod claim_race_tests;
 mod guidance_revision_tests;
 mod installation_transfer_tests;
+mod machine_tests;
 pub(crate) mod open_ready_fixture;
 mod runtime_release_tests;
 mod tool_enrollment_tests;
@@ -412,9 +413,11 @@ async fn admission(
                         .clone(),
                 ),
                 setup_message: None,
-                request: serde_json::from_value(serde_json::json!({"name":"Prepared test"}))
-                    .unwrap(),
-                resolved_image: None,
+                request: serde_json::from_value(
+                    serde_json::json!({"name":"Prepared test", "machine_included":plan.machine()}),
+                )
+                .unwrap(),
+                resolved_image: plan.machine().then(|| plan.warm.runtime_version.clone()),
                 capacity: Some(layer3_adapter::SandboxCapacity {
                     cpu_millis: 1000,
                     memory_mib: 2048,

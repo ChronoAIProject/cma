@@ -30,6 +30,8 @@ pub struct Row {
     pub owner: String,
     pub expiry: Option<i64>,
 }
+type OnSaved = Arc<dyn Fn(&str) + Send + Sync>;
+
 pub struct Memory {
     pub rows: Mutex<BTreeMap<String, Row>>,
     pub channel: Mutex<Vec<u8>>,
@@ -44,6 +46,7 @@ pub struct Memory {
     pub channel_status: Mutex<StatusCode>,
     pub channel_elapsed_ms: AtomicI64,
     pub fault: Mutex<Option<(String, bool)>>,
+    pub on_saved: Mutex<Option<OnSaved>>,
 }
 pub struct Fixture {
     pub memory: Arc<Memory>,
@@ -89,6 +92,7 @@ impl Fixture {
                 json!({"url":"wss://gateway.discord.gg/","shards":1,"session_start_limit":{"total":10,"remaining":10,"reset_after":86_400_000,"max_concurrency":1}}),
             ),
             fault: Mutex::new(None),
+            on_saved: Mutex::new(None),
             discord_channels: Mutex::default(),
             channel_calls: Mutex::default(),
             channel_status: Mutex::new(StatusCode::OK),
@@ -291,7 +295,7 @@ async fn save(
     }
     let version = current.map_or(1, |r| r.version + 1);
     rows.insert(
-        id,
+        id.clone(),
         Row {
             blob,
             version,
@@ -299,6 +303,11 @@ async fn save(
             expiry,
         },
     );
+    drop(rows);
+    let hook = state.on_saved.lock().unwrap().clone();
+    if let Some(hook) = hook {
+        hook(&id);
+    }
     if fault.is_some() {
         StatusCode::SERVICE_UNAVAILABLE.into_response()
     } else {

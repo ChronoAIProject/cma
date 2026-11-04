@@ -6,7 +6,7 @@ use crate::{
 };
 use cmaeg_core::{activity::SourceKind, message::Block};
 
-async fn media_setup(
+pub(super) async fn media_setup(
     replies: Vec<Result<HttpReply, TransportError>>,
 ) -> (
     Sender,

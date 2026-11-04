@@ -13,6 +13,7 @@ mod settings;
 mod shared_settings;
 mod skills;
 mod task_titles;
+pub(super) mod worktree_recovery;
 pub(crate) use conversation_fixtures::{
     authorized_conversation_fixture, conversation_fixture, conversation_fixture_with_registry,
 };
@@ -595,6 +596,7 @@ fn openapi_contains_every_agent_route() {
         "/api/v1/agents/{id}/interrupt",
         "/api/v1/agents/{id}/approvals/{request_id}",
         "/api/v1/agents/{id}/stop",
+        "/api/v1/agents/{id}/recover-worktree",
         "/api/v1/agents/{id}/events",
         "/api/v1/agents/{id}/transcript",
         "/api/v1/agents/{id}/usage",
@@ -618,7 +620,7 @@ fn openapi_contains_every_agent_route() {
             assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
         }
     }
-    assert_eq!(operation_ids.len(), 17);
+    assert_eq!(operation_ids.len(), 18);
 
     let schemas = serde_json::to_value(document).unwrap();
     let item_ref =

@@ -71,6 +71,9 @@ pub enum Source {
     NativeLark(NativeLarkSource),
     /// Native Meta WhatsApp Cloud API; independent of NyxID relay sources.
     Whatsapp {
+        /// Incoming private edits and deletions for WhatsApp Business App coexistence accounts.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        message_events: bool,
         /// Owner consent to create and publish managed static native Flow assets.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         forms_enabled: bool,
@@ -87,6 +90,9 @@ pub enum Source {
         /// Owner consent to close/reopen only the exact admitted forum topic.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         topic_lifecycle: bool,
+        /// Owner consent to create and manage new topics in the original forum supergroup.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        topic_creation: bool,
         /// Retain original message routing for edits and attributable reactions.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         message_events: bool,
@@ -283,6 +289,9 @@ pub struct ChannelDefinition {
     /// Multi-consumer routing; absent on every legacy channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing: Option<RoutingPolicy>,
+    /// Immutable creation opt-in for authenticated Custom durable execution.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub durable_custom_execution: bool,
     #[serde(default, skip_serializing)]
     pub secrets: ChannelSecrets,
     pub created_at: String,
@@ -315,6 +324,12 @@ impl ChannelDefinition {
             self.partition.validate_extended(&self.sources)?;
         }
         self.validate_tail()?;
+        if self.durable_custom_execution && self.routing.is_none() {
+            return Err(ValidationError::new(
+                "/routing",
+                "durable Custom execution requires routing",
+            ));
+        }
         self.validate_routing()
     }
 

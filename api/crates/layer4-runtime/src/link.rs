@@ -1,4 +1,5 @@
 mod conversation;
+mod desktop;
 use conversation::conversation;
 
 use std::path::PathBuf;
@@ -36,6 +37,7 @@ pub(crate) fn router(supervisor: Arc<Supervisor>) -> Router {
             post(control).layer(DefaultBodyLimit::max(CONTROL_BODY_BYTES)),
         )
         .route("/runtime/agents/{agent_id}/conversation", get(conversation))
+        .route("/runtime/desktop", get(desktop::websocket))
         .route("/runtime/agents/{agent_id}/history", get(history))
         .route(
             "/runtime/checkpoints/{reference}",
@@ -88,7 +90,11 @@ async fn history(
     }
 }
 
-async fn control(State(supervisor): State<Arc<Supervisor>>, body: Bytes) -> Response {
+async fn control(
+    State(supervisor): State<Arc<Supervisor>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     let value = match serde_json::from_slice::<serde_json::Value>(&body) {
         Ok(value) => value,
         Err(_) => {
@@ -144,7 +150,18 @@ async fn control(State(supervisor): State<Arc<Supervisor>>, body: Bytes) -> Resp
         let result = tokio::spawn(async move { supervisor.dispatch(request).await });
         return heartbeat_json(result, CONTROL_HEARTBEAT);
     }
-    Json(supervisor.dispatch(request).await).into_response()
+    let mut response = supervisor.dispatch(request).await;
+    if let layer3_adapter::wire::ResponseFrame::RuntimeStatus(status) = &mut response {
+        // Retained API readers deny unknown fields. Only an explicit opt-in may
+        // receive the new capability; the request JSON remains compatible.
+        status.agent_resource_preparation = headers
+            .get_all(header::ACCEPT)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .flat_map(|value| value.split(','))
+            .any(|value| value.trim() == layer3_adapter::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE);
+    }
+    Json(response).into_response()
 }
 
 fn heartbeat_json<T: Serialize + Send + 'static>(

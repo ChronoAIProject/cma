@@ -105,6 +105,11 @@ pub(in crate::store) async fn ensure_indexes(
             doc! { "agent_id": 1, "status": 1, "agent_order": 1 },
             false,
         ),
+        (
+            "agent_command_retained_authority",
+            doc! { "record.receipt.envelope.agent_id": 1, "record.status": 1 },
+            false,
+        ),
     ];
     let mut indexes: Vec<_> = definitions
         .into_iter()

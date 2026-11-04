@@ -80,11 +80,8 @@
   overflow-wrap: anywhere;
 }
 
-/* The close key is the button at its icon size, squared off rather than capsule. */
+/* The close key is the small icon-only button at its full 32px square (§15), squared off. */
 .modal__close {
-  width: 28px;
-  height: 28px;
-  padding: 0;
   border-radius: 8px;
 }
 
@@ -138,11 +135,15 @@
 @media (max-width: 480px) {
   .modal {
     padding-inline: 16px;
+    padding-block: 16px;
   }
 
   .modal__card {
     width: 100%;
     max-width: 100%;
+    /* A phone keeps the footer action on screen instead of 40% of the height empty. */
+    max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px);
   }
 
   .modal__content,

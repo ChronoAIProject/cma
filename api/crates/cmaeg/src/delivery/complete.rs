@@ -188,6 +188,7 @@ impl Sender {
         }
         (
             IntentReceipt {
+                message_parts: vec![],
                 message_ref,
                 rendering,
                 delivery,

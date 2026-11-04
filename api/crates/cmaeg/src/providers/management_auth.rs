@@ -46,7 +46,34 @@ impl CmaManagementAuth {
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
         };
         matches!(parts.as_slice(), [binding] if id(binding))
+            || matches!(parts.as_slice(), [binding,"preparation-inspections" | "preparations"] if id(binding))
             || matches!(parts.as_slice(), [binding,"conversations",conversation] if id(binding) && id(conversation))
+    }
+    pub(super) fn with_service(mut self, token: crate::service_auth::ServiceAuth) -> Self {
+        self.token = token;
+        self
+    }
+    pub(super) fn permits_worker_classifier(&self, url: &Url) -> bool {
+        url.origin() == self.origin
+            && url.path() == super::worker_classifier::PATH
+            && url.query().is_none()
+            && url.fragment().is_none()
+            && url.username().is_empty()
+            && url.password().is_none()
+    }
+    pub(super) async fn worker_classifier_bearer(
+        &self,
+        url: &Url,
+    ) -> Result<Secret, ProviderError> {
+        if !self.permits_worker_classifier(url) {
+            return Err(ProviderError::InvalidRequest(
+                "worker classifier requires exact CMA management route".into(),
+            ));
+        }
+        self.token
+            .bearer()
+            .await
+            .map_err(|error| ProviderError::Unavailable(error.to_string()))
     }
 }
 impl ProviderClient {
@@ -55,6 +82,34 @@ impl ProviderClient {
             auth.token = token;
         }
         self
+    }
+
+    pub(super) fn permits_preparation(&self, provider: &ProviderSlug, url: &Url) -> bool {
+        self.management_auth
+            .as_ref()
+            .is_some_and(|auth| auth.permits(provider, url))
+    }
+
+    /// Preparation must never silently downgrade to an agent key. Only the
+    /// configured manager can inspect or reserve a profile-owned hierarchy.
+    pub(super) async fn preparation_bearer(
+        &self,
+        provider: &ProviderSlug,
+        url: &Url,
+    ) -> Result<Secret, ProviderError> {
+        let auth = self
+            .management_auth
+            .as_ref()
+            .filter(|auth| auth.permits(provider, url))
+            .ok_or_else(|| {
+                ProviderError::InvalidRequest(
+                    "binding preparation requires configured CMA management authority".into(),
+                )
+            })?;
+        auth.token
+            .bearer()
+            .await
+            .map_err(|error| ProviderError::Unavailable(error.to_string()))
     }
 
     pub(super) async fn management_bearer(
@@ -88,19 +143,24 @@ mod tests {
         for path in [
             "/api/v1/cmaeg/bindings/binding_one",
             "/api/v1/cmaeg/bindings/binding_one/conversations/conversation_one",
+            "/api/v1/cmaeg/bindings/binding_one/preparation-inspections",
+            "/api/v1/cmaeg/bindings/binding_one/preparations",
         ] {
             assert!(auth.permits(
                 &provider,
                 &Url::parse(&format!("https://cma.example{path}")).unwrap()
             ));
         }
-        for url in ["http://cma.example/api/v1/cmaeg/bindings/binding_one",
+        for url in [
+            "http://cma.example/api/v1/cmaeg/bindings/binding_one",
             "https://cma.example:8443/api/v1/cmaeg/bindings/binding_one",
             "https://other.example/api/v1/cmaeg/bindings/binding_one",
-            "https://cma.example/api/v2/responses", "https://cma.example/.well-known/agent-card.json",
+            "https://cma.example/api/v2/responses",
+            "https://cma.example/.well-known/agent-card.json",
             "https://cma.example/api/v1/cmaeg/bindings/binding_one/conversations/conversation_one/events/event_one",
-            "https://cma.example/api/v1/cmaeg/bindings/binding_one?target=other"] {
-            assert!(!auth.permits(&provider,&Url::parse(url).unwrap()),"{url}");
+            "https://cma.example/api/v1/cmaeg/bindings/binding_one?target=other",
+        ] {
+            assert!(!auth.permits(&provider, &Url::parse(url).unwrap()), "{url}");
         }
         assert!(!auth.permits(
             &ProviderSlug::new("external").unwrap(),

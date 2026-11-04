@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use super::store::{SandboxStore, SandboxStoreError};
-use super::{Sandbox, SandboxStatus};
+use super::{
+    Sandbox, SandboxStatus, SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoveryVerifier,
+};
 use crate::{Caller, Capability, SandboxId, SubjectId};
 
 #[derive(Debug, thiserror::Error)]
@@ -21,6 +23,7 @@ pub enum SandboxRuntimeUpdateError {
 pub struct SandboxRuntimeUpdateService {
     store: Arc<dyn SandboxStore>,
     latest_version: String,
+    recovery: Option<Arc<dyn SandboxUnpublishedRecoveryVerifier>>,
 }
 
 impl SandboxRuntimeUpdateService {
@@ -28,7 +31,16 @@ impl SandboxRuntimeUpdateService {
         Self {
             store,
             latest_version,
+            recovery: None,
         }
+    }
+
+    pub fn with_unpublished_recovery(
+        mut self,
+        verifier: Arc<dyn SandboxUnpublishedRecoveryVerifier>,
+    ) -> Self {
+        self.recovery = Some(verifier);
+        self
     }
 
     pub fn latest_version(&self) -> &str {
@@ -36,6 +48,9 @@ impl SandboxRuntimeUpdateService {
     }
 
     pub fn can_update(&self, sandbox: &Sandbox) -> bool {
+        if self.recovery.is_some() && sandbox.unpublished_recovery_candidate() {
+            return true;
+        }
         if !sandbox.supports_retained_runtime_update() {
             return false;
         }
@@ -81,6 +96,65 @@ impl SandboxRuntimeUpdateService {
         self.queue(id, target_version, None).await
     }
 
+    /// Automatic repair is available once per unresolved recovery incident after
+    /// ordinary retries stall or park/fail. Its existing target must still be current;
+    /// obsolete pinned targets require an explicit owner/operator update.
+    pub async fn recover_failed_unpublished(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Sandbox, SandboxRuntimeUpdateError> {
+        let sandbox = self
+            .store
+            .get_sandbox(id)
+            .await
+            .map_err(store_error)?
+            .ok_or(SandboxRuntimeUpdateError::NotFound)?;
+        let target = sandbox
+            .automatic_unpublished_recovery_target()
+            .ok_or(SandboxRuntimeUpdateError::NotAvailable)?;
+        if target != self.latest_version
+            || sandbox.lifecycle.unpublished_recovery_attempted
+            || sandbox.lifecycle.unpublished_recovery.is_some()
+        {
+            return Err(SandboxRuntimeUpdateError::NotAvailable);
+        }
+        self.recover_unpublished(&sandbox, target, true)
+            .await
+            .map_err(store_error)
+    }
+
+    async fn recover_unpublished(
+        &self,
+        sandbox: &Sandbox,
+        target: &str,
+        automatic: bool,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        let verifier = self
+            .recovery
+            .as_ref()
+            .ok_or(SandboxStoreError::InvalidTransaction(
+                "unpublished runtime recovery is unavailable",
+            ))?;
+        let snapshot = self
+            .store
+            .unpublished_runtime_recovery_snapshot(&sandbox.id)
+            .await?;
+        if snapshot.sandbox != *sandbox {
+            return Err(SandboxStoreError::Conflict);
+        }
+        snapshot.validate()?;
+        let proof = verifier.verify(&snapshot).await?;
+        self.store
+            .admit_unpublished_runtime_recovery(SandboxUnpublishedRecoveryRequest {
+                snapshot,
+                proof,
+                target_runtime_version: target.into(),
+                automatic,
+                requested_at: crate::now_rfc3339(),
+            })
+            .await
+    }
+
     async fn queue(
         &self,
         id: &SandboxId,
@@ -100,6 +174,19 @@ impl SandboxRuntimeUpdateService {
             });
             if target_version != self.latest_version && !pinned {
                 return Err(SandboxRuntimeUpdateError::TargetChanged);
+            }
+            if sandbox.unpublished_recovery_candidate() {
+                match self
+                    .recover_unpublished(&sandbox, target_version, false)
+                    .await
+                {
+                    Ok(recovered) => return Ok(recovered),
+                    Err(SandboxStoreError::Conflict) => {
+                        tokio::task::yield_now().await;
+                        continue;
+                    }
+                    Err(error) => return Err(store_error(error)),
+                }
             }
             let revision = sandbox.revision;
             if !sandbox
@@ -121,6 +208,7 @@ impl SandboxRuntimeUpdateService {
 fn store_error(error: SandboxStoreError) -> SandboxRuntimeUpdateError {
     match error {
         SandboxStoreError::NotFound => SandboxRuntimeUpdateError::NotFound,
+        SandboxStoreError::InvalidTransaction(_) => SandboxRuntimeUpdateError::NotAvailable,
         _ => SandboxRuntimeUpdateError::Unavailable,
     }
 }

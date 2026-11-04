@@ -29,6 +29,7 @@ mod title_scheduler;
 mod title_worker;
 mod titles;
 mod unavailable_credentials;
+pub(crate) mod unpublished_recovery;
 mod warmup;
 pub(crate) mod worker;
 mod workspace_worker;
@@ -57,3 +58,14 @@ mod agent_worker_tests;
 mod worker_tests;
 
 pub(crate) mod legacy_credentials;
+
+#[cfg(test)]
+pub(crate) mod binding_lifecycle_test_support {
+    pub(crate) use super::agent_skills::EmptyAgentSkillResolver;
+    pub(crate) use super::agent_worker::{AgentWorker, AgentWorkerConfig, AgentWorkerDependencies};
+    pub(crate) use super::live_agent_stopper::DurableLiveAgentStopper;
+    pub(crate) use super::workspace_worker::{
+        DurableProfileWorkspaceProvisioner, WorkspaceWorker, WorkspaceWorkerConfig,
+        WorkspaceWorkerDependencies,
+    };
+}

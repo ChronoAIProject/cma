@@ -24,6 +24,7 @@ pub(super) fn inspect(
         agent_skill_install: true,
         agent_model_catalog: true,
         agent_browser: false,
+        agent_resource_preparation: false,
         sandbox_id: request.sandbox_id.clone(),
         generation: request.generation,
         home_identity: request.home_identity.clone(),

@@ -30,6 +30,7 @@ pub const MULTI_CONSUMER_DISABLED: &str = "multi_consumer_disabled";
 /// Flags that admit writes of new stored shapes. Default off until explicitly enabled.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WriteFlags {
+    pub durable_custom_execution: bool,
     pub native_lark: bool,
     /// Admits explicit native bot mention opt-ins after all readers support them.
     pub native_bot_mentions: bool,
@@ -48,11 +49,13 @@ pub struct WriteFlags {
     pub native_whatsapp_groups: bool,
     pub native_whatsapp: bool,
     pub native_whatsapp_forms: bool,
+    pub native_whatsapp_message_events: bool,
     /// Admits native Discord sources and credential revisions after reader rollout.
     pub native_discord: bool,
     pub telegram_message_events: bool,
     pub discord_thread_history: bool,
     pub telegram_topic_lifecycle: bool,
+    pub telegram_topic_creation: bool,
     pub discord_thread_lifecycle: bool,
     pub native_lark_conversation_history: bool,
     pub discord_conversation_history: bool,
@@ -78,6 +81,23 @@ pub(crate) fn check(
     next: &ChannelDefinition,
     flags: WriteFlags,
 ) -> Result<(), ValidationError> {
+    super::custom_execution::write_gate(current, next, flags.durable_custom_execution)?;
+    if let Some(index) = next.sources.iter().position(|source| {
+        matches!(
+            source,
+            Source::Telegram {
+                topic_creation: true,
+                ..
+            }
+        ) && !flags.telegram_topic_creation
+            && !current
+                .is_some_and(|old| super::native_telegram::retains_creation_opt_in(old, source))
+    }) {
+        return Err(ValidationError::new(
+            format!("/sources/{index}/topic_creation"),
+            "native_telegram_topic_creation_disabled",
+        ));
+    }
     if let Some(index) = next.sources.iter().position(|source| {
         matches!(
             source,
@@ -86,7 +106,7 @@ pub(crate) fn check(
                 ..
             }
         ) && !flags.telegram_topic_lifecycle
-            && !current.is_some_and(|old| old.sources.contains(source))
+            && !current.is_some_and(|old| super::native_telegram::retains_topic_opt_in(old, source))
     }) {
         return Err(ValidationError::new(
             format!("/sources/{index}/topic_lifecycle"),
@@ -275,6 +295,24 @@ pub(crate) fn check(
             "/sources/native_lark",
             "native_lark_writes_disabled",
         ));
+    }
+    if !flags.native_whatsapp_message_events {
+        for source in &next.sources {
+            if let Source::Whatsapp {
+                message_events: true,
+                app_id,
+                waba_id,
+                phone_number_id,
+                ..
+            } = source
+            {
+                if !current.is_some_and(|old| old.sources.iter().any(|previous| matches!(previous,
+                    Source::Whatsapp { message_events: true, app_id: a, waba_id: w, phone_number_id: p, .. }
+                    if a == app_id && w == waba_id && p == phone_number_id))) {
+                    return Err(ValidationError::new("/sources/whatsapp/message_events", "native_whatsapp_message_events_disabled"));
+                }
+            }
+        }
     }
     if !flags.native_whatsapp_forms {
         for source in &next.sources {

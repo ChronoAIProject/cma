@@ -104,6 +104,9 @@ impl Fixture {
         Store::new(self.records(), self.keys.clone())
     }
     pub(super) fn service(&self) -> ConnectionService {
+        self.service_with_console_origin(None)
+    }
+    fn service_with_console_origin(&self, console_public_url: Option<String>) -> ConnectionService {
         let providers = Arc::new(
             ProviderClient::new(
                 ProviderRegistry::parse("[]").unwrap(),
@@ -118,8 +121,10 @@ impl Fixture {
             Arc::new(self.records()),
             Arc::new(CreatorAuthenticator::new(&self.base).unwrap()),
             ManagementConfig {
+                console_public_url,
                 public_url: "https://gateway.example".into(),
                 public_api_url: "https://gateway.example".into(),
+                public_api_aliases: vec![],
                 advertise_public_api_url: true,
                 master_keys: self.keys.clone(),
                 cma_base_url: self.base.clone(),
@@ -145,21 +150,40 @@ impl Fixture {
             tracker: TurnTracker::new(Readiness::initialized()),
             public_origin: management.public_url.clone(),
             public_api_url: management.public_url.clone(),
+            public_api_aliases: vec![],
             advertise_public_api_url: true,
             whatsapp_templates_enabled: false,
             discord_interactions_enabled: false,
+            native_discord_media_controls_enabled: false,
+            native_discord_media_card_edits_enabled: false,
+            native_discord_media_card_replacements_enabled: false,
+            native_discord_media_card_sets_enabled: false,
             whatsapp_interactions_enabled: false,
             native_whatsapp_interactions_enabled: false,
+            native_whatsapp_media_controls_enabled: false,
             consumer_interactions_enabled: false,
             telegram_effects_issuance_enabled: false,
+            native_telegram_media_controls_enabled: false,
+            native_telegram_media_control_edits_enabled: false,
             native_media_edits: None,
             native_whatsapp_forms: None,
+            native_typing: None,
             native_lark_effects: None,
             lark_effects_issuance_enabled: false,
             lark_effects: None,
             telegram_effects: None,
             native_media_enabled: false,
             native_lark_outbound_media_enabled: false,
+            native_lark_sticker_replies_enabled: false,
+            native_lark_media_controls_enabled: false,
+            native_lark_multi_image_controls_enabled: false,
+            native_lark_media_card_replacements_enabled: false,
+            native_media_presentations_enabled: false,
+            native_discord_voice_enabled: false,
+            native_telegram_structured_replies_enabled: false,
+            native_whatsapp_structured_replies_enabled: false,
+            native_telegram_albums_enabled: false,
+            native_lark_thread_start_enabled: false,
             native_whatsapp_outbound_media_enabled: false,
             whatsapp_reactions: None,
             native_whatsapp_templates_enabled: false,
@@ -1364,6 +1388,7 @@ async fn browser_http_exchange_preserves_link_preview_and_requires_origin_and_cs
     for advertise in [false, true] {
         browser_http_exchange("", "https://gateway.example", advertise).await;
         browser_http_exchange("/event-gateway", "https://bot.example", advertise).await;
+        browser_http_exchange("/event-gateway", "https://new-bot.example", advertise).await;
     }
 }
 
@@ -1371,7 +1396,8 @@ async fn browser_http_exchange(prefix: &str, origin: &str, advertise: bool) {
     use axum::http::header;
     let fixture = Fixture::new().await;
     let mut service = fixture.service();
-    service.management.public_api_url = "https://bot.example/event-gateway".into();
+    service.management.public_api_url = "https://new-bot.example/event-gateway".into();
+    service.management.public_api_aliases = vec!["https://bot.example/event-gateway".into()];
     service.management.advertise_public_api_url = advertise;
     let mut record = connection("alice", false);
     record.browser_nonce = None;
@@ -1748,15 +1774,20 @@ async fn external_native_bot_capability_is_omitted_until_writes_enabled() {
 
 #[tokio::test]
 async fn public_discovery_uses_canonical_namespace_and_console_redirect_keeps_fixed_authority() {
-    public_discovery(false).await;
-    public_discovery(true).await;
+    public_discovery(false, None).await;
+    public_discovery(true, None).await;
+    public_discovery(true, Some("https://cma.nyxid.ai")).await;
 }
 
-async fn public_discovery(advertise: bool) {
+async fn public_discovery(advertise: bool, console_origin: Option<&str>) {
     use axum::http::header;
     use utoipa::OpenApi;
     let fixture = Fixture::new().await;
-    let mut service = fixture.service();
+    let mut service = fixture.service_with_console_origin(console_origin.map(str::to_owned));
+    let expected_console = console_origin.unwrap_or("https://gateway.example");
+    assert_eq!(service.management.console_public_url, expected_console);
+    assert_eq!(service.management.public_url, "https://gateway.example");
+    assert!(Arc::ptr_eq(&service.management.master_keys, &fixture.keys));
     service.management.public_api_url = "https://bot.example/event-gateway".into();
     service.management.advertise_public_api_url = advertise;
     let advertised = if advertise {
@@ -1815,18 +1846,21 @@ async fn public_discovery(advertise: bool) {
     assert!(!html.contains("href=\"/docs"));
     if !advertise {
         assert!(!html.contains("https://bot.chrono-ai.fun/event-gateway"));
+        assert!(!html.contains("https://cma.nyxid.ai/event-gateway"));
         assert!(html.contains("href=\"https://gateway.example/console\""));
     }
     let protocol_destination = format!("{advertised}/docs#protocol");
+    let console_destination = format!("{expected_console}/console");
+    let channel_destination = format!("{console_destination}/channels/record-123");
     for (path, destination) in [
         ("/docs/protocol", protocol_destination.as_str()),
         (
             "/event-gateway/legacy-console",
-            "https://gateway.example/console",
+            console_destination.as_str(),
         ),
         (
             "/event-gateway/legacy-console/channels/record-123?return_to=https://foreign.example",
-            "https://gateway.example/console/channels/record-123",
+            channel_destination.as_str(),
         ),
     ] {
         let response = client.get(format!("{base}{path}")).send().await.unwrap();

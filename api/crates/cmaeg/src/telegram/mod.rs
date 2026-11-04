@@ -3,9 +3,13 @@ mod effects;
 mod files;
 mod management;
 mod media;
+pub(crate) mod media_card_edit;
 pub(crate) mod media_edit;
 mod media_presentation;
-pub(crate) use media::{media_token_matches, MediaUpload};
+pub(crate) mod structured;
+#[cfg(test)]
+pub(crate) mod structured_tests;
+pub(crate) use media::{album_supported, media_token_matches, AlbumUpload, MediaUpload};
 #[cfg(test)]
 mod media_edit_tests;
 #[cfg(test)]
@@ -135,14 +139,9 @@ impl TelegramClient {
         text: &str,
         markup: Option<&Value>,
     ) -> Result<String, Error> {
-        let mut body = json!({"chat_id":chat_id,"text":text});
-        if let Some(thread_id) = thread_id {
-            body["message_thread_id"] = thread_id.into();
-        }
-        if let Some(markup) = markup {
-            body["reply_markup"] = markup.clone();
-        }
-        let value = self.call(token, "sendMessage", &body).await?;
+        let value = self
+            .send_message_value(token, chat_id, thread_id, text, markup)
+            .await?;
         if value["chat"]["id"]
             .as_i64()
             .map(|id| id.to_string())
@@ -152,6 +151,36 @@ impl TelegramClient {
             return Err(Error::Unconfirmed);
         }
         positive(&value["message_id"])
+    }
+    /// A split-text reference grants authority for this exact chat and topic.
+    pub(crate) async fn send_confirmed_text_part(
+        &self,
+        token: &Secret,
+        chat_id: &str,
+        thread_id: Option<&str>,
+        text: &str,
+    ) -> Result<String, Error> {
+        let value = self
+            .send_message_value(token, chat_id, thread_id, text, None)
+            .await?;
+        media::message_identity(&value, chat_id, thread_id)
+    }
+    async fn send_message_value(
+        &self,
+        token: &Secret,
+        chat_id: &str,
+        thread_id: Option<&str>,
+        text: &str,
+        markup: Option<&Value>,
+    ) -> Result<Value, Error> {
+        let mut body = json!({"chat_id":chat_id,"text":text});
+        if let Some(thread_id) = thread_id {
+            body["message_thread_id"] = thread_id.into();
+        }
+        if let Some(markup) = markup {
+            body["reply_markup"] = markup.clone();
+        }
+        self.call(token, "sendMessage", &body).await
     }
     pub async fn edit_message(
         &self,
@@ -249,10 +278,13 @@ pub(crate) fn messaging_source(
 ) -> cmaeg_core::channel::Source {
     let mut source = source.clone();
     if let cmaeg_core::channel::Source::Telegram {
-        topic_lifecycle, ..
+        topic_lifecycle,
+        topic_creation,
+        ..
     } = &mut source
     {
         *topic_lifecycle = false;
+        *topic_creation = false;
     }
     source
 }

@@ -16,6 +16,7 @@ pub(crate) async fn compose(
     ),
     Error,
 > {
+    let owner_key_settings = crate::worker_credentials::config::Settings::from_env()?;
     let independent_store_enabled = [
         CMAEG_MONGODB_URI,
         CMAEG_MONGODB_DATABASE,
@@ -25,6 +26,10 @@ pub(crate) async fn compose(
     ]
     .iter()
     .any(|key| std::env::var_os(key).is_some());
+    if (owner_key_settings.tracking || owner_key_settings.owner_keys) && !independent_store_enabled
+    {
+        return Err("worker tracking and owner keys require Gateway-owned Mongo storage; legacy remote records are unsupported".into());
+    }
     let (records, creator_auth, browser) = if independent_store_enabled {
         let mongo_uri = std::env::var(CMAEG_MONGODB_URI).map_err(|_| {
             format!("{CMAEG_MONGODB_URI} is required when independent Gateway storage is enabled")
@@ -62,10 +67,41 @@ pub(crate) async fn compose(
             )?
             .with_database(database),
         );
-        let creator_auth = std::sync::Arc::new(
-            auth::CreatorAuthenticator::new(&config.management.nyxid_base_url)?
-                .with_service(service_identity.clone()),
-        );
+        let mut creator_auth = auth::CreatorAuthenticator::new(&config.management.nyxid_base_url)?
+            .with_service(service_identity.clone());
+        if owner_key_settings.owner_keys {
+            let tracking = records
+                .worker_credentials()
+                .ok_or("owner keys require durable worker tracking")?;
+            let cutover_id = owner_key_settings
+                .cutover_id
+                .ok_or("owner key cutover ID required")?;
+            let cutover = tracking
+                .history()
+                .cutover()
+                .await?
+                .ok_or("owner key cutover attestation missing")?;
+            if !cutover.admits(&cutover_id, u64::MAX) {
+                return Err("owner key cutover attestation does not match".into());
+            }
+            let verifier = cma_service_auth::ServiceKeyAuth::new(
+                service_identity.clone(),
+                owner_key_settings
+                    .service_id
+                    .as_deref()
+                    .ok_or("owner key service UUID required")?,
+            )?;
+            let manager =
+                crate::providers::WorkerClassifierClient::new(config, service_auth.clone())?;
+            creator_auth =
+                creator_auth.with_owner_keys(auth::owner_keys::OwnerKeyAuthenticator::new(
+                    verifier,
+                    tracking.history(),
+                    Arc::new(manager),
+                    cutover_id,
+                ));
+        }
+        let creator_auth = Arc::new(creator_auth);
         (records, creator_auth, Some(service_identity))
     } else {
         let records = std::sync::Arc::new(

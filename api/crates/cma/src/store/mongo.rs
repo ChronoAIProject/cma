@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use layer2_core::StoreError;
-use mongodb::{bson::doc, Client};
+use mongodb::{bson::doc, options::ClientOptions, Client};
 
 use super::{
     AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoOperationStore,
@@ -13,8 +13,11 @@ use super::{
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
+    pub(crate) request_limits: Arc<super::request_limits::MongoRequestLimits>,
     pub(crate) document_artifacts: Arc<crate::document_artifacts::MongoDocumentStore>,
     pub(crate) message_feedback: Arc<super::message_feedback::MongoMessageFeedbackStore>,
+    /// Owner presentation palettes, kept apart from the strictly read Sandbox records.
+    pub(crate) sandbox_colors: Arc<super::sandbox_colors::MongoSandboxColorStore>,
     pub(crate) event_workers: Arc<super::event_workers::MongoEventWorkerProfileStore>,
     pub(crate) bot_setups: Arc<super::bot_setups::MongoBotSetupStore>,
     pub(crate) bot_setup_contexts: Arc<super::bot_setup_contexts::MongoBotSetupContextStore>,
@@ -71,8 +74,11 @@ impl MongoStores {
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
         authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     ) -> Result<Self, StoreError> {
-        let client = Client::with_uri_str(uri)
+        let mut options = ClientOptions::parse(uri)
             .await
+            .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
+        super::mongo_latency::observe(&mut options);
+        let client = Client::with_options(options)
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
         super::isolation::verify_with_authority(&client.database(database), authority).await?;
         Self::open(
@@ -165,6 +171,9 @@ impl MongoStores {
             super::message_feedback::MongoMessageFeedbackStore::open(&client.database(database))
                 .await?,
         );
+        let sandbox_colors = Arc::new(
+            super::sandbox_colors::MongoSandboxColorStore::open(&client.database(database)).await?,
+        );
         super::schema::initialize_collections(
             &client.database(database),
             &[crate::document_artifacts::COLLECTION],
@@ -177,9 +186,14 @@ impl MongoStores {
             .ensure_indexes()
             .await
             .map_err(|_| StoreError::Unavailable("initialize document registry".into()))?;
+        let request_limits = Arc::new(
+            super::request_limits::MongoRequestLimits::open(&client.database(database)).await?,
+        );
         let stores = Self {
+            request_limits,
             document_artifacts,
             message_feedback,
+            sandbox_colors,
             native_warm_pools,
             event_workers,
             bot_setups,

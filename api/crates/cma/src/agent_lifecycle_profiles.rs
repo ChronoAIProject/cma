@@ -1,5 +1,6 @@
 //! Immutable inline profiles use the capacity captured at operation admission.
 use super::*;
+use layer2_core::profiles::EnvironmentVariable;
 
 pub(crate) fn prepared_default_agent_profile(
 ) -> Result<layer2_core::profiles::AgentProfileContent, String> {
@@ -89,7 +90,14 @@ pub(super) async fn create_profiles(
                 max_agents_per_workspace: limits.max_agents_per_workspace,
                 workspace_profiles: vec![workspace_ref.clone()],
                 software_install_commands: Vec::new(),
-                environment_variables: Vec::new(),
+                environment_variables: if request.machine_included {
+                    vec![EnvironmentVariable {
+                        name: "CMA_MACHINE_INCLUDED".into(),
+                        value: "1".into(),
+                    }]
+                } else {
+                    Vec::new()
+                },
             };
             let sandbox_revision = profiles
                 .create_sandbox_configured_for_owner(

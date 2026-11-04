@@ -177,6 +177,7 @@ mod tests {
         ] {
             for enabled in [false, true] {
                 let source = Source::Whatsapp {
+                    message_events: enabled,
                     forms_enabled: enabled,
                     group_ids: groups.clone(),
                     app_id: "12345".into(),

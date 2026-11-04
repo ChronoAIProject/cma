@@ -1,6 +1,9 @@
 //! Existing supervisor file operations bound to one Agent's retained home.
 use std::sync::Arc;
 
+mod transport;
+mod transport_goal;
+
 use base64::Engine as _;
 use sha2::{Digest as _, Sha256};
 
@@ -17,6 +20,15 @@ struct Binding {
     path: String,
     cwd: String,
     tools: Vec<serde_json::Value>,
+    installed_transport: std::sync::RwLock<Option<transport::ToolTransport>>,
+    access: Option<(
+        Arc<dyn super::HostedAccessToolSource>,
+        super::HostedAccessToolBinding,
+    )>,
+    provider: Option<(
+        Arc<dyn super::HostedProviderToolSource>,
+        super::HostedProviderToolBinding,
+    )>,
 }
 impl std::fmt::Debug for HostedContextRefresh {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -57,13 +69,39 @@ impl HostedContextRefresh {
             path: format!("{path}/AGENTS.md"),
             cwd,
             tools,
+            installed_transport: std::sync::RwLock::new(None),
+            access: None,
+            provider: None,
         })))
+    }
+
+    pub(super) fn with_access(
+        mut self,
+        source: Arc<dyn super::HostedAccessToolSource>,
+        binding: super::HostedAccessToolBinding,
+    ) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("new context binding is uniquely owned")
+            .access = Some((source, binding));
+        self
     }
     pub(super) fn cwd(&self) -> &str {
         &self.0.cwd
     }
-    pub(super) fn tools(&self) -> &[serde_json::Value] {
-        &self.0.tools
+
+    pub(super) fn with_provider(
+        mut self,
+        source: Arc<dyn super::HostedProviderToolSource>,
+        binding: super::HostedProviderToolBinding,
+    ) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("new context binding is uniquely owned")
+            .provider = Some((source, binding));
+        self
+    }
+    pub(super) fn tools(&self) -> Vec<serde_json::Value> {
+        self.tools_for_transport(None)
+            .expect("confirmed transport has one managed server")
     }
 
     async fn exchange(&self, request: RequestFrame) -> crate::Result<ResponseFrame> {

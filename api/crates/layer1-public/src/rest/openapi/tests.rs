@@ -166,7 +166,7 @@ fn every_admin_route_is_documented_and_authenticated() {
         .iter()
         .filter(|(path, _)| path.starts_with("/api/v1/admin/"))
         .collect();
-    assert_eq!(admin.len(), 15);
+    assert_eq!(admin.len(), 17);
     for (_, item) in admin {
         for operation in [
             item.get.as_ref(),
@@ -181,7 +181,7 @@ fn every_admin_route_is_documented_and_authenticated() {
             assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
         }
     }
-    assert_eq!(operation_ids.len(), 18);
+    assert_eq!(operation_ids.len(), 20);
     assert!(document
         .paths
         .paths
@@ -341,6 +341,9 @@ fn only_public_discovery_and_previews_are_anonymous() {
             let security = &operation["security"];
             if security.as_array().is_some_and(Vec::is_empty) {
                 anonymous.insert(format!("{method} {path}"));
+            } else if path == crate::rest::worker_credentials::WORKER_CLASSIFIER_PATH {
+                assert_eq!(method, "post");
+                assert_eq!(security, &serde_json::json!([{ "bearerAuth": [] }]));
             } else {
                 assert_eq!(security, &authenticated, "security for {method} {path}");
             }

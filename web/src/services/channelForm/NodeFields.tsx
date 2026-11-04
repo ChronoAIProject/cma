@@ -1,5 +1,6 @@
 import type { Denied } from '../client';
 import {
+  nativeDiscordProviderUnavailable,
   nativeDiscordUnavailable,
   nativeLarkUnavailable,
   nativeWhatsappUnavailable,
@@ -14,6 +15,11 @@ import { CredentialsFields } from './CredentialsFields';
 import { Choice, Section } from './Fields';
 import { ProfileFields, ProviderFields } from './ProfileFields';
 import { SourceFields } from './SourceFields';
+import {
+  customAttachmentDescription,
+  customExecutionSelected,
+  hasCustomSource,
+} from './customExecution';
 import {
   defaultSource,
   object,
@@ -31,6 +37,7 @@ export function NodeFields({
   section,
   create,
   sourceCount,
+  savedCustomExecution,
   denied,
 }: {
   draft: Fields;
@@ -40,6 +47,7 @@ export function NodeFields({
   section: EditorSection;
   create: boolean;
   sourceCount: number;
+  savedCustomExecution?: boolean;
   denied: Denied;
 }) {
   const discovery = useRelayCapabilities();
@@ -47,6 +55,10 @@ export function NodeFields({
   if (!create && section.kind === 'producer' && section.index === sources.length)
     sources.push(defaultSource('nyxid_relay'));
   const producer = section.kind === 'producer' ? section.index : -1;
+  const providerUnavailable = nativeDiscordProviderUnavailable(
+    discovery,
+    String(object(draft.provider).slug ?? ''),
+  );
   const set = (key: string, next: unknown) => onChange({ ...draft, [key]: next });
   return (
     <>
@@ -55,6 +67,12 @@ export function NodeFields({
       ) : null}
       {create ? (
         <ManagedConnectionFields value={draft} onChange={onChange} denied={denied} />
+      ) : null}
+      {create && hasCustomSource(draft) && discovery.status === 'failed' ? (
+        <p className="channel-field-hint" role="status">
+          Could not check channel support. Your draft is retained.
+          {discovery.retry ? <Button onClick={discovery.retry}>Retry support check</Button> : null}
+        </p>
       ) : null}
       {create || section.kind === 'producer'
         ? sources.map((source, index) =>
@@ -84,7 +102,7 @@ export function NodeFields({
                       {
                         value: 'discord',
                         label: 'Direct Discord bot',
-                        unavailable: nativeDiscordUnavailable(discovery),
+                        unavailable: nativeDiscordUnavailable(discovery) ?? providerUnavailable,
                       },
                       { value: 'custom', label: 'Custom event' },
                     ]}
@@ -98,6 +116,13 @@ export function NodeFields({
                 ) : null}
                 <SourceFields
                   value={source}
+                  attachmentDescription={customAttachmentDescription(
+                    draft,
+                    create
+                      ? customExecutionSelected(discovery, draft)
+                      : savedCustomExecution === true,
+                  )}
+                  managedIdentity={Boolean(draft.connection_ref)}
                   onChange={(next) =>
                     set(
                       'sources',
@@ -119,7 +144,9 @@ export function NodeFields({
                     create={create}
                   />
                 ) : null}
-                {!create && !['whatsapp', 'native_lark'].includes(String(source.type)) ? (
+                {!create &&
+                !draft.connection_ref &&
+                !['whatsapp', 'native_lark'].includes(String(source.type)) ? (
                   <CredentialsFields
                     value={credentials}
                     onChange={onCredentials}
@@ -149,6 +176,11 @@ export function NodeFields({
       ) : null}
       {create || (section.kind === 'consumer' && section.id === 'default') ? (
         <>
+          {create && sources.some((source) => source.type === 'discord') && providerUnavailable ? (
+            <p className="channel-field-hint" role="status">
+              {providerUnavailable}
+            </p>
+          ) : null}
           <ProviderFields
             immutable={!create}
             value={object(draft.provider)}
@@ -193,6 +225,7 @@ export function NodeFields({
   );
 }
 export function nodeCredentials(values: Fields, section: EditorSection, draft: Fields): Fields {
+  if (section.kind === 'producer' && draft.connection_ref) return {};
   const keys =
     section.kind === 'consumer'
       ? ['agent_key']

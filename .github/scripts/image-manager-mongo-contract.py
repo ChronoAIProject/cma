@@ -77,6 +77,10 @@ def main():
                 raise SystemExit(result.returncode)
             for command in [
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "optional_forms_storage", "--", "--ignored", "--test-threads=1"],
+                ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "optional_media_continuation_storage", "--", "--ignored", "--test-threads=1"],
+                ["cargo", "nextest", "run", "--workspace", "--locked", "-E",
+                 "package(=cmaeg) and test(=worker_credentials::mongo::integration_tests::worker_history_cross_client_visibility_append_only_grants_and_cutover_barrier)",
+                 "--run-ignored", "only", "--test-threads", "1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "whatsapp_retention_on_real_mongo", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cma", "gateway::tests::", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "relay_ingress", "runner_binary::", "--", "--ignored", "--test-threads=1"],

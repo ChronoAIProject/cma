@@ -1,10 +1,3 @@
-body {
-  --dsw-alias-character-running: var(--dsw-static-ink-800);
-  --dsw-alias-character-completed: var(--dsw-static-moss-500);
-  --dsw-alias-character-pending: var(--dsw-static-amber-300);
-  --dsw-alias-character-failed: var(--dsw-static-red-600);
-}
-
 .landing__character {
   position: relative;
   display: block;
@@ -91,7 +84,8 @@ body {
   letter-spacing: 0;
 }
 .brand-home--compact .landing__character {
-  max-width: 280px;
+  /* The size the home mark had beside the heading alone; text below must not grow it. */
+  max-width: 134px;
 }
 .brand-loading {
   display: flex;

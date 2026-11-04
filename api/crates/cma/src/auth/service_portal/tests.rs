@@ -149,7 +149,8 @@ impl Fixture {
             },
             None,
             store.clone(),
-        );
+        )
+        .with_browser_origins(&[HeaderValue::from_static("https://new-cma.example.test")]);
         store
             .put_subject(SubjectAuthState::new(
                 SubjectId::new("owner"),
@@ -170,9 +171,11 @@ impl Fixture {
         let router = router(
             auth.clone(),
             Some(&crate::config::GatewayConfig {
+                binding_preparation_enabled: false,
                 base_url: gateway,
                 public_url: "https://gateway.example".into(),
                 public_api_url: "https://gateway.example".into(),
+                public_api_aliases: vec![],
             }),
         )
         .unwrap();
@@ -269,12 +272,12 @@ async fn writes_require_exact_origin_and_disallowed_paths_never_reach_gateway() 
         );
     }
     assert_eq!(f.control.calls.load(Ordering::SeqCst), 0);
-    let mut r = f.request(Method::POST, "/v1/channels");
-    r.headers_mut().insert(
-        header::ORIGIN,
-        HeaderValue::from_static("https://cma.example.test"),
-    );
-    assert_eq!(f.send(r).await.status(), StatusCode::NO_CONTENT);
+    for origin in ["https://cma.example.test", "https://new-cma.example.test"] {
+        let mut r = f.request(Method::POST, "/v1/channels");
+        r.headers_mut()
+            .insert(header::ORIGIN, origin.parse().unwrap());
+        assert_eq!(f.send(r).await.status(), StatusCode::NO_CONTENT);
+    }
 }
 #[tokio::test]
 async fn duplicate_cookie_or_explicit_bearer_never_selects_another_identity() {

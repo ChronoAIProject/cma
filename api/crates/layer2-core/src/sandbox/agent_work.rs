@@ -122,6 +122,9 @@ pub struct AgentCleanupDebt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentWorkState {
+    /// Immutable admission evidence; abandoned worktree data is retained until parent retirement.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub worktree_recoveries: Vec<super::AgentWorktreeRecovery>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub live_skills: Vec<super::AgentSkillInstallation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,6 +148,7 @@ pub struct AgentWorkState {
 impl AgentWorkState {
     pub fn new(step: AgentWorkStep, ready_at: String) -> Self {
         Self {
+            worktree_recoveries: Vec::new(),
             live_skills: Vec::new(),
             warm_conversation_id: None,
             step,

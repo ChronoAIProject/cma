@@ -1,5 +1,7 @@
 //! The Sandbox -> Workspace -> Worktree -> Agent domain hierarchy.
 
+mod desktop;
+pub use desktop::{DesktopConnection, DesktopError, DesktopFrame, DesktopService};
 mod admin;
 mod agent;
 pub mod agent_artifacts;
@@ -34,19 +36,26 @@ mod agent_reads_usage;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
+mod agent_worktree_recovery;
 pub mod answer_deliverables;
+pub use agent_worktree_recovery::{
+    plan_agent_worktree_recovery, AgentWorktreeRecovery, AgentWorktreeRecoveryContext,
+    AgentWorktreeRecoveryMutation,
+};
 mod background_checkpoint;
 pub mod binding;
 pub mod channel_usage;
 mod checkpoint;
 mod checkpoint_capture;
 mod checkpoint_writer_recovery;
+pub mod colors;
 pub mod control;
 mod conversation;
 mod conversation_fold;
 mod conversation_observation;
 mod conversation_observation_fold;
 pub mod message_feedback;
+pub mod provider_associations;
 pub mod suggestions;
 pub use conversation_observation::{
     AgentDescriptionSource, AgentObservations, AgentRuntimeMetadata, AgentTurnUsage,
@@ -72,9 +81,11 @@ mod credential_prerequisite;
 mod error;
 mod event;
 mod execution;
+mod failed_provision;
 mod first_message;
 mod first_message_dispatch;
 mod first_message_service;
+pub use failed_provision::SandboxFailedRuntimeProvision;
 mod hierarchy;
 mod task_status;
 pub use task_status::AgentTaskStatus;
@@ -109,6 +120,20 @@ pub use runtime_update::{
 mod runtime_update_service;
 pub use runtime_update_service::{SandboxRuntimeUpdateError, SandboxRuntimeUpdateService};
 mod runtime_recovery_agents;
+mod unpublished_recovery;
+mod unpublished_recovery_legacy;
+mod unpublished_recovery_reservation;
+mod unpublished_recovery_state;
+mod unpublished_recovery_transition;
+pub use unpublished_recovery::{
+    apply_unpublished_runtime_recovery, SandboxRecoveryConversationProof,
+    SandboxUnpublishedRecoveryMutation, SandboxUnpublishedRecoveryProof,
+    SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoverySnapshot,
+    SandboxUnpublishedRecoveryVerifier,
+};
+pub use unpublished_recovery_state::{
+    SandboxUnpublishedRecoveryQuiescence, SandboxUnpublishedRecoveryState,
+};
 #[allow(clippy::module_inception)]
 mod sandbox;
 mod service;
@@ -130,8 +155,12 @@ mod title_service;
 mod title_store;
 mod warmup;
 mod workspace;
+mod workspace_prepare_recovery;
 mod workspace_service;
 mod workspace_work;
+pub use workspace_prepare_recovery::{
+    WorkspacePrepareRecovery, WorkspacePrepareRecoveryAttempt, WorkspacePrepareRecoveryCompletion,
+};
 mod worktree;
 pub use home_recovery::{SandboxHomeRecovery, SandboxRecoveryPause};
 pub use warmup::{
@@ -314,6 +343,9 @@ mod revive_tests;
 mod rotate_tests;
 #[cfg(test)]
 mod runtime_generation_tests;
+#[cfg(test)]
+#[path = "../sandbox_usage_tests.rs"]
+mod sandbox_usage_tests;
 #[cfg(test)]
 mod service_tests;
 #[cfg(test)]

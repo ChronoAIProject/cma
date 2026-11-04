@@ -5,11 +5,12 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::{AdapterError, ConversationInput};
 
 const DELIVERY_DEADLINE: Duration = Duration::from_secs(2);
+const CONTEXT_DELIVERY_LIMIT: Duration = Duration::from_secs(120);
 
 struct PendingInput {
     input: ConversationInput,
@@ -35,8 +36,16 @@ pub trait ConversationInputGuard: Send + Sync {
 #[async_trait::async_trait]
 pub trait ConversationSettingsSupport: Send + Sync {
     async fn system_prompt_supported(&self) -> bool;
+    /// Cursor advances only after the exact conversation output was durably
+    /// recorded and acknowledged. Received bytes alone must never advance it.
+    async fn managed_context_progress(&self) -> Option<watch::Receiver<u64>> {
+        None
+    }
     async fn managed_context_receipt(&self, _sequence: u64) -> Option<String> {
         None
+    }
+    async fn managed_transport_receipt(&self, sequence: u64) -> Option<String> {
+        self.managed_context_receipt(sequence).await
     }
 }
 
@@ -125,6 +134,10 @@ impl ConversationInputSender {
                         | ConversationInput::Steer(_)
                 );
                 let refreshing = matches!(input, ConversationInput::RefreshContext { .. });
+                let prompt = matches!(
+                    input,
+                    ConversationInput::Prompt(_) | ConversationInput::RecoverablePrompt { .. }
+                );
                 let result = handler(input).await;
                 // These handlers reserve Unsupported for a definitive refusal
                 // before any runtime mutation; later failures are ambiguous.
@@ -133,6 +146,9 @@ impl ConversationInputSender {
                         && matches!(result, Err(AdapterError::OperationIdentityConflict(_)));
                 let failed = result.is_err() && !refused;
                 let outcome = match result {
+                    Err(error @ AdapterError::PromptNotWritten(_)) if prompt => {
+                        ConversationSendOutcome::PreWriteFailure(error)
+                    }
                     Err(error) if refused => ConversationSendOutcome::PreWriteFailure(error),
                     Ok(()) => ConversationSendOutcome::WriteConfirmed,
                     Err(error) => ConversationSendOutcome::Ambiguous(error),
@@ -167,6 +183,13 @@ impl ConversationInputSender {
         self.settings_support
             .as_ref()?
             .managed_context_receipt(sequence)
+            .await
+    }
+
+    pub async fn managed_transport_receipt(&self, sequence: u64) -> Option<String> {
+        self.settings_support
+            .as_ref()?
+            .managed_transport_receipt(sequence)
             .await
     }
 
@@ -218,6 +241,14 @@ impl ConversationInputSender {
         guard: Option<Arc<dyn ConversationInputGuard>>,
         deadline: Duration,
     ) -> ConversationSendOutcome {
+        let progress = if matches!(input, ConversationInput::RefreshContext { .. }) {
+            match &self.settings_support {
+                Some(support) => support.managed_context_progress().await,
+                None => None,
+            }
+        } else {
+            None
+        };
         let (delivered, receipt) = oneshot::channel();
         let state = Arc::new(AtomicU8::new(PENDING));
         if let Err(error) = self.inner.try_send(PendingInput {
@@ -244,21 +275,59 @@ impl ConversationInputSender {
             state: state.clone(),
             armed: true,
         };
-        let outcome = match tokio::time::timeout(deadline, receipt).await {
-            Ok(Ok(outcome)) => outcome,
-            Ok(Err(_)) => {
-                incomplete_delivery(&state, "the conversation input task ended before delivery")
-            }
-            Err(_) => incomplete_delivery(
-                &state,
-                "the conversation input task did not deliver the operation",
-            ),
-        };
+        let outcome = receive_delivery(receipt, progress, &state, deadline)
+            .await
+            .unwrap_or_else(|detail| incomplete_delivery(&state, detail));
         if matches!(outcome, ConversationSendOutcome::Ambiguous(_)) {
             self.abort.abort();
         }
         abort.armed = false;
         outcome
+    }
+}
+
+async fn receive_delivery(
+    mut receipt: oneshot::Receiver<ConversationSendOutcome>,
+    mut progress: Option<watch::Receiver<u64>>,
+    state: &AtomicU8,
+    deadline: Duration,
+) -> Result<ConversationSendOutcome, &'static str> {
+    let mut cursor = progress.as_ref().map_or(0, |value| *value.borrow());
+    let limit = if progress.is_some() {
+        CONTEXT_DELIVERY_LIMIT
+    } else {
+        deadline
+    };
+    let idle = tokio::time::sleep(deadline);
+    let absolute = tokio::time::sleep(limit);
+    tokio::pin!(idle, absolute);
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut receipt => return result.map_err(|_| "the conversation input task ended before delivery"),
+            _ = &mut absolute => return Err("the conversation input task exceeded its delivery limit"),
+            _ = &mut idle => return Err("the conversation input task did not deliver the operation"),
+            changed = async {
+                match progress.as_mut() {
+                    Some(value) => value.changed().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if changed.is_err() {
+                    progress = None;
+                    continue;
+                }
+                let next = *progress.as_ref().expect("watched progress").borrow();
+                if next > cursor {
+                    cursor = next;
+                    // Output from another queued operation must not extend a
+                    // request that has not passed its authority guard yet.
+                    if state.load(Ordering::Acquire) == WRITING {
+                        idle.as_mut().reset(tokio::time::Instant::now() + deadline);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -288,3 +357,7 @@ pub struct ConversationChannel {
 #[cfg(test)]
 #[path = "conversation_guard_tests.rs"]
 mod guard_tests;
+
+#[cfg(test)]
+#[path = "conversation_progress_tests.rs"]
+mod progress_tests;

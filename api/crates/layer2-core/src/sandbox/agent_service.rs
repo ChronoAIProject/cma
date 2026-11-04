@@ -79,6 +79,8 @@ pub enum AgentServiceError {
     StopReasonConflict,
     #[error("agent changed while the operation was requested")]
     ControlConflict,
+    #[error("agent worktree recovery is not eligible")]
+    WorktreeRecoveryConflict,
     #[error("agent log capacity exceeded")]
     LogCapacityExceeded,
     #[error("invalid agent request: {0}")]
@@ -106,6 +108,7 @@ impl AgentServiceError {
             Self::WorkConflict { .. } => "agent_work_conflict",
             Self::StopReasonConflict => "agent_stop_reason_conflict",
             Self::ControlConflict => "agent_control_conflict",
+            Self::WorktreeRecoveryConflict => "agent_worktree_recovery_conflict",
             Self::LogCapacityExceeded => "agent_log_capacity_exceeded",
             Self::InvalidRequest(_) => "invalid_agent_request",
             Self::Corrupt(_) => "stored_agent_corrupt",
@@ -318,6 +321,27 @@ impl AgentService {
             .await
             .map_err(runtime_error)?;
         Ok(scheduled)
+    }
+
+    pub async fn recover_worktree(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+        operation_id: &str,
+    ) -> Result<Agent, AgentServiceError> {
+        if !caller.authorization.allows(Capability::ControlAnySandbox) {
+            require(caller)?;
+        }
+        self.store
+            .begin_agent_worktree_recovery(
+                id,
+                caller,
+                operation_id,
+                &WorktreeId::generate(),
+                now_rfc3339(),
+            )
+            .await
+            .map_err(control_error)
     }
 
     pub async fn delete(&self, caller: &Caller, id: &AgentId) -> Result<Agent, AgentServiceError> {

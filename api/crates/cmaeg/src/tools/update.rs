@@ -35,9 +35,44 @@ impl ToolsState {
         );
         let result = async {
             validate(&message)?;
+            if message.structured_content.is_some() {
+                return Err(Problem::new(
+                    ProblemCode::InvalidRequest,
+                    400,
+                    "structured_content_requires_replyToEvent",
+                ));
+            }
+            if message.reply_with_received_sticker {
+                return Err(Problem::new(
+                    ProblemCode::InvalidRequest,
+                    400,
+                    "received_sticker_requires_replyToEvent",
+                ));
+            }
+            if message
+                .native_attachments
+                .iter()
+                .any(|a| crate::media::presentations::special(a.kind))
+            {
+                return Err(Problem::new(
+                    ProblemCode::InvalidRequest,
+                    422,
+                    "native_media_presentation_update_unsupported",
+                ));
+            }
             let (channel, message_ref, _) = self
                 .authorize_message(caller, reference, "updateMessage")
                 .await?;
+            if message.clear_native_attachments
+                && !(message_ref.interaction_record_id.is_some()
+                    && message_ref.route_id.starts_with("discord:"))
+            {
+                return Err(Problem::new(
+                    ProblemCode::InvalidRequest,
+                    400,
+                    "native_attachment_clear_unsupported",
+                ));
+            }
             if let Some(patch) = &message.native_media_update {
                 return self
                     .native_media_update(caller, reference, patch, idempotency_key)

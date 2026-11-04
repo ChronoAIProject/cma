@@ -141,6 +141,7 @@ impl Sender {
             rendering = report;
         }
         let rejected = |reason: &str| IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering: rendering.clone(),
             delivery: DeliveryOutcome::Rejected {
@@ -234,6 +235,7 @@ impl Sender {
         }
         ctx.gate.progress();
         let mut result = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering,
             delivery,

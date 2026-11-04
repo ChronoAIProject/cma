@@ -1,5 +1,6 @@
 //! Shared fresh authority is local to this adoption/status call, never a drain.
 use super::{runtime_lifecycle::validate_inventory, HostedAdapter};
+use crate::hosted::inspection_timing;
 use crate::{AdapterError, RuntimeAdoptionRequest, RuntimeInspection};
 
 impl HostedAdapter {
@@ -32,10 +33,13 @@ impl HostedAdapter {
                 .deployment
                 .render_adoption(adoption, adoption.generation)?;
             let expected = crate::hosted::deployment::provider_request_identity(&request)?;
-            if let Some(inspection) = self
-                .backend
-                .inspect_native_runtime(&adoption.handle, &request, home)
-                .await?
+            if let Some(inspection) = inspection_timing::measure(
+                &adoption.spec.sandbox_id,
+                "native_observation",
+                self.backend
+                    .inspect_native_runtime(&adoption.handle, &request, home),
+            )
+            .await?
             {
                 let observed = &inspection.observation;
                 validate_inventory(std::slice::from_ref(observed))?;
@@ -60,7 +64,12 @@ impl HostedAdapter {
                     home_identity: home.identity()?,
                 })?;
                 // The post-status observation boundary is deliberately fresh.
-                self.verify_home(home).await?;
+                inspection_timing::measure(
+                    &adoption.spec.sandbox_id,
+                    "post_status_home",
+                    self.verify_home(home),
+                )
+                .await?;
                 self.attach_state(adoption.handle.clone(), &adoption.spec, expected)
                     .await?;
                 return Ok(Some(inspection));
@@ -116,6 +125,19 @@ impl HostedAdapter {
             request.options.working_directory.clone(),
             tools,
         )
-        .map(Some)
+        .map(|context| {
+            let context = match (&self.access_tools, &settings.access_tool) {
+                (Some(source), Some(binding)) => {
+                    context.with_access(source.clone(), binding.clone())
+                }
+                _ => context,
+            };
+            Some(match (&self.provider_tools, &settings.provider_tool) {
+                (Some(source), Some(binding)) => {
+                    context.with_provider(source.clone(), binding.clone())
+                }
+                _ => context,
+            })
+        })
     }
 }

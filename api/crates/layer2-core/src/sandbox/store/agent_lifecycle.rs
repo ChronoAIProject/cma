@@ -40,6 +40,12 @@ pub struct AgentConnectionRecoveryCandidate {
     pub runtime_generation: u64,
     pub revision: u64,
     pub work_step: AgentWorkStep,
+    /// Monotonic applied revision from the same validated Agent observation.
+    /// This can skip completed maintenance, never authorize a new write.
+    pub managed_guidance_revision: u64,
+    /// Discovery may defer maintenance at a busy or unconfigured boundary.
+    /// A true value never authorizes a write; admission rereads and fences it.
+    pub managed_context_eligible: bool,
 }
 
 impl AgentConnectionRecoveryCandidate {
@@ -60,6 +66,9 @@ impl AgentConnectionRecoveryCandidate {
             runtime_generation,
             revision: agent.revision,
             work_step: agent.work.step,
+            managed_guidance_revision: agent.conversation.managed_guidance_revision,
+            managed_context_eligible: crate::sandbox::agent_live_skills::idle(agent)
+                && agent.settings().validate().is_ok(),
         })
     }
 

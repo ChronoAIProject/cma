@@ -209,7 +209,7 @@ async fn clone_workspace(
         OsString::from(url),
         path.as_os_str().to_owned(),
     ]);
-    git.checked(home, args, "clone workspace").await?;
+    git.checked_clone(home, args).await?;
     Ok(())
 }
 

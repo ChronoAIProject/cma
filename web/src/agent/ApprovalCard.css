@@ -17,8 +17,21 @@
   border-radius: 8px;
 }
 
+/* The waiting character leads the request; a decided card keeps only its words. */
+.approval__head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.approval__character {
+  margin-top: -4px;
+}
+
 .approval__request {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
@@ -26,10 +39,7 @@
 
 .approval__eyebrow {
   color: var(--dsw-alias-state-warn-label);
-  font-family: var(--ds-font-family-code);
-  font-size: 10px;
-  line-height: 15px;
-  text-transform: uppercase;
+  font: var(--dsw-font-xxs-strong-12);
 }
 
 .approval h2 {
@@ -63,6 +73,11 @@
   min-width: 0;
 }
 
+/* The three answers fill their equal columns, so they read as one choice rather than three. */
+.approval__choice > .button {
+  align-self: stretch;
+}
+
 .approval__effect {
   color: var(--dsw-alias-label-caption);
   font-size: 12px;
@@ -78,7 +93,6 @@
 
 @media (max-width: 30rem) {
   .approval__choice > .button {
-    align-self: stretch;
     min-height: 44px;
     max-height: 44px;
   }

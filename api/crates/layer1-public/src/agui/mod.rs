@@ -7,6 +7,8 @@ use axum::{
 };
 
 mod capabilities;
+#[cfg(test)]
+mod completion_tests;
 mod events;
 mod launch_companion;
 mod live;
@@ -17,8 +19,6 @@ mod run;
 mod sandbox_companion;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod completion_tests;
 
 pub use launch_companion::{launch_companion_router, LaunchCompanionState};
 

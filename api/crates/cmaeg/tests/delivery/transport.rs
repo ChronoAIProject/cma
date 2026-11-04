@@ -118,6 +118,9 @@ async fn closed_receipt_skips_queued_tool_send_and_drain_deadline_cancels_slow_w
             event: app.event.clone(),
             message: OutboundMessage {
                 whatsapp_template: None,
+                structured_content: None,
+                reply_with_received_sticker: false,
+                clear_native_attachments: false,
                 native_media_update: None,
                 native_attachments: Vec::new(),
                 thread_reply: false,

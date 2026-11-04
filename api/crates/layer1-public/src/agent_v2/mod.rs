@@ -21,6 +21,8 @@ mod operation_replay_tests;
 mod output_tests;
 mod parse;
 mod projection;
+#[cfg(test)]
+mod projection_tests;
 mod shapes;
 mod snapshot;
 mod stream;

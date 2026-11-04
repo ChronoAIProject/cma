@@ -54,6 +54,12 @@ pub(crate) fn outbound(form: bool) -> OutboundMessage {
 }
 impl Fixture {
     pub async fn new(named: bool, thread: bool, region: LarkRegion) -> Self {
+        Self::with_group(named, thread, thread, region).await
+    }
+    pub async fn new_group(named: bool, region: LarkRegion) -> Self {
+        Self::with_group(named, false, true, region).await
+    }
+    async fn with_group(named: bool, thread: bool, group: bool, region: LarkRegion) -> Self {
         let server = Server::start_realtime().await;
         let provider = HttpServer::start().await;
         let Source::NativeLark(mut source) = native::source() else {
@@ -78,6 +84,8 @@ impl Fixture {
         let mut raw = native::text("om_original", "hello", now());
         if thread {
             raw["event"]["message"]["thread_id"] = "omt_original".into();
+        }
+        if group {
             raw["event"]["message"]["chat_type"] = "group".into();
         }
         let msg = message::extract(&source, &raw, now()).unwrap().unwrap();

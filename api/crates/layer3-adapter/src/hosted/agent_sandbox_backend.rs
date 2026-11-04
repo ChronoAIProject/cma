@@ -46,6 +46,10 @@ impl AgentSandboxBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
+    async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
+        self.transport.open_desktop(handle).await
+    }
+
     fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
         Some(self.client.warm_pools())
     }
@@ -196,6 +200,37 @@ impl HostedBackend for AgentSandboxBackend {
         home: &HomeVolumeAttachment,
     ) -> Result<Option<RuntimeInspection>> {
         self.inspect_native_context(handle, request, home).await
+    }
+
+    async fn inspect_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<super::NonexecutingRuntimeProof>> {
+        self.client
+            .inspect_nonexecuting_runtime(handle, request, home)
+            .await
+    }
+
+    async fn suspend_nonexecuting_runtime(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        proof: &super::NonexecutingRuntimeProof,
+    ) -> Result<()> {
+        self.client
+            .suspend_nonexecuting_runtime(handle, request, home, proof)
+            .await
+    }
+
+    async fn run_recovery_command(
+        &self,
+        handle: &RuntimeHandle,
+        command: &super::RuntimeRecoveryCommand,
+    ) -> Result<Vec<u8>> {
+        self.client.run_recovery_command(handle, command).await
     }
 
     async fn reclaim(&self, expected: &RuntimeObservation) -> Result<()> {

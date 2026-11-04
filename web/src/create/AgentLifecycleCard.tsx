@@ -14,6 +14,7 @@ import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
 import { agentNameFor, validRepository } from './repository';
+import { retainLifecycleHandoff } from '../resources/lifecycleHandoff';
 import './Create.css';
 import './AgentLifecycleCard.css';
 
@@ -54,7 +55,13 @@ function AgentLifecycleForm({
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
   const { pending, failure, operation, connection: connectionRequest } = lifecycle;
   const createdReceipt = lifecycle.intent?.receipt;
-  const handoffTransport = useLifecycleTransport(client, operation, createdReceipt?.id, viewerId);
+  const handoffTransport = useLifecycleTransport(
+    client,
+    operation,
+    createdReceipt?.id,
+    viewerId,
+    lifecycle.intent?.body.machine_included === true,
+  );
   const admitted = useLifecycleAgent(
     client,
     operation,
@@ -74,6 +81,7 @@ function AgentLifecycleForm({
     [admitted, createdReceipt?.id, operation],
   );
   const [repository, setRepository] = useState('');
+  const [machineIncluded, setMachineIncluded] = useState(false);
   // Shown only after the field is left or Create agent is pressed, never while
   // somebody is still typing the URL, so the alert is announced once.
   const [repositoryError, setRepositoryError] = useState(false);
@@ -89,13 +97,32 @@ function AgentLifecycleForm({
     // opened directly after the server reports the final Agent identity.
     openedOperation.current = operation.id;
     if (operation.status === 'succeeded' ? clearIntent() : bindAgent(openTarget.id)) {
+      retainLifecycleHandoff(client.resourceViews, viewerId, admitted);
       handoffTransport();
       onCreated({ ...createdReceipt, id: openTarget.id, status: openTarget.status });
     }
-  }, [bindAgent, clearIntent, createdReceipt, handoffTransport, onCreated, operation, openTarget]);
+  }, [
+    admitted,
+    bindAgent,
+    clearIntent,
+    client.resourceViews,
+    createdReceipt,
+    handoffTransport,
+    onCreated,
+    operation,
+    openTarget,
+    viewerId,
+  ]);
   const repositoryUrl = repository.trim();
   const repositoryValid = validRepository(repositoryUrl);
   const canCreate = workspaceId !== undefined || sandboxId !== undefined || canCreateSandbox;
+  const machineIncludedAvailable =
+    workspaceId === undefined && sandboxId === undefined && canCreateSandbox;
+  useEffect(() => {
+    // Fetch static viewer code during creation; the owned Agent page opens the stream.
+    if (machineIncludedAvailable && machineIncluded)
+      void import('@novnc/novnc').catch(() => undefined);
+  }, [machineIncludedAvailable, machineIncluded]);
   const submit = () => {
     if (!canCreate) return;
     if (!repositoryValid) {
@@ -105,6 +132,7 @@ function AgentLifecycleForm({
     }
     const input: AgentLifecycleCreateInput = {
       name: agentNameFor(repositoryUrl),
+      ...(machineIncludedAvailable && machineIncluded ? { machine_included: true } : {}),
       ...(workspaceId === undefined ? {} : { workspace_id: workspaceId }),
       ...(sandboxId === undefined ? {} : { sandbox_id: sandboxId }),
       ...(repositoryUrl === '' ? {} : { repository: { url: repositoryUrl } }),
@@ -136,14 +164,33 @@ function AgentLifecycleForm({
           }
         />
         <p id="agent-repository-help" className="field__hint">
-          Your Agent receives this repository in its first message and prepares it in the empty
-          workspace. If authorization is needed, you’ll be prompted to connect your account.
+          Paste a GitHub link if the Agent should work on existing code, or leave this empty to
+          start from scratch. If the repository needs authorization, you’ll be asked to connect your
+          GitHub account.
         </p>
         {repositoryError ? (
           <p id="agent-repository-error" className="field__error" role="alert">
             Enter an HTTPS GitHub repository URL.
           </p>
         ) : null}
+      </div>
+      <div className="agent-lifecycle-machine">
+        <label className="agent-lifecycle-machine__control" htmlFor="agent-machine-included">
+          <input
+            id="agent-machine-included"
+            type="checkbox"
+            checked={machineIncluded}
+            disabled={!machineIncludedAvailable}
+            onChange={(event) => setMachineIncluded(event.target.checked)}
+            aria-describedby="agent-machine-included-help"
+          />
+          <span>Include a shared desktop</span>
+        </label>
+        <p id="agent-machine-included-help" className="field__hint">
+          {machineIncludedAvailable
+            ? 'Adds a Linux desktop with the Chromium browser that you and your Agent can both see and control. Useful for work on websites.'
+            : 'A shared desktop can only be added with a new Sandbox; an existing Sandbox keeps its original setup.'}
+        </p>
       </div>
       {/*
        * Read-only on purpose: the lifecycle request sends no inline
@@ -156,7 +203,8 @@ function AgentLifecycleForm({
         </span>
         <div>
           <h3 id="agent-settings-title">Agent settings</h3>
-          <p>gpt-6 · High · Autonomous</p>
+          <p>gpt-6 · High reasoning · Autonomous</p>
+          <p>The Agent works without asking first. Change this anytime from the message box.</p>
         </div>
       </section>
     </>
@@ -171,7 +219,7 @@ function AgentLifecycleForm({
             ? 'Start an Agent in the selected workspace.'
             : sandboxId !== undefined
               ? 'Start an Agent with a new workspace in this Sandbox.'
-              : 'Start an Agent in a new Sandbox with an empty workspace.'
+              : 'Your Agent gets its own Sandbox, a private computer it works in, starting with an empty Workspace.'
         }
         onClose={() => {
           if (operation?.status === 'succeeded' || operation?.status === 'failed')
@@ -204,6 +252,7 @@ function AgentLifecycleForm({
                       : lifecycle.bindAgent(openTarget.id))
                   ) {
                     openedOperation.current = operation.id;
+                    retainLifecycleHandoff(client.resourceViews, viewerId, admitted);
                     handoffTransport();
                     onCreated({ ...createdReceipt, id: openTarget.id, status: openTarget.status });
                   }
@@ -215,7 +264,7 @@ function AgentLifecycleForm({
           ) : (
             <>
               <p className="agent-lifecycle-note">
-                Includes chrono-llm-public and ornn-api access.
+                Includes access to ChronoAI models and the Ornn skill library.
               </p>
               <Button disabled={pending} onClick={onClose}>
                 Cancel

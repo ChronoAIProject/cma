@@ -52,6 +52,22 @@ impl Sender {
         reference: &MessageRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        if message.structured_content.is_some() {
+            return (unsupported(), SendEffects::default());
+        }
+        if message
+            .native_attachments
+            .iter()
+            .any(|a| crate::media::presentations::special(a.kind))
+        {
+            return (unsupported(), SendEffects::default());
+        }
+        if message.clear_native_attachments
+            && !(reference.interaction_record_id.is_some()
+                && reference.route_id.starts_with("discord:"))
+        {
+            return (unsupported(), SendEffects::default());
+        }
         if crate::interactions::native_lark::is_reference(reference) {
             return (
                 self.native_lark_card_update(ctx, reference, message).await,
@@ -170,6 +186,7 @@ impl Sender {
         if !lark && parts.len() != 1 {
             return (
                 IntentReceipt {
+                    message_parts: vec![],
                     message_ref: None,
                     rendering,
                     delivery: DeliveryOutcome::Rejected {
@@ -217,6 +234,7 @@ impl Sender {
                 }
                 return (
                     IntentReceipt {
+                        message_parts: vec![],
                         message_ref: None,
                         rendering,
                         delivery: DeliveryOutcome::Rejected {
@@ -258,6 +276,7 @@ impl Sender {
                 .await
         };
         let mut result = IntentReceipt {
+            message_parts: vec![],
             message_ref: None,
             rendering,
             delivery,
@@ -384,6 +403,7 @@ impl Sender {
             .then(|| MessageRef::seal(reference, &self.keys).ok())
             .flatten();
         IntentReceipt {
+            message_parts: vec![],
             message_ref,
             rendering,
             delivery,

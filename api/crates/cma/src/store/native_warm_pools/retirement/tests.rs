@@ -1,4 +1,5 @@
 use super::*;
+mod machine;
 use crate::store::sandbox_maintenance::mongo_integration_tests::active_sandbox;
 
 async fn fixture() -> (Database, MongoNativeWarmPools, PoolTarget, String) {

@@ -10,6 +10,11 @@ use layer2_core::ServiceId;
 
 use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
+mod access_migration;
+mod access_origins;
+mod provider_tool_relay;
+pub(crate) use access_migration::AgentAccessMigration;
+pub(crate) use provider_tool_relay::ProviderToolRelay;
 mod agent_sandbox;
 mod execution;
 mod gateway;
@@ -23,10 +28,12 @@ pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 mod bot_father;
 mod documents;
+mod usage_billing;
 pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
 pub(crate) use runtime::RuntimeConfig;
+pub(crate) use usage_billing::UsageBillingConfig;
 
 const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
@@ -139,6 +146,10 @@ impl TrustedProxyConfig {
 pub struct Config {
     pub bind: SocketAddr,
     pub public_url: String,
+    /// Explicit prior authorities for credentials already installed in live Agents.
+    pub agent_access_retained_origins: Vec<String>,
+    pub(crate) agent_access_transport_migration: Option<AgentAccessMigration>,
+    pub(crate) provider_tool_relay: Option<ProviderToolRelay>,
     /// Base URL for the independently deployed Image Manager service.  CMA
     /// only uses it with the request's delegated user credential.
     pub image_manager_base_url: String,
@@ -146,6 +157,7 @@ pub struct Config {
     pub nyxid_service_id: Option<String>,
     pub nyxid_proxy_issuer: Option<String>,
     pub nyxid_proxy_jwks_url: Option<String>,
+    pub nyxid_proxy_audience: Option<String>,
     pub cors_origins: Vec<HeaderValue>,
     pub rate_limits: RateLimitConfig,
     pub trusted_proxies: TrustedProxyConfig,
@@ -166,6 +178,7 @@ pub struct Config {
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub gateway: Option<GatewayConfig>,
+    pub usage_billing: Option<UsageBillingConfig>,
     pub bot_father: Option<BotFatherConfig>,
     pub document_storage: Option<DocumentStorageConfig>,
 }
@@ -176,6 +189,10 @@ impl std::fmt::Debug for Config {
             .debug_struct("Config")
             .field("bind", &self.bind)
             .field("public_url", &self.public_url)
+            .field(
+                "agent_access_retained_origins",
+                &self.agent_access_retained_origins,
+            )
             .field("image_manager_base_url", &self.image_manager_base_url)
             .field("nyxid_public_url", &self.nyxid_public_url)
             .field("cors_origins", &self.cors_origins)
@@ -215,6 +232,17 @@ impl Config {
             .map_err(|error| format!("CHRONO_SERVER_BIND is not a socket address: {error}"))?;
         let public_url = value_or(&mut lookup, "CHRONO_SERVER_PUBLIC_URL", DEFAULT_PUBLIC_URL)?;
         validate_origin("CHRONO_SERVER_PUBLIC_URL", &public_url)?;
+        let agent_access_retained_origins = access_origins::retained(&mut lookup)?;
+        let agent_access_transport_migration = access_migration::parse(&mut lookup)?;
+        let provider_tool_relay = provider_tool_relay::parse(&mut lookup, &public_url)?;
+        if agent_access_transport_migration
+            .as_ref()
+            .is_some_and(|migration| {
+                migration.origin.trim_end_matches('/') != public_url.trim_end_matches('/')
+            })
+        {
+            return Err("CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION origin must match CHRONO_SERVER_PUBLIC_URL".into());
+        }
         let image_manager_base_url = parse_service_base_url(
             "CHRONO_IMAGE_MANAGER_BASE_URL",
             &value_or(
@@ -329,14 +357,24 @@ impl Config {
             validate_origin("CHRONO_NYXID_BASE_URL", base_url)?;
         }
 
+        let document_storage = DocumentStorageConfig::from_lookup(&mut lookup)?;
+        if agent_access_transport_migration.is_some() && document_storage.is_none() {
+            return Err(
+                "CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION requires managed document context".into(),
+            );
+        }
         Ok(Self {
             bind,
             public_url,
+            agent_access_retained_origins,
+            agent_access_transport_migration,
+            provider_tool_relay,
             image_manager_base_url,
             nyxid_public_url,
             nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),
             nyxid_proxy_issuer: lookup("CHRONO_NYXID_PROXY_ISSUER")?,
             nyxid_proxy_jwks_url: lookup("CHRONO_NYXID_PROXY_JWKS_URL")?,
+            nyxid_proxy_audience: lookup("CHRONO_NYXID_PROXY_AUDIENCE")?,
             cors_origins,
             rate_limits,
             trusted_proxies,
@@ -360,8 +398,9 @@ impl Config {
             features,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
+            usage_billing: UsageBillingConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
-            document_storage: DocumentStorageConfig::from_lookup(&mut lookup)?,
+            document_storage,
         })
     }
 

@@ -56,6 +56,18 @@ pub struct PublicActivity {
 }
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Capabilities {
+    /// Exclusive static structured reply kinds supported for this exact retained event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_replies: Option<Vec<String>>,
+    /// Resend this event's received native Lark sticker to its original conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_with_received_sticker: Option<bool>,
+    /// One text reply can start the exact original native Lark group message thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_thread_start: Option<bool>,
+    /// Original forum-supergroup scope; current platform permissions are checked per creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic_creation: Option<bool>,
     /// Exact admitted Telegram forum topic; no creation or enumeration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub topic_lifecycle: Option<cmaeg_core::thread_lifecycle::TopicLifecycleCapabilities>,
@@ -104,6 +116,12 @@ mod sticker;
 pub use sticker::NativeStickerCapabilities;
 #[path = "context_media.rs"]
 mod media;
+#[cfg(test)]
+#[path = "context_media_controls_tests.rs"]
+mod media_controls_tests;
+#[cfg(test)]
+#[path = "context_telegram_media_controls_tests.rs"]
+mod telegram_media_controls_tests;
 pub use media::NativeMediaCapabilities;
 #[path = "context_whatsapp.rs"]
 mod whatsapp;
@@ -218,6 +236,12 @@ pub(super) fn project(
     state: &ToolsState,
 ) -> ContextResponse {
     let mut capabilities = Capabilities {
+        structured_replies: None,
+        reply_with_received_sticker: None,
+        native_thread_start: (state.native_lark_thread_start_enabled
+            && activity_verified
+            && crate::native_lark::thread_start::eligible(channel, event, &activity))
+        .then_some(true),
         native_media_edits: crate::native_media::Capabilities::context(
             state, channel, event, &activity,
         ),
@@ -423,3 +447,7 @@ pub(super) fn unavailable() -> Problem {
 #[cfg(test)]
 #[path = "context_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "context_discord_media_set_tests.rs"]
+mod media_set_tests;

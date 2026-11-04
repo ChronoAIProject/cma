@@ -166,11 +166,13 @@ impl Fixture {
             .await
             .unwrap();
         let message = native_lark::message::Message::Text {
+            quoted_message: None,
             message_id: "om_received".into(),
             chat_id: "oc_native_chat".into(),
             sender: "ou_human".into(),
             text: "original".into(),
             resources: vec![],
+            received_sticker: None,
             group: threaded,
             thread_id: threaded.then(|| "omt_thread".into()),
             mentioned: false,

@@ -17,6 +17,7 @@ use self::support::{
 };
 
 mod execution;
+mod prepare_recovery;
 mod prepared;
 mod profile;
 mod removal;
@@ -135,6 +136,7 @@ impl WorkspaceWorker {
     ) -> Result<(), SandboxStoreError> {
         match workspace.work.step {
             WorkspaceWorkStep::Prepare => self.prepare(workspace, now).await,
+            WorkspaceWorkStep::RecoverPrepare => self.recover_prepare(workspace, now).await,
             WorkspaceWorkStep::Setup => self.setup(workspace, now).await,
             WorkspaceWorkStep::Remove => self.remove(workspace, now).await,
             WorkspaceWorkStep::None => Err(SandboxStoreError::Conflict),
@@ -428,6 +430,7 @@ impl WorkspaceWorker {
                 .save_workspace(expected, workspace)
                 .await;
         }
+        let recovering_prepare = workspace.work.step == WorkspaceWorkStep::RecoverPrepare;
         workspace
             .work
             .advance(
@@ -438,6 +441,15 @@ impl WorkspaceWorker {
             )
             .map_err(|_| SandboxStoreError::Conflict)?;
         let typed = failure.typed();
+        if recovering_prepare {
+            let attempt = workspace
+                .work
+                .prepare_recovery
+                .as_mut()
+                .and_then(|recovery| recovery.attempts.last_mut())
+                .ok_or(SandboxStoreError::WorkspaceRecoveryConflict)?;
+            attempt.failed = Some(typed.clone());
+        }
         workspace
             .transition(WorkspaceStatus::Failed, stamp.clone(), Some(typed.clone()))
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;

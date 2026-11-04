@@ -43,14 +43,20 @@ use crate::AuthenticatedSubject;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 
+#[path = "sandbox_colors_tests.rs"]
+mod colors_tests;
 #[path = "sandbox_lifecycle_view_tests.rs"]
 mod lifecycle_view_tests;
+#[path = "workspace_prepare_recovery_tests.rs"]
+pub(super) mod prepare_recovery_tests;
 #[path = "sandbox_provider_view_tests.rs"]
 mod provider_view_tests;
 #[path = "sandbox_runtime_update_tests.rs"]
 pub(super) mod runtime_update_tests;
 #[path = "sandbox_service_access_tests.rs"]
 mod service_access_tests;
+#[path = "sandbox_visible_inventory_tests.rs"]
+mod visible_inventory_tests;
 type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);
 

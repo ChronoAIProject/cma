@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { AccessibleAgent, EffectiveAccess } from '@chronoai/cma-sdk';
 import type { ResourceViewsClient } from './client';
 import { useAuthorizedRead, type AuthorizedValue } from './useAuthorizedRead';
+import { readLifecycleHandoff } from './lifecycleHandoff';
 
 export interface AgentAccessValue {
   readonly detail: AccessibleAgent;
@@ -34,6 +35,23 @@ export function useAgentAccess(
       value.viewerId === viewerId &&
       value.context === context,
   );
+  const handoff = readLifecycleHandoff(client, viewerId, agentId);
+  const seededFromHandoff = personal === undefined && handoff !== undefined;
+  const seeded =
+    personal ??
+    (handoff === undefined
+      ? undefined
+      : {
+          client,
+          agentId,
+          viewerId,
+          context,
+          lineage: {
+            agentId: handoff.agentId,
+            workspaceId: handoff.workspaceId,
+            sandboxId: handoff.sandboxId,
+          },
+        });
   const read = useMemo(
     () =>
       client === undefined || agentId === undefined
@@ -82,18 +100,17 @@ export function useAgentAccess(
   if (personal !== undefined && result.state.status === 'error' && !result.state.transient)
     setKnown(known.filter((item) => item !== personal));
   const personalReady =
-    personal !== undefined &&
-    personal?.client === client &&
-    personal?.agentId === agentId &&
-    personal?.viewerId === viewerId &&
-    personal?.context === context &&
+    seeded !== undefined &&
+    seeded.client === client &&
+    seeded.agentId === agentId &&
+    seeded.viewerId === viewerId &&
+    seeded.context === context &&
     (result.state.status !== 'error' || result.state.transient === true) &&
     (result.state.status !== 'ready' || result.state.value.detail.access !== 'shared');
   return {
     ...result,
     personalReady,
-    personalLineage:
-      personalReady && result.state.status === 'ready' ? personal.lineage : undefined,
-    personalReadOnly: personalReady && result.state.status !== 'ready',
+    personalLineage: personalReady ? seeded.lineage : undefined,
+    personalReadOnly: personalReady && result.state.status !== 'ready' && !seededFromHandoff,
   };
 }

@@ -324,6 +324,48 @@ async fn repository_is_a_first_message_and_never_a_platform_clone_plan() {
     assert_eq!(repeated, prompt);
 }
 
+#[tokio::test]
+async fn machine_included_profiles_pin_the_desktop_image_and_marker() {
+    let store = Arc::new(InMemoryProfileStore::default());
+    let profiles =
+        PrivateProfileCreationService::new(store.clone(), bounds(), Arc::new([] as [String; 0]));
+    let caller = Caller::new(SubjectId::new("owner"), Authorization::new([]));
+    let request = serde_json::from_value(json!({
+        "name": "Desktop Agent",
+        "machine_included": true
+    }))
+    .unwrap();
+    validate_request(&request).unwrap();
+    let (_, _, sandbox_ref) = create_profiles(
+        &profiles,
+        &caller,
+        &request,
+        Some("ghcr.io/chronoaiproject/cma-runtime-desktop@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
+        "desktop",
+        SandboxCapacity { cpu_millis: 2_000, memory_mib: 8_192 },
+        layer2_core::sandbox::SandboxLimits { max_workspaces: 16, max_agents_per_workspace: 16 },
+        LifecycleBehavior::PromptRepository,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let sandbox = store
+        .sandbox_profile_revision(&sandbox_ref.id, sandbox_ref.revision)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(sandbox.content.runtime_image.as_deref(), Some("ghcr.io/chronoaiproject/cma-runtime-desktop@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+    assert_eq!(sandbox.content.cpu_millis, 2_000);
+    assert_eq!(sandbox.content.memory_mib, 8_192);
+    assert_eq!(
+        sandbox.content.environment_variables,
+        vec![layer2_core::profiles::EnvironmentVariable {
+            name: "CMA_MACHINE_INCLUDED".into(),
+            value: "1".into()
+        }]
+    );
+}
+
 #[test]
 fn empty_workspace_setup_waits_for_user_tasks_without_optional_access_requests() {
     for context in [

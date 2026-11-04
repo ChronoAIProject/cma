@@ -27,6 +27,7 @@ pub use answer_deliverables::answer_deliverables_router;
 mod agent_attachments;
 pub use agent_attachments::agent_attachments_router;
 mod agent_filesystem;
+pub mod binding_media;
 pub use agent_filesystem::agent_filesystem_router;
 mod agent_observation_shapes;
 mod agent_openapi_shapes;
@@ -34,12 +35,19 @@ pub use agent_artifacts::agent_artifacts_router;
 #[cfg(test)]
 mod agent_artifacts_tests;
 mod agent_channel_usage;
+mod sandbox_usage;
+pub use sandbox_usage::sandbox_usage_router;
+mod agent_provider_associations;
+pub use agent_provider_associations::agent_provider_associations_router;
 mod agent_command_admission;
 mod agent_models;
 mod agent_operate;
 mod agent_preferences;
+#[cfg(test)]
+mod agent_provider_associations_tests;
 mod agent_settings;
 mod agent_skills;
+mod agent_worktree_recovery;
 mod message_feedback;
 mod message_feedback_reasons;
 mod suggestion_shapes;
@@ -72,6 +80,8 @@ mod badge_mark;
 #[cfg(test)]
 mod badge_tests;
 mod defaults;
+mod desktop;
+pub use desktop::{desktop_router, desktop_router_with_origins};
 mod documents;
 pub use documents::documents_router;
 mod embed;
@@ -116,8 +126,11 @@ mod trigger_assets_test_support;
 mod bindings;
 #[cfg(test)]
 mod bindings_tests;
+pub mod worker_credentials;
 pub use bindings::{
     binding_router, binding_router_with_native_tools, binding_router_with_native_tools_alias,
+    binding_router_with_native_tools_alias_and_preparation,
+    binding_router_with_native_tools_aliases_and_preparation,
 };
 mod gateway_connections;
 mod gateway_interactions;
@@ -138,6 +151,7 @@ mod launch_events;
 mod launch_quota;
 mod launches;
 mod public_names;
+mod sandbox_colors;
 mod sandbox_commands;
 #[cfg(test)]
 mod sandbox_commands_tests;

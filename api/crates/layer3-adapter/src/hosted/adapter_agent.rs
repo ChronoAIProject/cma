@@ -210,7 +210,11 @@ pub(super) async fn reconnect_agent(
     handle: &RuntimeHandle,
     authority_fence: u64,
     request: &AgentOpenRequest,
-    (conversation_id, recovered_prompt): (&str, Option<crate::PromptIdentity>),
+    (conversation_id, recovered_prompt, recovered_context): (
+        &str,
+        Option<crate::PromptIdentity>,
+        Option<u64>,
+    ),
     updates: mpsc::Sender<ConversationUpdate>,
 ) -> crate::Result<ConversationChannel> {
     let result = open_agent(
@@ -218,7 +222,7 @@ pub(super) async fn reconnect_agent(
         handle,
         authority_fence,
         request,
-        Some((conversation_id, recovered_prompt.clone())),
+        Some((conversation_id, recovered_prompt.clone(), recovered_context)),
         updates.clone(),
     )
     .await;
@@ -238,7 +242,7 @@ pub(super) async fn reconnect_agent(
                 handle,
                 authority_fence,
                 &resumed,
-                Some((conversation_id, recovered_prompt)),
+                Some((conversation_id, recovered_prompt, recovered_context)),
                 updates,
             )
             .await
@@ -252,13 +256,20 @@ pub(super) async fn open_agent(
     handle: &RuntimeHandle,
     authority_fence: u64,
     request: &AgentOpenRequest,
-    held: Option<(&str, Option<crate::PromptIdentity>)>,
+    held: Option<(&str, Option<crate::PromptIdentity>, Option<u64>)>,
     updates: mpsc::Sender<ConversationUpdate>,
 ) -> crate::Result<ConversationChannel> {
-    let (held_conversation, recovered_prompt) = match held {
-        Some((conversation, prompt)) => (Some(conversation), prompt),
-        None => (None, None),
+    let (held_conversation, recovered_prompt, recovered_context) = match held {
+        Some((conversation, prompt, context)) => (Some(conversation), prompt, context),
+        None => (None, None, None),
     };
+    if recovered_context.is_some_and(|sequence| sequence == 0)
+        || recovered_context.is_some() && recovered_prompt.is_some()
+    {
+        return Err(AdapterError::Rejected(
+            "invalid context recovery authority".into(),
+        ));
+    }
     if held_conversation.is_some_and(|id| {
         id.is_empty()
             || id.len() > 512
@@ -281,12 +292,13 @@ pub(super) async fn open_agent(
     validate_fence(authority_fence)?;
     let launch = adapter.runtime.launch(request)?;
     let mut settings = adapter.runtime.open_settings(request)?;
-    if settings.recovered_prompt.is_some() {
+    if settings.recovered_prompt.is_some() || settings.recovered_context_sequence.is_some() {
         return Err(AdapterError::Rejected(
             "runtime supplied prompt recovery authority".into(),
         ));
     }
     settings.recovered_prompt = recovered_prompt;
+    settings.recovered_context_sequence = recovered_context;
     // Provider rendering has no authority to add channel tools. Only the
     // configured control-plane source can prove an eligible creation record.
     if settings.context_refresh.is_some()
@@ -381,34 +393,22 @@ pub(super) async fn open_agent(
         let conversation = channel.conversation_id.as_deref().ok_or_else(|| {
             AdapterError::Rejected("channel tool session has no conversation identity".into())
         })?;
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            source.confirm_open(&binding, conversation),
-        )
-        .await
-        .map_err(|_| AdapterError::Unavailable("channel tool open receipt timed out".into()))??;
+        super::super::tool_confirmation::confirm(|| source.confirm_open(&binding, conversation))
+            .await?;
     }
     if let (Some(source), Some(binding)) = (&adapter.provider_tools, provider_tool) {
         let conversation = channel.conversation_id.as_deref().ok_or_else(|| {
             AdapterError::Rejected("provider tool session has no conversation identity".into())
         })?;
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            source.confirm_open(&binding, conversation),
-        )
-        .await
-        .map_err(|_| AdapterError::Unavailable("provider tool open receipt timed out".into()))??;
+        super::super::tool_confirmation::confirm(|| source.confirm_open(&binding, conversation))
+            .await?;
     }
     if let (Some(source), Some(binding)) = (&adapter.access_tools, access_tool) {
         let conversation = channel.conversation_id.as_deref().ok_or_else(|| {
             AdapterError::Rejected("access tool session has no conversation identity".into())
         })?;
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            source.confirm_open(&binding, conversation),
-        )
-        .await
-        .map_err(|_| AdapterError::Unavailable("access tool receipt timed out".into()))??;
+        super::super::tool_confirmation::confirm(|| source.confirm_open(&binding, conversation))
+            .await?;
     }
     Ok(channel)
 }

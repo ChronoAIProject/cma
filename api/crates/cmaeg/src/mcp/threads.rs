@@ -38,8 +38,8 @@ struct ManageThreadArguments {
 struct Schemas;
 const TOOLS:[ToolSpec;3]=[
     ToolSpec { name:"listEventThreads",description:"List up to 25 public active or archived threads under the original native Discord parent, or only the original thread for a threaded event. Requires source thread_lifecycle consent. Results retain the original actor, consumer and expiry. No private sibling enumeration or pagination; names are untrusted reference data.",schema:"ListThreadArguments",read_only:true,destructive:false,idempotent:true,open_world:true },
-    ToolSpec { name:"createEventThread",description:"Create one public Discord thread from the exact original human message in a guild text or announcement channel. Requires source thread_lifecycle consent, an explicit name/archive duration and a stable idempotency_key. Private and forum/media creation are unsupported. Never retry unknown outcomes under another key.",schema:"CreateThreadArguments",read_only:false,destructive:false,idempotent:true,open_world:true },
-    ToolSpec { name:"manageThread",description:"Manage one exact admitted conversation thread. Discord supports rename/archive/reopen and current-bot join/leave. Telegram topic_lifecycle supports close/reopen only with the original Event target in a non-General forum supergroup topic; no Telegram thread_ref, create, list or private topics. Use the original threaded event or a scoped thread_ref returned by list/create. Requires platform-specific source thread_lifecycle or topic_lifecycle consent and a stable idempotency_key. Rename requires an explicit name of 1–100 printable characters; omit name for all other actions. Rename and join/leave require an active thread; rename never reopens it and reopen never unlocks it. Telegram requires current forum administrator topic permissions; Discord enforces its operation permissions. Never retry unknown outcomes under another key.",schema:"ManageThreadArguments",read_only:false,destructive:true,idempotent:true,open_world:true },
+    ToolSpec { name:"createEventThread",description:"Create one named conversation thread scoped to an original native human event. Discord creates a public thread from the exact guild text/announcement message and requires thread_lifecycle consent and auto_archive_duration. Telegram creates an empty named topic in the exact original forum supergroup with independent topic_creation consent; omit auto_archive_duration. Name is 1–100 printable characters. Returns a scoped thread_ref for manageThread; the original event reply destination is unchanged. No caller-selected destination, Telegram private topic, listing or icon selection. Requires current provider permissions and a stable idempotency_key. Never retry unknown outcomes under another key.",schema:"CreateThreadArguments",read_only:false,destructive:false,idempotent:true,open_world:true },
+    ToolSpec { name:"manageThread",description:"Manage one exact admitted conversation thread. Discord supports rename/archive/reopen and current-bot join/leave. Telegram topic_lifecycle supports rename/close/reopen with the original Event target in a forum supergroup topic. General requires its separate gate and the original native forum envelope; absent thread alone is insufficient. General reopen also makes it visible. A scoped Telegram thread_ref returned by createEventThread permits rename/close/reopen of that created topic while topic_creation consent remains active. No Telegram listing or private topics. Use the original threaded event or a scoped thread_ref returned by list/create. Requires platform-specific source thread_lifecycle or topic_lifecycle consent and a stable idempotency_key. Rename requires an explicit name of 1–100 printable characters; omit name for all other actions. Discord rename and join/leave require an active thread; rename never reopens it and reopen never unlocks it. Telegram rename changes only the name, preserving topic state and icon. Telegram topic discovery retains its conservative close/reopen subset for compatibility; it is not exhaustive. Telegram requires current forum administrator topic permissions; Discord enforces its operation permissions. Never retry unknown outcomes under another key.",schema:"ManageThreadArguments",read_only:false,destructive:true,idempotent:true,open_world:true },
 ];
 pub(super) fn handles(name: &str) -> bool {
     TOOLS.iter().any(|tool| tool.name == name)
@@ -47,10 +47,15 @@ pub(super) fn handles(name: &str) -> bool {
 pub(super) fn selected(
     discord: bool,
     telegram: bool,
+    telegram_creation: bool,
 ) -> impl Iterator<Item = super::catalog::SelectedTool> {
     TOOLS
         .iter()
-        .filter(move |tool| discord || (telegram && tool.name == "manageThread"))
+        .filter(move |tool| {
+            discord
+                || (telegram && tool.name == "manageThread")
+                || (telegram_creation && tool.name == "createEventThread")
+        })
         .map(|spec| super::catalog::SelectedTool {
             spec,
             definitions: || definitions(Schemas::openapi()),

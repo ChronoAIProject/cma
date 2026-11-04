@@ -120,6 +120,13 @@
               "null"
             ]
           },
+          "media_responses": {
+            "description": "Independent appended responses. URLs still require Agent Manager's\nnormal response authorization; this feed grants no conversation access.",
+            "items": {
+              "$ref": "#/components/schemas/ActivityMediaResponse"
+            },
+            "type": "array"
+          },
           "produced_at": {
             "type": [
               "string",
@@ -235,6 +242,17 @@
               "mentions_bot": {
                 "type": "boolean"
               },
+              "quoted_message": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/QuotedMessage",
+                    "description": "Untrusted native reply context, scoped by this activity; grants no authority."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "reply_to": {
                 "oneOf": [
                   {
@@ -341,6 +359,43 @@
           "event"
         ],
         "type": "string"
+      },
+      "ActivityMediaResponse": {
+        "properties": {
+          "attachment_index": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "delivery": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "observed_at": {
+            "type": "string"
+          },
+          "response_id": {
+            "type": "string"
+          },
+          "response_url": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attachment_index",
+          "kind",
+          "response_id",
+          "response_url",
+          "status",
+          "delivery",
+          "observed_at"
+        ],
+        "type": "object"
       },
       "ActivityPage": {
         "properties": {
@@ -1733,6 +1788,30 @@
               }
             ]
           },
+          "native_thread_start": {
+            "description": "One text reply can start the exact original native Lark group message thread.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "reply_with_received_sticker": {
+            "description": "Resend this event's received native Lark sticker to its original conversation.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "structured_replies": {
+            "description": "Exclusive static structured reply kinds supported for this exact retained event.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "thread_history": {
             "description": "A fixed 20-message prior window is available on explicit request.",
             "type": [
@@ -1749,6 +1828,13 @@
               {
                 "type": "null"
               }
+            ]
+          },
+          "topic_creation": {
+            "description": "Original forum-supergroup scope; current platform permissions are checked per creation.",
+            "type": [
+              "boolean",
+              "null"
             ]
           },
           "topic_lifecycle": {
@@ -1913,6 +1999,17 @@
             "description": "Normalized event time: source timestamp when supplied, otherwise gateway normalization time.",
             "type": "string"
           },
+          "quoted_context": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/QuotedContextSummary",
+                "description": "Availability only: this metadata feed never copies quoted text or IDs."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "received_at": {
             "description": "Gateway receive timestamp, persisted before provider launch.",
             "type": "string"
@@ -1961,6 +2058,10 @@
           },
           "credentials": {
             "$ref": "#/components/schemas/CredentialsRequest"
+          },
+          "durable_custom_execution": {
+            "description": "Immutable opt-in to durable execution for this channel's Custom source.",
+            "type": "boolean"
           },
           "name": {
             "type": "string"
@@ -2191,6 +2292,13 @@
               }
             ]
           },
+          "durable_custom_execution": {
+            "description": "Optional echo for older clients; a supplied value must match the saved mode.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "expected_version": {
             "format": "int64",
             "minimum": 0,
@@ -2303,6 +2411,25 @@
           "id",
           "source",
           "type"
+        ],
+        "type": "object"
+      },
+      "ConfirmedMessagePart": {
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "description": "Zero-based position in the rendered text, not a delivery retry counter.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message_ref": {
+            "$ref": "#/components/schemas/MessageRef"
+          }
+        },
+        "required": [
+          "index",
+          "message_ref"
         ],
         "type": "object"
       },
@@ -2768,6 +2895,41 @@
       "ConversationId": {
         "type": "string"
       },
+      "ConversationInspection": {
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "agent_status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "binding_id": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "generation": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "binding_id",
+          "generation",
+          "conversation_id",
+          "agent_id",
+          "state"
+        ],
+        "type": "object"
+      },
       "ConversationKind": {
         "enum": [
           "private",
@@ -2804,7 +2966,7 @@
         "additionalProperties": false,
         "properties": {
           "auto_archive_duration": {
-            "description": "Discord minutes: 60, 1440, 4320, or 10080. Always explicit.",
+            "description": "Required Discord minutes: 60, 1440, 4320, or 10080. Omit for Telegram.",
             "format": "int32",
             "minimum": 0,
             "type": "integer"
@@ -2814,8 +2976,7 @@
           }
         },
         "required": [
-          "name",
-          "auto_archive_duration"
+          "name"
         ],
         "type": "object"
       },
@@ -3300,6 +3461,77 @@
           "status",
           "event_id",
           "conversation_id"
+        ],
+        "type": "object"
+      },
+      "EventAttestationRequest": {
+        "additionalProperties": false,
+        "description": "All identifiers are comparisons against the capability's original target.\nThis cannot select another target, attachment or filesystem path.",
+        "properties": {
+          "activity_sha256": {
+            "type": "string"
+          },
+          "artifact": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaArtifactClaim",
+                "description": "Required by attachment and supplement admission. An event-only result\ndoes not attest file bytes or derived text."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "binding_generation": {
+            "description": "The generation actually present in the frozen Gateway request. None is\nnot a claim about Manager generation; Manager must check its own parent.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "channel_id": {
+            "$ref": "#/components/schemas/ChannelId"
+          },
+          "conversation_id": {
+            "$ref": "#/components/schemas/ConversationId"
+          },
+          "event_expires_at": {
+            "description": "Exact sealed capability expiry, as Unix seconds. This comparison lets\nManager bound a deferred continuation without trusting caller expiry.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "event_id": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "event_ref": {
+            "$ref": "#/components/schemas/EventRef"
+          },
+          "provider_binding_id": {
+            "$ref": "#/components/schemas/BindingId"
+          }
+        },
+        "required": [
+          "event_ref",
+          "provider_binding_id",
+          "channel_id",
+          "conversation_id",
+          "event_id",
+          "activity_sha256",
+          "event_expires_at"
+        ],
+        "type": "object"
+      },
+      "EventAttestationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "current"
         ],
         "type": "object"
       },
@@ -3823,7 +4055,8 @@
           "components",
           "stickers",
           "poll",
-          "forwarded_snapshot"
+          "forwarded_snapshot",
+          "media"
         ],
         "type": "string"
       },
@@ -3929,6 +4162,13 @@
         "properties": {
           "delivery": {
             "$ref": "#/components/schemas/DeliveryOutcome"
+          },
+          "message_parts": {
+            "description": "Confirmed native split-text parts in rendered order; absent for legacy receipts.\nAn unknown aggregate outcome can retain confirmed earlier parts.",
+            "items": {
+              "$ref": "#/components/schemas/ConfirmedMessagePart"
+            },
+            "type": "array"
           },
           "message_ref": {
             "oneOf": [
@@ -4102,6 +4342,117 @@
         ],
         "type": "object"
       },
+      "MediaArtifactClaim": {
+        "additionalProperties": false,
+        "description": "The descriptor always names the original uploaded file. For a derived kind,\ncontent_sha256 hashes exact UTF-8 derived text; source_sha256 hashes the bytes\nconsumed by derivation. For Original both hashes name the original bytes.",
+        "properties": {
+          "attachment_index": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "content_sha256": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MediaContinuationKind"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_sha256": {
+            "type": "string"
+          },
+          "text_sha256": {
+            "description": "None for an upload; required for a queued supplement. Hashes the complete\ncanonical input, including the Manager-verified persisted file path.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "attachment_index",
+          "kind",
+          "content_sha256",
+          "source_sha256",
+          "name",
+          "media_type",
+          "size_bytes"
+        ],
+        "type": "object"
+      },
+      "MediaContinuationKind": {
+        "enum": [
+          "original",
+          "transcript",
+          "text_excerpt"
+        ],
+        "type": "string"
+      },
+      "MediaControlsCapabilities": {
+        "description": "Exact media/control combination supported for this event's verified destination.",
+        "properties": {
+          "buttons": {
+            "type": "boolean"
+          },
+          "caption_max_chars": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "choices": {
+            "type": "boolean"
+          },
+          "clear_media": {
+            "description": "Explicit clear_native_attachments removes every upload on a confirmed card.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "kinds": {
+            "description": "Exact attachment kinds supported with controls; absent means the parent kinds apply.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "max_attachments": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "replace_media": {
+            "description": "Replace the supported upload set on the same durable card through a confirmed PATCH.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "update": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "max_attachments",
+          "buttons",
+          "choices",
+          "caption_max_chars",
+          "update"
+        ],
+        "type": "object"
+      },
       "MediaDownload": {
         "additionalProperties": false,
         "description": "A ready download: one `curl` command that works once and expires at\n`expires_at`. Only `curl` carries the link; `url` never does.",
@@ -4129,6 +4480,27 @@
           "url",
           "expires_at",
           "curl"
+        ],
+        "type": "object"
+      },
+      "MediaResponsePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RetainedMediaResponse"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
         ],
         "type": "object"
       },
@@ -4265,6 +4637,43 @@
         ],
         "type": "object"
       },
+      "NativeAlbumCapabilities": {
+        "description": "Native album constraints. Albums do not issue individual or aggregate operation references.",
+        "properties": {
+          "controls": {
+            "type": "boolean"
+          },
+          "kind_groups": {
+            "description": "Each album must use kinds from one group; image/video may be mixed.",
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "max_attachments": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message_operations": {
+            "type": "boolean"
+          },
+          "min_attachments": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "min_attachments",
+          "max_attachments",
+          "kind_groups",
+          "controls",
+          "message_operations"
+        ],
+        "type": "object"
+      },
       "NativeAttachment": {
         "additionalProperties": false,
         "properties": {
@@ -4396,6 +4805,28 @@
       },
       "NativeMediaCapabilities": {
         "properties": {
+          "albums": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeAlbumCapabilities",
+                "description": "Eligible ordered attachments are sent as one album; absent when disabled."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "controls": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaControlsCapabilities",
+                "description": "One upload and native controls in the same message; absent while issuance is disabled."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "kinds": {
             "items": {
               "type": "string"
@@ -4441,6 +4872,16 @@
             "description": "Exact accepted MIME types when the transport supports a bounded subset.",
             "items": {
               "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "presentation_profiles": {
+            "description": "Explicit native presentation profiles; absent while issuance is disabled.",
+            "items": {
+              "$ref": "#/components/schemas/NativePresentationProfile"
             },
             "type": [
               "array",
@@ -4536,6 +4977,8 @@
           "file",
           "audio",
           "video",
+          "voice",
+          "animation",
           "sticker"
         ],
         "type": "string"
@@ -4625,6 +5068,56 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "NativePresentationProfile": {
+        "description": "Explicit native presentation profiles; ordinary audio/video keep their existing meaning.",
+        "properties": {
+          "caption": {
+            "type": "boolean"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "max_attachments": {
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_bytes": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "message_operations": {
+            "type": "boolean"
+          },
+          "mime_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "text": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "mime_types",
+          "max_bytes",
+          "caption",
+          "profile",
+          "message_operations"
+        ],
         "type": "object"
       },
       "NativeStickerCapabilities": {
@@ -4785,6 +5278,10 @@
             },
             "type": "array"
           },
+          "clear_native_attachments": {
+            "description": "Explicitly remove every native attachment; updateMessage only when advertised.",
+            "type": "boolean"
+          },
           "native_attachments": {
             "description": "Explicit native media delivery. Legacy attachment blocks remain links.",
             "items": {
@@ -4806,6 +5303,14 @@
               }
             ]
           },
+          "reply_with_received_sticker": {
+            "description": "Resend only the exact retained native Lark sticker received in this event.",
+            "type": "boolean"
+          },
+          "structured_content": {
+            "$ref": "#/components/schemas/StructuredContent",
+            "description": "Exclusive contact card, static location or venue; only when advertised for the original event."
+          },
           "text": {
             "type": [
               "string",
@@ -4813,7 +5318,7 @@
             ]
           },
           "thread_reply": {
-            "description": "Request the verified source thread; never fall back when unavailable.",
+            "description": "Request the verified source thread; native Lark may start the exact admitted\ngroup root thread with one text reply when explicitly advertised. Never fall back.",
             "type": "boolean"
           },
           "whatsapp_template": {
@@ -4888,6 +5393,25 @@
           "cancelled"
         ],
         "type": "string"
+      },
+      "PartitionInspection": {
+        "properties": {
+          "consumer_id": {
+            "type": "string"
+          },
+          "mapping": {
+            "$ref": "#/components/schemas/ConversationInspection"
+          },
+          "transport_conversation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "consumer_id",
+          "transport_conversation_id",
+          "mapping"
+        ],
+        "type": "object"
       },
       "PartitionKey": {
         "enum": [
@@ -5267,6 +5791,10 @@
               }
             ]
           },
+          "durable_custom_execution": {
+            "description": "Immutable owner opt-in for this channel's authenticated Custom events.",
+            "type": "boolean"
+          },
           "name": {
             "type": "string"
           },
@@ -5366,6 +5894,133 @@
         },
         "required": [
           "enabled"
+        ],
+        "type": "object"
+      },
+      "QuoteRelation": {
+        "enum": [
+          "reply",
+          "context"
+        ],
+        "type": "string"
+      },
+      "QuoteTextOrigin": {
+        "enum": [
+          "selected_quote",
+          "parent_text",
+          "parent_caption"
+        ],
+        "type": "string"
+      },
+      "QuotedContent": {
+        "additionalProperties": false,
+        "properties": {
+          "kinds": {
+            "description": "Descriptive kinds only; never attachment locators or fetch authority.",
+            "items": {
+              "$ref": "#/components/schemas/QuotedContentKind"
+            },
+            "type": "array"
+          },
+          "text": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/QuotedText"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "QuotedContentKind": {
+        "enum": [
+          "image",
+          "video",
+          "audio",
+          "file",
+          "sticker",
+          "contact",
+          "location",
+          "poll"
+        ],
+        "type": "string"
+      },
+      "QuotedContextSummary": {
+        "properties": {
+          "content_kinds": {
+            "items": {
+              "$ref": "#/components/schemas/QuotedContentKind"
+            },
+            "type": "array"
+          },
+          "relation": {
+            "$ref": "#/components/schemas/QuoteRelation"
+          },
+          "text_available": {
+            "type": "boolean"
+          },
+          "text_truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "relation",
+          "text_available",
+          "text_truncated",
+          "content_kinds"
+        ],
+        "type": "object"
+      },
+      "QuotedMessage": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/QuotedContent",
+                "description": "Only content supplied with this authenticated incoming message. Absent\nmeans the payload supplies the relationship only; nothing was fetched."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message_id": {
+            "description": "Provider message ID within the enclosing native source and conversation.\nDoes not authorize lookup, media fetch, reply, edit, or other effects.",
+            "type": "string"
+          },
+          "relation": {
+            "$ref": "#/components/schemas/QuoteRelation",
+            "description": "Explicit platform reply, or a context reference whose reply semantics are not asserted."
+          }
+        },
+        "required": [
+          "relation",
+          "message_id"
+        ],
+        "type": "object"
+      },
+      "QuotedText": {
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "$ref": "#/components/schemas/QuoteTextOrigin"
+          },
+          "text": {
+            "description": "Untrusted user content, at most 4096 UTF-8 bytes.",
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text",
+          "truncated",
+          "origin"
         ],
         "type": "object"
       },
@@ -5501,6 +6156,13 @@
       },
       "RelayAuthoringCapabilities": {
         "properties": {
+          "custom_durable_execution_enabled": {
+            "description": "New Custom channels may opt into durable execution for recovery-capable providers.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "dynamic_sources_writes_enabled": {
             "type": "boolean"
           },
@@ -5541,7 +6203,21 @@
               "null"
             ]
           },
+          "native_discord_forwards_enabled": {
+            "description": "Bounded descriptions of received Discord forwards, without origin access.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_discord_reactions_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_discord_rich_content_enabled": {
+            "description": "Descriptive sticker/embed/poll intake, not media download or poll actions.",
             "type": [
               "boolean",
               "null"
@@ -5603,7 +6279,20 @@
               "null"
             ]
           },
+          "native_telegram_general_topic_lifecycle_enabled": {
+            "description": "General-topic execution additionally requires the original native forum envelope.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_telegram_message_events_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "native_telegram_topic_creation_enabled": {
             "type": [
               "boolean",
               "null"
@@ -5640,6 +6329,12 @@
               "null"
             ]
           },
+          "native_whatsapp_message_events_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "native_whatsapp_writes_enabled": {
             "type": [
               "boolean",
@@ -5660,6 +6355,16 @@
           },
           "relay_raw_verification_writes_enabled": {
             "type": "boolean"
+          },
+          "response_recovery_providers": {
+            "description": "Registered provider slugs with response replay. Configuration, not connection health.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "thread_contract_writes_enabled": {
             "type": "boolean"
@@ -5928,6 +6633,53 @@
           "feishu"
         ],
         "type": "string"
+      },
+      "RetainedMediaResponse": {
+        "properties": {
+          "attachment_index": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "consumer_id": {
+            "type": "string"
+          },
+          "delivery": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "refusal": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "response_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "response_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "consumer_id",
+          "attachment_index",
+          "kind",
+          "status",
+          "delivery"
+        ],
+        "type": "object"
       },
       "RouteResolution": {
         "description": "How an event's targets were resolved.",
@@ -6295,6 +7047,10 @@
                 "maxItems": 16,
                 "type": "array"
               },
+              "message_events": {
+                "description": "Incoming private edits and deletions for WhatsApp Business App coexistence accounts.",
+                "type": "boolean"
+              },
               "phone_number_id": {
                 "type": "string"
               },
@@ -6337,6 +7093,10 @@
               },
               "message_events": {
                 "description": "Retain original message routing for edits and attributable reactions.",
+                "type": "boolean"
+              },
+              "topic_creation": {
+                "description": "Owner consent to create and manage new topics in the original forum supergroup.",
                 "type": "boolean"
               },
               "topic_lifecycle": {
@@ -6755,6 +7515,10 @@
                 "maxItems": 16,
                 "type": "array"
               },
+              "message_events": {
+                "description": "Incoming private edits and deletions for WhatsApp Business App coexistence accounts.",
+                "type": "boolean"
+              },
               "phone_number_id": {
                 "type": "string"
               },
@@ -6797,6 +7561,10 @@
               },
               "message_events": {
                 "description": "Retain original message routing for edits and attributable reactions.",
+                "type": "boolean"
+              },
+              "topic_creation": {
+                "description": "Owner consent to create and manage new topics in the original forum supergroup.",
                 "type": "boolean"
               },
               "topic_lifecycle": {
@@ -6981,6 +7749,107 @@
           "expired"
         ],
         "type": "string"
+      },
+      "StructuredContent": {
+        "oneOf": [
+          {
+            "properties": {
+              "first_name": {
+                "type": "string"
+              },
+              "last_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "phone_number": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "contact"
+                ],
+                "type": "string"
+              },
+              "vcard": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "phone_number",
+              "first_name",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "horizontal_accuracy": {
+                "format": "double",
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "latitude": {
+                "format": "double",
+                "type": "number"
+              },
+              "longitude": {
+                "format": "double",
+                "type": "number"
+              },
+              "type": {
+                "enum": [
+                  "location"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "latitude",
+              "longitude",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "latitude": {
+                "format": "double",
+                "type": "number"
+              },
+              "longitude": {
+                "format": "double",
+                "type": "number"
+              },
+              "title": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "venue"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "latitude",
+              "longitude",
+              "title",
+              "address",
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "TelegramReaction": {
         "oneOf": [
@@ -8850,6 +9719,15 @@
             }
           },
           {
+            "description": "Requires mode=stream. Explicitly opt into response-scoped media events and a bounded wait for supplementary responses. Omitted or false preserves the legacy stream terminal contract.",
+            "in": "query",
+            "name": "media_responses",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "description": "Required for HMAC authentication",
             "in": "header",
             "name": "webhook-id",
@@ -9034,6 +9912,80 @@
         },
         "tags": [
           "ingress"
+        ]
+      }
+    },
+    "/channels/{channel_id}/events/{event_id}/media-responses": {
+      "get": {
+        "description": "Owner-authorized retained media continuation metadata. Returns at most 16 attachment slots per page with independent response identities and terminal delivery statuses. No response text, attachment paths, credentials or wider Agent conversation visibility are returned. Each Agent Manager response URL still requires its normal authorization.",
+        "operationId": "getEventMediaResponses",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaResponsePage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
         ]
       }
     },
@@ -9267,6 +10219,78 @@
         ]
       }
     },
+    "/channels/{channel_id}/partition": {
+      "get": {
+        "operationId": "inspectChannelPartition",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "partition_key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "consumer_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartitionInspection"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
     "/channels/{channel_id}/rekey": {
       "post": {
         "operationId": "rekeyChannel",
@@ -9487,6 +10511,47 @@
         ],
         "tags": [
           "channels"
+        ]
+      }
+    },
+    "/event-attestations": {
+      "post": {
+        "description": "Read-only exact-event capability. The sealed event_ref in the request body authorizes only a boolean current-source/current-target check. No event content, credentials or workspace paths are returned. Agent Manager must separately validate the original admitted command and its actual binding generation. This endpoint never starts a response or changes the original execution lease.",
+        "operationId": "attestRetainedEvent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventAttestationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventAttestationResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "provider integration"
         ]
       }
     },
@@ -9797,6 +10862,15 @@
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/HistoryCursor"
+            }
+          },
+          {
+            "description": "Opt in to text from supported mixed Lark/Feishu posts and the media omission enum. Default false; requires the mixed-history gate and source consent. Repeat the same value for every cursor page. No media downloads or file authority.",
+            "in": "query",
+            "name": "include_media",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           }
         ],

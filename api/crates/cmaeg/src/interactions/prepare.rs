@@ -74,8 +74,42 @@ impl InteractionStore {
         context: EventContextSnapshot,
         thread: Option<crate::discord::component_thread::ThreadIdentity>,
     ) -> Result<PreparedCard, Error> {
-        self.prepare_card(channel, event, message, context, thread, FormMode::None)
-            .await
+        self.prepare_card(
+            channel,
+            event,
+            message,
+            context,
+            thread,
+            FormMode::None,
+            None,
+        )
+        .await
+    }
+    /// Prepared uploads and their controls share the same card/destination.
+    /// Store only its bounded hash/metadata; callback recovery never fetches media.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn prepare_discord_media(
+        &self,
+        channel: &ResolvedChannel,
+        event: &EventRefPayload,
+        message: &OutboundMessage,
+        context: EventContextSnapshot,
+        thread: Option<crate::discord::component_thread::ThreadIdentity>,
+        files: &[crate::media::outbound::PreparedFile],
+    ) -> Result<PreparedCard, Error> {
+        let media = super::discord_media::Media::prepare_set(message, files, false)?;
+        let mut retained = message.clone();
+        retained.native_attachments.clear();
+        self.prepare_card(
+            channel,
+            event,
+            &retained,
+            context,
+            thread,
+            FormMode::None,
+            Some(media),
+        )
+        .await
     }
     /// Explicit issuance path: legacy preparation never grants native form authority.
     pub async fn prepare_lark_form(
@@ -100,7 +134,7 @@ impl InteractionStore {
             return Err(Error::Denied);
         }
         lark_form::schema(message)?;
-        self.prepare_card(channel, event, message, context, None, FormMode::Lark)
+        self.prepare_card(channel, event, message, context, None, FormMode::Lark, None)
             .await
     }
     pub(crate) async fn prepare_discord_form(
@@ -112,8 +146,16 @@ impl InteractionStore {
         thread: Option<crate::discord::component_thread::ThreadIdentity>,
     ) -> Result<PreparedCard, Error> {
         discord_form::schema(message)?;
-        self.prepare_card(channel, event, message, context, thread, FormMode::Discord)
-            .await
+        self.prepare_card(
+            channel,
+            event,
+            message,
+            context,
+            thread,
+            FormMode::Discord,
+            None,
+        )
+        .await
     }
     #[allow(clippy::too_many_arguments)]
     async fn prepare_card(
@@ -124,8 +166,14 @@ impl InteractionStore {
         context: EventContextSnapshot,
         thread: Option<crate::discord::component_thread::ThreadIdentity>,
         form_mode: FormMode,
+        media: Option<Vec<super::discord_media::Media>>,
     ) -> Result<PreparedCard, Error> {
-        if context.channel_id != channel.id
+        if (matches!(event.reply, ReplyAddress::Discord { .. })
+            && !message.native_attachments.is_empty())
+            || (media.is_some()
+                && (!matches!(event.reply, ReplyAddress::Discord { .. })
+                    || form_mode != FormMode::None))
+            || context.channel_id != channel.id
             || !event.verifies_activity(&context.activity)
             || (message.thread_reply
                 && matches!(event.reply, ReplyAddress::Discord { .. })
@@ -202,6 +250,7 @@ impl InteractionStore {
             None
         };
         let mut card = Card {
+            native_telegram_media: None,
             native_whatsapp_flow: None,
             native_whatsapp,
             native_lark: None,
@@ -241,6 +290,12 @@ impl InteractionStore {
             // its exact stored bytes.
             consumer: event.consumer.clone(),
         };
+        if let Some(media) = media {
+            card.discord
+                .as_mut()
+                .ok_or(Error::Denied)?
+                .set_media(media)?;
+        }
         if form_mode == FormMode::Discord {
             card.discord.as_mut().ok_or(Error::Denied)?.form =
                 Some(discord_form::authority(message)?);

@@ -22,6 +22,9 @@ use std::{
     time::Duration,
 };
 
+#[path = "owner_keys_tests.rs"]
+mod owner_keys;
+
 struct AuthFixture {
     task: tokio::task::JoinHandle<()>,
     allowed: Arc<AtomicBool>,
@@ -115,9 +118,11 @@ async fn fixture_app() -> (Server, ManagementState, LaunchRequest, Creator) {
         Arc::new(server.records.clone()),
         Arc::new(CreatorAuthenticator::new("http://127.0.0.1:9").unwrap()),
         crate::ManagementConfig {
+            console_public_url: None,
             master_keys: Arc::new(fixture::keys()),
             public_url: "http://127.0.0.1:8090".into(),
             public_api_url: "http://127.0.0.1:8090".into(),
+            public_api_aliases: vec![],
             advertise_public_api_url: true,
             cma_base_url: url.origin().ascii_serialization(),
             tools_nyxid_slug: "cmaeg".into(),

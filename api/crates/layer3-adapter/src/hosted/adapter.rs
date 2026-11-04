@@ -14,28 +14,34 @@ use crate::{
     AdapterCapabilities, AdapterError, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest,
     AgentOpenRequest, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest, CheckpointReceipt,
     CheckpointRequest, CheckpointWriterResumeReceipt, CheckpointWriterResumeRequest,
-    ConversationChannel, ConversationSnapshot, ConversationUpdate, CredentialFrame, InstallReceipt,
-    InstallRequest, ResourceReading, RestoreBootstrapReceipt, RestoreBootstrapRequest,
-    RestoreRequest, RuntimeAdoptionRequest, RuntimeHandle, RuntimeObservation,
-    RuntimeProvisionRequest, SandboxAdapter, SandboxSpec, SetupReceipt, WorkspaceReceipt,
-    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef,
-    WorktreeRequest, WriterState,
+    ConversationChannel, ConversationSnapshot, ConversationUpdate, CredentialFrame,
+    DesktopConnectionHandle, InstallReceipt, InstallRequest, ResourceReading,
+    RestoreBootstrapReceipt, RestoreBootstrapRequest, RestoreRequest, RuntimeAdoptionRequest,
+    RuntimeHandle, RuntimeObservation, RuntimeProvisionRequest, SandboxAdapter, SandboxSpec,
+    SetupReceipt, WorkspaceReceipt, WorkspaceRemoveRequest, WorkspaceRequest,
+    WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest, WriterState,
 };
 
 #[path = "adapter_agent.rs"]
 mod agent;
+#[path = "adapter_agent_resources.rs"]
+mod agent_resources;
 #[path = "adapter_attachment.rs"]
 mod attachment;
 #[path = "adapter_checkpoint.rs"]
 mod checkpoint;
 #[path = "adapter_context.rs"]
 mod context;
+#[path = "adapter_credential.rs"]
+mod credential;
 #[path = "adapter_exchange.rs"]
 mod exchange;
 #[path = "adapter_filesystem.rs"]
 mod filesystem;
 #[path = "adapter_install.rs"]
 mod install;
+#[path = "adapter_nonexecuting.rs"]
+mod nonexecuting;
 #[path = "adapter_provider_tools.rs"]
 mod provider_tools;
 #[path = "adapter_runtime.rs"]
@@ -58,6 +64,7 @@ pub struct HostedAdapter {
     backend: Arc<dyn HostedBackend>,
     runtime: Arc<dyn HostedAgentRuntime>,
     deployment: HostedDeployment,
+    native_runtime_images: BTreeMap<String, crate::RuntimeImage>,
     home_volumes: Option<Arc<dyn crate::HomeVolumeStore>>,
     channel_tools: Option<Arc<dyn super::HostedChannelToolSource>>,
     access_tools: Option<Arc<dyn super::HostedAccessToolSource>>,
@@ -75,6 +82,7 @@ impl HostedAdapter {
             backend,
             runtime,
             deployment,
+            native_runtime_images: BTreeMap::new(),
             home_volumes: None,
             channel_tools: None,
             access_tools: None,
@@ -85,6 +93,40 @@ impl HostedAdapter {
 
     pub fn deployment(&self) -> &HostedDeployment {
         &self.deployment
+    }
+
+    /// Admit an additional deployment-owned image for native cold allocation.
+    /// The caller must verify the installed image's contract before registration.
+    pub fn with_native_runtime_image(mut self, image: crate::RuntimeImage) -> crate::Result<Self> {
+        super::validate_runtime_image(&image.uri)?;
+        crate::runtime_bootstrap::admit_pool_image(&image)?;
+        self.native_runtime_images.insert(image.uri.clone(), image);
+        Ok(self)
+    }
+
+    async fn select_native_pool_request(
+        &self,
+        request: &RuntimeProvisionRequest,
+        home: &crate::HomeVolumeRequest,
+    ) -> crate::Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+        let rendered = self
+            .deployment
+            .render_runtime(&request.spec, request.generation)?;
+        let image = self
+            .native_runtime_images
+            .get(&rendered.image.uri)
+            .unwrap_or(&self.deployment.image);
+        self.backend
+            .select_native_pool(&rendered, image, home)
+            .await
+    }
+
+    pub(crate) async fn run_recovery_command(
+        &self,
+        handle: &RuntimeHandle,
+        command: &super::RuntimeRecoveryCommand,
+    ) -> crate::Result<Vec<u8>> {
+        self.backend.run_recovery_command(handle, command).await
     }
 
     pub fn with_home_volumes(mut self, store: Arc<dyn crate::HomeVolumeStore>) -> Self {
@@ -109,6 +151,13 @@ impl HostedAdapter {
             .get(handle)
             .cloned()
             .ok_or_else(|| AdapterError::Unavailable(format!("unknown runtime {}", handle.0)))
+    }
+
+    pub(crate) async fn open_desktop(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<crate::DesktopConnectionHandle> {
+        self.backend.open_desktop(handle).await
     }
 }
 
