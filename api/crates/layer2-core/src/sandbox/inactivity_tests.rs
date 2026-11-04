@@ -1,6 +1,6 @@
 use super::lifecycle_test_support::{agent, log, sandbox, IDLE_AT, NOW};
 use super::*;
-use crate::ids::AgentId;
+use crate::ids::{AgentId, SandboxId};
 
 fn activity(agent_id: &str, conversation_id: &str, seq: u64) -> SandboxAgentActivity {
     let agent = agent(agent_id, conversation_id, seq);
@@ -37,6 +37,16 @@ fn activity_projection_copies_no_log_or_message_content() {
     assert!(!json.contains("private transcript content"));
     assert!(!json.contains("Private title"));
     assert_eq!(activity.newest_log.unwrap().seq, 4);
+}
+
+#[test]
+fn open_desktop_session_registry_blocks_maintenance_until_stream_closes() {
+    let sandbox_id = SandboxId("sbx_desktop_registry_test".into());
+    assert!(!has_open_desktop_session(&sandbox_id));
+    register_open_desktop_session(&sandbox_id);
+    assert!(has_open_desktop_session(&sandbox_id));
+    unregister_open_desktop_session(&sandbox_id);
+    assert!(!has_open_desktop_session(&sandbox_id));
 }
 
 #[test]

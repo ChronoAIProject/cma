@@ -210,18 +210,22 @@ function SettingsEditor({
               })
             }
           />
-        ) : null}
-        <NumberField
-          label="Pause after (seconds)"
-          value={draft.inactivity.pause_after_seconds}
-          minimum={60}
-          maximum={86400}
-          disabled={disabled}
-          error={fieldError('inactivity.pause_after_seconds')}
-          onChange={(value) =>
-            update({ ...draft, inactivity: { ...draft.inactivity, pause_after_seconds: value } })
-          }
-        />
+        ) : (
+          <NumberField
+            label="Pause after (seconds)"
+            value={draft.inactivity.pause_after_seconds}
+            minimum={60}
+            maximum={86400}
+            disabled={disabled}
+            error={fieldError('inactivity.pause_after_seconds')}
+            onChange={(value) =>
+              update({
+                ...draft,
+                inactivity: { ...draft.inactivity, pause_after_seconds: value },
+              })
+            }
+          />
+        )}
         <div className="operator-actions">
           <Button
             disabled={disabled || pauseNowBusy}
@@ -379,6 +383,7 @@ function IdleThresholdFields({
         label="Pause after hours"
         value={hours}
         minimum={0}
+        maximum={24}
         disabled={disabled}
         onChange={(value) => change('hours', value)}
       />

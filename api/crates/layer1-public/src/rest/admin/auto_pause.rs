@@ -55,6 +55,14 @@ pub(crate) async fn preview(
         .maintenance
         .as_ref()
         .ok_or(CollectionProblem::Unavailable)?;
+    let threshold = state
+        .settings
+        .current()
+        .await
+        .map_err(CollectionProblem::from)?
+        .settings
+        .inactivity
+        .pause_after_seconds;
     let mut page = PageRequest::default();
     let mut candidates = 0u64;
     loop {
@@ -62,7 +70,22 @@ pub(crate) async fn preview(
             .sandbox_maintenance_candidates(&page)
             .await
             .map_err(|_| CollectionProblem::Unavailable)?;
-        candidates = candidates.saturating_add(result.items.len() as u64);
+        for sandbox_id in result.items {
+            let outcome = store
+                .preview_inactivity_pause(
+                    layer2_core::sandbox::store::SandboxInactivityPauseRequest {
+                        sandbox_id,
+                        requested_at: now_rfc3339(),
+                        pause_after_seconds: threshold,
+                        auto_pause_enabled: true,
+                    },
+                )
+                .await
+                .map_err(|_| CollectionProblem::Unavailable)?;
+            if outcome == SandboxMaintenanceOutcome::Scheduled {
+                candidates = candidates.saturating_add(1);
+            }
+        }
         let Some(next) = result.next else { break };
         page.cursor = Some(next);
     }
