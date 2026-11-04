@@ -249,7 +249,6 @@ impl ControlPlaneComposition {
             adapter.clone(),
         )?;
         let agent_skills = credentials::agent_skills(config, sandbox_credentials.clone())?;
-
         let limits = RateLimiters::from_config(
             config.rate_limits,
             config.trusted_proxies.clone(),
