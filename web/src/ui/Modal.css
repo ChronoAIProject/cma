@@ -207,3 +207,37 @@
     flex: 1;
   }
 }
+
+/* The task repository specialization keeps the shared modal lifecycle. */
+.modal[data-presentation='repository'] {
+  padding: 16px;
+}
+.modal[data-presentation='repository'] .modal__mask {
+  background: var(--dsw-specific-task-scrim);
+  backdrop-filter: blur(8px);
+}
+.modal[data-presentation='repository'] .modal__card {
+  width: 480px;
+  max-width: 100%;
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  padding: 24px;
+  border-radius: 26px;
+  border-color: var(--dsw-specific-task-border);
+  background: var(--dsw-specific-task-shell);
+}
+
+.modal[data-presentation='task'] {
+  padding: 16px;
+}
+.modal[data-presentation='task'] .modal__card {
+  width: 700px;
+  max-width: 100%;
+  max-height: calc(100dvh - 32px);
+  border-radius: 26px;
+  border-color: var(--dsw-specific-task-panel-border);
+  background: var(--dsw-specific-task-shell);
+}
+.modal[data-presentation='task'] .modal__body {
+  margin-top: 16px;
+}
