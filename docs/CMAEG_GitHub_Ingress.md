@@ -22,9 +22,10 @@ available. A completed chrono-goals response can additionally project
 `succeeded` or `no_change` with its branch, commit and pull request fields. If
 the provider snapshot is unavailable or does not contain the result contract,
 CMAEG keeps the provider terminal state and leaves `result` absent. The routed
-scheduler serializes work sharing the same
-`record_id` and consumer target while retaining parallelism across other
-targets. A route may explicitly exclude pull request head ref prefixes such as
+scheduler currently keys serialization by `record_id` and admission-specific
+target ID. This does **not** establish serialization across deliveries; stable
+target-board execution identity and cross-delivery tests remain prerequisites
+for enabling execution. A route may explicitly exclude pull request head ref prefixes such as
 `automation/`; matching deliveries remain queryable as `ignored` and do not
 resolve or launch a channel.
 
@@ -48,7 +49,7 @@ owner. Fork PRs use the top-level installed repository, not `head.repo`.
 
 Only uncompressed UTF-8 `application/json` is accepted. Body size is limited to 256 KiB. Reading and durable admission share a five-second
 budget; execution is never awaited. Duplicate identity is
-`(github.com, app_id, X-GitHub-Delivery)`; raw digest and event header must match.
+`(github.com, app_ref, X-GitHub-Delivery)`; raw digest and event header must match.
 GitHub's HMAC does not authenticate delivery/event headers, so supported schemas
 also reject conflicting issue/PR/comment/review shapes. This is delivery
 deduplication, not end-to-end exactly-once processing.
@@ -124,11 +125,13 @@ Concurrent duplicates converge on the create-only root; uncertain inserts/commit
 are acknowledged only after exact readback. Receipt lookup does not depend on an
 Activity window. Never invent a new key to bypass uncertainty.
 
-## Release prerequisite: implement dynamic integration management
+## Remaining prerequisite: dynamic installation ownership and execution
 
-Do not supply a GitHub config file to make the current draft deployable. Replace
-`Gateway::from_env`, its in-memory App/secret/proof lookup, static App route list
-and GitHub-specific recovery record selection with the control-plane contract in
+Dynamic App registration, encrypted webhook credentials and signed ping receipts
+are implemented. Service startup no longer calls `Gateway::from_env` or reads a
+GitHub config file. The retained in-memory installation proofs, static App route
+list and GitHub-specific recovery record selection still need replacement with
+the ownership and execution control-plane contract in
 [the replacement design](CMAEG_GitHub_Integration_Design.md).
 
 Reuse existing storage encryption, creator authentication and durable execution.

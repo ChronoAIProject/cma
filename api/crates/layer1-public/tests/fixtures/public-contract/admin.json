@@ -33,7 +33,9 @@
               }
             },
             "inactivity": {
-              "pause_after_seconds": 900
+              "auto_pause_enabled": false,
+              "pause_after_seconds": 900,
+              "grace_started_at": null
             },
             "retention": {
               "agent_log_days": 90
@@ -96,7 +98,9 @@
               }
             },
             "inactivity": {
-              "pause_after_seconds": 900
+              "auto_pause_enabled": false,
+              "pause_after_seconds": 900,
+              "grace_started_at": null
             },
             "retention": {
               "agent_log_days": 90
@@ -180,7 +184,8 @@
               }
             },
             "inactivity": {
-              "pause_after_seconds": 900
+              "pause_after_seconds": 900,
+              "auto_pause_enabled": false
             },
             "retention": {
               "agent_log_days": 90
@@ -223,7 +228,9 @@
               }
             },
             "inactivity": {
-              "pause_after_seconds": 900
+              "auto_pause_enabled": false,
+              "pause_after_seconds": 900,
+              "grace_started_at": null
             },
             "retention": {
               "agent_log_days": 90
@@ -283,7 +290,9 @@
               }
             },
             "inactivity": {
-              "pause_after_seconds": 900
+              "auto_pause_enabled": false,
+              "pause_after_seconds": 900,
+              "grace_started_at": null
             },
             "retention": {
               "agent_log_days": 90
@@ -355,7 +364,8 @@
         "body": {
           "expected_revision": 3,
           "inactivity": {
-            "pause_after_seconds": 59
+            "pause_after_seconds": 59,
+            "auto_pause_enabled": false
           }
         }
       },
@@ -407,7 +417,9 @@
               }
             },
             "inactivity": {
-              "pause_after_seconds": 900
+              "auto_pause_enabled": false,
+              "pause_after_seconds": 900,
+              "grace_started_at": null
             },
             "retention": {
               "agent_log_days": 90
@@ -462,7 +474,9 @@
               }
             },
             "inactivity": {
-              "pause_after_seconds": 900
+              "auto_pause_enabled": false,
+              "pause_after_seconds": 900,
+              "grace_started_at": null
             },
             "retention": {
               "agent_log_days": 90

@@ -1,7 +1,7 @@
 import type { ResolvedConfig } from './config.js';
 import type { OperationOptions } from './http.js';
 import { ProtocolError, ValidationError } from './errors.js';
-import { array, boolean } from './schema.js';
+import { array, boolean, integer, object, type Output } from './schema.js';
 import {
   command,
   identity,
@@ -36,6 +36,9 @@ import {
   sandboxCommandRequest,
   type SandboxCommandRequest,
 } from './instances/commands.js';
+
+const alwaysOnRequest = object({ always_on: boolean, expected_revision: integer });
+export type AlwaysOnRequest = Output<typeof alwaysOnRequest>;
 
 export interface SandboxListOptions extends PageOptions {
   readonly status?: SandboxStatus;
@@ -161,6 +164,16 @@ export class Sandboxes {
   }
   revive(id: string, options: CommandOptions) {
     return this.lifecycle(id, '/revive', 'POST', options);
+  }
+
+  /** Set the owner-controlled per-Sandbox automatic-pause whitelist value. */
+  setAlwaysOn(id: string, body: AlwaysOnRequest, options: CommandOptions) {
+    return read(this.config, `/api/v1/sandboxes/${segment(id)}/always-on`, identity(sandbox, id), {
+      ...command(options),
+      method: 'POST',
+      body: input(alwaysOnRequest, body),
+      expectedStatus: 200,
+    });
   }
 
   /** Queue an exact deployment runtime image; active work finishes before rotation. */

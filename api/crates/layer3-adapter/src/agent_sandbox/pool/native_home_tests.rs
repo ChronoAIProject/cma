@@ -21,6 +21,9 @@ mod resume_read_tests;
 #[path = "native_runtime_render_read_tests.rs"]
 mod runtime_render_read_tests;
 
+#[path = "metric_identity_tests.rs"]
+mod metrics_identity;
+
 fn spec() -> NativePoolSpec {
     let mut spec = super::tests::spec();
     spec.home.mode = HomeVolumeMode::NativeVctEmptyV1;

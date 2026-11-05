@@ -63,6 +63,9 @@ pub struct Sandbox {
     pub status: SandboxStatus,
     /// Immutable source profile.
     pub profile: ProfileReference,
+    /// Explicit automatic-pause whitelist preference, when supplied by the server.
+    #[serde(default)]
+    pub always_on: Option<bool>,
     /// Effective creation and explicitly granted services; absent on older servers.
     pub nyxid_services: Option<Vec<String>>,
     /// Captured admission limits.

@@ -393,6 +393,14 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     reviveSandbox: async (id, options) => {
       await sdk.sandboxes.revive(id, options);
     },
+    setSandboxAlwaysOn: async (id, alwaysOn, expectedRevision, options) => {
+      await sdk.sandboxes.setAlwaysOn(
+        id,
+        { always_on: alwaysOn, expected_revision: expectedRevision },
+        options,
+      );
+      return sandboxDetail(await sdk.sandboxes.read(id, { signal: options.signal }));
+    },
     deleteSandbox: async (id, options) => {
       await sdk.sandboxes.delete(id, options);
     },
