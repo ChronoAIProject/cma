@@ -12,7 +12,7 @@ use super::admin::sandboxes::{
 use super::admin::settings::{
     InactivitySettingsBody, MarketplaceSettingsBody, PatchRequest, PlatformDefaultsBody,
     PlatformLimitsBody, PlatformSettingsBody, ProfileReferenceBody, ReplaceRequest, ResetRequest,
-    RetentionSettingsBody, SettingsView, TriggerSettingsBody,
+    RetentionSettingsBody, SettingsView, TriggerSettingsBody, UsageReportingSettingsBody,
 };
 use super::admin::{ActivityPageView, ActivityView, RuntimeEntryView, RuntimeInventoryView};
 use super::agent_openapi_shapes::*;
@@ -444,6 +444,7 @@ use super::trigger_openapi_shapes::*;
         ProfileReferenceBody,
         PlatformDefaultsBody,
         InactivitySettingsBody,
+        UsageReportingSettingsBody,
         super::sandbox_always_on::AlwaysOnRequest, super::admin::sandboxes::AdminAlwaysOnRequest, super::admin::auto_pause::AutoPausePreviewView, super::admin::auto_pause::PauseIdleNowRequest, super::admin::auto_pause::PauseIdleNowView,
         RetentionSettingsBody,
         PlatformLimitsBody,

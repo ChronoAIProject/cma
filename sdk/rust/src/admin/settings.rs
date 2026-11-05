@@ -83,9 +83,19 @@ pub struct MarketplaceSettings {
     pub enabled: bool,
 }
 
+/// Presentation policy, independent of measured usage collection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageReportingSettings {
+    /// Show measured usage in the UI only when explicitly enabled.
+    pub measured_visible: bool,
+}
+
 /// Complete platform settings with additive fields retained at every boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlatformSettings {
+    /// Absent on older servers; absence means measured usage stays hidden.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_reporting: Option<Section<UsageReportingSettings>>,
     /// Default profiles.
     pub defaults: Section<SettingsDefaults>,
     /// Inactivity controls.
@@ -133,6 +143,9 @@ pub struct ReplaceSettingsRequest {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PatchSettingsRequest {
+    /// Optional replacement usage presentation section.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_reporting: Option<Section<UsageReportingSettings>>,
     /// Exact settings revision being patched.
     pub expected_revision: u64,
     /// Optional replacement default profiles.
@@ -157,7 +170,8 @@ pub struct PatchSettingsRequest {
 
 impl PatchSettingsRequest {
     pub(crate) fn validate(&self) -> Result<()> {
-        if self.defaults.is_none()
+        if self.usage_reporting.is_none()
+            && self.defaults.is_none()
             && self.inactivity.is_none()
             && self.retention.is_none()
             && self.limits.is_none()

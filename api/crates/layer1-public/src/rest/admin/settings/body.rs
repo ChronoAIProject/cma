@@ -3,9 +3,9 @@
 use axum::{extract::FromRequest, extract::Request, Json};
 use layer2_core::profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef};
 use layer2_core::{
-    AgentProfileId, InactivitySettings, MarketplaceSettings, PlatformDefaults, PlatformLimits,
-    PlatformSettings, RetentionSettings, SandboxProfileId, StoredPlatformSettings, TriggerSettings,
-    WorkspaceProfileId,
+    platform::UsageReportingSettings, AgentProfileId, InactivitySettings, MarketplaceSettings,
+    PlatformDefaults, PlatformLimits, PlatformSettings, RetentionSettings, SandboxProfileId,
+    StoredPlatformSettings, TriggerSettings, WorkspaceProfileId,
 };
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
@@ -66,9 +66,25 @@ pub(crate) struct MarketplaceSettingsBody {
     enabled: bool,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UsageReportingSettingsBody {
+    measured_visible: bool,
+}
+
+impl From<UsageReportingSettingsBody> for UsageReportingSettings {
+    fn from(value: UsageReportingSettingsBody) -> Self {
+        Self {
+            measured_visible: value.measured_visible,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PlatformSettingsBody {
+    #[serde(default)]
+    usage_reporting: UsageReportingSettingsBody,
     defaults: PlatformDefaultsBody,
     inactivity: InactivitySettingsBody,
     retention: RetentionSettingsBody,
@@ -80,6 +96,7 @@ pub(crate) struct PlatformSettingsBody {
 impl From<PlatformSettingsBody> for PlatformSettings {
     fn from(value: PlatformSettingsBody) -> Self {
         Self {
+            usage_reporting: value.usage_reporting.into(),
             defaults: value.defaults.into(),
             inactivity: value.inactivity.into(),
             checkpoints: Default::default(),
@@ -94,6 +111,9 @@ impl From<PlatformSettingsBody> for PlatformSettings {
 impl From<PlatformSettings> for PlatformSettingsBody {
     fn from(value: PlatformSettings) -> Self {
         Self {
+            usage_reporting: UsageReportingSettingsBody {
+                measured_visible: value.usage_reporting.measured_visible,
+            },
             defaults: PlatformDefaultsBody {
                 sandbox_profile: ProfileReferenceBody {
                     id: value.defaults.sandbox_profile.id.0,
@@ -239,6 +259,9 @@ pub(crate) struct ReplaceRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PatchRequest {
+    #[serde(default)]
+    #[schema(required = false, value_type = UsageReportingSettingsBody)]
+    usage_reporting: PatchField<UsageReportingSettingsBody>,
     pub(super) expected_revision: u64,
     #[serde(default)]
     #[schema(required = false, value_type = PlatformDefaultsBody)]
@@ -266,6 +289,11 @@ impl PatchRequest {
         mut settings: PlatformSettings,
     ) -> Result<(u64, PlatformSettings), Failure> {
         let mut changed = false;
+        changed |= apply(
+            self.usage_reporting,
+            &mut settings.usage_reporting,
+            "usage_reporting",
+        )?;
         changed |= apply(self.defaults, &mut settings.defaults, "defaults")?;
         changed |= apply(self.inactivity, &mut settings.inactivity, "inactivity")?;
         changed |= apply(self.retention, &mut settings.retention, "retention")?;
@@ -324,7 +352,9 @@ const LIMITS: &[FieldSpec] = &[
 ];
 const TRIGGERS: &[FieldSpec] = &[leaf("enabled"), leaf("orchestration_paused")];
 const MARKETPLACE: &[FieldSpec] = &[leaf("enabled")];
+const USAGE_REPORTING: &[FieldSpec] = &[leaf("measured_visible")];
 const PLATFORM: &[FieldSpec] = &[
+    branch("usage_reporting", USAGE_REPORTING),
     branch("defaults", DEFAULTS),
     branch("inactivity", INACTIVITY),
     branch("retention", RETENTION),
@@ -334,6 +364,7 @@ const PLATFORM: &[FieldSpec] = &[
 ];
 const REPLACE: &[FieldSpec] = &[leaf("expected_revision"), branch("settings", PLATFORM)];
 const PATCH: &[FieldSpec] = &[
+    branch("usage_reporting", USAGE_REPORTING),
     leaf("expected_revision"),
     branch("defaults", DEFAULTS),
     branch("inactivity", INACTIVITY),
