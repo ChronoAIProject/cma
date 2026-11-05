@@ -488,3 +488,39 @@ fn stored_sandbox() -> crate::sandbox::Sandbox {
     value.revision = 1;
     value
 }
+
+#[tokio::test]
+async fn funding_pause_fence_cannot_mutate_a_newer_sandbox_revision() {
+    let store = InMemorySandboxStore::default();
+    let value = stored_sandbox();
+    store.create_sandbox(value.clone()).await.unwrap();
+    let mut changed = value.clone();
+    changed.name = "newer authority".into();
+    changed.revision += 1;
+    store
+        .save_sandbox(value.revision, changed.clone())
+        .await
+        .unwrap();
+    let command = SandboxLifecycleCommand::pause(
+        value.id.clone(),
+        value.owner,
+        NOW.into(),
+        Some("funding unavailable".into()),
+    )
+    .at_revision(value.revision);
+    assert_eq!(
+        store.schedule_sandbox_lifecycle(command.clone()).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        store.get_sandbox(&value.id).await.unwrap().unwrap(),
+        changed
+    );
+    assert!(matches!(
+        store
+            .schedule_sandbox_lifecycle(command.at_revision(changed.revision))
+            .await
+            .unwrap(),
+        SandboxLifecycleCommandResult::Accepted(_)
+    ));
+}

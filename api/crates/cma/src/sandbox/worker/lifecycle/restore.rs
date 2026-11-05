@@ -16,7 +16,7 @@ use super::super::support::{
 };
 use super::super::SandboxWorker;
 use super::checkpoint::{pinned_checkpoint, require_quiet_agent};
-use super::support::{lifecycle_lease, model_error, operation_id};
+use super::support::{lifecycle_lease, model_error, operation_id, replacement_runtime_version};
 use crate::sandbox::runtime_mapping::sandbox_spec;
 
 impl SandboxWorker {
@@ -93,7 +93,24 @@ impl SandboxWorker {
         if let Some(target) = sandbox.admitted_runtime_update_target() {
             spec.runtime_image = Some(target.into());
         }
-        let request = RuntimeProvisionRequest::new(generation, spec);
+        let funded_until = match self
+            .funding
+            .ensure_coverage(&sandbox, SystemTime::now())
+            .await
+        {
+            Ok(coverage) => coverage,
+            Err(error) => {
+                return self
+                    .handle_lifecycle_failure(
+                        sandbox,
+                        super::super::support::funding_failure(error),
+                        now,
+                    )
+                    .await
+            }
+        };
+        let mut request = RuntimeProvisionRequest::new(generation, spec);
+        request.funded_until = funded_until;
         let provisioned = if let Some(binding) = sandbox.lifecycle.suspended_runtime.as_deref() {
             match crate::sandbox::runtime_attachment::recovery_runtime_request(
                 &sandbox,
@@ -468,19 +485,4 @@ pub(super) fn replacement_runtime_generation(
         .checked_add(1)
         .ok_or_else(|| WorkerFailure::terminal_validation("lifecycle authority is exhausted"))?;
     Ok(next_agent_generation.max(next_authority_generation))
-}
-
-fn replacement_runtime_version(sandbox: &Sandbox, deployed: &str) -> String {
-    sandbox
-        .admitted_runtime_update_target()
-        .map(str::to_owned)
-        .or_else(|| {
-            sandbox
-                .lifecycle
-                .suspended_runtime
-                .as_ref()
-                .map(|binding| binding.runtime_version.clone())
-        })
-        .or_else(|| sandbox.profile.content.runtime_image.clone())
-        .unwrap_or_else(|| deployed.to_owned())
 }

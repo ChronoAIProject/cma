@@ -115,13 +115,21 @@ impl Default for SandboxSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeProvisionRequest {
+    /// Funding authority is persisted separately and injected for each effect;
+    /// mutable coverage must not change an immutable provisioning receipt digest.
+    #[serde(skip)]
+    pub funded_until: Option<u64>,
     pub generation: u64,
     pub spec: SandboxSpec,
 }
 
 impl RuntimeProvisionRequest {
     pub fn new(generation: u64, spec: SandboxSpec) -> Self {
-        Self { generation, spec }
+        Self {
+            generation,
+            spec,
+            funded_until: None,
+        }
     }
 }
 

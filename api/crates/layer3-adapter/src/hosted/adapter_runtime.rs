@@ -10,15 +10,17 @@ impl HostedAdapter {
         request: &crate::RuntimeProvisionRequest,
         operation_id: &str,
     ) -> crate::Result<crate::RuntimeProvisionReceipt> {
-        let rendered = self
+        let mut rendered = self
             .deployment
             .render_runtime(&request.spec, request.generation)?;
+        rendered.funded_until = request.funded_until;
         self.verify_spec_home(&request.spec).await?;
         if let Some(home) = &request.spec.home_volume {
             self.backend
                 .verify_home_route(&rendered, &home.request)
                 .await?;
         }
+        self.backend.validate_funding(&rendered, None).await?;
         let identity = provider_request_identity(&rendered)?;
         let request_sha256 = crate::provider_request_digest(request)?;
         let receipt = self
@@ -153,7 +155,11 @@ impl HostedAdapter {
                 .expected_image
                 .clone_from(&successor.spec.runtime_image);
         }
-        let next = self.retained_request(&resumed, successor.generation)?;
+        let mut next = self.retained_request(&resumed, successor.generation)?;
+        next.funded_until = successor.funded_until;
+        self.backend
+            .validate_funding(&next, Some(&request.handle))
+            .await?;
         let previous_identity = provider_request_identity(&previous)?;
         let next_identity = provider_request_identity(&next)?;
         self.verify_spec_home(&request.spec).await?;
@@ -190,14 +196,17 @@ impl HostedAdapter {
         &self,
         spec: &SandboxSpec,
         generation: u64,
+        funded_until: Option<u64>,
     ) -> crate::Result<RuntimeHandle> {
-        let request = self.deployment.render_runtime(spec, generation)?;
+        let mut request = self.deployment.render_runtime(spec, generation)?;
+        request.funded_until = funded_until;
         self.verify_spec_home(spec).await?;
         if let Some(home) = &spec.home_volume {
             self.backend
                 .verify_home_route(&request, &home.request)
                 .await?;
         }
+        self.backend.validate_funding(&request, None).await?;
         let identity = provider_request_identity(&request)?;
         let handle = match spec.home_volume.as_deref() {
             Some(home) => self.backend.provision_with_home(request, home).await?,
@@ -391,4 +400,38 @@ fn sha256_fingerprint(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+impl HostedAdapter {
+    pub(super) async fn deadline_exact(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        until: u64,
+    ) -> crate::Result<()> {
+        let rendered = self
+            .deployment
+            .render_adoption(request, request.generation)?;
+        self.backend
+            .set_runtime_deadline(&request.handle, &rendered, until)
+            .await
+    }
+    pub(super) async fn resources_exact(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> crate::Result<crate::ResourceReading> {
+        self.known_state(handle).await?;
+        match self
+            .exchange(handle, crate::wire::RequestFrame::Resources)
+            .await?
+        {
+            crate::wire::ResponseFrame::Resources(reading) => Ok(reading),
+            _ => unreachable!("exchange verifies response operation"),
+        }
+    }
+    pub(super) async fn teardown_exact(&self, handle: &RuntimeHandle) -> crate::Result<()> {
+        self.known_state(handle).await?;
+        self.backend.teardown(handle).await?;
+        self.states.lock().await.remove(handle);
+        Ok(())
+    }
 }
