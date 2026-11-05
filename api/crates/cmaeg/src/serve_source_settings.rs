@@ -65,10 +65,7 @@ pub(super) async fn configure(
     config: &Config,
     state: &mut ManagementState,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    if config.github_enabled {
-        state.github =
-            crate::github::Gateway::from_records(&state.records, state.master_keys.clone()).await;
-    }
+    state.github_enabled = config.github_enabled;
     state.native_bot_mentions_writes_enabled = config.native_bot_mentions_writes_enabled;
     state.thread_contract_writes_enabled = config.thread_contract_writes_enabled;
     state.multi_consumer_writes_enabled = config.multi_consumer_writes_enabled;
@@ -126,21 +123,6 @@ pub(super) async fn configure(
     state.native_discord = crate::discord::selection::Selection::new(&config.native_discord);
     state.native_discord_admission_enabled = config.routing.admission_enabled;
     Ok(whatsapp_forms_ready)
-}
-
-pub(super) fn attach_github(
-    state: &mut ManagementState,
-    ingress: &crate::ingress::IngressState,
-) -> Result<(), std::io::Error> {
-    if let Some(gateway) = state.github.as_mut() {
-        let gateway = Arc::get_mut(gateway).ok_or_else(|| {
-            std::io::Error::other("GitHub gateway was shared before ingress setup")
-        })?;
-        gateway.attach_providers(state.providers.clone());
-        gateway.attach_ingress(Arc::new(ingress.clone()));
-        gateway.attach_activity(state.activity.clone());
-    }
-    Ok(())
 }
 
 impl crate::delivery::relay_client::RelayClient {
