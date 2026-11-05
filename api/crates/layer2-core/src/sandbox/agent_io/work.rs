@@ -50,6 +50,19 @@ pub enum CommandFailureCode {
     ExecutionFailed,
 }
 
+impl CommandFailureCode {
+    /// Preserve the predecessor reader contract for new failures and default
+    /// public projections. Missing prerequisites prevent execution; they do not
+    /// establish revoked authority, a missing Agent, or a transient outage.
+    /// Keep the precise variants for diagnostics and reading retained records.
+    pub fn legacy_code(self) -> Self {
+        match self {
+            Self::CredentialSetupRequired | Self::ConnectionsRequired => Self::ExecutionFailed,
+            code => code,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommandFailure {
@@ -225,7 +238,19 @@ impl AdmittedAgentCommand {
             .ok_or(CommandLedgerError::Corrupt)?;
         self.status = AgentResponseStatus::Failed;
         self.work.lease = None;
-        self.work.failure = Some(CommandFailure { code, at: now });
+        if code != code.legacy_code() {
+            tracing::warn!(
+                event = "command_refusal",
+                command_id = %self.receipt.envelope.command_id.as_str().chars().take(128).collect::<String>(),
+                agent_id = %self.receipt.envelope.agent_id.as_str().chars().take(128).collect::<String>(),
+                error_kind = ?code,
+                "Command prerequisite refused"
+            );
+        }
+        self.work.failure = Some(CommandFailure {
+            code: code.legacy_code(),
+            at: now,
+        });
         Ok(())
     }
 }

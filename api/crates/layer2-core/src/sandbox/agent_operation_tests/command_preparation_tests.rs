@@ -104,7 +104,14 @@ async fn preparation_refusal_is_terminal_but_transient_errors_and_timeout_keep_o
         assert!(current.work.lease.is_none() && current.work.dispatch.is_none());
         match failure {
             CommandPreparationError::Rejected(code) => {
-                assert_eq!(current.work.failure.unwrap().code, code);
+                let expected = match code {
+                    CommandFailureCode::CredentialSetupRequired
+                    | CommandFailureCode::ConnectionsRequired => {
+                        CommandFailureCode::ExecutionFailed
+                    }
+                    code => code,
+                };
+                assert_eq!(current.work.failure.unwrap().code, expected);
                 assert_eq!(current.status, AgentResponseStatus::Failed);
                 assert_eq!(delay, Duration::ZERO);
             }
