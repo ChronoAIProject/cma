@@ -1,4 +1,6 @@
-import { render, screen, within } from '@testing-library/react';
+import { NavigationSettingsContext } from './sidebarContext';
+import type { ReactElement } from 'react';
+import { render as renderView, screen, within } from '@testing-library/react';
 import { createClient } from '@chronoai/cma-sdk';
 import { expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
@@ -283,3 +285,11 @@ it('preserves a failed turn under a paused parent while holding successful tasks
     within(screen.getByRole('treeitem', { name: /^Failed task/ })).getByText('Failed'),
   ).toBeVisible();
 });
+
+function render(view: ReactElement) {
+  const wrap = (content: ReactElement) => (
+    <NavigationSettingsContext value={document.body}>{content}</NavigationSettingsContext>
+  );
+  const result = renderView(wrap(view));
+  return { ...result, rerender: (content: ReactElement) => result.rerender(wrap(content)) };
+}
