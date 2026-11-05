@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { ApiError } from '@chronoai/cma-sdk';
 import { Operations, canOpenOperations } from './Operations';
 import { detail, now, operatorClient, sandboxRow } from './testFixtures';
+import { metricRow } from '../usage/metrics/testFixtures';
 
 describe('operator capabilities and record views', () => {
   it("shows people by name and keeps another owner's Agents under the right Workspace", async () => {
@@ -24,7 +25,7 @@ describe('operator capabilities and record views', () => {
     render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
     expect(await screen.findByRole('cell', { name: 'Alex Chen' })).toBeInTheDocument();
     expect(screen.queryByText('owner-1')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Details for Research Sandbox' }));
+    await user.click(screen.getByRole('button', { name: 'Runtime details for Research Sandbox' }));
     const drawer = screen.getByRole('dialog');
     const workspace = (await within(drawer).findByText('Research Workspace: ready')).closest('li')!;
     expect(within(workspace).getByText('Research assistant: ready')).toBeInTheDocument();
@@ -91,18 +92,17 @@ describe('operator capabilities and record views', () => {
     );
     await screen.findByText('Research Sandbox');
     expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-      'Sandboxes',
-      'Usage',
+      'Sandboxes & usage',
       'Activity',
     ]);
     expect(screen.queryByRole('tab', { name: 'Platform settings' })).not.toBeInTheDocument();
-    fireEvent.keyDown(screen.getByRole('tab', { name: 'Sandboxes' }), { key: 'ArrowRight' });
-    expect(screen.getByRole('tab', { name: 'Usage' })).toHaveFocus();
-    fireEvent.keyDown(screen.getByRole('tab', { name: 'Usage' }), { key: 'ArrowRight' });
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Sandboxes & usage' }), {
+      key: 'ArrowRight',
+    });
     expect(screen.getByRole('tab', { name: 'Activity' })).toHaveFocus();
     await screen.findByRole('cell', { name: 'Morgan Park' });
     fireEvent.keyDown(screen.getByRole('tab', { name: 'Activity' }), { key: 'Home' });
-    expect(screen.getByRole('tab', { name: 'Sandboxes' })).toHaveFocus();
+    expect(screen.getByRole('tab', { name: 'Sandboxes & usage' })).toHaveFocus();
     await screen.findByText('Research Sandbox');
     rerender(<Operations client={client} capabilities={['read_activity_log']} />);
     await screen.findByRole('cell', { name: 'Morgan Park' });
@@ -111,112 +111,6 @@ describe('operator capabilities and record views', () => {
     expect(client.admin.listProfiles).not.toHaveBeenCalled();
     expect(client.admin.retireProfile).not.toHaveBeenCalled();
     expect(screen.queryByText('must not render')).not.toBeInTheDocument();
-  });
-
-  it('applies Sandbox filters explicitly and retains them and rows after a failed refresh', async () => {
-    const client = operatorClient();
-    const user = userEvent.setup();
-    render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
-    await screen.findByText('Research Sandbox');
-    expect(screen.queryByRole('textbox', { name: 'Sandbox owner' })).not.toBeInTheDocument();
-    await chooseOptionValue(user, screen.getByRole('button', { name: 'Sandbox owner' }), 'owner-1');
-    await chooseOptionValue(user, screen.getByLabelText('Sandbox status'), 'failed');
-    await user.type(screen.getByLabelText('Runtime version'), 'runtime-3');
-    expect(client.admin.listSandboxes).toHaveBeenCalledTimes(2);
-    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
-    await waitFor(() =>
-      expect(client.admin.listSandboxes).toHaveBeenLastCalledWith(
-        expect.objectContaining({
-          owner: 'owner-1',
-          status: 'failed',
-          runtime_version: 'runtime-3',
-        }),
-      ),
-    );
-    client.admin.listSandboxes.mockRejectedValueOnce(
-      new ApiError(503, 'Unavailable', 'operator_service_unavailable', 'request-830'),
-    );
-    await user.click(screen.getByRole('button', { name: 'Refresh records' }));
-    await screen.findByText('operator_service_unavailable');
-    expect(screen.getByText('Research Sandbox')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Sandbox owner' })).toHaveTextContent('Alex Chen');
-    expect(screen.getByText('request-830')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Retire' })).toBeDisabled();
-  });
-
-  it('lists owners from unvisited pages and retains choices after an empty filtered result', async () => {
-    const client = operatorClient();
-    const user = userEvent.setup();
-    client.admin.listSandboxes.mockImplementation(async (options = {}) => {
-      if (options.owner) return { items: [], next: null };
-      if (options.limit === 200 && options.cursor === 'page-2')
-        return {
-          items: [
-            { ...sandboxRow, id: 'sbx-2', owner: 'owner-2', owner_name: 'Morgan Park' },
-            { ...sandboxRow, id: 'sbx-3', owner: 'owner-2', owner_name: 'Morgan Park' },
-          ],
-          next: null,
-        };
-      return { items: [sandboxRow], next: 'page-2' };
-    });
-    render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
-    await screen.findByText('Research Sandbox');
-    const picker = screen.getByRole('button', { name: 'Sandbox owner' });
-    await waitFor(() => expect(picker).toBeEnabled());
-    expect(screen.queryByRole('cell', { name: 'Morgan Park' })).not.toBeInTheDocument();
-    await user.click(picker);
-    expect(screen.getAllByRole('menuitemradio').map((option) => option.textContent)).toEqual([
-      'All owners',
-      'Alex Chen',
-      'Morgan Park',
-    ]);
-    await user.click(screen.getByRole('menuitemradio', { name: 'Morgan Park' }));
-    expect(client.admin.listSandboxes).toHaveBeenCalledTimes(3);
-    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
-    await screen.findByText('No records match these filters.');
-    expect(client.admin.listSandboxes).toHaveBeenLastCalledWith(
-      expect.objectContaining({ owner: 'owner-2', cursor: undefined }),
-    );
-    await user.click(picker);
-    expect(screen.getByRole('menuitemradio', { name: 'Alex Chen' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitemradio', { name: 'Morgan Park' })).toHaveAttribute(
-      'aria-checked',
-      'true',
-    );
-    await user.click(screen.getByRole('menuitemradio', { name: 'All owners' }));
-    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
-    await waitFor(() =>
-      expect(client.admin.listSandboxes).toHaveBeenLastCalledWith(
-        expect.objectContaining({ owner: undefined, cursor: undefined }),
-      ),
-    );
-    expect(
-      client.admin.listSandboxes.mock.calls.filter(([options]) => options?.limit === 200),
-    ).toHaveLength(2);
-  });
-
-  it('reports failed owner choices separately and retries without filtering table records', async () => {
-    const client = operatorClient();
-    const user = userEvent.setup();
-    let failOwners = true;
-    client.admin.listSandboxes.mockImplementation(async (options = {}) => {
-      if (options.limit === 200 && failOwners) throw new Error('Offline');
-      return { items: [sandboxRow], next: null };
-    });
-    render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
-    await screen.findByText('Owner choices could not be loaded.');
-    expect(screen.getByText('Research Sandbox')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Sandbox owner' })).toBeDisabled();
-    failOwners = false;
-    await user.click(screen.getByRole('button', { name: 'Retry owner choices' }));
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Sandbox owner' })).toBeEnabled(),
-    );
-    await user.click(screen.getByRole('button', { name: 'Sandbox owner' }));
-    expect(screen.getByRole('menuitemradio', { name: 'Alex Chen' })).toBeInTheDocument();
-    expect(
-      client.admin.listSandboxes.mock.calls.filter(([options]) => options?.limit === 50),
-    ).toHaveLength(1);
   });
 
   it('opens a focus-trapped hierarchy and safe event timeline drawer then restores focus', async () => {
@@ -231,7 +125,9 @@ describe('operator capabilities and record views', () => {
       },
     ]);
     render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
-    const trigger = await screen.findByRole('button', { name: 'Details for Research Sandbox' });
+    const trigger = await screen.findByRole('button', {
+      name: 'Runtime details for Research Sandbox',
+    });
     await user.click(trigger);
     const drawer = await screen.findByRole('dialog', { name: 'Sandbox details' });
     await within(drawer).findByText('Research Workspace: ready');
@@ -269,7 +165,7 @@ describe('operator capabilities and record views', () => {
     expect(confirm).toBeDisabled();
     await act(async () => resolve({ ...detail.sandbox, status: 'retiring' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(client.admin.listSandboxes).toHaveBeenCalledTimes(3);
+    expect(client.adminUsageMetrics.create).toHaveBeenCalledTimes(2);
   });
 
   it('keeps an unknown retirement outcome and sends only a read on the next confirmation', async () => {
@@ -331,67 +227,31 @@ describe('operator record tables', () => {
       .getAllByRole('columnheader')
       .map((header) => header.textContent);
 
-  it('lists Sandboxes with labelled columns, a status badge and an SGT time', async () => {
+  it('retains runtime controls beside allocated columns and performs no inventory sweep', async () => {
     const client = operatorClient();
-    client.admin.listSandboxes.mockResolvedValue({
-      items: [sandboxRow, { ...sandboxRow, id: 'sbx-failed', name: 'Broken', status: 'failed' }],
+    client.adminUsageMetrics.sandboxes.mockResolvedValue({
+      report_id: 'report-one',
+      as_of: 1,
+      items: [metricRow, { ...metricRow, sandbox_id: 'sbx-2', name: 'Second', status: 'failed' }],
       next: null,
-    });
-    render(
-      <Operations client={client} capabilities={['read_all_sandboxes', 'control_any_sandbox']} />,
-    );
-    await screen.findByRole('cell', { name: /Broken/ });
-    expect(headers('Sandboxes')).toEqual([
-      'Sandbox',
-      'Owner',
-      'Status',
-      'Runtime',
-      'Agents',
-      'Last activity (SGT)',
-      'Actions',
-    ]);
-    const [, live, broken] = within(screen.getByRole('table')).getAllByRole('row');
-    expect(within(live!).getByText('Live').closest('.badge')).toHaveAttribute(
-      'data-tone',
-      'neutral',
-    );
-    expect(within(broken!).getByText('Needs attention').closest('.badge')).toHaveAttribute(
-      'data-tone',
-      'error',
-    );
-    expect(within(live!).getByText(sandboxRow.id).tagName).toBe('CODE');
-    expect(within(live!).getByText(/\d{4}/).tagName).toBe('TIME');
-    // Holding the capability, nothing on the page says it is missing.
-    expect(screen.queryByText('Cross-owner control is required.')).not.toBeInTheDocument();
-    expect(within(live!).getByRole('button', { name: 'Retire' })).toBeEnabled();
-  });
-
-  it('says once for the page that Retire needs cross-owner control', async () => {
-    const client = operatorClient();
-    client.admin.listSandboxes.mockResolvedValue({
-      items: [sandboxRow, { ...sandboxRow, id: 'sbx-2', name: 'Second' }],
-      next: null,
+      total_count: 2,
     });
     render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
     await screen.findByRole('cell', { name: /Second/ });
-    expect(screen.getAllByText('Cross-owner control is required.')).toHaveLength(1);
-    // Information, not an alarm: the reader can still review every Sandbox.
-    expect(screen.getByText('Cross-owner control is required.').closest('.alert')).toHaveAttribute(
-      'data-tone',
-      'info',
-    );
+    expect(headers('Sandboxes and allocated usage')).toContain('CPU allocated (cores)');
     for (const button of screen.getAllByRole('button', { name: 'Retire' }))
       expect(button).toBeDisabled();
+    expect(client.admin.listSandboxes).not.toHaveBeenCalled();
+    expect(client.usage.adminSandboxes).not.toHaveBeenCalled();
+    expect(client.adminUsageMetrics.sandboxes).toHaveBeenCalledTimes(1);
   });
-
-  it('keeps an unread list from claiming no records', async () => {
+  it('keeps a failed metrics report from claiming an empty inventory', async () => {
     const client = operatorClient();
-    client.admin.listSandboxes.mockRejectedValue(
-      new ApiError(503, 'Unavailable', 'operator_service_unavailable'),
-    );
+    client.adminUsageMetrics.create.mockRejectedValue(new ApiError(503, 'Unavailable'));
     render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
-    await screen.findByText('operator_service_unavailable');
-    expect(screen.queryByText('No records match these filters.')).not.toBeInTheDocument();
+    await screen.findByText('Usage reporting is unavailable');
+    expect(screen.queryByText('No Sandboxes match this selection.')).not.toBeInTheDocument();
+    expect(client.admin.listSandboxes).not.toHaveBeenCalled();
   });
 
   it('draws each Activity outcome in its own tone under an SGT time column', async () => {

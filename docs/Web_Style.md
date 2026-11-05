@@ -3050,7 +3050,7 @@ exit; retain the existing 44px mobile touch target.
 
 ### Operations profile inventory retirement (2026-10-19)
 
-Operations offers Sandboxes, Warm pools, Platform settings and Activity, with
+Operations offers Sandboxes & usage, Warm pools, Platform settings and Activity, with
 their existing capability gates and keyboard navigation. It has no Profiles tab,
 inventory or retirement action. This supersedes the Profiles inventory in §19.
 Immutable profile records and historical public APIs remain available to runtime
@@ -3195,11 +3195,10 @@ its fixed destination as a description. Sandbox Details keeps Pause/Resume in
 the header and places New agent in More actions, rather than a second primary
 creation button.
 
-Operations Sandbox Owner is a named dropdown with All owners. Choices use the
-canonical display names from the complete authorized, unfiltered Sandbox
-inventory and remain available across table filtering and pagination. Load once
-per mounted client, with bounded pagination, cancellation, loading and explicit
-retry on failure; do not poll. Existing explicit filter application is retained.
+Operations Owner starts at Everyone. Its report-scoped subject-prefix search
+returns named choices with bounded server paging across the authorized cohort.
+Choices remain available across table filtering and pagination, with cancellation,
+loading and explicit retry on failure. Existing explicit filter application is retained.
 
 The landing route keeps the sidebar collapsed and has no expand, drawer, drag,
 or keyboard expansion affordance. Service routes retain normal sidebar controls.
@@ -5036,30 +5035,18 @@ controls, and no stylesheet refers to it.
 
 ### 2026-11-03 — Sandbox usage
 
-Account Usage now uses the measured popup specified below. Legacy Settings
-addresses recover there; Appearance is canonical in the account menu.
-Operations adds an independently capability-gated Usage tab with all-owner totals,
-owner filtering and retained Sandbox rows. CPU core-hours, RAM GiB-hours, disk
+Account Usage now uses the popup specified below. Legacy Settings addresses
+recover there; Appearance is canonical in the account menu.
+Operations combines inventory and measured reporting in the independently
+capability-gated Sandboxes & usage view with server-side owner filtering and paging. CPU core-hours, RAM GiB-hours, disk
 GiB-hours, uptime and tracking coverage use explicit units. Partial histories and
 failed reads are stated; unavailable values never become zero.
 
 ### 2026-11-03 — Operations usage controls
 
-Operations Usage uses the existing Picker for User (including All users) and
-Sandbox status (including All statuses), plus the existing Input for a Sandbox
-ID search. Apply filters combines these choices and resets pagination. User
-choices remain available when the filtered result is empty. Retained usage for
-an unavailable user remains selectable with an explicit unavailable-name label
-and its identifier.
-
-Sortable table headers use the existing compact ghost Button, with an upward or
-downward arrow for the active direction and `aria-sort` on the column header.
-Clicking the active header toggles ascending/descending order; choosing a new
-column starts ascending. Numeric quantities sort by their unrounded values and
-timestamps by time, across the complete result set before pagination. Changing
-the sort returns to page one. Loading or incomplete inventories do not appear
-as complete sortable results; failed refreshes retain the last successful rows
-with an alert. Existing table dimensions, scrolling and tokens remain unchanged.
+Operations now uses the shared measured report controls specified below. Sorting
+and owner discovery run on the server across the frozen report cohort. The
+previous client inventory scan and standalone Usage tab are retired.
 
 | 2026-11-03 | Add User/status/Sandbox ID filters and accessible ascending/descending column sorting to Operations Usage using the existing form, Picker, Button and Table primitives. |
 
@@ -5205,6 +5192,26 @@ when present. Inline detail uses the same cards, all three charts and paged
 lifecycle history.
 
 | 2026-11-05 | Define shared measured CPU, memory and PVC reporting with explicit allocation semantics, bounded server paging, accessible charts and honest missing-data states. |
+
+### 2026-11-05 — Operations resource dashboard
+
+**Sandboxes & usage** replaces the separate Sandboxes and Usage tabs, guarded
+by `read_all_sandboxes`. Warm pools, Platform settings and Activity retain their
+existing gates and interactions. `tab=usage` is a legacy hint for the merged
+view. Tab, range, owner/status/runtime/Sandbox/search filters and supported
+server sort persist in URL state. The default range is the last 24 hours.
+
+The report summary, three resource charts and 50-row inventory share a report
+ID. Chart grouping offers Total / By owner / By Sandbox and whole-cohort top
+series plus Other. Owner search covers the frozen cohort by subject prefix;
+it never derives choices from the visible inventory page. Rows open inline
+usage details, including View this owner's usage. Runtime details retain the
+existing drawer; retirement retains its acknowledgement and uncertain-outcome
+read recovery and still requires `control_any_sandbox`. Retained stale rows
+never enable retirement. Unassigned/unattributed infrastructure readings stay
+in an administrator-only diagnostic footer, excluded from owner totals.
+
+| 2026-11-05 | Merge Operations Sandboxes and Usage into one measured dashboard, preserve runtime/control authorization, and replace browser inventory scans with report-backed server discovery, sorting and paging. |
 
 ### 2026-11-05 — Account Usage popup and canonical Appearance
 

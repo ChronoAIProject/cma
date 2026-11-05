@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { metricsClient } from '../usage/metrics/testFixtures';
 import type {
   AdminProfileSummary,
   AdminSandboxDetail,
@@ -201,7 +202,9 @@ export function operatorClient() {
     }),
   };
   return {
+    readMeasuredUsage: vi.fn().mockResolvedValue(false),
     admin,
+    adminUsageMetrics: metricsClient(true),
     usage: {
       summary: vi.fn<OperatorClient['usage']['summary']>(),
       sandboxes: vi.fn<OperatorClient['usage']['sandboxes']>(),
