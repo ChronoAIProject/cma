@@ -2225,7 +2225,7 @@
       },
       "ChannelCreateRequest": {
         "additionalProperties": false,
-        "description": "Request wrapper used by channel creation.",
+        "description": "Request wrapper used by channel creation.\nTop-level `routing` is not accepted. After creation, configure routing with\n`PUT /v1/channels/{channel_id}/routing` and `{expected_version,routing}`.",
         "properties": {
           "connection_admission": {
             "oneOf": [
@@ -2451,7 +2451,7 @@
       },
       "ChannelUpdateRequest": {
         "additionalProperties": false,
-        "description": "Update body; credentials are retained when this field is absent.",
+        "description": "Update body; credentials are retained when this field is absent.\nTop-level `routing` is not accepted; full updates preserve the saved policy.\nUse `PUT /v1/channels/{channel_id}/routing` to change routing.",
         "properties": {
           "connection_admission": {
             "oneOf": [

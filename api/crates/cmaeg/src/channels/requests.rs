@@ -9,6 +9,8 @@ use serde_json::Value;
 use utoipa::ToSchema;
 
 /// Request wrapper used by channel creation.
+/// Top-level `routing` is not accepted. After creation, configure routing with
+/// `PUT /v1/channels/{channel_id}/routing` and `{expected_version,routing}`.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelCreateRequest {
@@ -35,6 +37,8 @@ pub struct ChannelCreateRequest {
 }
 
 /// Update body; credentials are retained when this field is absent.
+/// Top-level `routing` is not accepted; full updates preserve the saved policy.
+/// Use `PUT /v1/channels/{channel_id}/routing` to change routing.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelUpdateRequest {
