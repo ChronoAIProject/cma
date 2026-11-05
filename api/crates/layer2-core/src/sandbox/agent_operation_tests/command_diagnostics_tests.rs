@@ -85,3 +85,49 @@ async fn preparation_diagnostics_are_bounded_and_never_format_private_errors_or_
         assert!(!output.contains(private));
     }
 }
+
+#[tokio::test]
+async fn prerequisite_refusals_log_precise_causes_but_record_only_legacy_codes() {
+    for (code, cause) in [
+        (
+            CommandFailureCode::CredentialSetupRequired,
+            "CredentialSetupRequired",
+        ),
+        (
+            CommandFailureCode::ConnectionsRequired,
+            "ConnectionsRequired",
+        ),
+    ] {
+        let (store, agent, parent) = fixture(AgentStatus::Paused).await;
+        let mut command = admit(
+            &store,
+            &agent,
+            &parent,
+            "refusal",
+            AgentCommand::message("private-input-marker"),
+        )
+        .await;
+        let logs = Logs::default();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(logs.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        command
+            .reject_unclaimed(command.revision, code, crate::now_rfc3339())
+            .unwrap();
+        let output = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        assert_eq!(output.lines().count(), 1);
+        assert!(output.contains("event=\"command_refusal\""));
+        assert!(output.contains(&format!("error_kind={cause}")));
+        assert!(output.contains(command.receipt.envelope.command_id.as_str()));
+        assert!(!output.contains("private-input-marker"));
+        assert_eq!(
+            serde_json::to_value(&command).unwrap()["work"]["failure"]["code"],
+            "execution_failed"
+        );
+        assert_eq!(command.status, AgentResponseStatus::Failed);
+        assert!(command.work.dispatch.is_none());
+    }
+}
