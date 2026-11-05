@@ -134,3 +134,20 @@
   justify-content: center;
   padding: 6px 0;
 }
+
+.profile__build {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.profile__build-fallback {
+  display: block;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+}
+
+.profile__build-fallback code {
+  display: block;
+  user-select: all;
+}
