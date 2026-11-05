@@ -7,11 +7,11 @@ use std::time::SystemTime;
 impl SandboxReconciler {
     /// Run only in the background sweep, after ordinary adoption. Existing
     /// failed older-image incidents require explicit owner/operator retargeting.
-    pub(super) async fn recover_failed_unpublished_runtime(&self) -> Result<(), SandboxStoreError> {
-        let Some(service) = &self.failed_runtime_recovery else {
-            return Ok(());
-        };
-        let authority = self.authority().await?;
+    pub(super) fn failed_runtime_recovery_candidate(
+        &self,
+        authority: &std::collections::BTreeMap<SandboxId, layer2_core::sandbox::Sandbox>,
+    ) -> Option<SandboxId> {
+        let service = self.failed_runtime_recovery.as_ref()?;
         let eligible = authority
             .values()
             .filter(|sandbox| {
@@ -26,23 +26,25 @@ impl SandboxReconciler {
                     }) == Some(service.latest_version())
             })
             .collect::<Vec<_>>();
-        let Some(index) = recovery_schedule_index(&self.recovery_schedule_cursor, eligible.len())
-        else {
-            return Ok(());
+        let index = recovery_schedule_index(&self.recovery_schedule_cursor, eligible.len())?;
+        Some(eligible[index].id.clone())
+    }
+
+    pub(super) async fn recover_failed_unpublished_runtime(&self, id: &SandboxId) {
+        let Some(service) = &self.failed_runtime_recovery else {
+            return;
         };
-        let sandbox = eligible[index];
         // Scheduling rotates even if an earlier candidate cannot prove safety.
         // The cursor chooses only which candidate to inspect; admission rereads and
         // fences the complete durable state and never trusts this observation.
-        match service.recover_failed_unpublished(&sandbox.id).await {
+        match service.recover_failed_unpublished(id).await {
             Ok(_) => {
-                tracing::info!(sandbox_id = %sandbox.id, "failed unpublished runtime recovery admitted")
+                tracing::info!(sandbox_id = %id, "failed unpublished runtime recovery admitted")
             }
             Err(error) => {
-                tracing::warn!(sandbox_id = %sandbox.id, error = %error, "failed runtime retained while recovery evidence is unavailable")
+                tracing::warn!(sandbox_id = %id, error = %error, "failed runtime retained while recovery evidence is unavailable")
             }
         }
-        Ok(())
     }
 
     pub(super) async fn reconcile_runtime_update(

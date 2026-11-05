@@ -156,3 +156,25 @@ async fn a_single_worker_never_multiplies_inflight_attempts() {
     release.notify_waiters();
     running.await.unwrap().unwrap();
 }
+
+#[tokio::test(start_paused = true)]
+async fn yielded_sweep_keeps_pending_age_without_failure_backoff() {
+    let budget = BackgroundBudget::new();
+    let work = work(&budget, "resumable");
+    let started = Instant::now();
+    for _ in 0..8 {
+        assert_eq!(
+            work.run_resumable(|| async { Ok(false) }).await.unwrap(),
+            Some(false)
+        );
+        assert_eq!(budget.slots.available_permits(), 2);
+    }
+    assert!(started.elapsed() <= Duration::from_secs(2));
+    assert_eq!(
+        work.run_resumable(|| async { Ok(true) }).await.unwrap(),
+        Some(true)
+    );
+    let completed = Instant::now();
+    work.run_resumable(|| async { Ok(true) }).await.unwrap();
+    assert_eq!(completed.elapsed(), Duration::ZERO);
+}
