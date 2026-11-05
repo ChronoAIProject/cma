@@ -112,7 +112,11 @@ async fn apply_claim(
     let Some((agent, state)) = load_agent(store, request.agent_id(), session).await? else {
         return Ok(ClaimApply::Settled(None));
     };
-    if state.stored.is_some() {
+    if state
+        .stored
+        .as_ref()
+        .is_some_and(|title| title.source != layer2_core::sandbox::AgentTitleSource::Fallback)
+    {
         return Ok(ClaimApply::Settled(None));
     }
     if title_transcript(store, &agent, session).await?.is_none() {
@@ -125,11 +129,7 @@ async fn apply_claim(
                 .then(|| lease.to_claim(request)),
         ));
     }
-    let mode = if state.attempted {
-        AgentTitleClaimMode::FallbackOnly
-    } else {
-        AgentTitleClaimMode::Generate
-    };
+    let mode = AgentTitleClaimMode::Generate;
     let claim = AgentTitleClaim::acquired(
         request.clone(),
         mode,
@@ -137,8 +137,14 @@ async fn apply_claim(
         expires_at.to_system_time(),
     );
     let mut filter = current_agent_filter(&agent);
-    filter.insert(TITLE, Bson::Null);
-    filter.insert("record.title", Bson::Null);
+    filter.insert(
+        TITLE,
+        agent.title.clone().map(Bson::String).unwrap_or(Bson::Null),
+    );
+    filter.insert(
+        "record.title",
+        agent.title.clone().map(Bson::String).unwrap_or(Bson::Null),
+    );
     let result = store
         .agents
         .update_one(filter, doc! { "$set": claim_fields(&claim) })

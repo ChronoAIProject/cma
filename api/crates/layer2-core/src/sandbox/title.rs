@@ -205,7 +205,7 @@ impl AgentTitleTranscript {
                 super::AgentLogKind::AgentMessage { content }
                     if turn_sequence.is_some() && owner.is_some() =>
                 {
-                    assistant.get_or_insert(content.as_str());
+                    assistant = Some(content.as_str());
                 }
                 super::AgentLogKind::TurnCompleted {
                     turn_sequence: completed,
