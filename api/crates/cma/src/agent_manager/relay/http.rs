@@ -33,12 +33,16 @@ pub(super) async fn route(
     if !relay.coordinator.is_ready() {
         return unavailable();
     }
+    let body_limit = body_limit(request.uri().path());
+    let Ok(_body_budget) = relay
+        .body_budget
+        .clone()
+        .try_acquire_many_owned(body_limit as u32)
+    else {
+        return unavailable();
+    };
     let (parts, body) = request.into_parts();
-    let bytes = match tokio::time::timeout(
-        Duration::from_secs(5),
-        to_bytes(body, crate::REQUEST_BODY_LIMIT_BYTES),
-    )
-    .await
+    let bytes = match tokio::time::timeout(Duration::from_secs(5), to_bytes(body, body_limit)).await
     {
         Ok(Ok(bytes)) => bytes,
         _ => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
@@ -167,8 +171,25 @@ fn needs_owner(path: &str, method: &axum::http::Method) -> bool {
     };
     matches!(
         suffix,
-        "recover-worktree" | "skills" | "models" | "environment" | "attachments"
+        "recover-worktree"
+            | "skills"
+            | "models"
+            | "environment"
+            | "attachments"
+            | "files"
+            | "browser"
     ) || suffix.starts_with("files/")
+        || suffix == "browser/control"
+}
+
+fn body_limit(path: &str) -> usize {
+    if path.ends_with("/attachments") {
+        layer2_core::sandbox::agent_attachments::MAX_ATTACHMENT_BYTES
+    } else if path.ends_with("/files") {
+        (layer3_adapter::MAX_AGENT_FILE_BYTES.div_ceil(3) * 4 + 4096) as usize
+    } else {
+        crate::REQUEST_BODY_LIMIT_BYTES
+    }
 }
 
 async fn forward(

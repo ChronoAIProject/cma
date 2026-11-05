@@ -19,6 +19,7 @@ pub(super) const PREFIX: &str = "/internal/agent-manager/v1";
 pub(super) const PROOF: &str = "x-cma-agent-manager-relay";
 pub(super) const MAX_STREAMS: usize = 256;
 pub(super) const MAX_FRAME: usize = 128 * 1024;
+pub(super) const MAX_BUFFERED_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 pub(crate) struct Relay {
     coordinator: Arc<OwnershipCoordinator>,
@@ -27,6 +28,7 @@ pub(crate) struct Relay {
     authentication: authentication::Authentication,
     client: reqwest::Client,
     slots: Arc<Semaphore>,
+    body_budget: Arc<Semaphore>,
 }
 
 pub(super) struct Destination {
@@ -54,6 +56,7 @@ impl Relay {
                 .build()
                 .map_err(|_| "peer relay client is unavailable")?,
             slots: Arc::new(Semaphore::new(MAX_STREAMS)),
+            body_budget: Arc::new(Semaphore::new(MAX_BUFFERED_BODY_BYTES)),
         }))
     }
 
