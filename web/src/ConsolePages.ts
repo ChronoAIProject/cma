@@ -14,4 +14,3 @@ export const TriggerPublisherPage = lazy(() =>
 );
 
 export const Documents = lazy(() => import('./documents/Documents'));
-export { Settings } from './usage/Settings';

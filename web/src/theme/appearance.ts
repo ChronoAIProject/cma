@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from 'react';
+
 /**
  * Light or dark, and remembering which.
  *
@@ -19,6 +21,7 @@
 export type Appearance = 'light' | 'dark' | 'system';
 
 const STORAGE_KEY = 'cma:appearance';
+let transientAppearance: Appearance | undefined;
 
 /** Whether a stored value is one we understand. */
 function isAppearance(value: unknown): value is Appearance {
@@ -37,7 +40,9 @@ function readAppearance(): Appearance | null {
 function writeAppearance(appearance: Appearance): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, appearance);
+    transientAppearance = undefined;
   } catch {
+    transientAppearance = appearance;
     // Applying the preference does not depend on remembering it.
   }
 }
@@ -52,7 +57,7 @@ export function storedAppearance(): Appearance {
   // CMA is a dense operations surface; keep the first visit aligned with the
   // production console's dark chrome while still allowing an explicit light or
   // system preference from the account menu.
-  return readAppearance() ?? 'dark';
+  return transientAppearance ?? readAppearance() ?? 'dark';
 }
 
 /**
@@ -78,6 +83,7 @@ export function applyAppearance(appearance: Appearance): void {
 export function setAppearance(appearance: Appearance): void {
   applyAppearance(appearance);
   writeAppearance(appearance);
+  window.dispatchEvent(new Event('cma:appearance'));
 }
 
 /** What the page is actually showing, resolving "system" against the browser. */
@@ -116,21 +122,21 @@ export function startAppearance(): () => void {
   applyAppearance(storedAppearance());
 
   const query = systemQuery();
-  if (query === null) {
-    return () => {};
-  }
-
   const reapply = () => {
-    // Re-read rather than closing over the value: the preference may have been
-    // changed since boot, and a stale "system" would fight the explicit choice.
-    const current = storedAppearance();
-    if (current === 'system') {
-      applyAppearance(current);
+    if (storedAppearance() === 'system') applyAppearance('system');
+  };
+  const storage = (event: StorageEvent) => {
+    if (event.key === STORAGE_KEY || event.key === null) {
+      transientAppearance = undefined;
+      applyAppearance(storedAppearance());
     }
   };
-
-  query.addEventListener('change', reapply);
-  return () => query.removeEventListener('change', reapply);
+  query?.addEventListener('change', reapply);
+  window.addEventListener('storage', storage);
+  return () => {
+    query?.removeEventListener('change', reapply);
+    window.removeEventListener('storage', storage);
+  };
 }
 
 /** The order the control cycles through. */
@@ -146,4 +152,17 @@ export function appearanceLabel(appearance: Appearance): string {
     default:
       return 'System';
   }
+}
+
+function subscribeAppearance(listener: () => void) {
+  window.addEventListener('storage', listener);
+  window.addEventListener('cma:appearance', listener);
+  return () => {
+    window.removeEventListener('storage', listener);
+    window.removeEventListener('cma:appearance', listener);
+  };
+}
+/** Keep retained account menus synchronized with browser-local preferences. */
+export function useAppearance(): Appearance {
+  return useSyncExternalStore(subscribeAppearance, storedAppearance);
 }

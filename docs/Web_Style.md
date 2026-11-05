@@ -4980,8 +4980,8 @@ controls, and no stylesheet refers to it.
 
 ### 2026-11-03 — Sandbox usage
 
-Settings exposes General and Usage through the existing underlined tab pattern.
-Usage reuses the Operations scrollport, definition lists, filters and record tables.
+Account Usage now uses the measured popup specified below. Legacy Settings
+addresses recover there; Appearance is canonical in the account menu.
 Operations adds an independently capability-gated Usage tab with all-owner totals,
 owner filtering and retained Sandbox rows. CPU core-hours, RAM GiB-hours, disk
 GiB-hours, uptime and tracking coverage use explicit units. Partial histories and
@@ -5149,3 +5149,33 @@ when present. Inline detail uses the same cards, all three charts and paged
 lifecycle history.
 
 | 2026-11-05 | Define shared measured CPU, memory and PVC reporting with explicit allocation semantics, bounded server paging, accessible charts and honest missing-data states. |
+
+### 2026-11-05 — Account Usage popup and canonical Appearance
+
+Account Usage opens the shared Modal titled **Your usage** over the retained
+Agent or service route. Opening never remounts the Agent editor, stream or pending
+input. Charts load on the first visit. The closed dialog retains its report state,
+aborts reads and pauses refresh; reopening resumes pending work within the report
+lifetime. Owner endpoints are used even for administrators. Agent discovery is
+paged and available only after an owner-scoped report confirms the Sandbox;
+Agent selection is explicitly **Shared Sandbox usage**.
+
+The card is at most 960px wide with 16px viewport clearance; below 768px it becomes
+a full-height sheet. The close header stays fixed while content and horizontal
+tables scroll inside. Details and lifecycle history expand inline with no stacked
+dialog. Selecting CPU / Memory / Disk focuses that chart and its table columns.
+Menu navigation focuses the retained account trigger before opening so Escape,
+close and browser Back restore focus without discarding work.
+On mobile the navigation sheet remains behind Usage so its account trigger can
+receive focus on close. Escape inside a dialog belongs to that dialog and does
+not also close the background navigation sheet.
+
+The canonical /usage route saves its in-app background for Back/Forward. Direct
+links use the Agent manager shell. /settings/usage replaces to /usage; /settings
+and /settings/general replace with the one-time notice “Appearance is now in your
+account menu.” The stored theme is preserved. Settings leaves the account menu.
+Appearance has one System / Light / Dark choice group with menuitemradio selected
+state, browser-local persistence, immediate preview, storage synchronization and
+OS updates for System. Existing text-size controls remain available.
+
+| 2026-11-05 | Replace account Settings with an owner-scoped measured Usage popup, preserve Agent work and legacy links, and consolidate Appearance into explicit account-menu choices. |
