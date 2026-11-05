@@ -1,4 +1,4 @@
-//! Snapshot transactions for agent-title claims and write-once completion.
+//! Snapshot transactions for agent-title claims and durable completion.
 
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::SandboxStoreError;
@@ -16,6 +16,7 @@ use super::agent_log::{
 use super::agent_log_integrity::{
     ensure_append_capacity, AppendCapacity, LogSummary, TransactionLogError,
 };
+use super::agent_title_claims::current_agent_filter;
 use super::agent_title_state::{
     automatic_completion_fields, lease_filter, read_title_state, user_completion_fields,
     TitleState, TITLE,
@@ -24,8 +25,7 @@ use super::agent_titles::{map_store_error, snapshot_session};
 use super::agents::{agent_replacement_fields, read_agent};
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
-    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
-    TRANSACTION_ATTEMPTS,
+    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, TRANSACTION_ATTEMPTS,
 };
 
 enum ApplyError {
@@ -476,21 +476,6 @@ impl CompletionProof {
             Self::Automatic(claim) => state.completed_by(claim),
             Self::User(token) => state.user_commit_token.as_ref() == Some(token),
         }
-    }
-}
-
-fn current_agent_filter(agent: &Agent) -> Document {
-    doc! {
-        "channel_reuse_cleanup_execution": { "$exists": false },
-        "_id": agent.id.as_str(),
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-        "revision": signed(agent.revision, "agent revision").unwrap_or(i64::MIN),
-        "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
-            .unwrap_or(i64::MIN),
-        "record.conversation.last_seq": signed(
-            agent.conversation.last_seq,
-            "agent log sequence",
-        ).unwrap_or(i64::MIN),
     }
 }
 

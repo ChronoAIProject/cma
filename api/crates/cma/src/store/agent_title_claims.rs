@@ -238,7 +238,7 @@ async fn reconcile_claim(
     Ok(AgentTitleTranscript::from_agent_log(&agent, &logs).is_some())
 }
 
-fn current_agent_filter(agent: &Agent) -> Document {
+pub(super) fn current_agent_filter(agent: &Agent) -> Document {
     doc! {
         "channel_reuse_cleanup_execution": { "$exists": false },
         "_id": agent.id.as_str(),
