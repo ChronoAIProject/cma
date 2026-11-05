@@ -190,6 +190,34 @@ impl HostedBackend for RuntimeBackends {
             .select_native_pool(request, image, home)
             .await
     }
+    async fn validate_funding(
+        &self,
+        request: &ProviderSandboxRequest,
+        existing: Option<&RuntimeHandle>,
+    ) -> Result<()> {
+        if request.funded_until.is_none() {
+            return Ok(());
+        }
+        if let Some(handle) = existing {
+            return self
+                .for_handle(handle)?
+                .validate_funding(request, Some(handle))
+                .await;
+        }
+        let selected = self.allocation_provider(request).await?;
+        self.select(selected)?.validate_funding(request, None).await
+    }
+    async fn set_runtime_deadline(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        until: u64,
+    ) -> Result<()> {
+        self.for_handle(handle)?
+            .set_runtime_deadline(handle, request, until)
+            .await
+    }
+
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle> {
         let selected = self.allocation_provider(&request).await?;
         self.select(selected)?.provision(request).await
