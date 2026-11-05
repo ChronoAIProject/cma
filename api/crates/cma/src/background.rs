@@ -76,9 +76,12 @@ pub(crate) async fn sandbox_reconciliation<F>(
     operation: impl FnOnce() -> F,
 ) -> Result<(), SandboxStoreError>
 where
-    F: std::future::Future<Output = Result<(), SandboxStoreError>>,
+    F: std::future::Future<Output = Result<bool, SandboxStoreError>>,
 {
-    SANDBOX_RECONCILIATION.run(operation).await.map(|_| ())
+    SANDBOX_RECONCILIATION
+        .run_resumable(operation)
+        .await
+        .map(|_| ())
 }
 
 #[cfg(test)]
