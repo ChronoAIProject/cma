@@ -55,6 +55,10 @@ impl AgentSandboxBackend {
             .wait_ready(handle, Duration::from_secs(180))
             .await?;
         timing.completed("wait_ready");
+        if let Some(until) = request.funded_until {
+            // Readiness can consume the remaining window; never bind expired work.
+            crate::agent_sandbox::funding::deadline(until)?;
+        }
         self.assign_and_bind(handle, &pod, request).await
     }
 

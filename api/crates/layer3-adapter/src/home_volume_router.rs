@@ -1,6 +1,5 @@
 //! Exact storage authority follows the persisted request, including before its
 //! first PVC response. Provider defaults are consulted only during reservation.
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::{
@@ -9,6 +8,7 @@ use crate::{
     HomeVolumeStore, Result,
 };
 
+#[derive(Clone)]
 struct Route {
     store: Arc<dyn HomeVolumeStore>,
     policy: HomeVolumePolicy,
@@ -17,6 +17,7 @@ struct Route {
 
 /// Local historical homes and remote native homes coexist. A missing route is
 /// unavailable; the router never probes a different cluster after any failure.
+#[derive(Clone)]
 pub struct RoutedHomeVolumes {
     local: Option<Route>,
     native: Option<Route>,
@@ -156,30 +157,16 @@ impl HomeVolumeStore for RoutedHomeVolumes {
     }
 
     async fn inventory(&self) -> Result<Vec<HomeVolumeAttachment>> {
-        let mut all = Vec::new();
-        let mut volumes = BTreeSet::new();
-        for (native, route) in [(false, &self.local), (true, &self.native)] {
-            let Some(route) = route else { continue };
-            for attachment in route.store.inventory().await? {
-                attachment.validate_for(&attachment.request.sandbox_id)?;
-                if self.is_native(&attachment.request)? != native {
-                    // A migration store may retain the same legacy API scope as
-                    // the local route. Only an identical earlier observation can
-                    // be shared; a different disk or lineage remains a conflict.
-                    if all.iter().any(|prior| prior == &attachment) {
-                        continue;
-                    }
-                    return Err(rejected("home inventory is outside its recorded cluster"));
-                }
-                if !volumes.insert(attachment.request.volume_id.clone()) {
-                    return Err(rejected(
-                        "home inventory repeats an allocation across providers",
-                    ));
-                }
-                all.push(attachment);
+        let mut cursor = inventory::Cursor::new(self.clone());
+        loop {
+            if let Some(items) = crate::InventoryCursor::advance(&mut cursor).await? {
+                return Ok(items);
             }
         }
-        Ok(all)
+    }
+
+    fn inventory_cursor(&self) -> Option<Box<dyn crate::InventoryCursor<HomeVolumeAttachment>>> {
+        Some(Box::new(inventory::Cursor::new(self.clone())))
     }
 
     async fn prepare(&self, request: &HomeVolumeRequest) -> Result<HomeVolumeReceipt> {
@@ -280,3 +267,6 @@ fn rejected(message: &str) -> AdapterError {
 #[cfg(test)]
 #[path = "home_volume_router_tests.rs"]
 mod tests;
+
+#[path = "home_volume_inventory.rs"]
+mod inventory;
