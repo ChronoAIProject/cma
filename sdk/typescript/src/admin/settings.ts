@@ -23,6 +23,7 @@ const pauseSeconds = (value: unknown) => {
   return number;
 };
 const sections = {
+  usage_reporting: object({ measured_visible: boolean }),
   defaults: object({
     sandbox_profile: profileReference,
     workspace_profile: profileReference,
@@ -42,7 +43,7 @@ const sections = {
   triggers: object({ enabled: boolean, orchestration_paused: boolean }),
   marketplace: object({ enabled: boolean }),
 };
-const knownSettings = object(sections);
+const knownSettings = object({ ...sections, usage_reporting: optional(sections.usage_reporting) });
 type KnownSettings = Output<typeof knownSettings>;
 export type PlatformSettings = KnownSettings & Readonly<Record<string, unknown>>;
 export function platformSettings(value: unknown): PlatformSettings {
@@ -51,6 +52,9 @@ export function platformSettings(value: unknown): PlatformSettings {
   return {
     ...raw,
     ...known,
+    ...(known.usage_reporting === undefined
+      ? {}
+      : { usage_reporting: { ...record(raw.usage_reporting), ...known.usage_reporting } }),
     defaults: {
       ...record(raw.defaults),
       ...known.defaults,
@@ -83,6 +87,7 @@ export const replaceSettingsRequest = object({
 export type ReplaceSettingsRequest = Output<typeof replaceSettingsRequest>;
 
 const patchFields = object({
+  usage_reporting: optional(sections.usage_reporting),
   expected_revision: integer,
   defaults: optional(sections.defaults),
   inactivity: optional(sections.inactivity),
