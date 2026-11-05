@@ -114,9 +114,9 @@ async fn finish(
     {
         return Err(SandboxStoreError::Conflict);
     }
-    let (_, current) = progress::current(database, &progress.agent_id, session).await?;
+    let (agent, current) = progress::current(database, &progress.agent_id, session).await?;
     let before = progress.clone();
-    match scrub(database, &current, &mut progress, session).await {
+    match scrub(database, &agent, &current, &mut progress, session).await {
         Ok(()) => {}
         Err(SandboxStoreError::Corrupt(_) | SandboxStoreError::SequenceConflict) => {
             progress = before;
@@ -148,11 +148,11 @@ async fn finish(
 
 async fn scrub(
     database: &Database,
+    agent: &layer2_core::sandbox::Agent,
     current: &Head,
     progress: &mut Progress,
     session: &mut ClientSession,
 ) -> Result<(), SandboxStoreError> {
-    let rebuilt = rebuild::head(progress);
     let captured = &progress.captured_head;
     if current.agent_id != captured.agent_id
         || current.incarnation != captured.incarnation
@@ -162,6 +162,23 @@ async fn scrub(
     {
         return Err(corrupt());
     }
+    // No active-tail source has been folded yet. Recapture it in this unit's
+    // snapshot if publication advanced it while we scrubbed sealed prefixes.
+    // A rollover makes the former tail a sealed unit; subsequent invocations
+    // continue from that unit without rescanning already certified segments.
+    if progress.next_ordinal == captured.active_ordinal
+        && (current != captured || agent != &progress.captured_agent)
+    {
+        if current != captured && current.revision == captured.revision {
+            return Err(corrupt());
+        }
+        progress.captured_head = current.clone();
+        progress.captured_agent = agent.clone();
+        progress.through_seq = current.last_seq;
+        progress.head_revision = current.revision;
+    }
+    let rebuilt = rebuild::head(progress);
+    let captured = &progress.captured_head;
     if database.collection::<Document>(SEGMENTS).find_one(doc! {
         "agent_id":&current.agent_id,"incarnation":&current.incarnation,"ordinal":{"$gte":current.active_ordinal},
     }).projection(doc! {"_id":1}).session(&mut *session).await.map_err(unavailable)?.is_some() {
@@ -216,7 +233,9 @@ async fn scrub(
     let mut rows = raw
         .find(doc! {"agent_id":&progress.agent_id,"seq":{"$gte":start,"$lte":end}})
         .sort(doc! {"seq":1})
-        .batch_size(1)
+        // Mongo additionally caps each reply by its BSON message budget. A
+        // fixed row batch avoids one round trip per event in a full segment.
+        .batch_size(128)
         .limit(MAX_ENTRIES + 1)
         .session(&mut *session)
         .await

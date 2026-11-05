@@ -237,6 +237,35 @@ async fn near_capacity_active_tail_uses_bounded_batches_with_authority_deadline_
             eprintln!("active_fixture large={large} rows={} queries={} bytes={} largest_reply={} elapsed_ms={}",
                 reads.source_rows, reads.queries, reads.reply_bytes, reads.largest_reply, started.elapsed().as_millis());
         }
+        *trace.lock().unwrap() = Reads::default();
+        let started = std::time::Instant::now();
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                segments::audit_unit(
+                    &client,
+                    &client.database(&name),
+                    agent.id.as_str(),
+                    "capacity",
+                    false
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap(),
+            "complete"
+        );
+        {
+            let reads = trace.lock().unwrap();
+            assert_eq!(reads.source_rows, source.len());
+            assert!(
+                reads.queries < 200,
+                "audit must batch its bounded source scan"
+            );
+            assert!(reads.largest_reply < 16 * 1024 * 1024 + 1024);
+            eprintln!("audit_fixture large={large} rows={} queries={} bytes={} largest_reply={} elapsed_ms={}",
+                reads.source_rows, reads.queries, reads.reply_bytes, reads.largest_reply, started.elapsed().as_millis());
+        }
         admin.database(&name).drop().await.unwrap();
     }
 }

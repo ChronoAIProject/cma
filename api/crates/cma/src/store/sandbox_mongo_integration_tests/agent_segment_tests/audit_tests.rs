@@ -74,7 +74,7 @@ async fn audit_quarantines_corruption_outside_an_earlier_successful_page() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
-async fn audit_validates_captured_aggregate_when_live_conversation_advances() {
+async fn audit_recaptures_changed_tail_without_restarting_sealed_prefix() {
     let (client, name) = database("segment_audit_movement").await;
     let db = client.database(&name);
     segments::migrate(&db).await.unwrap();
@@ -86,8 +86,8 @@ async fn audit_validates_captured_aggregate_when_live_conversation_advances() {
             .unwrap(),
         "running"
     );
-    // This later commit changes native identity. The audit must continue to
-    // certify the original aggregate and prefix, never today's aggregate.
+    // This later commit changes native identity. Only the unscanned active
+    // tail is recaptured; already checked sealed segments remain complete.
     let event = AgentLogEntry {
         agent_id: agent.id.clone(),
         seq: 7,
@@ -120,16 +120,152 @@ async fn audit_validates_captured_aggregate_when_live_conversation_advances() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(progress.get_i64("through_seq").unwrap(), 6);
-    assert_eq!(progress.get_i64("checked_entries").unwrap(), 6);
+    assert_eq!(progress.get_i64("through_seq").unwrap(), 7);
+    assert_eq!(progress.get_i64("checked_entries").unwrap(), 7);
+    assert_eq!(progress.get_i64("fence").unwrap(), 3);
+    assert_eq!(progress.get_i64("head_revision").unwrap(), 2);
+    let semantic: layer2_core::sandbox::AgentLogProjectionState =
+        bson::deserialize_from_document(progress.get_document("semantic").unwrap().clone())
+            .unwrap();
     assert_eq!(
-        progress
-            .get_document("semantic")
-            .unwrap()
-            .get("latest_conversation"),
-        Some(&Bson::Null)
+        semantic.latest_conversation,
+        Some(("fixture-native".into(), 1))
     );
     db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn audit_restart_checks_a_newly_sealed_tail_before_certifying_its_successor() {
+    for damage in [false, true] {
+        let (client, name) = database("segment_audit_rollover").await;
+        let db = client.database(&name);
+        segments::migrate(&db).await.unwrap();
+        let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+        let (agent, _) = segmented(&store, 1).await;
+        assert_eq!(
+            segments::audit_unit(&client, &db, agent.id.as_str(), "rollover", false)
+                .await
+                .unwrap(),
+            "running"
+        );
+        let filter = doc! {"_id":agent.id.as_str()};
+        let mut head = Head::read(
+            store
+                .segment_logs
+                .heads
+                .find_one(filter.clone())
+                .await
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        let raw: Vec<RawDocumentBuf> = store
+            .agent_log
+            .clone_with_type()
+            .find(doc! {"agent_id":agent.id.as_str(),"seq":{"$gte":head.active_start_seq}})
+            .sort(doc! {"seq":1})
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        let mut seal = Seal {
+            id: Seal::identity(agent.id.as_str(), &head.incarnation, head.active_ordinal),
+            format_version: 1,
+            agent_id: agent.id.0.clone(),
+            incarnation: head.incarnation.clone(),
+            ordinal: head.active_ordinal,
+            start_seq: head.active_start_seq,
+            end_seq: head.last_seq,
+            entry_count: head.active_count,
+            encoded_bytes: head.active_bytes,
+            previous_seal: head.previous_seal.clone(),
+            prefix_count: head.lifetime_count,
+            prefix_bytes: head.lifetime_bytes,
+            leaf_digests: digest::binary(
+                raw.iter()
+                    .enumerate()
+                    .flat_map(|(i, row)| {
+                        digest::leaf(
+                            agent.id.as_str(),
+                            &head.incarnation,
+                            head.active_start_seq + i as i64,
+                            row.as_bytes(),
+                        )
+                        .bytes
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            seal_digest: digest::binary(vec![]),
+            digest_version: digest::VERSION.into(),
+            sealing_operation: "fixture-rollover".into(),
+            source_format: "segmented_v1".into(),
+            storage_kind: "mongo".into(),
+        };
+        seal.seal_digest = seal.digest();
+        seal.validate().unwrap();
+        store
+            .segment_logs
+            .seals
+            .insert_one(bson::serialize_to_document(&seal).unwrap())
+            .await
+            .unwrap();
+        head.revision += 1;
+        head.active_ordinal += 1;
+        head.active_start_seq = head.last_seq + 1;
+        head.active_count = 0;
+        head.active_bytes = 0;
+        head.previous_seal = Some(seal.seal_digest);
+        head.validate().unwrap();
+        store
+            .segment_logs
+            .heads
+            .replace_one(filter.clone(), bson::serialize_to_document(&head).unwrap())
+            .await
+            .unwrap();
+        store
+            .agents
+            .update_one(filter, doc! {"$inc":{"agent_log_head_revision":1_i64}})
+            .await
+            .unwrap();
+        if damage {
+            store
+                .agent_log
+                .update_one(
+                    doc! {"agent_id":agent.id.as_str(),"seq":3_i64},
+                    doc! {"$set":{"record.appended_at":"2026-10-01T00:00:00Z"}},
+                )
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            segments::audit_unit(&client, &db, agent.id.as_str(), "rollover", false)
+                .await
+                .unwrap(),
+            if damage { "corrupt" } else { "running" }
+        );
+        if !damage {
+            assert_eq!(
+                segments::audit_unit(&client, &db, agent.id.as_str(), "rollover", false)
+                    .await
+                    .unwrap(),
+                "complete"
+            );
+            let progress = store
+                .segment_logs
+                .audits
+                .find_one(doc! {"agent_id":agent.id.as_str(),"audit_id":"rollover"})
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(progress.get_i64("fence").unwrap(), 3);
+            assert_eq!(progress.get_i64("next_ordinal").unwrap(), 3);
+            assert_eq!(progress.get_i64("checked_entries").unwrap(), 4);
+            assert_eq!(progress.get_i64("head_revision").unwrap(), 2);
+        }
+        db.drop().await.unwrap();
+    }
 }
 
 #[tokio::test]
