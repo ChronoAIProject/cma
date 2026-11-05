@@ -2930,6 +2930,16 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/github/tasks/{task_id}` | Read the durable admission task associated with a GitHub delivery. |
 <!-- openapi-operations:end -->
 
+GitHub storage initializes in the background when `CMAEG_GITHUB_ENABLED=true`.
+Until initialization succeeds, integration operations return 503 and the
+authenticated capability query reports `store_ready: false`; ordinary gateway
+readiness and channel operations remain independent. While the flag is disabled,
+channel writes introducing or changing a GitHub source return 400
+`invalid_request` with `/sources: github_writes_disabled`, even when dynamic
+source writes are enabled. Carrying retained sources through unchanged or
+removing them remains allowed. The flag grants no installation or execution
+authority.
+
 GitHub App registration derives ownership from creator authentication and returns
 201 on creation or 200 for an exact replay of the same `Idempotency-Key` and
 private request. A changed request under that owner/key returns 409 `conflict`.

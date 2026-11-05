@@ -18,7 +18,17 @@ and the goal-agent workflow remain later slices.
 When disabled, the gateway performs no GitHub schema updates, starts no GitHub
 worker and refuses integration operations with 503; the authenticated capability
 query remains available with `store_ready: false`. Existing records are retained.
-When enabled, startup uses the existing gateway Mongo connection and keyring.
+The same flag rejects channel writes that introduce or change a GitHub source,
+even when dynamic source writes are enabled. Unchanged retained sources and their
+removal remain allowed; disabling the flag does not make an old binary capable
+of reading GitHub source records already stored.
+Enabling GitHub in production establishes a rollback floor: every rollback
+image must include the GitHub source reader and these source-write, background
+initialization and source-selection fixes. Turning the flag off preserves data;
+it does not permit a rollback to an image below that floor.
+When enabled, initialization runs in the background after the HTTP listener binds,
+using the existing gateway Mongo connection and keyring. GitHub operations return
+503 until initialization succeeds; ordinary channel traffic can proceed meanwhile.
 Missing or version-1 `github_integrations` storage is prepared in service code:
 the record validator, owner/kind index and migration-marker validator are updated,
 then the version-2 marker is committed with majority acknowledgement. No stored
@@ -34,12 +44,17 @@ checks remain unchanged; a least-privilege runtime account can open prepared
 storage, but cannot initialize unprepared storage without the necessary authority.
 The retained CLI and role-printing commands remain explicit operator tools.
 
-Initialization has a 30-second bound. A failure keeps GitHub unavailable while
+Background initialization has a 30-second bound. A failure keeps GitHub unavailable while
 ordinary channels remain available, with a sanitized reason in startup logs.
+Database delays that clear within the bound allow GitHub to become ready without
+restarting the process. Startup work is cancelled on shutdown. No execution-group
+polling runs without configured execution routes; onboarding alone starts no scan.
 After correcting the cause, a subsequent startup resumes incomplete preparation.
 Concurrent startup reconciles a duplicate marker write against the majority-read
-current version before proceeding. Readiness is exposed only after storage checks
-pass. Rollback by disabling the flag preserves schema and records; re-enabling
+current version before proceeding. GitHub `store_ready` becomes true only after
+storage checks pass. `/readyz` remains the gateway readiness signal and does not
+fail ordinary channels because an optional GitHub integration is unavailable.
+Rollback by disabling the flag preserves schema and records; re-enabling
 uses them. Verify the deployed version, effective flag and
 `GET /v1/github/capabilities` before running the
 [signed-ping acceptance](CMAEG_GitHub_Online_Verification.md).

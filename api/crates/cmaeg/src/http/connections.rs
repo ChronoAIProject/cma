@@ -61,7 +61,7 @@ pub async fn capabilities(State(service): State<ConnectionService>, _creator: Cr
                 } else {
                     Vec::new()
                 };
-                if service.management.github.is_some() {
+                if service.management.github.get().is_some() {
                     features.push("github_native_receipts_v1".into());
                 }
                 features
