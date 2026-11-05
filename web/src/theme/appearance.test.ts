@@ -90,6 +90,25 @@ describe('stored appearance', () => {
 
     expect(storedAppearance()).toBe('dark');
   });
+
+  it('retains a System choice when storage writes are denied and follows OS changes', () => {
+    const system = stubSystem(false);
+    const stop = startAppearance();
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('denied', 'SecurityError');
+    });
+    try {
+      setAppearance('system');
+      expect(storedAppearance()).toBe('system');
+      expect(isDark()).toBe(false);
+      system.flip(true);
+      expect(isDark()).toBe(true);
+    } finally {
+      write.mockRestore();
+      setAppearance('dark');
+      stop();
+    }
+  });
 });
 
 describe('applying an appearance', () => {
