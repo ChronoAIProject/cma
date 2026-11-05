@@ -132,7 +132,10 @@ describe('ToolCallGroup', () => {
         call('edit', 'completed', {
           kind: 'edit',
           title: 'app.js',
-          output: { text: '--- app.js\n+++ app.js\n-old\n+one\n+two', truncated: false },
+          output: {
+            text: '--- app.js\n+++ app.js\n@@ -1 +1,2 @@\n-old\n+one\n+two',
+            truncated: false,
+          },
         }),
       ]),
     ).toBe('Edited app.js +2 −1');
