@@ -405,6 +405,9 @@ pub(super) fn funding_failure(error: FundingError) -> WorkerFailure {
         FundingError::Retryable(detail) => {
             WorkerFailure::retryable(&format!("prepaid Sandbox funding unavailable: {detail}"))
         }
+        FundingError::NotEnrolled => WorkerFailure::resource_quota(
+            "paid admission closed; existing funding must finish recovery and settlement",
+        ),
         FundingError::Unfunded(detail) => WorkerFailure::resource_quota(&format!(
             "prepaid Sandbox window was not funded: {detail}"
         )),

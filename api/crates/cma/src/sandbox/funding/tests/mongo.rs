@@ -6,6 +6,39 @@ use layer2_core::sandbox_usage_service::SandboxUsageStore as _;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn non_cohort_mongo_decision_survives_restart_and_is_not_due_for_funding() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable replica set required");
+    let client = mongodb::Client::with_uri_str(uri).await.unwrap();
+    let name = format!("cma_funding_cohort_{}", uuid::Uuid::new_v4().simple());
+    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let source = Arc::new(MongoFundingStateStore(store));
+    let fake = Harness::new();
+    let sandbox = fake.sandbox.clone();
+    let mut state = SandboxBillingState::new(&sandbox, 1);
+    source.save(&mut state).await.unwrap();
+    state.unbilled_generation = Some(1);
+    source.save(&mut state).await.unwrap();
+    assert!(source.due(500).await.unwrap().is_empty());
+    let reopened = Arc::new(MongoFundingStateStore(Arc::new(
+        MongoSandboxStore::open(&client, &name).await.unwrap(),
+    )));
+    assert_eq!(reopened.load(&sandbox.id).await.unwrap(), Some(state));
+    let adapter =
+        ProviderFundingAdapter::new(fake.provider.clone(), reopened, fake.control.clone());
+    assert_eq!(
+        adapter.ensure_coverage(&sandbox, at(500)).await.unwrap(),
+        None
+    );
+    adapter.settle(&sandbox, at(501)).await.unwrap();
+    assert_eq!(adapter.renew_due(at(800)).await.unwrap(), 0);
+    assert_eq!(fake.provider.quotes.load(Ordering::SeqCst), 0);
+    assert!(fake.provider.requests.lock().unwrap().is_empty());
+    assert!(fake.control.pauses.lock().unwrap().is_empty());
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn funding_mongo_cas_restart_retained_zero_evidence_and_due_recovery() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable replica set required");
     let client = mongodb::Client::with_uri_str(uri).await.unwrap();
