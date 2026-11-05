@@ -69,6 +69,9 @@ pub fn render(
                 definition.sources.iter().find_map(|source| match source {
                     Source::Custom {
                         prompt_template, ..
+                    }
+                    | Source::Github {
+                        prompt_template, ..
                     } => prompt_template.as_deref(),
                     _ => None,
                 }) {
@@ -156,4 +159,73 @@ pub(super) fn bounded(value: &str, max: usize) -> &str {
         end -= 1;
     }
     &value[..end]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cmaeg_core::{
+        activity::{ActivityKind, SourceKind},
+        channel::Source,
+        cloudevent::CloudEvent,
+    };
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn github_batch_event_reaches_agent_input() {
+        let record = crate::console::test_support::record(1);
+        let mut definition = crate::console::test_support::definition(&record, "owner-1", "github");
+        definition.sources = vec![Source::Github {
+            app_ref: "pilot".into(),
+            installation_ids: vec![7],
+            repository_ids: vec![42],
+            deny_repository_ids: Vec::new(),
+            events: vec!["issues".into()],
+            actions: vec!["opened".into()],
+            prompt_template: None,
+        }];
+
+        let mut activity = crate::console::test_support::activity("github-event-1");
+        activity.kind = ActivityKind::Event {
+            ce: CloudEvent {
+                specversion: "1.0".into(),
+                id: "delivery-1".into(),
+                source: "github://app/pilot".into(),
+                r#type: "com.github.batch".into(),
+                time: None,
+                subject: Some("repo:42".into()),
+                datacontenttype: Some("application/json".into()),
+                dataschema: None,
+                data: Some(json!({
+                    "batch_id": "batch-1",
+                    "events": [{"repository_id": 42, "action": "opened"}],
+                })),
+                extensions: BTreeMap::new(),
+            },
+            attachments: Vec::new(),
+        };
+        activity.source = SourceKind::Github {
+            app_ref: "pilot".into(),
+            installation_id: 7,
+            repository_id: 42,
+        };
+
+        let rendered = render(
+            &activity,
+            &definition,
+            &RenderMedia::empty(None),
+            Audience {
+                tools: false,
+                downloads: false,
+            },
+        );
+        let text = rendered[0]["content"][0]["text"]
+            .as_str()
+            .expect("rendered input text");
+
+        assert!(text.starts_with("Event com.github.batch from github://app/pilot:"));
+        assert!(text.contains("batch-1"));
+        assert!(text.contains("repository_id"));
+    }
 }
