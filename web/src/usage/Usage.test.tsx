@@ -1,12 +1,10 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 import { operatorClient } from '../operator/testFixtures';
 import { SandboxUsagePanel } from './SandboxUsagePanel';
 import { AdminSandboxUsage } from './AdminSandboxUsage';
 import { chooseOptionValue } from '../test/select';
-import { Settings } from './Settings';
-import { parseRoute, routePath } from '../routing/routes';
 
 const totals = {
   uptime_seconds: 3661,
@@ -188,19 +186,4 @@ it('reports missing history and retries failed usage reads without presenting a 
   expect(screen.queryByText('0 core-hours')).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Refresh usage' }));
   await screen.findByText('Some usage history is unavailable');
-});
-
-it('restores the Usage settings tab from its URL and supports tab keyboard navigation', async () => {
-  const api = client();
-  const navigate = vi.fn();
-  const user = userEvent.setup();
-  expect(parseRoute('/settings/usage')).toEqual({ kind: 'settings', tab: 'usage' });
-  expect(routePath({ kind: 'settings', tab: 'usage' })).toBe('/settings/usage');
-  render(<Settings client={api} tab="usage" onNavigate={navigate} />);
-  await screen.findByRole('button', { name: 'Research' });
-  const tab = screen.getByRole('tab', { name: 'Usage' });
-  expect(tab).toHaveAttribute('aria-selected', 'true');
-  tab.focus();
-  await user.keyboard('{ArrowLeft}');
-  expect(navigate).toHaveBeenCalledWith({ kind: 'settings', tab: 'general' });
 });

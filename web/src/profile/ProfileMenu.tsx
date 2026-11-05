@@ -1,13 +1,10 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { User } from '../auth/types';
 import { canOpenOperations } from '../operator/capabilities';
 import type { AppRoute } from '../routing/routes';
 import { Menu, type MenuEntry } from '../ui/Menu';
 import {
-  IconDarkOutline16,
   IconBrowseOutline16,
-  IconFollowsystemOutline16,
-  IconLightOutline16,
   IconCopyOutline16,
   IconRightUpOutline16,
   IconSettingsOutline16,
@@ -16,8 +13,7 @@ import {
   APPEARANCE_ORDER,
   appearanceLabel,
   setAppearance,
-  storedAppearance,
-  type Appearance,
+  useAppearance,
 } from '../theme/appearance';
 import { BUILD } from '../shell/build';
 import './ProfileMenu.css';
@@ -38,7 +34,7 @@ interface ProfileMenuProps {
 const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
   docs: { kind: 'docs' },
   operations: { kind: 'operations' },
-  settings: { kind: 'settings', tab: 'general' },
+  usage: { kind: 'usage' },
 };
 
 export function initialsFor(user: Pick<User, 'displayName' | 'email' | 'handle'>): string {
@@ -51,30 +47,30 @@ export function initialsFor(user: Pick<User, 'displayName' | 'email' | 'handle'>
     : source.slice(0, 2).toUpperCase();
 }
 
-function appearanceIcon(appearance: Appearance) {
-  if (appearance === 'light') return <IconLightOutline16 />;
-  if (appearance === 'dark') return <IconDarkOutline16 />;
-  return <IconFollowsystemOutline16 />;
-}
-
 export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
-  const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
+  const appearance = useAppearance();
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [avatarBroken, setAvatarBroken] = useState(false);
   const [copied, setCopied] = useState(false);
   const textSize = useSystemTextSize();
   const canOperate = canOpenOperations(user.capabilities);
   const items: MenuEntry[] = [
     { id: 'docs', icon: <IconBrowseOutline16 />, label: 'Docs' },
-    { id: 'settings', icon: <IconSettingsOutline16 />, label: 'Settings' },
+    { id: 'usage', icon: <IconSettingsOutline16 />, label: 'Usage' },
     ...(canOperate
       ? [{ id: 'operations', icon: <IconSettingsOutline16 />, label: 'Operations' }]
       : []),
     { type: 'separator', id: 'before-preferences' },
     {
+      type: 'choices',
       id: 'appearance',
-      icon: appearanceIcon(appearance),
-      label: `Appearance: ${appearanceLabel(appearance)}`,
+      text: 'Appearance',
+      selectedId: `appearance-${appearance}`,
+      choices: APPEARANCE_ORDER.map((value) => ({
+        id: `appearance-${value}`,
+        label: appearanceLabel(value),
+      })),
     },
     {
       type: 'choices',
@@ -104,14 +100,13 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
     const route = MENU_ROUTES[id];
     if (route !== undefined) {
       setOpen(false);
+      triggerRef.current?.focus();
       onNavigate?.(route);
       return;
     }
-    if (id === 'appearance') {
-      const at = APPEARANCE_ORDER.indexOf(appearance);
-      const next = APPEARANCE_ORDER[(at + 1) % APPEARANCE_ORDER.length] ?? 'system';
-      setLocalAppearance(next);
-      setAppearance(next);
+    const chosenAppearance = APPEARANCE_ORDER.find((value) => id === `appearance-${value}`);
+    if (chosenAppearance) {
+      setAppearance(chosenAppearance);
       return;
     }
     if (id === 'build') {
@@ -147,11 +142,11 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
         <button
           type="button"
           className="profile__trigger"
+          ref={triggerRef}
           aria-haspopup="menu"
           aria-expanded={open}
           aria-label={`Account menu for ${user.displayName ?? user.handle}`}
           onClick={() => {
-            if (!open) setLocalAppearance(storedAppearance());
             setOpen((wasOpen) => !wasOpen);
           }}
         >
