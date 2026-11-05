@@ -96,6 +96,8 @@ const PROFILE_COLLECTIONS: &[&str] = &[
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(crate) writer_policy:
+        std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub(super) bindings: super::bindings::BindingCollections,
     pub(super) client: Client,
     pub(super) checkpoint_objects: MongoCheckpointObjectStore,
@@ -176,6 +178,7 @@ impl MongoSandboxStore {
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            writer_policy: Default::default(),
             bindings: super::bindings::BindingCollections::open(&database).await?,
             client: client.clone(),
             checkpoint_objects,
@@ -253,6 +256,7 @@ impl MongoSandboxStore {
             .map_err(|error| unavailable("Agent access tool index", error))?;
         super::trigger_first_messages::ensure_indexes(&store).await?;
         super::agent_log::ensure_indexes(&store.agent_log).await?;
+        super::agent_task_status::ensure_indexes(&store.agent_log).await?;
         super::suggestions::ensure_indexes(&store.suggestions).await?;
         super::agent_channel_usage::ensure_indexes(&store.channel_usage_events).await?;
         super::agent_commands::ensure_indexes(&store.agent_commands).await?;

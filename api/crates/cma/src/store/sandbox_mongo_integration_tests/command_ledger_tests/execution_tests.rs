@@ -18,6 +18,9 @@ use super::*;
 #[path = "resource_execution_tests.rs"]
 mod resource_execution;
 
+#[path = "capacity_execution_tests.rs"]
+mod capacity_execution;
+
 struct Authority(Mutex<Result<Caller, CommandAuthorizationError>>);
 #[async_trait::async_trait]
 impl AgentCommandAuthorizer for Authority {

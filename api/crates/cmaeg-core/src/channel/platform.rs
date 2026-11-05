@@ -67,7 +67,7 @@ impl ChannelDefinition {
                 super::LarkRegion::Feishu => Platform::Feishu,
             }),
             Source::Whatsapp { .. } => Some(Platform::Whatsapp),
-            Source::Custom { .. } => None,
+            Source::Custom { .. } | Source::Github { .. } => None,
         })
     }
 }

@@ -1,5 +1,7 @@
 use super::*;
 
+mod maintenance;
+
 use layer2_core::sandbox::store::{
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome, SandboxLifecycleAgentScope,
     SandboxLifecycleExecutionStore, SandboxLifecycleMutation, SandboxMutationGuard,

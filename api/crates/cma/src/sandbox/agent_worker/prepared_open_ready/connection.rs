@@ -27,91 +27,94 @@ impl AgentWorker {
         else {
             return Ok(());
         };
-        if agent.work.step != AgentWorkStep::PublishConnection {
-            // A concurrent command may have scheduled cleanup before our claim.
-            return Box::pin(self.execute(agent, now + started.elapsed())).await;
-        }
-        let context = self
-            .prepared_connection_context(&agent, observed)
-            .await
-            .ok()
-            .flatten();
-        // Parent reads may stall beyond the new lease. Do not activate or fall
-        // back with expired authority; durable PublishConnection remains due.
-        if !agent
-            .work
-            .lease
-            .as_ref()
-            .is_some_and(|lease| live_lease(lease, &self.config.holder, now + started.elapsed()))
-        {
-            return Err(SandboxStoreError::Conflict);
-        }
-        let transferred = context.as_ref().and_then(|context| {
-            if !same_opened_agent(opened, &agent, original)
-                || validated_open_request(&agent, context).is_err()
-            {
-                return None;
+        let claimed = agent.clone();
+        let result = async {
+            if agent.work.step != AgentWorkStep::PublishConnection {
+                // A concurrent command may have scheduled cleanup before our claim.
+                return Box::pin(self.execute(agent, now + started.elapsed())).await;
             }
-            let previous = original.identity();
-            let target = LiveAgentTarget {
-                agent_id: agent.id.clone(),
-                conversation_id: previous.conversation_id.clone(),
-                runtime_generation: previous.runtime_generation,
+            let context = self
+                .prepared_connection_context(&agent, observed)
+                .await
+                .ok()
+                .flatten();
+            // Parent reads may stall beyond the new lease. Do not activate or fall
+            // back with expired authority; durable PublishConnection remains due.
+            if !agent.work.lease.as_ref().is_some_and(|lease| {
+                live_lease(lease, &self.config.holder, now + started.elapsed())
+            }) {
+                return Err(SandboxStoreError::Conflict);
+            }
+            let transferred = context.as_ref().and_then(|context| {
+                if !same_opened_agent(opened, &agent, original)
+                    || validated_open_request(&agent, context).is_err()
+                {
+                    return None;
+                }
+                let previous = original.identity();
+                let target = LiveAgentTarget {
+                    agent_id: agent.id.clone(),
+                    conversation_id: previous.conversation_id.clone(),
+                    runtime_generation: previous.runtime_generation,
+                };
+                let staged = self
+                    .dependencies
+                    .registry
+                    .staged_attachment(&target, previous.authority_fence)
+                    .ok()??;
+                if staged.identity() != previous {
+                    return None;
+                }
+                let fence = claimed_fence(&agent, &self.config.holder).ok()?;
+                let transferred = self
+                    .dependencies
+                    .registry
+                    .staged_attachment(&target, fence)
+                    .ok()??;
+                let current = transferred.identity();
+                (current.nonce == previous.nonce
+                    && current.conversation_id == previous.conversation_id
+                    && current.runtime_generation == previous.runtime_generation)
+                    .then_some(transferred)
+            });
+            let Some(attachment) = transferred else {
+                return self
+                    .publish_connection(agent, now + started.elapsed())
+                    .await;
             };
-            let staged = self
+            if self
                 .dependencies
                 .registry
-                .staged_attachment(&target, previous.authority_fence)
-                .ok()??;
-            if staged.identity() != previous {
-                return None;
+                .publish_and_activate(&attachment)
+                .is_err()
+            {
+                return self
+                    .publish_connection(agent, now + started.elapsed())
+                    .await;
             }
-            let fence = claimed_fence(&agent, &self.config.holder).ok()?;
-            let transferred = self
-                .dependencies
-                .registry
-                .staged_attachment(&target, fence)
-                .ok()??;
-            let current = transferred.identity();
-            (current.nonce == previous.nonce
-                && current.conversation_id == previous.conversation_id
-                && current.runtime_generation == previous.runtime_generation)
-                .then_some(transferred)
-        });
-        let Some(attachment) = transferred else {
-            return self
-                .publish_connection(agent, now + started.elapsed())
-                .await;
-        };
-        if self
-            .dependencies
-            .registry
-            .publish_and_activate(&attachment)
-            .is_err()
-        {
-            return self
-                .publish_connection(agent, now + started.elapsed())
-                .await;
+            self.finish_connection_publication(agent, &attachment, now + started.elapsed())
+                .await?;
+            let identity = attachment.identity();
+            let live_connected =
+                self.dependencies
+                    .registry
+                    .published_target_is_attached(&LiveAgentTarget {
+                        agent_id: identity.agent_id.clone(),
+                        conversation_id: identity.conversation_id,
+                        runtime_generation: identity.runtime_generation,
+                    });
+            tracing::info!(
+                agent_id = %identity.agent_id,
+                authority_fence = identity.authority_fence,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                live_connected,
+                "Prepared Agent connection publication completed"
+            );
+            Ok(())
         }
-        self.finish_connection_publication(agent, &attachment, now + started.elapsed())
-            .await?;
-        let identity = attachment.identity();
-        let live_connected =
-            self.dependencies
-                .registry
-                .published_target_is_attached(&LiveAgentTarget {
-                    agent_id: identity.agent_id.clone(),
-                    conversation_id: identity.conversation_id,
-                    runtime_generation: identity.runtime_generation,
-                });
-        tracing::info!(
-            agent_id = %identity.agent_id,
-            authority_fence = identity.authority_fence,
-            elapsed_ms = started.elapsed().as_millis() as u64,
-            live_connected,
-            "Prepared Agent connection publication completed"
-        );
-        Ok(())
+        .await;
+        self.finish_capacity_attempt(&claimed, result, now + started.elapsed())
+            .await
     }
 
     async fn prepared_connection_context(
