@@ -89,7 +89,7 @@ async fn apply(
         seq,
         at,
         (seq, previous_revision),
-        false,
+        crate::store::sandbox_usage::UsageObservation::Lifecycle,
     )
     .await
 }
@@ -127,7 +127,7 @@ pub(in crate::store) async fn record_saved(
         seq,
         &sandbox.updated_at,
         (seq, expected_revision),
-        false,
+        crate::store::sandbox_usage::UsageObservation::Lifecycle,
     )
     .await
 }
