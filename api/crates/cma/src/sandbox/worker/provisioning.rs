@@ -56,12 +56,21 @@ impl SandboxWorker {
             .runtime_image
             .clone()
             .unwrap_or_else(|| self.config.runtime_version.clone());
-        match self
-            .dependencies
-            .adapter
-            .provision_runtime(&RuntimeProvisionRequest::new(generation, spec))
+        let funded_until = match self
+            .funding
+            .ensure_coverage(&sandbox, SystemTime::now())
             .await
         {
+            Ok(coverage) => coverage,
+            Err(error) => {
+                return self
+                    .retry_failure(sandbox, super::support::funding_failure(error), now)
+                    .await
+            }
+        };
+        let mut request = RuntimeProvisionRequest::new(generation, spec);
+        request.funded_until = funded_until;
+        match self.dependencies.adapter.provision_runtime(&request).await {
             Ok(handle) => {
                 timing.completed("runtime_provision");
                 let boot_id = match crate::sandbox::runtime_attachment::provisioned_runtime_status(

@@ -1030,6 +1030,10 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_USAGE_LAGO_API_URL` | Complete HTTPS API base ending `/api/v1`; required when usage billing is enabled. Supply the effective API path used by NyxID, including any reverse-proxy prefix. |
 | `CHRONO_USAGE_LAGO_PLAN_CODE` | Existing NyxID Lago plan code, normally `starter`. Never creates customers, subscriptions, prices or wallets. |
 | `CHRONO_USAGE_LAGO_API_KEY` | Secret reference for that Lago organization. Required when usage billing is enabled; never exposed to browsers or Sandbox runtimes. |
+| `CHRONO_NYXID_SANDBOX_BILLING_ENABLED` | Default false. Enables NyxID prepaid Sandbox quotes, finite windows, renewal and retained evidence admission. Keep false until the NyxID producer contract and all readers are deployed. |
+| `CHRONO_NYXID_SANDBOX_BILLING_BASE_URL` | HTTPS NyxID producer API base ending `/api/v1/billing/sandboxes`; credentials and query strings are rejected. |
+| `CHRONO_NYXID_SANDBOX_BILLING_PRODUCER_ID` | Canonical UUID v4 of the General-purpose producer service account, used for diagnostics. NyxID verifies producer identity from its JWT; this setting grants no authority. |
+| `CHRONO_NYXID_SANDBOX_BILLING_CREDENTIAL_REF` | Environment variable name populated through secret injection with a General-purpose service-account JWT scoped to `billing:sandbox:write`. CMA resolves it at request time; no credential value is stored in config or receipts. |
 | `CHRONO_SERVER_TRUSTED_PROXY_CIDRS` | Exact trusted load-balancer peers; empty by default, production explicit |
 | `CHRONO_SERVER_TRUSTED_PROXY_HOPS` | Trusted rightmost forwarded hops, 1-16; default 1 |
 | `CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS` | Empty or the complete build-pinned set; must not overlap trusted peer ranges |
