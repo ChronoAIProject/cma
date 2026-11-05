@@ -2681,7 +2681,8 @@ full command/path and recorded output or diff. Removed/added diff lines use
 danger/success ink with −/+ markers. Failures show the error text in danger ink.
 The Terminal jump is independent of expansion: it opens Terminal, scrolls the
 matching command to 16px below its scrollport top and fades a highlight over
-1.8s. Tool duration is never guessed from render time.
+1.8s. Terminal reserves trailing space when needed to align even its final command
+16px below the scrollport top. Tool duration is never guessed from render time.
 
 One bottom conversation status reads [logo] Thinking <elapsed> · View activity,
 updating its recorded-start clock once a second. Thinking may shimmer: this is
@@ -2706,7 +2707,10 @@ The Screen-only control bar says “Agent is in control · Working in <app>” o
 “Agent paused · Desktop is idle”, with a solid contrast Take control action.
 This intentionally supersedes the generic dark lime primary: control is a
 high-contrast action beside the picture, with the inverse light fill in dark.
-Takeover still requires the existing confirmed lease and permission.
+Browser takeover still requires the existing confirmed lease and permission.
+Native desktop input uses the authorized desktop connection: Take control enables
+input explicitly, including during a turn, and Return to Agent releases held keys
+and pointer buttons. Reconnection never restores input automatically.
 
 Screen operations form their own collapsed group, for example “Checked it in
 Browser · 3 steps 19s”. Each noninteractive row has an action icon, description
@@ -5987,3 +5991,5 @@ saving. Use existing form spacing, labels and validation; introduce no new token
 | 2026-11-06 | Add an editable channel queue wait limit with a five-minute default, a one-day maximum and explicit never-started expiry behavior; preserve the existing Agent destination. |
 
 | 2026-11-06 | Keep negative feedback editable through its selected icon, with vote removal inside the reasons dialog and one named Close action; preserve the compact three-icon answer footer. |
+
+| 2026-11-06 | Reserve trailing Terminal space for the final-command jump and document explicit native desktop input and return while preserving browser lease authority and reconnect behavior. |
