@@ -285,3 +285,21 @@ pub(super) fn bounded(mut value: String, limit: usize) -> String {
     value.truncate(end);
     value
 }
+
+pub(super) fn recorded_tool_output(
+    fields: &layer3_adapter::ToolCallUpdateFields,
+) -> Option<super::RecordedToolOutput> {
+    let mut text = String::new();
+    let mut reported = false;
+    let mut truncated = false;
+    for block in layer3_adapter::reported_tool_text(fields) {
+        if reported {
+            truncated |= text.len() == 16 * 1024;
+            append_bounded(&mut text, "\n", 16 * 1024);
+        }
+        reported = true;
+        truncated |= text.len().saturating_add(block.len()) > 16 * 1024;
+        append_bounded(&mut text, block.as_ref(), 16 * 1024);
+    }
+    reported.then_some(super::RecordedToolOutput { text, truncated })
+}
