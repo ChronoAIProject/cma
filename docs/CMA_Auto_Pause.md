@@ -57,16 +57,50 @@ field when a preference has been explicitly set.
 
 ## Compatibility and rollout
 
-The settings document and Sandbox aggregate use additive fields with defaults;
-older records remain readable. The new SDK fields are optional on the TypeScript
-reader so clients can preserve unknown fields while a rolling deployment is in
-progress. No billing collections, runtime image pins, homes or conversation
-records are changed by this feature.
+The persisted fields added by #1341 were audited against predecessor
+`d50bbe72d`. New readers accept old records with defaults. Old readers require
+neutral values to be omitted; merely defaulting them on read is insufficient.
 
-Deploy with the setting off. During production verification, read the settings
-revision and maintenance inventory, confirm no automatic decisions occur while
-off, then enable a reviewed threshold. Verify the full grace period, an idle
-existing Sandbox, an active turn, queued work, an Always on Sandbox, explicit and
-message resume, preview, and the confirmed immediate action. Observe decision
-logs and metrics alongside API latency and Mongo checkout health. The feature
-stays off until the owner explicitly enables it.
+| Persisted field / record | Neutral write and predecessor reader |
+| --- | --- |
+| `platform_settings.settings.inactivity.auto_pause_enabled` | `false` is omitted. The predecessor's `InactivitySettings` denies unknown fields. `true` must remain stored. |
+| `platform_settings.settings.inactivity.grace_started_at` | `None` is omitted. The settings service clears it while disabled, including threshold edits; enabled policies retain the timestamp. The predecessor rejects any stored timestamp. |
+| `SandboxProfileSnapshot.always_on` | `None` is omitted everywhere snapshots are serialized, including Sandbox aggregates, retained warm plans and admissions. Both `Some(true)` and `Some(false)` persist: an explicit preference differs from absence. The predecessor snapshot reader denies unknown fields. |
+| `sandboxes.desktop_activity_fence` | Absent until a desktop lease operation increments it. This is outer query metadata, outside the typed `record`; the predecessor reads named metadata fields and ignores this counter. No neutral counter is initialized. |
+| `sandbox_sessions` (`_id`, `sandbox_id`, `lease_expires_at`) | New collection and expiry index; the predecessor never reads it. Desktop activity may create these records while auto-pause is off. |
+
+`MongoPlatformSettingsStore` replaces the complete `settings` value using a
+literal in its update pipeline. Consequently a disabled save omits both new
+keys and removes any previously stored grace/enablement keys; a separate
+`$unset` stage is unnecessary. Sandbox creation and replacement likewise
+serialize the complete profile snapshot, preserving omission of `None`.
+The profile-store extraction changes no draft/revision schema. The new
+`SandboxAgentActivity` flags and `SandboxInactivityPauseRequest.auto_pause_enabled`
+are transient evidence/request fields, not persisted records. Pause lifecycle
+records retain their existing shape.
+
+Deploy with auto-pause off and leave Always on preferences unset. Under those
+conditions ordinary settings and Sandbox saves remain readable by the
+predecessor during rolling overlap and rollback. API responses still expose
+the explicit policy boolean through their existing response projection.
+No billing collections, runtime image pins, homes or conversation records are
+changed by this compatibility correction.
+
+Enabling auto-pause or writing an explicit Always on preference (including
+`false`) raises the rollback floor to this release. Wait until predecessor pods
+have drained before either action. Turning auto-pause off clears its settings
+keys, but does not remove explicit Sandbox preferences or establish that all
+retained records are predecessor-compatible. Retain a recovery image from this
+release or later after these writes; do not discard preference/history records
+to force an older image to read them. There is no additional feature gate.
+
+For production verification, the release lead should confirm that the settings
+document's key shape is unchanged after an ordinary save with auto-pause off,
+and that old pods remain healthy during rolling overlap, without typed-reader
+errors. Keep auto-pause off and Always on unset throughout this release's
+verification. This checklist is not evidence of an executed production write.
+
+After separate owner approval, enable a reviewed threshold and verify the full
+grace period, an idle existing Sandbox, an active turn, queued work, an Always
+on Sandbox, explicit and message resume, preview, and the confirmed immediate
+action. Observe decision logs alongside API latency and Mongo checkout health.
