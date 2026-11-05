@@ -21,7 +21,7 @@ impl SuggestionGenerator for CompletedModel {
 async fn contextual_suggestions_mongo_completed_message_retains_observed_receipt_and_generates_next_suggestion(
 ) {
     let (client, name) = database("ticket19_completed_operation").await;
-    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let store = Arc::new(enabled_store(&client, &name).await);
     let (parent, mut agent) = seed(
         &store,
         "completed-operation",

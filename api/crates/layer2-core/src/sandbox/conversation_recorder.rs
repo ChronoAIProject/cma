@@ -33,6 +33,7 @@ pub use live::{AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription};
 pub struct DurableAgentUpdateRecorder {
     store: Arc<dyn AgentConversationUpdateStore>,
     live: live::AgentLiveHub,
+    writer_policy: Arc<super::task_experience::TaskExperiencePolicy>,
 }
 
 impl DurableAgentUpdateRecorder {
@@ -40,8 +41,19 @@ impl DurableAgentUpdateRecorder {
     where
         S: AgentConversationUpdateStore + 'static,
     {
+        Self::with_writer_policy(store, Arc::default())
+    }
+
+    pub fn with_writer_policy<S>(
+        store: Arc<S>,
+        writer_policy: Arc<super::task_experience::TaskExperiencePolicy>,
+    ) -> Arc<Self>
+    where
+        S: AgentConversationUpdateStore + 'static,
+    {
         Arc::new(Self {
             store,
+            writer_policy,
             live: live::AgentLiveHub::default(),
         })
     }
@@ -337,7 +349,16 @@ impl DurableAgentUpdateRecorder {
                 }
             }
             let folded = match &update {
-                Some(update) => fold_update(&current, &recovered, update.clone(), &appended_at)?,
+                Some(update) => fold_update(
+                    &current,
+                    &recovered,
+                    update.clone(),
+                    &appended_at,
+                    self.writer_policy.allows_writer(
+                        &current.owner,
+                        super::task_experience::TaskExperienceWriter::ToolOutput,
+                    ),
+                )?,
                 None => FoldedConversationUpdate::Quiet(recovered.clone()),
             };
             let (next_agent, mut next_assembly, logs, turn_closed) = match folded {
