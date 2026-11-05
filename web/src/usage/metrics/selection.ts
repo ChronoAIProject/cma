@@ -65,3 +65,10 @@ export function useUsageSelection(admin: boolean) {
   );
   return [selection, update] as const;
 }
+
+/** Old measured sort links cannot request hidden measurement-based ordering. */
+export function allocationSelection(selection: Selection): Selection {
+  if (!['cpu_mean_cores', 'memory_mean_bytes', 'disk_latest_bytes'].includes(selection.sort))
+    return selection;
+  return { ...selection, sort: 'last_activity_at', order: 'desc' };
+}
