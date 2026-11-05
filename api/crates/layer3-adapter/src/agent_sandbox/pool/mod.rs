@@ -262,3 +262,9 @@ mod selection_read_tests;
 
 #[cfg(test)]
 mod drain_tests;
+
+mod claim_inventory;
+mod home_inventory;
+
+#[cfg(test)]
+mod home_inventory_tests;
