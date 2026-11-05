@@ -252,3 +252,34 @@ fn sandbox_usage_runtime_release_during_pause_records_a_pause_edge() {
         .unwrap();
     assert_eq!(paused.totals.uptime_seconds, 30);
 }
+
+#[test]
+fn funded_zero_tail_is_observed_once_without_enabling_idle_periodic_events() {
+    let mut value = sandbox();
+    value.runtime = None;
+    value.status = SandboxStatus::Retired;
+    let (initial, _) = observe(None, &value, 1, &at(0), false).unwrap().unwrap();
+    assert!(observe(Some(&initial), &value, 1, &at(300), true)
+        .unwrap()
+        .is_none());
+    let (closed, event) = observe_funded_checkpoint(Some(&initial), &value, 1, &at(300))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (event.started_at, event.ended_at),
+        (timestamp(&at(0)).unwrap(), timestamp(&at(300)).unwrap())
+    );
+    assert_eq!(event.allocation, Allocation::default());
+    assert_eq!(event.quantity, UsageTotals::default());
+    assert_eq!(closed.totals, initial.totals);
+    assert!(
+        observe_funded_checkpoint(Some(&closed), &value, 1, &at(300))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        observe_funded_checkpoint(Some(&closed), &value, 1, &at(200))
+            .unwrap()
+            .is_none()
+    );
+}
