@@ -206,6 +206,7 @@ impl HostedDeployment {
         }
 
         let mut request = ProviderSandboxRequest {
+            funded_until: None,
             image: ProviderImage {
                 uri: image_uri.to_owned(),
             },
@@ -297,6 +298,7 @@ pub(crate) fn provider_request_fingerprint(
 ) -> crate::Result<String> {
     request.validate_volumes()?;
     let ProviderSandboxRequest {
+        funded_until: _,
         image,
         entrypoint,
         env,
