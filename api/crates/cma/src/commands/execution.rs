@@ -24,11 +24,15 @@ impl ResourceCommandExecution {
         command: &AdmittedAgentCommand,
     ) -> Result<CommandExecutionAuthorization, CommandReadiness> {
         command.validate().map_err(|_| CommandReadiness::Retry)?;
-        let mut authority = self
-            .authority
-            .authorize_resource_command(&self.access, &command.receipt.envelope)
-            .await
-            .map_err(authority_readiness)?;
+        let mut authority = observe_command_preparation(
+            command,
+            "command_authorization",
+            self.authority
+                .authorize_resource_command(&self.access, &command.receipt.envelope),
+            authorization_error_kind,
+        )
+        .await
+        .map_err(authority_readiness)?;
         if command.receipt.envelope.continuation.is_some() {
             let source = self.source_guard.clone().ok_or(CommandReadiness::Reject(
                 CommandFailureCode::AuthorityRevoked,
@@ -130,14 +134,27 @@ impl AgentCommandExecution for ResourceCommandExecution {
         {
             return;
         }
-        let Ok(authority) = self
-            .authority
-            .authorize_command_revival(&self.access, &current)
-            .await
+        let Ok(authority) = observe_command_preparation(
+            &current,
+            "revival_authorization",
+            self.authority
+                .authorize_command_revival(&self.access, &current),
+            authorization_error_kind,
+        )
+        .await
         else {
             return;
         };
-        let _ = self.context.prepare_command_input(authority).await;
+        let _ = observe_command_preparation(
+            &current,
+            "revival_preparation",
+            self.context.prepare_command_input(authority),
+            |error| match error {
+                layer2_core::sandbox::AgentContextError::Lifecycle(error) => error.code(),
+                _ => "context_unavailable",
+            },
+        )
+        .await;
     }
 
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {
@@ -230,5 +247,17 @@ fn authority_readiness(error: ResourceCommandAuthorizationError) -> CommandReadi
             ResourceAccessStoreError::NotFound,
         )) => CommandReadiness::Reject(CommandFailureCode::AgentUnavailable),
         _ => CommandReadiness::Retry,
+    }
+}
+
+fn authorization_error_kind(error: &ResourceCommandAuthorizationError) -> &'static str {
+    match error {
+        ResourceCommandAuthorizationError::Custody(CommandAuthorizationError::Revoked) => {
+            "custody_revoked"
+        }
+        ResourceCommandAuthorizationError::Custody(CommandAuthorizationError::Unavailable) => {
+            "custody_unavailable"
+        }
+        ResourceCommandAuthorizationError::Resource(error) => command_access_error_kind(error),
     }
 }

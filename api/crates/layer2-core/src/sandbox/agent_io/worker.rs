@@ -135,6 +135,16 @@ impl AgentCommandWorker {
                     CommandReadiness::Retry
                 })
         };
+        if readiness != CommandReadiness::Ready {
+            tracing::warn!(
+                event = "command_readiness",
+                command_id = %id,
+                agent_id = %candidate.receipt.envelope.agent_id,
+                outcome = ?readiness,
+                timed_out = readiness_timed_out,
+                "Queued command is not ready"
+            );
+        }
         match readiness {
             CommandReadiness::Ready => {}
             CommandReadiness::Retry => {
@@ -189,7 +199,15 @@ impl AgentCommandWorker {
             {
                 return Ok(Duration::ZERO);
             }
-            let _ = tokio::time::timeout(IO_BOUND, self.execution.prepare_queued(&current)).await;
+            if tokio::time::timeout(IO_BOUND, self.execution.prepare_queued(&current))
+                .await
+                .is_err()
+            {
+                tracing::warn!(event = "command_preparation", command_id = %id,
+                    agent_id = %current.receipt.envelope.agent_id,
+                    boundary = "prepare_queued", error_kind = "timed_out",
+                    "Queued command preparation exceeded its IO bound");
+            }
             // Channel preparation or an explicit interruption may have just
             // cancelled the active turn. Revisit its replacement promptly,
             // still reacquiring authority and the lane on the next attempt.
