@@ -242,6 +242,7 @@ pub(crate) async fn serve(
             .map(|composition| composition.ingress.clone()),
     )
     .with_activity_observer(observers.activity.clone());
+    source_settings::attach_github(&mut state, &ingress)?;
     let tools_state = tools::ToolsState {
         native_typing,
         native_lark_conversation_history: source_settings::lark_history(
@@ -349,6 +350,10 @@ pub(crate) async fn serve(
     let connections = connections::ConnectionService::new(state.clone(), tools_state.clone());
     let ingress = ingress.with_receipt_observer(Arc::new(connections.clone()));
     let _connection_worker = connections.start_completion_worker(runner);
+    let mut github_worker = state
+        .github
+        .as_ref()
+        .map(|gateway| crate::github::Worker::start(gateway.clone()));
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let _metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
     let mut routed_workers = crate::serve_routed::start_workers(routed, state.readiness.clone());
@@ -420,6 +425,9 @@ pub(crate) async fn serve(
         for worker in &routed_workers {
             worker.stop_scheduling();
         }
+        if let Some(worker) = &github_worker {
+            worker.stop();
+        }
         let (
             turns_drained,
             routed_drained,
@@ -449,23 +457,14 @@ pub(crate) async fn serve(
                 }
             }
         );
-        if !whatsapp_forms_drained {
-            tracing::warn!("native WhatsApp Form drain incomplete; durable write fences retained");
-        }
-        if !lark_controls_drained {
-            tracing::warn!("native Lark callback drain incomplete; consumed cards retain recovery");
-        }
-        if !native_drained {
-            tracing::warn!(
-                "native Discord drain incomplete; durable inbox and lease fences retained"
-            );
-        }
-        if !turns_drained {
-            tracing::warn!("turn drain deadline reached; remaining consumers cancelled");
-        }
-        if !routed_drained {
-            tracing::warn!("routed execution drain incomplete; durable recovery retained");
-        }
+        shutdown::log_drain_results(
+            turns_drained,
+            routed_drained,
+            native_drained,
+            lark_controls_drained,
+            whatsapp_forms_drained,
+        );
+        shutdown::drain_github(&mut github_worker, deadline).await;
         if !delivery_engine.drain(deadline).await {
             tracing::warn!(
                 "delivery drain deadline reached; remaining sends cancelled with unknown outcome"
