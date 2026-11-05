@@ -41,6 +41,10 @@ struct Record {
 }
 
 impl MongoRecords {
+    pub(crate) fn database(&self) -> Database {
+        self.db.clone()
+    }
+
     pub async fn open(db: Database) -> Result<Self, RecordError> {
         Self::open_with_authority(
             db,
