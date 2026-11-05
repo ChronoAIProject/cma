@@ -11,6 +11,27 @@ use std::{
 };
 use tokio::sync::{mpsc, watch, Semaphore};
 
+struct SerialExecutor {
+    started: mpsc::UnboundedSender<String>,
+    release_first: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    calls: AtomicUsize,
+}
+impl TargetExecutor for SerialExecutor {
+    fn execute<'a>(&'a self, work: &'a WorkItem) -> BoxFuture<'a, Disposition> {
+        Box::pin(async move {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            self.started
+                .send(work.identity.event_id.to_string())
+                .unwrap();
+            if call == 0 {
+                let receiver = self.release_first.lock().unwrap().take().unwrap();
+                receiver.await.unwrap();
+            }
+            Disposition::Settled
+        })
+    }
+}
+
 struct Executor {
     started: mpsc::UnboundedSender<String>,
     permits: Semaphore,
@@ -138,6 +159,66 @@ async fn a_full_hint_queue_recovers_every_committed_target_from_the_real_store()
     );
     assert_eq!(report.aborted, 0);
     assert!(!report.recovery_failed);
+}
+
+#[tokio::test]
+async fn same_record_admissions_are_serial_while_other_records_can_run() {
+    let setup = setup().await;
+    let mut first = setup.plan.clone();
+    first.targets.truncate(1);
+    let mut second = first.clone();
+    second.identity.event_id = cmaeg_core::ids::EventId::new("second-event").unwrap();
+    let other = {
+        let mut plan = second.clone();
+        plan.identity.record_id = cmaeg_core::ids::RecordId::new("other-record").unwrap();
+        plan
+    };
+    let source = Arc::new(Pages {
+        values: Mutex::new(VecDeque::from([Ok(page(
+            vec![first.clone(), second, other.clone()],
+            None,
+        ))])),
+        cursors: Mutex::new(Vec::new()),
+        repeated: Vec::new(),
+        panic: false,
+    });
+    let (started, mut observed) = mpsc::unbounded_channel();
+    let (release, receiver) = tokio::sync::oneshot::channel();
+    let executor = Arc::new(SerialExecutor {
+        started,
+        release_first: Mutex::new(Some(receiver)),
+        calls: AtomicUsize::new(0),
+    });
+    let (scheduler, _) = Scheduler::new(
+        source,
+        executor,
+        ScheduleConfig {
+            concurrency: 3,
+            ..config()
+        },
+    )
+    .unwrap();
+    let (stop, stopped) = watch::channel(false);
+    let task = tokio::spawn(scheduler.run(stopped));
+
+    assert_eq!(
+        next(&mut observed).await,
+        first.identity.event_id.to_string()
+    );
+    assert_eq!(
+        next(&mut observed).await,
+        other.identity.event_id.to_string()
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), observed.recv())
+            .await
+            .is_err()
+    );
+    release.send(()).unwrap();
+    assert_eq!(next(&mut observed).await, "second-event");
+
+    stop.send(true).unwrap();
+    task.await.unwrap();
 }
 
 #[tokio::test]

@@ -6,9 +6,12 @@ use layer2_core::sandbox::message_feedback::{
     FeedbackDetails, FeedbackReasonError, FeedbackReasonRequest, MessageFeedback,
     MessageFeedbackStore, MessageVote,
 };
+use layer2_core::sandbox::task_experience::{TaskExperiencePolicy, TaskExperienceWriter};
 use layer2_core::{sandbox::AgentReadError, AgentId, StoreError, SubjectId};
+use mongodb::bson::Document;
 use mongodb::{bson::doc, options::IndexOptions, Collection, Database, IndexModel};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use super::{durability::majority_collection, schema};
 
@@ -24,10 +27,14 @@ struct Record {
     sequence: i64,
     #[serde(flatten)]
     details: FeedbackDetails,
+    #[serde(skip)]
+    expanded: bool,
 }
 
+#[derive(Clone)]
 pub(crate) struct MongoMessageFeedbackStore {
-    records: Collection<Record>,
+    records: Collection<Document>,
+    pub(crate) writer_policy: Arc<TaskExperiencePolicy>,
 }
 
 impl MongoMessageFeedbackStore {
@@ -43,7 +50,10 @@ impl MongoMessageFeedbackStore {
             )
             .await
             .map_err(|_| StoreError::Unavailable("initialize message feedback index".into()))?;
-        Ok(Self { records })
+        Ok(Self {
+            records,
+            writer_policy: Arc::default(),
+        })
     }
 
     async fn load(
@@ -57,7 +67,9 @@ impl MongoMessageFeedbackStore {
             .records
             .find_one(doc! {"_id": &id})
             .await
-            .map_err(unavailable)?;
+            .map_err(unavailable)?
+            .map(decode)
+            .transpose()?;
         if let Some(row) = &row {
             schema::require_current(row.document_schema_version).map_err(|_| corrupt())?;
             if row.owner != owner.as_str()
@@ -86,7 +98,12 @@ impl MongoMessageFeedbackStore {
             agent_id: agent.to_string(),
             sequence: i64::try_from(sequence).map_err(|_| corrupt())?,
             details,
+            expanded: self
+                .writer_policy
+                .allows_writer(owner, TaskExperienceWriter::FeedbackDetails)
+                || previous.is_some_and(|row| row.expanded),
         };
+        let document = encode(&row)?;
         if let Some(previous) = previous {
             let version = i64::try_from(previous.details.version).map_err(|_| corrupt())?;
             let mut filter =
@@ -105,12 +122,12 @@ impl MongoMessageFeedbackStore {
             );
             return self
                 .records
-                .replace_one(filter, &row)
+                .replace_one(filter, &document)
                 .await
                 .map(|result| result.matched_count == 1)
                 .map_err(unavailable);
         }
-        match self.records.insert_one(row).await {
+        match self.records.insert_one(document).await {
             Ok(_) => Ok(true),
             Err(error) if super::sandbox_mongo::is_duplicate_key(&error) => Ok(false),
             Err(error) => Err(unavailable(error)),
@@ -146,10 +163,19 @@ impl MessageFeedbackStore for MongoMessageFeedbackStore {
             .map(|row| row.details.clone())
             .unwrap_or_default();
         let next = current.with_reasons(request)?;
-        if next == current
-            || self
-                .replace(owner, agent, sequence, previous.as_ref(), next.clone())
-                .await?
+        // Exact accepted requests remain replayable after admission closes.
+        if next == current {
+            return Ok(current);
+        }
+        if !self
+            .writer_policy
+            .allows_writer(owner, TaskExperienceWriter::FeedbackDetails)
+        {
+            return Err(AgentReadError::Forbidden.into());
+        }
+        if self
+            .replace(owner, agent, sequence, previous.as_ref(), next.clone())
+            .await?
         {
             return Ok(next);
         }
@@ -170,7 +196,7 @@ impl MessageFeedbackStore for MongoMessageFeedbackStore {
     ) -> Result<Vec<MessageFeedback>, AgentReadError> {
         let after = i64::try_from(after).unwrap_or(i64::MAX);
         let through = i64::try_from(through).unwrap_or(i64::MAX);
-        let rows: Vec<Record> = self.records
+        let rows: Vec<Document> = self.records
             .find(doc! {"owner": owner.as_str(), "agent_id": agent.as_str(), "sequence": {"$gt": after, "$lte": through}, "vote": {"$in": ["up", "down"]}})
             .sort(doc! {"sequence": 1})
             .limit(i64::from(limit))
@@ -179,6 +205,7 @@ impl MessageFeedbackStore for MongoMessageFeedbackStore {
             .try_collect().await.map_err(unavailable)?;
         rows.into_iter()
             .map(|row| {
+                let row = decode(row)?;
                 schema::require_current(row.document_schema_version).map_err(|_| corrupt())?;
                 let sequence = u64::try_from(row.sequence).map_err(|_| corrupt())?;
                 if sequence == 0
@@ -210,6 +237,16 @@ impl MessageFeedbackStore for MongoMessageFeedbackStore {
                 .map(|row| row.details.clone())
                 .unwrap_or_default();
             let next = current.with_vote(vote)?;
+            // The predecessor cannot read a null vote. Closing admission must
+            // neither create that shape nor delete/downgrade a retained row.
+            if current != next
+                && !self
+                    .writer_policy
+                    .allows_writer(owner, TaskExperienceWriter::FeedbackDetails)
+                && (vote.is_none() || previous.as_ref().is_some_and(|row| row.expanded))
+            {
+                return Err(AgentReadError::Forbidden);
+            }
             if current == next
                 || self
                     .replace(owner, agent, sequence, previous.as_ref(), next)
@@ -224,6 +261,34 @@ impl MessageFeedbackStore for MongoMessageFeedbackStore {
     }
 }
 
+const DETAIL_FIELDS: &[&str] = &[
+    "version",
+    "reasons",
+    "comment",
+    "updated_at",
+    "last_request",
+];
+
+fn decode(document: Document) -> Result<Record, AgentReadError> {
+    let expanded = DETAIL_FIELDS
+        .iter()
+        .any(|field| document.contains_key(*field));
+    let mut row: Record =
+        mongodb::bson::deserialize_from_document(document).map_err(|_| corrupt())?;
+    row.expanded = expanded;
+    Ok(row)
+}
+
+fn encode(row: &Record) -> Result<Document, AgentReadError> {
+    let mut document = mongodb::bson::serialize_to_document(row).map_err(|_| corrupt())?;
+    if !row.expanded {
+        for field in DETAIL_FIELDS {
+            document.remove(*field);
+        }
+    }
+    Ok(document)
+}
+
 fn identity(owner: &SubjectId, agent: &AgentId, sequence: u64) -> Result<String, AgentReadError> {
     layer2_core::profiles::content_digest(&(owner, agent, sequence)).map_err(|_| corrupt())
 }
@@ -235,75 +300,5 @@ fn corrupt() -> AgentReadError {
 }
 
 #[cfg(test)]
-#[path = "message_feedback_mongo_tests.rs"]
-mod concurrency_tests;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    #[ignore = "requires disposable Mongo fixture"]
-    async fn message_feedback_survives_reopen_switches_clears_and_isolates_owner_and_agent() {
-        let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable Mongo URI");
-        let client = mongodb::Client::with_uri_str(uri).await.unwrap();
-        let database = client.database(&format!("cma_feedback_{}", uuid::Uuid::new_v4().simple()));
-        let owner = SubjectId::new("feedback-owner");
-        let other = SubjectId::new("feedback-other");
-        let agent = AgentId("agt_feedback".into());
-        let foreign = AgentId("agt_foreign".into());
-        let store = MongoMessageFeedbackStore::open(&database).await.unwrap();
-        store
-            .set(&owner, &agent, 4, Some(MessageVote::Up))
-            .await
-            .unwrap();
-        store
-            .set(&owner, &agent, 8, Some(MessageVote::Down))
-            .await
-            .unwrap();
-        store
-            .set(&other, &agent, 4, Some(MessageVote::Down))
-            .await
-            .unwrap();
-        store
-            .set(&owner, &foreign, 4, Some(MessageVote::Down))
-            .await
-            .unwrap();
-        drop(store);
-        let store = MongoMessageFeedbackStore::open(&database).await.unwrap();
-        assert_eq!(
-            store.list(&owner, &agent, 0, 8, 10).await.unwrap(),
-            vec![
-                MessageFeedback {
-                    sequence: 4,
-                    vote: MessageVote::Up
-                },
-                MessageFeedback {
-                    sequence: 8,
-                    vote: MessageVote::Down
-                },
-            ]
-        );
-        assert_eq!(store.list(&owner, &agent, 4, 8, 1).await.unwrap().len(), 1);
-        assert_eq!(store.list(&owner, &agent, 0, 4, 10).await.unwrap().len(), 1);
-        store
-            .set(&owner, &agent, 4, Some(MessageVote::Down))
-            .await
-            .unwrap();
-        store.set(&owner, &agent, 8, None).await.unwrap();
-        store.set(&owner, &agent, 8, None).await.unwrap();
-        assert_eq!(
-            store.list(&owner, &agent, 0, 8, 10).await.unwrap(),
-            vec![MessageFeedback {
-                sequence: 4,
-                vote: MessageVote::Down
-            }]
-        );
-        assert_eq!(store.list(&other, &agent, 0, 8, 10).await.unwrap().len(), 1);
-        assert_eq!(
-            store.list(&owner, &foreign, 0, 8, 10).await.unwrap().len(),
-            1
-        );
-        database.drop().await.unwrap();
-    }
-}
+#[path = "message_feedback_tests.rs"]
+mod tests;

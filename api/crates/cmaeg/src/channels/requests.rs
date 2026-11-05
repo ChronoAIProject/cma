@@ -123,6 +123,17 @@ pub enum SourceRequest {
         conversation_history: bool,
         admission: AdmissionPolicy,
     },
+    Github {
+        app_ref: String,
+        installation_ids: Vec<u64>,
+        repository_ids: Vec<u64>,
+        #[serde(default)]
+        deny_repository_ids: Vec<u64>,
+        events: Vec<String>,
+        actions: Vec<String>,
+        #[serde(default)]
+        prompt_template: Option<String>,
+    },
     NyxidRelay {
         issuer: String,
         key_id: String,
