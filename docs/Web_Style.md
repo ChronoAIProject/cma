@@ -2736,7 +2736,9 @@ The footer has no absolute date, token totals or completed-turn duration. Copy
 and vote pending, success, retry and error states remain available. Voting still
 requires a recorded eligible answer and owner authority; unavailable voting
 controls remain visible and disabled with their reason. Optional negative-vote
-reasons open in the shared dialog, keeping the footer compact.
+reasons open in the shared dialog, keeping the footer compact. Selecting an already
+active Needs improvement icon reopens that dialog; Remove vote inside the dialog
+clears the vote. The dialog has one Close action in its header.
 
 The Agent mask is a static 24px SVG. Its hue comes from a stable hash of the Agent
 identifier applied to the workspace accent, so tasks do not inherit an identical
@@ -5983,3 +5985,5 @@ its destination or runtime settings to change. Preserve other profile fields whe
 saving. Use existing form spacing, labels and validation; introduce no new tokens.
 
 | 2026-11-06 | Add an editable channel queue wait limit with a five-minute default, a one-day maximum and explicit never-started expiry behavior; preserve the existing Agent destination. |
+
+| 2026-11-06 | Keep negative feedback editable through its selected icon, with vote removal inside the reasons dialog and one named Close action; preserve the compact three-icon answer footer. |
