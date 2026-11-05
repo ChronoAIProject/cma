@@ -83,7 +83,8 @@ impl ControlPlaneComposition {
         )
         .await?;
         let adapter = adapters.owned;
-        let auth = credentials::authentication(config, &stores, &users, &activity)?;
+        let auth =
+            credentials::authentication(config, &stores, &users, &activity, settings.clone())?;
         let broker = Arc::new(
             CmaServiceConnectionBroker::from_auth_config_with_callback(
                 &config.auth_mode,
