@@ -38,6 +38,7 @@ const capability = enumeration(
 );
 export type Capability = Output<typeof capability>;
 const signedIn = object({
+  usage_reporting: optional(object({ measured_visible: boolean })),
   subject: text,
   capabilities: array(capability),
   visitor: boolean,
