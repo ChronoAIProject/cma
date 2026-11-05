@@ -39,8 +39,14 @@ pub struct SettingsDefaults {
 /// Sandbox inactivity policy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Inactivity {
+    /// Global automatic pause admission. Deployments default this to false.
+    #[serde(default)]
+    pub auto_pause_enabled: bool,
     /// Idle threshold from 60 through 86400 seconds.
     pub pause_after_seconds: u32,
+    /// RFC3339 instant at which the current policy's grace period began.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grace_started_at: Option<String>,
 }
 
 /// Durable checkpoint and conversation retention.

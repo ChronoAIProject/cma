@@ -45,6 +45,7 @@ export function SandboxSections({
   onSelect,
   onAction,
   onNavigate,
+  onAlwaysOnChange,
 }: {
   readonly client: CmaWebClient;
   readonly sandbox: SandboxDetail;
@@ -61,6 +62,7 @@ export function SandboxSections({
   readonly onSelect: (tab: SandboxTab) => void;
   readonly onAction: (action: TreeAction) => void;
   readonly onNavigate: (route: AppRoute) => void;
+  readonly onAlwaysOnChange?: (alwaysOn: boolean) => Promise<void>;
 }) {
   const { settings, settingsLoaded, contents, retry } = useSandboxContents({
     client,
@@ -86,6 +88,7 @@ export function SandboxSections({
               runtime={runtime}
               busy={busy}
               stale={stale}
+              onAlwaysOnChange={onAlwaysOnChange}
             />
           ),
         },
