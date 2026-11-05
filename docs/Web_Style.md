@@ -5164,3 +5164,27 @@ in an administrator-only diagnostic footer, excluded from owner totals.
 
 | 2026-11-05 | Merge Operations Sandboxes and Usage into one measured dashboard, preserve runtime/control authorization, and replace browser inventory scans with report-backed server discovery, sorting and paging. |
 - 2026-11-05 — Name the account action Copy build version, copy the immutable bundle version and full revision, and expose accessible clipboard feedback with selectable fallback identity.
+
+### 2026-11-05 — Allocated Usage before measured rollout
+
+Operations **Sandboxes & usage** and the account **Your usage** popup default to
+allocated resources. Show current allocated CPU cores, memory GiB and disk GiB
+as three resource cards, followed by allocated core-hours/GiB-hours, the report's
+effective period, and allocation-history completeness, unknown time and projected
+tail. Retained disk continues accruing allocation time while paused. Summary,
+50-row server pages and inline detail use the same report ID; lifecycle history
+and authorized runtime controls remain available. Amounts and charges are absent.
+
+Measured presentation follows the effective **Show measured usage** platform
+setting, off by default. Administrators edit it in the existing Platform settings
+form; other users consume only its public read-only exposure. An absent or
+unavailable setting keeps measured presentation hidden. The setting does not
+enable backend collection or billing. The default
+view omits measured readings, coverage/source warnings, metric selectors,
+measured sorting, grouping, charts and series requests, including inline detail.
+Saved measured sorts resolve to last activity descending while hidden. Allocation
+history gaps and report access/expiry/backoff/unavailable errors remain visible;
+a source outage must not imply zero allocation. Enabling measured presentation
+restores the existing measured UI alongside allocation values.
+
+| 2026-11-05 | Default Usage to allocated capacity, resource-hours and allocation-history coverage; honor the effective Show measured usage platform setting without changing backend collection flags. |
