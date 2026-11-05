@@ -61,6 +61,13 @@ pub use agent_conversation::{
 pub use agent_message_checkpoint::AgentMessageCheckpoint;
 pub use agent_reopen::AgentReopenGuard;
 mod agent_lifecycle;
+mod agent_log_capacity;
+pub use agent_log_capacity::{plan_agent_log_capacity_failure, AGENT_LOG_CAPACITY_FAILURE};
+mod agent_cleanup_capacity;
+pub use agent_cleanup_capacity::{
+    agent_cleanup_capacity_retry, plan_agent_cleanup_capacity_retry,
+    validate_agent_cleanup_capacity_log,
+};
 mod agent_sign_in;
 pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
