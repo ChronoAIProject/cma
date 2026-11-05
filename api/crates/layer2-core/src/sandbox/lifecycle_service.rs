@@ -59,37 +59,65 @@ impl SandboxService {
         &self,
         authorization: std::sync::Arc<super::agent_io::CommandRevivalAuthorization>,
     ) -> Result<SandboxLifecycleCommandResult, SandboxLifecycleCommandError> {
-        let snapshot = authorization
-            .current_snapshot()
-            .await
-            .map_err(|_| SandboxLifecycleCommandError::Forbidden)?;
+        use super::agent_io::{command_access_error_kind, observe_command_preparation};
+        let command = authorization.command();
+        let snapshot = observe_command_preparation(
+            command,
+            "revival_snapshot",
+            authorization.current_snapshot(),
+            command_access_error_kind,
+        )
+        .await
+        .map_err(|_| SandboxLifecycleCommandError::Forbidden)?;
         let sandbox = snapshot.lineage.sandbox;
-        self.credentials
-            .check_services(
+        observe_command_preparation(
+            command,
+            "revival_prerequisites",
+            self.credentials.check_services(
                 &sandbox.owner,
                 &sandbox
                     .profile
                     .content
                     .connection_services_for_grants(&sandbox.credential.effective_reaches()),
-            )
-            .await
-            .map_err(|error| match error {
+            ),
+            |error| match error {
                 super::SandboxCredentialPrerequisiteError::SetupRequired => {
-                    SandboxLifecycleCommandError::CredentialSetupRequired
+                    "credential_setup_required"
                 }
-                super::SandboxCredentialPrerequisiteError::ConnectionsRequired { services } => {
-                    SandboxLifecycleCommandError::ConnectionsRequired { services }
+                super::SandboxCredentialPrerequisiteError::ConnectionsRequired { .. } => {
+                    "connections_required"
                 }
                 super::SandboxCredentialPrerequisiteError::Unavailable(_) => {
-                    SandboxLifecycleCommandError::Unavailable(
-                        "connection verification is unavailable".into(),
-                    )
+                    "prerequisite_unavailable"
                 }
-            })?;
-        self.store
-            .schedule_command_revival(authorization)
-            .await
-            .map_err(lifecycle_store_error)
+            },
+        )
+        .await
+        .map_err(|error| match error {
+            super::SandboxCredentialPrerequisiteError::SetupRequired => {
+                SandboxLifecycleCommandError::CredentialSetupRequired
+            }
+            super::SandboxCredentialPrerequisiteError::ConnectionsRequired { services } => {
+                SandboxLifecycleCommandError::ConnectionsRequired { services }
+            }
+            super::SandboxCredentialPrerequisiteError::Unavailable(_) => {
+                SandboxLifecycleCommandError::Unavailable(
+                    "connection verification is unavailable".into(),
+                )
+            }
+        })?;
+        observe_command_preparation(
+            command,
+            "revival_scheduling",
+            async {
+                self.store
+                    .schedule_command_revival(authorization.clone())
+                    .await
+                    .map_err(lifecycle_store_error)
+            },
+            SandboxLifecycleCommandError::code,
+        )
+        .await
     }
 
     pub async fn pause(
