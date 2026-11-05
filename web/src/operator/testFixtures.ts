@@ -202,6 +202,7 @@ export function operatorClient() {
     }),
   };
   return {
+    readMeasuredUsage: vi.fn().mockResolvedValue(false),
     admin,
     adminUsageMetrics: metricsClient(true),
     usage: {

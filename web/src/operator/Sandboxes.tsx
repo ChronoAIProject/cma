@@ -4,6 +4,7 @@ import { Button } from '../ui/Button';
 import { Presence } from '../ui/Presence';
 import { RiskConfirmation } from '../ui/RiskConfirmation';
 import { MetricsDashboard } from '../usage/metrics/MetricsDashboard';
+import { useMeasuredUsage } from '../usage/metrics/useMeasuredUsage';
 import { useUsageSelection } from '../usage/metrics/selection';
 import { SandboxDetail } from './SandboxDetail';
 import { operatorFailure, type OperatorFailure } from './failure';
@@ -16,6 +17,7 @@ export function Sandboxes({
   readonly client: OperatorClient;
   readonly canControl: boolean;
 }) {
+  const measured = useMeasuredUsage(client.readMeasuredUsage);
   const [selection, onSelection] = useUsageSelection(true);
   const [revision, setRevision] = useState(0);
   const [detail, setDetail] = useState<string>();
@@ -59,6 +61,7 @@ export function Sandboxes({
         api={client.adminUsageMetrics}
         history={client.usage}
         admin
+        measured={measured}
         selection={selection}
         onSelection={onSelection}
         actions={(row, disabled) => (
