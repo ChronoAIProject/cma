@@ -294,6 +294,17 @@ fn import_failure(error: cmaeg::records::RecordError) -> &'static str {
         RecordError::Rejected(reason) if reason == "record export is unreadable" => {
             "record export is unreadable"
         }
+        // Fixed policy text, never record bytes: the operator must see which
+        // gate refused the row and that the flag or key ring decides it.
+        RecordError::Rejected(reason) if reason == cmaeg::records::GITHUB_IMPORT_DISABLED => {
+            cmaeg::records::GITHUB_IMPORT_DISABLED
+        }
+        RecordError::Rejected(reason) if reason == cmaeg::records::GITHUB_IMPORT_KEYS_REQUIRED => {
+            cmaeg::records::GITHUB_IMPORT_KEYS_REQUIRED
+        }
+        RecordError::Rejected(reason) if reason == cmaeg::records::GITHUB_IMPORT_UNREADABLE => {
+            cmaeg::records::GITHUB_IMPORT_UNREADABLE
+        }
         RecordError::Rejected(_) => {
             "Gateway record import rejected; check export or target records"
         }

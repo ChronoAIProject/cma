@@ -12,6 +12,89 @@ use cmaeg_core::{
 };
 use serde_json::{json, Value};
 
+#[test]
+fn mixed_custom_and_github_events_use_only_the_matching_source_template_in_either_order() {
+    let custom = json!({"type":"custom", "auth":{"type":"hmac","key_id":"key-1"},
+        "prompt_template":"custom {{type}}"});
+    let github = json!({"type":"github", "app_ref":"pilot", "installation_ids":[7],
+        "repository_ids":[42], "events":["issues"], "actions":["opened"], "prompt_template":"github {{type}}"});
+    for reversed in [false, true] {
+        for (custom_template, github_template) in
+            [(true, true), (true, false), (false, true), (false, false)]
+        {
+            let mut sources = vec![custom.clone(), github.clone()];
+            if !custom_template {
+                sources[0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("prompt_template");
+            }
+            if !github_template {
+                sources[1]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("prompt_template");
+            }
+            if reversed {
+                sources.reverse();
+            }
+            let mut value: Value = serde_json::from_str(include_str!(
+                "../../../cmaeg-core/tests/fixtures/channel.json"
+            ))
+            .unwrap();
+            let profile: EventWorkerProfile =
+                serde_json::from_value(value["profile"].clone()).unwrap();
+            value["profile_digest"] = profile.digest().into();
+            value["sources"] = json!(sources);
+            let definition: ChannelDefinition = serde_json::from_value(value).unwrap();
+            definition.validate().unwrap();
+            for (source, expected) in [
+                (
+                    SourceKind::Custom,
+                    if custom_template {
+                        "custom event.changed"
+                    } else {
+                        "Event event.changed from https://events.example:\n{\"value\":1}"
+                    },
+                ),
+                (
+                    SourceKind::Github {
+                        app_ref: "pilot".into(),
+                        installation_id: 7,
+                        repository_id: 42,
+                    },
+                    if github_template {
+                        "github event.changed"
+                    } else {
+                        "Event event.changed from https://events.example:\n{\"value\":1}"
+                    },
+                ),
+            ] {
+                let mut activity: Activity = serde_json::from_str(include_str!(
+                    "../../../cmaeg-core/tests/fixtures/activity.json"
+                ))
+                .unwrap();
+                activity.source = source;
+                activity.kind = ActivityKind::Event {
+                    ce: serde_json::from_value(json!({"specversion":"1.0","id":"event-1",
+                        "source":"https://events.example","type":"event.changed","data":{"value":1}})).unwrap(),
+                    attachments: vec![],
+                };
+                let input = render_input::render(
+                    &activity,
+                    &definition,
+                    &RenderMedia::empty(None),
+                    Audience {
+                        tools: false,
+                        downloads: false,
+                    },
+                );
+                assert_eq!(input[0]["content"][0]["text"], expected);
+            }
+        }
+    }
+}
+
 fn native() -> Value {
     json!({"type":"telegram","bot_id":"77","bot_username":"native_bot","admission":{"type":"all"}})
 }
