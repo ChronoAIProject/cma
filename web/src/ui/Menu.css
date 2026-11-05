@@ -200,3 +200,40 @@
   color: var(--dsw-alias-brand-text);
   background: var(--dsw-specific-sidebar-nav-item-active);
 }
+
+/* Run location and independent computer choices share the same menu mechanics. */
+.menu[data-presentation='run-target'] {
+  width: 320px;
+  min-width: 0;
+  max-width: calc(100vw - 32px);
+  padding: 8px;
+  border-radius: 18px;
+  background: var(--dsw-specific-task-menu);
+}
+.menu[data-presentation='run-target'] .menu__label {
+  color: var(--dsw-specific-task-weak);
+  font-size: 12.5px;
+  line-height: 20px;
+}
+.menu[data-presentation='run-target'] .menu__item {
+  min-height: 44px;
+  gap: 12px;
+  padding: 8px;
+  color: var(--dsw-specific-task-primary);
+}
+.menu[data-presentation='run-target'] .menu__icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-specific-task-panel-border);
+}
+.menu[data-presentation='run-target'] .menu__reason {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.menu[data-presentation='run-target'] .menu__check {
+  color: var(--dsw-specific-task-accent);
+}
