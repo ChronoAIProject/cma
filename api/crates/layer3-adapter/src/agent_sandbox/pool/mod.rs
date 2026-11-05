@@ -268,3 +268,6 @@ mod home_inventory;
 
 #[cfg(test)]
 mod home_inventory_tests;
+
+#[cfg(test)]
+mod cleanup_inventory_tests;
