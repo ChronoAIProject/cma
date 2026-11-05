@@ -74,6 +74,7 @@ pub(super) fn authentication(
     stores: &crate::store::MongoStores,
     users: &Arc<layer2_core::UserDirectory>,
     activity: &Arc<layer2_core::ActivityService>,
+    settings: Arc<layer2_core::PlatformSettingsService>,
 ) -> Result<Arc<crate::auth::AuthState>, String> {
     use crate::auth::{AuthState, SignInRecords};
     let auth = AuthState::with_store_and_nyxid_public_url(
@@ -85,6 +86,7 @@ pub(super) fn authentication(
         stores.auth.clone(),
         config.nyxid_public_url.clone(),
     )
+    .with_platform_settings(settings)
     .with_browser_origins(&config.cors_origins)
     .with_agent_key_service(config.nyxid_service_id.clone())
     .with_resource_request_enabled(config.features.nyxid_resource_request)
