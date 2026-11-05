@@ -11,6 +11,11 @@ use super::{
     MongoTriggerDefinitionStore, MongoUserDirectoryStore,
 };
 
+pub(crate) struct MongoConnectionPolicy {
+    pub authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
+    pub agent_manager_replicas: bool,
+}
+
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
     pub(crate) request_limits: Arc<super::request_limits::MongoRequestLimits>,
@@ -84,40 +89,46 @@ impl MongoStores {
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
         authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     ) -> Result<Self, StoreError> {
-        Self::connect_with_pool(
+        Self::connect_with_policy(
             uri,
             database,
             deployment,
             auth_encryption_key,
             activity_retention,
             runtime,
-            authority,
-            None,
+            MongoConnectionPolicy {
+                authority,
+                agent_manager_replicas: false,
+            },
         )
         .await
     }
 
-    pub(crate) async fn connect_with_pool(
+    pub(crate) async fn connect_with_policy(
         uri: &str,
         database: &str,
         deployment: &str,
         auth_encryption_key: &AuthEncryptionKey,
         activity_retention: Duration,
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
-        authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
-        max_pool_size: Option<u32>,
+        policy: MongoConnectionPolicy,
     ) -> Result<Self, StoreError> {
         let mut options = ClientOptions::parse(uri)
             .await
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
-        if let Some(size) = max_pool_size {
-            options.max_pool_size = Some(size);
+        if policy.agent_manager_replicas {
+            options.max_pool_size = Some(10);
             options.min_pool_size = Some(0);
         }
         super::mongo_latency::observe(&mut options);
         let client = Client::with_options(options)
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
-        super::isolation::verify_with_authority(&client.database(database), authority).await?;
+        super::isolation::replicas::verify(
+            &client.database(database),
+            policy.authority,
+            policy.agent_manager_replicas,
+        )
+        .await?;
         Self::open(
             client,
             database,

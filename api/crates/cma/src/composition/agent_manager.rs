@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn stores(config: &Config) -> Result<Arc<MongoStores>, String> {
-    let mut stores = MongoStores::connect_with_pool(
+    let mut stores = MongoStores::connect_with_policy(
         &config.mongodb_uri,
         &config.mongodb_database,
         &config.deployment_id,
@@ -11,8 +11,10 @@ pub(super) async fn stores(config: &Config) -> Result<Arc<MongoStores>, String> 
             &config.runtime.sandbox_image,
             config.runtime.home_policy.as_ref(),
         ),
-        config.mongodb_authority,
-        config.agent_manager_replicas.as_ref().map(|_| 10),
+        crate::store::mongo::MongoConnectionPolicy {
+            authority: config.mongodb_authority,
+            agent_manager_replicas: config.agent_manager_replicas.is_some(),
+        },
     )
     .await
     .map_err(|error| format!("durable stores are not usable: {error}"))?;

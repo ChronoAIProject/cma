@@ -8,6 +8,9 @@ use layer3_adapter::{
 };
 use std::sync::Mutex;
 
+#[path = "drain_tests.rs"]
+mod drain;
+
 struct CaptureTransport(Mutex<Vec<OwnershipToken>>);
 #[async_trait::async_trait]
 impl HostedControlTransport for CaptureTransport {
@@ -93,6 +96,34 @@ async fn maintenance_control_uses_owner_and_captures_epoch_with_real_mongo_linea
                 &RuntimeHandle("wrong-runtime".into()),
                 &request
             )
+            .await
+            .unwrap()
+            .is_err());
+        // Only never-adopted prepared Agents may use legacy control. A released
+        // permanent epoch must still refuse fallback if its aggregate is absent.
+        let unadopted = RequestFrame::CaptureAgent(AgentRef {
+            agent_id: layer3_adapter::AgentSlot::new("prepared-unadopted"),
+        });
+        assert!(instances[0]
+            .relay
+            .route("synthetic", &runtime, &unadopted)
+            .await
+            .is_none());
+        mongo
+            .database(&name)
+            .collection::<mongodb::bson::Document>("agents")
+            .delete_one(mongodb::bson::doc! {"_id": agent.id.as_str()})
+            .await
+            .unwrap();
+        instances[owner]
+            .coordinator
+            .handoff(&authority, async { Ok(()) })
+            .await
+            .unwrap();
+        assert!(store.owner(&agent.id).await.unwrap().is_none());
+        assert!(instances[0]
+            .relay
+            .route("synthetic", &runtime, &request)
             .await
             .unwrap()
             .is_err());

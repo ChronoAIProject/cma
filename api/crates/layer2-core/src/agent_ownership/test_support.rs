@@ -138,6 +138,11 @@ impl OwnershipStore for MemoryOwnershipStore {
             .cloned())
     }
 
+    async fn has_owner_history(&self, id: &AgentId) -> Result<bool, OwnershipError> {
+        self.accessible()?;
+        Ok(self.state.lock().unwrap().owners.contains_key(id))
+    }
+
     async fn acquire(
         &self,
         id: &AgentId,

@@ -5,6 +5,7 @@ use mongodb::{
     Database,
 };
 use std::collections::{BTreeMap, BTreeSet};
+pub(crate) mod replicas;
 pub(crate) const COLLECTIONS: &[&str] = &[
     super::request_limits::COLLECTION,
     "visitor_launch_days",
@@ -189,7 +190,9 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
         let collection = resource.get_str("collection").map_err(|_| denied())?;
         if resource.len() != 2
             || resource.get_str("db").ok() != Some(database)
-            || (!collection.is_empty() && !COLLECTIONS.contains(&collection))
+            || (!collection.is_empty()
+                && !COLLECTIONS.contains(&collection)
+                && !replicas::COLLECTIONS.contains(&collection))
         {
             return Err(denied());
         }
@@ -375,6 +378,25 @@ mod tests {
                 matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code==13)
             );
         }
+        // Existing isolated grants remain sufficient while the switch is off.
+        // Operators can install the additive grants before enabling ownership.
+        use cma_service_auth::mongodb_authority::MongoAuthorityMode;
+        assert!(
+            replicas::verify(&isolated, MongoAuthorityMode::Isolated, true)
+                .await
+                .is_err()
+        );
+        let mut upgraded = replicas::role(&name, true);
+        upgraded.remove("createRole");
+        upgraded.insert("updateRole", "cma_am_runtime");
+        db.run_command(upgraded).await.unwrap();
+        verify(&isolated).await.unwrap();
+        replicas::verify(&isolated, MongoAuthorityMode::Isolated, true)
+            .await
+            .unwrap();
+        super::super::agent_ownership::MongoAgentOwnership::open(&runtime, &name)
+            .await
+            .unwrap();
         db.drop().await.unwrap();
     }
     #[test]

@@ -79,7 +79,13 @@ async fn main() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     if arguments == ["--print-runtime-role"] {
         match std::env::var("CHRONO_MONGODB_DATABASE") {
-            Ok(database) => println!("{}", store::isolation::role(&database)),
+            Ok(database) => println!(
+                "{}",
+                store::isolation::replicas::role(
+                    &database,
+                    std::env::var("CHRONO_AGENT_MANAGER_REPLICAS_ENABLED").as_deref() == Ok("true"),
+                )
+            ),
             Err(_) => {
                 eprintln!("CHRONO_MONGODB_DATABASE is required");
                 std::process::exit(2)
@@ -87,8 +93,8 @@ async fn main() {
         }
         return;
     }
-    if !arguments.is_empty() {
-        eprintln!("usage: cma [--print-runtime-role]");
+    if !arguments.is_empty() && arguments != ["--agent-manager-drain"] {
+        eprintln!("usage: cma [--print-runtime-role | --agent-manager-drain]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {

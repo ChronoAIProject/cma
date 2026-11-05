@@ -57,25 +57,38 @@ async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
         )
         .unwrap();
         updates.install_live_source(relay.live_source());
-        let router = relay.routes(Router::new().route(
-            "/api/v1/agents/{agent}/environment",
-            get(|headers: HeaderMap| async move {
-                if headers
-                    .get("authorization")
-                    .and_then(|value| value.to_str().ok())
-                    != Some("Bearer synthetic-authorized")
-                {
-                    return StatusCode::UNAUTHORIZED.into_response();
-                }
-                let owner = layer2_core::agent_ownership::execution_owner().unwrap();
-                axum::Json(
-                    serde_json::json!({"instance": owner.instance_id, "epoch": owner.epoch,
+        let router = relay.routes(
+            Router::new()
+                .route(
+                    "/api/v1/agents/{agent}/environment",
+                    get(|headers: HeaderMap| async move {
+                        if headers
+                            .get("authorization")
+                            .and_then(|value| value.to_str().ok())
+                            != Some("Bearer synthetic-authorized")
+                        {
+                            return StatusCode::UNAUTHORIZED.into_response();
+                        }
+                        let owner = layer2_core::agent_ownership::execution_owner().unwrap();
+                        axum::Json(
+                            serde_json::json!({"instance": owner.instance_id, "epoch": owner.epoch,
                 "idempotency": headers.get("idempotency-key").and_then(|value| value.to_str().ok()),
                 "request": headers.get("x-request-id").and_then(|value| value.to_str().ok()) }),
+                        )
+                        .into_response()
+                    }),
                 )
-                .into_response()
-            }),
-        ));
+                .route(
+                    "/api/v1/agents/{agent}/files/slow",
+                    get(|| async {
+                        use futures_util::StreamExt;
+                        axum::body::Body::from_stream(
+                            futures_util::stream::once(async { Ok::<_, std::io::Error>("first") })
+                                .chain(futures_util::stream::pending()),
+                        )
+                    }),
+                ),
+        );
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });
@@ -353,3 +366,36 @@ async fn public_lane_bounds_connections_and_revokes_already_buffered_local_frame
 
 #[path = "mongo_tests.rs"]
 mod mongo;
+
+#[tokio::test]
+async fn slow_owner_response_keeps_relay_capacity_until_reader_disconnects() {
+    let (store, instances) = cluster(2).await;
+    let id = AgentId("agt-slow-response".into());
+    let (owner, _) = acquire(&store, &instances, &id).await;
+    let peer = &instances[1 - owner];
+    let reserved = peer
+        .relay
+        .slots
+        .clone()
+        .acquire_many_owned((MAX_STREAMS - 1) as u32)
+        .await
+        .unwrap();
+    let url = format!("{}/api/v1/agents/{id}/files/slow", peer.address);
+    let mut response = client().get(&url).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.chunk().await.unwrap().unwrap(), "first");
+    assert_eq!(peer.relay.slots.available_permits(), 0);
+    assert_eq!(
+        client().get(&url).send().await.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    drop(response);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while peer.relay.slots.available_permits() == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    drop(reserved);
+}

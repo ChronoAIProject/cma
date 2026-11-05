@@ -214,7 +214,7 @@ async fn sandbox_checkpoint_publication_fences_every_captured_remote_owner() {
     for agent in &agents {
         authorities.push(acquire(&store, &coordinators, agent).await);
     }
-    let mutation = checkpoint_mutation(&sandbox, &agents, checkpoint_for_agents(&agents, 7));
+    let mutation = checkpoint_mutation(&sandbox, &agents, checkpoint_for_agents(&agents, 1));
     assert!(matches!(
         store.publish_sandbox_checkpoint(mutation.clone()).await,
         Err(SandboxStoreError::Conflict)

@@ -78,11 +78,17 @@ pub(crate) async fn prestop(config: &crate::config::Config) -> Result<(), String
     if config.agent_manager_replicas.is_none() {
         return Ok(());
     }
-    let authentication = authentication::Authentication::new(
+    drain_local(
+        config.bind.port(),
         config
             .auth_encryption_key
             .agent_manager_signing_key(&config.deployment_id),
-    );
+    )
+    .await
+}
+
+pub(super) async fn drain_local(port: u16, key: ring::hmac::Key) -> Result<(), String> {
+    let authentication = authentication::Authentication::new(key);
     let uri: Uri = DRAIN.parse().unwrap();
     let proof = authentication
         .sign(
@@ -101,7 +107,7 @@ pub(crate) async fn prestop(config: &crate::config::Config) -> Result<(), String
         .build()
         .map_err(|_| "cannot construct drain client")?;
     let response = client
-        .post(format!("http://127.0.0.1:{}{DRAIN}", config.bind.port()))
+        .post(format!("http://127.0.0.1:{port}{DRAIN}"))
         .header(PROOF, proof)
         .send()
         .await
