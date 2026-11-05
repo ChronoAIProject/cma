@@ -421,6 +421,8 @@ function ConsoleContent({
           newAgent={
             canStartNewAgent
               ? {
+                  current:
+                    canCreateInScope && (route.kind === 'home' || route.kind === 'agent_manager'),
                   onCreate: () => onCreate?.({ kind: 'new_agent' }),
                   unavailableReason: newAgentUnavailable,
                 }

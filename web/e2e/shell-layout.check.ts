@@ -1,6 +1,6 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
-import { LocalAgentV2, binding } from './agent-v2.fixture';
+import { LocalAgentV2, binding, cursor } from './agent-v2.fixture';
 
 /** The collapsed sidebar's width: none on a phone (§9), the 56px rail elsewhere. */
 const rail = (viewport: number) => (viewport < 640 ? 0 : 56);
@@ -18,6 +18,44 @@ async function settleShell(page: Page, viewport: number, sidebar: number) {
       }),
     )
     .toEqual({ rail: sidebar, right: viewport });
+}
+
+async function routePolicy(page: Page) {
+  await page.route('**/api/v2/ui/task-experience', (route) =>
+    route.fulfill({
+      json: {
+        object: 'cma.ui.task_experience',
+        schema_version: 1,
+        account_id: 'local-owner',
+        capabilities: {
+          task_home_admission: true,
+          desktop_enable: false,
+          suggested_followup_admission: false,
+          browser_takeover: false,
+          replay_presentation: false,
+        },
+      },
+    }),
+  );
+}
+
+// The shell must observe the same event head as its loaded conversation snapshot.
+async function routeHead(page: Page, fixture: LocalAgentV2) {
+  await routePolicy(page);
+  await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
+    route.fulfill({
+      json: {
+        object: 'cma.agent.event_head',
+        schema_version: 1,
+        agent_id: 'agt_contract',
+        incarnation: 'a'.repeat(64),
+        through_cursor: cursor(fixture.items.length),
+        active_turn: fixture.items.some((item) => item.kind.type === 'turn_completed')
+          ? null
+          : (fixture.items.find((item) => item.kind.type === 'turn_started') ?? null),
+      },
+    }),
+  );
 }
 
 async function insideViewport(element: Locator) {
@@ -51,6 +89,7 @@ for (const width of [390, 360, 320]) {
       try {
         await page.setViewportSize({ width, height: 844 });
         await fixture.route(page, baseURL!);
+        await routeHead(page, fixture);
         await page.route('**/api/v2/agents/agt_contract/queued-inputs', (route) =>
           route.fulfill({
             json: {
@@ -132,22 +171,24 @@ test('LOCAL shell resize preserves draft, desktop navigation width and manual co
 }) => {
   const boundary = new LocalStartup();
   await boundary.route(page, baseURL!);
+  await routePolicy(page);
   await page.setViewportSize({ width: 1440, height: 844 });
   await page.goto('/agents/agt_contract');
   const input = page.getByRole('textbox', { name: 'Message', exact: true });
   await expect(input).toBeEnabled();
+  await page.getByRole('button', { name: 'Back to conversation' }).click();
   await input.fill('Keep this draft while resizing the full shell.');
-  await settleShell(page, 1440, 344);
+  await settleShell(page, 1440, 264);
   const handle = (await page.getByRole('separator', { name: 'Resize navigation' }).boundingBox())!;
   const startX = handle.x + handle.width / 2;
   await page.mouse.move(startX, handle.y + 40);
   await page.mouse.down();
   await page.mouse.move(startX + 56, handle.y + 40, { steps: 4 });
   await page.mouse.up();
-  await settleShell(page, 1440, 400);
+  await settleShell(page, 1440, 320);
   for (const width of [390, 320, 1440]) {
     await page.setViewportSize({ width, height: 844 });
-    await settleShell(page, width, width < 1024 ? rail(width) : 400);
+    await settleShell(page, width, width < 1024 ? rail(width) : 320);
     await insideViewport(input);
     await expect(input).toHaveValue('Keep this draft while resizing the full shell.');
   }
@@ -159,7 +200,7 @@ test('LOCAL shell resize preserves draft, desktop navigation width and manual co
     await expect(input).toHaveValue('Keep this draft while resizing the full shell.');
   }
   await page.getByRole('button', { name: 'Show navigation', exact: true }).click();
-  await settleShell(page, 1440, 400);
+  await settleShell(page, 1440, 320);
   expect(boundary.writes).toEqual([]);
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.errors).toEqual([]);
@@ -172,6 +213,7 @@ for (const authenticated of [false, true]) {
   }) => {
     const boundary = new LocalStartup();
     await boundary.route(page, baseURL!);
+    await routePolicy(page);
     if (!authenticated)
       await page.route('**/auth/session', (route) =>
         route.fulfill({ json: { authenticated: false } }),
@@ -181,6 +223,11 @@ for (const authenticated of [false, true]) {
       await expect(
         page.getByRole('heading', { name: 'What should your Agent work on?' }),
       ).toBeVisible();
+      await expect(
+        page
+          .getByRole('complementary', { name: 'Application navigation' })
+          .getByRole('button', { name: 'New agent', exact: true }),
+      ).toHaveAttribute('aria-current', 'page');
       await page.getByLabel('Your task').fill('Retain this Home draft across screen sizes.');
       await page.getByRole('button', { name: 'Hide navigation', exact: true }).click();
     } else await expect(page.getByRole('button', { name: 'Get Started' })).toBeVisible();
@@ -224,6 +271,7 @@ test('LOCAL system text scales user and Agent content together without changing 
   baseURL,
 }, info) => {
   const fixture = new LocalAgentV2();
+  fixture.append({ type: 'turn_started', turn_sequence: 1 });
   fixture.append({ type: 'message', role: 'user', content: 'Review this example.' });
   fixture.append({
     type: 'message',
@@ -231,8 +279,10 @@ test('LOCAL system text scales user and Agent content together without changing 
     content:
       '# Example\n\nReadable explanation with `inline code`.\n\n```text\nconst value = 42;\n```\n\n- A useful list item\n\n| Name | Value |\n| --- | --- |\n| example | 42 |',
   });
+  fixture.append({ type: 'turn_completed', turn_sequence: 1 });
   try {
     await fixture.route(page, baseURL!);
+    await routeHead(page, fixture);
     await page.route('**/api/v2/agents/agt_contract/queued-inputs', (route) =>
       route.fulfill({
         json: {
@@ -245,12 +295,16 @@ test('LOCAL system text scales user and Agent content together without changing 
     );
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/agents/agt_contract');
+    await page.getByRole('button', { name: 'Back to conversation' }).click();
+    await settleShell(page, 1440, 264);
     await expect(page.locator('.agent-content h2')).toHaveText('Example');
     await expect(
-      page.locator('.message--user').getByRole('button', { name: /vote message/ }),
+      page.locator('.message--user').getByRole('button', { name: /^(Helpful|Needs improvement)$/ }),
     ).toHaveCount(0);
     await expect(
-      page.locator('.message--assistant').getByRole('button', { name: /vote message/ }),
+      page
+        .locator('.message--assistant')
+        .getByRole('button', { name: /^(Helpful|Needs improvement)$/ }),
     ).toHaveCount(2);
     const measurements = () =>
       page.evaluate(() => {
@@ -302,7 +356,7 @@ test('LOCAL system text scales user and Agent content together without changing 
         path: info.outputPath(`conversation-${name.toLowerCase()}-320.png`),
       });
       await page.setViewportSize({ width: 1440, height: 900 });
-      await settleShell(page, 1440, 344);
+      await settleShell(page, 1440, 264);
     }
     expect(fixture.writes).toEqual([]);
     expect(fixture.boundary.writes).toEqual([]);
