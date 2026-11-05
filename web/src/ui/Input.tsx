@@ -17,7 +17,12 @@ import './Input.css';
 interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'className'> {
   /** A leading 16px glyph, drawn inside the field. */
   readonly icon?: ReactNode;
-  /** Extra class for placement only. Never for colour or height. */
+  /**
+   * Extra class for placement only. Never for colour or height.
+   * Sole exception: task-home landing controls (composer toolbar, send,
+   * repository chip, templates, recovery actions) and repository dialog
+   * controls, documented in Web_Style 2026-11-05.
+   */
   readonly placement?: string;
 }
 

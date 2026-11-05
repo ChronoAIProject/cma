@@ -68,8 +68,8 @@ is `--dsw-static-paper-50`.
 | `paper` | `0 #FFFBF2`, `50 #FAF2E0`, `100 #F5EAD3`, `200 #EFE4CB`, `250 #EFE2C6`, `300 #E5D8BC`, `400 #CFBE99`, `500 #B9A57C`                                                |
 | `ink`   | `50 #FDF8EC`, `200 #B7AB92`, `300 #8C8474`, `350 #756D5E`, `500 #4C5A68`, `800 #0E61AC`, `850 #0A4C88`, `900 #073A69`, `950 #15283C`                               |
 | `coal`  | `50 #EDF2E2`, `300 #A9B199`, `450 #7D876F`, `500 #6B7361`, `650 #3F4630`, `700 #333A26`, `750 #21251A`, `800 #191C14`, `850 #121410`, `900 #0C0D0A`, `950 #060606` |
-| `lime`  | `300 #D7FF7D`, `400 #C3FD43`, `500 #AEE734`, `600 #8FC121`, `800 #3F6212`, `900 #24300F`                                                                                        |
-| `zinc`  | `0 #FFFFFF`, `50 #FAFAFA`, `100 #F4F4F5`, `200 #E4E4E7`, `300 #D4D4D8`, `400 #A1A1AA`, `500 #71717A`, `600 #52525B`, `700 #3F3F46`, `800 #27272A`, `850 #1F1F23`, `900 #18181B`, `925 #111113`, `950 #09090B` |
+| `lime`  | `300 #D7FF7D`, `350 #D7FF5A`, `400 #C3FD43`, `420 #C8F542`, `500 #AEE734`, `600 #8FC121`, `800 #3F6212`, `900 #24300F`                                                                                        |
+| `zinc`  | `0 #FFFFFF`, `50 #FAFAFA`, `100 #F4F4F5`, `200 #E4E4E7`, `300 #D4D4D8`, `400 #A1A1AA`, `440 #8B8B94`, `450 #8A8A93`, `460 #85858E`, `500 #71717A`, `600 #52525B`, `700 #3F3F46`, `720 #3A3A40`, `790 #2A2A2E`, `800 #27272A`, `810 #26262A`, `850 #1F1F23`, `870 #1C1C1F`, `880 #1A1A1D`, `890 #19191C`, `900 #18181B`, `920 #131315`, `925 #111113`, `930 #0F0F11`, `940 #0B0B0C`, `950 #09090B`, `960 #060607` |
 | `moss`  | `100 #EDF6E7`, `400 #5F963B`, `500 #3E7A22`, `600 #2D6017`, `900 #1C2E14`                                                                                          |
 | `red`   | `100 #F8E4DE`, `300 #FF806F`, `400 #FF5A45`, `500 #D7604A`, `600 #BC3B26`, `700 #A42D1B`, `900 #3A1711`                                                            |
 | `amber` | `100 #F5E6C4`, `300 #FFC45A`, `400 #FFB020`, `500 #D18B12`, `600 #A9720B`, `700 #875A08`, `900 #33260C`                                                            |
@@ -180,7 +180,8 @@ second vocabulary.
 | `--dsw-specific-login-input`                    | `#FFFFFF`            | `#111113`              |
 | `--dsw-specific-menu`                           | `#FFFFFF`            | `#18181B`              |
 | `--dsw-specific-selector`                       | `#F4F4F5`            | `#1F1F23`              |
-| `--dsw-specific-sidebar-fill`                   | `#FAFAFA`            | `#111113`              |
+| `--dsw-specific-sidebar-fill`                   | `#FAFAFA`            | `#0F0F11`              |
+| `--dsw-specific-sidebar-new-current`            | `#F4F4F5`            | `#1A1A1D`              |
 | `--dsw-specific-sidebar-nav-item-active`        | `#F4F4F5`            | `#27272A`              |
 | `--dsw-specific-sidebar-nav-item-active-accent` | `rgba(63,98,18,.12)` | `rgba(195,253,67,.18)` |
 | `--dsw-specific-sidebar-nav-item-hover`         | `#F4F4F5`            | `#1F1F23`              |
@@ -237,6 +238,37 @@ Measured on the base grounds, primary text is 19.9:1 light / 19.1:1 dark, second
 so small tertiary metadata is readable in both appearances; it stays quieter than `label-caption`. `label-dimmed` is a disabled or non-text paint and never the sole
 readable account of state.
 
+### Task-home text contrast (2026-11-05)
+
+Measured using WCAG sRGB relative luminance, `(lighter + 0.05) / (darker + 0.05)`.
+Names below abbreviate `--dsw-specific-task-*`; secondary is
+`--dsw-alias-label-secondary`, and error is `--dsw-alias-state-error-primary`. Every pairing meets AA for normal text (≥4.5:1),
+including 12.5px metadata and 17px placeholders. Ratios are rounded only for display;
+checks use unrounded values. Disabled icons are not used as text paints.
+
+| Text / ground | Light | Dark | Normal text |
+| --- | --- | --- | --- |
+| primary on page | 19.90:1 | 17.90:1 | AA |
+| primary on shell | 19.06:1 | 16.88:1 | AA |
+| primary on panel | 19.90:1 | 15.96:1 | AA |
+| primary on menu | 19.90:1 | 16.12:1 | AA |
+| weak on page | 7.73:1 | 5.83:1 | AA |
+| weak on shell | 7.41:1 | 5.49:1 | AA |
+| weak on panel | 7.73:1 | 5.19:1 | AA |
+| weak on menu | 7.73:1 | 5.25:1 | AA |
+| placeholder on page | 7.73:1 | 5.38:1 | AA |
+| placeholder on shell | 7.41:1 | 5.07:1 | AA |
+| placeholder on panel | 7.73:1 | 4.80:1 | AA |
+| placeholder on menu | 7.73:1 | 4.85:1 | AA |
+| secondary on page | 7.73:1 | 7.68:1 | AA |
+| secondary on shell | 7.41:1 | 7.24:1 | AA |
+| secondary on panel | 7.73:1 | 6.84:1 | AA |
+| secondary on menu | 7.73:1 | 6.91:1 | AA |
+| on-accent on accent | 7.08:1 | 15.55:1 | AA |
+| on-accent on accent-hover | 13.96:1 | 17.18:1 | AA |
+| error on panel | 5.54:1 | 5.68:1 | AA |
+| error on shell | 5.31:1 | 6.01:1 | AA |
+
 The four former vendored sheets (`design-platform.css`, `effects-typography.css`, `scrollbar.css`,
 and `shiki.css`) keep their filenames but become first-party token sheets governed here. The
 "kept verbatim" policy retires. `web/src/styles/vendor/LICENSE-deepseek-harness.txt` remains because
@@ -270,6 +302,11 @@ While the preference is `system`, a `change` listener re-applies it, so an Agent
 sunset follows the machine.
 
 ---
+
+The task-home specific palette and sidebar refinements are defined in the dated
+**2026-11-05 — New agent landing redesign** contract below. Its specific tokens
+are part of this alias contract and resolve through the static zinc/lime ramps in
+both appearances.
 
 ## 4. Typography
 
@@ -330,6 +367,11 @@ the face says "this is a literal". Letter spacing is otherwise zero unless this 
 display exception.
 
 ---
+
+Task home has a Geist display exception: `clamp(32px, 4.5vw, 56px)`, weight
+700, line-height 1.05 and letter-spacing -0.04em. Its subtitle and textarea use
+17px/26px, repository dialog title 26px/32px at 700, and keyboard/model text
+Geist Mono 12.5px/20px. See the 2026-11-05 landing contract.
 
 ## 5. Depth
 
@@ -582,6 +624,10 @@ reduced motion or when hidden. Its geometry remains reserved while Three.js load
 
 ---
 
+The New agent action may carry `aria-current="page"` on task home. Its current
+fill, accent icon, bordered shortcut tag and account divider follow the
+2026-11-05 landing contract; all existing sidebar collapse behavior remains.
+
 ## 11. The centre column
 
 **Every centre view starts with one page header**, so the same three questions — where am I, what
@@ -636,6 +682,9 @@ for whoever reads a report. Unreachable is never shown as signed out, and nothin
 coloured as an alarm.
 
 ---
+
+Task home uses the centered 780px fluid landing column defined in the
+2026-11-05 contract, with wrapping controls and no sidebar restacking.
 
 ## 12. Controls
 
@@ -5211,3 +5260,255 @@ a source outage must not imply zero allocation. Enabling measured presentation
 restores the existing measured UI alongside allocation values.
 
 | 2026-11-05 | Default Usage to allocated capacity, resource-hours and allocation-history coverage; honor the effective Show measured usage platform setting without changing backend collection flags. |
+### 2026-11-05 — New agent landing redesign
+
+This contract supersedes prior task-home heading sizes (including 20/28), subtitle,
+inline repository fields, Desktop options disclosure, 160px textarea, template
+copy and composer geometry from 2026-11-03/04. Existing task admission, retained
+intent, idempotency, draft persistence, permissions, recovery, connections,
+provisioning and contextual creation behavior remain authoritative.
+
+**Palette.** Extend static zinc with 440 #8B8B94, 460 #85858E, 720 #3A3A40,
+790 #2A2A2E, 810 #26262A, 870 #1C1C1F, 880 #1A1A1D, 890 #19191C,
+920 #131315, 930 #0F0F11, 940 #0B0B0C and 960 #060607; extend lime with
+350 #D7FF5A and 420 #C8F542. Components read only aliases/specifics.
+The following `--dsw-specific-task-*` tokens use these static steps:
+
+| Suffix | Light | Dark |
+| --- | --- | --- |
+| page | zinc 0 | zinc 940 |
+| shell | zinc 50 | zinc 920 |
+| border | zinc 200 | zinc 810 |
+| panel | zinc 0 | zinc 890 |
+| panel-border | zinc 200 | zinc 790 |
+| focus-border | zinc 400 | zinc 720 |
+| primary | zinc 950 | zinc 100 |
+| weak | zinc 600 | zinc 440 |
+| placeholder | zinc 600 | zinc 460 |
+| accent | lime 800 | lime 420 |
+| accent-hover | lime 900 | lime 350 |
+| on-accent | zinc 0 | zinc 940 |
+| hover | zinc 100 | zinc 870 |
+| disabled | zinc 200 | zinc 810 |
+| muted-icon | zinc 500 | zinc 500 |
+| menu | zinc 0 | zinc 900 |
+| focus-ring | 0 0 0 3px lime 800 at 20% | 0 0 0 3px lime 420 at 20% |
+| scrim | zinc 950 at 42% | zinc 960 at 72% |
+
+Secondary text keeps `--dsw-alias-label-secondary`. `--dsw-specific-sidebar-fill`
+becomes zinc 50/light, zinc 930/dark. New `--dsw-specific-sidebar-new-current`
+is zinc 100/light, zinc 880/dark. Borders use the existing zinc 200/light,
+zinc 850/dark alias. All fills are flat, without gradients.
+
+**Sidebar.** Current New agent has the current fill and task accent plus glyph.
+Search retains platform-aware ⌘K / Ctrl K in an 11px/18px mono kbd with 1px border,
+4px radius and 4px horizontal padding. The account area has a 1px top divider.
+Ready to start has a static task-accent 8px dot and its own `ready` tone; Completed
+has a zinc 500 neutral dot and a separate `completed` tone. Other task states retain
+existing semantics. The current flag applies only where task home is rendered.
+
+**Landing.** Center vertically with auto block margins in the existing scrollable
+center column; content width is at most 780px, with 24px outer padding (828px maximum outer
+width; 16px padding at 600px and below). Grid gaps are 20px. A centered noninteractive 30px pill, 1px shell
+border, 999px radius, 12px horizontal padding and 8px gap reads **New agent** with
+an 8px accent dot. The heading follows the §4 display exception. Subtitle:
+**Give it a task. Your Agent works through it on a cloud computer.** The bottom
+mono line reads **GPT-6 · High reasoning · Autonomous**, with the same accent dot.
+Long retained content wraps within the column; errors and provisioning stay reachable.
+
+**Composer.** Outer 26px radius, 6px padding, 1px shell border; focus-within uses
+focus-border. Toolbar has 6px padding, 8px gaps, wrapping 36px controls with 12px
+horizontal padding and 999px radii, separated by a 20px vertical hairline. Inner
+panel has 20px radius, 1px panel border and 16px padding. Textarea has minimum
+128px height, no resize handle, 17px/26px Geist, transparent ground and placeholder
+**What would you like your Agent to do?** Footer has 8px top padding, 12px gap,
+right-aligned mono platform hint **⌘ ↵ to run** (Ctrl off Apple platforms) and a
+40px circular arrow-up send button. Blank/whitespace input and existing admission
+constraints disable it with disabled fill and zinc 500 icon. Enabled fill is
+accent, hover accent-hover, foreground on-accent. Cmd/Ctrl+Enter uses form submit,
+never duplicates admission and does not submit during IME composition. No attachment
+control is offered. Named task controls may specialize shared Button/Input surfaces
+with these documented dimensions, colours and radii; other consumers are unchanged.
+
+**Run target.** Reuse Menu focus, navigation, portal and dismissal. A documented
+`run-target` presentation uses 320px width bounded by viewport minus 32px, 18px
+radius, 8px padding and menu fill. Trigger has 1.5px accent outline while open.
+Group labels use 12.5px/20px weak text. The sole location is **Cloud computer**,
+a checked menuitemradio with a 32px icon square, 8px radius, 1px panel border and
+secondary **Its own Linux machine in the cloud**. A separator and **Computer options**
+label precede **Agent browser** and **Shared desktop** menuitemcheckbox rows, with
+existing descriptions/unavailable reasons at 12px/18px. Menu gains per-item roles
+so independent checkboxes and a radio can coexist. Checked rows show an accent
+check; row padding is 8px, gap 12px, minimum height 44px. Choices freeze after intent;
+a retained unavailable choice can still be unchecked before intent. Trigger suffixes
+**Browser**, **Shared desktop** or **2 options** make retained choices visible.
+
+**Repository.** Reuse Modal with a `repository` presentation: full-screen scrim,
+8px backdrop blur, 16px viewport clearance, 480px maximum card width, 26px radius,
+24px padding and 20px gaps. A centered 56px repository icon square (24px glyph, 16px radius,
+1px panel border), title **Add git repo**, and secondary subtitle **Your Agent
+clones it onto the cloud computer before it starts.** precede required GitHub
+repository and optional Repository ref fields. Labels use 14px/22px, gaps 8px;
+field groups 16px apart. Shared Input specializes to 48px height, 12px radius,
+accent focus border and the 3px specific focus ring. Ref uses Geist Mono. Helper:
+**The requested ref is verified during preparation.** Footer is two equal columns,
+12px gap, 48px actions, 12px radius, Cancel outline / Add repo accent. Close is a
+32px icon button at top/right 12px. Repository input is initial focus; existing
+Modal trap, Escape and focus return apply. Invalid nonempty refs show an inline
+error; Add repo/Enter require valid repository and ref. Trim surrounding whitespace and accept bare owner/repo or
+optional https://github.com/, optional .git and trailing slash; store canonical
+HTTPS github.com URL. Reject invalid/dot segments and keep existing ref constraints.
+Unsupported/contextual creation disables adding with an accessible reason. Retained
+repositories remain removable; contextual creation always inherits its repository.
+
+The toolbar chip shows GitHub mark, editable owner/repo name, branch glyph and
+mono ref (**default** if empty), and a labelled remove button. It wraps with 8px
+gaps, 36px minimum height, 999px radius and shell border. Name/ref truncate within
+160px each; removal preserves text. Editing pre-fills the dialog. No second dialog
+is opened inside the contextual creation dialog.
+
+**Templates and feedback.** Five wrapping 42px chips use 12px radius, 1px panel
+border, 12px horizontal padding, 8px gaps, 13px/20px text and hover fill. Icons:
+magnifier, table, file, globe, code brackets. Their prompts are respectively:
+- Research [topic] and summarize the key findings, with links to sources.
+- Analyze the spreadsheet at [link] and point out trends, outliers and what to do next.
+- Write a [type of document] about [subject] for [audience].
+- Build a one-page website for [project] and share a preview link.
+- Write a [language] script that [does what].
+
+Click replaces the unsent draft, focuses the textarea and selects the first bracketed
+placeholder. Below the composer, pending submission or accepted queued/running
+preparation shows one status pill: **Preparing a cloud computer for your Agent…**,
+with 8px accent dot, 12px/20px text, 8px/12px padding, shell border and 999px radius.
+Dot opacity pulses 1 to .4 over 1.8s using the shared easing; reduced-motion removes
+the animation. Failed, waiting-for-connection, succeeded or uncertain recovery uses
+its existing state instead. Receipt text does not duplicate this announcement;
+provisioning milestones remain visible but do not make a competing live announcement.
+
+At coarse pointers or widths ≤600px, interactive landing controls, templates, dialog
+close and chip removal have minimum 44px targets. Toolbar/chips wrap, textarea is
+fluid, model text can wrap, heading scales to 32px. AppFrame retains its auto-collapse
+and overlay behavior; the sidebar never restacks above the content.
+
+| 2026-11-05 | Redesign New agent landing with a layered composer, shared run-target menu and repository dialog, accessible templates, preserved lifecycle recovery and matching light/dark tokens. |
+
+
+#### Review refinements — 2026-11-05
+
+Repository capability is tri-state. While checking, the disabled Add git repo control
+says **Checking repository support…**, and submitting a retained repository says
+**Checking repository support. Wait for the check to finish before starting.** Only a
+confirmed unsupported result or absent capability reader says unavailable.
+
+Contextual creation uses a compact task-home variant inside the shared **New task**
+Modal: visually hidden section heading, no New agent pill or display subtitle, no
+viewport-sized type. **Creating in Workspace/Sandbox X** is secondary 14px/22px.
+The contextual Modal uses 16px viewport clearance, at most 700px width, 26px radius,
+shell ground and panel border; maximum height is viewport minus 32px. Its body has
+16px top spacing and 24px horizontal padding; task content has zero padding, 12px
+gaps and no minimum width. Composer stays ahead of templates and model metadata.
+The initial composer must be entirely visible without scrolling at 1440×900 and
+390×844. Long subsequent states scroll within the dialog. The contextual run-location
+reason is **This Sandbox's existing Linux machine**; preparation says **Preparing
+your Agent…**. New-Sandbox landing retains its original cloud-computer wording.
+
+All Agent browser descriptions and validation identify **Agent browser**. Clearing
+an unavailable choice points to **Agent browser in the Cloud computer menu**;
+shared-desktop validation points to **Shared desktop in the Cloud computer menu**.
+The two-choice trigger suffix is **Browser + desktop**, superseding **2 options**.
+
+Repository errors use the same 14px/22px error ink as ref errors. A nonempty invalid
+repository is explained after blur; Enter also validates empty input. The form uses
+noValidate and aria-required, never native required bubbles. The error is **Enter
+owner/repository or a github.com repository URL.**, connected by aria-describedby
+and aria-invalid. All template icons are 16px, including a matching globe glyph.
+The task textarea exposes Meta+Enter on Apple platforms and Control+Enter elsewhere
+through aria-keyshortcuts. Toolbar controls and repository chip use the same 36px
+outer height (44px at coarse pointers or ≤600px), with border-box sizing. Chip
+borders are inset so they do not increase row height; chip name/remove controls use
+that same outer height. Adding an ordinary repository does not move the composer.
+
+**Retained task and feedback surfaces.** Submitted task and provisioning use panel
+ground, panel-border, 20px radius, 16px padding and 12px gaps. Submitted heading is
+16px/24px at 600; task text is Geist 14px/22px with pre-wrap and anywhere wrapping.
+Repository URL, ref and checkout commit are Geist Mono 12.5px/20px; labels are
+secondary 12px/18px. Metadata uses an 8px-gap grid and 4px label/value gaps. Status,
+context, explanation and permission/loading feedback are centered 14px/22px with
+zero paragraph margins; alerts use error ink on panel ground, 1px panel-border,
+12px radius and 12px padding. Recovery/continue/start-another/retry/manual actions
+are centered, at most full width, 40px high (44px for touch/≤600px), 12px radius,
+16px horizontal padding, outline border and primary text. Continue/start-another
+may use the task accent fill and paired foreground; hover uses task hover or
+accent-hover respectively. Provisioning retains reported milestones and times,
+with primary labels, secondary details, task-border rules and task-accent active/
+complete rules. The shared provisioning component owns this named task variant;
+other callers keep their existing presentation. No state, recovery action, error,
+requested ref or checkout commit is removed.
+
+Shared Button/Input placement remains placement-only, never colour/depth/size,
+except the task-home composer and repository dialog controls documented here.
+Task status dots are owned by Tree.css beside the state labels, including shared
+navigation consumers. Text contrast measurements for task paints are recorded in §2.
+
+| 2026-11-05 | Refine repository checking and errors, compact contextual creation, retained-task feedback, browser-option copy, stable toolbar geometry, accessible shortcuts and measured task contrast. |
+
+At ≤600px the repository slot reserves a second toolbar row for both Add git repo
+and its chip; the divider is hidden. This keeps ordinary add/remove operations at
+the same toolbar height even when a repository name is wider than the Add label.
+
+
+#### Task entry failure and toolbar refinements — 2026-11-05
+
+Supersedes the preceding narrow-toolbar reservation and placement-exception wording.
+At ≤600px the empty repository slot remains in the toolbar's normal wrapping flow,
+with its divider; Cloud computer and Add git repo share a row when they fit. Only
+an existing repository chip reserves its own row and hides that divider. Desktop
+add/remove retains constant toolbar height. Neither state overflows at 320, 360 or
+390px. The hidden contextual section heading reads **New task in Sandbox X** or
+**New task in Workspace X**.
+
+The sole Button/Input placement specialization exception is **task-home landing
+controls (composer toolbar, send, repository chip, templates, recovery actions)
+and repository dialog controls**. All other placement classes remain placement-only,
+never colour, depth or size.
+
+Unknown/network/timeout failures do not expose browser or transport diagnostics.
+Uncertain task submission says **We couldn't confirm your task was received. Use
+Recover original task to resend the same request.** A failed task status read says
+**Task status couldn't be read. Use Retry task status to check again.** Manual Agent
+creation uses the equivalent sentences naming **Recover creation** and **Retry
+status**. An explicit 400/422 creation refusal without a readable detail says
+**Your task could not be started. Review it and try again.** (or **Your Agent could
+not be created. Review its settings and try again.** in manual creation).
+Deliberate identity/verification and saved-request messages and readable service
+details remain intact. These presentation rules do not change retries, retained
+requests, or their keys. Failed preparation omits the promise that progress and
+results will appear in a conversation. Error-ink contrast on task panel and shell
+is measured in §2 alongside the other text paints.
+
+| 2026-11-05 | Make task failure guidance actionable, restore compact empty mobile toolbars, clarify contextual labels and control exceptions, and verify error-ink contrast. |
+
+
+#### Failure actions and explicit refusals — 2026-11-05
+
+Failure guidance names the action rendered by the current surface. Task home uses
+**Recover original task** before a receipt, **Continue original task** when a
+connection-gated request must resume, and **Retry task status** after a receipt.
+Manual Agent creation uses **Recover creation** / **Retry status**. The Agent
+conversation's setup follow-up uses **Retry setup status** for read failures and
+uncertain continuation results. When the available action only reads status, the
+sentence says **check again**, never **resend the same request**. An uncertain
+continuation in that surface says **We couldn't confirm your task setup. Use Retry
+setup status to check again.** (or **Agent setup** for manual creation).
+
+A detail-free, non-retryable HTTP submit refusal says **Agent Manager refused this
+task (403). Your original request is saved.**, substituting the actual status and
+**Agent creation** for manual creation. The existing typed 400/422 validation
+refusal keeps its review-and-try-again sentence and existing retention behavior.
+Only transport/unknown errors, 408/504 timeouts, and detail-free 5xx/429 responses
+use uncertain-submit wording. Status-read failures describe the failed read, not a
+refusal of the earlier creation request. Readable service details and deliberate
+identity/storage messages remain unchanged. Copy classification never changes
+request retention, key reuse, polling cadence, or recovery actions.
+
+| 2026-11-05 | Match lifecycle failure guidance to each surface's visible action and distinguish explicit HTTP refusals from uncertain submission. |
