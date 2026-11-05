@@ -1,4 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { NavigationSettingsContext } from './sidebarContext';
+import type { ReactElement } from 'react';
+import { render as renderView, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { ManagerNavigation } from './ManagerNavigation';
@@ -107,21 +109,17 @@ it('shows visible task states alongside characters and respects parent lifecycle
     ['active', 'stopped', 'paused', 'still', 'brand', 'Stopped', 'Stopped', undefined],
     ['paused', 'working', 'paused', 'still', 'brand', 'Paused', 'Paused', undefined],
   ] as const;
-  for (const [sandbox, agent, pose, motion, tone, word, taskWord, state] of cases) {
+  for (const [sandbox, agent, , , , , taskWord] of cases) {
     view.rerender(draw(sandbox, agent));
     const name = new RegExp(`^Agent one,\\s*${taskWord}`);
     const row = screen.getByRole('treeitem', { name });
     expect(row).toHaveTextContent(taskWord);
     expect(screen.getByRole('link', { name })).toBe(row.querySelector('a'));
-    const character = row.querySelector('.tree-row__signal .character-avatar');
-    expect(character).toHaveAttribute('aria-hidden', 'true');
-    expect(character).toHaveAttribute('data-pose', pose);
-    expect(character).toHaveAttribute('data-motion', motion);
-    expect(character).toHaveAttribute('data-tone', tone);
-    expect(row.querySelector('.tree-row__signal')).toHaveAttribute('title', word);
-    const dot = row.querySelector('.tree-row__state .statedot');
-    if (state === undefined) expect(dot).toBeNull();
-    else expect(dot).toHaveAttribute('data-state', state);
+    expect(row.querySelector('.task-mask svg')).not.toBeNull();
+    expect(row.querySelector('.task-mask')).toHaveAttribute('style');
+    expect(row.querySelector('.tree-row__signal')).toBeNull();
+    expect(row.querySelector('.task-running__dot') !== null).toBe(taskWord === 'Working');
+    if (taskWord !== 'Working') expect(row.querySelector('time')).toHaveAttribute('dateTime');
   }
   const user = userEvent.setup();
   await expandNavigationFilters(user);
@@ -363,3 +361,32 @@ it('keeps filters open for status choices and closes them when managing environm
   );
   expect(screen.getByRole('button', { name: 'Manage environments' })).toBeVisible();
 });
+
+it('opens environments from the bottom Settings shortcut and restores the focused task', async () => {
+  render(
+    <ManagerNavigation
+      {...props}
+      route={{ kind: 'agent', agentId: 'agt_1' }}
+      navigation={{ status: 'ready', items: navigationFixture(), refresh: vi.fn() }}
+    />,
+  );
+  const user = userEvent.setup();
+  const task = screen.getByRole('treeitem', { name: /Agent one/ });
+  task.focus();
+  await user.click(screen.getByRole('button', { name: 'Settings' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
+  const back = screen.getByRole('button', { name: 'Back to tasks' });
+  expect(back).toHaveFocus();
+  expect(screen.queryByRole('menu', { name: 'Navigation settings' })).not.toBeInTheDocument();
+  await user.keyboard('{Enter}');
+  expect(screen.getByRole('treeitem', { name: /Agent one/ })).toHaveFocus();
+  expect(screen.getByRole('button', { name: 'Settings' })).toBeVisible();
+});
+
+function render(view: ReactElement) {
+  const wrap = (content: ReactElement) => (
+    <NavigationSettingsContext value={document.body}>{content}</NavigationSettingsContext>
+  );
+  const result = renderView(wrap(view));
+  return { ...result, rerender: (content: ReactElement) => result.rerender(wrap(content)) };
+}

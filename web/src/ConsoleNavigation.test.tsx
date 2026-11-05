@@ -6,7 +6,7 @@ import { CmaClientProvider } from './api/context';
 import type { User } from './auth/types';
 import { Console } from './Console';
 import type { AppRoute } from './routing/routes';
-import { SIDEBAR_COLLAPSED, SIDEBAR_MIN } from './shell/columns';
+import { SIDEBAR_MIN } from './shell/columns';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from './test/agent';
 
 const OWNER: User = {
@@ -73,7 +73,7 @@ it.each([
     if (initialAgent === 'agt_1') {
       await actor.type(screen.getByRole('textbox', { name: 'Message' }), 'Keep this draft');
     }
-    if (width < 1024) {
+    if (width < 640) {
       await actor.click(screen.getByRole('button', { name: 'Show navigation' }));
     }
     const frame = document.querySelector('.frame') as HTMLElement;
@@ -90,12 +90,12 @@ it.each([
       expect(
         frame.style.gridTemplateColumns.startsWith(
           // A phone has no rail: the top bar is the way back to navigation.
-          `${width < 640 ? 0 : width < 1024 ? SIDEBAR_COLLAPSED : SIDEBAR_MIN}px`,
+          `${width < 640 ? 0 : SIDEBAR_MIN}px`,
         ),
       ).toBe(true),
     );
     expect(
-      screen.getByRole('button', { name: width < 1024 ? 'Show navigation' : 'Hide navigation' }),
+      screen.getByRole('button', { name: width < 640 ? 'Show navigation' : 'Hide navigation' }),
     ).toBeInTheDocument();
     expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
     if (initialAgent === 'agt_1') {
