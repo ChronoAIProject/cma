@@ -89,3 +89,51 @@ pub(super) async fn read(
         pending.is_some(),
     ))
 }
+
+pub(super) async fn active_starts(
+    store: &MongoSandboxStore,
+    agents: &[Agent],
+    session: &mut ClientSession,
+) -> Result<std::collections::HashMap<layer2_core::AgentId, String>, SandboxStoreError> {
+    use futures_util::TryStreamExt as _;
+    let active: std::collections::HashMap<_, _> = agents
+        .iter()
+        .filter_map(|agent| {
+            agent
+                .conversation
+                .active_turn
+                .map(|turn| (agent.id.clone(), (turn, agent.conversation.last_seq)))
+        })
+        .collect();
+    if active.is_empty() {
+        return Ok(Default::default());
+    }
+    let terms = active.iter().map(|(id, (turn, last))| Ok(doc! {
+        "agent_id": id.as_str(), "record.kind.turn_sequence": signed(*turn, "turn sequence").map_err(SandboxStoreError::Corrupt)?,
+        "seq": { "$lte": signed(*last, "last sequence").map_err(SandboxStoreError::Corrupt)? },
+    })).collect::<Result<Vec<_>, SandboxStoreError>>()?;
+    let mut cursor = store
+        .agent_log
+        .find(doc! { "record.kind.type": "turn_started", "$or": terms })
+        .max_time(std::time::Duration::from_secs(10))
+        .session(&mut *session)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    let mut starts = std::collections::HashMap::new();
+    while let Some(document) = cursor
+        .stream(&mut *session)
+        .try_next()
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+    {
+        let entry = read_entry(&document)?;
+        if let Some((turn, last)) = active.get(&entry.agent_id) {
+            if entry.seq <= *last
+                && matches!(entry.kind, AgentLogKind::TurnStarted { turn_sequence, .. } if turn_sequence == *turn)
+            {
+                starts.insert(entry.agent_id, entry.appended_at);
+            }
+        }
+    }
+    Ok(starts)
+}
