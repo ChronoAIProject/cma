@@ -71,6 +71,12 @@ pub(super) fn validate_legacy_sources(
                 has_custom = true;
                 variants.insert("custom");
             }
+            Source::Github { .. } => {
+                return Err(ValidationError::new(
+                    &pointer,
+                    "github source requires extended readers",
+                ));
+            }
         }
         validate_source(source, secrets, &pointer)?;
     }
@@ -93,7 +99,8 @@ pub(super) fn validate_extended_sources(
             "must contain at most eight sources",
         ));
     }
-    let (mut telegram, mut discord, mut whatsapp, mut custom) = (false, false, false, false);
+    let (mut telegram, mut discord, mut whatsapp, mut custom, mut github) =
+        (false, false, false, false, false);
     let mut native_lark = false;
     let mut platforms = BTreeSet::<Platform>::new();
     let mut routes = BTreeSet::<&str>::new();
@@ -106,6 +113,7 @@ pub(super) fn validate_extended_sources(
             Source::Discord { .. } => std::mem::replace(&mut discord, true),
             Source::Whatsapp { .. } => std::mem::replace(&mut whatsapp, true),
             Source::Custom { .. } => std::mem::replace(&mut custom, true),
+            Source::Github { .. } => std::mem::replace(&mut github, true),
             Source::NyxidRelay { .. } => false,
         };
         if duplicated {
@@ -314,6 +322,65 @@ fn validate_source(
             }
             if let Some(attachments) = attachments {
                 attachments.validate(&format!("{pointer}/attachments"))?;
+            }
+            Ok(())
+        }
+        Source::Github {
+            app_ref,
+            installation_ids,
+            repository_ids,
+            deny_repository_ids,
+            events,
+            actions,
+            prompt_template,
+        } => {
+            require_string(app_ref, &format!("{pointer}/app_ref"), 1, 128)?;
+            if installation_ids.is_empty() || installation_ids.contains(&0) {
+                return Err(ValidationError::new(
+                    format!("{pointer}/installation_ids"),
+                    "must contain positive installation IDs",
+                ));
+            }
+            if repository_ids.is_empty() || repository_ids.contains(&0) {
+                return Err(ValidationError::new(
+                    format!("{pointer}/repository_ids"),
+                    "must contain positive repository IDs",
+                ));
+            }
+            if deny_repository_ids.contains(&0) {
+                return Err(ValidationError::new(
+                    format!("{pointer}/deny_repository_ids"),
+                    "must contain positive repository IDs",
+                ));
+            }
+            if repository_ids
+                .iter()
+                .any(|id| deny_repository_ids.contains(id))
+            {
+                return Err(ValidationError::new(
+                    format!("{pointer}/deny_repository_ids"),
+                    "cannot deny an allowed repository",
+                ));
+            }
+            let unique = |values: &[u64]| {
+                values.iter().copied().collect::<BTreeSet<_>>().len() == values.len()
+            };
+            if !unique(installation_ids) || !unique(repository_ids) || !unique(deny_repository_ids)
+            {
+                return Err(ValidationError::new(
+                    format!("{pointer}/repository_ids"),
+                    "must contain unique IDs",
+                ));
+            }
+            validate_nonempty_unique(events, &format!("{pointer}/events"), 32)?;
+            validate_nonempty_unique(actions, &format!("{pointer}/actions"), 64)?;
+            if let Some(prompt) = prompt_template {
+                require_string(
+                    prompt,
+                    &format!("{pointer}/prompt_template"),
+                    0,
+                    MAX_PROMPT_TEMPLATE_BYTES,
+                )?;
             }
             Ok(())
         }
