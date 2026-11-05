@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
-import { LocalAgentV2 } from './agent-v2.fixture';
+import { cursor, LocalAgentV2 } from './agent-v2.fixture';
 
 const identity = JSON.parse(readFileSync('dist/build-info.json', 'utf8')) as {
   version: string;
@@ -14,6 +14,18 @@ for (const clipboard of ['available', 'denied', 'absent'] as const) {
     const fixture = new LocalAgentV2();
     try {
       await fixture.route(page, baseURL!);
+      await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
+        route.fulfill({
+          json: {
+            object: 'cma.agent.event_head',
+            schema_version: 1,
+            agent_id: 'agt_contract',
+            incarnation: 'a'.repeat(64),
+            through_cursor: cursor(fixture.items.length),
+            active_turn: null,
+          },
+        }),
+      );
       await page.addInitScript((mode) => {
         Object.defineProperty(navigator, 'clipboard', {
           configurable: true,
