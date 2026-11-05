@@ -166,7 +166,7 @@ fn every_admin_route_is_documented_and_authenticated() {
         .iter()
         .filter(|(path, _)| path.starts_with("/api/v1/admin/"))
         .collect();
-    assert_eq!(admin.len(), 17);
+    assert_eq!(admin.len(), 20);
     for (_, item) in admin {
         for operation in [
             item.get.as_ref(),
@@ -181,7 +181,7 @@ fn every_admin_route_is_documented_and_authenticated() {
             assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
         }
     }
-    assert_eq!(operation_ids.len(), 20);
+    assert_eq!(operation_ids.len(), 23);
     assert!(document
         .paths
         .paths
@@ -205,6 +205,7 @@ fn every_owner_hierarchy_route_is_documented_and_authenticated() {
         "/api/v1/sandboxes/{id}",
         "/api/v1/sandboxes/{id}/pause",
         "/api/v1/sandboxes/{id}/revive",
+        "/api/v1/sandboxes/{id}/always-on",
         "/api/v1/sandboxes/{id}/events",
         "/api/v1/sandboxes/{id}/workspaces",
         "/api/v1/workspaces/{id}",
@@ -229,7 +230,7 @@ fn every_owner_hierarchy_route_is_documented_and_authenticated() {
                 .flatten(),
         );
     }
-    assert_eq!(operations.len(), 13);
+    assert_eq!(operations.len(), 14);
     assert!(operations
         .iter()
         .all(|operation| operation.security.as_ref().map(Vec::len) == Some(2)));

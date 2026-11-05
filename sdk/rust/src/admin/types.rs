@@ -5,7 +5,7 @@ use crate::{
     instances::{AgentStatus, Failure, SandboxStatus, WorkspaceStatus},
     profiles::{ProfileKind, ProfileVisibility},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Operator Sandbox list item.
@@ -60,6 +60,9 @@ pub struct Sandbox {
     pub status: SandboxStatus,
     /// Immutable profile identity.
     pub profile: InstanceProfileReference,
+    /// Explicit automatic-pause whitelist preference, when supplied by the server.
+    #[serde(default)]
+    pub always_on: Option<bool>,
     /// Observed runtime metadata.
     pub runtime: Option<Runtime>,
     /// Hierarchy limits.
@@ -215,4 +218,38 @@ pub struct RuntimeInventory {
     pub observed_at: String,
     /// Observed runtimes.
     pub runtimes: Vec<RuntimeEntry>,
+}
+
+/// Operator automatic-pause whitelist update.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AlwaysOnRequest {
+    /// Whether this Sandbox should remain running while idle.
+    pub always_on: bool,
+    /// Exact Sandbox revision being changed.
+    pub expected_revision: u64,
+}
+
+/// Number of active Sandboxes that currently satisfy the idle proof.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AutoPausePreview {
+    /// Sandboxes that would be paused by the current policy.
+    pub candidates: u64,
+}
+
+/// Confirmed operator idle-pause result counts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PauseIdleNowRequest {
+    /// Confirmation gate required by the destructive operator action.
+    pub confirmed: bool,
+}
+
+/// Counts returned by an operator idle-pause request.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PauseIdleNow {
+    /// Sandboxes newly scheduled for pause.
+    pub scheduled: u64,
+    /// Sandboxes which already had a matching pause scheduled.
+    pub already_satisfied: u64,
+    /// Sandboxes rejected by the current activity or policy proof.
+    pub skipped: u64,
 }

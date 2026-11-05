@@ -113,7 +113,11 @@ impl SandboxLifecycleExecutionStore for InMemorySandboxStore {
                 &rows,
                 &workspaces,
             )?;
-            let activities = super::maintenance::live_agent_activities(&state, &current.id)?;
+            let activities = super::maintenance::live_agent_activities(
+                &state,
+                &current.id,
+                &mutation.appended_at,
+            )?;
             super::super::checkpoint_capture::validate_checkpoint_capture_quiet(
                 current,
                 &activities,

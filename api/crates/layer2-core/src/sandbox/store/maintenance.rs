@@ -19,6 +19,9 @@ pub struct SandboxInactivityPauseRequest {
     pub sandbox_id: SandboxId,
     pub requested_at: String,
     pub pause_after_seconds: u64,
+    /// When true, historical profile `always_keep_alive` is migrated to the
+    /// new per-Sandbox preference: only an explicit `always_on: true` remains.
+    pub auto_pause_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +36,38 @@ pub enum SandboxMaintenanceOutcome {
     Scheduled,
     AlreadyScheduled,
     NotEligible,
+}
+
+/// Short lived owner-facing terminal/desktop session leases. The lease is
+/// additive evidence for inactivity and is fenced by the store adapter so a
+/// concurrent open stream cannot race a pause admission.
+#[async_trait]
+pub trait SandboxSessionStore: Send + Sync {
+    async fn open_sandbox_session(
+        &self,
+        sandbox_id: &SandboxId,
+        session_id: &str,
+        lease_expires_at: &str,
+    ) -> Result<(), SandboxStoreError>;
+
+    async fn renew_sandbox_session(
+        &self,
+        sandbox_id: &SandboxId,
+        session_id: &str,
+        lease_expires_at: &str,
+    ) -> Result<(), SandboxStoreError>;
+
+    async fn close_sandbox_session(
+        &self,
+        sandbox_id: &SandboxId,
+        session_id: &str,
+    ) -> Result<(), SandboxStoreError>;
+
+    async fn has_open_sandbox_session(
+        &self,
+        sandbox_id: &SandboxId,
+        observed_at: &str,
+    ) -> Result<bool, SandboxStoreError>;
 }
 
 /// A fully decided mutation which an adapter can persist transactionally.
@@ -160,6 +195,23 @@ pub trait SandboxMaintenanceStore: Send + Sync {
         &self,
         request: SandboxInactivityPauseRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError>;
+
+    /// Evaluate the same evidence and policy fences as an inactivity pause
+    /// without committing the resulting lifecycle mutation.
+    async fn preview_inactivity_pause(
+        &self,
+        request: SandboxInactivityPauseRequest,
+    ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError>;
+
+    /// Change the durable owner preference through an operator-authorized
+    /// path. The caller performs capability checks; the store supplies the
+    /// same revision compare-and-swap used by owner controls.
+    async fn set_sandbox_always_on(
+        &self,
+        sandbox_id: SandboxId,
+        expected_revision: u64,
+        always_on: bool,
+    ) -> Result<Sandbox, SandboxStoreError>;
 
     async fn schedule_image_rotation(
         &self,
