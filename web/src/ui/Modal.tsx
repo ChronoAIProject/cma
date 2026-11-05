@@ -28,6 +28,7 @@ import './Modal.css';
 
 interface ModalProps {
   readonly open: boolean;
+  readonly presentation?: 'repository' | 'task';
   readonly onClose: () => void;
   /** The heading, and the dialog's accessible name in every mode. */
   readonly title: string;
@@ -56,6 +57,7 @@ interface ModalProps {
 
 export function Modal({
   open,
+  presentation,
   onClose,
   title,
   description,
@@ -71,6 +73,7 @@ export function Modal({
 
   const content = (
     <ModalBody
+      presentation={presentation}
       onClose={onClose}
       title={title}
       description={description}
@@ -90,6 +93,7 @@ export function Modal({
     <Presence>
       {open ? (
         <ModalBody
+          presentation={presentation}
           onClose={onClose}
           title={title}
           description={description}
@@ -133,6 +137,7 @@ function RetainedModal({
  */
 function ModalBody({
   onClose,
+  presentation,
   title,
   description,
   children,
@@ -171,7 +176,13 @@ function ModalBody({
   }, [exiting, hidden]);
 
   return createPortal(
-    <div className="modal" role="presentation" hidden={hidden} {...presenceAttributes(exiting)}>
+    <div
+      className="modal"
+      data-presentation={presentation}
+      role="presentation"
+      hidden={hidden}
+      {...presenceAttributes(exiting)}
+    >
       <div className="modal__mask" aria-hidden="true" onClick={close} />
       <div
         className={['modal__card', placement ?? ''].filter(Boolean).join(' ')}

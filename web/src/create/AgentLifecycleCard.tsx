@@ -10,6 +10,7 @@ import { Input } from '../ui/Input';
 import { IconAgentPresetOutline16 } from '../ui/icons';
 import { Modal } from '../ui/Modal';
 import { useLifecycleIntent } from './lifecycleIntent';
+import { lifecycleFailureMessage } from './lifecycleFailure';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
@@ -17,6 +18,9 @@ import { agentNameFor, validRepository } from './repository';
 import { retainLifecycleHandoff } from '../resources/lifecycleHandoff';
 import './Create.css';
 import './AgentLifecycleCard.css';
+
+const recoverCreation = { label: 'Recover creation', kind: 'recover' } as const;
+const retryStatus = { label: 'Retry status', kind: 'status' } as const;
 
 interface AgentLifecycleCardProps {
   readonly client: CmaWebClient;
@@ -53,8 +57,12 @@ function AgentLifecycleForm({
   // The action that opened this dialog fixes its destination. The global action
   // always provisions a new Sandbox; contextual actions keep their exact parent.
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
-  const { pending, failure, operation, connection: connectionRequest } = lifecycle;
+  const { pending, operation, connection: connectionRequest } = lifecycle;
   const createdReceipt = lifecycle.intent?.receipt;
+  const failure = lifecycleFailureMessage(
+    lifecycle.failure,
+    createdReceipt ? retryStatus : recoverCreation,
+  );
   const handoffTransport = useLifecycleTransport(
     client,
     operation,
@@ -277,7 +285,7 @@ function AgentLifecycleForm({
                 {pending
                   ? 'Starting provisioning…'
                   : lifecycle.intent
-                    ? 'Recover creation'
+                    ? recoverCreation.label
                     : 'Create agent'}
               </Button>
             </>
@@ -313,7 +321,7 @@ function AgentLifecycleForm({
           </p>
         ) : null}
         {createdReceipt && failure ? (
-          <Button onClick={lifecycle.retryStatus}>Retry status</Button>
+          <Button onClick={lifecycle.retryStatus}>{retryStatus.label}</Button>
         ) : null}
         {operation?.status === 'waiting_for_connection' && !connectionRequest ? (
           <Button onClick={() => lifecycle.setConnection(operation.connection)}>

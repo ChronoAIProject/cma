@@ -4,6 +4,21 @@
  */
 
 body {
+  --dsw-static-zinc-440: #8b8b94;
+  --dsw-static-zinc-460: #85858e;
+  --dsw-static-zinc-720: #3a3a40;
+  --dsw-static-zinc-790: #2a2a2e;
+  --dsw-static-zinc-810: #26262a;
+  --dsw-static-zinc-870: #1c1c1f;
+  --dsw-static-zinc-880: #1a1a1d;
+  --dsw-static-zinc-890: #19191c;
+  --dsw-static-zinc-920: #131315;
+  --dsw-static-zinc-930: #0f0f11;
+  --dsw-static-zinc-940: #0b0b0c;
+  --dsw-static-zinc-960: #060607;
+  --dsw-static-lime-350: #d7ff5a;
+  --dsw-static-lime-420: #c8f542;
+
   --dsw-static-paper-0: #fffbf2;
   --dsw-static-paper-50: #faf2e0;
   --dsw-static-paper-100: #f5ead3;
@@ -277,9 +292,55 @@ body[data-ds-dark-theme] {
   --dsw-specific-login-input: var(--dsw-static-zinc-925);
   --dsw-specific-menu: var(--dsw-alias-bg-layer-2);
   --dsw-specific-selector: var(--dsw-static-zinc-850);
-  --dsw-specific-sidebar-fill: var(--dsw-static-zinc-925);
+  --dsw-specific-sidebar-fill: var(--dsw-static-zinc-930);
   --dsw-specific-sidebar-nav-item-active: var(--dsw-static-zinc-800);
   --dsw-specific-sidebar-nav-item-active-accent: rgba(195, 253, 67, 0.18);
   --dsw-specific-sidebar-nav-item-hover: var(--dsw-static-zinc-850);
   --dsw-specific-tip: var(--dsw-static-zinc-850);
+}
+
+body {
+  --dsw-specific-task-page: var(--dsw-static-zinc-0);
+  --dsw-specific-task-shell: var(--dsw-static-zinc-50);
+  --dsw-specific-task-border: var(--dsw-static-zinc-200);
+  --dsw-specific-task-panel: var(--dsw-static-zinc-0);
+  --dsw-specific-task-panel-border: var(--dsw-static-zinc-200);
+  --dsw-specific-task-focus-border: var(--dsw-static-zinc-400);
+  --dsw-specific-task-primary: var(--dsw-static-zinc-950);
+  --dsw-specific-task-weak: var(--dsw-static-zinc-600);
+  --dsw-specific-task-placeholder: var(--dsw-static-zinc-600);
+  --dsw-specific-task-accent: var(--dsw-static-lime-800);
+  --dsw-specific-task-accent-hover: var(--dsw-static-lime-900);
+  --dsw-specific-task-on-accent: var(--dsw-static-zinc-0);
+  --dsw-specific-task-hover: var(--dsw-static-zinc-100);
+  --dsw-specific-task-muted-icon: var(--dsw-static-zinc-500);
+  --dsw-specific-task-disabled: var(--dsw-static-zinc-200);
+  --dsw-specific-task-menu: var(--dsw-static-zinc-0);
+  --dsw-specific-sidebar-new-current: var(--dsw-static-zinc-100);
+  --dsw-specific-task-focus-ring: 0 0 0 3px
+    color-mix(in srgb, var(--dsw-specific-task-accent) 20%, transparent);
+  --dsw-specific-task-scrim: color-mix(in srgb, var(--dsw-static-zinc-950) 42%, transparent);
+}
+
+body[data-ds-dark-theme] {
+  --dsw-specific-task-page: var(--dsw-static-zinc-940);
+  --dsw-specific-task-shell: var(--dsw-static-zinc-920);
+  --dsw-specific-task-border: var(--dsw-static-zinc-810);
+  --dsw-specific-task-panel: var(--dsw-static-zinc-890);
+  --dsw-specific-task-panel-border: var(--dsw-static-zinc-790);
+  --dsw-specific-task-focus-border: var(--dsw-static-zinc-720);
+  --dsw-specific-task-primary: var(--dsw-static-zinc-100);
+  --dsw-specific-task-weak: var(--dsw-static-zinc-440);
+  --dsw-specific-task-placeholder: var(--dsw-static-zinc-460);
+  --dsw-specific-task-accent: var(--dsw-static-lime-420);
+  --dsw-specific-task-accent-hover: var(--dsw-static-lime-350);
+  --dsw-specific-task-on-accent: var(--dsw-static-zinc-940);
+  --dsw-specific-task-hover: var(--dsw-static-zinc-870);
+  --dsw-specific-task-muted-icon: var(--dsw-static-zinc-500);
+  --dsw-specific-task-disabled: var(--dsw-static-zinc-810);
+  --dsw-specific-task-menu: var(--dsw-static-zinc-900);
+  --dsw-specific-sidebar-new-current: var(--dsw-static-zinc-880);
+  --dsw-specific-task-focus-ring: 0 0 0 3px
+    color-mix(in srgb, var(--dsw-specific-task-accent) 20%, transparent);
+  --dsw-specific-task-scrim: color-mix(in srgb, var(--dsw-static-zinc-960) 72%, transparent);
 }
