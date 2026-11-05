@@ -1,4 +1,5 @@
-import { useId, useState } from 'react';
+import { useId } from 'react';
+import { useOperationsTab } from './useOperationsTab';
 import { PageHeader } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import type { Capability } from '../auth/types';
@@ -7,7 +8,6 @@ import { Sandboxes } from './Sandboxes';
 import { PlatformSettings } from './PlatformSettings';
 import { WarmPools } from './WarmPools';
 import { Activity } from './Activity';
-import { AdminSandboxUsage } from '../usage/AdminSandboxUsage';
 import { operatorViews } from './capabilities';
 import './Operations.css';
 
@@ -21,7 +21,7 @@ export function Operations({
   readonly capabilities: readonly Capability[];
 }) {
   const available = operatorViews.filter((view) => capabilities.includes(view.capability));
-  const [selected, setSelected] = useState<string>();
+  const [selected, setSelected] = useOperationsTab();
   const selectedView = available.find((view) => view.id === selected) ?? available[0];
   const id = useId();
   useDocumentTitle('Operations');
@@ -81,7 +81,6 @@ export function Operations({
           <Sandboxes client={client} canControl={canControl} />
         ) : null}
         {selectedView.id === 'settings' ? <PlatformSettings client={client} /> : null}
-        {selectedView.id === 'usage' ? <AdminSandboxUsage client={client} /> : null}
         {selectedView.id === 'warm_pools' ? <WarmPools client={client} /> : null}
         {selectedView.id === 'activity' ? <Activity client={client} /> : null}
       </div>
