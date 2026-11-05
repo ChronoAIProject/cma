@@ -87,16 +87,6 @@ pub(super) fn unbound_failure(command: &AgentCommand, status: &CommandStatusView
             "agent_command_authority_unavailable",
             "The command was refused because execution authority could not be verified.",
         ),
-        Some(CommandFailureCode::CredentialSetupRequired) => (
-            StatusCode::CONFLICT,
-            "sandbox_credential_setup_required",
-            "The Sandbox credential must be set up again before the Agent can resume. Ask its owner to restore credentials and submit a new command.",
-        ),
-        Some(CommandFailureCode::ConnectionsRequired) => (
-            StatusCode::CONFLICT,
-            "connections_required",
-            "The Sandbox owner must reconnect its required services before the Agent can resume. Restore the connections and submit a new command.",
-        ),
         Some(CommandFailureCode::AgentUnavailable) => (
             StatusCode::CONFLICT,
             "agent_unavailable",
@@ -112,7 +102,11 @@ pub(super) fn unbound_failure(command: &AgentCommand, status: &CommandStatusView
             "runtime_lost",
             "The runtime was lost before this command could dispatch.",
         ),
-        Some(CommandFailureCode::ExecutionFailed) => (
+        Some(
+            CommandFailureCode::CredentialSetupRequired
+            | CommandFailureCode::ConnectionsRequired
+            | CommandFailureCode::ExecutionFailed,
+        ) => (
             StatusCode::CONFLICT,
             "agent_command_execution_failed",
             "The command failed before a turn was bound.",
