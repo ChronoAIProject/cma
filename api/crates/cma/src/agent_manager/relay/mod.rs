@@ -5,6 +5,8 @@ pub(crate) use control::prestop;
 mod http;
 mod live;
 mod maintenance;
+mod reopen;
+pub(crate) use reopen::ReopenCall;
 
 use layer2_core::agent_ownership::{
     bounded, Authority, Member, OwnershipCoordinator, OwnershipToken,
@@ -24,6 +26,7 @@ pub(super) const MAX_BUFFERED_BODY_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) struct Relay {
     coordinator: Arc<OwnershipCoordinator>,
     maintenance: std::sync::OnceLock<maintenance::Maintenance>,
+    reopen: std::sync::OnceLock<Arc<crate::sandbox::worker::SandboxWorker>>,
     updates: Weak<DurableAgentUpdateRecorder>,
     authentication: authentication::Authentication,
     client: reqwest::Client,
@@ -46,6 +49,7 @@ impl Relay {
         Ok(Arc::new(Self {
             coordinator,
             maintenance: std::sync::OnceLock::new(),
+            reopen: std::sync::OnceLock::new(),
             updates: Arc::downgrade(updates),
             authentication: authentication::Authentication::new(key),
             client: reqwest::Client::builder()
@@ -129,6 +133,10 @@ impl Relay {
                         "/internal/agent-manager/v1/control/{agent}",
                         axum::routing::post(maintenance::serve),
                     )
+                    .route(
+                        "/internal/agent-manager/v1/control/{agent}/reopen",
+                        axum::routing::post(reopen::serve),
+                    )
                     .with_state(self.clone()),
             )
             .layer(axum::middleware::from_fn_with_state(
@@ -139,4 +147,4 @@ impl Relay {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

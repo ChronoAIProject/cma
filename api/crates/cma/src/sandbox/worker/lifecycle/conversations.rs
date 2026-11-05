@@ -74,6 +74,20 @@ impl SandboxWorker {
         let mut attachments = Vec::new();
         let mut receipts = BTreeMap::new();
         for agent in &live {
+            if let Some(relay) = self.reopen_relay.get() {
+                let relay = relay.upgrade().ok_or(SandboxStoreError::Conflict)?;
+                match relay.reopen_agent(&sandbox, &agent.id).await {
+                    Ok(receipt) => {
+                        receipts.insert(agent.id.clone(), receipt);
+                    }
+                    Err(error) => {
+                        return self
+                            .rollback_reopen(sandbox, attachments, adapter_failure(error), now)
+                            .await
+                    }
+                }
+                continue;
+            }
             let worktree = worktrees
                 .get(&agent.id)
                 .expect("every validated live agent has a worktree");

@@ -55,6 +55,7 @@ pub(crate) struct SandboxLifecycleConfig {
 }
 
 pub(crate) struct SandboxLifecycleComposition {
+    pub(crate) reopen_worker: Arc<SandboxWorker>,
     warmup: super::warmup::LegacyWarmSandboxCleanup,
     reconciliation: SandboxReconciler,
     sandbox: SandboxScheduler,
@@ -178,6 +179,7 @@ impl SandboxLifecycleComposition {
         );
 
         Self {
+            reopen_worker: sandbox_worker.clone(),
             warmup,
             updates,
             reconciliation,

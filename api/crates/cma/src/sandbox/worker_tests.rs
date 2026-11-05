@@ -57,6 +57,7 @@ mod lifecycle_queue_tests;
 mod lifecycle_recovery_tests;
 mod native_pool_tests;
 mod native_suspension_tests;
+mod owned_reopen_tests;
 mod pause_cancellation_tests;
 mod provided_credential_tests;
 mod reconciliation_tests;

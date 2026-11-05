@@ -2044,6 +2044,13 @@ establish peer authority: every peer relay request requires a valid signed proof
 and live membership. Secret rotation requires all serving peers to use the same
 existing deployment key; do not rotate that key as part of scaling.
 
+Lifecycle recovery also routes each conversation reopen to its Agent owner.
+The owner records startup output and stages the connection under its captured
+epoch; the Sandbox worker fences all returned epochs in the final publication
+transaction. A staged connection activates only after that publication is visible.
+Changed lifecycle claims, failed ownership or expired leases discard the stage;
+normal lifecycle retries recover lost responses without publishing stale output.
+
 Live fragments use bounded authenticated subscriptions to the owner below the
 public SSE projections. Subscribers on any manager receive v1/v2, AG-UI and
 Responses live events while their existing Mongo catch-up remains authoritative.
