@@ -2194,3 +2194,31 @@ escalate instead of bypassing its fence. Do not delete ownership history, rotate
 Sandboxes, apply whole manifests or blindly run `rollout undo`. Restore only the
 captured narrow fields responsible for a regression. A full-stop rollback is an
 outage; no PDB can make it continuously available.
+
+## Immutable web build identity
+
+The account menu's **Copy build version** copies the running bundle's own version
+and full commit SHA. It never reads API build metadata: an existing browser tab
+continues to identify its original bundle until reloaded. Local Vite development
+and `npm run build` show `dev (local)` without deployment inputs.
+
+Every web Docker build sets `CHRONO_BUILD_ARTIFACT=promotable`. It requires
+`CHRONO_BUILD=<release version>` and `CHRONO_BUILD_SHA=<full 40-character SHA>`.
+CI candidates use `git-<first 12 SHA characters>` in both platform and native scan
+passes; release scan/publish passes use the planned release version. Missing,
+blank, placeholder or mismatched inputs fail before bundling. Vite emits the same
+validated identity as bundle constants and `build-info.json` verification evidence.
+The browser does not fetch that evidence file.
+
+Before CI exports tested web bytes and before release publication, the required
+web identity check compares evidence and compiled JavaScript with the exact image's
+OCI source/version/revision labels. It inspects by immutable image ID and cleans
+its stopped verification container. Transfer/promotion retains the tested image
+ID/digest and existing provenance checks; do not rebuild or relabel to correct an
+identity. A candidate identity is not a release version.
+
+For production acceptance, the lead compares a fresh browser's copied identity
+with the tested source, image labels and promoted digest. Retain all prior hashed
+web assets needed by open tabs and the batch's compatible reader floor through
+normal deployment procedures. Verify an existing tab continues working and names
+its original bundle. This UI change does not authorize deployment or asset removal.

@@ -1,18 +1,30 @@
 /**
  * Which build of the frontend is on screen — docs/Web_Style.md §6.
  *
- * The status band names it because a person reporting something odd, and the
+ * The account menu names it because a person reporting something odd, and the
  * person reading that report, need to be talking about the same bundle. It is
  * baked in at build time rather than fetched: a build identifier the running
  * page asks a server for is one that can disagree with the code answering the
  * question.
  *
- * `dev` when nothing set it, which is the honest answer for a local run and is
- * what CI's image build produces. The publisher passes the release version.
+ * Local runs are explicitly local. Deployable artifacts require both a
+ * release/git version and a full revision before Vite builds the bundle.
  */
 declare const __CHRONO_BUILD__: string | undefined;
+declare const __CHRONO_BUILD_SHA__: string | undefined;
+declare const __CHRONO_BUILD_LOCAL__: boolean | undefined;
 
 export const BUILD: string = typeof __CHRONO_BUILD__ === 'string' ? __CHRONO_BUILD__ : 'dev';
+const revision = typeof __CHRONO_BUILD_SHA__ === 'string' ? __CHRONO_BUILD_SHA__ : '';
+const local = typeof __CHRONO_BUILD_LOCAL__ === 'boolean' ? __CHRONO_BUILD_LOCAL__ : true;
+
+export const BUILD_INFO = Object.freeze({
+  version: BUILD,
+  revision,
+  local,
+  label: local ? `${BUILD} (local)` : BUILD,
+  copyText: `CMA ${BUILD} (${revision || 'local'})${local && revision ? ' (local)' : ''}`,
+});
 
 /**
  * The public API base for the deployment serving this bundle.
