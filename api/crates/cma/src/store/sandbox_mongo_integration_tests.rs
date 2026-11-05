@@ -79,6 +79,7 @@ use super::worktrees::worktree_replacement_fields;
 use super::DefaultProfileSpec;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
+mod agent_segment_tests;
 mod background_checkpoint_tests;
 mod command_ledger_tests;
 mod conversation_fixtures;
