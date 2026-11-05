@@ -140,9 +140,10 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     case 'usage_updated':
       return durableUsage(next, kind);
     case 'title_set':
-      return kind.source === 'owner_override' && text(kind.title) !== undefined
+      if (text(kind.title) === undefined) return next;
+      return kind.source === 'owner_override'
         ? { ...next, ownerTitle: text(kind.title) }
-        : next;
+        : { ...next, title: text(kind.title) };
     case 'runtime_metadata_changed':
       return {
         ...next,
@@ -313,6 +314,7 @@ function patchState(
       : { ...state, approvals: upsert(state.approvals, approval) };
   }
   if (path === '/ownerTitle') return { ...state, ownerTitle: text(item.value) };
+  if (path === '/title') return { ...state, title: text(item.value) };
   if (path === '/runtimeMetadata') {
     const metadata = object(item.value);
     return metadata === undefined
