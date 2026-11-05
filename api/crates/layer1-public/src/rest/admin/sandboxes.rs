@@ -7,7 +7,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use layer2_core::sandbox::store::PageRequest;
+use layer2_core::sandbox::store::{PageRequest, SandboxStoreError};
 use layer2_core::sandbox::{
     AgentAdminSummary, AgentStatus, Sandbox, SandboxAdminQuery, SandboxAdminSummary,
     SandboxAdminView, SandboxEvent, SandboxStatus, WorkspaceAdminSummary, WorkspaceStatus,
@@ -18,10 +18,18 @@ use utoipa::ToSchema;
 
 use crate::AuthenticatedCaller;
 
+use super::super::instances_openapi_shapes::SandboxView;
 use super::super::sandbox_runtime_update::SandboxRuntimeUpdateView;
 use super::{AdminState, CollectionProblem, ProtectedKind, ProtectedProblem};
 
 const DEFAULT_EVENT_LIMIT: u16 = 200;
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AdminAlwaysOnRequest {
+    always_on: bool,
+    expected_revision: u64,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -168,8 +176,44 @@ pub(super) fn routes() -> Router<Arc<AdminState>> {
     Router::new()
         .route("/api/v1/admin/sandboxes", get(list))
         .route("/api/v1/admin/sandboxes/{id}", get(read))
+        .route("/api/v1/admin/sandboxes/{id}/always-on", post(always_on))
         .route("/api/v1/admin/sandboxes/{id}/events", get(events))
         .route("/api/v1/admin/sandboxes/{id}/retire", post(retire))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/sandboxes/{id}/always-on",
+    tag = "administration",
+    params(("id" = String, Path)),
+    request_body = AdminAlwaysOnRequest,
+    responses((status = 200, body = SandboxView), (status = 403, body = crate::rest::ProblemDocument), (status = 409, body = crate::rest::ProblemDocument))
+)]
+pub(crate) async fn always_on(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    Json(body): Json<AdminAlwaysOnRequest>,
+) -> Result<Json<SandboxView>, CollectionProblem> {
+    caller
+        .require(Capability::ControlAnySandbox)
+        .map_err(CollectionProblem::from)?;
+    let store = state
+        .maintenance
+        .as_ref()
+        .ok_or(CollectionProblem::Unavailable)?;
+    let sandbox = store
+        .set_sandbox_always_on(SandboxId(id), body.expected_revision, body.always_on)
+        .await
+        .map_err(|error| match error {
+            SandboxStoreError::NotFound => CollectionProblem::NotFound,
+            SandboxStoreError::Conflict => CollectionProblem::Conflict,
+            SandboxStoreError::Corrupt(_) | SandboxStoreError::Unavailable(_) => {
+                CollectionProblem::Unavailable
+            }
+            _ => CollectionProblem::Conflict,
+        })?;
+    Ok(Json(SandboxView::from(&sandbox)))
 }
 
 #[utoipa::path(

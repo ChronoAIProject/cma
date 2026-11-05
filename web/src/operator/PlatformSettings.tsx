@@ -72,6 +72,9 @@ function SettingsEditor({
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [needsReview, setNeedsReview] = useState(false);
+  const [previewCount, setPreviewCount] = useState<number>();
+  const [pauseNowResult, setPauseNowResult] = useState<string>();
+  const [pauseNowBusy, setPauseNowBusy] = useState(false);
   const submitting = useRef(false);
   const update = (value: Settings) => {
     setDraft(value);
@@ -179,17 +182,87 @@ function SettingsEditor({
       </Presence>
       <section>
         <h3>Inactivity</h3>
-        <NumberField
-          label="Pause after (seconds)"
-          value={draft.inactivity.pause_after_seconds}
-          minimum={60}
-          maximum={86400}
-          disabled={disabled}
-          error={fieldError('inactivity.pause_after_seconds')}
-          onChange={(value) =>
-            update({ ...draft, inactivity: { ...draft.inactivity, pause_after_seconds: value } })
-          }
-        />
+        <label className="operator-switch">
+          <input
+            type="checkbox"
+            disabled={disabled}
+            checked={draft.inactivity.auto_pause_enabled ?? false}
+            onChange={(event) =>
+              update({
+                ...draft,
+                inactivity: {
+                  ...draft.inactivity,
+                  auto_pause_enabled: event.target.checked,
+                },
+              })
+            }
+          />
+          Enable auto pause
+        </label>
+        {(draft.inactivity.auto_pause_enabled ?? false) ? (
+          <IdleThresholdFields
+            seconds={draft.inactivity.pause_after_seconds}
+            disabled={disabled}
+            onChange={(seconds) =>
+              update({
+                ...draft,
+                inactivity: { ...draft.inactivity, pause_after_seconds: seconds },
+              })
+            }
+          />
+        ) : (
+          <NumberField
+            label="Pause after (seconds)"
+            value={draft.inactivity.pause_after_seconds}
+            minimum={60}
+            maximum={86400}
+            disabled={disabled}
+            error={fieldError('inactivity.pause_after_seconds')}
+            onChange={(value) =>
+              update({
+                ...draft,
+                inactivity: { ...draft.inactivity, pause_after_seconds: value },
+              })
+            }
+          />
+        )}
+        <div className="operator-actions">
+          <Button
+            disabled={disabled || pauseNowBusy}
+            onClick={() => {
+              void client.admin
+                .previewAutoPause({})
+                .then((result) => setPreviewCount(result.candidates));
+            }}
+          >
+            Preview idle Sandboxes
+          </Button>
+          <Button
+            disabled={disabled || pauseNowBusy}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  'Pause every currently idle Sandbox now? Active work and Always on Sandboxes are rechecked.',
+                )
+              )
+                return;
+              setPauseNowBusy(true);
+              setPauseNowResult(undefined);
+              void client.admin
+                .pauseIdleNow(true, {})
+                .then((result) =>
+                  setPauseNowResult(`${result.scheduled} Sandboxes scheduled to pause.`),
+                )
+                .finally(() => setPauseNowBusy(false));
+            }}
+          >
+            {pauseNowBusy ? 'Pausing idle Sandboxes' : 'Pause idle now'}
+          </Button>
+          {previewCount === undefined ? null : (
+            <span role="status">{previewCount} Sandboxes are candidates.</span>
+          )}
+          {pauseNowResult === undefined ? null : <span role="status">{pauseNowResult}</span>}
+        </div>
       </section>
       <section>
         <h3>Retention</h3>
@@ -279,6 +352,59 @@ function SettingsEditor({
         </Presence>
       </div>
     </form>
+  );
+}
+
+function IdleThresholdFields({
+  seconds,
+  disabled,
+  onChange,
+}: {
+  readonly seconds: number;
+  readonly disabled: boolean;
+  readonly onChange: (seconds: number) => void;
+}) {
+  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainder = safeSeconds % 60;
+  const change = (part: 'hours' | 'minutes' | 'seconds', value: number) => {
+    const next =
+      part === 'hours'
+        ? value * 3600 + minutes * 60 + remainder
+        : part === 'minutes'
+          ? hours * 3600 + value * 60 + remainder
+          : hours * 3600 + minutes * 60 + value;
+    onChange(next);
+  };
+  return (
+    <div className="operator-settings-grid" aria-label="Automatic pause idle threshold">
+      <NumberField
+        label="Pause after hours"
+        value={hours}
+        minimum={0}
+        maximum={24}
+        disabled={disabled}
+        onChange={(value) => change('hours', value)}
+      />
+      <NumberField
+        label="Pause after minutes"
+        value={minutes}
+        minimum={0}
+        maximum={59}
+        disabled={disabled}
+        onChange={(value) => change('minutes', value)}
+      />
+      <NumberField
+        label="Pause after seconds"
+        value={remainder}
+        minimum={0}
+        maximum={59}
+        disabled={disabled}
+        onChange={(value) => change('seconds', value)}
+      />
+      <p className="operator-notice">Choose at least 60 seconds and at most 24 hours.</p>
+    </div>
   );
 }
 

@@ -1,6 +1,6 @@
 use super::lifecycle_test_support::{agent, log, sandbox, IDLE_AT, NOW};
 use super::*;
-use crate::ids::AgentId;
+use crate::ids::{AgentId, SandboxId};
 
 fn activity(agent_id: &str, conversation_id: &str, seq: u64) -> SandboxAgentActivity {
     let agent = agent(agent_id, conversation_id, seq);
@@ -37,6 +37,16 @@ fn activity_projection_copies_no_log_or_message_content() {
     assert!(!json.contains("private transcript content"));
     assert!(!json.contains("Private title"));
     assert_eq!(activity.newest_log.unwrap().seq, 4);
+}
+
+#[test]
+fn open_desktop_session_registry_blocks_maintenance_until_stream_closes() {
+    let sandbox_id = SandboxId("sbx_desktop_registry_test".into());
+    assert!(!has_open_desktop_session(&sandbox_id));
+    register_open_desktop_session(&sandbox_id);
+    assert!(has_open_desktop_session(&sandbox_id));
+    unregister_open_desktop_session(&sandbox_id);
+    assert!(!has_open_desktop_session(&sandbox_id));
 }
 
 #[test]
@@ -105,6 +115,24 @@ fn active_turn_lifecycle_work_and_queued_input_each_prevent_pause() {
     let mut queued = quiet_pair();
     queued[0].queued_messages_present = true;
     assert!(!is_inactivity_pause_candidate(&sandbox, &queued, NOW, 900,));
+
+    let mut external_activity = quiet_pair();
+    external_activity[0].external_activity_present = true;
+    assert!(!is_inactivity_pause_candidate(
+        &sandbox,
+        &external_activity,
+        NOW,
+        900,
+    ));
+
+    let mut open_session = quiet_pair();
+    open_session[0].open_terminal_or_desktop_session = true;
+    assert!(!is_inactivity_pause_candidate(
+        &sandbox,
+        &open_session,
+        NOW,
+        900,
+    ));
 
     let mut stopping = quiet_pair();
     stopping[0].stop_requested = true;

@@ -1,6 +1,7 @@
 //! Content-free evidence and fail-closed sandbox inactivity decisions.
 
 use std::collections::BTreeSet;
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +9,39 @@ use crate::ids::{AgentId, SandboxId};
 use crate::{seconds_from_rfc3339, MAX_PAUSE_AFTER_SECONDS, MIN_PAUSE_AFTER_SECONDS};
 
 use super::{Agent, AgentLogEntry, AgentStatus, Sandbox, SandboxModelError, SandboxStatus};
+
+static OPEN_DESKTOP_SESSIONS: OnceLock<Mutex<BTreeSet<SandboxId>>> = OnceLock::new();
+
+/// Record a live desktop stream so maintenance cannot classify its Sandbox as
+/// idle while the stream is open. The connection's Drop implementation removes
+/// the marker; durable command evidence remains the authority for user input.
+pub fn register_open_desktop_session(sandbox_id: &SandboxId) {
+    OPEN_DESKTOP_SESSIONS
+        .get_or_init(|| Mutex::new(BTreeSet::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(sandbox_id.clone());
+}
+
+/// Remove the process-local desktop marker after a stream closes.
+pub fn unregister_open_desktop_session(sandbox_id: &SandboxId) {
+    if let Some(sessions) = OPEN_DESKTOP_SESSIONS.get() {
+        sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(sandbox_id);
+    }
+}
+
+/// Check whether this CMA process currently owns an open desktop stream.
+pub fn has_open_desktop_session(sandbox_id: &SandboxId) -> bool {
+    OPEN_DESKTOP_SESSIONS.get().is_some_and(|sessions| {
+        sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains(sandbox_id)
+    })
+}
 
 /// The newest durable log position without copying its potentially private payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +66,13 @@ pub struct SandboxAgentActivity {
     pub work_pending: bool,
     pub stop_requested: bool,
     pub queued_messages_present: bool,
+    /// Durable user/channel/trigger activity observed outside the Agent log.
+    /// The projection remains content-free; any positive value blocks pause.
+    #[serde(default)]
+    pub external_activity_present: bool,
+    /// Open terminal or desktop leases associated with this Sandbox.
+    #[serde(default)]
+    pub open_terminal_or_desktop_session: bool,
     pub newest_log: Option<SandboxAgentLogActivity>,
 }
 
@@ -57,6 +98,8 @@ impl SandboxAgentActivity {
             work_pending: agent.work.step.is_pending(),
             stop_requested: agent.requested_stop_reason.is_some(),
             queued_messages_present: !agent.conversation.queued_messages.is_empty(),
+            external_activity_present: false,
+            open_terminal_or_desktop_session: false,
             newest_log: newest_log.map(|entry| SandboxAgentLogActivity {
                 agent_id: entry.agent_id.clone(),
                 seq: entry.seq,
@@ -102,6 +145,8 @@ pub fn is_inactivity_pause_candidate(
             && !activity.work_pending
             && !activity.stop_requested
             && !activity.queued_messages_present
+            && !activity.external_activity_present
+            && !activity.open_terminal_or_desktop_session
             && activity.newest_log.as_ref().is_some_and(|newest| {
                 newest.agent_id == activity.agent_id
                     && newest.seq == activity.last_seq

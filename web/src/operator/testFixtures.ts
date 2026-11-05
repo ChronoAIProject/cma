@@ -157,6 +157,34 @@ export function operatorClient() {
         revision: body.expected_revision + 1,
         settings: body.settings,
       })),
+    previewAutoPause: vi
+      .fn<OperatorClient['admin']['previewAutoPause']>()
+      .mockResolvedValue({ candidates: 1 }),
+    pauseIdleNow: vi.fn<OperatorClient['admin']['pauseIdleNow']>().mockResolvedValue({
+      scheduled: 1,
+      already_satisfied: 0,
+      skipped: 0,
+    }),
+    setSandboxAlwaysOn: vi
+      .fn<OperatorClient['admin']['setSandboxAlwaysOn']>()
+      .mockImplementation(async (_id, body) => ({
+        id: sandboxRow.id,
+        owner: sandboxRow.owner,
+        name: sandboxRow.name,
+        status: sandboxRow.status,
+        profile: { id: 'sbp-1', revision: 1 },
+        always_on: body.always_on,
+        nyxid_services: [],
+        limits: { max_workspaces: 2, max_agents_per_workspace: 2 },
+        lifecycle: {
+          pause: { allowed: true },
+          revive: { allowed: false, reason: 'not_paused' },
+        },
+        last_activity_at: now,
+        created_at: now,
+        updated_at: now,
+        revision: body.expected_revision + 1,
+      })),
     listActivity: vi.fn<OperatorClient['admin']['listActivity']>().mockResolvedValue({
       items: [
         {

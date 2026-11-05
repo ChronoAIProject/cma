@@ -42,7 +42,6 @@ struct Sweep {
     candidates: VecDeque<SandboxId>,
     candidate_page: PageRequest,
     candidates_finished: bool,
-    pause_after_seconds: u64,
 }
 
 impl Default for Sweep {
@@ -61,7 +60,6 @@ impl Default for Sweep {
             candidates: VecDeque::new(),
             candidate_page: PageRequest::default(),
             candidates_finished: false,
-            pause_after_seconds: 0,
         }
     }
 }
@@ -235,17 +233,11 @@ impl Sweep {
                 return Ok(u64::from(self.recovery_candidate.is_some()));
             }
             Phase::Policy => {
-                self.pause_after_seconds = reconciler
-                    .policy
-                    .current_sandbox_policy()
-                    .await
-                    .map_err(|_| {
-                        SandboxStoreError::Unavailable(
-                            "sandbox maintenance policy is unavailable".into(),
-                        )
-                    })?
-                    .inactivity_pause_after_seconds;
-                self.phase = Phase::Candidates;
+                self.phase = if reconciler.automatic_pause_threshold(now).await?.is_some() {
+                    Phase::Candidates
+                } else {
+                    Phase::Complete
+                };
             }
             Phase::Candidates => {
                 if self.candidates_finished {
@@ -305,19 +297,33 @@ impl Sweep {
                 return Ok(1);
             }
             Phase::IdlePause => {
+                // A sweep can yield or retry after policy changes. Never carry
+                // enablement, grace or a threshold across an admission attempt.
+                let Some(pause_after_seconds) = reconciler.automatic_pause_threshold(now).await?
+                else {
+                    self.phase = Phase::Complete;
+                    return Ok(0);
+                };
                 let sandbox_id = self
                     .candidates
                     .front()
                     .expect("candidate is retained until admission finishes")
                     .clone();
-                reconciler
+                let outcome = reconciler
                     .store
                     .schedule_inactivity_pause(SandboxInactivityPauseRequest {
-                        sandbox_id,
+                        sandbox_id: sandbox_id.clone(),
                         requested_at: rfc3339_at(now),
-                        pause_after_seconds: self.pause_after_seconds,
+                        pause_after_seconds,
+                        auto_pause_enabled: true,
                     })
                     .await?;
+                tracing::info!(parent: None,
+                    sandbox_id = %sandbox_id,
+                    outcome = ?outcome,
+                    threshold_seconds = pause_after_seconds,
+                    "automatic sandbox pause decision"
+                );
                 self.next_candidate();
                 return Ok(1);
             }
@@ -333,6 +339,33 @@ impl Sweep {
         } else {
             Phase::Profiles
         };
+    }
+}
+
+impl SandboxReconciler {
+    async fn automatic_pause_threshold(
+        &self,
+        now: SystemTime,
+    ) -> Result<Option<u64>, SandboxStoreError> {
+        let policy = self.policy.current_sandbox_policy().await.map_err(|_| {
+            SandboxStoreError::Unavailable("sandbox maintenance policy is unavailable".into())
+        })?;
+        if !self
+            .policy
+            .automatic_pause_allowed(&rfc3339_at(now))
+            .await
+            .map_err(|_| {
+                SandboxStoreError::Unavailable(
+                    "automatic pause enablement policy is unavailable".into(),
+                )
+            })?
+        {
+            tracing::debug!(parent: None,
+                "automatic sandbox pause is disabled or within its enablement grace period"
+            );
+            return Ok(None);
+        }
+        Ok(Some(policy.inactivity_pause_after_seconds))
     }
 }
 
