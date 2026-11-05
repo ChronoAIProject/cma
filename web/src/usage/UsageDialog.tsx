@@ -1,6 +1,7 @@
 import type { UsageClient } from './client';
 import { Modal } from '../ui/Modal';
 import { MetricsDashboard } from './metrics/MetricsDashboard';
+import { useMeasuredUsage } from './metrics/useMeasuredUsage';
 import { useUsageSelection } from './metrics/selection';
 import { UsageAgentPicker } from './UsageAgentPicker';
 
@@ -15,6 +16,7 @@ export function UsageDialog({
   readonly onClose: () => void;
   readonly appearanceNotice?: boolean;
 }) {
+  const measured = useMeasuredUsage(client?.readMeasuredUsage, open);
   const [selection, onSelection] = useUsageSelection(false);
   return (
     <Modal keepMounted open={open} title="Your usage" onClose={onClose} placement="usage-dialog">
@@ -24,6 +26,7 @@ export function UsageDialog({
           api={client.usageMetrics}
           history={client.usage}
           admin={false}
+          measured={measured}
           active={open}
           selection={selection}
           onSelection={onSelection}

@@ -1,3 +1,4 @@
+import { createUsageClient } from '../usage/client';
 import { ApiError, ProtocolError, type Cma } from '@chronoai/cma-sdk';
 import { AgentLifecycleCreateError } from './client';
 import type {
@@ -69,7 +70,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     return profile.content;
   };
   return {
-    usageViews: sdk,
+    usageViews: createUsageClient(sdk),
     operationReplay: sdk.agentEventsV2,
     deliverables: sdk.agents,
     documents: documentsClient(),

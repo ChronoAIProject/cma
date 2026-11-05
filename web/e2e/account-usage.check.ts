@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalUsageMetrics } from './usage-metrics.fixture';
 
+const measured = process.env.CMA_E2E_MEASURED_USAGE === 'true';
+
 test('LOCAL account Usage preserves the Agent, owner scope, focus and browser history', async ({
   page,
   baseURL,
@@ -9,17 +11,9 @@ test('LOCAL account Usage preserves the Agent, owner scope, focus and browser hi
   const boundary = new LocalStartup();
   const metrics = new LocalUsageMetrics();
   await boundary.route(page, baseURL!);
-  await page.route('**/auth/session', (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        subject: 'local-owner',
-        display_name: 'Local operator',
-        capabilities: ['use_own_sandboxes', 'read_all_sandboxes'],
-      },
-    }),
-  );
   await metrics.route(page);
+  metrics.measuredVisible = measured;
+  await metrics.session(page, ['use_own_sandboxes', 'read_all_sandboxes']);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/agents/agt_contract');
   const editor = page.getByRole('textbox', { name: 'Message', exact: true });
@@ -40,10 +34,21 @@ test('LOCAL account Usage preserves the Agent, owner scope, focus and browser hi
   await expect(dialog.getByRole('button', { name: 'Research Sandbox', exact: true })).toBeVisible();
   expect(metrics.creates.every((read) => !read.admin && !read.input.filters?.owner)).toBe(true);
   await expect(page.getByRole('dialog')).toHaveCount(1);
-  await dialog.getByRole('button', { name: 'Memory working set', exact: true }).click();
-  await expect(
-    dialog.getByText('View Memory working set chart data', { exact: true }),
-  ).toBeVisible();
+  if (measured) {
+    await dialog.getByRole('button', { name: 'Memory working set', exact: true }).click();
+    await expect(
+      dialog.getByText('View Memory working set chart data', { exact: true }),
+    ).toBeVisible();
+  } else {
+    await expect(dialog.getByRole('region', { name: 'Allocated capacity now' })).toContainText(
+      '2 cores',
+    );
+    await expect(dialog.getByRole('region', { name: 'Allocated resource-hours' })).toContainText(
+      '480',
+    );
+    await expect(dialog.getByRole('button', { name: 'Memory working set' })).toHaveCount(0);
+    await expect(dialog.getByRole('region', { name: 'Measured resource charts' })).toHaveCount(0);
+  }
   expect(metrics.creates).toHaveLength(1);
   await dialog.getByRole('button', { name: 'Research Sandbox', exact: true }).click();
   await dialog.getByRole('button', { name: 'Lifecycle history', exact: true }).click();
@@ -82,6 +87,8 @@ test('LOCAL account Usage preserves the Agent, owner scope, focus and browser hi
   await expect(dialog).toBeVisible();
   await page.goBack();
   await expect(dialog).not.toBeVisible();
+  if (!measured)
+    expect(metrics.reads.filter((url) => url.pathname.endsWith('/series'))).toEqual([]);
   expect(boundary.writes).toEqual([]);
   expect(boundary.errors).toEqual([]);
 });
@@ -92,6 +99,8 @@ for (const path of ['/usage', '/settings/usage', '/settings/general', '/settings
     const metrics = new LocalUsageMetrics();
     await boundary.route(page, baseURL!);
     await metrics.route(page);
+    metrics.measuredVisible = measured;
+    await metrics.session(page, ['use_own_sandboxes', 'read_all_sandboxes']);
     await page.addInitScript(() => localStorage.setItem('cma:appearance', 'light'));
     await page.goto(`${path}?range=7d`);
     const dialog = page.getByRole('dialog', { name: 'Your usage' });
@@ -103,6 +112,8 @@ for (const path of ['/usage', '/settings/usage', '/settings/general', '/settings
     expect(await page.evaluate(() => localStorage.getItem('cma:appearance'))).toBe('light');
     await dialog.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(page).toHaveURL(/\/agent-manager$/);
+    if (!measured)
+      expect(metrics.reads.filter((url) => url.pathname.endsWith('/series'))).toEqual([]);
     expect(boundary.writes).toEqual([]);
   });
 }
@@ -117,12 +128,16 @@ for (const status of [403, 410, 429, 503]) {
     metrics.failure = status;
     await boundary.route(page, baseURL!);
     await metrics.route(page);
+    metrics.measuredVisible = measured;
+    await metrics.session(page, ['use_own_sandboxes', 'read_all_sandboxes']);
     await page.goto('/usage');
     const dialog = page.getByRole('dialog', { name: 'Your usage' });
     await expect(dialog.getByRole('alert')).toBeVisible();
     await expect(dialog.getByText('No Sandboxes match this selection.')).toHaveCount(0);
     if (status === 429)
       await expect(dialog.getByRole('button', { name: 'Waiting to retry' })).toBeDisabled();
+    if (!measured)
+      expect(metrics.reads.filter((url) => url.pathname.endsWith('/series'))).toEqual([]);
     expect(boundary.writes).toEqual([]);
   });
 }
@@ -136,6 +151,8 @@ test('LOCAL pending owner report resolves and empty selections are explicit', as
   metrics.pending = true;
   await boundary.route(page, baseURL!);
   await metrics.route(page);
+  metrics.measuredVisible = measured;
+  await metrics.session(page, ['use_own_sandboxes', 'read_all_sandboxes']);
   await page.goto('/usage');
   const dialog = page.getByRole('dialog', { name: 'Your usage' });
   await expect(dialog.getByText('Preparing usage report…')).toBeVisible();
@@ -145,6 +162,8 @@ test('LOCAL pending owner report resolves and empty selections are explicit', as
   await dialog.getByRole('searchbox', { name: 'Usage Sandbox search' }).fill('empty');
   await dialog.getByRole('button', { name: 'Apply usage filters' }).click();
   await expect(dialog.getByText('No Sandboxes match this selection.')).toBeVisible();
+  if (!measured)
+    expect(metrics.reads.filter((url) => url.pathname.endsWith('/series'))).toEqual([]);
   expect(boundary.writes).toEqual([]);
 });
 
@@ -156,6 +175,8 @@ test('LOCAL mobile Usage returns focus to the retained account trigger', async (
   const metrics = new LocalUsageMetrics();
   await boundary.route(page, baseURL!);
   await metrics.route(page);
+  metrics.measuredVisible = measured;
+  await metrics.session(page, ['use_own_sandboxes', 'read_all_sandboxes']);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/agents/agt_contract');
   await page.getByRole('button', { name: 'Show navigation', exact: true }).click();
@@ -169,5 +190,7 @@ test('LOCAL mobile Usage returns focus to the retained account trigger', async (
   await expect(dialog).not.toBeVisible();
   await expect(trigger).toBeFocused();
   await expect(trigger).toBeInViewport();
+  if (!measured)
+    expect(metrics.reads.filter((url) => url.pathname.endsWith('/series'))).toEqual([]);
   expect(boundary.writes).toEqual([]);
 });
