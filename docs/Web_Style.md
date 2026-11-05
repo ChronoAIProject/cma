@@ -5121,3 +5121,31 @@ button, 32px desktop height, 44px mobile height, 12px horizontal padding and an 
 radius. Existing control availability and pending-request guards are unchanged.
 
 | 2026-11-04 | Clarify supported running follow-ups and label Stop without changing queue or interruption semantics. |
+
+### 2026-11-05 — Measured resource reporting
+
+Measured usage surfaces share one immutable, principal-scoped report for their
+selected range, filters, summary, charts and server-sorted pages. CPU cores,
+memory working set and whole home-PVC usage remain distinct from allocated
+capacity and resource-hours. Missing measurements and denominators stay unknown;
+coverage, source time and last-observed disk values remain explicit. Money is absent.
+
+Filters apply atomically. Last hour / 24 hours / 7 days / 30 days / custom (at
+most 30 days) and supported server sorts persist in the address. Owner/Sandbox
+choices search and page on the server; table pages contain 50 rows. Automatic
+refresh runs at most once per minute while visible. Hide/close aborts requests;
+pending reports resume by ID; denied or expired reports clear their data.
+Pending, empty, partial, expired, denied, backoff and unavailable states remain
+distinct. Retained results identify their previous selection.
+
+Resource cards use layer-1 ground, border-l1, 12px radius and 16px padding. The
+three-column grid stacks below 768px; filters use 12px gaps and actions 8px.
+Recharts supplies nonanimated 240px line charts with brand/primary/secondary
+ink, distinct dash patterns, 12px ticks, gaps without interpolation, one units
+axis and a labelled current-allocation reference. A keyboard-readable HTML
+table pages through 50 buckets and states time, units, coverage and gaps.
+Percentages use matching summed usage/capacity inputs. Legends include Other
+when present. Inline detail uses the same cards, all three charts and paged
+lifecycle history.
+
+| 2026-11-05 | Define shared measured CPU, memory and PVC reporting with explicit allocation semantics, bounded server paging, accessible charts and honest missing-data states. |
