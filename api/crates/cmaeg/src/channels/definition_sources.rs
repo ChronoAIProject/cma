@@ -10,7 +10,9 @@ use cmaeg_core::{
 use super::definition::hash_secret;
 use super::requests::{CredentialsRequest, SourceRequest};
 
-pub(super) fn check_github_sources(
+/// Refuse a new or changed GitHub source while GitHub writes are disabled.
+/// Management writes and offline import both apply this policy.
+pub(crate) fn check_github_sources(
     current: Option<&ChannelDefinition>,
     next: &ChannelDefinition,
     enabled: bool,
