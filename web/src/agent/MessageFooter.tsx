@@ -128,9 +128,12 @@ export function MessageFooter({
                   disabled={unavailable !== undefined}
                   title={
                     unavailable ??
-                    (vote === 'down' ? 'Remove needs improvement vote' : 'Needs improvement')
+                    (vote === 'down' ? 'Edit reasons for improvement' : 'Needs improvement')
                   }
-                  onClick={() => feedback?.setVote(id, vote === 'down' ? null : 'down')}
+                  onClick={() => {
+                    if (vote === 'down' && feedback?.reasons) feedback.reasons.open(id);
+                    else feedback?.setVote(id, vote === 'down' ? null : 'down');
+                  }}
                 />
               </>
             ) : null}
@@ -172,6 +175,9 @@ export function MessageFooter({
               Retry feedback
             </Button>
           </div>
+        ) : null}
+        {voting && feedback.reasons?.denied ? (
+          <span role="status">Feedback is unavailable for this account.</span>
         ) : null}
       </footer>
       {voting && feedback.reasons?.rows[id]?.open ? (
