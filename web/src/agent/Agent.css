@@ -214,8 +214,6 @@
   overflow-wrap: anywhere;
 }
 
-.message__usage,
-.message__duration,
 .message__delivery {
   color: var(--dsw-alias-label-caption);
   font-size: 12px;
@@ -473,24 +471,17 @@
 }
 .message-footer__actions {
   flex-wrap: nowrap;
-  pointer-events: none;
 }
-/*
- * At rest a message shows only its content; its time, usage and actions arrive
- * with the reader's attention. Opacity rather than display, so nothing shifts.
- */
-.message__timestamp,
-.message__usage,
-.message-footer__actions {
+/* Icons are always visible. Supplemental time reveals without moving controls. */
+.message__timestamp {
   opacity: 0;
   transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
-.message:hover :is(.message__timestamp, .message__usage, .message-footer__actions),
-.message:focus-within :is(.message__timestamp, .message__usage, .message-footer__actions),
-.message-footer[data-voted] .message-footer__actions,
-.message-footer[data-feedback-status] .message-footer__actions {
+.message:hover .message__timestamp,
+.message:focus-within .message__timestamp,
+.message-footer:hover .message__timestamp,
+.message-footer:focus-within .message__timestamp {
   opacity: 1;
-  pointer-events: auto;
 }
 /* Compact keys: the footer is reserved under every message, so its height is the rhythm. */
 .message-footer__actions .button {
@@ -513,9 +504,8 @@
 .message-footer__error {
   margin-top: 4px;
 }
-@media (hover: none), (max-width: 30rem) {
+@media (pointer: coarse), (hover: none) {
   .message__timestamp,
-  .message__usage,
   .message-footer__actions {
     opacity: 1;
     pointer-events: auto;
@@ -533,7 +523,6 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .message__timestamp,
-  .message__usage,
   .message-footer__actions {
     transition: none;
   }
