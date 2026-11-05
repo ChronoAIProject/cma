@@ -23,7 +23,12 @@ export class LocalUsageMetrics {
       if (this.failure)
         return route.fulfill({
           status: this.failure,
-          json: { error: { code: 'usage_unavailable', message: 'Fixture reporting unavailable' } },
+          json: {
+            status: this.failure,
+            title: 'Usage unavailable',
+            detail: 'Fixture reporting unavailable',
+            code: 'usage_unavailable',
+          },
         });
       if (request.method() === 'POST') {
         const input = request.postDataJSON() as UsageMetricQuery;
@@ -63,7 +68,12 @@ export class LocalUsageMetrics {
       if (!report)
         return route.fulfill({
           status: 410,
-          json: { error: { code: 'report_expired', message: 'Fixture report expired' } },
+          json: {
+            status: 410,
+            title: 'Report expired',
+            detail: 'Fixture report expired',
+            code: 'report_expired',
+          },
         });
       if (!member) return route.fulfill({ json: report });
       if (member === 'owners')
