@@ -271,17 +271,16 @@ for (const width of [1440, 390]) {
           const plan = page.getByRole('region', { name: 'Plan', exact: true });
           if (state === 'working') {
             await expect(plan.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '2');
-            await expect(
-              page.getByRole('link', { name: 'Current plan: Working · step 3 of 5' }),
-            ).toBeVisible();
+            await expect(plan.getByText(/^Current step 3:/)).toBeVisible();
             await page.screenshot({ path: info.outputPath(`working-${width}.png`) });
             if (width < 1024)
               await page.getByRole('button', { name: 'Show Agent computer' }).click();
             await expect(page.getByAltText('Agent browser page')).toBeVisible();
-            await page.getByRole('tab', { name: 'Terminal' }).click();
-            await page.getByRole('tab', { name: 'Browser', exact: true }).click();
+            await expect(page.getByRole('tab', { name: 'Terminal' })).toHaveCount(0);
+            await page.getByRole('tab', { name: 'Files' }).click();
+            await page.getByRole('tab', { name: 'Screen', exact: true }).click();
             await page.screenshot({ path: info.outputPath(`computer-${width}.png`) });
-            await page.getByRole('button', { name: 'Back to conversation' }).click();
+            await page.getByRole('button', { name: 'Close computer' }).click();
           } else {
             await expect(
               page.getByRole('button', { name: 'Make this into slides', exact: true }),
@@ -372,24 +371,12 @@ for (const width of [1440, 390]) {
     try {
       await page.goto('/agents/agt_contract');
       if (width < 1024) await page.getByRole('button', { name: 'Show Agent computer' }).click();
-      await page.getByRole('button', { name: 'View operation history' }).click();
-      await expect(page.getByRole('tab', { name: 'Terminal' })).toBeFocused();
-      const replay = page.getByRole('region', { name: 'Operation record replay' });
-      await expect(replay.getByText('Recorded output 3', { exact: true })).not.toBeVisible();
-      const position = replay.getByRole('slider');
-      await expect(position).toHaveValue('3');
+      await page.getByRole('tab', { name: 'Terminal' }).click();
+      const output = page.locator('#computer-page-activity');
+      for (const number of [1, 2, 3])
+        await expect(output.getByText(`Recorded output ${number}`, { exact: true })).toBeVisible();
+      await expect(output.getByRole('slider')).toHaveCount(0);
       await page.screenshot({ path: info.outputPath(`terminal-${width}.png`) });
-      await replay.locator('summary').press('Enter');
-      await expect(replay.getByText('Recorded output 3', { exact: true })).toBeVisible();
-      await position.press('Home');
-      await expect(position).toHaveValue('1');
-      await expect(replay.getByText('Recorded output 1', { exact: true })).not.toBeVisible();
-      await replay.locator('summary').press('Enter');
-      await expect(replay.getByText('Recorded output 1', { exact: true })).toBeVisible();
-      await page.screenshot({ path: info.outputPath(`terminal-expanded-${width}.png`) });
-      await replay.getByRole('button', { name: 'Return Live' }).click();
-      await expect(position).toHaveValue('3');
-      await expect(replay.getByText('Recorded output 3', { exact: true })).not.toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
         true,
       );
@@ -413,14 +400,14 @@ test('LOCAL shared desktop uses the same computer panel and releases control on 
   await page.goto('/agents/agt_contract');
   const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
   const desktop = computer.getByRole('region', { name: 'Machine desktop' });
-  await expect(desktop.getByRole('status')).toContainText('Connected');
+  await expect(desktop.getByRole('status')).toContainText('Agent paused · Desktop is idle');
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Retain this draft');
   await desktop.getByRole('button', { name: 'Take control' }).click();
-  await expect(desktop.getByRole('button', { name: 'Stop controlling' })).toBeVisible();
-  await computer.getByRole('tab', { name: 'Terminal' }).click();
+  await expect(desktop.getByRole('button', { name: 'Return to Agent' })).toBeVisible();
+  await computer.getByRole('tab', { name: 'Files' }).click();
   await expect(page.getByRole('region', { name: 'Machine desktop' })).toHaveCount(0);
-  await computer.getByRole('tab', { name: 'Browser', exact: true }).click();
-  await expect(desktop.getByRole('status')).toContainText('Connected');
+  await computer.getByRole('tab', { name: 'Screen', exact: true }).click();
+  await expect(desktop.getByRole('status')).toContainText('Agent paused · Desktop is idle');
   await expect(desktop.getByRole('button', { name: 'Take control' })).toBeVisible();
   expect(stream.connections).toHaveLength(2);
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveValue(

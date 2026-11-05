@@ -1,17 +1,16 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, it } from 'vitest';
-
 const css = readFileSync(resolve(process.cwd(), 'src/agent/ToolCallRows.css'), 'utf8');
-const rule = (selector: string) =>
-  css.match(new RegExp(`${selector.replace(/[.[\]]/g, '\\$&')} \\{[^}]*\\}`))?.[0] ?? '';
-
-it('draws tool activity as a line, not a box', () => {
-  for (const selector of ['.tool-calls', '.agent-event--tool'])
-    expect(rule(selector)).not.toMatch(/border|background|border-radius/);
-});
-
-it('hangs expanded rows against one left rule and keeps failures in error ink', () => {
-  expect(rule('.tool-calls__rows')).toMatch(/border-left: 1px solid var\(--dsw-alias-border-l1\)/);
-  expect(rule('.tool-calls__failed')).toMatch(/color: var\(--dsw-alias-state-error-primary\)/);
+it('uses the documented Workspace row, mono, border and failure tokens', () => {
+  for (const token of [
+    'workspace-row-height',
+    'workspace-tool-font',
+    'workspace-border',
+    'workspace-danger',
+  ])
+    expect(css).toContain(`var(--dsw-alias-${token})`);
+  expect(css).not.toMatch(/#[a-f0-9]{3,8}\b/i);
+  expect(css).toContain(':focus-visible');
+  expect(css).toContain('(pointer: coarse)');
 });

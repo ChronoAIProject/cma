@@ -39,7 +39,7 @@ it('preserves setup and native title provenance through decoded v2 replay and re
   );
   await waitFor(() => {
     if (result.current.state.status !== 'ready') throw new Error('Agent did not load');
-    expect(agentDisplayTitle(result.current.state.detail)).toBe(setup);
+    expect(agentDisplayTitle(result.current.state.detail)).toBe('Agent one');
   });
   await act(async () => {
     h.gap('reconnected', null);

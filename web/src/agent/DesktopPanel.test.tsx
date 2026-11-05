@@ -128,7 +128,7 @@ it('waits through startup and reconnects after revival without retaining input c
   expect(vi.getTimerCount()).toBe(0);
 });
 
-it('requires explicit user input control and pauses it during an Agent turn', async () => {
+it('requires explicit control and returns input to the running Agent on request', async () => {
   const onClose = vi.fn();
   const view = render(
     <DesktopPanel runtimeReady agentId="agt_demo" running={false} onClose={onClose} />,
@@ -143,11 +143,15 @@ it('requires explicit user input control and pauses it during an Agent turn', as
   expect(connection.viewOnly).toBe(false);
   view.rerender(<DesktopPanel runtimeReady agentId="agt_demo" running onClose={onClose} />);
   expect(connection.viewOnly).toBe(true);
-  expect(screen.getByRole('button', { name: 'Control desktop' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Control desktop' }));
+  expect(connection.viewOnly).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'Return to Agent' }));
+  expect(connection.viewOnly).toBe(true);
+  expect(screen.getByRole('button', { name: 'Control desktop' })).toBeEnabled();
   expect(screen.getByRole('status')).toHaveTextContent('Agent is working');
   view.rerender(<DesktopPanel runtimeReady agentId="agt_demo" running={false} onClose={onClose} />);
   expect(connection.viewOnly).toBe(true);
-  expect(screen.getByText('The Agent finished. You can take control now.')).toBeInTheDocument();
+  expect(screen.getByText('The Agent is paused. The desktop is idle.')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Control desktop' })).toBeEnabled();
   fireEvent.click(screen.getByRole('button', { name: 'Close machine desktop' }));
   expect(onClose).toHaveBeenCalledOnce();

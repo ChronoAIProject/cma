@@ -66,7 +66,7 @@ it('shows uncertainty after four seconds and recovers the original stalled contr
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
-    expect(screen.getByText('Agent is controlling')).toBeVisible();
+    expect(screen.getByText('Agent paused · Desktop is idle')).toBeVisible();
     expect(requests.map(({ method }) => method)).toEqual(['GET', 'POST', 'GET']);
     expect(requests[2]!.operation).toBe(requests[1]!.operation);
     expect(sessionStorage.getItem(key)).toBeNull();
@@ -124,7 +124,7 @@ it('verifies control once on a development remount while browser observation occ
     </StrictMode>,
   );
   await act(async () => finish());
-  expect(await screen.findByText('Agent is controlling')).toBeInTheDocument();
+  expect(await screen.findByText('Agent paused · Desktop is idle')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Take control' })).toBeEnabled();
   expect(fetch).toHaveBeenCalledTimes(1);
 });

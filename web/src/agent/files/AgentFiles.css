@@ -257,3 +257,36 @@
     min-height: 44px;
   }
 }
+
+.agent-files__file-label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.agent-files__file-path {
+  color: var(--dsw-alias-workspace-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agent-files__changes {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  margin-left: auto;
+  font: var(--dsw-alias-workspace-tool-font);
+}
+.agent-files__added {
+  color: var(--dsw-alias-workspace-accent);
+}
+.agent-files__removed {
+  color: var(--dsw-alias-workspace-danger);
+}
+
+.agent-files__file-label > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
