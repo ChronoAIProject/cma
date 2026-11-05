@@ -275,7 +275,8 @@ export function AgentSidePanel({
               changes={changedFiles(
                 operations?.toolCalls,
                 conversation?.runtimeMetadata?.workingDirectory ??
-                  detail?.runtimeMetadata?.workingDirectory,
+                  detail?.runtimeMetadata?.workingDirectory ??
+                  detail?.worktree.path,
               )}
               key={`${agentId}:${shared}:${subject}:${visitedScope?.generation}`}
               panel
@@ -357,7 +358,8 @@ export function AgentSidePanel({
               observation={observation}
               workingDirectory={
                 conversation?.runtimeMetadata?.workingDirectory ??
-                detail?.runtimeMetadata?.workingDirectory
+                detail?.runtimeMetadata?.workingDirectory ??
+                detail?.worktree.path
               }
             />
           )}
