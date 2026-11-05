@@ -559,3 +559,19 @@ fn operation<'a>(
 ) -> &'a serde_json::Value {
     &document["paths"][path][method]
 }
+
+#[test]
+fn usage_presentation_settings_have_a_strict_boolean_admin_contract() {
+    let document = serde_json::to_value(document()).unwrap();
+    let schemas = &document["components"]["schemas"];
+    let section = &schemas["UsageReportingSettingsBody"];
+    assert_eq!(section["properties"]["measured_visible"]["type"], "boolean");
+    assert_eq!(section["required"], serde_json::json!(["measured_visible"]));
+    assert_eq!(section["additionalProperties"], false);
+    for name in ["PlatformSettingsBody", "PatchRequest"] {
+        assert_eq!(
+            schemas[name]["properties"]["usage_reporting"]["$ref"],
+            "#/components/schemas/UsageReportingSettingsBody"
+        );
+    }
+}

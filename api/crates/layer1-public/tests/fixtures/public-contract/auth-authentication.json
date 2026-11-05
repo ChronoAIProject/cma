@@ -17,6 +17,9 @@
         },
         "body": {
           "authenticated": true,
+          "usage_reporting": {
+            "measured_visible": false
+          },
           "subject": "contract-developer",
           "capabilities": [
             "create_sandbox",
@@ -196,6 +199,9 @@
         },
         "body": {
           "authenticated": true,
+          "usage_reporting": {
+            "measured_visible": false
+          },
           "subject": "contract-visitor",
           "capabilities": [
             "use_own_sandboxes",
@@ -273,6 +279,9 @@
         },
         "body": {
           "authenticated": true,
+          "usage_reporting": {
+            "measured_visible": false
+          },
           "subject": "contract-visitor",
           "capabilities": [],
           "visitor": false

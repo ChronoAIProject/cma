@@ -930,3 +930,6 @@ mod warm_pool_tests;
 
 #[path = "admin/runtime_update_tests.rs"]
 mod runtime_update_tests;
+
+#[path = "admin/usage_reporting_tests.rs"]
+mod usage_reporting_tests;
