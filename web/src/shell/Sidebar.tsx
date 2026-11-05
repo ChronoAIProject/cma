@@ -24,6 +24,7 @@ export interface SidebarLink {
  * having gone away rather than as "switch scope first".
  */
 export interface SidebarNewAgent {
+  readonly current?: boolean;
   readonly onCreate: () => void;
   readonly label?: string;
   readonly icon?: ReactNode;
@@ -105,6 +106,7 @@ export function Sidebar({
               <button
                 type="button"
                 className="sidebar__new"
+                aria-current={newAgent.current ? 'page' : undefined}
                 aria-label={newAgent.label ?? 'New agent'}
                 title={collapsed ? (newAgent.label ?? 'New agent') : undefined}
                 aria-disabled={newAgent.unavailableReason === undefined ? undefined : true}
