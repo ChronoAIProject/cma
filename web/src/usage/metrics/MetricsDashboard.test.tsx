@@ -18,6 +18,7 @@ function renderDashboard(api = metricsClient(true), admin = true) {
   const view = render(
     <MetricsDashboard
       api={api}
+      measured
       history={history}
       admin={admin}
       selection={defaultSelection}

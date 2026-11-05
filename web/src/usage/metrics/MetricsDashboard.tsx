@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import type { Cma, UsageMetricRow } from '@chronoai/cma-sdk';
 import { Button } from '../../ui/Button';
 import { Picker } from '../../ui/Picker';
@@ -11,6 +11,7 @@ import { MetricsNotice } from './MetricsNotice';
 import { useUsageReport, useUsageVisible } from './useReport';
 import type { MetricsFailure } from './failure';
 import type { Group, Metric, MetricsClient, Selection } from './model';
+import { allocationSelection } from './selection';
 import './Metrics.css';
 
 export function MetricsDashboard({
@@ -20,6 +21,7 @@ export function MetricsDashboard({
   selection,
   onSelection,
   active = true,
+  measured = false,
   actions,
   agentPicker,
 }: {
@@ -29,11 +31,16 @@ export function MetricsDashboard({
   readonly selection: Selection;
   readonly onSelection: (value: Selection) => void;
   readonly active?: boolean;
+  readonly measured?: boolean;
   readonly actions?: (row: UsageMetricRow, disabled: boolean) => ReactNode;
   readonly agentPicker?: (draft: Selection, update: (value: Selection) => void) => ReactNode;
 }) {
+  const effectiveSelection = useMemo(
+    () => (measured ? selection : allocationSelection(selection)),
+    [measured, selection],
+  );
   const visible = useUsageVisible(active);
-  const state = useUsageReport(api, selection, admin, active);
+  const state = useUsageReport(api, effectiveSelection, admin, active);
   const [group, setGroup] = useState<Group>('total');
   const [metric, setMetric] = useState<Metric>('cpu');
   const [detail, setDetail] = useState<{ report: string; sandbox: string }>();
@@ -53,11 +60,11 @@ export function MetricsDashboard({
   return (
     <div
       className="usage-metrics"
-      aria-label={admin ? 'Operations resource dashboard' : 'Your measured usage'}
+      aria-label={admin ? 'Operations resource dashboard' : 'Your usage resources'}
     >
       <MetricFilters
         api={api}
-        selection={selection}
+        selection={effectiveSelection}
         admin={admin}
         active={visible}
         onApply={onSelection}
@@ -102,10 +109,11 @@ export function MetricsDashboard({
         <section aria-busy={state.busy || undefined}>
           <MetricSummary
             report={report}
+            measured={measured}
             selectedMetric={admin ? undefined : metric}
             onMetric={admin ? undefined : setMetric}
           />
-          {admin && (
+          {admin && measured && (
             <Picker
               label="Chart grouping"
               value={group}
@@ -117,28 +125,34 @@ export function MetricsDashboard({
               onChange={setGroup}
             />
           )}
-          <MetricCharts
-            api={api}
-            report={report}
-            group={admin ? group : 'total'}
-            metric={admin ? undefined : metric}
-            active={visible && !state.busy}
-            onFailure={onFailure}
-          />
+          {measured && (
+            <MetricCharts
+              api={api}
+              report={report}
+              group={admin ? group : 'total'}
+              metric={admin ? undefined : metric}
+              active={visible && !state.busy}
+              onFailure={onFailure}
+            />
+          )}
           <MetricTable
-            key={`${report.report_id}:${selection.sort}:${selection.order}`}
+            key={`${report.report_id}:${effectiveSelection.sort}:${effectiveSelection.order}`}
             api={api}
             reportId={report.report_id}
-            sort={selection.sort}
-            order={selection.order}
+            sort={effectiveSelection.sort}
+            order={effectiveSelection.order}
             admin={admin}
             active={visible && !state.busy}
-            focusedMetric={admin ? undefined : metric}
+            measured={measured}
+            focusedMetric={admin || !measured ? undefined : metric}
             onSort={(sort) =>
               onSelection({
-                ...selection,
+                ...effectiveSelection,
                 sort,
-                order: selection.sort === sort && selection.order === 'asc' ? 'desc' : 'asc',
+                order:
+                  effectiveSelection.sort === sort && effectiveSelection.order === 'asc'
+                    ? 'desc'
+                    : 'asc',
               })
             }
             onDetail={(row) => setDetail({ report: report.report_id, sandbox: row.sandbox_id })}
@@ -152,6 +166,7 @@ export function MetricsDashboard({
               history={history}
               reportId={report.report_id}
               sandboxId={detail.sandbox}
+              measured={measured}
               active={visible && !state.busy}
               admin={admin}
               onClose={() => setDetail(undefined)}
