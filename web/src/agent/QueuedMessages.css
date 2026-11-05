@@ -2,7 +2,8 @@
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: var(--radius-lg);
   background: var(--dsw-alias-bg-layer-1);
-  padding: 16px;
+  padding: 4px 12px;
+  margin: 0 24px 8px;
   min-width: 0;
 }
 .queued-messages__heading {
@@ -30,12 +31,16 @@
 }
 .queued-message {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
-  padding: 12px 0;
+  padding: 4px 0;
 }
 .queued-message__body {
   position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 .queued-message__heading {
@@ -166,4 +171,12 @@
   .queued-message__content {
     transition: none;
   }
+}
+
+.queued-message__actions {
+  margin-top: 0;
+}
+.queued-message__editor-frame,
+.queued-message__body > .queued-messages__error {
+  grid-column: 1 / -1;
 }

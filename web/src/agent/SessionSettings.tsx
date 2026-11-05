@@ -170,6 +170,12 @@ export function SessionSettings({
   const summary = draft
     ? `${modelLabel(models, draft.model)} · ${effortLabel(draft.reasoning_effort)} · ${permissionLabel(draft.permission_mode)}`
     : undefined;
+  const compactSummary = draft
+    ? `${modelLabel(models, draft.model).match(/\(([^)]+)\)/)?.[1] ?? modelLabel(models, draft.model)} · ${effortLabel(draft.reasoning_effort)}`
+    : undefined;
+  const settingsTooltip = draft
+    ? `${modelLabel(models, draft.model)} · ${effortLabel(draft.reasoning_effort)} reasoning · ${permissionLabel(draft.permission_mode)}`
+    : undefined;
   return (
     <>
       {draft ? (
@@ -180,10 +186,10 @@ export function SessionSettings({
             aria-label={`Agent settings: ${summary}`}
             aria-expanded={expanded}
             aria-controls={settingsId}
-            title={`Agent settings: ${summary}`}
+            title={settingsTooltip}
             onClick={() => setExpanded((current) => !current)}
           >
-            <span className="composer-chip__label">{summary}</span>
+            <span className="composer-chip__label">{compactSummary}</span>
             <IconChevronDownOutline14 />
           </button>
           <div

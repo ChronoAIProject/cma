@@ -125,8 +125,8 @@
 
 .agent-composer .agent-composer__submit {
   position: relative;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
 }
 
@@ -146,10 +146,9 @@
 }
 
 .agent-composer .agent-composer__submit--stop {
-  width: auto;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 8px;
+  padding: 0;
+  color: var(--dsw-alias-workspace-control-text);
+  background: var(--dsw-alias-workspace-control-bg);
 }
 
 /* A chip is a quiet control inside the box: no border, a hover wash. */
@@ -257,4 +256,10 @@
   .composer-chip {
     transition: none;
   }
+}
+
+.agent-composer__stop-hint {
+  color: var(--dsw-alias-workspace-secondary);
+  font-size: 12px;
+  white-space: nowrap;
 }

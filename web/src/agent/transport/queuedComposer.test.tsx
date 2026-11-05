@@ -12,14 +12,14 @@ const props = {
 };
 
 it.each(['click', 'enter'])(
-  'queues ordinary input with %s while keeping Stop response separate',
+  'queues ordinary input with %s and restores the single Stop button after acceptance',
   async (method) => {
     const onSend = vi.fn(async (_text, accept) => accept());
     render(<Composer {...props} onSend={onSend} />);
     const field = screen.getByRole('textbox', { name: 'Message' });
     fireEvent.change(field, { target: { value: 'Do this after the current response' } });
     expect(screen.getByRole('button', { name: 'Queue message' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
     await act(async () => {
       if (method === 'click')
         fireEvent.click(screen.getByRole('button', { name: 'Queue message' }));
@@ -28,6 +28,7 @@ it.each(['click', 'enter'])(
     expect(onSend).toHaveBeenCalledOnce();
     expect(onSend.mock.calls[0]![0]).toBe('Do this after the current response');
     expect(field).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
     expect(props.onStop).not.toHaveBeenCalled();
   },
 );
