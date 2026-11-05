@@ -7,6 +7,9 @@ use tokio::time::Instant;
 mod fixtures;
 use fixtures::{sandbox, setup, Failure, Output};
 
+#[path = "reconciliation_sweep_policy_tests.rs"]
+mod policy_tests;
+
 async fn complete(reconciler: &SandboxReconciler) -> usize {
     for attempt in 1..=30 {
         if reconciler.run_due(SystemTime::now()).await.unwrap() {
@@ -119,6 +122,15 @@ async fn slow_sweep_finishes_over_bounded_attempts_without_replaying_pages_or_ca
     assert!(logs
         .lines()
         .any(|line| line.contains("reason=\"complete\"") && line.contains("completed=1")));
+    let decisions = logs
+        .lines()
+        .filter(|line| line.contains("automatic sandbox pause decision"))
+        .collect::<Vec<_>>();
+    assert_eq!(decisions.len(), 8);
+    assert!(decisions.iter().all(|line| line.contains("sandbox_id=sbx_")
+        && line.contains("outcome=NotEligible")
+        && line.contains("threshold_seconds=900")
+        && !line.contains("private fixture content")));
 }
 
 #[tokio::test(start_paused = true)]

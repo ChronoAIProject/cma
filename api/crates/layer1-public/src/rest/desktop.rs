@@ -147,6 +147,8 @@ async fn relay(
             },
         }
     }
+    let (sandbox_id, session_id) = connection.session_ids();
+    service.close(sandbox_id, session_id).await;
     let _ = tokio::time::timeout(Duration::from_secs(2), sink.send(Message::Close(None))).await;
 }
 
