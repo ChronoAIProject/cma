@@ -1,60 +1,150 @@
-import { memo, useId, useState } from 'react';
+import { screenOperation, screenOperationTime } from './screenOperations';
+import { memo, useContext, useId, useState } from 'react';
 import type { ToolCall } from './model';
-import { StateDot, type StateDotState } from '../ui/StateDot';
-import { IconChevronDownOutline14, IconChevronRightOutline14 } from '../ui/icons';
-import { ActivityBody } from './Thinking';
+import {
+  IconChevronDownOutline14,
+  IconChevronRightOutline14,
+  IconRightUpOutline16,
+} from '../ui/icons';
 import type { ToolGroup } from './timeline';
-import { toolOutcome, toolOutcomeWord, type ToolOutcome } from './toolStatus';
+import { toolOutcome, toolOutcomeWord } from './toolStatus';
+import { ComputerContext } from './environment/context';
+import { durationLabel, toolDuration } from './workspaceTime';
+import { toolCategory, summarizeTools } from './toolSummary';
+import { ToolIcon } from './ToolIcon';
 import './ToolCallRows.css';
-
-/** Cancelled ends without asserting success or failure, so like any ended state it draws no dot. */
-const DOT: Readonly<Record<ToolOutcome, StateDotState | undefined>> = {
-  running: 'ongoing',
-  completed: 'done',
-  failed: 'error',
-  cancelled: undefined,
-  unreported: 'neutral',
-};
 
 function ToolCallLine({
   tool,
   activeRunId,
 }: {
   readonly tool: ToolCall;
-  readonly activeRunId: string | undefined;
+  readonly activeRunId?: string;
 }) {
+  const [open, setOpen] = useState(false);
+  const computer = useContext(ComputerContext);
   const outcome = toolOutcome(tool, activeRunId);
-  const dot = DOT[outcome];
+  const category = toolCategory(tool);
+  const screen = screenOperation(tool);
+  const duration = toolDuration(tool.startedAt, tool.finishedAt);
+  const detailsId = useId();
   return (
     <article
       className="agent-event--tool"
       aria-label={`Tool call: ${tool.title}`}
       data-outcome={outcome}
     >
-      <div className="tool-call__line">
-        <span className="tool-call__dot">
-          {dot === undefined ? null : <StateDot state={dot} size={10} />}
-        </span>
-        <strong>{tool.title}</strong>
-        {tool.kind === undefined ? null : <span className="tool-call__kind">{tool.kind}</span>}
-        <span className="tool-call__word">{toolOutcomeWord(outcome, tool.status)}</span>
-      </div>
-      {/* No duration: the public contract reports none, and an absent one is not zero. */}
-      <ActivityBody
-        label="Details"
-        body={tool.detail === undefined ? undefined : { text: tool.detail, truncated: false }}
-      />
+      {screen ? (
+        <div className="tool-call__line tool-call__screen">
+          <span className="tool-call__icon" aria-hidden="true">
+            <ToolIcon kind={screen.action} />
+          </span>
+          <span className="tool-call__literal" title={tool.title}>
+            {screen.description}
+          </span>
+          {screen.at ? (
+            <time dateTime={screen.at}>{screenOperationTime(screen.at)}</time>
+          ) : (
+            <span aria-label="Time not reported">—</span>
+          )}
+        </div>
+      ) : (
+        <div className="tool-call__line">
+          <button
+            type="button"
+            className="tool-call__expand"
+            aria-expanded={open}
+            aria-controls={open ? detailsId : undefined}
+            onClick={() => setOpen(!open)}
+          >
+            <span className="tool-call__icon" aria-hidden="true">
+              <ToolIcon kind={category} />
+            </span>
+            <span className="tool-call__literal" title={tool.title}>
+              {tool.title}
+            </span>
+            {duration === undefined ? null : (
+              <span className="tool-call__duration">{durationLabel(duration)}</span>
+            )}
+            <span
+              className="tool-call__outcome"
+              role="img"
+              aria-label={toolOutcomeWord(outcome, tool.status)}
+              title={toolOutcomeWord(outcome, tool.status)}
+            >
+              {outcome === 'completed'
+                ? '✓'
+                : outcome === 'failed'
+                  ? '!'
+                  : outcome === 'cancelled'
+                    ? '■'
+                    : '·'}
+            </span>
+            {category === 'command' ? null : (
+              <span className="tool-call__terminal" aria-hidden="true" />
+            )}
+          </button>
+          {category === 'command' ? (
+            <button
+              type="button"
+              className="tool-call__terminal"
+              aria-label="View in Terminal"
+              title="View in Terminal"
+              disabled={!computer}
+              onClick={(event) => {
+                event.stopPropagation();
+                computer?.selectTerminal(tool.id);
+              }}
+            >
+              <IconRightUpOutline16 />
+            </button>
+          ) : null}
+        </div>
+      )}
+      {outcome === 'failed' ? (
+        <p className="tool-call__error">
+          {tool.output?.text || tool.detail || 'The operation failed.'}
+        </p>
+      ) : null}
+      {open ? (
+        <div id={detailsId} className="tool-call__details">
+          <pre>{tool.detail ?? tool.title}</pre>
+          {tool.output ? (
+            <>
+              <pre aria-label={category === 'edit' ? 'Recorded diff' : 'Recorded output'}>
+                {category === 'edit'
+                  ? tool.output.text.split('\n').map((line, index) => (
+                      <span
+                        key={index}
+                        className={
+                          line.startsWith('+') && !line.startsWith('+++')
+                            ? 'tool-call__added'
+                            : line.startsWith('-') && !line.startsWith('---')
+                              ? 'tool-call__removed'
+                              : undefined
+                        }
+                      >
+                        {line}
+                        {'\n'}
+                      </span>
+                    ))
+                  : tool.output.text}
+              </pre>
+              {tool.output.truncated ? <p>Output truncated</p> : null}
+            </>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   );
 }
 
-/** A lone call sits in the same quiet container as a group, so one and many read alike. */
 export function ToolCallRow({
   tool,
   activeRunId,
 }: {
   readonly tool: ToolCall;
-  readonly activeRunId: string | undefined;
+  readonly activeRunId?: string;
 }) {
   return (
     <ToolCallGroup
@@ -74,20 +164,12 @@ export const ToolCallGroup = memo(function ToolCallGroup({
   activeRunId,
 }: {
   readonly group: ToolGroup;
-  readonly activeRunId: string | undefined;
+  readonly activeRunId?: string;
 }) {
-  const [chosen, setChosen] = useState<boolean>();
-  const open =
-    chosen ??
-    (group.failed &&
-      activeRunId !== undefined &&
-      group.items.some((tool) => tool.runId === activeRunId));
+  const [open, setOpen] = useState(false);
   const rowsId = useId();
-  // A settled group repeats no command line: only work still running or calls that
-  // failed are worth a reader's glance before they choose to open it.
-  const outcomes = group.items.map((tool) => toolOutcome(tool, activeRunId));
-  const running = group.items[outcomes.lastIndexOf('running')];
-  const failures = outcomes.filter((outcome) => outcome === 'failed').length;
+  const summary = summarizeTools(group.items);
+  const failures = group.items.filter((tool) => toolOutcome(tool, activeRunId) === 'failed').length;
   return (
     <div className="tool-calls" data-group="">
       <button
@@ -95,27 +177,31 @@ export const ToolCallGroup = memo(function ToolCallGroup({
         className="tool-calls__toggle"
         aria-expanded={open}
         aria-controls={open ? rowsId : undefined}
-        onClick={() => setChosen(!open)}
+        onClick={() => setOpen(!open)}
       >
         <span className="tool-calls__chevron" aria-hidden="true">
           {open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
         </span>
-        <span className="tool-calls__count">
-          {group.items.length} tool call{group.items.length === 1 ? '' : 's'}
-        </span>
-        {/* Spaces between the parts keep the accessible name readable; flex drops them visually. */}
-        {running === undefined ? null : (
+        <span className="tool-calls__count">{summary.label}</span>
+        {summary.added === undefined ? null : (
           <>
             {' '}
-            <span className="tool-calls__running">· Running {running.title}</span>
+            <span className="tool-call__added">+{summary.added}</span>{' '}
+            <span className="tool-call__removed">−{summary.removed}</span>
           </>
         )}
-        {failures === 0 ? null : (
+        {summary.duration ? (
+          <>
+            {' '}
+            <span className="tool-call__duration">{summary.duration}</span>
+          </>
+        ) : null}
+        {failures ? (
           <>
             {' '}
             <span className="tool-calls__failed">· {failures} failed</span>
           </>
-        )}
+        ) : null}
       </button>
       {open ? (
         <div className="tool-calls__rows" id={rowsId}>

@@ -126,7 +126,7 @@ it('keeps composer settings available while Details and tree navigation remain u
   ).toHaveTextContent('gpt-6 High');
   expect(composer.getByLabelText('Permission mode')).toHaveTextContent('Autonomous');
   await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
-  await actor.click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
+  await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
   const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
   expect(panel.queryByLabelText('Model')).not.toBeInTheDocument();
   expect(panel.queryByLabelText(/Model and reasoning effort/)).not.toBeInTheDocument();

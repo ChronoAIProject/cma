@@ -190,7 +190,10 @@ export function Composer({
   ]);
 
   useEffect(() => {
-    if (usable) inputRef.current?.focus({ preventScroll: true });
+    // History can finish after the owner has already focused a computer tab.
+    // Initial readiness must not take keyboard input away from that control.
+    if (usable && (!document.activeElement || document.activeElement === document.body))
+      inputRef.current?.focus({ preventScroll: true });
   }, [usable]);
 
   useLayoutEffect(() => {
