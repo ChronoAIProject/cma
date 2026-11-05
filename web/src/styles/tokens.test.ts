@@ -353,3 +353,21 @@ describe('the scope a token is declared in', () => {
     expect(offences).toEqual([]);
   });
 });
+
+describe('New agent landing palette', () => {
+  it.each([
+    ['page', '#ffffff', '#0b0b0c'],
+    ['shell', '#fafafa', '#131315'],
+    ['panel', '#ffffff', '#19191c'],
+    ['accent', '#3f6212', '#c8f542'],
+    ['accent-hover', '#24300f', '#d7ff5a'],
+    ['on-accent', '#ffffff', '#0b0b0c'],
+    ['muted-icon', '#71717a', '#71717a'],
+    ['primary', '#09090b', '#f4f4f5'],
+    ['placeholder', '#52525b', '#85858e'],
+  ])('resolves task %s in light and dark', (suffix, light, dark) => {
+    const palette = themes();
+    expect(resolveToken(`dsw-specific-task-${suffix}`, palette.light)).toBe(light);
+    expect(resolveToken(`dsw-specific-task-${suffix}`, palette.dark)).toBe(dark);
+  });
+});
