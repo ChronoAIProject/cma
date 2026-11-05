@@ -13,6 +13,9 @@ pub struct ProviderImage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProviderSandboxRequest {
+    /// Internal prepaid authority; never part of an immutable provider request digest.
+    #[serde(skip)]
+    pub funded_until: Option<u64>,
     pub image: ProviderImage,
     pub entrypoint: Vec<String>,
     pub env: BTreeMap<String, String>,

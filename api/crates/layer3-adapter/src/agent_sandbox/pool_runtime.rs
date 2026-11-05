@@ -279,8 +279,11 @@ impl AgentSandboxClient {
         {
             return Err(rejected("native pool member already has runtime authority"));
         }
-        let patch = json!({"metadata":{"uid":actual.uid(),"resourceVersion":actual.resource_version(),
+        let mut patch = json!({"metadata":{"uid":actual.uid(),"resourceVersion":actual.resource_version(),
             "labels":{OWNER_LABEL:self.config.deployment},"annotations":desired.annotations()}});
+        if request.funded_until.is_some() {
+            patch["spec"] = json!({"shutdownTime":desired.data["spec"]["shutdownTime"],"shutdownPolicy":"Retain"});
+        }
         timing.completed("admission_render_validate");
         let updated = self
             .sandboxes
