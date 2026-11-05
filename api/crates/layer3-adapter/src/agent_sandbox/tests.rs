@@ -43,6 +43,7 @@ pub(super) fn config() -> AgentSandboxConfig {
 }
 pub(super) fn request() -> ProviderSandboxRequest {
     ProviderSandboxRequest {
+        funded_until: None,
         image: ProviderImage {
             uri: format!("registry.example/cma@sha256:{}", "a".repeat(64)),
         },
