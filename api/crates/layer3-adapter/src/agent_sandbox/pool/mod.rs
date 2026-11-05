@@ -6,6 +6,7 @@ mod control;
 mod drain;
 mod home;
 mod home_origin;
+mod metric_controller;
 mod native_home;
 mod native_home_recovery;
 mod native_home_store;

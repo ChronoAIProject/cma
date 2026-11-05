@@ -460,7 +460,7 @@ shared §12.3 menu titled **CMA services**. Agent Manager and Event Gateway are 
 modified or middle click opens a new tab, with the current one checked. **Image Manager** stays
 listed, `aria-disabled`, with the reason *Coming soon. Image Manager is not available yet.* under
 its label, and never routes. Consumer routes belong to Event Gateway. Collapsed, the button keeps
-only its glyph. The build revision is no longer in the header; it is the copyable **Build `<rev>`**
+only its glyph. The build revision is no longer in the header; it is the **Copy build version · <version>**
 row of the account menu.
 
 **Action row.** Directly under the header, in this order. Every entry is a plain full-width row,
@@ -562,8 +562,15 @@ starts no work. Visitors do not get it.
 
 The account row is the only foot content: avatar, name, and email. Long identity lines truncate
 within the fixed seat. Its upward-opening menu contains Docs, capability-gated Operations,
-Appearance, System text size, the copyable **Build `<rev>`** row (*Build revision copied* once
-copied; a refused clipboard leaves the revision readable) and Sign out.
+Appearance, System text size, **Copy build version · <version>**, and Sign out.
+The build row copies `CMA <version> (<full commit SHA>)` from the bundle's own
+compile-time identity; local runs show `dev (local)`. It announces **Build version
+copied** on success. A denied or absent clipboard announces **Could not copy. Select
+the build version to copy it manually.** and exposes the full selectable identity
+in the same enabled row for retry. The identity wraps in the existing secondary
+menu text style; its code text permits selection and uses the established mono face.
+Deployable artifacts reject missing or placeholder version/revision metadata;
+ordinary local builds remain supported. Existing tabs keep their own identity.
 
 There is no Chat/Agent switch, session group, pricing control, or terminal plane
 choice. Selecting an Agent opens its conversation; selecting a Sandbox opens
@@ -5179,3 +5186,4 @@ state, browser-local persistence, immediate preview, storage synchronization and
 OS updates for System. Existing text-size controls remain available.
 
 | 2026-11-05 | Replace account Settings with an owner-scoped measured Usage popup, preserve Agent work and legacy links, and consolidate Appearance into explicit account-menu choices. |
+- 2026-11-05 — Name the account action Copy build version, copy the immutable bundle version and full revision, and expose accessible clipboard feedback with selectable fallback identity.

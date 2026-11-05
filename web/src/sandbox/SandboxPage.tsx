@@ -356,6 +356,24 @@ export function SandboxPage({
         onSelect={selectTab}
         onAction={onAction}
         onNavigate={onNavigate}
+        onAlwaysOnChange={
+          viewerId !== undefined && sandbox.owner === viewerId
+            ? async (alwaysOn) => {
+                if (state.status !== 'ready') return;
+                const updated = await client.setSandboxAlwaysOn(
+                  sandboxId,
+                  alwaysOn,
+                  state.sandbox.revision,
+                  { idempotencyKey: `always-on:${sandboxId}:${Date.now()}` },
+                );
+                setStored((previous) =>
+                  previous?.request === request && previous.state.status === 'ready'
+                    ? { ...previous, state: { ...previous.state, sandbox: updated } }
+                    : previous,
+                );
+              }
+            : undefined
+        }
       />
       {client.resourceViews === undefined ? null : (
         <SharingDialog

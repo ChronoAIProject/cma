@@ -40,7 +40,7 @@ pub async fn capabilities(
 ) -> Response {
     crate::http::problems::no_store(
         Json(super::GitHubCapabilities {
-            store_ready: state.github.is_some(),
+            store_ready: state.github.get().is_some(),
             dynamic_app_registration: true,
             native_app_webhook: true,
             webhook_secret_rotation: true,
@@ -60,7 +60,7 @@ pub async fn create_app(
     body: Result<Json<super::CreateAppRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response, Error> {
     let Json(body) = body.map_err(|_| Error::Invalid)?;
-    let gateway = state.github.as_ref().ok_or(Error::Unavailable)?;
+    let gateway = state.github.get().ok_or(Error::Unavailable)?;
     let key = header(&headers, "idempotency-key")?;
     let (integration, created) = gateway
         .create_app(&creator.subject, key, state.advertised_api_url(), body)
@@ -84,7 +84,7 @@ pub async fn read_app(
     creator: IntegrationOwner,
     Path(app_ref): Path<String>,
 ) -> Result<Response, Error> {
-    let gateway = state.github.as_ref().ok_or(Error::Unavailable)?;
+    let gateway = state.github.get().ok_or(Error::Unavailable)?;
     Ok(crate::http::problems::no_store(
         Json(gateway.read_app(&creator.subject, &app_ref).await?).into_response(),
     ))
@@ -99,7 +99,7 @@ pub async fn update_app(
     body: Result<Json<super::UpdateAppRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response, Error> {
     let Json(body) = body.map_err(|_| Error::Invalid)?;
-    let gateway = state.github.as_ref().ok_or(Error::Unavailable)?;
+    let gateway = state.github.get().ok_or(Error::Unavailable)?;
     let app = gateway
         .mutate_app(
             &creator.subject,
@@ -120,7 +120,7 @@ pub async fn verify_app(
     body: Result<Json<super::VerifyAppRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response, Error> {
     let Json(body) = body.map_err(|_| Error::Invalid)?;
-    let gateway = state.github.as_ref().ok_or(Error::Unavailable)?;
+    let gateway = state.github.get().ok_or(Error::Unavailable)?;
     let app = gateway
         .mutate_app(
             &administrator.creator.subject,
@@ -144,7 +144,7 @@ pub async fn webhook_secret(
     body: Result<Json<super::WebhookSecretRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response, Error> {
     let Json(body) = body.map_err(|_| Error::Invalid)?;
-    let gateway = state.github.as_ref().ok_or(Error::Unavailable)?;
+    let gateway = state.github.get().ok_or(Error::Unavailable)?;
     let app = gateway
         .mutate_app(
             &creator.subject,
@@ -163,7 +163,7 @@ pub async fn list_apps(
     query: Result<Query<super::ListAppsQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Response, Error> {
     let Query(query) = query.map_err(|_| Error::Invalid)?;
-    let gateway = state.github.as_ref().ok_or(Error::Unavailable)?;
+    let gateway = state.github.get().ok_or(Error::Unavailable)?;
     Ok(crate::http::problems::no_store(
         Json(gateway.list_apps(&creator.subject, query).await?).into_response(),
     ))
@@ -176,7 +176,7 @@ pub async fn bind(
     body: Result<Json<BindRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response, Error> {
     let Json(body) = body.map_err(|_| Error::Invalid)?;
-    let gateway = state.github.as_ref().ok_or(Error::Unavailable)?;
+    let gateway = state.github.get().ok_or(Error::Unavailable)?;
     let (binding, created) = gateway.bind(&creator.subject, body).await?;
     Ok(crate::http::problems::no_store(
         (
@@ -197,7 +197,7 @@ pub async fn binding(
     creator: IntegrationOwner,
     Path(id): Path<String>,
 ) -> Result<Response, Error> {
-    let gateway = state.github.as_ref().ok_or(Error::Unavailable)?;
+    let gateway = state.github.get().ok_or(Error::Unavailable)?;
     Ok(Json(gateway.binding(&creator.subject, &id).await?).into_response())
 }
 
@@ -208,7 +208,7 @@ pub async fn webhook(
     headers: HeaderMap,
     request: axum::extract::Request,
 ) -> Result<Response, Error> {
-    let gateway = state.github.as_ref().ok_or(Error::Unavailable)?;
+    let gateway = state.github.get().ok_or(Error::Unavailable)?;
     let delivery = header(&headers, "x-github-delivery")?;
     let content_type = header(&headers, "content-type").map_err(|_| Error::MediaType)?;
     let mut media = content_type.split(';').map(str::trim);
@@ -268,7 +268,7 @@ pub async fn receipt(
     creator: IntegrationOwner,
     Path(id): Path<String>,
 ) -> Result<Response, Error> {
-    let gateway = state.github.as_ref().ok_or(Error::Unavailable)?;
+    let gateway = state.github.get().ok_or(Error::Unavailable)?;
     Ok(crate::http::problems::no_store(
         Json(gateway.receipt(&creator.subject, &id).await?).into_response(),
     ))
@@ -280,7 +280,7 @@ pub async fn task(
     creator: IntegrationOwner,
     Path(task_id): Path<String>,
 ) -> Result<Response, Error> {
-    let gateway = state.github.as_ref().ok_or(Error::Unavailable)?;
+    let gateway = state.github.get().ok_or(Error::Unavailable)?;
     Ok(Json(gateway.task(&creator.subject, &task_id).await?).into_response())
 }
 
@@ -302,7 +302,7 @@ pub async fn lookup(
     creator: IntegrationOwner,
     Path((app_ref, delivery_id)): Path<(String, String)>,
 ) -> Result<Response, Error> {
-    let gateway = state.github.as_ref().ok_or(Error::Unavailable)?;
+    let gateway = state.github.get().ok_or(Error::Unavailable)?;
     if !super::config::valid_ref(&app_ref) || !super::config::valid_ref(&delivery_id) {
         return Err(Error::NotFound);
     }

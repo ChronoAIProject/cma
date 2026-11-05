@@ -147,10 +147,18 @@ retained with an explicit backfill error rather than silently truncated.
 
 These dedicated metrics can appear in Lago current usage and invoices consumed
 by NyxID. The optional direct-to-Lago exporter does not create rows in NyxID's
-internal `/billing/usage` ledger and does not enforce prepaid-credit reservations
-or an overdraft policy. Those exporter limitations must remain explicit when
-choosing paid pricing. The exporter is disabled in the checked-in manifest;
-prepaid admission is described in the lifecycle adapter below.
+internal `/billing/usage` ledger. CMA does not enforce NyxID prepaid-credit
+reservations or an overdraft policy. Those exporter and adapter limitations must
+remain explicit when choosing paid pricing. Billing and the exporter are disabled
+in the checked-in manifest until provider configuration and the companion
+lifecycle contract are verified.
+
+## Measured resource reports
+
+See [Measured Sandbox resource reports](CMA_Sandbox_Metrics.md) for the new
+owner/admin report APIs, CPU/working-set/PVC semantics, coverage, retention,
+read-model migration, monitoring permissions and production verification.
+The existing allocated usage ledger and billing quantities keep their meanings.
 
 ## NyxID prepaid lifecycle adapter
 

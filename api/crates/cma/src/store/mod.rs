@@ -87,6 +87,7 @@ mod operator_sandboxes;
 mod profile_documents;
 #[cfg(test)]
 mod profile_index_tests;
+mod profile_mongo;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;
 mod profile_references;
@@ -109,6 +110,7 @@ mod sandbox_mongo_integration_tests;
 mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
 mod sandbox_reconciliation;
+mod sandbox_sessions;
 mod sandbox_transactions;
 mod sandbox_unpublished_recovery;
 pub(crate) mod sandbox_usage;
@@ -168,3 +170,9 @@ mod legacy_sandbox;
 pub(crate) mod runtime_routing;
 
 pub(crate) mod native_warm_pools;
+
+// Measured reporting read models (#1332); independent of lifecycle writes.
+pub(crate) mod sandbox_metric_bindings;
+pub(crate) mod sandbox_metric_rollups;
+pub(crate) mod sandbox_usage_rollups;
+pub(crate) mod usage_reports;

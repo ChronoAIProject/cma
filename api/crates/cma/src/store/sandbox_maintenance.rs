@@ -2,11 +2,13 @@
 
 use futures_util::TryStreamExt;
 use layer2_core::ids::SandboxId;
+use layer2_core::now_rfc3339;
 use layer2_core::sandbox::store::{
     validate_image_rotation_request, validate_inactivity_pause_request, Page, PageRequest,
     SandboxImageRotationRequest, SandboxInactivityPauseRequest, SandboxMaintenanceOutcome,
-    SandboxMaintenanceStore, SandboxStoreError, MAX_PAGE_SIZE,
+    SandboxMaintenanceStore, SandboxStore, SandboxStoreError, MAX_PAGE_SIZE,
 };
+use layer2_core::sandbox::{Sandbox, SandboxStatus};
 use mongodb::bson::doc;
 
 use super::sandbox_mongo::{
@@ -70,6 +72,44 @@ impl SandboxMaintenanceStore for MongoSandboxStore {
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
         validate_inactivity_pause_request(&request)?;
         schedule(self, MaintenanceRequest::Inactivity(request)).await
+    }
+
+    async fn preview_inactivity_pause(
+        &self,
+        request: SandboxInactivityPauseRequest,
+    ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+        validate_inactivity_pause_request(&request)?;
+        preview(self, MaintenanceRequest::Inactivity(request)).await
+    }
+
+    async fn set_sandbox_always_on(
+        &self,
+        sandbox_id: SandboxId,
+        expected_revision: u64,
+        always_on: bool,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        let current = self
+            .get_sandbox(&sandbox_id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        if matches!(
+            current.status,
+            SandboxStatus::Retiring | SandboxStatus::Retired
+        ) || current.revision != expected_revision
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        let mut next = current;
+        next.profile.always_on = Some(always_on);
+        next.revision = next
+            .revision
+            .checked_add(1)
+            .ok_or(SandboxStoreError::Conflict)?;
+        next.updated_at = now_rfc3339();
+        next.validate()
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        self.save_sandbox(expected_revision, next.clone()).await?;
+        Ok(next)
     }
 
     async fn schedule_image_rotation(
@@ -162,4 +202,28 @@ async fn schedule(
         "sandbox maintenance exhausted its retry budget: {}",
         last_transient.unwrap_or_else(|| "no driver result".into())
     )))
+}
+
+async fn preview(
+    store: &MongoSandboxStore,
+    request: MaintenanceRequest,
+) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+    let mut session = store
+        .client
+        .start_session()
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    start_transaction(&mut session)
+        .await
+        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+    let result = apply(store, &request, &mut session).await;
+    let abort = session.abort_transaction().await;
+    if let Err(error) = abort {
+        return Err(SandboxStoreError::Unavailable(error.to_string()));
+    }
+    match result {
+        Ok(receipt) => Ok(receipt.outcome),
+        Err(ApplyError::Domain(error)) => Err(error),
+        Err(ApplyError::Driver(error)) => Err(SandboxStoreError::Unavailable(error.to_string())),
+    }
 }
