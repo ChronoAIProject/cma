@@ -72,10 +72,14 @@ test('integrated task file feedback and edited follow-up survive reload with exa
     await page.goto('/');
     await page.getByLabel('Your task').fill(ready.body.initial_message);
     if (ready.body.repository) {
+      await page.getByRole('button', { name: 'Add git repo' }).click();
       await page.getByLabel('GitHub repository', { exact: true }).fill(ready.body.repository.url);
       await page.getByLabel('Repository ref', { exact: true }).fill(ready.body.repository.ref);
+      await page.getByRole('button', { name: 'Add repo', exact: true }).click();
     }
-    await page.getByRole('checkbox', { name: 'Enable desktop' }).check();
+    await page.getByRole('button', { name: /^Cloud computer/ }).click();
+    await page.getByRole('menuitemcheckbox', { name: 'Agent browser' }).click();
+    await page.keyboard.press('Escape');
     await page.screenshot({ path: info.outputPath('home-current.png') });
     observation.mark('firstIntent');
     await page.getByRole('button', { name: 'Start task', exact: true }).click();
