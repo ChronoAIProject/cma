@@ -61,6 +61,38 @@ async fn keep_alive_policy_applies_to_existing_sandboxes_and_preserves_manual_pa
         .await
         .unwrap();
     assert_pause_not_eligible(&store, &value.id).await;
+
+    let enabled = stored_sandbox("sbx_enabled_keepalive", "owner-a");
+    store.create_sandbox(enabled.clone()).await.unwrap();
+    let enabled_agent = stored_agent(&enabled, "agt_enabled", "conversation-enabled", 1);
+    store.create_agent(enabled_agent.clone()).await.unwrap();
+    insert_logs(&store, &enabled_agent.id, &[IDLE_AT]);
+    let mut enabled_request = pause_request(&enabled.id);
+    enabled_request.auto_pause_enabled = true;
+    assert_eq!(
+        store
+            .schedule_inactivity_pause(enabled_request)
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::Scheduled
+    );
+
+    let mut always_on = stored_sandbox("sbx_always_on", "owner-a");
+    always_on.profile.always_on = Some(true);
+    store.create_sandbox(always_on.clone()).await.unwrap();
+    let always_on_agent = stored_agent(&always_on, "agt_always_on", "conversation-always-on", 1);
+    store.create_agent(always_on_agent.clone()).await.unwrap();
+    insert_logs(&store, &always_on_agent.id, &[IDLE_AT]);
+    let mut always_on_request = pause_request(&always_on.id);
+    always_on_request.auto_pause_enabled = true;
+    assert_eq!(
+        store
+            .schedule_inactivity_pause(always_on_request)
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::NotEligible
+    );
+
     assert_eq!(
         store.get_sandbox(&value.id).await.unwrap(),
         Some(value.clone())
@@ -696,6 +728,7 @@ fn pause_request(sandbox_id: &SandboxId) -> SandboxInactivityPauseRequest {
         sandbox_id: sandbox_id.clone(),
         requested_at: NOW.into(),
         pause_after_seconds: 15 * 60,
+        auto_pause_enabled: false,
     }
 }
 

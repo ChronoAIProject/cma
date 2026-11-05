@@ -159,6 +159,7 @@ pub(crate) fn fixture_with_pools(
     let names = crate::rest::public_names::tests::Names::seeded();
     let mut state = AdminState::new(settings, operators, activity_service)
         .with_user_directory(layer2_core::UserDirectory::new(names.clone()))
+        .with_maintenance(sandboxes.clone())
         .with_runtime_updates(Arc::new(
             layer2_core::sandbox::SandboxRuntimeUpdateService::new(
                 sandboxes.clone(),
@@ -317,6 +318,7 @@ pub(crate) fn sandbox(id: &str, owner: &str, version: &str) -> Sandbox {
             id: layer2_core::SandboxProfileId("sbp_test".into()),
             revision: 1,
             digest: "a".repeat(64),
+            always_on: None,
             content: SandboxProfileContent {
                 runtime_image: None,
                 cpu_millis: 1_000,

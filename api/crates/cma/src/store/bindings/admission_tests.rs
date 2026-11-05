@@ -23,6 +23,7 @@ pub(super) fn sandbox(value: &ProviderBinding) -> Sandbox {
             id: SandboxProfileId::generate(),
             revision: 1,
             digest: content_digest(&content).unwrap(),
+            always_on: None,
             content: content.clone(),
         },
         status: SandboxStatus::Provisioning,

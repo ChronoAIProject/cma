@@ -25,6 +25,8 @@ export function SandboxDetail({
   }>({ events: [], loading: true });
   const [reload, setReload] = useState(0);
   const [after, setAfter] = useState(0);
+  const [alwaysOnBusy, setAlwaysOnBusy] = useState(false);
+  const [alwaysOnError, setAlwaysOnError] = useState<string>();
   useEffect(() => {
     const controller = new AbortController();
     Promise.all([
@@ -83,6 +85,57 @@ export function SandboxDetail({
                 <dd>
                   <ReferenceLink kind="sandbox" id={detail.sandbox.profile.id} /> revision{' '}
                   {detail.sandbox.profile.revision}
+                </dd>
+                <dt>Always on</dt>
+                <dd>
+                  <label className="operator-switch">
+                    <input
+                      type="checkbox"
+                      checked={detail.sandbox.profile.always_on === true}
+                      disabled={alwaysOnBusy || state.loading}
+                      onChange={(event) => {
+                        const value = event.target.checked;
+                        setAlwaysOnBusy(true);
+                        setAlwaysOnError(undefined);
+                        void client.admin
+                          .setSandboxAlwaysOn(
+                            id,
+                            { always_on: value, expected_revision: detail.sandbox.revision },
+                            {},
+                          )
+                          .then(() => {
+                            setState((previous) =>
+                              previous.detail === undefined
+                                ? previous
+                                : {
+                                    ...previous,
+                                    detail: {
+                                      ...previous.detail,
+                                      sandbox: {
+                                        ...previous.detail.sandbox,
+                                        profile: {
+                                          ...previous.detail.sandbox.profile,
+                                          always_on: value,
+                                        },
+                                        revision: previous.detail.sandbox.revision + 1,
+                                      },
+                                    },
+                                  },
+                            );
+                          })
+                          .catch((error: unknown) => {
+                            setAlwaysOnError(
+                              error instanceof Error
+                                ? error.message
+                                : 'Could not save this control.',
+                            );
+                          })
+                          .finally(() => setAlwaysOnBusy(false));
+                      }}
+                    />
+                    Keep this Sandbox running when automatic pause is enabled
+                  </label>
+                  {alwaysOnError === undefined ? null : <p role="alert">{alwaysOnError}</p>}
                 </dd>
                 <dt>Created</dt>
                 <dd>
