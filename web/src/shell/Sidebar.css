@@ -366,3 +366,18 @@
     right: 12px;
   }
 }
+
+.sidebar__new[aria-current='page'] {
+  background: var(--dsw-specific-sidebar-new-current);
+}
+.sidebar__new[aria-current='page'] > svg {
+  color: var(--dsw-specific-task-accent);
+}
+.sidebar__kbd {
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.sidebar__account {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
