@@ -15,6 +15,7 @@ export function MetricTable({
   order,
   admin,
   active,
+  measured,
   focusedMetric,
   onSort,
   onDetail,
@@ -27,6 +28,7 @@ export function MetricTable({
   readonly order: 'asc' | 'desc';
   readonly admin: boolean;
   readonly active: boolean;
+  readonly measured: boolean;
   readonly focusedMetric?: Metric;
   readonly onSort: (sort: UsageMetricSort) => void;
   readonly onDetail: (row: UsageMetricRow) => void;
@@ -65,18 +67,26 @@ export function MetricTable({
     column('Runtime'),
     column('Agents'),
     ...metrics.map((metric) =>
-      column(
-        metric === 'cpu'
-          ? 'CPU mean / allocated (cores)'
-          : metric === 'memory'
-            ? 'Memory mean / allocated (GiB)'
-            : 'Disk used / allocated (GiB)',
-        metric === 'cpu'
-          ? 'cpu_mean_cores'
-          : metric === 'memory'
-            ? 'memory_mean_bytes'
-            : 'disk_latest_bytes',
-      ),
+      measured
+        ? column(
+            metric === 'cpu'
+              ? 'CPU mean / allocated (cores)'
+              : metric === 'memory'
+                ? 'Memory mean / allocated (GiB)'
+                : 'Disk used / allocated (GiB)',
+            metric === 'cpu'
+              ? 'cpu_mean_cores'
+              : metric === 'memory'
+                ? 'memory_mean_bytes'
+                : 'disk_latest_bytes',
+          )
+        : column(
+            metric === 'cpu'
+              ? 'CPU allocated (cores)'
+              : metric === 'memory'
+                ? 'Memory allocated (GiB)'
+                : 'Disk allocated (GiB)',
+          ),
     ),
     column('Allocated CPU (core-hours)', 'allocated_cpu_core_hours'),
     column('Allocated memory (GiB-hours)', 'allocated_memory_gib_hours'),
@@ -87,7 +97,7 @@ export function MetricTable({
     <section aria-label="Usage inventory">
       <MetricsNotice failure={records.error} onRetry={records.retry} />
       <Table
-        label="Sandboxes and measured usage"
+        label={measured ? 'Sandboxes and measured usage' : 'Sandboxes and allocated usage'}
         columns={columns}
         actions={actions ? 'Actions' : undefined}
         loading={records.loading}
@@ -110,7 +120,20 @@ export function MetricTable({
             <TableCell>{displayQuantity(row.agent_count)}</TableCell>
             {metrics.map((metric) => (
               <TableCell key={metric}>
-                <CompactReading metric={metric} row={row} />
+                {measured ? (
+                  <CompactReading metric={metric} row={row} />
+                ) : (
+                  metricValue(
+                    row.allocation[
+                      metric === 'cpu'
+                        ? 'cpu_cores'
+                        : metric === 'memory'
+                          ? 'memory_bytes'
+                          : 'disk_bytes'
+                    ],
+                    metric,
+                  )
+                )}
               </TableCell>
             ))}
             <TableCell>{displayQuantity(row.allocated_period.cpu_core_hours)}</TableCell>
