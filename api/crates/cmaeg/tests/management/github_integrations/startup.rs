@@ -2,6 +2,92 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn blocked_github_initialization_keeps_http_available_and_recovers_without_restart() {
+    use mongodb::bson::doc;
+    use std::time::Duration;
+    let mut fixture = Fixture::new(true).await;
+    fixture.allow_startup_migration().await;
+    let database = fixture.database.admin.database(&fixture.database.name);
+    database
+        .collection::<mongodb::bson::Document>("eg_schema_migrations")
+        .update_one(
+            doc! {"_id":"github_integrations"},
+            doc! {"$set":{"version":1}},
+        )
+        .write_concern(
+            mongodb::options::WriteConcern::builder()
+                .w(mongodb::options::Acknowledgment::Majority)
+                .build(),
+        )
+        .await
+        .unwrap();
+    let mut session = fixture.database.admin.start_session().await.unwrap();
+    session.start_transaction().await.unwrap();
+    database
+        .collection::<mongodb::bson::Document>("eg_schema_migrations")
+        .update_one(
+            doc! {"_id":"github_integrations"},
+            doc! {"$set":{"version":2}},
+        )
+        .session(&mut session)
+        .await
+        .unwrap();
+    let started = tokio::time::timeout(
+        Duration::from_secs(3),
+        fixture.replica_with_flag(Some(true)),
+    )
+    .await;
+    let observed = if let Ok(base) = &started {
+        let channels = fixture
+            .read(base, "/v1/channels", "token-alice")
+            .await
+            .status();
+        let capabilities = fixture
+            .read(base, "/v1/github/capabilities", "token-alice")
+            .await
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
+        Some((channels, capabilities))
+    } else {
+        None
+    };
+    session.abort_transaction().await.unwrap();
+    let base = started.expect("optional GitHub initialization must not delay HTTP startup");
+    let (channels, capabilities) = observed.unwrap();
+    assert_eq!(channels, 200);
+    assert_eq!(capabilities["store_ready"], false);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let capabilities = fixture
+                .read(&base, "/v1/github/capabilities", "token-alice")
+                .await
+                .json::<serde_json::Value>()
+                .await
+                .unwrap();
+            if capabilities["store_ready"] == true {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("GitHub becomes available after the database resumes");
+    let response = fixture
+        .registration(
+            &base,
+            "token-alice",
+            "after-delayed-init",
+            &json!({"app_id":42,"display_name":"Recovered without restart"}),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn disabled_startup_does_not_prepare_storage_even_with_migration_authority() {
     use mongodb::bson::doc;
     let mut fixture = Fixture::new(false).await;
@@ -21,7 +107,7 @@ async fn disabled_startup_does_not_prepare_storage_even_with_migration_authority
         .unwrap();
     database.run_command(doc! {"grantRolesToUser":"runtime","roles":[{"role":"cma_eg_automation_runtime","db":&fixture.database.name}]}).await.unwrap();
     database.run_command(doc! {"revokeRolesFromUser":"runtime","roles":[{"role":"cma_eg_automation_migrator","db":&fixture.database.name}]}).await.unwrap();
-    let enabled_without_initialization_authority = fixture.replica().await;
+    let enabled_without_initialization_authority = fixture.replica_with_flag(Some(true)).await;
     let capabilities = fixture
         .read(
             &enabled_without_initialization_authority,
@@ -56,7 +142,7 @@ async fn unknown_future_schema_is_not_activated_or_downgraded_by_startup() {
         .await
         .unwrap();
     for _attempt in 0..2 {
-        let incompatible = fixture.replica().await;
+        let incompatible = fixture.replica_with_flag(Some(true)).await;
         let capabilities = fixture
             .read(&incompatible, "/v1/github/capabilities", "token-alice")
             .await
@@ -124,7 +210,7 @@ async fn incomplete_upgrade_stays_unavailable_and_resumes_after_the_external_fau
         )
         .await
         .unwrap();
-    let interrupted = fixture.replica().await;
+    let interrupted = fixture.replica_with_flag(Some(true)).await;
     let capabilities = fixture
         .read(&interrupted, "/v1/github/capabilities", "token-alice")
         .await
@@ -213,6 +299,7 @@ async fn concurrent_startups_converge_on_one_usable_integration_store() {
     let mut bases = Vec::new();
     for (base, child) in futures_util::future::join_all(startups).await {
         fixture.children.push(child);
+        fixture.wait_for_github(&base).await;
         bases.push(base);
     }
     for number in 0..2 {
