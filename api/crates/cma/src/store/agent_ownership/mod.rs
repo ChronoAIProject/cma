@@ -169,6 +169,15 @@ impl OwnershipStore for MongoAgentOwnership {
             .transpose()
     }
 
+    async fn has_owner_history(&self, id: &AgentId) -> Result<bool, OwnershipError> {
+        self.owners
+            .find_one(doc! {"_id": id.as_str()})
+            .projection(doc! {"_id": 1})
+            .await
+            .map(|row| row.is_some())
+            .map_err(unavailable)
+    }
+
     async fn acquire(
         &self,
         agent_id: &AgentId,

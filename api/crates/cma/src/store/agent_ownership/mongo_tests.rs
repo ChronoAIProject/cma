@@ -55,6 +55,7 @@ async fn two_and_three_instances_share_one_owner_and_keep_epoch_after_release() 
             store.register(member(instance)).await.unwrap();
         }
         let agent = AgentId("agent".into());
+        assert!(!store.has_owner_history(&agent).await.unwrap());
         let winner = preferred(&store, &agent).await;
         let mut tasks = tokio::task::JoinSet::new();
         for instance in &instances {
@@ -82,6 +83,7 @@ async fn two_and_three_instances_share_one_owner_and_keep_epoch_after_release() 
         store.release(&first.token).await.unwrap();
         store.release(&first.token).await.unwrap();
         assert!(store.owner(&agent).await.unwrap().is_none());
+        assert!(store.has_owner_history(&agent).await.unwrap());
         let second = store.acquire(&agent, &winner).await.unwrap().unwrap();
         assert_eq!(second.token.epoch, 2);
         assert_eq!(store.check(&first.token).await, Err(OwnershipError::Stale));

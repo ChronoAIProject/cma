@@ -27,7 +27,7 @@ pub(super) async fn route(
     if !private && proof.is_none() && !needs_owner(request.uri().path(), request.method()) {
         return next.run(request).await;
     }
-    let Ok(_slot) = relay.slots.clone().try_acquire_owned() else {
+    let Ok(slot) = relay.slots.clone().try_acquire_owned() else {
         return unavailable();
     };
     if !relay.coordinator.is_ready() {
@@ -127,7 +127,7 @@ pub(super) async fn route(
     if private {
         return unavailable();
     }
-    forward(&relay, destination, request, bytes.as_ref()).await
+    forward(&relay, destination, request, bytes.as_ref(), slot).await
 }
 
 #[derive(Clone)]
@@ -176,7 +176,9 @@ async fn forward(
     destination: Destination,
     request: Request,
     body: &[u8],
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) -> Response {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     let mut headers = HeaderMap::new();
     for (name, value) in request.headers() {
         if authentication::forwarded(name.as_str()) {
@@ -202,8 +204,8 @@ async fn forward(
             .path_and_query()
             .map_or("/", |value| value.as_str())
     );
-    let response = match tokio::time::timeout(
-        Duration::from_secs(60),
+    let response = match tokio::time::timeout_at(
+        deadline,
         relay
             .client
             .request(request.method().clone(), url)
@@ -219,9 +221,29 @@ async fn forward(
     };
     let status = response.status();
     let headers = response.headers().clone();
-    let stream = response
-        .bytes_stream()
-        .map(|result| result.map_err(|_| std::io::Error::other("owner relay ended")));
+    // Hold capacity through the response body, including slow readers. Headers
+    // alone do not finish a relay, and a trickle cannot extend its total deadline.
+    let stream = futures_util::stream::unfold(
+        Some((response.bytes_stream(), permit)),
+        move |state| async move {
+            let (mut stream, permit) = state?;
+            let next = tokio::time::timeout_at(deadline, stream.next()).await;
+            let result = match next {
+                Ok(Some(result)) => result.map_err(|_| std::io::Error::other("owner relay ended")),
+                Ok(None) => return None,
+                Err(_) => {
+                    return Some((
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "owner relay deadline exceeded",
+                        )),
+                        None,
+                    ))
+                }
+            };
+            Some((result, Some((stream, permit))))
+        },
+    );
     let mut result = Response::new(Body::from_stream(stream));
     *result.status_mut() = status;
     for (name, value) in &headers {

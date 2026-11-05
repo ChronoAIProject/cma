@@ -105,6 +105,9 @@ pub trait OwnershipStore: Send + Sync {
     ) -> Result<Membership, OwnershipError>;
     async fn membership(&self) -> Result<Membership, OwnershipError>;
     async fn owner(&self, agent_id: &AgentId) -> Result<Option<OwnershipLease>, OwnershipError>;
+    /// Permanent custody, including expired and released epochs. Absence of a
+    /// live owner never authorizes returning an opted-in Agent to legacy mode.
+    async fn has_owner_history(&self, agent_id: &AgentId) -> Result<bool, OwnershipError>;
     /// Returns None for a live peer owner, another preferred member, or capacity.
     /// Missing process-local attachment is never evidence for takeover.
     async fn acquire(

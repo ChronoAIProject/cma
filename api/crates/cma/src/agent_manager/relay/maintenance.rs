@@ -115,10 +115,9 @@ impl Relay {
             .map_err(|_| ())?
             .map_err(|_| ())?;
         let Some(agent) = agent else {
-            if bounded(self.coordinator.store.owner(id))
+            if bounded(self.coordinator.store.has_owner_history(id))
                 .await
                 .map_err(|_| ())?
-                .is_some()
             {
                 return Err(());
             }
