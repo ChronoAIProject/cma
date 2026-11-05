@@ -2,6 +2,8 @@ use super::*;
 use layer2_core::sandbox::{AgentMessageAssembly, AgentUpdateRecorder, DurableAgentUpdateRecorder};
 use layer3_adapter::ConversationUpdate;
 
+mod capacity_tests;
+
 #[test]
 fn agent_log_terminal_capacity_requires_a_terminal_publication() {
     let starting = agent_for_worker("agt_log_capacity", NOW);

@@ -1,5 +1,7 @@
 pub(super) fn guidance(class: &str) -> &'static str {
     match class {
+        "agent_log_capacity_exceeded" =>
+            "This Agent's retained history cannot accept more work. Waiting or restarting does not free history capacity. Keep its history and contact the deployment operator about recovery, or explicitly create a replacement Agent.",
         "resource_quota" | "workspace_resource_quota" | "agent_resource_quota" =>
             "Free unused capacity or choose a smaller profile before creating a replacement.",
         "service_not_granted" =>
@@ -36,6 +38,10 @@ mod tests {
         assert!(guidance("agent_skill_invalid").contains("skills"));
         assert!(guidance("workspace_runtime_rejected").contains("commands"));
         assert!(guidance("retryable_transient").contains("later"));
+        let capacity = guidance("agent_log_capacity_exceeded");
+        assert!(capacity.contains("Waiting or restarting does not free"));
+        assert!(capacity.contains("Keep its history"));
+        assert!(capacity.contains("explicitly create a replacement"));
         assert!(!guidance("private upstream error").contains("private upstream error"));
     }
 }

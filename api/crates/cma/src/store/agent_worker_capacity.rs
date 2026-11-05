@@ -1,7 +1,9 @@
 //! Evidence-gated access to the agent log's terminal reserves.
 
-use layer2_core::sandbox::store::AgentWorkMutation;
-use layer2_core::sandbox::{Agent, AgentLogKind, AgentStatus, SandboxEventKind};
+use layer2_core::sandbox::store::{
+    agent_cleanup_capacity_retry, AgentWorkMutation, AGENT_LOG_CAPACITY_FAILURE,
+};
+use layer2_core::sandbox::{Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind};
 
 use super::agent_log_integrity::AppendCapacity;
 
@@ -9,14 +11,78 @@ pub(super) fn publication_capacity(
     current: &Agent,
     mutation: &AgentWorkMutation,
 ) -> AppendCapacity {
-    if delete_evidence_matches(current, mutation) {
+    // The transaction proves that a cleanup marker has not already been
+    // appended at this step. Subsequent retries carry no log entries.
+    if agent_cleanup_capacity_retry(current, mutation) {
+        return if current.status.is_live() {
+            AppendCapacity::StopOrFailure
+        } else {
+            AppendCapacity::Delete
+        };
+    }
+    if delete_evidence_matches(current, mutation)
+        || cleanup_completion_capacity(current, mutation) == Some(AppendCapacity::Delete)
+    {
         AppendCapacity::Delete
     } else if stop_evidence_matches(current, mutation)
         || startup_failure_evidence_matches(current, mutation)
+        || capacity_failure_evidence_matches(current, mutation)
+        || cleanup_completion_capacity(current, mutation) == Some(AppendCapacity::StopOrFailure)
     {
         AppendCapacity::StopOrFailure
     } else {
         AppendCapacity::Normal
+    }
+}
+
+fn capacity_failure_evidence_matches(current: &Agent, mutation: &AgentWorkMutation) -> bool {
+    let next = &mutation.agent;
+    current.status.is_live()
+        && current.requested_stop_reason.is_none()
+        && next.status == AgentStatus::Failed
+        && next.work.step == AgentWorkStep::None
+        && next.updated_at == mutation.appended_at
+        && matches!(mutation.agent_logs.as_slice(),
+            [AgentLogKind::WorkStepFailed { step, failure }]
+                if *step == current.work.step
+                    && failure.class == AGENT_LOG_CAPACITY_FAILURE
+                    && Some(failure) == next.failure.as_ref())
+        && transition_event_matches(current, mutation, AgentStatus::Failed)
+}
+
+/// The final terminal write is unreachable unless its preceding cleanup steps
+/// can also complete. Only finite, forward progress gets this headroom; retry
+/// records must not consume the reserve indefinitely. The transaction validates
+/// the full publication, including close receipts and parent absence proofs,
+/// before selecting capacity here.
+fn cleanup_completion_capacity(
+    current: &Agent,
+    mutation: &AgentWorkMutation,
+) -> Option<AppendCapacity> {
+    let next = &mutation.agent;
+    if current.status != next.status
+        || next.updated_at != mutation.appended_at
+        || next.requested_stop_reason != current.requested_stop_reason
+        || !matches!(mutation.agent_logs.as_slice(),
+            [AgentLogKind::WorkStepCompleted { step }] if *step == current.work.step)
+    {
+        return None;
+    }
+    match (current.work.step, next.work.step) {
+        (AgentWorkStep::FenceInteraction, AgentWorkStep::CloseProcess)
+        | (AgentWorkStep::CloseProcess, AgentWorkStep::PublishStopped)
+            if current.status.is_live() && current.requested_stop_reason.is_some() =>
+        {
+            Some(AppendCapacity::StopOrFailure)
+        }
+        (AgentWorkStep::EnsureProcessClosed, AgentWorkStep::RemoveHome)
+        | (AgentWorkStep::RemoveHome, AgentWorkStep::RemoveWorktree)
+        | (AgentWorkStep::RemoveWorktree, AgentWorkStep::PublishDeleted)
+            if matches!(current.status, AgentStatus::Stopped | AgentStatus::Failed) =>
+        {
+            Some(AppendCapacity::Delete)
+        }
+        _ => None,
     }
 }
 
