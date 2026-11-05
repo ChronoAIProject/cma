@@ -227,7 +227,7 @@ describe('operator record tables', () => {
       .getAllByRole('columnheader')
       .map((header) => header.textContent);
 
-  it('retains runtime controls beside measured columns and performs no inventory sweep', async () => {
+  it('retains runtime controls beside allocated columns and performs no inventory sweep', async () => {
     const client = operatorClient();
     client.adminUsageMetrics.sandboxes.mockResolvedValue({
       report_id: 'report-one',
@@ -238,7 +238,7 @@ describe('operator record tables', () => {
     });
     render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
     await screen.findByRole('cell', { name: /Second/ });
-    expect(headers('Sandboxes and measured usage')).toContain('CPU mean / allocated (cores)');
+    expect(headers('Sandboxes and allocated usage')).toContain('CPU allocated (cores)');
     for (const button of screen.getAllByRole('button', { name: 'Retire' }))
       expect(button).toBeDisabled();
     expect(client.admin.listSandboxes).not.toHaveBeenCalled();
