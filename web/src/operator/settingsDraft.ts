@@ -36,6 +36,14 @@ export function reviewSettingsDraft(
       'pause_after_seconds',
       'grace_started_at',
     ]),
+    ...(draft.usage_reporting?.measured_visible !== base.usage_reporting?.measured_visible
+      ? {
+          usage_reporting: {
+            ...current.usage_reporting,
+            measured_visible: draft.usage_reporting?.measured_visible ?? false,
+          },
+        }
+      : {}),
     retention: merge(base.retention, draft.retention, current.retention, ['agent_log_days']),
     limits: merge(base.limits, draft.limits, current.limits, [
       'max_sandboxes_per_user',
