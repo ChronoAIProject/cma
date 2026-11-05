@@ -39,6 +39,7 @@ pub use media::{
     CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
 };
 pub use native_discord::NativeDiscordConfig;
+pub(crate) use routing::github_writes_enabled;
 pub use routing::{RoutingConfig, CMAEG_NON_HUMAN_PROVIDERS};
 pub use service_account::*;
 pub use stt::*;
@@ -279,7 +280,7 @@ impl Config {
             management,
             cma_service_account: ServiceAccountConfig::from_env()?,
             channel_cache: ChannelCacheConfig::from_env()?,
-            github_enabled: routing::write_flag("CMAEG_GITHUB_ENABLED")?,
+            github_enabled: github_writes_enabled()?,
             native_bot_mentions_writes_enabled: match env::var(
                 "CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED",
             ) {
