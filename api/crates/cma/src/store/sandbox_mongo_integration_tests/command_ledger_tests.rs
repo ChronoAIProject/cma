@@ -7,6 +7,7 @@ mod discovery_tests;
 mod execution_tests;
 mod queued_cancellation_tests;
 mod queued_input_tests;
+mod refusal_compatibility_tests;
 mod sandbox_controls_tests;
 mod startup_failure_tests;
 mod suggested_reply_tests;
