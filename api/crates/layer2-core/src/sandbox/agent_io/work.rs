@@ -41,6 +41,8 @@ pub enum CommandFailureCode {
     QueueTimeout,
     AuthorityRevoked,
     AuthorityUnavailable,
+    CredentialSetupRequired,
+    ConnectionsRequired,
     AgentUnavailable,
     TargetTurnChanged,
     RuntimeUnavailable,
