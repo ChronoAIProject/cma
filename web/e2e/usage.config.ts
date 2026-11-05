@@ -8,7 +8,7 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname))
   throw new Error('Usage browser checks require a loopback preview.');
 export default defineConfig({
   testDir: '.',
-  testMatch: ['usage.check.ts', 'account-usage.check.ts', 'usage-settings.check.ts'],
+  testMatch: ['account-usage.check.ts', 'operations-usage.check.ts', 'usage-settings.check.ts'],
   workers: 1,
   retries: 0,
   forbidOnly: true,
