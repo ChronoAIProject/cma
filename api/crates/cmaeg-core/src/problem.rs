@@ -27,6 +27,11 @@ pub enum ProblemCode {
     PayloadTooLarge,
     UnsupportedMediaType,
     Internal,
+    GithubSignatureInvalid,
+    GithubInstallationForbidden,
+    GithubResourceNotFound,
+    GithubDeliveryConflict,
+    GithubSourceUnavailable,
     /// The event exists but has no attachment at the requested index.
     AttachmentNotFound,
     /// Inbound media is disabled, or a media read's event_ref sealed no
