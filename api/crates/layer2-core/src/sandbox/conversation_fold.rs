@@ -3,7 +3,7 @@ use layer3_adapter::{ConversationUpdate, SessionUpdate};
 use super::conversation_fold_support::{
     active_turn, append_bounded, approval_detail, bounded, complete_first_message,
     fail_first_message, flush_message, observe_first_message, observe_operation, plain_text,
-    prompt_evidence, validate_prompt_identity, wire_name,
+    prompt_evidence, recorded_tool_output, validate_prompt_identity, wire_name,
 };
 use super::{
     Agent, AgentAvailableCommand, AgentConfigOption, AgentConversationError, AgentLogKind,
@@ -315,6 +315,22 @@ fn fold_semantic_update(
     let mut logs = flush_message(assembly);
     observe_first_message(&mut agent, prompt_evidence, appended_at, &mut logs)?;
     observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
+    let initial_output = match &update {
+        SessionUpdate::ToolCall(call)
+            if durable_tool_output && layer3_adapter::has_reported_file_changes(call) =>
+        {
+            recorded_tool_output(
+                &layer3_adapter::ToolCallUpdateFields::new()
+                    .content(call.content.clone())
+                    .raw_output(call.raw_output.clone()),
+            )
+            .map(|output| AgentLogKind::ToolOutputReported {
+                call_id: call.tool_call_id.0.to_string(),
+                output,
+            })
+        }
+        _ => None,
+    };
     let kind = match update {
         SessionUpdate::ToolCall(call) => AgentLogKind::ToolCallStarted {
             call_id: call.tool_call_id.0.to_string(),
@@ -420,6 +436,7 @@ fn fold_semantic_update(
         }
     };
     logs.push(kind);
+    logs.extend(initial_output);
     changed(
         agent,
         logs,
@@ -429,24 +446,6 @@ fn fold_semantic_update(
         false,
         appended_at,
     )
-}
-
-fn recorded_tool_output(
-    fields: &layer3_adapter::ToolCallUpdateFields,
-) -> Option<super::RecordedToolOutput> {
-    let mut text = String::new();
-    let mut reported = false;
-    let mut truncated = false;
-    for block in layer3_adapter::reported_tool_text(fields) {
-        if reported {
-            truncated |= text.len() == 16 * 1024;
-            append_bounded(&mut text, "\n", 16 * 1024);
-        }
-        reported = true;
-        truncated |= text.len().saturating_add(block.len()) > 16 * 1024;
-        append_bounded(&mut text, block, 16 * 1024);
-    }
-    reported.then_some(super::RecordedToolOutput { text, truncated })
 }
 
 pub(super) fn changed(
