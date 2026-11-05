@@ -260,6 +260,7 @@ impl ControlPlaneComposition {
                 operations: projections.operations(),
                 policy: sandbox_policy.clone(),
                 skills: agent_skills,
+                funding: runtime::funding(config, &stores, adapter.clone())?,
             },
             SandboxLifecycleConfig {
                 access_transport_migration: config.agent_access_transport_migration.clone(),

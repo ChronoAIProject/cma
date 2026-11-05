@@ -43,3 +43,16 @@ impl RuntimeServices {
         }
     }
 }
+
+pub(super) fn funding(
+    config: &Config,
+    stores: &MongoStores,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+) -> Result<Arc<dyn crate::sandbox::funding::SandboxFundingAdapter>, String> {
+    crate::sandbox::funding::production(
+        config.sandbox_billing.clone(),
+        stores.sandbox_model.clone(),
+        adapter,
+        config.deployment_id.clone(),
+    )
+}

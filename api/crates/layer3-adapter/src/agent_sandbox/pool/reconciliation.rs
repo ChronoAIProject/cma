@@ -7,32 +7,24 @@ use kube::{
 use serde_json::json;
 
 use super::{
-    api_error, claims, cleanup_inventory, model, rejected, AgentSandboxPools, NativePoolClaim,
-    NativePoolClaimRequest, NativePoolCleanup, NativePoolHomeOrigin, NativePoolMember, Result,
-    NATIVE_HOME_ANNOTATION, OWNER_LABEL,
+    api_error, rejected, AgentSandboxPools, NativePoolClaim, NativePoolCleanup,
+    NativePoolHomeOrigin, NativePoolMember, Result, NATIVE_HOME_ANNOTATION,
 };
 
 const CLEANUP: &str = "cma/native-cleanup";
 
 impl AgentSandboxPools {
     pub async fn inventory_claims(&self) -> Result<Vec<NativePoolClaim>> {
-        let mut result = Vec::new();
-        for mut claim in cleanup_inventory::complete(&self.claims).await? {
-            if claim.labels().get(OWNER_LABEL) != Some(&self.config.deployment) {
-                continue;
+        let mut cursor = self.claim_inventory_cursor();
+        loop {
+            if let Some(items) = cursor.advance().await? {
+                return Ok(items);
             }
-            let encoded = claim
-                .annotations()
-                .get("cma/pool-claim-request")
-                .filter(|v| v.len() <= 128 * 1024)
-                .ok_or_else(|| rejected("native claim has no allocation request"))?;
-            let request: NativePoolClaimRequest = serde_json::from_str(encoded)
-                .map_err(|_| rejected("native claim allocation request is invalid"))?;
-            claim.metadata.deletion_timestamp = None;
-            claims::verify_claim(&claim, &model::claim(&self.config, &request)?)?;
-            result.push(claims::receipt(&request, &claim)?);
         }
-        Ok(result)
+    }
+
+    pub fn claim_inventory_cursor(&self) -> Box<dyn crate::InventoryCursor<NativePoolClaim>> {
+        Box::new(super::claim_inventory::Cursor::new(self.clone()))
     }
 
     /// Caller has freshly established that this request has no live database
