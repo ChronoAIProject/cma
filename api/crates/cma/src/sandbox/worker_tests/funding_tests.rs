@@ -46,6 +46,9 @@ fn funded_worker(h: &Harness) -> (Arc<SandboxWorker>, Arc<Funding>) {
         settlements: AtomicUsize::new(0),
         lose_settlement: AtomicBool::new(false),
     });
+    (worker_with_funding(h, funding.clone()), funding)
+}
+fn worker_with_funding(h: &Harness, funding: Arc<dyn SandboxFundingAdapter>) -> Arc<SandboxWorker> {
     let dependencies = SandboxWorkerDependencies {
         store: h.store.clone(),
         adapter: h.adapter.clone(),
@@ -63,11 +66,9 @@ fn funded_worker(h: &Harness) -> (Arc<SandboxWorker>, Arc<Funding>) {
     let mut config =
         SandboxWorkerConfig::new("funding-test", "test", runtime_image(), h.policy.clone());
     config.retry_delay = Duration::from_secs(5);
-    (
-        SandboxWorker::new_with_funding(dependencies, config, funding.clone()),
-        funding,
-    )
+    SandboxWorker::new_with_funding(dependencies, config, funding)
 }
+
 #[tokio::test]
 async fn unfunded_provisioning_never_creates_runtime_and_publishes_failure() {
     let h = Harness::new(vec![], 0, Duration::from_secs(3600)).await;
@@ -110,4 +111,67 @@ async fn unfunded_retirement_still_tears_down_and_retries_settlement_store_failu
     assert_eq!(funding.admissions.load(Ordering::SeqCst), 0);
     assert_eq!(funding.settlements.load(Ordering::SeqCst), 2);
     assert!(h.adapter.runtime_inventory().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn non_cohort_user_creates_pauses_and_resumes_with_enabled_funding_adapter() {
+    let h = Harness::new(vec![], 0, Duration::from_secs(3600)).await;
+    let created = h.create().await;
+    let now = start_time(&created);
+    let funding = crate::sandbox::funding::excluded_funding();
+    let worker = worker_with_funding(&h, funding.clone());
+    for _ in 0..20 {
+        worker.run_one(&created.id, now).await.unwrap();
+        if h.stored(&created.id).await.status == SandboxStatus::Active {
+            break;
+        }
+    }
+    let active = h.stored(&created.id).await;
+    assert_eq!(active.status, SandboxStatus::Active);
+    assert!(active.failure.is_none());
+    assert!(active.runtime.is_some());
+    let home = active.lifecycle.home.clone();
+    let pause_at = now + Duration::from_secs(10);
+    h.store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::pause(
+            active.id.clone(),
+            active.owner.clone(),
+            rfc3339_at(pause_at),
+            None,
+        ))
+        .await
+        .unwrap();
+    for _ in 0..20 {
+        worker.run_one(&active.id, pause_at).await.unwrap();
+        if h.stored(&active.id).await.status == SandboxStatus::Paused {
+            break;
+        }
+    }
+    assert_eq!(h.stored(&active.id).await.status, SandboxStatus::Paused);
+    let revive_at = pause_at + Duration::from_secs(10);
+    h.store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::revive(
+            active.id.clone(),
+            active.owner.clone(),
+            rfc3339_at(revive_at),
+            SandboxReviveCause::ExplicitRequest,
+        ))
+        .await
+        .unwrap();
+    let restarted = worker_with_funding(&h, funding.clone());
+    for _ in 0..20 {
+        restarted.run_one(&active.id, revive_at).await.unwrap();
+        if h.stored(&active.id).await.status == SandboxStatus::Active {
+            break;
+        }
+    }
+    let resumed = h.stored(&active.id).await;
+    assert_eq!(resumed.status, SandboxStatus::Active);
+    assert!(resumed.failure.is_none());
+    assert!(resumed.runtime.is_some());
+    assert_eq!(resumed.lifecycle.home, home);
+    assert_eq!(funding.renew_due(revive_at).await.unwrap(), 0);
+    let events = h.store.sandbox_events(&active.id, 0, 100).await.unwrap();
+    assert!(!events.iter().any(|e| matches!(&e.kind,
+        SandboxEventKind::WorkStepFailed { failure, .. } if failure.detail.contains("prepaid"))));
 }

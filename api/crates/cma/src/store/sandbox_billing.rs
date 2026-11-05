@@ -100,7 +100,7 @@ impl MongoSandboxStore {
             .map_err(|_| SandboxStoreError::Corrupt("funding deadline overflow".into()))?;
         let mut cursor = self
             .sandbox_billing
-            .find(doc! {"retry_at":{"$lte":before},"$or":[
+            .find(doc! {"unbilled_generation":mongodb::bson::Bson::Null,"retry_at":{"$lte":before},"$or":[
                 {"stopped":false}, {"windows.0":{"$exists":true}},
                 {"retained_disk_gib":{"$gt":0}}, {"pending":{"$ne":mongodb::bson::Bson::Null}}
             ]})
