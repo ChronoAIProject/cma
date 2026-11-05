@@ -321,6 +321,7 @@ fn home_request(id: &str) -> HomeVolumeRequest {
 }
 fn runtime_request(id: &str, generation: u64) -> RuntimeProvisionRequest {
     RuntimeProvisionRequest {
+        funded_until: None,
         generation,
         spec: SandboxSpec {
             sandbox_id: id.into(),

@@ -91,8 +91,16 @@ impl SandboxAdapter for HostedAdapter {
         self.home_volumes.as_deref()
     }
 
+    async fn set_runtime_deadline(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        until: u64,
+    ) -> crate::Result<()> {
+        self.deadline_exact(request, until).await
+    }
+
     async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
-        self.provision_exact(spec, 1).await
+        self.provision_exact(spec, 1, None).await
     }
 
     async fn provision_runtime_receipted(
@@ -165,7 +173,7 @@ impl SandboxAdapter for HostedAdapter {
         &self,
         request: &RuntimeProvisionRequest,
     ) -> crate::Result<RuntimeHandle> {
-        self.provision_exact(&request.spec, request.generation)
+        self.provision_exact(&request.spec, request.generation, request.funded_until)
             .await
     }
 
@@ -483,17 +491,10 @@ impl SandboxAdapter for HostedAdapter {
     }
 
     async fn resources(&self, handle: &RuntimeHandle) -> crate::Result<ResourceReading> {
-        self.known_state(handle).await?;
-        match self.exchange(handle, RequestFrame::Resources).await? {
-            ResponseFrame::Resources(reading) => Ok(reading),
-            _ => unreachable!("exchange verifies response operation"),
-        }
+        self.resources_exact(handle).await
     }
 
     async fn teardown(&self, handle: &RuntimeHandle) -> crate::Result<()> {
-        self.known_state(handle).await?;
-        self.backend.teardown(handle).await?;
-        self.states.lock().await.remove(handle);
-        Ok(())
+        self.teardown_exact(handle).await
     }
 }
