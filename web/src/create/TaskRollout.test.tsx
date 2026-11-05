@@ -34,6 +34,7 @@ it('offers ordinary manual Agent creation when task policy is disabled', async (
   };
   render(<TaskHome client={client} viewerId="owner" canCreateSandbox onCreated={() => {}} />);
   await act(async () => {});
+  fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Policy-gated task' } });
   expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'New agent' }));
   expect(create).not.toHaveBeenCalled();

@@ -56,3 +56,8 @@
   justify-content: center;
   gap: 8px;
 }
+
+.console__surface:has(> [data-task-home]) {
+  overflow: auto;
+  background: var(--dsw-specific-task-page);
+}
