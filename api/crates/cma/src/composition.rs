@@ -12,6 +12,7 @@ mod media;
 mod profiles;
 mod routes;
 mod runtime;
+mod stores;
 use crate::{
     activity::ActivityRecorder,
     auth::{service_portal, AuthState},
@@ -37,44 +38,12 @@ use layer2_core::{
     },
     ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
 };
-pub(crate) struct ControlPlaneComposition {
-    pub router: Router,
-    pub bindings: bindings::BindingComposition,
-    pub bots: Option<bots::BotComposition>,
-    pub actor_continuations: Option<Arc<crate::bot_setups::ActorContinuationWorker>>,
-    pub auth: Arc<AuthState>,
-    pub launch_scheduler: super::trigger::LaunchScheduler,
-    pub provenance_backfill: crate::sandbox::AgentProvenanceBackfill,
-    pub usage: crate::usage_billing::UsageWorkers,
-    pub command_scheduler: super::commands::CommandScheduler,
-    pub sandbox_control_scheduler: super::commands::SandboxControlScheduler,
-    pub sandbox_lifecycle: SandboxLifecycleComposition,
-    pub native_warm_pools: Arc<crate::warm_pools::NativeWarmPools>,
-    pub native_prepared: crate::sandbox::native_prepared::NativePreparedWorker,
-    pub agent_access_worker: crate::agent_access_worker::AgentAccessWorker,
-}
+mod state;
+pub(crate) use state::ControlPlaneComposition;
+
 impl ControlPlaneComposition {
     pub(crate) async fn build(config: &Config) -> Result<Self, String> {
-        let mut stores = MongoStores::connect_with_authority(
-            &config.mongodb_uri,
-            &config.mongodb_database,
-            &config.deployment_id,
-            &config.auth_encryption_key,
-            config.activity_retention,
-            (
-                &config.runtime.sandbox_image,
-                config.runtime.home_policy.as_ref(),
-            ),
-            config.mongodb_authority,
-        )
-        .await
-        .map_err(|error| format!("durable stores are not usable: {error}"))?;
-        stores.sandbox_model = Arc::new(
-            (*stores.sandbox_model)
-                .clone()
-                .with_machine_runtime_version(config.runtime.machine_sandbox_image.clone()),
-        );
-        let stores = Arc::new(stores.with_writer_policy(config.task_experience.clone()));
+        let stores = stores::connect(config).await?;
         let activity = ActivityService::new(stores.activity.clone());
         let documents = documents::compose(config, &stores)?;
         let users = UserDirectory::new(stores.users.clone());
@@ -165,6 +134,7 @@ impl ControlPlaneComposition {
         .with_skill_support(Arc::new(crate::projections::AdapterAgentSkillSupport(
             adapter.clone(),
         )))
+        .with_sessions(stores.sandbox_model.clone())
         .with_resource_access(resource_access.clone())
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
         let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
@@ -213,6 +183,7 @@ impl ControlPlaneComposition {
         )
         .with_user_directory(Arc::clone(&users))
         .with_runtime_updates(runtime.updates.clone())
+        .with_maintenance(stores.sandbox_model.clone())
         .with_warm_pools(native_warm_pools.clone());
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
@@ -247,7 +218,6 @@ impl ControlPlaneComposition {
             adapter.clone(),
         )?;
         let agent_skills = credentials::agent_skills(config, sandbox_credentials.clone())?;
-
         let limits = RateLimiters::from_config(
             config.rate_limits,
             config.trusted_proxies.clone(),
@@ -467,6 +437,8 @@ impl ControlPlaneComposition {
         let provenance_backfill =
             crate::sandbox::AgentProvenanceBackfill::new(stores.sandbox_model.clone());
         let usage = crate::usage_billing::UsageWorkers::new(&stores, config)?;
+        let usage_metrics = crate::sandbox_metrics::MetricsWorkers::new(config).await?;
+        let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
         let router = routes::compose(
             resource_routes,
@@ -488,6 +460,7 @@ impl ControlPlaneComposition {
             actor_continuations,
             provenance_backfill,
             usage,
+            usage_metrics,
             launch_scheduler,
             command_scheduler,
             sandbox_control_scheduler,

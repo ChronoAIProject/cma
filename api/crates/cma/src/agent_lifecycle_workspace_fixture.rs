@@ -88,6 +88,7 @@ pub(super) async fn seed(store: &InMemorySandboxStore) -> Workspace {
             id: SandboxProfileId("sbp_existing".into()),
             revision: 1,
             digest: "a".repeat(64),
+            always_on: None,
             content: SandboxProfileContent {
                 runtime_image: None,
                 cpu_millis: 1000,

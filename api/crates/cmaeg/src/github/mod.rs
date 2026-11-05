@@ -106,7 +106,7 @@ impl Gateway {
     pub(crate) async fn from_records(
         records: &crate::records::RecordClient,
         keys: Arc<MasterKeyRing>,
-    ) -> Option<Arc<Self>> {
+    ) -> Option<Self> {
         let database = records.database()?;
         startup::initialize(database, keys).await
     }

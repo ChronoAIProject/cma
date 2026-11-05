@@ -311,6 +311,12 @@ export interface CmaWebClient {
   ): Promise<AgentDetail>;
   pauseSandbox(id: string, options: CommandOptions): Promise<void>;
   reviveSandbox(id: string, options: CommandOptions): Promise<void>;
+  setSandboxAlwaysOn(
+    id: string,
+    alwaysOn: boolean,
+    expectedRevision: number,
+    options: CommandOptions,
+  ): Promise<SandboxDetail>;
   deleteSandbox(id: string, options: CommandOptions): Promise<void>;
   removeWorkspace(id: string, options: CommandOptions): Promise<void>;
   interruptAgent(id: string, options: CommandOptions): Promise<void>;
@@ -353,6 +359,7 @@ export const unavailableClient: CmaWebClient = {
   createAgent: unavailable,
   pauseSandbox: unavailable,
   reviveSandbox: unavailable,
+  setSandboxAlwaysOn: unavailable,
   deleteSandbox: unavailable,
   removeWorkspace: unavailable,
   interruptAgent: unavailable,

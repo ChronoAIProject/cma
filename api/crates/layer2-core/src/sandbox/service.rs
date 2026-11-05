@@ -74,6 +74,13 @@ pub struct SandboxPolicy {
 #[async_trait::async_trait]
 pub trait SandboxPolicySource: Send + Sync {
     async fn current_sandbox_policy(&self) -> Result<SandboxPolicy, StoreError>;
+
+    /// Whether the automatic pause reconciler may submit decisions at this
+    /// instant. Fixed test policies retain the historical enabled behavior;
+    /// deployment policy sources can impose a durable enablement grace period.
+    async fn automatic_pause_allowed(&self, _now: &str) -> Result<bool, StoreError> {
+        Ok(true)
+    }
 }
 
 #[async_trait::async_trait]
@@ -256,6 +263,43 @@ impl SandboxService {
             .sandbox_events(id, after, limit)
             .await
             .map_err(store_error)
+    }
+
+    /// Set the owner-controlled per-Sandbox Always on preference. `None` keeps
+    /// legacy profile availability semantics until the platform auto-pause
+    /// policy is enabled; once explicitly set, the preference is durable on
+    /// this Sandbox only.
+    pub async fn set_always_on(
+        &self,
+        caller: &Caller,
+        id: &SandboxId,
+        expected_revision: u64,
+        always_on: bool,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        require(caller, Capability::UseOwnSandboxes)?;
+        let current = self.owned(caller, id).await?;
+        if current.revision != expected_revision
+            || matches!(
+                current.status,
+                SandboxStatus::Retiring | SandboxStatus::Retired
+            )
+        {
+            return Err(SandboxServiceError::InvalidState);
+        }
+        let mut next = current.clone();
+        next.profile.always_on = Some(always_on);
+        next.revision = next
+            .revision
+            .checked_add(1)
+            .ok_or(SandboxServiceError::InvalidState)?;
+        next.updated_at = now_rfc3339();
+        next.validate()
+            .map_err(|_| SandboxServiceError::InvalidState)?;
+        self.store
+            .save_sandbox(expected_revision, next.clone())
+            .await
+            .map_err(store_error)?;
+        Ok(next)
     }
 
     pub async fn delete(

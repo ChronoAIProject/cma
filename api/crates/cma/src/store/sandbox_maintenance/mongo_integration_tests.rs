@@ -153,6 +153,7 @@ fn pause(id: &SandboxId) -> SandboxInactivityPauseRequest {
         sandbox_id: id.clone(),
         requested_at: LATER.into(),
         pause_after_seconds: 900,
+        auto_pause_enabled: false,
     }
 }
 
@@ -529,9 +530,10 @@ async fn maintenance_agent_fence_conflicts_with_a_turn_after_the_evidence_snapsh
     let (sandbox, ready) = fixture(&store, "sbx_turn_race").await;
     let mut session = client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
-    let evidence = evidence::live_activities(&store, std::slice::from_ref(&ready), &mut session)
-        .await
-        .unwrap();
+    let evidence =
+        evidence::live_activities(&store, std::slice::from_ref(&ready), &mut session, LATER)
+            .await
+            .unwrap();
     assert!(layer2_core::sandbox::is_inactivity_pause_candidate(
         &sandbox, &evidence, LATER, 900
     ));
@@ -596,7 +598,7 @@ async fn maintenance_fence_conflicts_with_a_new_log_at_the_same_agent_revision()
     let (sandbox, ready) = fixture(&store, "sbx_log_race").await;
     let mut session = client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
-    evidence::live_activities(&store, std::slice::from_ref(&ready), &mut session)
+    evidence::live_activities(&store, std::slice::from_ref(&ready), &mut session, LATER)
         .await
         .unwrap();
     store
@@ -673,7 +675,7 @@ async fn maintenance_sandbox_write_conflicts_with_a_newly_admitted_agent() {
     store.create_workspace(workspace.clone()).await.unwrap();
     let mut session = client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
-    evidence::live_activities(&store, std::slice::from_ref(&ready), &mut session)
+    evidence::live_activities(&store, std::slice::from_ref(&ready), &mut session, LATER)
         .await
         .unwrap();
     store
