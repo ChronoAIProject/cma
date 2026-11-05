@@ -244,7 +244,10 @@ async fn managed_prerequisite_refusals_fail_fast_with_typed_logged_results() {
             Duration::ZERO
         );
         let current = fixture.command().await;
-        assert_eq!(current.work.failure.unwrap().code, code);
+        assert_eq!(
+            current.work.failure.unwrap().code,
+            CommandFailureCode::ExecutionFailed
+        );
         assert_eq!(current.status, AgentResponseStatus::Failed);
         assert_eq!(current.receipt, fixture.command.receipt);
         assert!(current.work.dispatch.is_none());
@@ -331,10 +334,24 @@ async fn prerequisite_refusal_after_revival_is_terminal_before_runtime_dispatch(
         assert_eq!(fixture.parent().await.status, SandboxStatus::Reviving);
         fixture.finish_revival().await;
         *fixture.prerequisite.result.lock().unwrap() = Err(error);
+        let logs = Logs::default();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(logs.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
         worker.run_scheduled(id).await.unwrap();
+        let output = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("command_refusal"));
+        assert!(output.contains(&format!("error_kind={code:?}")));
+        assert!(!output.contains("service-fixture") && !output.contains("Inspect this."));
         let current = fixture.command().await;
         assert_eq!(current.status, AgentResponseStatus::Failed);
-        assert_eq!(current.work.failure.unwrap().code, code);
+        assert_eq!(
+            current.work.failure.unwrap().code,
+            CommandFailureCode::ExecutionFailed
+        );
         assert!(current.work.dispatch.is_none());
         assert_eq!(fixture.sends.load(Ordering::SeqCst), 0);
         client.database(&name).drop().await.unwrap();

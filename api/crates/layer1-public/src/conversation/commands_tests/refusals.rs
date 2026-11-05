@@ -101,12 +101,12 @@ async fn committed_prebinding_failures_keep_typed_http_errors_and_receipt_header
         (
             CommandFailureCode::CredentialSetupRequired,
             StatusCode::CONFLICT,
-            "sandbox_credential_setup_required",
+            "agent_command_execution_failed",
         ),
         (
             CommandFailureCode::ConnectionsRequired,
             StatusCode::CONFLICT,
-            "connections_required",
+            "agent_command_execution_failed",
         ),
         (
             CommandFailureCode::AgentUnavailable,
