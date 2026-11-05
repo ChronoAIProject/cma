@@ -28,41 +28,27 @@ use output::output_replayed;
 #[path = "conversation_live.rs"]
 pub(super) mod live;
 
-pub use live::{AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription};
+pub use live::{
+    AgentLiveFragment, AgentLiveFragmentKind, AgentLivePublisher, AgentLiveSource,
+    AgentLiveSubscription,
+};
 
 pub struct DurableAgentUpdateRecorder {
     store: Arc<dyn AgentConversationUpdateStore>,
     live: live::AgentLiveHub,
+    live_source: std::sync::OnceLock<Arc<dyn AgentLiveSource>>,
     writer_policy: Arc<super::task_experience::TaskExperiencePolicy>,
 }
 
-impl DurableAgentUpdateRecorder {
-    pub fn new<S>(store: Arc<S>) -> Arc<Self>
-    where
-        S: AgentConversationUpdateStore + 'static,
-    {
-        Self::with_writer_policy(store, Arc::default())
-    }
-
-    pub fn with_writer_policy<S>(
-        store: Arc<S>,
-        writer_policy: Arc<super::task_experience::TaskExperiencePolicy>,
-    ) -> Arc<Self>
-    where
-        S: AgentConversationUpdateStore + 'static,
-    {
-        Arc::new(Self {
-            store,
-            writer_policy,
-            live: live::AgentLiveHub::default(),
-        })
-    }
-}
+mod configuration;
 
 #[async_trait::async_trait]
 impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
     fn subscribe_live(&self, id: &AgentId) -> Option<AgentLiveSubscription> {
-        Some(self.live.subscribe(id))
+        match self.live_source.get() {
+            Some(source) => source.subscribe(id),
+            None => Some(self.subscribe_local(id)),
+        }
     }
 
     async fn restore_assembly(

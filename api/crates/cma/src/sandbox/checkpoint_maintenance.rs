@@ -137,9 +137,17 @@ impl SandboxCheckpointMaintenance {
                                 && sandbox.lifecycle.home.is_some()))
                 });
             let background = stream::iter(background)
-                .map(|sandbox| self.process(sandbox, &clock))
+                .map(|sandbox| {
+                    layer2_core::agent_ownership::transport_observation_scope(
+                        self.process(sandbox, &clock),
+                    )
+                })
                 .buffer_unordered(4);
-            let held = stream::iter(held).then(|sandbox| self.process(sandbox, &clock));
+            let held = stream::iter(held).then(|sandbox| {
+                layer2_core::agent_ownership::transport_observation_scope(
+                    self.process(sandbox, &clock),
+                )
+            });
             let results = background.chain(held);
             tokio::pin!(results);
             while let Some(result) = results.next().await {

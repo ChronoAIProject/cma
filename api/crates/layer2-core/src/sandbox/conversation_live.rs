@@ -12,13 +12,13 @@ use super::super::{Agent, AgentMessageAssembly};
 const LIVE_BUFFER_FRAGMENTS: usize = 32;
 const LIVE_FRAGMENT_BYTES: usize = 16 * 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AgentLiveFragmentKind {
     Message,
     Thought,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AgentLiveFragment {
     pub agent_id: AgentId,
     pub runtime_generation: u64,
@@ -46,17 +46,84 @@ impl std::fmt::Debug for AgentLiveFragment {
 
 /// A live-only lane; lag requires replaying the canonical durable transcript.
 pub struct AgentLiveSubscription {
-    receiver: broadcast::Receiver<AgentLiveFragment>,
-    _sender: Arc<broadcast::Sender<AgentLiveFragment>>,
+    receiver: broadcast::Receiver<LiveFrame>,
+    _sender: Arc<broadcast::Sender<LiveFrame>>,
+}
+
+#[derive(Clone)]
+struct LiveFrame {
+    fragment: Option<AgentLiveFragment>,
+    authority: Option<Arc<crate::agent_ownership::Authority>>,
+}
+
+impl LiveFrame {
+    fn current(self) -> Result<AgentLiveFragment, broadcast::error::RecvError> {
+        if self
+            .authority
+            .is_some_and(|authority| !authority.is_current())
+        {
+            return Err(broadcast::error::RecvError::Lagged(1));
+        }
+        self.fragment.ok_or(broadcast::error::RecvError::Lagged(1))
+    }
+}
+
+/// A configured cluster source may relay the local lane from its current owner.
+pub trait AgentLiveSource: Send + Sync {
+    fn subscribe(&self, id: &AgentId) -> Option<AgentLiveSubscription>;
+}
+
+#[derive(Clone)]
+pub struct AgentLivePublisher(Arc<broadcast::Sender<LiveFrame>>);
+
+impl AgentLivePublisher {
+    pub fn publish(
+        &self,
+        fragment: AgentLiveFragment,
+        authority: Arc<crate::agent_ownership::Authority>,
+    ) {
+        let _ = self.0.send(LiveFrame {
+            fragment: Some(fragment),
+            authority: Some(authority),
+        });
+    }
+
+    pub fn gap(&self) {
+        let _ = self.0.send(LiveFrame {
+            fragment: None,
+            authority: None,
+        });
+    }
+
+    pub async fn closed(&self) {
+        self.0.closed().await;
+    }
 }
 
 impl AgentLiveSubscription {
+    pub fn channel() -> (AgentLivePublisher, Self) {
+        let sender = Arc::new(broadcast::channel(LIVE_BUFFER_FRAGMENTS).0);
+        let subscription = Self {
+            receiver: sender.subscribe(),
+            _sender: sender.clone(),
+        };
+        (AgentLivePublisher(sender), subscription)
+    }
+
     pub async fn recv(&mut self) -> Result<AgentLiveFragment, broadcast::error::RecvError> {
-        self.receiver.recv().await
+        self.receiver.recv().await?.current()
     }
 
     pub fn try_recv(&mut self) -> Result<AgentLiveFragment, broadcast::error::TryRecvError> {
-        self.receiver.try_recv()
+        self.receiver
+            .try_recv()?
+            .current()
+            .map_err(|error| match error {
+                broadcast::error::RecvError::Lagged(count) => {
+                    broadcast::error::TryRecvError::Lagged(count)
+                }
+                broadcast::error::RecvError::Closed => broadcast::error::TryRecvError::Closed,
+            })
     }
 }
 
@@ -71,10 +138,20 @@ pub(crate) struct AgentLiveMessageIdentity {
 
 #[derive(Default)]
 pub(super) struct AgentLiveHub {
-    lanes: Mutex<BTreeMap<AgentId, Weak<broadcast::Sender<AgentLiveFragment>>>>,
+    lanes: Mutex<BTreeMap<AgentId, Weak<broadcast::Sender<LiveFrame>>>>,
 }
 
 impl AgentLiveHub {
+    #[cfg(feature = "test-support")]
+    pub(super) fn subscriber_count(&self, id: &AgentId) -> usize {
+        self.lanes
+            .lock()
+            .unwrap()
+            .get(id)
+            .and_then(Weak::upgrade)
+            .map_or(0, |lane| lane.receiver_count())
+    }
+
     pub(super) fn subscribe(&self, id: &AgentId) -> AgentLiveSubscription {
         let mut lanes = self.lanes.lock().unwrap_or_else(|error| error.into_inner());
         lanes.retain(|_, sender| sender.strong_count() > 0);
@@ -106,7 +183,10 @@ impl AgentLiveHub {
                 end -= 1;
             }
             fragment.delta = remaining[..end].into();
-            let _ = sender.send(fragment.clone());
+            let _ = sender.send(LiveFrame {
+                fragment: Some(fragment.clone()),
+                authority: crate::agent_ownership::execution_authority(),
+            });
             remaining = &remaining[end..];
         }
     }

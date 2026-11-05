@@ -11,6 +11,9 @@ use layer3_adapter::{ConversationInputSender, ConversationUpdate};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
 
+mod authority;
+use authority::{accept_authority, fence_authority, validate_authority};
+mod ownership;
 mod publication;
 mod recovery;
 mod updates;
@@ -53,6 +56,7 @@ pub(crate) struct LiveAgentAttachment {
 }
 
 struct RegistryEntry {
+    manager_authority: Option<Arc<layer2_core::agent_ownership::Authority>>,
     conversation_id: String,
     runtime_generation: u64,
     authority_fence: u64,
@@ -80,6 +84,7 @@ struct RegistryState {
 
 #[derive(Default)]
 pub(crate) struct LiveAgentRegistry {
+    ownership: OnceLock<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     state: Mutex<RegistryState>,
     next_nonce: AtomicU64,
     loss_handler: OnceLock<Arc<dyn LiveAgentConnectionLossHandler>>,
@@ -98,6 +103,7 @@ impl LiveAgentRegistry {
         updates: mpsc::Receiver<ConversationUpdate>,
         recorder: Arc<dyn AgentUpdateRecorder>,
     ) -> Result<LiveAgentAttachment, LiveAgentRegistryError> {
+        let manager_authority = self.attachment_owner(&agent_id)?;
         if runtime_generation == 0 || authority_fence == 0 {
             return Err(LiveAgentRegistryError::StaleGeneration);
         }
@@ -131,6 +137,7 @@ impl LiveAgentRegistry {
         let (activate, activated) = oneshot::channel();
         let task = spawn_update_task(Arc::downgrade(self), activated, updates, recorder);
         let entry = RegistryEntry {
+            manager_authority,
             conversation_id: conversation_id.clone(),
             runtime_generation,
             authority_fence,
@@ -298,6 +305,13 @@ impl AgentRuntimeRegistry for LiveAgentRegistry {
         if !entry.published || entry.conversation_id != target.conversation_id {
             return Err(AgentRuntimeError::NotFound);
         }
+        if entry
+            .manager_authority
+            .as_ref()
+            .is_some_and(|owner| !owner.is_current())
+        {
+            return Err(AgentRuntimeError::StaleGeneration);
+        }
         Ok(AgentRuntimeConnection {
             capabilities: entry.capabilities.clone(),
             input: entry.input.clone(),
@@ -321,65 +335,6 @@ impl AgentRuntimeRegistry for LiveAgentRegistry {
         }
         LiveAgentRegistry::fence(self, agent_id, None, authority_fence);
         Ok(())
-    }
-}
-
-fn validate_authority(
-    state: &RegistryState,
-    agent_id: &AgentId,
-    runtime_generation: u64,
-    authority_fence: u64,
-) -> Result<(), LiveAgentRegistryError> {
-    if runtime_generation == 0 || authority_fence == 0 {
-        return Err(LiveAgentRegistryError::StaleGeneration);
-    }
-    if state.watermarks.get(agent_id).is_some_and(|watermark| {
-        runtime_generation < watermark.runtime_generation
-            || (runtime_generation == watermark.runtime_generation
-                && (authority_fence < watermark.authority_fence
-                    || (watermark.fenced && authority_fence == watermark.authority_fence)))
-    }) {
-        return Err(LiveAgentRegistryError::StaleGeneration);
-    }
-    Ok(())
-}
-
-fn accept_authority(
-    state: &mut RegistryState,
-    agent_id: &AgentId,
-    runtime_generation: u64,
-    authority_fence: u64,
-) {
-    let watermark = state.watermarks.entry(agent_id.clone()).or_default();
-    if runtime_generation > watermark.runtime_generation {
-        watermark.runtime_generation = runtime_generation;
-        watermark.authority_fence = authority_fence;
-        watermark.fenced = false;
-    } else if runtime_generation == watermark.runtime_generation
-        && authority_fence > watermark.authority_fence
-    {
-        watermark.authority_fence = authority_fence;
-        watermark.fenced = false;
-    }
-}
-
-fn fence_authority(
-    state: &mut RegistryState,
-    agent_id: &AgentId,
-    runtime_generation: u64,
-    authority_fence: u64,
-) -> bool {
-    let watermark = state.watermarks.entry(agent_id.clone()).or_default();
-    if runtime_generation > watermark.runtime_generation
-        || (runtime_generation == watermark.runtime_generation
-            && authority_fence >= watermark.authority_fence)
-    {
-        watermark.runtime_generation = runtime_generation;
-        watermark.authority_fence = authority_fence;
-        watermark.fenced = true;
-        true
-    } else {
-        false
     }
 }
 
@@ -434,6 +389,10 @@ fn target_matches(entries: &HashMap<AgentId, RegistryEntry>, target: &LiveAgentT
     entries.get(&target.agent_id).is_some_and(|entry| {
         entry.conversation_id == target.conversation_id
             && entry.runtime_generation == target.runtime_generation
+            && entry
+                .manager_authority
+                .as_ref()
+                .is_none_or(|owner| owner.is_current())
     })
 }
 

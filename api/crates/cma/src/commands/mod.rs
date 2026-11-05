@@ -1,6 +1,7 @@
 //! Durable Agent command scheduling and current personal execution authority.
 
 mod execution;
+pub(crate) mod ownership;
 mod production;
 mod sandbox_scheduler;
 mod scheduler;

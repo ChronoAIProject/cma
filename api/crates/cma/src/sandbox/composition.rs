@@ -41,6 +41,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -59,7 +60,7 @@ pub(crate) struct SandboxLifecycleComposition {
     agent: AgentScheduler,
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
-    updates: Arc<dyn AgentUpdateRecorder>,
+    updates: Arc<DurableAgentUpdateRecorder>,
 }
 
 impl SandboxLifecycleComposition {
@@ -140,6 +141,7 @@ impl SandboxLifecycleComposition {
                 config.deployment_id.clone(),
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
+            .with_ownership(config.ownership)
             .with_managed_documents(config.managed_documents_enabled)
             .with_access_transport_migration(config.access_transport_migration),
         );
@@ -182,8 +184,12 @@ impl SandboxLifecycleComposition {
         }
     }
 
+    pub(crate) fn live_updates(&self) -> Arc<DurableAgentUpdateRecorder> {
+        self.updates.clone()
+    }
+
     pub(crate) fn updates(&self) -> Arc<dyn AgentUpdateRecorder> {
-        Arc::clone(&self.updates)
+        self.updates.clone()
     }
 
     pub(crate) async fn initialize(&self) -> Result<(), String> {

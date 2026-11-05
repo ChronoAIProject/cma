@@ -4,6 +4,7 @@ mod activity;
 mod agent_access;
 mod agent_access_worker;
 mod agent_lifecycle;
+mod agent_manager;
 mod agent_models;
 mod auth;
 mod background;
@@ -99,6 +100,9 @@ async fn main() {
 async fn serve() -> Result<(), String> {
     let config =
         Config::from_env().map_err(|error| format!("configuration is not usable: {error}"))?;
+    if std::env::args().nth(1).as_deref() == Some("--agent-manager-drain") {
+        return agent_manager::relay::prestop(&config).await;
+    }
     let composition = ControlPlaneComposition::build(&config).await?;
     let auth_mode = config.auth_mode_name();
     let app = with_request_context(with_cors(composition.router, config.cors_origins));
@@ -126,6 +130,9 @@ async fn serve() -> Result<(), String> {
         auth_mode,
         "CMA listening"
     );
+    if let Some(manager) = &composition.agent_manager {
+        manager.activate()?;
+    }
     let mut shutdown = ShutdownCoordinator::new();
     shutdown.push(
         composition
@@ -164,7 +171,13 @@ async fn serve() -> Result<(), String> {
         tokio::pin!(server);
         tokio::select! {
             result = &mut server => result.map_err(|error| format!("HTTP server failed: {error}")),
-            () = shutdown_signal() => {
+            () = async {
+                match &composition.agent_manager {
+                    Some(manager) => tokio::select! { _ = shutdown_signal() => (), _ = manager.failed() => () },
+                    None => shutdown_signal().await,
+                }
+            } => {
+                if let Some(manager) = &composition.agent_manager { manager.drain().await; }
                 // Existing streams still need their workers until HTTP finishes.
                 let _ = http_stop.send(true);
                 match tokio::time::timeout(HTTP_DRAIN_TIMEOUT, &mut server).await {
@@ -174,6 +187,9 @@ async fn serve() -> Result<(), String> {
             }
         }
     };
+    if let Some(manager) = &composition.agent_manager {
+        manager.drain().await;
+    }
     let aborted = shutdown.drain().await;
     match (server_result, aborted) {
         (Err(error), _) => Err(error),
