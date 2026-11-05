@@ -19,7 +19,7 @@ pub use service_traits::*;
 mod agent;
 pub use agent::AgentStore;
 mod agent_log;
-pub use agent_log::AgentLogStore;
+pub use agent_log::{AgentLogCurrentState, AgentLogStore};
 mod workspace_worker;
 pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore};
 
@@ -57,6 +57,7 @@ mod agent_message_checkpoint;
 mod agent_reopen;
 pub use agent_conversation::{
     validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
+    PendingAgentApprovalPage,
 };
 pub use agent_message_checkpoint::AgentMessageCheckpoint;
 pub use agent_reopen::AgentReopenGuard;

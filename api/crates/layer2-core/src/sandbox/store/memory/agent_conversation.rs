@@ -7,6 +7,32 @@ use crate::seconds_from_rfc3339;
 
 #[async_trait]
 impl AgentConversationStore for InMemorySandboxStore {
+    async fn pending_agent_approvals_page(
+        &self,
+        id: &AgentId,
+        through_seq: u64,
+        after: u64,
+        limit: u16,
+    ) -> Result<crate::sandbox::store::PendingAgentApprovalPage, SandboxStoreError> {
+        let state = self.lock();
+        let agent = state.agents.get(id).ok_or(SandboxStoreError::NotFound)?;
+        if agent.conversation.last_seq != through_seq {
+            return Err(SandboxStoreError::Conflict);
+        }
+        if after > through_seq {
+            return Err(SandboxStoreError::InvalidPage);
+        }
+        let mut pending = PendingAgentApprovals::default();
+        for entry in state.agent_logs.get(id).into_iter().flatten() {
+            pending.observe(entry);
+        }
+        crate::sandbox::store::PendingAgentApprovalPage::from_entries(
+            pending.into_entries(),
+            after,
+            limit,
+        )
+    }
+
     async fn agent_message_checkpoint(
         &self,
         id: &AgentId,

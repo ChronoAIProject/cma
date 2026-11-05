@@ -49,6 +49,22 @@ impl AgentReadService {
                     )
                 };
                 require_granted(&agent, crate::RuntimeCapability::Conversation)?;
+                match self
+                    .store
+                    .agent_log_final_answer(&agent, sequence)
+                    .await
+                    .map_err(log_store_error)?
+                {
+                    crate::sandbox::AgentLogAnswerLookup::Legacy => {}
+                    crate::sandbox::AgentLogAnswerLookup::NotFinal => {
+                        return Err(AgentReadError::NotFound)
+                    }
+                    crate::sandbox::AgentLogAnswerLookup::Answer(evidence) => {
+                        let answer = projected_answer(&agent, sequence, *evidence, authority)?;
+                        Box::pin(self.validate_final_answer(&answer)).await?;
+                        return Ok(answer);
+                    }
+                }
                 let mut budget = 4 * 1024 * 1024;
                 let entry = self.answer_entry(&agent, sequence, &mut budget).await?;
                 if !matches!(entry.kind, AgentLogKind::AgentMessage { .. }) {
@@ -213,4 +229,69 @@ impl AgentReadService {
         })?;
         Ok(entry)
     }
+}
+
+fn projected_answer(
+    agent: &Agent,
+    sequence: u64,
+    evidence: crate::sandbox::AgentLogAnswerEvidence,
+    authority: AnswerAuthority,
+) -> Result<AgentFinalAnswer, AgentReadError> {
+    let facts = &evidence.facts;
+    facts
+        .validate(agent.conversation.last_seq)
+        .map_err(AgentReadError::Corrupt)?;
+    if facts.final_answer_sequence() != Some(sequence)
+        || evidence.message.seq != sequence
+        || evidence.start.seq != facts.turn_sequence
+        || evidence.start.appended_at != facts.started_at
+        || facts.end_sequence != Some(evidence.terminal.seq)
+        || !matches!(&facts.outcome, AgentTurnOutcome::Completed { at } if at == &evidence.terminal.appended_at)
+        || !matches!(&evidence.start.kind, AgentLogKind::TurnStarted { turn_sequence, origin_key, .. }
+            if *turn_sequence == facts.turn_sequence && origin_key == &facts.origin_key)
+        || evidence.terminal.kind
+            != (AgentLogKind::TurnCompleted {
+                turn_sequence: facts.turn_sequence,
+            })
+    {
+        return Err(corrupt(
+            "answer evidence disagrees with its original source",
+        ));
+    }
+    let mut bytes = 0;
+    for entry in [&evidence.start, &evidence.message, &evidence.terminal] {
+        if entry.agent_id != agent.id
+            || entry.seq == 0
+            || entry.seq > agent.conversation.last_seq
+            || crate::seconds_from_rfc3339(&entry.appended_at).is_none()
+        {
+            return Err(corrupt("answer source identity is invalid"));
+        }
+        bytes += serde_json::to_vec(entry)
+            .map_err(|_| corrupt("invalid answer source"))?
+            .len();
+        if bytes > 4 * 1024 * 1024 {
+            return Err(AgentReadError::Unavailable(
+                "answer exceeds the read byte bound".into(),
+            ));
+        }
+    }
+    let AgentLogKind::AgentMessage { content } = evidence.message.kind else {
+        return Err(corrupt(
+            "answer evidence does not reference an Agent message",
+        ));
+    };
+    if content.trim().is_empty() {
+        return Err(corrupt("answer evidence references an empty message"));
+    }
+    Ok(AgentFinalAnswer {
+        turn_sequence: facts.turn_sequence,
+        message: AgentTranscriptMessage {
+            sequence,
+            role: AgentTranscriptRole::Agent,
+            content,
+            appended_at: evidence.message.appended_at,
+        },
+        authority,
+    })
 }

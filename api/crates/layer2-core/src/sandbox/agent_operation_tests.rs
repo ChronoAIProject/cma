@@ -13,6 +13,7 @@ mod live_skill_tests;
 mod managed_context_tests;
 mod observation_tests;
 mod preferences_tests;
+mod projected_evidence;
 mod queued_message_tests;
 mod retired_prompt_tests;
 mod settings_tests;

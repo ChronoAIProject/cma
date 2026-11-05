@@ -66,7 +66,7 @@ pub use continuation::{CommandSourceGuard, ExternalEventContinuation};
 pub use event::{
     AgentEphemeralEvent, AgentEvent, AgentEventKind, AgentMessageRole, AGENT_IO_SCHEMA_VERSION,
 };
-pub use evidence::CommandEvidence;
+pub use evidence::{CommandEvidence, CommandLogReferences};
 pub use execution_authority::{CommandExecutionAuthorization, CommandExecutionFence};
 pub use external_event::{external_event_key, ExternalEventContext, MAX_EXTERNAL_EVENT_BYTES};
 pub use input::{AgentAttachmentReference, AgentContent, AgentInput};

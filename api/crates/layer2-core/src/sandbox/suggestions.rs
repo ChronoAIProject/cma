@@ -6,9 +6,11 @@ use serde::{Deserialize, Serialize};
 use super::{agent_io::AnswerContext, AgentReadError, AgentReadService};
 use crate::{AgentId, Caller, SubjectId};
 
+mod budget;
 mod context;
 mod generation;
 mod quality;
+pub use budget::{context_entry_bytes, MAX_CONTEXT_BYTES};
 pub use context::work_is_current;
 pub use context::{authority_digest, work_from_turn, SuggestionContext, MAX_CONTEXT_EVENTS};
 pub use generation::*;

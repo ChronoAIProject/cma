@@ -6,6 +6,8 @@ mod conversation_gap_tests;
 mod message_feedback_tests;
 #[path = "agent_reads_tests/resource_access_tests.rs"]
 mod resource_access_tests;
+#[path = "agent_reads_tests/segment_projection_tests.rs"]
+mod segment_projection_tests;
 #[path = "agent_reads_tests/unpublished_identity_tests.rs"]
 mod unpublished_identity_tests;
 

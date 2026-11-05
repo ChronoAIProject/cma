@@ -33,8 +33,7 @@ impl AgentCommandService {
                     ) {
                         continue;
                     }
-                    let Some(operation) = reads.steering_operation(authorization, entry).await?
-                    else {
+                    let Some(operation) = entry.steering_operation else {
                         continue;
                     };
                     let Some(record) = self

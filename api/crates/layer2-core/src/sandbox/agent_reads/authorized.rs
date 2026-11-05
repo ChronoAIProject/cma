@@ -134,13 +134,10 @@ impl AgentReadService {
             .agent
             .as_ref()
             .ok_or_else(|| corrupt("authorized Agent snapshot has no Agent"))?;
-        let entries = self.complete_log(agent).await?;
-        fold_agent_log(agent, &entries).map_err(AgentReadError::Corrupt)?;
+        let entries = self.bounded_log_page(agent, after, limit).await?;
         let personal = is_personal(&authorized, context);
         let page = entries
             .into_iter()
-            .filter(|entry| entry.seq > after)
-            .take(usize::from(limit))
             .map(|entry| AgentVisibleLogEntry::from_entry(entry, personal))
             .collect();
         self.finish_read(&authorized, id, ResourceCapability::ViewHistory)
@@ -217,10 +214,20 @@ impl AgentReadService {
             .as_ref()
             .ok_or_else(|| corrupt("authorized Agent snapshot has no Agent"))?;
         require_granted(agent, crate::RuntimeCapability::Usage)?;
-        let entries = self.complete_log(agent).await?;
-        let usage = fold_agent_log(agent, &entries)
-            .map_err(AgentReadError::Corrupt)?
-            .usage;
+        let usage = if let Some(state) = self
+            .store
+            .agent_log_projection(agent)
+            .await
+            .map_err(log_store_error)?
+        {
+            AgentUsageReading {
+                agent_id: agent.id.clone(),
+                through_seq: state.through_seq,
+                usage: state.usage(),
+            }
+        } else {
+            self.legacy_usage(agent).await?
+        };
         self.finish_read(&authorized, id, ResourceCapability::ViewDetails)
             .await?;
         Ok(usage)
