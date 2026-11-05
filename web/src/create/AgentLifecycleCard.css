@@ -141,3 +141,36 @@
     gap: 8px;
   }
 }
+
+.agent-lifecycle-provisioning[data-presentation='task'] {
+  padding: 16px;
+  gap: 12px;
+  border: 1px solid var(--dsw-specific-task-panel-border);
+  border-radius: 20px;
+  background: var(--dsw-specific-task-panel);
+  color: var(--dsw-specific-task-primary);
+}
+.agent-lifecycle-provisioning[data-presentation='task'] .agent-lifecycle-steps strong {
+  color: var(--dsw-specific-task-primary);
+}
+.agent-lifecycle-provisioning[data-presentation='task'] .agent-lifecycle-steps li {
+  border-top-color: var(--dsw-specific-task-panel-border);
+}
+.agent-lifecycle-provisioning[data-presentation='task']
+  .agent-lifecycle-steps
+  li[data-state='done'],
+.agent-lifecycle-provisioning[data-presentation='task']
+  .agent-lifecycle-steps
+  li[data-state='ongoing'] {
+  border-top-color: var(--dsw-specific-task-accent);
+}
+.agent-lifecycle-provisioning[data-presentation='task']
+  .agent-lifecycle-steps
+  li[data-state='error'] {
+  border-top-color: var(--dsw-alias-state-error-primary);
+}
+.agent-lifecycle-provisioning[data-presentation='task']
+  .agent-lifecycle-steps
+  li[data-state='warning'] {
+  border-top-color: var(--dsw-alias-state-warn-primary);
+}
