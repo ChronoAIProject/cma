@@ -16,6 +16,7 @@ const AT: &str = "2026-09-05T00:00:10Z";
 const RETRY_AT: &str = "2026-09-05T00:00:20Z";
 const LEASE_END: &str = "2026-09-05T00:01:00Z";
 
+mod capacity_tests;
 mod prepared_open_ready_tests;
 mod prepared_pair_tests;
 mod retired_runtime_tests;
