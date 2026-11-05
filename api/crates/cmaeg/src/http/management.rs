@@ -145,13 +145,7 @@ pub async fn create_channel(
 ) -> Response {
     let body = match body {
         Ok(Json(body)) => body,
-        Err(_error) => {
-            return no_store(problem(
-                StatusCode::BAD_REQUEST,
-                ProblemCode::InvalidRequest,
-                "request does not match the channel schema",
-            ))
-        }
+        Err(error) => return super::management_schema::rejection(&error),
     };
     let key = match idempotency_key(&headers) {
         Ok(key) => key,
@@ -281,13 +275,7 @@ pub async fn update_channel(
     };
     let body = match body {
         Ok(Json(body)) => body,
-        Err(_error) => {
-            return no_store(problem(
-                StatusCode::BAD_REQUEST,
-                ProblemCode::InvalidRequest,
-                "request does not match the channel schema",
-            ))
-        }
+        Err(error) => return super::management_schema::rejection(&error),
     };
     let loaded = match management::update(&state, &creator, &channel_id, body).await {
         Ok(loaded) => loaded,
