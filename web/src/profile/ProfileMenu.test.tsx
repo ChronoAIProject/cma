@@ -111,6 +111,8 @@ it('copies the immutable build identity from the account menu', async () => {
   await actor.click(screen.getByRole('menuitem', { name: /Copy build version · dev \(local\)/ }));
   expect(writeText).toHaveBeenCalledWith(BUILD_INFO.copyText);
   expect(await screen.findByRole('menuitem', { name: 'Build version copied' })).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Build version copied');
+  expect(screen.getByRole('menu')).not.toContainElement(screen.getByRole('status'));
 });
 
 it('keeps the build revision readable when the clipboard refuses it', async () => {

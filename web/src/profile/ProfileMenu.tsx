@@ -105,7 +105,7 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
       id: 'build',
       icon: <IconCopyOutline16 />,
       label: (
-        <span className="profile__build" role="status" aria-live="polite">
+        <span className="profile__build">
           {copyState === 'copied'
             ? 'Build version copied'
             : `Copy build version · ${BUILD_INFO.label}`}
@@ -161,52 +161,63 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
   };
 
   return (
-    <Menu
-      open={open}
-      side="top"
-      align="start"
-      label="Account"
-      placement={`profile${collapsed ? ' profile--collapsed' : ''}`}
-      matchAnchorWidth
-      items={items}
-      onSelect={choose}
-      onClose={() => {
-        setOpen(false);
-        clearCopy();
-      }}
-      anchor={
-        <button
-          type="button"
-          className="profile__trigger"
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-label={`Account menu for ${user.displayName ?? user.handle}`}
-          onClick={() => {
-            clearCopy();
-            if (!open) setLocalAppearance(storedAppearance());
-            setOpen((wasOpen) => !wasOpen);
-          }}
-        >
-          <span className="profile__face" aria-hidden="true">
-            {user.avatarUrl === undefined || avatarBroken ? (
-              initialsFor(user)
-            ) : (
-              <img
-                className="profile__avatar"
-                src={user.avatarUrl}
-                alt=""
-                onError={() => {
-                  setAvatarBroken(true);
-                }}
-              />
-            )}
-          </span>
-          <span className="profile__who">
-            <span className="profile__name">{user.displayName ?? user.handle}</span>
-            {user.email === undefined ? null : <span className="profile__email">{user.email}</span>}
-          </span>
-        </button>
-      }
-    />
+    <>
+      <span className="sr-only" role="status" aria-live="polite">
+        {copyState === 'copied'
+          ? 'Build version copied'
+          : copyState === 'failed'
+            ? 'Could not copy. Select the build version to copy it manually.'
+            : ''}
+      </span>
+      <Menu
+        open={open}
+        side="top"
+        align="start"
+        label="Account"
+        placement={`profile${collapsed ? ' profile--collapsed' : ''}`}
+        matchAnchorWidth
+        items={items}
+        onSelect={choose}
+        onClose={() => {
+          setOpen(false);
+          clearCopy();
+        }}
+        anchor={
+          <button
+            type="button"
+            className="profile__trigger"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            aria-label={`Account menu for ${user.displayName ?? user.handle}`}
+            onClick={() => {
+              clearCopy();
+              if (!open) setLocalAppearance(storedAppearance());
+              setOpen((wasOpen) => !wasOpen);
+            }}
+          >
+            <span className="profile__face" aria-hidden="true">
+              {user.avatarUrl === undefined || avatarBroken ? (
+                initialsFor(user)
+              ) : (
+                <img
+                  className="profile__avatar"
+                  src={user.avatarUrl}
+                  alt=""
+                  onError={() => {
+                    setAvatarBroken(true);
+                  }}
+                />
+              )}
+            </span>
+            <span className="profile__who">
+              <span className="profile__name">{user.displayName ?? user.handle}</span>
+              {user.email === undefined ? null : (
+                <span className="profile__email">{user.email}</span>
+              )}
+            </span>
+          </button>
+        }
+      />
+    </>
   );
 }
