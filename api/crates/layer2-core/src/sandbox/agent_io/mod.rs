@@ -102,7 +102,10 @@ pub use work::{
     CommandClaim, CommandClaimRequest, CommandDispatch, CommandFailure, CommandFailureCode,
     CommandLease, CommandObservation, CommandWorkState,
 };
-pub use worker::{AgentCommandExecution, AgentCommandWorker, CommandAttempt, CommandReadiness};
+pub use worker::{
+    AgentCommandExecution, AgentCommandWorker, CommandAttempt, CommandPreparationError,
+    CommandReadiness,
+};
 pub use worker_store::{finish_command_work_page, AgentCommandWorkerStore};
 
 #[cfg(test)]

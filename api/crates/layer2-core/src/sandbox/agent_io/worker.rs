@@ -30,6 +30,21 @@ pub enum CommandReadiness {
     Reject(CommandFailureCode),
 }
 
+/// Preparation failures retain their retry/terminal distinction across adapters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum CommandPreparationError {
+    #[error("revival authority is temporarily unavailable")]
+    AuthorityUnavailable,
+    #[error("command or lifecycle state changed; recheck current authority")]
+    StateChanged,
+    #[error("revival dependency is temporarily unavailable")]
+    DependencyUnavailable,
+    #[error("command preparation exceeded its IO bound")]
+    TimedOut,
+    #[error("command preparation refused: {0:?}")]
+    Rejected(CommandFailureCode),
+}
+
 /// Production implements this with actual current credential authorization and
 /// the existing context/claimed-operation services. No actor is synthesized from
 /// the envelope owner. Preparation may request revival but may never send input.
@@ -37,7 +52,10 @@ pub enum CommandReadiness {
 pub trait AgentCommandExecution: Send + Sync {
     /// Fresh authority and target checks, with no lifecycle or runtime effects.
     async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness;
-    async fn prepare_queued(&self, command: &AdmittedAgentCommand);
+    async fn prepare_queued(
+        &self,
+        command: &AdmittedAgentCommand,
+    ) -> Result<(), CommandPreparationError>;
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt;
 }
 
@@ -199,14 +217,27 @@ impl AgentCommandWorker {
             {
                 return Ok(Duration::ZERO);
             }
-            if tokio::time::timeout(IO_BOUND, self.execution.prepare_queued(&current))
-                .await
-                .is_err()
-            {
+            let preparation =
+                tokio::time::timeout(IO_BOUND, self.execution.prepare_queued(&current))
+                    .await
+                    .unwrap_or(Err(CommandPreparationError::TimedOut));
+            if let Err(error) = preparation {
                 tracing::warn!(event = "command_preparation", command_id = %id,
                     agent_id = %current.receipt.envelope.agent_id,
-                    boundary = "prepare_queued", error_kind = "timed_out",
-                    "Queued command preparation exceeded its IO bound");
+                    boundary = "prepare_queued", error_kind = ?error,
+                    "Queued command preparation failed");
+                if let CommandPreparationError::Rejected(code) = error {
+                    // The revision CAS refuses stale rejection after another
+                    // worker claims, dispatches, edits or cancels this command.
+                    return bounded(self.store.reject_unclaimed_command(
+                        id,
+                        current.revision,
+                        code,
+                        now_rfc3339(),
+                    ))
+                    .await
+                    .map(|()| Duration::ZERO);
+                }
             }
             // Channel preparation or an explicit interruption may have just
             // cancelled the active turn. Revisit its replacement promptly,
