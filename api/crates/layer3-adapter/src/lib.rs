@@ -35,6 +35,8 @@ mod home_snapshot_job;
 mod home_snapshot_view;
 mod home_volume;
 mod home_volume_router;
+mod inventory_cursor;
+pub use inventory_cursor::InventoryCursor;
 mod prompt_identity;
 mod provider_finality;
 mod runtime;

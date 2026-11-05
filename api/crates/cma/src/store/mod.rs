@@ -96,6 +96,7 @@ mod resource_access;
 mod sandbox_admission;
 #[cfg(test)]
 mod sandbox_admission_mongo_integration_tests;
+pub(crate) mod sandbox_billing;
 pub(crate) mod sandbox_colors;
 mod sandbox_controls;
 mod sandbox_credentials;

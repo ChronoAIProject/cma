@@ -51,6 +51,7 @@ pub(super) const WORKSPACE_PROFILE_REVISIONS: &str = "workspace_profile_revision
 pub(super) const SANDBOX_PROFILES: &str = "sandbox_profiles";
 pub(super) const SANDBOX_PROFILE_REVISIONS: &str = "sandbox_profile_revisions";
 pub(super) const WARM_SANDBOXES: &str = "warm_sandboxes";
+pub(super) const SANDBOX_BILLING: &str = "sandbox_billing_state";
 
 const SANDBOX_COLLECTIONS: &[&str] = &[
     "sandbox_retained_availability",
@@ -78,6 +79,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     SANDBOX_EVENTS,
     super::sandbox_usage::STATES,
     super::sandbox_usage::EVENTS,
+    SANDBOX_BILLING,
     SANDBOX_ADMISSIONS,
     CHECKPOINTS,
     WARM_SANDBOXES,
@@ -127,6 +129,7 @@ pub struct MongoSandboxStore {
     pub(super) sandbox_events: Collection<Document>,
     pub(super) sandbox_usage: Collection<Document>,
     pub(super) sandbox_usage_events: Collection<Document>,
+    pub(super) sandbox_billing: Collection<Document>,
     pub(super) sandbox_admissions: Collection<Document>,
     pub(super) checkpoints: Collection<Document>,
     pub(super) sandbox_profiles: Collection<Document>,
@@ -217,6 +220,7 @@ impl MongoSandboxStore {
             sandbox_events: majority_collection(&database, SANDBOX_EVENTS),
             sandbox_usage: majority_collection(&database, super::sandbox_usage::STATES),
             sandbox_usage_events: majority_collection(&database, super::sandbox_usage::EVENTS),
+            sandbox_billing: majority_collection(&database, SANDBOX_BILLING),
             sandbox_admissions: majority_collection(&database, SANDBOX_ADMISSIONS),
             checkpoints: majority_collection(&database, CHECKPOINTS),
             sandbox_profiles: majority_collection(&database, SANDBOX_PROFILES),
@@ -241,6 +245,7 @@ impl MongoSandboxStore {
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;
         super::sandbox_usage::ensure_indexes(&store).await?;
+        super::sandbox_billing::ensure_indexes(&store.sandbox_billing).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;
         super::worktrees::ensure_indexes(&store.worktrees).await?;
         super::agents::ensure_indexes(&store.agents).await?;
