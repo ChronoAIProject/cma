@@ -18,6 +18,7 @@ mod agent_lifecycle_operations;
 mod agent_log;
 mod agent_log_integrity;
 mod agent_log_reads;
+pub(crate) mod agent_ownership;
 mod agent_profiles;
 mod agent_provenance;
 mod agent_provenance_backfill;

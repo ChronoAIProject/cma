@@ -15,7 +15,9 @@ mod access_origins;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
+mod agent_manager;
 mod agent_sandbox;
+pub(crate) use agent_manager::AgentManagerReplicas;
 mod execution;
 mod gateway;
 mod home;
@@ -175,6 +177,7 @@ pub struct Config {
     pub desktop_verified_runtime_image: Option<String>,
     pub auth_mode: AuthMode,
     pub features: FeatureFlags,
+    pub(crate) agent_manager_replicas: Option<AgentManagerReplicas>,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub gateway: Option<GatewayConfig>,
@@ -396,6 +399,7 @@ impl Config {
                 .filter(|value| !value.is_empty()),
             auth_mode,
             features,
+            agent_manager_replicas: AgentManagerReplicas::from_lookup(&mut lookup)?,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
             usage_billing: UsageBillingConfig::from_lookup(&mut lookup)?,
