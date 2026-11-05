@@ -134,7 +134,32 @@ async fn composed(
     Arc<Authority>,
     Arc<AtomicUsize>,
 ) {
-    let (store, agent, parent) = fixture(name, client).await;
+    composed_with_credentials(
+        client,
+        name,
+        Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+        active_sandbox("sbx_commands"),
+    )
+    .await
+}
+
+async fn composed_with_credentials(
+    client: &Client,
+    name: &str,
+    credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    parent: Sandbox,
+) -> (
+    Arc<MongoSandboxStore>,
+    Agent,
+    Sandbox,
+    Arc<crate::commands::ResourceCommandExecution>,
+    Arc<Authority>,
+    Arc<AtomicUsize>,
+) {
+    let store = MongoSandboxStore::open(client, name).await.unwrap();
+    let agent = ready_agent(&parent, "agt_commands");
+    store.create_sandbox(parent.clone()).await.unwrap();
+    insert_agent(&store, &agent, NOW).await;
     let workspace = ready_workspace(&parent, agent.workspace_id.as_str(), "project");
     let (mut worktree, _) = worktree_and_agent(&parent.id);
     worktree.id = agent.worktree_id.clone();
@@ -160,7 +185,7 @@ async fn composed(
             store.clone(),
             profiles.clone(),
             SandboxPolicy::default(),
-            Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+            credentials.clone(),
         ),
         WorkspaceService::new(store.clone(), profiles.clone()),
         AgentService::new(
@@ -177,7 +202,8 @@ async fn composed(
         authority: authority.clone(),
         access: Arc::new(ResourceAccessService::new(store.clone(), authority.clone())),
         store: store.clone(),
-        operations: AgentOperationService::new(store.clone(), runtime),
+        operations: AgentOperationService::new(store.clone(), runtime)
+            .with_connections(credentials),
         context,
     });
     (store, agent, parent, execution, authority, sends)
@@ -246,7 +272,7 @@ async fn production_authorization_refuses_missing_authority_and_actor_substituti
     ] {
         *authority.0.lock().unwrap() = answer;
         assert_eq!(execution.check_queued(&admitted).await, readiness);
-        execution.prepare_queued(&admitted).await;
+        assert!(execution.prepare_queued(&admitted).await.is_err());
         assert_eq!(execution.execute(&admitted).await, attempt);
     }
     assert_eq!(sends.load(Ordering::SeqCst), 0);

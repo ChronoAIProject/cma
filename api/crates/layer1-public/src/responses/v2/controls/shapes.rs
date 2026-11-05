@@ -94,6 +94,8 @@ public_enum!(
         QueueTimeout,
         AuthorityRevoked,
         AuthorityUnavailable,
+        CredentialSetupRequired,
+        ConnectionsRequired,
         AgentUnavailable,
         TargetTurnChanged,
         RuntimeUnavailable,

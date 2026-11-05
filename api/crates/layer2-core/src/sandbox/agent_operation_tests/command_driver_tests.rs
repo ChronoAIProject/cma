@@ -19,6 +19,9 @@ mod retries;
 #[path = "command_diagnostics_tests.rs"]
 mod diagnostics;
 
+#[path = "command_preparation_tests.rs"]
+mod preparation;
+
 enum Behavior {
     Execute,
     RejectAfterBinding,
@@ -61,8 +64,12 @@ impl AgentCommandExecution for Execution {
         CommandReadiness::Ready
     }
 
-    async fn prepare_queued(&self, _: &AdmittedAgentCommand) {
+    async fn prepare_queued(
+        &self,
+        _: &AdmittedAgentCommand,
+    ) -> Result<(), CommandPreparationError> {
         self.preparations.fetch_add(1, Ordering::SeqCst);
+        Ok(())
     }
 
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {

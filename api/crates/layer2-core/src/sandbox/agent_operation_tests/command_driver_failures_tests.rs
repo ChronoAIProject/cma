@@ -199,7 +199,10 @@ impl AgentCommandExecution for LostSnapshot {
     async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness {
         self.execution.check_queued(command).await
     }
-    async fn prepare_queued(&self, command: &AdmittedAgentCommand) {
+    async fn prepare_queued(
+        &self,
+        command: &AdmittedAgentCommand,
+    ) -> Result<(), CommandPreparationError> {
         self.execution.prepare_queued(command).await
     }
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {
