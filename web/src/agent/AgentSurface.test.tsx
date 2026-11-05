@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from '../test/agent';
@@ -131,9 +131,8 @@ it.each([false, true])(
       />
     );
     const view = render(draw());
-    const link = screen.getByRole('link', { name: 'Current plan: Working · step 2 of 3' });
-    expect(link.closest('header')).not.toBeNull();
-    expect(link).toHaveAttribute('href', `#${screen.getByRole('region', { name: 'Plan' }).id}`);
+    expect(screen.getByRole('region', { name: 'Plan' }).closest('header')).toBeNull();
+    expect(screen.queryByRole('link', { name: /^Current plan:/ })).toBeNull();
     fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
       target: { value: 'Retain next draft' },
     });
@@ -389,21 +388,20 @@ it('offers Stop, Export and Delete from the header, with the reason Delete is un
   await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
   expect(
     screen.getByRole('menuitem', {
-      name: 'Delete agent Stop this Agent before deleting it and its Worktree.',
+      name: 'Delete task Stop this Agent before deleting it and its Worktree.',
     }),
   ).toHaveAttribute('aria-disabled', 'true');
-  expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeInTheDocument();
-  // Destructive last, after a separator.
-  // Details first, then the creation origin, then the actions with destructive last.
-  expect(screen.getAllByRole('menuitem').map((row) => row.textContent)).toEqual([
-    'Show Agent details',
-    'Stop agent',
-    'Export history',
-    'Delete agent Stop this Agent before deleting it and its Worktree.',
+  expect(screen.queryByRole('menuitem', { name: 'Export history' })).not.toBeInTheDocument();
+  expect(
+    screen.getAllByRole('menuitem').map((row) => row.textContent?.split('Only')[0]?.trim()),
+  ).toEqual([
+    'Rename',
+    'View deletion status No deletion is in progress.',
+    'Delete task Stop this Agent before deleting it and its Worktree.',
   ]);
-  expect(screen.getByRole('menu').querySelectorAll('[role="separator"]')).toHaveLength(3);
-  await actor.click(screen.getByRole('menuitem', { name: 'Stop agent' }));
-  expect(onAgentAction).toHaveBeenCalledWith({ kind: 'stop_agent', agentId: 'agt_1' });
+  expect(screen.getByRole('menu').querySelectorAll('[role="separator"]')).toHaveLength(1);
+  expect(screen.queryByRole('menuitem', { name: 'Stop agent' })).not.toBeInTheDocument();
+  expect(onAgentAction).not.toHaveBeenCalled();
 });
 
 it('holds every header action while another action is being confirmed', async () => {
@@ -432,7 +430,7 @@ it('holds every header action while another action is being confirmed', async ()
   );
   await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
   const stop = screen.getByRole('menuitem', {
-    name: 'Stop agent Another action is still being confirmed.',
+    name: 'Delete task Another action is still being confirmed.',
   });
   await actor.click(stop);
   expect(onAgentAction).not.toHaveBeenCalled();
@@ -454,10 +452,10 @@ it('offers only the Details toggle and creation origin to a reader without actio
     />,
   );
   await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
-  expect(screen.getAllByRole('menuitem').map((row) => row.textContent)).toEqual([
-    'Show Agent details',
-  ]);
-  expect(screen.getByRole('menu')).toHaveTextContent('Creation origin unavailable');
+  expect(screen.getAllByRole('menuitem')).toHaveLength(3);
+  for (const item of screen.getAllByRole('menuitem'))
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.getByRole('button', { name: 'Show Agent details' })).toBeEnabled();
 });
 
 it('holds approval and Stop response controls during history hydration', async () => {
@@ -529,15 +527,16 @@ it('holds approvals while saving and distinguishes pending admission from an act
   expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   rerender(draw({ pending: 'send', inputAvailability: { allowed: true } }));
   expect(screen.queryByText('Starting.', { exact: true })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'More Agent actions' })).toHaveAttribute(
+  expect(screen.getByRole('button', { name: 'Show Agent details' })).toHaveAttribute(
     'title',
     'Agent one · Working',
   );
   expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   expect(draft).toHaveValue('Keep my draft');
   rerender(draw({ pending: 'send', inputAvailability }, 'run-active'));
-  expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Stop response' }));
+  expect(screen.getByRole('button', { name: 'Queue message' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
+  fireEvent.keyDown(draft, { key: 'Escape' });
   expect(interrupt).toHaveBeenCalledOnce();
   expect(approve).not.toHaveBeenCalled();
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
@@ -607,11 +606,12 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
   expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();
-  await actor.click(screen.getByRole('button', { name: '1 tool call' }));
+  expect(screen.queryByRole('button', { name: 'View activity' })).not.toBeInTheDocument();
+  await actor.click(screen.getByRole('button', { name: 'Typecheck' }));
   const tool = screen.getByRole('article', { name: 'Tool call: Typecheck' });
-  expect(tool).toHaveTextContent('shell');
-  expect(tool).toHaveTextContent('Completed');
+  expect(within(tool).getByRole('img', { name: 'Completed' })).toBeInTheDocument();
+  await actor.click(within(tool).getByRole('button', { name: /Typecheck/ }));
+  expect(tool.querySelector('.tool-call__details pre')).toHaveTextContent('Typecheck');
   expect(tool).not.toHaveTextContent(/duration/i);
   expect(screen.queryByText('Check the types.')).not.toBeInTheDocument();
   expect(screen.getByText('Conversation recovery')).toBeInTheDocument();
@@ -620,8 +620,7 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
   );
   await actor.click(screen.getByRole('button', { name: 'Allow' }));
   expect(approve).toHaveBeenCalledWith('approval_1', 'allow');
-  await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
-  await actor.click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
+  await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
   expect(onDetailsOpenChange).toHaveBeenCalledWith(true);
 });
 

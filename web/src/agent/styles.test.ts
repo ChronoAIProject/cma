@@ -60,11 +60,11 @@ describe('conversation geometry with readable labels', () => {
     );
   });
 
-  it('uses a 28px Send circle with 44px mobile targets and a neutral empty state', () => {
+  it('uses a 32px Send circle with 44px mobile targets and a neutral empty state', () => {
     const rules = sheet('Composer.css');
     const submit = declaration(rules, '.agent-composer .agent-composer__submit');
-    expect(submit.getPropertyValue('width')).toBe('28px');
-    expect(submit.getPropertyValue('height')).toBe('28px');
+    expect(submit.getPropertyValue('width')).toBe('32px');
+    expect(submit.getPropertyValue('height')).toBe('32px');
     expect(submit.getPropertyValue('border-radius')).toBe('50%');
     const empty = declaration(rules, '.agent-composer .agent-composer__submit:disabled');
     expect(empty.getPropertyValue('background')).toBe('var(--dsw-alias-bg-layer-3)');
@@ -78,7 +78,7 @@ describe('conversation geometry with readable labels', () => {
     );
     expect(narrow.getPropertyValue('width')).toBe('44px');
     const stop = declaration(rules, '.agent-composer .agent-composer__submit--stop');
-    expect(stop.getPropertyValue('width')).toBe('auto');
+    expect(stop.getPropertyValue('background')).toBe('var(--dsw-alias-workspace-control-bg)');
   });
 
   it('retains the original 12px gap and track in the resource metrics row', () => {

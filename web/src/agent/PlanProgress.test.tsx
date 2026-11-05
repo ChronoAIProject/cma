@@ -69,7 +69,7 @@ it('replaces reordered and ambiguous plans without guessing progress, then clear
   expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
   view.rerender(report([]));
   expect(screen.queryByRole('region', { name: 'Plan' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /^Thinking/ })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'View activity' })).toBeVisible();
 });
 
 it.each([
@@ -178,7 +178,7 @@ it('folds operations by default while keeping failures and approvals discoverabl
     },
   });
   const view = render(<MessageStream conversation={conversation} onApproval={() => {}} />);
-  const operation = screen.getByRole('button', { name: '1 tool call' });
+  const operation = screen.getByRole('button', { name: 'Read instructions' });
   expect(operation).toHaveAttribute('aria-expanded', 'false');
   expect(
     screen.queryByRole('article', { name: 'Tool call: Read instructions' }),
@@ -196,9 +196,11 @@ it('folds operations by default while keeping failures and approvals discoverabl
     kind: { type: 'approval_requested', approval_id: 'permission', action: 'Read another file' },
   });
   view.rerender(<MessageStream conversation={conversation} onApproval={() => {}} />);
-  expect(screen.getByRole('article', { name: 'Tool call: Read instructions' })).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: '1 tool call · 1 failed' }));
-  expect(screen.getByRole('button', { name: '1 tool call · 1 failed' })).toBeVisible();
+  expect(
+    screen.queryByRole('article', { name: 'Tool call: Read instructions' }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /Read instructions.*1 failed/ }));
+  expect(screen.getByRole('button', { name: /Read instructions.*1 failed/ })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Allow' })).toBeVisible();
 });
 
@@ -248,7 +250,7 @@ it('does not regress a cleared plan when an older public replay frame arrives', 
   conversation = foldLiveEvent(conversation, report, 'agent');
   render(<MessageStream conversation={conversation} onApproval={() => {}} />);
   expect(screen.queryByRole('region', { name: 'Plan' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /^Thinking/ })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'View activity' })).toBeVisible();
 });
 
 it('keeps operation disclosures in their own turns', () => {
@@ -277,7 +279,7 @@ it('keeps operation disclosures in their own turns', () => {
     });
   });
   render(<MessageStream conversation={conversation} onApproval={() => {}} />);
-  const disclosures = screen.getAllByRole('button', { name: '1 tool call' });
+  const disclosures = screen.getAllByRole('button', { name: /^(First|Second) turn operation$/ });
   expect(disclosures).toHaveLength(2);
   fireEvent.click(disclosures[0]!);
   expect(screen.getByRole('article', { name: 'Tool call: First turn operation' })).toBeVisible();
