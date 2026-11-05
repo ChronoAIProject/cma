@@ -4,7 +4,15 @@ use super::fixtures::*;
 use layer3_adapter::{ConversationMetadata, ConversationUpdate, ConversationUsage};
 
 fn apply(agent: &mut Agent, update: ConversationUpdate) -> Vec<AgentLogKind> {
-    match fold_update(agent, &AgentMessageAssembly::default(), update, LATER).unwrap() {
+    match fold_update(
+        agent,
+        &AgentMessageAssembly::default(),
+        update,
+        LATER,
+        false,
+    )
+    .unwrap()
+    {
         FoldedConversationUpdate::Changed(change) => {
             *agent = change.agent;
             change.logs
