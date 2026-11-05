@@ -63,15 +63,24 @@ impl MongoSandboxStore {
         }
     }
 
-    pub(in crate::store) async fn checkpoint_usage_one(
+    pub(crate) async fn checkpoint_usage_one(
         &self,
         id: &str,
         at: &str,
     ) -> Result<(), SandboxStoreError> {
+        self.checkpoint_usage_observed(id, at, false).await
+    }
+
+    pub(crate) async fn checkpoint_usage_observed(
+        &self,
+        id: &str,
+        at: &str,
+        funded: bool,
+    ) -> Result<(), SandboxStoreError> {
         for _ in 0..TRANSACTION_ATTEMPTS {
             let mut session = self.client.start_session().await.map_err(unavailable)?;
             start_transaction(&mut session).await.map_err(unavailable)?;
-            let result = checkpoint(self, &mut session, id, at).await;
+            let result = checkpoint(self, &mut session, id, at, funded).await;
             match result {
                 Ok(()) => {}
                 Err(TransactionEventError::Driver(error)) if is_transient(&error) => {
@@ -100,6 +109,7 @@ async fn checkpoint(
     session: &mut ClientSession,
     id: &str,
     at: &str,
+    funded: bool,
 ) -> Result<(), TransactionEventError> {
     use TransactionEventError::{Domain, Driver};
     let Some(document) = store
@@ -124,7 +134,11 @@ async fn checkpoint(
         seq,
         at,
         (seq, sandbox.revision),
-        true,
+        if funded {
+            UsageObservation::FundedCheckpoint
+        } else {
+            UsageObservation::Checkpoint
+        },
     )
     .await
 }
