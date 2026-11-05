@@ -9,6 +9,7 @@ export type {
 export { answerContext, type AnswerContext } from './answer-context.js';
 export * from './resource-access.js';
 export * from './usage.js';
+export * from './usage-metrics/index.js';
 export * from './agent-files.js';
 export * from './bots.js';
 export * from './bot-setups.js';

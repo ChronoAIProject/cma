@@ -714,6 +714,14 @@ routing policy; every other channel response is unchanged and carries no
 A full channel PUT keeps its routing and its consumers' keys exactly as stored.
 Dedicated policy changes use the gated routing endpoint described under
 [Node diagnostics and routing policy](#node-diagnostics-and-routing-policy).
+Neither `POST /v1/channels` nor `PUT /v1/channels/{channel_id}` accepts a
+top-level `routing` field. Both schemas reject unknown fields. A misplaced
+top-level `routing` returns 400 `invalid_request` with the bounded detail
+`/routing: not accepted in channel create or full update; use PUT /v1/channels/{channel_id}/routing with {expected_version,routing} after creation`.
+Other schema errors retain the generic channel-schema detail; submitted values
+and arbitrary field names are never echoed. See the
+[NyxID native Discord activation contract](CMAEG_NyxID_Discord_Activation.md)
+for the create, routing, version and acknowledgement sequence.
 Owner-authored durable Custom creation initializes the default-only policy with
 its immutable execution marker; it does not migrate existing channel records.
 
@@ -2929,6 +2937,16 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/github/apps/{app_ref}/deliveries/{delivery_id}` | Recover a receipt by the original GitHub delivery ID. |
 | `GET /v1/github/tasks/{task_id}` | Read the durable admission task associated with a GitHub delivery. |
 <!-- openapi-operations:end -->
+
+GitHub storage initializes in the background when `CMAEG_GITHUB_ENABLED=true`.
+Until initialization succeeds, integration operations return 503 and the
+authenticated capability query reports `store_ready: false`; ordinary gateway
+readiness and channel operations remain independent. While the flag is disabled,
+channel writes introducing or changing a GitHub source return 400
+`invalid_request` with `/sources: github_writes_disabled`, even when dynamic
+source writes are enabled. Carrying retained sources through unchanged or
+removing them remains allowed. The flag grants no installation or execution
+authority.
 
 GitHub App registration derives ownership from creator authentication and returns
 201 on creation or 200 for an exact replay of the same `Idempotency-Key` and

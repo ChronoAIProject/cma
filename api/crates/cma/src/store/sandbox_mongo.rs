@@ -17,6 +17,7 @@ use tokio::sync::Semaphore;
 use super::MongoCheckpointObjectStore;
 use super::{durability::majority_collection, schema::initialize_collections};
 
+pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
 pub(super) const TRANSACTION_ATTEMPTS: usize = 5;
 const COMMIT_ATTEMPTS: usize = 5;
@@ -27,6 +28,7 @@ const MAX_PENDING_RECONCILIATIONS: usize = 16;
 static RECONCILIATION_SLOTS: Semaphore = Semaphore::const_new(MAX_PENDING_RECONCILIATIONS);
 
 pub(super) const SANDBOXES: &str = "sandboxes";
+pub(super) const SANDBOX_SESSIONS: &str = "sandbox_sessions";
 pub(super) const WORKSPACES: &str = "workspaces";
 pub(super) const WORKTREES: &str = "worktrees";
 pub(super) const AGENTS: &str = "agents";
@@ -55,6 +57,7 @@ pub(super) const SANDBOX_BILLING: &str = "sandbox_billing_state";
 const SANDBOX_COLLECTIONS: &[&str] = &[
     "sandbox_retained_availability",
     SANDBOXES,
+    SANDBOX_SESSIONS,
     WORKSPACES,
     WORKTREES,
     AGENTS,
@@ -83,14 +86,6 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     WARM_SANDBOXES,
     super::native_prepared::COLLECTION,
 ];
-const PROFILE_COLLECTIONS: &[&str] = &[
-    AGENT_PROFILES,
-    AGENT_PROFILE_REVISIONS,
-    WORKSPACE_PROFILES,
-    WORKSPACE_PROFILE_REVISIONS,
-    SANDBOX_PROFILES,
-    SANDBOX_PROFILE_REVISIONS,
-];
 
 /// One adapter implements every sandbox-model port so cross-port operations
 /// share a client session and therefore a real Mongo transaction.
@@ -102,6 +97,7 @@ pub struct MongoSandboxStore {
     pub(super) client: Client,
     pub(super) checkpoint_objects: MongoCheckpointObjectStore,
     pub(super) sandboxes: Collection<Document>,
+    pub(super) sandbox_sessions: Collection<Document>,
     pub(super) workspaces: Collection<Document>,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
@@ -183,6 +179,7 @@ impl MongoSandboxStore {
             client: client.clone(),
             checkpoint_objects,
             sandboxes: majority_collection(&database, SANDBOXES),
+            sandbox_sessions: majority_collection(&database, SANDBOX_SESSIONS),
             workspaces: majority_collection(&database, WORKSPACES),
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
@@ -239,6 +236,7 @@ impl MongoSandboxStore {
             agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
+        super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;
         super::sandbox_usage::ensure_indexes(&store).await?;
         super::sandbox_billing::ensure_indexes(&store.sandbox_billing).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;
@@ -304,38 +302,6 @@ fn validate_transaction_server(reply: &Document) -> Result<(), StoreError> {
         )));
     }
     Ok(())
-}
-
-/// Profile drafts and revisions are separate from runtime aggregates, but use
-/// the same Mongo client so publication can resolve references transactionally.
-#[derive(Clone)]
-pub struct MongoProfileStore {
-    pub(super) client: Client,
-    pub(super) agent_profiles: Collection<Document>,
-    pub(super) agent_revisions: Collection<Document>,
-    pub(super) workspace_profiles: Collection<Document>,
-    pub(super) workspace_revisions: Collection<Document>,
-    pub(super) sandbox_profiles: Collection<Document>,
-    pub(super) sandbox_revisions: Collection<Document>,
-}
-
-impl MongoProfileStore {
-    pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
-        let database = client.database(name);
-        initialize_collections(&database, PROFILE_COLLECTIONS).await?;
-        let store = Self {
-            client: client.clone(),
-            agent_profiles: majority_collection(&database, AGENT_PROFILES),
-            agent_revisions: majority_collection(&database, AGENT_PROFILE_REVISIONS),
-            workspace_profiles: majority_collection(&database, WORKSPACE_PROFILES),
-            workspace_revisions: majority_collection(&database, WORKSPACE_PROFILE_REVISIONS),
-            sandbox_profiles: majority_collection(&database, SANDBOX_PROFILES),
-            sandbox_revisions: majority_collection(&database, SANDBOX_PROFILE_REVISIONS),
-        };
-        super::profiles::ensure_indexes(&store).await?;
-        tracing::info!(database = name, "sandbox-profile Mongo store ready");
-        Ok(store)
-    }
 }
 
 pub(super) fn record_bson<T: Serialize>(record: &T) -> Result<Bson, String> {

@@ -4,6 +4,9 @@ use cmaeg::{discord::selection::Selection, NativeDiscordConfig};
 use serde_json::Value;
 use std::{collections::BTreeSet, time::Duration};
 
+#[path = "native_discord_contract.rs"]
+mod contract;
+
 fn body() -> Value {
     let mut value = create_body();
     value["record_id"] = uuid::Uuid::new_v4().to_string().into();
@@ -13,9 +16,17 @@ fn body() -> Value {
     value
 }
 fn native_state(provider: &FakeProvider, cma: &FakeCma, nyxid: &FakeNyxid) -> ManagementState {
+    native_state_with_slug(provider, cma, nyxid, "cma_codex")
+}
+fn native_state_with_slug(
+    provider: &FakeProvider,
+    cma: &FakeCma,
+    nyxid: &FakeNyxid,
+    slug: &str,
+) -> ManagementState {
     let mut state = management_state(provider, cma, nyxid, key_ring(1));
     let registry = ProviderRegistry::parse(&json!([{
-        "slug":"cma_codex","base_url":provider.base_url(),"kind":"responses_http",
+        "slug":slug,"base_url":provider.base_url(),"kind":"responses_http",
         "paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}",
         "conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses",
         "recovery":{"response":"/api/v2/responses/{response_id}","events":"/api/v2/responses/{response_id}/events"}},"max_inflight":8

@@ -1994,3 +1994,63 @@ URLs to `https://cma.nyxid.ai/event-gateway` and retain
 `https://bot.chrono-ai.fun/event-gateway` in both alias lists. Keep
 `https://bot-gateway.chrono-ai.fun` as the legacy public origin. On rollback retain
 readers and all three reachable bases for links and webhooks already issued.
+
+## Measured Sandbox reporting rollout
+
+See [Measured Sandbox resource reports](CMA_Sandbox_Metrics.md) for the new
+owner/admin report APIs, CPU/working-set/PVC semantics, coverage, retention,
+read-model migration, monitoring permissions and production verification.
+The existing allocated usage ledger and billing quantities keep their meanings.
+
+### Measured reporting configuration
+
+See [Measured Sandbox resource reports](CMA_Sandbox_Metrics.md) for source,
+identity, schema and rollout prerequisites. All replicas must use the same
+reporting budgets; use a coordinated rollout to lower cluster-wide budgets.
+
+| Key | Type, default and constraint |
+| --- | --- |
+| `CHRONO_USAGE_METRICS_ENABLED` | Boolean, `false`; enables independent read-only observation/collection jobs. |
+| `CHRONO_USAGE_METRICS_CLUSTER` | Validated label, `chronoai-prod-asia-southeast1-gke`; exact observed VM cluster. |
+| `CHRONO_USAGE_METRICS_URL` | Optional internal URL ending `/select/0/prometheus/`; empty selects the fixed monitoring service proxy GET. |
+| `CHRONO_USAGE_METRICS_WORKERS` | Integer, `2`; 1–2 shared report worker slots. |
+| `CHRONO_USAGE_METRICS_QUEUE` | Integer, `8`; 1–8 queued reports across replicas. |
+| `CHRONO_USAGE_METRICS_SOURCE_CALLS` | Integer, `2`; 1–2 shared upstream leases. |
+| `CHRONO_USAGE_METRICS_SOURCE_SECONDS` | Integer, `5`; 1–5 seconds per upstream request. |
+| `CHRONO_USAGE_METRICS_REPORT_SECONDS` | Integer, `60`; 1–60 seconds per report. |
+| `CHRONO_USAGE_METRICS_REPORT_MIB` | Integer, `256`; 1–1024 MiB maximum per report, including charts. |
+| `CHRONO_USAGE_METRICS_TENANT_MIB` | Integer, `512`; 1–4096 MiB reserved report quota per principal. |
+| `CHRONO_USAGE_METRICS_GLOBAL_MIB` | Integer, `2048`; 1–16384 MiB reserved report quota across replicas. |
+
+Byte budgets must satisfy report ≤ tenant ≤ global. Reporting uses a separate
+four-connection Mongo pool, 2-second indexed-read budget, and a 30-second circuit
+on failed/slow (>250 ms) checkout or reads exceeding their budget. Reporting
+pressure returns Retry-After without changing conversation/lifecycle pools.
+
+## Immutable web build identity
+
+The account menu's **Copy build version** copies the running bundle's own version
+and full commit SHA. It never reads API build metadata: an existing browser tab
+continues to identify its original bundle until reloaded. Local Vite development
+and `npm run build` show `dev (local)` without deployment inputs.
+
+Every web Docker build sets `CHRONO_BUILD_ARTIFACT=promotable`. It requires
+`CHRONO_BUILD=<release version>` and `CHRONO_BUILD_SHA=<full 40-character SHA>`.
+CI candidates use `git-<first 12 SHA characters>` in both platform and native scan
+passes; release scan/publish passes use the planned release version. Missing,
+blank, placeholder or mismatched inputs fail before bundling. Vite emits the same
+validated identity as bundle constants and `build-info.json` verification evidence.
+The browser does not fetch that evidence file.
+
+Before CI exports tested web bytes and before release publication, the required
+web identity check compares evidence and compiled JavaScript with the exact image's
+OCI source/version/revision labels. It inspects by immutable image ID and cleans
+its stopped verification container. Transfer/promotion retains the tested image
+ID/digest and existing provenance checks; do not rebuild or relabel to correct an
+identity. A candidate identity is not a release version.
+
+For production acceptance, the lead compares a fresh browser's copied identity
+with the tested source, image labels and promoted digest. Retain all prior hashed
+web assets needed by open tabs and the batch's compatible reader floor through
+normal deployment procedures. Verify an existing tab continues working and names
+its original bundle. This UI change does not authorize deployment or asset removal.

@@ -55,6 +55,7 @@ pub mod stream;
 pub mod task_experience;
 pub mod triggers;
 pub mod usage;
+pub mod usage_metrics;
 
 /// Executable integration guides shipped with the crate.
 pub mod guides {

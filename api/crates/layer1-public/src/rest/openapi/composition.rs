@@ -14,6 +14,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
     document.merge(super::super::answer_deliverables::AnswerDeliverablesApi::openapi());
     document.merge(super::super::message_feedback::document());
     document.merge(crate::rest::sandbox_usage::document());
+    document.merge(crate::rest::sandbox_metrics::document());
     document.merge(crate::rest::bindings::preparation::document());
     document.merge(crate::rest::bindings::inspection::document());
     document.merge(crate::rest::binding_media::document());

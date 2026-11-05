@@ -24,6 +24,7 @@ mod projections;
 mod provider_tool_relay;
 mod rate_limit;
 mod sandbox;
+mod sandbox_metrics;
 mod shutdown;
 mod store;
 mod trigger;
@@ -153,6 +154,7 @@ async fn serve() -> Result<(), String> {
     composition.sandbox_lifecycle.spawn(&mut shutdown);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
     composition.usage.spawn(&mut shutdown);
+    composition.usage_metrics.spawn(&mut shutdown);
     let (http_stop, http_signal) = tokio::sync::watch::channel(false);
     let server_result = {
         let server = axum::serve(

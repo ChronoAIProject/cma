@@ -1,0 +1,468 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "auto-pause-owner-anonymous",
+      "operation": "POST /api/v1/sandboxes/{id}/always-on",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/always-on",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "always-on-anonymous"
+        },
+        "body": {
+          "always_on": true,
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-owner-forbidden",
+      "operation": "POST /api/v1/sandboxes/{id}/always-on",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/always-on",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "always-on-forbidden"
+        },
+        "body": {
+          "always_on": true,
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-admin-anonymous",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/always-on",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_contract/always-on",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "always_on": true,
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-admin-forbidden",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/always-on",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_contract/always-on",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "always_on": true,
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-admin-missing",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/always-on",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_missing/always-on",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "always_on": true,
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-resource-not-found",
+          "title": "operator resource not found",
+          "status": 404,
+          "detail": "No operator resource matches this request.",
+          "code": "operator_resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-preview-anonymous",
+      "operation": "GET /api/v1/admin/auto-pause/preview",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/auto-pause/preview",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-preview-forbidden",
+      "operation": "GET /api/v1/admin/auto-pause/preview",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/auto-pause/preview",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-pause-now-anonymous",
+      "operation": "POST /api/v1/admin/auto-pause/pause-idle-now",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/auto-pause/pause-idle-now",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "confirmed": true
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-pause-now-forbidden",
+      "operation": "POST /api/v1/admin/auto-pause/pause-idle-now",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/auto-pause/pause-idle-now",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "confirmed": true
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-pause-now-unconfirmed",
+      "operation": "POST /api/v1/admin/auto-pause/pause-idle-now",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/auto-pause/pause-idle-now",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "confirmed": false
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-admin-request",
+          "title": "invalid admin request",
+          "status": 400,
+          "detail": "The operator request parameters are not valid.",
+          "code": "invalid_admin_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-owner-always-on",
+      "operation": "POST /api/v1/sandboxes/{id}/always-on",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/always-on",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "always-on-owner"
+        },
+        "body": {
+          "always_on": true,
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_route",
+          "owner": "owner-a",
+          "owner_name": null,
+          "name": "research",
+          "status": "active",
+          "profile": {
+            "id": "sbp_route",
+            "revision": 3
+          },
+          "always_on": true,
+          "nyxid_services": [
+            "api-github"
+          ],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": true
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
+          },
+          "runtime_version": "sha256:runtime",
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "$updated",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "updated": "/updated_at"
+      }
+    },
+    {
+      "id": "auto-pause-admin-always-on",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/always-on",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_contract/always-on",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "always_on": true,
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_contract",
+          "owner": "owner-a",
+          "owner_name": null,
+          "name": "Sandbox sbx_contract",
+          "status": "active",
+          "profile": {
+            "id": "sbp_test",
+            "revision": 1
+          },
+          "always_on": true,
+          "nyxid_services": [],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": true
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
+          },
+          "runtime_version": "runtime-v1",
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "$updated",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "updated": "/updated_at"
+      }
+    },
+    {
+      "id": "auto-pause-preview",
+      "operation": "GET /api/v1/admin/auto-pause/preview",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/auto-pause/preview",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "candidates": 0
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-pause-idle-now",
+      "operation": "POST /api/v1/admin/auto-pause/pause-idle-now",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/auto-pause/pause-idle-now",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "confirmed": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "scheduled": 0,
+          "already_satisfied": 0,
+          "skipped": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

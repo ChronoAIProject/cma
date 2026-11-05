@@ -58,13 +58,23 @@ impl Default for PlatformDefaults {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InactivitySettings {
+    /// Omit disabled policy so predecessor strict readers accept ordinary saves.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto_pause_enabled: bool,
     pub pause_after_seconds: u64,
+    /// The instant from which the current policy is allowed to pause. This is
+    /// written when enablement or the threshold changes, so existing Sandboxes
+    /// receive a complete grace period after an operator change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grace_started_at: Option<String>,
 }
 
 impl Default for InactivitySettings {
     fn default() -> Self {
         Self {
+            auto_pause_enabled: false,
             pause_after_seconds: 900,
+            grace_started_at: None,
         }
     }
 }
@@ -148,6 +158,13 @@ impl PlatformSettings {
             return Err(CoreError::InvalidRequest(format!(
                 "inactivity.pause_after_seconds must be between {MIN_PAUSE_AFTER_SECONDS} and {MAX_PAUSE_AFTER_SECONDS}"
             )));
+        }
+        if let Some(started_at) = &self.inactivity.grace_started_at {
+            if crate::seconds_from_rfc3339(started_at).is_none() {
+                return Err(CoreError::InvalidRequest(
+                    "inactivity.grace_started_at must be RFC3339".into(),
+                ));
+            }
         }
         for (field, revision) in [
             (
