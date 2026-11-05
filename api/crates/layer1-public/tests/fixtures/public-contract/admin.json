@@ -18,6 +18,9 @@
         "body": {
           "revision": 0,
           "settings": {
+            "usage_reporting": {
+              "measured_visible": false
+            },
             "defaults": {
               "sandbox_profile": {
                 "id": "sbp_default_v2",
@@ -83,6 +86,9 @@
         "body": {
           "revision": 1,
           "settings": {
+            "usage_reporting": {
+              "measured_visible": false
+            },
             "defaults": {
               "sandbox_profile": {
                 "id": "sbp_default_v2",
@@ -213,6 +219,9 @@
         "body": {
           "revision": 2,
           "settings": {
+            "usage_reporting": {
+              "measured_visible": false
+            },
             "defaults": {
               "sandbox_profile": {
                 "id": "sbp_default_v2",
@@ -275,6 +284,9 @@
         "body": {
           "revision": 3,
           "settings": {
+            "usage_reporting": {
+              "measured_visible": false
+            },
             "defaults": {
               "sandbox_profile": {
                 "id": "sbp_default_v2",
@@ -402,6 +414,9 @@
         "body": {
           "revision": 4,
           "settings": {
+            "usage_reporting": {
+              "measured_visible": false
+            },
             "defaults": {
               "sandbox_profile": {
                 "id": "sbp_default_v2",
@@ -459,6 +474,9 @@
         "body": {
           "revision": 5,
           "settings": {
+            "usage_reporting": {
+              "measured_visible": false
+            },
             "defaults": {
               "sandbox_profile": {
                 "id": "sbp_default_v2",

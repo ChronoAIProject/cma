@@ -48,6 +48,25 @@ const fixture = () => {
 };
 
 describe('public operator administration', () => {
+  it('round-trips measured visibility and preserves additive section fields', async () => {
+    const t = fixture();
+    for (const measured_visible of [false, true]) {
+      const current = { ...settings, usage_reporting: { measured_visible, future: 'preserved' } };
+      t.answer({ revision: 1, settings: current });
+      const read = await t.admin.readSettings();
+      expect(read.settings.usage_reporting).toEqual(current.usage_reporting);
+      await t.admin.replaceSettings({ expected_revision: 1, settings: read.settings });
+      expect(JSON.parse(String(t.calls.at(-1)!.init.body)).settings.usage_reporting).toEqual(
+        current.usage_reporting,
+      );
+      await t.admin.patchSettings({ expected_revision: 1, usage_reporting: { measured_visible } });
+      expect(JSON.parse(String(t.calls.at(-1)!.init.body))).toEqual({
+        expected_revision: 1,
+        usage_reporting: { measured_visible },
+      });
+    }
+  });
+
   it('retains verified creator and actor names separately from authority identifiers', async () => {
     const t = fixture();
     t.answer({ items: [{ ...summary, owner_name: 'Sam Lee' }], next: null });
