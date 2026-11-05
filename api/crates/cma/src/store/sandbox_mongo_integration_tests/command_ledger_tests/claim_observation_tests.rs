@@ -52,7 +52,12 @@ impl AgentCommandExecution for LocalReadiness {
             CommandReadiness::Ready
         }
     }
-    async fn prepare_queued(&self, _: &AdmittedAgentCommand) {}
+    async fn prepare_queued(
+        &self,
+        _: &AdmittedAgentCommand,
+    ) -> Result<(), CommandPreparationError> {
+        Ok(())
+    }
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {
         self.attempts.lock().unwrap().push(command.clone());
         CommandAttempt::Retry
