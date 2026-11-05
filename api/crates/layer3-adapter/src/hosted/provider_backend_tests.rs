@@ -27,6 +27,7 @@ fn metadata(sandbox_id: &str, generation: u64, fingerprint: &str) -> BTreeMap<St
 
 fn request(sandbox_id: &str, generation: u64, fingerprint: &str) -> ProviderSandboxRequest {
     ProviderSandboxRequest {
+        funded_until: None,
         image: ProviderImage {
             uri: "runtime:test".into(),
         },

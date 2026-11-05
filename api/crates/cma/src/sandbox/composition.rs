@@ -13,6 +13,7 @@ use super::{
     agent_skills::AgentSkillResolver,
     agent_worker::{AgentWorker, AgentWorkerConfig, AgentWorkerDependencies},
     credential::SandboxCredentialController,
+    funding::{FundingRenewalWorker, SandboxFundingAdapter},
     live_agent_stopper::DurableLiveAgentStopper,
     reconciliation::SandboxReconciler,
     scheduler::SandboxScheduler,
@@ -38,6 +39,7 @@ pub(crate) struct SandboxLifecycleDependencies {
     pub policy: Arc<dyn SandboxPolicySource>,
     pub skills: Arc<dyn AgentSkillResolver>,
     pub title_runtime: Arc<dyn TitleRuntimeEndpoint>,
+    pub funding: Arc<dyn SandboxFundingAdapter>,
 }
 
 pub(crate) struct SandboxLifecycleConfig {
@@ -60,6 +62,7 @@ pub(crate) struct SandboxLifecycleComposition {
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
     updates: Arc<dyn AgentUpdateRecorder>,
+    funding_renewal: FundingRenewalWorker,
 }
 
 impl SandboxLifecycleComposition {
@@ -143,7 +146,8 @@ impl SandboxLifecycleComposition {
             .with_managed_documents(config.managed_documents_enabled)
             .with_access_transport_migration(config.access_transport_migration),
         );
-        let sandbox_worker = SandboxWorker::new(
+        let funding_renewal = FundingRenewalWorker::new(Arc::clone(&dependencies.funding));
+        let sandbox_worker = SandboxWorker::new_with_funding(
             SandboxWorkerDependencies {
                 store: dependencies.store.clone(),
                 adapter: dependencies.adapter,
@@ -168,6 +172,7 @@ impl SandboxLifecycleComposition {
             )
             .with_execution(config.execution)
             .with_home_policy(config.home_policy),
+            dependencies.funding,
         );
 
         Self {
@@ -178,6 +183,7 @@ impl SandboxLifecycleComposition {
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
             agent: AgentScheduler::new(agent_worker, agent_admitted),
             titles,
+            funding_renewal,
             suggestions,
         }
     }
@@ -199,6 +205,7 @@ impl SandboxLifecycleComposition {
         shutdown.push(self.reconciliation.spawn(signal));
         shutdown.push(self.agent.spawn(shutdown.subscribe()));
         shutdown.push(self.titles.spawn(shutdown.subscribe()));
+        shutdown.push(self.funding_renewal.spawn(shutdown.subscribe()));
         shutdown.push(self.suggestions.spawn(shutdown.subscribe()));
         for scheduler in [self.sandbox, self.workspace] {
             let signal = shutdown.subscribe();

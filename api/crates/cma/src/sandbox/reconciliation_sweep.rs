@@ -35,6 +35,8 @@ struct Sweep {
     binding_cursor: Option<SandboxId>,
     recovery_candidate: Option<SandboxId>,
     runtime_index: usize,
+    claim_inventory: Option<Box<dyn layer3_adapter::InventoryCursor<NativePoolClaim>>>,
+    home_inventory: Option<Box<dyn layer3_adapter::InventoryCursor<HomeVolumeAttachment>>>,
     claims: VecDeque<NativePoolClaim>,
     homes: VecDeque<HomeVolumeAttachment>,
     candidates: VecDeque<SandboxId>,
@@ -52,6 +54,8 @@ impl Default for Sweep {
             binding_cursor: None,
             recovery_candidate: None,
             runtime_index: 0,
+            claim_inventory: None,
+            home_inventory: None,
             claims: VecDeque::new(),
             homes: VecDeque::new(),
             candidates: VecDeque::new(),
@@ -174,11 +178,16 @@ impl Sweep {
             }
             Phase::ClaimInventory => {
                 if let Some(pools) = reconciler.adapter.native_pools() {
-                    self.claims = pools
-                        .inventory_claims()
-                        .await
-                        .map_err(provider_error)?
-                        .into();
+                    if self.claim_inventory.is_none() {
+                        self.claim_inventory = pools.claim_inventory_cursor();
+                    }
+                    let items = match &mut self.claim_inventory {
+                        Some(cursor) => cursor.advance().await.map_err(provider_error)?,
+                        None => Some(pools.inventory_claims().await.map_err(provider_error)?),
+                    };
+                    let Some(items) = items else { return Ok(0) };
+                    self.claims = items.into();
+                    self.claim_inventory = None;
                 }
                 self.phase = Phase::Claims;
             }
@@ -192,7 +201,16 @@ impl Sweep {
             }
             Phase::HomeInventory => {
                 if let Some(homes) = reconciler.adapter.home_volumes() {
-                    self.homes = homes.inventory().await.map_err(provider_error)?.into();
+                    if self.home_inventory.is_none() {
+                        self.home_inventory = homes.inventory_cursor();
+                    }
+                    let items = match &mut self.home_inventory {
+                        Some(cursor) => cursor.advance().await.map_err(provider_error)?,
+                        None => Some(homes.inventory().await.map_err(provider_error)?),
+                    };
+                    let Some(items) = items else { return Ok(0) };
+                    self.homes = items.into();
+                    self.home_inventory = None;
                 }
                 self.phase = Phase::Homes;
             }
