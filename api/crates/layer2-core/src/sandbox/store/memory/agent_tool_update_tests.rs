@@ -4,7 +4,16 @@ use super::*;
 
 #[tokio::test]
 async fn completed_tool_records_reported_text_without_recording_each_output_delta() {
-    let (_, working, recorder) = working_agent().await;
+    let (store, working, _) = working_agent().await;
+    let recorder = DurableAgentUpdateRecorder::with_writer_policy(
+        Arc::new(store),
+        Arc::new(
+            serde_json::from_value(serde_json::json!({
+                "mode":"all", "accounts":[], "capabilities":["replay_presentation"]
+            }))
+            .unwrap(),
+        ),
+    );
     let mut assembly = AgentMessageAssembly::default();
     let update = serde_json::from_value(serde_json::json!({
         "sessionUpdate": "tool_call_update", "toolCallId": "proof",
@@ -40,7 +49,16 @@ fn output_update(index: usize) -> ConversationUpdate {
 
 #[tokio::test]
 async fn native_command_completion_records_the_provider_reported_output() {
-    let (_, working, recorder) = working_agent().await;
+    let (store, working, _) = working_agent().await;
+    let recorder = DurableAgentUpdateRecorder::with_writer_policy(
+        Arc::new(store),
+        Arc::new(
+            serde_json::from_value(serde_json::json!({
+                "mode":"all", "accounts":[], "capabilities":["replay_presentation"]
+            }))
+            .unwrap(),
+        ),
+    );
     let mut assembly = AgentMessageAssembly::default();
     let update = serde_json::from_value(serde_json::json!({
         "sessionUpdate": "tool_call_update", "toolCallId": "native-proof", "status": "completed",
@@ -66,7 +84,16 @@ async fn native_command_completion_records_the_provider_reported_output() {
 
 #[tokio::test]
 async fn reported_output_without_status_is_bounded_and_does_not_invent_a_status() {
-    let (_, working, recorder) = working_agent().await;
+    let (store, working, _) = working_agent().await;
+    let recorder = DurableAgentUpdateRecorder::with_writer_policy(
+        Arc::new(store),
+        Arc::new(
+            serde_json::from_value(serde_json::json!({
+                "mode":"all", "accounts":[], "capabilities":["replay_presentation"]
+            }))
+            .unwrap(),
+        ),
+    );
     let mut assembly = AgentMessageAssembly::default();
     let update = serde_json::from_value(serde_json::json!({
         "sessionUpdate": "tool_call_update", "toolCallId": "proof",
@@ -304,13 +331,14 @@ async fn output_only_tool_update_preserves_operation_write_evidence() {
             &working,
             &assembly,
             output_update(0).without_prompt_evidence(),
-            NOW
+            NOW,
+            false,
         )
         .unwrap(),
         FoldedConversationUpdate::Quiet(_)
     ));
     let FoldedConversationUpdate::Changed(change) =
-        fold_update(&working, &assembly, output_update(1), NOW).unwrap()
+        fold_update(&working, &assembly, output_update(1), NOW, false).unwrap()
     else {
         panic!("owned output must retain operation execution evidence");
     };
@@ -326,7 +354,14 @@ async fn output_only_tool_update_preserves_operation_write_evidence() {
         AgentOperationDelivery::ExecutionObserved
     );
     assert!(matches!(
-        fold_update(&change.agent, &change.assembly, output_update(2), NOW).unwrap(),
+        fold_update(
+            &change.agent,
+            &change.assembly,
+            output_update(2),
+            NOW,
+            false
+        )
+        .unwrap(),
         FoldedConversationUpdate::Quiet(_)
     ));
 }
@@ -374,3 +409,6 @@ async fn output_only_tool_updates_still_reject_stopped_agents() {
     );
     assert_eq!(store.get_agent(&stopped.id).await.unwrap(), Some(stopped));
 }
+
+#[path = "tool_writer_admission_tests.rs"]
+mod writer_admission_tests;

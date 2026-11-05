@@ -6,6 +6,7 @@ mod agent_access_worker;
 mod agent_lifecycle;
 mod agent_models;
 mod auth;
+mod background;
 mod bot_setups;
 mod commands;
 mod composition;
