@@ -12,6 +12,8 @@ function normalized(kind: V2AgentEventKind) {
       };
     case 'conversation_available':
       return { type: 'conversation_opened' };
+    case 'runtime_changed':
+      return { type: 'runtime_generation_retired' };
     case 'tool_started':
       return { ...kind, type: 'tool_call_started' };
     case 'tool_updated':
@@ -54,7 +56,10 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
       (message) => message.role === 'user' && message.runId === state.activeRunId,
     );
     const commandId =
-      item.message_command_id ?? (firstInput ? state.responseBinding?.commandId : undefined);
+      item.message_command_id ??
+      (firstInput && (state.historyStart ?? 0) < (state.responseBinding?.turnSequence ?? 0)
+        ? state.responseBinding?.commandId
+        : undefined);
     next = {
       ...next,
       messages: next.messages.map((message) =>

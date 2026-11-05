@@ -38,6 +38,11 @@ export function refreshConversation(
   current: ConversationState,
   next: Awaited<ReturnType<typeof loadAgent>>,
 ): ConversationState {
+  if (next.conversation.historyStart !== undefined) {
+    if (current.agentIncarnation !== next.conversation.agentIncarnation)
+      throw new Error('Agent history changed conversation identity.');
+    return current.cursor > next.conversation.cursor ? current : next.conversation;
+  }
   if (next.v2Items !== undefined) {
     if (current.agentIncarnation !== next.conversation.agentIncarnation)
       throw new Error('Agent snapshot changed conversation identity.');

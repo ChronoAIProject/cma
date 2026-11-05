@@ -10,6 +10,7 @@ import type {
 import { mergeTranscriptSnapshot } from './chronology';
 import { conversationFromTranscript, foldAgentEvent, type ConversationState } from './conversation';
 import { loadV2Agent } from './transport/load';
+import { loadBoundedAgent } from './loadBoundedAgent';
 import type { AgentV2Session } from './transport/client';
 import type { V2AgentEventItem } from '@chronoai/cma-sdk';
 
@@ -51,6 +52,43 @@ export async function loadAgent(
   onInputReady?: (ready: ReadyAgent) => void,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly AgentEvent[] }> {
   const v2 = await client.agentTransport?.openForLoad(agentId, { signal });
+  if (client.agentHistory !== undefined) {
+    try {
+      return await loadBoundedAgent(
+        client,
+        agentId,
+        signal,
+        v2,
+        allowIncompleteHistory,
+        lineage,
+        onInputReady,
+      );
+    } catch (error) {
+      if (signal.aborted || !(error instanceof ApiError) || error.status !== 404) throw error;
+      // A predecessor server has no bounded endpoint. Its finite legacy log
+      // remains readable; current authorization is checked again by every read.
+      if (v2 !== undefined)
+        return loadV2Agent(
+          { ...client, agentHistory: undefined },
+          agentId,
+          signal,
+          v2,
+          allowIncompleteHistory,
+          onHistoryProgress,
+          lineage,
+          onInputReady,
+        );
+      return loadAgent(
+        { ...client, agentHistory: undefined, agentTransport: undefined },
+        agentId,
+        signal,
+        allowIncompleteHistory,
+        onHistoryProgress,
+        lineage,
+        onInputReady,
+      );
+    }
+  }
   if (v2 !== undefined)
     return loadV2Agent(
       client,
@@ -137,6 +175,8 @@ export async function loadAgent(
     }
     signal.throwIfAborted();
     durableEvents.push(...page.items);
+    if (durableEvents.length > 10_128)
+      throw new Error('This history requires a server with bounded history reads.');
     conversation = page.items.reduce(foldAgentEvent, conversation);
     const nextCursor = page.next;
     if (nextCursor !== undefined && (nextCursor <= (cursor ?? 0) || seen.has(nextCursor))) {

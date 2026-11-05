@@ -2,7 +2,19 @@ import type { CmaWebClient } from '../api/client';
 import type { ResourceViewsClient } from './client';
 import { conversationFromTranscript, foldAgentEvent } from '../agent/conversation';
 import { mergeTranscriptSnapshot } from '../agent/chronology';
-import type { EffectiveAccess } from '@chronoai/cma-sdk';
+import { ApiError, type EffectiveAccess } from '@chronoai/cma-sdk';
+import { conversationFromWindow, withCurrentState } from '../agent/historyWindow';
+import type { ConversationState } from '../agent/model';
+
+interface SharedHistoryReading {
+  value: {
+    agentId: string;
+    conversation: ConversationState;
+    access: EffectiveAccess;
+    deadline: number;
+  };
+  revalidateAt: string;
+}
 
 export class SharedAgentAccessChangedError extends Error {
   constructor() {
@@ -26,6 +38,39 @@ export function sharedAgentAuthority(access: EffectiveAccess) {
     [...access.capabilities].sort(),
     access.shared_by?.subject,
   ]);
+}
+
+export async function revalidateSharedAgentHistory(
+  client: ResourceViewsClient,
+  authorization: Awaited<ReturnType<typeof loadSharedAgentAccess>>['value'],
+  signal: AbortSignal,
+) {
+  assertDeadline(authorization.deadline, signal);
+  const current = await client.resourceAccess.effective('agent', authorization.agentId, { signal });
+  assertDeadline(
+    Math.min(authorization.deadline, accessDeadline(Date.now(), current.revalidate_at)),
+    signal,
+  );
+  if (
+    sharedAgentAuthority(current) !== sharedAgentAuthority(authorization.access) ||
+    !current.capabilities.includes('view_history')
+  )
+    throw new SharedAgentAccessChangedError();
+}
+
+export async function authorizeSharedHistory(
+  client: ResourceViewsClient,
+  authorization: Awaited<ReturnType<typeof loadSharedAgentAccess>>['value'] | undefined,
+  signal: AbortSignal,
+  onAccessChanged: () => void,
+) {
+  try {
+    if (authorization === undefined) throw new SharedAgentAccessChangedError();
+    await revalidateSharedAgentHistory(client, authorization, signal);
+  } catch (error) {
+    if (!signal.aborted) onAccessChanged();
+    throw error;
+  }
 }
 
 /** Access gates interaction; downloading history must not hold up this decision. */
@@ -74,11 +119,36 @@ export async function loadSharedAgentTranscript(
   client: ResourceViewsClient,
   authorization: Awaited<ReturnType<typeof loadSharedAgentAccess>>['value'],
   signal: AbortSignal,
-) {
+): Promise<SharedHistoryReading> {
   const { agentId, access } = authorization;
   assertDeadline(authorization.deadline, signal);
-  const transcript = await web.readAgentTranscript(agentId, { signal });
-  if (transcript.agentId !== agentId) throw new Error('Agent history identity changed.');
+  let conversation;
+  if (web.agentHistory !== undefined) {
+    try {
+      const current = await web.agentHistory.state(agentId, { signal });
+      assertDeadline(authorization.deadline, signal);
+      const page = await web.agentHistory.history(agentId, {
+        throughCursor: current.through_cursor,
+        limit: 200,
+        toolOutput: true,
+        signal,
+      });
+      conversation = withCurrentState(conversationFromWindow(page), current);
+    } catch (error) {
+      if (signal.aborted || !(error instanceof ApiError) || error.status !== 404) throw error;
+      await revalidateSharedAgentHistory(client, authorization, signal);
+      return loadSharedAgentTranscript(
+        { ...web, agentHistory: undefined },
+        client,
+        authorization,
+        signal,
+      );
+    }
+  } else {
+    const transcript = await web.readAgentTranscript(agentId, { signal });
+    if (transcript.agentId !== agentId) throw new Error('Agent history identity changed.');
+    conversation = conversationFromTranscript(transcript);
+  }
   const current = await client.resourceAccess.effective('agent', agentId, { signal });
   const deadline = Math.min(
     authorization.deadline,
@@ -93,7 +163,7 @@ export async function loadSharedAgentTranscript(
   return {
     value: {
       agentId,
-      conversation: conversationFromTranscript(transcript),
+      conversation,
       access: current,
       deadline,
     },
@@ -120,6 +190,12 @@ export async function hydrateSharedAgent(
   throughSequence?: number,
 ) {
   const { agentId, access, deadline } = snapshot;
+  if (web.agentHistory !== undefined && snapshot.conversation.historyStart !== undefined) {
+    const fresh = await loadSharedAgentTranscript(web, client, snapshot, signal);
+    if (throughSequence !== undefined && fresh.value.conversation.cursor < throughSequence)
+      throw new Error('Agent history is behind its observed live head.');
+    return fresh.value.conversation;
+  }
   let conversation = conversationFromTranscript({ agentId, turns: [], throughSeq: 0 });
   let cursor: number | undefined = 0;
   do {
@@ -129,6 +205,8 @@ export async function hydrateSharedAgent(
     conversation = page.items
       .filter((event) => throughSequence === undefined || event.seq <= throughSequence)
       .reduce(foldAgentEvent, conversation);
+    if (conversation.cursor > 10_128)
+      throw new Error('This history requires a server with bounded history reads.');
     if (page.next !== undefined && page.next <= (cursor ?? 0))
       throw new Error('Agent history pagination did not advance.');
     cursor =

@@ -12,8 +12,10 @@ import {
   loadSharedAgentTranscript,
   sharedAgentAuthority,
   SharedAgentAccessChangedError,
+  authorizeSharedHistory,
 } from './loadSharedAgent';
 import { MessageStream } from '../agent/MessageStream';
+import { HistoryNavigation } from '../agent/HistoryNavigation';
 import { Composer } from '../agent/Composer';
 import { conversationFromTranscript, type ConversationState } from '../agent/conversation';
 import { HydrationEvents } from '../agent/mergeHydration';
@@ -399,6 +401,19 @@ export function SharedAgent({
         {error === undefined ? null : <Alert tone="error">{error}</Alert>}
       </div>
       <div className="agent-surface__conversation">
+        {conversation === undefined ? null : (
+          <HistoryNavigation
+            client={web.agentHistory}
+            agentId={agentId}
+            scope={basis}
+            conversation={conversation}
+            disabled={ready === undefined}
+            authorize={(signal) => authorizeSharedHistory(client, ready, signal, onAccessChanged)}
+            approvalReadOnly={!can('resolve_approval')}
+            approvalBusy={busy}
+            onApproval={approve}
+          />
+        )}
         {conversation === undefined ? null : (
           <MessageStream
             onReplay={web?.operationReplay ? computerObservation?.selectReplay : undefined}

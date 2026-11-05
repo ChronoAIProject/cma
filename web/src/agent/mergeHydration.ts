@@ -1,6 +1,7 @@
 import type { AgentLiveEvent } from '../api/types';
 import { foldLiveEvent } from './conversation';
 import type { ConversationState } from './model';
+import { boundConversation, DISPLAY_BYTES, DISPLAY_ROWS } from './retention';
 
 interface BufferedEvent {
   readonly event: AgentLiveEvent;
@@ -63,10 +64,12 @@ export class HydrationEvents {
   private snapshot?: ConversationState;
   private events: BufferedEvent[] = [];
   private streamCursor = 0;
+  private checkpoint?: ConversationState;
 
   reset(snapshot?: ConversationState) {
     this.snapshot = snapshot;
     this.events = [];
+    this.checkpoint = undefined;
     this.streamCursor = snapshot?.cursor ?? 0;
   }
 
@@ -77,6 +80,7 @@ export class HydrationEvents {
   /** Stop retaining history overlap without losing its stale-frame boundary. */
   discardBuffered() {
     this.events = [];
+    this.checkpoint = undefined;
   }
 
   apply(state: ConversationState, event: AgentLiveEvent, agent: string, buffering: boolean) {
@@ -103,10 +107,20 @@ export class HydrationEvents {
         };
       else this.events.push(entry);
     }
-    return foldLiveEvent(state, event, agent);
+    const next = foldLiveEvent(state, event, agent);
+    if (
+      buffering &&
+      (this.events.length > DISPLAY_ROWS || JSON.stringify(this.events).length * 2 > DISPLAY_BYTES)
+    ) {
+      this.checkpoint = boundConversation({ ...next, displayLimited: true });
+      this.events = [];
+    }
+    return next;
   }
 
   merge(snapshot: ConversationState, agent: string, complete: boolean) {
+    if (this.checkpoint !== undefined && this.checkpoint.cursor >= snapshot.cursor)
+      snapshot = this.checkpoint;
     this.snapshot = snapshot;
     let conversation = snapshot;
     this.events = this.events.filter((entry) => {
@@ -114,7 +128,10 @@ export class HydrationEvents {
       conversation = foldLiveEvent(conversation, entry.event, agent);
       return true;
     });
-    if (complete) this.events = [];
-    return conversation;
+    if (complete) {
+      this.events = [];
+      this.checkpoint = undefined;
+    }
+    return boundConversation(conversation);
   }
 }

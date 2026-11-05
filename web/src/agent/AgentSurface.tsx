@@ -46,6 +46,7 @@ import { conversationMedia } from './mediaSources';
 import { AgentHeaderProgress } from './AgentHeaderProgress';
 import { messageSubmission } from './messageSubmission';
 import type { AgentComputerObservation } from './environment/observation';
+import { HistoryNavigation } from './HistoryNavigation';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -326,6 +327,17 @@ export function AgentSurface({
       </div>
 
       <div className="agent-surface__conversation">
+        <HistoryNavigation
+          client={lifecycleClient?.agentHistory}
+          agentId={agentId}
+          scope={viewerId}
+          conversation={conversation}
+          disabled={accessUncertain || historyIncomplete}
+          authorize={(signal) => state.v2?.authorize(signal) ?? Promise.resolve()}
+          approvalReadOnly={readOnly}
+          approvalBusy={approvalBusy}
+          onApproval={(id, decision) => void controller.approve(id, decision)}
+        />
         {status === 'starting' ||
         detail.failure !== undefined ||
         preparation.some((step) => step.status !== 'Done') ? (

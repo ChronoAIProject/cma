@@ -76,6 +76,12 @@ export interface RecoveryNotice {
 }
 
 export interface ConversationState {
+  /** Exclusive lower bound of displayed source history, never a replay acknowledgement. */
+  readonly historyStart?: number;
+  readonly incompleteRuns?: readonly string[];
+  readonly historyPreviousCursor?: string;
+  readonly displayLimited?: boolean;
+  readonly approvalsTruncated?: boolean;
   readonly turnOutcomes?: Readonly<Record<string, 'completed' | 'failed' | 'interrupted'>>;
   readonly agentCursor?: string;
   readonly agentIncarnation?: string;

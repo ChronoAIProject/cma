@@ -10,6 +10,8 @@ import { sessionCommands } from './slashCommands';
 import { number, object, text, upsert } from './conversationValues';
 import { liveReasoning } from './liveReasoning';
 import { startTurn, finishTurn } from './turnTiming';
+import { boundConversation } from './retention';
+import { hasRecordedGap, recordedGapRuns } from './completeness';
 import type { ApprovalRequest, ConversationState, RecoveryNotice } from './model';
 export type {
   ApprovalRequest,
@@ -17,27 +19,22 @@ export type {
   ConversationState,
   RecoveryNotice,
 } from './model';
-
 function recover(state: ConversationState, notice: RecoveryNotice): ConversationState {
   return { ...state, recovery: upsert(state.recovery, notice) };
 }
 
-function hasRecordedGap(state: ConversationState, runId: string | undefined): boolean {
-  return state.recovery.some(
-    (notice) =>
-      notice.runId === runId &&
-      (notice.id.startsWith('gap:') || notice.id.startsWith('history-gap:')),
-  );
-}
-
 export function foldAgentEvent(state: ConversationState, event: AgentEvent): ConversationState {
-  return orderEntries(state, foldDurableEvent(state, event), event.seq);
+  return boundConversation(orderEntries(state, foldDurableEvent(state, event), event.seq));
 }
 
 function foldDurableEvent(state: ConversationState, event: AgentEvent): ConversationState {
   if (event.seq <= state.cursor) return state;
   const kind = event.kind;
-  const next = { ...state, cursor: event.seq };
+  const next = {
+    ...state,
+    cursor: event.seq,
+    incompleteRuns: recordedGapRuns(state, kind.type),
+  };
   switch (kind.type) {
     case 'available_commands_set':
       return { ...next, availableCommands: sessionCommands(kind.commands) };
@@ -94,16 +91,28 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     case 'tool_call_updated': {
       const id = text(kind.call_id);
       const current = next.toolCalls.find((tool) => tool.id === id);
-      if (id === undefined || current === undefined) return next;
+      if (id === undefined) return next;
+      const retained =
+        current ??
+        (state.historyStart === undefined
+          ? undefined
+          : {
+              id,
+              runId: next.activeRunId,
+              title: 'Continued tool activity',
+              status: 'running',
+              sequence: event.seq,
+            });
+      if (retained === undefined) return next;
       const output = object(kind.output);
       return updateTool(next, {
-        ...current,
-        title: text(kind.title) ?? current.title,
-        status: text(kind.status) ?? current.status,
+        ...retained,
+        title: text(kind.title) ?? retained.title,
+        status: text(kind.status) ?? retained.status,
         output:
           typeof output?.text === 'string' && typeof output.truncated === 'boolean'
             ? { text: output.text, truncated: output.truncated }
-            : current.output,
+            : current?.output,
       });
     }
     case 'approval_requested': {
@@ -411,7 +420,9 @@ export function foldLiveEvent(
   event: AgentLiveEvent,
   threadId: string,
 ): ConversationState {
-  return orderEntries(state, foldLive(state, event, threadId), number(event.cursor));
+  return boundConversation(
+    orderEntries(state, foldLive(state, event, threadId), number(event.cursor)),
+  );
 }
 
 function foldLive(
