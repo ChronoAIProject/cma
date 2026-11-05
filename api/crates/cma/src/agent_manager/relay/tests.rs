@@ -60,8 +60,8 @@ async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
         let router = relay.routes(
             Router::new()
                 .route(
-                    "/api/v1/agents/{agent}/environment",
-                    get(|headers: HeaderMap| async move {
+                    "/api/v1/agents/{agent}/{*operation}",
+                    axum::routing::any(|headers: HeaderMap, body: axum::body::Bytes| async move {
                         if headers
                             .get("authorization")
                             .and_then(|value| value.to_str().ok())
@@ -71,7 +71,7 @@ async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
                         }
                         let owner = layer2_core::agent_ownership::execution_owner().unwrap();
                         axum::Json(
-                            serde_json::json!({"instance": owner.instance_id, "epoch": owner.epoch,
+                            serde_json::json!({"instance": owner.instance_id, "epoch": owner.epoch, "bytes": body.len(),
                 "idempotency": headers.get("idempotency-key").and_then(|value| value.to_str().ok()),
                 "request": headers.get("x-request-id").and_then(|value| value.to_str().ok()) }),
                         )
@@ -87,7 +87,8 @@ async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
                                 .chain(futures_util::stream::pending()),
                         )
                     }),
-                ),
+                )
+                .layer(axum::extract::DefaultBodyLimit::max(MAX_BUFFERED_BODY_BYTES)),
         );
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
@@ -158,6 +159,42 @@ async fn two_and_three_instances_route_to_exact_owner_and_preserve_authorization
                 client().get(&url).send().await.unwrap().status(),
                 StatusCode::UNAUTHORIZED
             );
+        }
+        let peer = &instances[(owner + 1) % count];
+        for (method, path) in [
+            (Method::POST, "files"),
+            (Method::DELETE, "files"),
+            (Method::POST, "attachments"),
+            (Method::GET, "browser"),
+            (Method::PUT, "browser"),
+            (Method::DELETE, "browser"),
+            (Method::GET, "browser/control"),
+            (Method::POST, "browser/control"),
+            (Method::GET, "models"),
+            (Method::POST, "skills"),
+            (Method::POST, "recover-worktree"),
+        ] {
+            // Existing file/attachment contracts permit bodies above the usual
+            // JSON limit. The relay must preserve those bounds and exact bytes.
+            let size = if method == Method::POST && matches!(path, "files" | "attachments") {
+                3 * 1024 * 1024
+            } else {
+                0
+            };
+            let response = client()
+                .request(
+                    method,
+                    format!("{}/api/v1/agents/{id}/{path}", peer.address),
+                )
+                .header("authorization", "Bearer synthetic-authorized")
+                .body(vec![b'x'; size])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let body: serde_json::Value = response.json().await.unwrap();
+            assert_eq!(body["instance"], instances[owner].coordinator.instance_id);
+            assert_eq!(body["bytes"], size);
         }
         instances[owner].coordinator.fail().await;
         let other = (owner + 1) % count;
