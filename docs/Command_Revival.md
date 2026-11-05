@@ -23,11 +23,15 @@ The historical production refusal cannot be reconstructed from those discarded
 results; this code defect is covered by a supplied-credential regression.
 
 Preparation now returns typed outcomes. Missing credential setup or required
-connections immediately fail the unclaimed command with
-`credential_setup_required` or `connections_required`. Restore the prerequisite
-and submit a new command with a new idempotency key. The same typed refusals
-apply if a prerequisite fails at the final dispatch check after revival. Revoked authority and absent
-Agents retain their existing terminal codes. Temporary dependency failures,
+connections immediately fail the unclaimed command with the legacy durable and
+command-status code `execution_failed` (response error code
+`agent_command_execution_failed`). Execution cannot proceed until a prerequisite
+is restored; this does not imply revoked authority, a missing Agent or a
+transient runtime outage. Restore the prerequisite and submit a new command with
+a new idempotency key. The same mapping applies at the final dispatch check after
+revival. Internal `CredentialSetupRequired` and `ConnectionsRequired` distinctions
+remain available in bounded, content-free `command_refusal` diagnostics. Revoked
+authority and absent Agents retain their existing terminal codes. Temporary dependency failures,
 authority revalidation, scheduling contention and preparation timeouts retry
 under the original queue deadline. Already scheduled lifecycle work remains
 durable across retries and cancellation. Ordinary runtime-unavailable deadlines
@@ -45,12 +49,21 @@ and a scheduling error. These distinguish the previously invisible production
 refusal without retaining user content.
 
 After deployment, verify that a channel message to a paused Agent either
-schedules revival and dispatches once, or promptly returns its typed refusal.
+schedules revival and dispatches once, or promptly returns the compatible terminal
+refusal.
 Investigate any `queue_timeout` using the preceding command-ID diagnostics;
 confirm whether authority, prerequisites, lifecycle contention or runtime
 availability prevented progress. Production reproduction requires an authorized
 owner action. This change performs no production mutation.
 
-The new terminal codes are additive API values and are included in both SDKs.
-An older API binary or SDK with an exhaustive enum may not decode a newly stored
-failure; rollback must retain a reader that recognizes these values.
+New refusal writes and default v2 projections use only the legacy failure values,
+so B1 API readers and retained B1 browser tabs/SDKs can decode them. Readers retain
+support for `credential_setup_required` and `connections_required`; default wire
+projections map even retained precise codes to the legacy value without changing
+the stored record. This change performs no migration or record rewrite. If a
+precise code was already persisted by an earlier build, B1 still cannot read that
+record: rollback must retain a reader that recognizes it.
+
+Production verification: no new failure-code strings in `agent_commands` records
+or v2 command responses; old/new readers decode all newly written refusals.
+Correlate each prerequisite refusal with its precise diagnostic cause.
