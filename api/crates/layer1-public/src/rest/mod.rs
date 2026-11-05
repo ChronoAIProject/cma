@@ -154,6 +154,7 @@ mod launch_events;
 mod launch_quota;
 mod launches;
 mod public_names;
+mod sandbox_always_on;
 mod sandbox_colors;
 mod sandbox_commands;
 #[cfg(test)]
