@@ -93,7 +93,10 @@ impl SandboxLifecycleComposition {
                 ),
             )),
         ));
-        let updates = DurableAgentUpdateRecorder::new(Arc::clone(&dependencies.store));
+        let updates = DurableAgentUpdateRecorder::with_writer_policy(
+            dependencies.store.clone(),
+            dependencies.store.writer_policy.clone(),
+        );
         let registry = Arc::clone(&dependencies.registry);
         let suggestions = super::suggestion_worker::SuggestionWorker::new(
             dependencies.store.clone(),

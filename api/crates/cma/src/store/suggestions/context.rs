@@ -85,6 +85,12 @@ pub(in crate::store) async fn enqueue(
     logs: &[AgentLogEntry],
     session: &mut ClientSession,
 ) -> Result<(), TransactionLogError> {
+    if !store
+        .writer_policy
+        .allows_writer(&agent.owner, TaskExperienceWriter::Suggestions)
+    {
+        return Ok(());
+    }
     let Some(completed) = logs
         .iter()
         .find(|entry| matches!(entry.kind, AgentLogKind::TurnCompleted { .. }))
