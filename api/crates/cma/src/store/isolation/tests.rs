@@ -118,9 +118,7 @@ async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
             .find_one(doc! {})
             .await
             .unwrap_err();
-        assert!(
-            matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code==13)
-        );
+        assert!(matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code==13));
     }
     // Existing isolated grants remain sufficient while the switch is off.
     // Operators can install the additive grants before enabling ownership.
@@ -155,9 +153,8 @@ fn rejects_foreign_and_database_wide_privileges() {
         "",
     ] {
         let mut changed = grants.clone();
-        changed.push(
-            doc! {"resource":{"db":"cma","collection":collection},"actions":["find"]}.into(),
-        );
+        changed
+            .push(doc! {"resource":{"db":"cma","collection":collection},"actions":["find"]}.into());
         assert!(validate(&doc!{"authInfo":{"authenticatedUsers":[{"user":"agent-manager"}],"authenticatedUserPrivileges":changed}},"cma").is_err());
     }
 }
@@ -217,8 +214,7 @@ fn index_removal_is_confined_to_the_binding_migration() {
     ] {
         let mut changed = grants.clone();
         changed.push(
-            doc! {"resource":{"db":"cma","collection":collection},"actions":["dropIndex"]}
-                .into(),
+            doc! {"resource":{"db":"cma","collection":collection},"actions":["dropIndex"]}.into(),
         );
         let status = doc! {"authInfo":{"authenticatedUsers":[{"user":"agent-manager"}],"authenticatedUserPrivileges":changed}};
         assert!(validate(&status, "cma").is_err());
