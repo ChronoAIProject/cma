@@ -11,8 +11,8 @@ use kube::Client;
 
 #[derive(Clone)]
 pub struct NativeHomeVolumes {
-    pools: AgentSandboxPools,
-    legacy: PersistentHomeVolumes,
+    pub(super) pools: AgentSandboxPools,
+    pub(super) legacy: PersistentHomeVolumes,
     scope: HomeVolumeScope,
 }
 impl NativeHomeVolumes {
@@ -45,7 +45,7 @@ impl NativeHomeVolumes {
             .map_err(api_error)?;
         Ok(())
     }
-    fn native(&self, request: &HomeVolumeRequest) -> Result<bool> {
+    pub(super) fn native(&self, request: &HomeVolumeRequest) -> Result<bool> {
         request.validate()?;
         if request.policy.is_native_vct() {
             if request.scope.as_ref() != Some(&self.scope) {
@@ -123,16 +123,15 @@ impl HomeVolumeStore for NativeHomeVolumes {
         scope == &self.scope || self.legacy.accepts_scope(scope)
     }
     async fn inventory(&self) -> Result<Vec<HomeVolumeAttachment>> {
-        let mut values = self.legacy.inventory().await?;
-        for claim in self.pools.inventory_claims().await? {
-            if claim.request.home.policy.is_native_vct() {
-                self.native(&claim.request.home)?;
-                if let Some(home) = self.pools.recover_native_vct(&claim).await? {
-                    values.push(home);
-                }
+        let mut cursor = super::home_inventory::Cursor::new(self.clone());
+        loop {
+            if let Some(items) = crate::InventoryCursor::advance(&mut cursor).await? {
+                return Ok(items);
             }
         }
-        Ok(values)
+    }
+    fn inventory_cursor(&self) -> Option<Box<dyn crate::InventoryCursor<HomeVolumeAttachment>>> {
+        Some(Box::new(super::home_inventory::Cursor::new(self.clone())))
     }
     async fn prepare(&self, request: &HomeVolumeRequest) -> Result<HomeVolumeReceipt> {
         if !self.native(request)? {

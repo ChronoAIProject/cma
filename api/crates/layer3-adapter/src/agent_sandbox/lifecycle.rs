@@ -99,7 +99,14 @@ impl AgentSandboxClient {
         }
         // API defaults may add fields. Require all submitted values recursively;
         // changes to the pinned image/resources/mounts/identity are never adopted.
-        if !super::pool::contains_spec(&actual.data["spec"], &desired.data["spec"]) {
+        let mut admitted = desired.data["spec"].clone();
+        // Funding expiry changes independently of the immutable runtime spec.
+        // Creation/resume and the backend deadline hook verify it separately.
+        if let Some(object) = admitted.as_object_mut() {
+            object.remove("shutdownTime");
+            object.remove("shutdownPolicy");
+        }
+        if !super::pool::contains_spec(&actual.data["spec"], &admitted) {
             return Err(rejected(
                 "Sandbox spec differs from its admitted configuration",
             ));
