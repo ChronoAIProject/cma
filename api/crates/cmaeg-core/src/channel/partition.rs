@@ -25,7 +25,7 @@ impl PartitionRule {
     /// The key that applies to an activity from `source`.
     pub fn key_for(&self, source: &SourceKind) -> PartitionKey {
         match source {
-            SourceKind::Custom => self.custom_key.unwrap_or(self.key),
+            SourceKind::Custom | SourceKind::Github { .. } => self.custom_key.unwrap_or(self.key),
             _ => self.key,
         }
     }
@@ -114,7 +114,9 @@ impl PartitionRule {
                         "native WhatsApp private chats do not have threads",
                     ));
                 }
-                Source::Custom { .. } if !is_custom_key(self.key_for(&SourceKind::Custom)) => {
+                Source::Custom { .. } | Source::Github { .. }
+                    if !is_custom_key(self.key_for(&SourceKind::Custom)) =>
+                {
                     return Err(ValidationError::new("/partition/key", CUSTOM_KEYS));
                 }
                 Source::NativeLark(_)
