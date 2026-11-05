@@ -56,16 +56,17 @@ async fn nyxid_cohort_and_fleet_refusals_allow_create_and_resume_without_any_hol
 
 #[tokio::test]
 async fn unknown_or_malformed_admission_refusals_cannot_enable_free_compute() {
+    let mut missing_number = exclusion("CMA paid admission is disabled");
+    missing_number.as_object_mut().unwrap().remove("error_code");
+    let mut wrong_number = exclusion("CMA paid admission is disabled");
+    wrong_number["error_code"] = json!(11301);
+    let mut wrong_error = exclusion("CMA paid admission is disabled");
+    wrong_error["error"] = json!("billing_not_configured");
     for (status, body) in [
         (402, exclusion("Billing provider is unavailable")),
-        (
-            402,
-            json!({"error":"billing_provider_unavailable","message":"CMA paid admission is disabled"}),
-        ),
-        (
-            402,
-            json!({"error":"billing_provider_unavailable","error_code":11301,"message":"CMA paid admission is disabled"}),
-        ),
+        (402, missing_number),
+        (402, wrong_number),
+        (402, wrong_error),
         (403, exclusion("CMA paid admission is disabled")),
         (503, exclusion("CMA paid admission is disabled")),
         (
