@@ -2710,7 +2710,9 @@ high-contrast action beside the picture, with the inverse light fill in dark.
 Browser takeover still requires the existing confirmed lease and permission.
 Native desktop input uses the authorized desktop connection: Take control enables
 input explicitly, including during a turn, and Return to Agent releases held keys
-and pointer buttons. Reconnection never restores input automatically.
+and pointer buttons. A newly starting turn releases a prior desktop input grant;
+taking control during an already active turn remains explicit. Reconnection
+never restores input automatically.
 
 Screen operations form their own collapsed group, for example “Checked it in
 Browser · 3 steps 19s”. Each noninteractive row has an action icon, description
@@ -5993,3 +5995,5 @@ saving. Use existing form spacing, labels and validation; introduce no new token
 | 2026-11-06 | Keep negative feedback editable through its selected icon, with vote removal inside the reasons dialog and one named Close action; preserve the compact three-icon answer footer. |
 
 | 2026-11-06 | Reserve trailing Terminal space for the final-command jump and document explicit native desktop input and return while preserving browser lease authority and reconnect behavior. |
+
+| 2026-11-06 | Preserve desktop key and pointer release when a new Agent turn starts; keep explicit Take control available during an existing turn. |
