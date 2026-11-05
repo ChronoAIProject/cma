@@ -589,7 +589,7 @@ mod checkpoint_capture_tests;
 mod execution_tests;
 mod launch_command_tests;
 mod profile_transaction_tests;
-mod sandbox_lifecycle_tests;
+pub(in crate::store) mod sandbox_lifecycle_tests;
 mod sandbox_usage_tests;
 mod service_access_tests;
 mod skill_material_tests;

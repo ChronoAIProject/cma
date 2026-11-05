@@ -104,6 +104,8 @@ pub struct MongoSandboxStore {
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
     pub(super) agent_writes: std::sync::Arc<super::agent_write_coordination::AgentWrites>,
+    pub(crate) agent_ownership: Option<std::sync::Arc<super::agent_ownership::MongoAgentOwnership>>,
+    pub(super) agent_manager_instance: Option<String>,
     pub(super) agent_access_tools: Collection<Document>,
     pub(super) agent_access_requests: Collection<Document>,
     pub(super) agent_reuse_bindings: Collection<Document>,
@@ -184,6 +186,8 @@ impl MongoSandboxStore {
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
             agent_writes: Default::default(),
+            agent_ownership: None,
+            agent_manager_instance: None,
             agent_access_tools: majority_collection(
                 &database,
                 super::agent_access_tools::COLLECTION,

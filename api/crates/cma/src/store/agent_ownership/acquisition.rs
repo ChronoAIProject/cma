@@ -139,12 +139,15 @@ impl MongoAgentOwnership {
                 Ok(None)
             };
         }
-        if candidates(id, membership, None)?
+        if candidates(id, membership, previous)?
             .first()
             .is_none_or(|member| member.instance_id != instance)
         {
             return Ok(None);
         }
+        // The expired row still occupies one slot on its previous member. A
+        // same-member reclaim replaces it atomically, even at the load limit.
+        let reclaim = previous == Some(instance);
         let reserved = self
             .members
             .update_one(
@@ -152,10 +155,10 @@ impl MongoAgentOwnership {
                     "_id": instance, "protocol": i64::from(PROTOCOL_VERSION), "draining": false,
                     "$expr": {"$and": [
                         {"$gt": ["$expires_at", "$$NOW"]},
-                        {"$lt": ["$owned_agents", "$max_owned_agents"]},
+                        {if reclaim { "$lte" } else { "$lt" }: ["$owned_agents", "$max_owned_agents"]},
                     ]},
                 },
-                doc! {"$inc": {"owned_agents": 1_i64}},
+                doc! {"$inc": {"owned_agents": if reclaim { 0_i64 } else { 1_i64 }, "renewal_revision": 1_i64}},
             )
             .session(&mut *session)
             .await?;
@@ -182,7 +185,7 @@ impl MongoAgentOwnership {
             .session(&mut *session)
             .await?
             .ok_or(OwnershipError::Stale)?;
-        if let Some(previous) = previous {
+        if let Some(previous) = previous.filter(|_| !reclaim) {
             self.decrement(previous, session).await?;
         }
         Ok(Some(owner_from(&acquired)?))

@@ -56,6 +56,10 @@ impl OwnershipCoordinator {
             && Instant::now() < *self.member_deadline.lock().unwrap()
     }
 
+    pub fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::Acquire)
+    }
+
     pub fn failure_signal(&self) -> watch::Receiver<bool> {
         self.failed.subscribe()
     }
@@ -87,9 +91,10 @@ impl OwnershipCoordinator {
                 "acquisition returned another owner's token".into(),
             ));
         }
-        let authority = Authority::new(
+        let authority = Authority::with_store(
             lease.token,
             deadline(started, membership.now_ms, lease.expires_at_ms)?,
+            self.store.clone(),
         );
         if !self.is_ready() {
             authority.revoke();
@@ -97,6 +102,10 @@ impl OwnershipCoordinator {
         }
         owned.insert(id.clone(), authority.clone());
         Ok(Some(authority))
+    }
+
+    pub async fn owned(&self) -> Vec<Arc<Authority>> {
+        self.owned.lock().await.values().cloned().collect()
     }
 
     pub async fn local(&self, id: &AgentId) -> Option<Arc<Authority>> {

@@ -137,6 +137,12 @@ async fn apply(
     claim: &ChildWriterClaim,
     session: &mut ClientSession,
 ) -> Result<bool, ClaimError> {
+    if let ChildWriterClaim::Agent(agent) = claim {
+        store
+            .fence_agent_effect(&agent.id, session)
+            .await
+            .map_err(ClaimError::Domain)?;
+    }
     let (id, sandbox_id, owner, _) = claim.identity();
     let parent = store
         .sandboxes
@@ -200,12 +206,15 @@ async fn apply(
         );
         filter.insert("record.title", record_title_value(agent));
     }
+    let mut fields = claim.fields().map_err(ClaimError::Domain)?;
+    if let ChildWriterClaim::Agent(agent) = claim {
+        store
+            .agent_work_owner_fields(&agent.id, &mut fields)
+            .map_err(ClaimError::Domain)?;
+    }
     let advanced = claim
         .collection(store)
-        .update_one(
-            filter,
-            doc! { "$set": claim.fields().map_err(ClaimError::Domain)? },
-        )
+        .update_one(filter, doc! { "$set": fields })
         .session(session)
         .await
         .map_err(ClaimError::Driver)?;

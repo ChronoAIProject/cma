@@ -16,8 +16,10 @@ use super::sandbox_mongo::{
 };
 
 mod acquisition;
+mod effects;
 mod membership;
 mod records;
+mod work_discovery;
 use records::{member_from, owner_from, token_filter};
 
 pub(super) const MEMBERS: &str = "cma_agent_manager_members";
@@ -184,6 +186,15 @@ impl OwnershipStore for MongoAgentOwnership {
     }
 
     async fn check(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
+        self.members
+            .find_one(doc! {
+                "_id": &token.instance_id, "draining": false,
+                "protocol": i64::from(PROTOCOL_VERSION),
+                "$expr": {"$gt": ["$expires_at", "$$NOW"]},
+            })
+            .await
+            .map_err(unavailable)?
+            .ok_or(OwnershipError::Stale)?;
         self.owners
             .find_one(token_filter(token)?)
             .await

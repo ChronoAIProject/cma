@@ -232,6 +232,10 @@ async fn apply_publication(
         .transpose()
         .map_err(PublishError::Domain)?
         .ok_or(PublishError::Domain(SandboxStoreError::NotFound))?;
+    store
+        .fence_checkpoint_owners(mutation, session)
+        .await
+        .map_err(PublishError::Domain)?;
     agents::validate_and_fence(store, &current, mutation, session).await?;
 
     store

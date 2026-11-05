@@ -1,6 +1,9 @@
 use super::*;
 use layer2_core::agent_ownership::{candidates, DEFAULT_MAX_OWNED_AGENTS};
 
+#[path = "mongo_effect_tests.rs"]
+mod effects;
+
 async fn fixture() -> MongoAgentOwnership {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("use the disposable Mongo integration harness");
@@ -111,6 +114,7 @@ async fn expiry_and_drain_reject_stale_effects_and_allow_takeover() {
     assert_ne!(next, first.token.instance_id);
     assert!(store.acquire(&agent, &next).await.unwrap().is_none());
     assert_eq!(store.renew(&first.token).await, Err(OwnershipError::Stale));
+    assert_eq!(store.check(&first.token).await, Err(OwnershipError::Stale));
     let mut session = store.client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
     assert_eq!(
@@ -163,6 +167,14 @@ async fn capacity_is_bounded_and_expired_members_cannot_resurrect() {
     }
     assert_eq!(owned.len(), 1);
     assert_eq!(store.membership().await.unwrap().members[0].owned_agents, 1);
+    expire(&store, &owned[0].token).await;
+    let reclaimed = store
+        .acquire(&owned[0].token.agent_id, "one")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(reclaimed.token.epoch, owned[0].token.epoch + 1);
+    assert_eq!(store.membership().await.unwrap().members[0].owned_agents, 1);
     store
         .members
         .update_one(
@@ -179,6 +191,10 @@ async fn capacity_is_bounded_and_expired_members_cannot_resurrect() {
     );
     assert_eq!(
         store.renew(&owned[0].token).await,
+        Err(OwnershipError::Stale)
+    );
+    assert_eq!(
+        store.check(&reclaimed.token).await,
         Err(OwnershipError::Stale)
     );
     store.database.drop().await.unwrap();

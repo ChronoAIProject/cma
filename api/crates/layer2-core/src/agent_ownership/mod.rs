@@ -6,9 +6,12 @@
 mod placement;
 pub use placement::candidates;
 mod authority;
-pub use authority::{execution_owner, Authority};
+pub use authority::{execution_authority, execution_owner, Authority};
 mod coordinator;
+mod observations;
+mod transport;
 pub use coordinator::{bounded, OwnershipCoordinator};
+pub use observations::{observe_transport, observed_transport, transport_observation_scope};
 
 use crate::AgentId;
 

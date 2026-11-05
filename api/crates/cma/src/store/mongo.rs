@@ -74,6 +74,7 @@ impl MongoStores {
         .await
     }
 
+    #[cfg(test)]
     pub async fn connect_with_authority(
         uri: &str,
         database: &str,
@@ -83,9 +84,36 @@ impl MongoStores {
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
         authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     ) -> Result<Self, StoreError> {
+        Self::connect_with_pool(
+            uri,
+            database,
+            deployment,
+            auth_encryption_key,
+            activity_retention,
+            runtime,
+            authority,
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn connect_with_pool(
+        uri: &str,
+        database: &str,
+        deployment: &str,
+        auth_encryption_key: &AuthEncryptionKey,
+        activity_retention: Duration,
+        runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
+        authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
+        max_pool_size: Option<u32>,
+    ) -> Result<Self, StoreError> {
         let mut options = ClientOptions::parse(uri)
             .await
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
+        if let Some(size) = max_pool_size {
+            options.max_pool_size = Some(size);
+            options.min_pool_size = Some(0);
+        }
         super::mongo_latency::observe(&mut options);
         let client = Client::with_options(options)
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;

@@ -100,6 +100,10 @@ async fn apply_publication_observed(
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
     session: &mut mongodb::ClientSession,
 ) -> Result<PublicationReceipt, ApplyError> {
+    store
+        .fence_agent_effect(&mutation.agent.id, session)
+        .await
+        .map_err(ApplyError::Domain)?;
     let current_row = store
         .agents
         .find_one(doc! { "_id": mutation.agent.id.as_str() })
