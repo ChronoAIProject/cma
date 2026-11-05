@@ -18,7 +18,7 @@ def validate(ci, publish, dockerfile)
     gate = steps.find { |step| step["name"] == "Verify web bundle identity against image metadata" }
     raise "web image proof missing" unless gate && gate["run"].start_with?("python3 .github/scripts/web-build-identity.py ")
     expected_if = index.zero? ? "matrix.component == 'web'" : "success() && steps.reconcile.outputs.reuse == 'false' && matrix.component == 'web'"
-    raise "web image proof bypassed" unless gate["if"] == expected_if
+    raise "web image proof bypassed" unless gate["if"] == expected_if && !gate.key?("continue-on-error")
     after = index.zero? ? "Export tested native image" : "Publish"
     raise "proof must precede transfer/publication" unless steps.index(gate) < steps.index { |step| step["name"] == after }
   end
