@@ -77,7 +77,10 @@ impl SandboxWorker {
             if let Some(relay) = self.reopen_relay.get() {
                 let relay = relay.upgrade().ok_or(SandboxStoreError::Conflict)?;
                 match relay.reopen_agent(&sandbox, &agent.id).await {
-                    Ok(receipt) => {
+                    Ok(mut receipt) => {
+                        // Lifecycle validation uses the publisher's logical
+                        // timestamp, which can differ from the remote clock.
+                        receipt.completed_at = rfc3339_at(now);
                         receipts.insert(agent.id.clone(), receipt);
                     }
                     Err(error) => {
