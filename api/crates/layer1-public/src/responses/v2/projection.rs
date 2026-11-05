@@ -99,7 +99,11 @@ pub(super) fn project(
         background: false,
         error: command.failure.map(|code| ResponseError {
             code: failure_code(code).into(),
-            message: "The admitted Agent command could not complete.".into(),
+            message: match code {
+                CommandFailureCode::CredentialSetupRequired => "The Sandbox credential must be set up again before the Agent can resume. Ask its owner to restore credentials and submit a new command.",
+                CommandFailureCode::ConnectionsRequired => "The Sandbox owner must reconnect its required services before the Agent can resume. Restore the connections and submit a new command.",
+                _ => "The admitted Agent command could not complete.",
+            }.into(),
         }),
         incomplete_details: (command.status == AgentResponseStatus::Cancelled)
             .then(|| json!({"reason":"interrupted"})),
@@ -234,6 +238,8 @@ fn failure_code(code: CommandFailureCode) -> &'static str {
         CommandFailureCode::QueueTimeout => "agent_command_queue_timeout",
         CommandFailureCode::AuthorityRevoked => "agent_command_authority_revoked",
         CommandFailureCode::AuthorityUnavailable => "agent_command_authority_unavailable",
+        CommandFailureCode::CredentialSetupRequired => "sandbox_credential_setup_required",
+        CommandFailureCode::ConnectionsRequired => "connections_required",
         CommandFailureCode::AgentUnavailable => "agent_unavailable",
         CommandFailureCode::TargetTurnChanged => "target_turn_changed",
         CommandFailureCode::RuntimeUnavailable => "runtime_unavailable",

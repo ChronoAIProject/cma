@@ -59,18 +59,37 @@ impl SandboxService {
         &self,
         authorization: std::sync::Arc<super::agent_io::CommandRevivalAuthorization>,
     ) -> Result<SandboxLifecycleCommandResult, SandboxLifecycleCommandError> {
-        let snapshot = authorization
-            .current_snapshot()
-            .await
-            .map_err(|_| SandboxLifecycleCommandError::Forbidden)?;
+        use super::agent_io::{command_access_error_kind, observe_command_preparation};
+        let command = authorization.command();
+        let snapshot = observe_command_preparation(
+            command,
+            "revival_snapshot",
+            authorization.current_snapshot(),
+            command_access_error_kind,
+        )
+        .await
+        .map_err(command_snapshot_error)?;
         let sandbox = snapshot.lineage.sandbox;
-        self.credentials
-            .check_services(
-                &sandbox.owner,
-                &sandbox
-                    .profile
-                    .content
-                    .connection_services_for_grants(&sandbox.credential.effective_reaches()),
+        // Existing runtime/lifecycle work needs no new credential prerequisite.
+        if matches!(
+            sandbox.status,
+            SandboxStatus::Paused | SandboxStatus::Pausing
+        ) {
+            observe_command_preparation(
+                command,
+                "revival_prerequisites",
+                self.credentials.check_sandbox(&sandbox),
+                |error| match error {
+                    super::SandboxCredentialPrerequisiteError::SetupRequired => {
+                        "credential_setup_required"
+                    }
+                    super::SandboxCredentialPrerequisiteError::ConnectionsRequired { .. } => {
+                        "connections_required"
+                    }
+                    super::SandboxCredentialPrerequisiteError::Unavailable(_) => {
+                        "prerequisite_unavailable"
+                    }
+                },
             )
             .await
             .map_err(|error| match error {
@@ -86,10 +105,44 @@ impl SandboxService {
                     )
                 }
             })?;
-        self.store
-            .schedule_command_revival(authorization)
-            .await
-            .map_err(lifecycle_store_error)
+        }
+        let result = observe_command_preparation(
+            command,
+            "revival_scheduling",
+            self.store.schedule_command_revival(authorization.clone()),
+            |error| match error {
+                SandboxStoreError::Conflict | SandboxStoreError::SequenceConflict => {
+                    "scheduling_conflict"
+                }
+                SandboxStoreError::NotFound => "sandbox_not_found",
+                SandboxStoreError::LifecycleBusy { .. } => "sandbox_lifecycle_busy",
+                SandboxStoreError::Corrupt(_) => "stored_sandbox_corrupt",
+                _ => "scheduling_unavailable",
+            },
+        )
+        .await
+        .map_err(lifecycle_store_error);
+        match &result {
+            Ok(SandboxLifecycleCommandResult::NotEligible(sandbox)) => {
+                tracing::warn!(event = "command_preparation", boundary = "revival_scheduling",
+                    command_id = %command.receipt.envelope.command_id,
+                    agent_id = %command.receipt.envelope.agent_id,
+                    sandbox_id = %sandbox.id, status = ?sandbox.status,
+                    blocker = ?sandbox.revive_eligibility().err(), error_kind = "not_eligible",
+                    "Queued command revival is not eligible");
+            }
+            Ok(SandboxLifecycleCommandResult::Accepted(outcome))
+                if outcome.disposition == super::SandboxLifecycleCommandDisposition::Scheduled =>
+            {
+                tracing::info!(event = "command_preparation", boundary = "revival_scheduling",
+                    command_id = %command.receipt.envelope.command_id,
+                    agent_id = %command.receipt.envelope.agent_id,
+                    sandbox_id = %outcome.sandbox.id,
+                    "Queued command revival durably scheduled");
+            }
+            _ => {}
+        }
+        result
     }
 
     pub async fn pause(
@@ -237,5 +290,26 @@ fn lifecycle_store_error(error: SandboxStoreError) -> SandboxLifecycleCommandErr
         }
         SandboxStoreError::Corrupt(detail) => SandboxLifecycleCommandError::Corrupt(detail),
         other => SandboxLifecycleCommandError::Unavailable(other.to_string()),
+    }
+}
+
+fn command_snapshot_error(
+    error: crate::resource_access::ResourceAccessError,
+) -> SandboxLifecycleCommandError {
+    use crate::resource_access::{AccessError, ResourceAccessError, ResourceAccessStoreError};
+    match error {
+        ResourceAccessError::Access(AccessError::NotFound)
+        | ResourceAccessError::Store(ResourceAccessStoreError::NotFound) => {
+            SandboxLifecycleCommandError::NotFound
+        }
+        ResourceAccessError::Access(
+            AccessError::Forbidden | AccessError::UnsafeInteractiveShare,
+        ) => SandboxLifecycleCommandError::Forbidden,
+        ResourceAccessError::Store(ResourceAccessStoreError::Corrupt) => {
+            SandboxLifecycleCommandError::Corrupt("revival authority is inconsistent".into())
+        }
+        _ => SandboxLifecycleCommandError::Unavailable(
+            "revival authority must be checked again".into(),
+        ),
     }
 }
