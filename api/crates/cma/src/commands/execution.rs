@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use layer2_core::now_rfc3339;
 use layer2_core::resource_access::{
     AccessError, ResourceAccessError, ResourceAccessService, ResourceAccessStoreError,
 };
@@ -19,16 +18,20 @@ pub(crate) struct ResourceCommandExecution {
 }
 
 impl ResourceCommandExecution {
-    async fn checked(
+    pub(super) async fn checked(
         &self,
         command: &AdmittedAgentCommand,
     ) -> Result<CommandExecutionAuthorization, CommandReadiness> {
         command.validate().map_err(|_| CommandReadiness::Retry)?;
-        let mut authority = self
-            .authority
-            .authorize_resource_command(&self.access, &command.receipt.envelope)
-            .await
-            .map_err(authority_readiness)?;
+        let mut authority = observe_command_preparation(
+            command,
+            "command_authorization",
+            self.authority
+                .authorize_resource_command(&self.access, &command.receipt.envelope),
+            authorization_error_kind,
+        )
+        .await
+        .map_err(authority_readiness)?;
         if command.receipt.envelope.continuation.is_some() {
             let source = self.source_guard.clone().ok_or(CommandReadiness::Reject(
                 CommandFailureCode::AuthorityRevoked,
@@ -60,6 +63,18 @@ impl ResourceCommandExecution {
             return Err(CommandReadiness::Reject(
                 CommandFailureCode::AgentUnavailable,
             ));
+        }
+        if agent.status != layer2_core::sandbox::AgentStatus::Ready
+            && matches!(
+                command.receipt.envelope.command,
+                AgentCommand::Message { .. }
+            )
+        {
+            tracing::warn!(event = "command_readiness", boundary = "agent_readiness",
+                command_id = %command.receipt.envelope.command_id,
+                agent_id = %agent.id, sandbox_id = %lineage.sandbox.id,
+                agent_status = ?agent.status, sandbox_status = ?lineage.sandbox.status,
+                error_kind = "agent_not_ready", "Queued command is waiting for its Agent");
         }
         if !matches!(
             command.receipt.envelope.command,
@@ -98,46 +113,14 @@ impl AgentCommandExecution for ResourceCommandExecution {
         }
     }
 
-    async fn prepare_queued(&self, command: &AdmittedAgentCommand) {
-        if matches!(command.receipt.envelope.actor, AgentActor::Channel { .. }) {
-            return;
-        }
-        if super::trigger_execution::is_trigger(command) {
-            return;
-        }
-        if !matches!(
-            command.receipt.envelope.command,
-            AgentCommand::Message { .. }
-        ) {
-            return;
-        }
-        let Ok(_) = self.checked(command).await else {
-            return;
-        };
-        // Provider and policy IO can overlap another replica's claim. Recheck
-        // the authoritative record immediately before entering lifecycle work.
-        let Ok(Some(current)) = self
-            .store
-            .get_command(&command.receipt.envelope.command_id)
-            .await
-        else {
-            return;
-        };
-        if current != *command
-            || current.validate().is_err()
-            || !current.awaiting_claim(&now_rfc3339())
-            || current.queue_expired(&now_rfc3339())
-        {
-            return;
-        }
-        let Ok(authority) = self
-            .authority
-            .authorize_command_revival(&self.access, &current)
-            .await
-        else {
-            return;
-        };
-        let _ = self.context.prepare_command_input(authority).await;
+    async fn prepare_queued(
+        &self,
+        command: &AdmittedAgentCommand,
+    ) -> Result<(), CommandPreparationError> {
+        observe_command_preparation(command, "prepare_queued", self.prepare(command), |_| {
+            "preparation_failed"
+        })
+        .await
     }
 
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {
@@ -175,10 +158,13 @@ impl AgentCommandExecution for ResourceCommandExecution {
         {
             return CommandAttempt::Retry;
         }
-        match self
-            .operations
-            .execute_resource_claim(&authority, &current)
-            .await
+        match observe_command_preparation(
+            &current,
+            "command_execution",
+            self.operations.execute_resource_claim(&authority, &current),
+            AgentOperationError::code,
+        )
+        .await
         {
             Ok(_) => CommandAttempt::Finished,
             Err(AgentOperationError::Conflict) => {
@@ -198,6 +184,14 @@ pub(super) fn classify(error: AgentOperationError) -> CommandAttempt {
     // The driver rereads binding state before acting on any classification.
     // Errors after an unknown commit therefore only lead to reconciliation.
     match error {
+        Connection(layer2_core::sandbox::SandboxCredentialPrerequisiteError::SetupRequired) => {
+            CommandAttempt::Reject(Failure::CredentialSetupRequired)
+        }
+        Connection(
+            layer2_core::sandbox::SandboxCredentialPrerequisiteError::ConnectionsRequired {
+                ..
+            },
+        ) => CommandAttempt::Reject(Failure::ConnectionsRequired),
         Forbidden => CommandAttempt::Reject(Failure::AuthorityRevoked),
         NotFound => CommandAttempt::Reject(Failure::AgentUnavailable),
         StatusConflict { status } if !status.is_live() => {
@@ -214,11 +208,14 @@ pub(super) fn classify(error: AgentOperationError) -> CommandAttempt {
     }
 }
 
-fn authority_readiness(error: ResourceCommandAuthorizationError) -> CommandReadiness {
+pub(super) fn authority_readiness(error: ResourceCommandAuthorizationError) -> CommandReadiness {
     match error {
         ResourceCommandAuthorizationError::Resource(ResourceAccessError::Access(
             AccessError::NotFound,
         )) => CommandReadiness::Reject(CommandFailureCode::AgentUnavailable),
+        ResourceCommandAuthorizationError::Resource(ResourceAccessError::Access(
+            AccessError::RevalidationRequired,
+        )) => CommandReadiness::Retry,
         ResourceCommandAuthorizationError::Custody(CommandAuthorizationError::Revoked)
         | ResourceCommandAuthorizationError::Resource(ResourceAccessError::Access(_)) => {
             CommandReadiness::Reject(CommandFailureCode::AuthorityRevoked)
@@ -230,5 +227,17 @@ fn authority_readiness(error: ResourceCommandAuthorizationError) -> CommandReadi
             ResourceAccessStoreError::NotFound,
         )) => CommandReadiness::Reject(CommandFailureCode::AgentUnavailable),
         _ => CommandReadiness::Retry,
+    }
+}
+
+pub(super) fn authorization_error_kind(error: &ResourceCommandAuthorizationError) -> &'static str {
+    match error {
+        ResourceCommandAuthorizationError::Custody(CommandAuthorizationError::Revoked) => {
+            "custody_revoked"
+        }
+        ResourceCommandAuthorizationError::Custody(CommandAuthorizationError::Unavailable) => {
+            "custody_unavailable"
+        }
+        ResourceCommandAuthorizationError::Resource(error) => command_access_error_kind(error),
     }
 }

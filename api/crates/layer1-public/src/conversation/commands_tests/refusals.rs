@@ -99,6 +99,16 @@ async fn committed_prebinding_failures_keep_typed_http_errors_and_receipt_header
             "agent_command_authority_unavailable",
         ),
         (
+            CommandFailureCode::CredentialSetupRequired,
+            StatusCode::CONFLICT,
+            "sandbox_credential_setup_required",
+        ),
+        (
+            CommandFailureCode::ConnectionsRequired,
+            StatusCode::CONFLICT,
+            "connections_required",
+        ),
+        (
             CommandFailureCode::AgentUnavailable,
             StatusCode::CONFLICT,
             "agent_unavailable",
