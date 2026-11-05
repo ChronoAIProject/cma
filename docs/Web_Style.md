@@ -5216,6 +5216,140 @@ radius. Existing control availability and pending-request guards are unchanged.
 
 | 2026-11-04 | Clarify supported running follow-ups and label Stop without changing queue or interruption semantics. |
 
+## 30. Agent Workspace v3 (2026-11-05)
+
+The Agent Manager conversation follows the running and stopped Workspace v3
+references. This section supersedes the earlier task-row, toolbar, tool activity,
+composer and computer-panel presentation rules. Retained conversations, public
+authorization, exact request recovery and unsaved drafts keep their existing
+contracts. These changes reduce repeated status and put the conversation beside
+the environment the Agent actually operates.
+
+The following alias tokens are defined on `body`, with dark overrides on
+`body[data-ds-dark-theme]`. Components read the aliases, never literal colors.
+The `workspace` role scopes this palette to Agent Manager; other services keep §2.
+
+| Alias suffix (`--dsw-alias-workspace-`) | Light | Dark |
+| --- | --- | --- |
+| `text` | `#1d1d1b` | `#fafafa` |
+| `secondary` | `#6e6e69` | `#b4b4ae` |
+| `weak` | `#a3a39e` | `#969690` |
+| `border` | `#ececea` | `#27272a` |
+| `border-strong` | `#e4e4e0` | `#3f3f46` |
+| `sidebar` | `#f7f7f5` | `#111113` |
+| `selected` | `#efefec` | `#27272a` |
+| `accent` | `#4f8a35` | `#a9cf90` |
+| `link` | `#456f2e` | `#b9dca4` |
+| `success` | `#8fb07a` | `#a4c38e` |
+| `danger` | `#c4493b` | `#ff9689` |
+| `ready-text` | `#8a6416` | `#f0ce82` |
+| `ready-bg` | `#f5ecd8` | `#332a18` |
+| `step-selected` | `#f1f5ec` | `#202b1a` |
+| `terminal-highlight` | `rgba(143,191,115,.18)` | `rgba(143,191,115,.24)` |
+| `control-bg` | `#1d1d1b` | `#fafafa` |
+| `control-text` | `#ffffff` | `#1d1d1b` |
+
+Weak ink is supplemental metadata, never the sole accessible account of state.
+The exact timestamp and status also belong to the row's accessible name; required
+status and control text use secondary or primary ink. Success is a check shape,
+and failures also carry their error text. Ready carries a visible word.
+
+The shared geometry aliases (same in both themes) are `workspace-row-height`
+36px, `workspace-group-font` 400 11.5px/18px in the interface face,
+`workspace-body-font` 400 15px/1.75 in the interface face,
+`workspace-mono` `'SF Mono', ui-monospace, Menlo, Consolas, monospace`, and
+`workspace-tool-font` 400 12.5px/20px in that mono stack. This explicit stack
+supersedes §4's generic-monospace restriction for Workspace tool literals only.
+`workspace-conversation-min` is 420px; `workspace-title-min` is 96px;
+`workspace-command-inset` is 16px; `workspace-highlight-duration` is 1.8s;
+`workspace-cursor-duration` is .5s; `workspace-step-interval` is 1.6s.
+Existing 4/8/12/16/24px gaps, 32px controls, 44px touch targets, 8/12/16px radii
+and the shared easing/focus tokens remain the geometry vocabulary.
+
+Tasks are grouped Active, Today, Yesterday, Earlier. Active includes running and
+confirmed Ready tasks. Rows are 36px with a distinct-hue Agent mask, title and
+right-aligned time (today HH:mm; earlier MMM D). Running adds a breathing green
+dot and elapsed time; Ready has a pill. Completed has no visible status word.
+Group headings use the group font and weak ink with 8px preceding space. The
+Tasks heading has 8px before its list. The row menu is revealed by hover or
+focus-within, and always visible for coarse pointers; it retains its target and
+accessible name when visually hidden. This replaces stacked task statuses and
+always-visible menus to keep the task list compact. Settings moves to the right
+of the bottom account row (avatar, name, email, Settings icon).
+
+The toolbar is a normal grid row above the message scrollport; it never overlays
+messages. The title has a 96px minimum and ellipsizes only after its available
+space is exhausted. The right controls are Share, Computer, More. Computer uses
+the selected fill while open and a transparent ground while closed. More orders
+Watch replay (<count> actions), separator, Rename, View deletion status,
+separator, Delete task (danger). A collapsed sidebar exposes Show sidebar at
+the toolbar's left. Below 1180px an open computer automatically collapses the
+sidebar until the user explicitly chooses its state. The conversation floor is
+420px; smaller viewports retain the existing focus-trapped panel overlay.
+
+Tool groups start collapsed, including failures, and summarize actual operations
+(Ran 2 commands · Read 2 files; Edited app.js +86 −14), with recorded duration.
+Expanded groups have one rounded border and 36px rows. Rows show type icon,
+ellipsized mono command/path, duration, muted success check and a 32px terminal
+jump target (a reserved slot for non-command rows). Activating a row expands its
+full command/path and recorded output or diff. Removed/added diff lines use
+danger/success ink with −/+ markers. Failures show the error text in danger ink.
+The Terminal jump is independent of expansion: it opens Terminal, scrolls the
+matching command to 16px below its scrollport top and fades a highlight over
+1.8s. Tool duration is never guessed from render time.
+
+One bottom conversation status reads [logo] Thinking <elapsed> · View activity,
+updating its recorded-start clock once a second. Thinking may shimmer: this is
+an explicit exception to the old status-text motion rule, not animation of an
+Agent's words. Stopped turns read ■ Stopped after <duration> · Watch replay.
+The composer has no spinner. With input it shows Send (↑); empty while running
+it shows a solid contrast Stop square and Esc to stop; empty while idle it shows
+disabled Send. Enter sends, Shift+Enter inserts a newline, Escape stops eligible
+active work. Running placeholder: “Add a follow-up — it'll be queued while the
+agent works”; idle: “Reply to Chrono Agent…”. Admitted follow-ups appear directly
+above the composer as Queued · <content> with an independently named × removal
+button. Queue is offered only while running. The compact model/effort reads
+Astra · High; its tooltip retains the full model, reasoning and permission.
+
+Computer tabs are Screen, Terminal, Files with roving tabindex and arrow keys.
+Terminal exists only after a recorded terminal operation. Opening Computer
+defaults to Screen. Screen follows the Agent's active desktop/browser surface;
+a real desktop includes its native browser, taskbar and current-app highlight.
+Browser-only tasks show their real page and address. The panel header has
+Reconnect and Full screen icon keys only on Screen and a Close computer ×.
+The Screen-only control bar says “Agent is in control · Working in <app>” or
+“Agent paused · Desktop is idle”, with a solid contrast Take control action.
+This intentionally supersedes the generic dark lime primary: control is a
+high-contrast action beside the picture, with the inverse light fill in dark.
+Takeover still requires the existing confirmed lease and permission.
+
+Screen action groups summarize “Checked it in Browser · <count> steps”. Each
+row carries an action, HH:mm:ss timestamp and screenshot button. A selected step
+uses the selected-step ground and accent screenshot glyph. A recorded screenshot
+includes its captured pointer, drawn as a cursor with Agent label, transitioning
+position over .5s. The preview fills its panel without nested padded scrollports.
+The viewing bar reads “Step <n> of <total> · <action> · <time>”, Previous, Play/
+Pause, Next, Back to live. Ends disable Previous/Next. Play advances every 1.6s,
+stops at the end and restarts at step 1 when invoked at the end. Viewing never
+changes Agent execution or live observation. Missing capture has the named
+“Screenshot not recorded for this step” state. Watch replay in More or the stopped
+status starts at step 1; there is no always-visible replay footer or scrubber.
+
+Terminal shows bash, the recorded working directory and Live during the current
+turn. Every command retains its own block: $ command and duration, then complete
+recorded output, with existing explicit truncation evidence where the service
+bounded a result. It retains scrollback without playback. The end shows a cursor
+while running or “— agent paused —”. Files show name, path, reported +n −n and M
+for modified files; missing change evidence never becomes a zero diff.
+
+All icon keys have names and tooltips. Status announcements report transitions,
+not every timer tick. Reduced motion removes breathing, shimmer, highlight fade
+and cursor transitions, stops any autoplay, and requires manual step navigation;
+the selected command remains visibly highlighted for the same 1.8s without a
+fade. Changing that preference cancels ongoing animation/playback immediately.
+
+| 2026-11-05 | Define Agent Workspace v3 palette in both appearances, compact grouped tasks and tools, one composer action, Screen/Terminal/Files and durable screen-step viewing; deliberately supersede repeated Completed labels, persistent menus/replay chrome and the old motion/control conventions while preserving public authority and conversation continuity. |
+
 ### 2026-11-05 — Measured resource reporting
 
 Measured usage surfaces share one immutable, principal-scoped report for their
