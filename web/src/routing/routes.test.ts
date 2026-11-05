@@ -121,6 +121,9 @@ it('refuses direct Image Manager URLs while the portal is unavailable', () => {
     kind: 'not_found',
     pathname: '/image-manager/images',
   });
+  const { result } = renderHook(() => useAppRouter());
+  act(() => result.current.navigate({ kind: 'image_manager' }));
+  expect(result.current.route).toEqual({ kind: 'not_found', pathname: '/image-manager' });
 });
 
 it.each(['/settings', '/settings/general', '/settings/usage'])(
