@@ -15,6 +15,9 @@ use super::sandbox_mongo::{
     signed, string_field_matches, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 
+#[cfg(test)]
+mod mongo_integration_tests;
+
 pub(super) fn workspace_indexes() -> Vec<IndexModel> {
     vec![
         IndexModel::builder()
@@ -62,6 +65,16 @@ pub(super) fn workspace_indexes() -> Vec<IndexModel> {
             .options(
                 IndexOptions::builder()
                     .name("workspaces_due_work".to_string())
+                    .build(),
+            )
+            .build(),
+        // Maintenance fences every child, including removed and manual Workspaces.
+        // None of the partial indexes above covers that complete-child lookup.
+        IndexModel::builder()
+            .keys(doc! { "sandbox_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("workspaces_sandbox".to_string())
                     .build(),
             )
             .build(),
