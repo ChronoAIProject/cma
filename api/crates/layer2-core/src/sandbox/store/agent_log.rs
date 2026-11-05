@@ -17,6 +17,35 @@ pub trait AgentLogStore: Send + Sync {
         limit: u16,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError>;
 
+    /// Read one bounded page from a frozen high-water range while validating
+    /// the backing log in one store operation. Implementations must return
+    /// exactly the available entries in `(after, through]`, up to `limit`, or
+    /// a sequence conflict when that range is not complete.
+    async fn agent_log_range(
+        &self,
+        agent_id: &AgentId,
+        after: u64,
+        through: u64,
+        limit: u16,
+    ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+        if limit == 0 || limit > MAX_PAGE_SIZE || after > through {
+            return Err(SandboxStoreError::InvalidPage);
+        }
+        let expected = (through - after).min(u64::from(limit)) as usize;
+        if expected == 0 {
+            return Ok(Vec::new());
+        }
+        let entries = self.agent_log(agent_id, after, expected as u16).await?;
+        if entries.len() != expected
+            || entries.iter().enumerate().any(|(offset, entry)| {
+                entry.agent_id != *agent_id || entry.seq != after + offset as u64 + 1
+            })
+        {
+            return Err(SandboxStoreError::SequenceConflict);
+        }
+        Ok(entries)
+    }
+
     /// Read one immutable entry for message metadata. The caller must first
     /// authorize the owning lineage and bound sequence by the captured Agent's
     /// committed high-water mark. Conversation replay still uses validated scans.

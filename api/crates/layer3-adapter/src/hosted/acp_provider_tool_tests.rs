@@ -135,7 +135,7 @@ async fn rejoin_requires_an_exact_successful_tool_open_in_the_same_runtime_proce
         if accepted {
             stop(opened.unwrap()).await;
         } else {
-            assert!(matches!(opened, Err(crate::AdapterError::Unsupported(_))));
+            assert!(matches!(opened, Err(crate::AdapterError::Rejected(_))));
         }
         serving.await.unwrap();
     }
