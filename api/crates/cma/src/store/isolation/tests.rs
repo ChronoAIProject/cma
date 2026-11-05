@@ -128,9 +128,10 @@ async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
             .await
             .is_err()
     );
-    let mut upgraded = replicas::role(&name, true);
-    upgraded.remove("createRole");
-    upgraded.insert("updateRole", "cma_am_runtime");
+    let mut upgraded = doc! {"updateRole": "cma_am_runtime"};
+    let mut grants = replicas::role(&name, true);
+    grants.remove("createRole");
+    upgraded.extend(grants);
     db.run_command(upgraded).await.unwrap();
     verify(&isolated).await.unwrap();
     replicas::verify(&isolated, MongoAuthorityMode::Isolated, true)
