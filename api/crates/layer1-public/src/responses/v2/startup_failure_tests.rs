@@ -145,18 +145,10 @@ async fn starting_fixture() -> Fixture {
 }
 
 #[tokio::test]
-async fn revival_refusals_replay_typed_codes_and_actionable_messages() {
-    for (failure, code, detail) in [
-        (
-            CommandFailureCode::CredentialSetupRequired,
-            "sandbox_credential_setup_required",
-            "restore credentials",
-        ),
-        (
-            CommandFailureCode::ConnectionsRequired,
-            "connections_required",
-            "required services",
-        ),
+async fn revival_refusals_keep_legacy_status_and_response_codes() {
+    for failure in [
+        CommandFailureCode::CredentialSetupRequired,
+        CommandFailureCode::ConnectionsRequired,
     ] {
         let f = fixture().await;
         let response = create(&f, false).await;
@@ -184,10 +176,25 @@ async fn revival_refusals_replay_typed_codes_and_actionable_messages() {
         let frames = events(&bytes);
         let terminal = frames.last().unwrap();
         assert_eq!(terminal["type"], "response.failed");
-        assert_eq!(terminal["response"]["error"]["code"], code);
-        assert!(terminal["response"]["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains(detail));
+        assert_eq!(
+            terminal["response"]["error"]["code"],
+            "agent_command_execution_failed"
+        );
+        assert_eq!(
+            terminal["response"]["error"]["message"],
+            "The admitted Agent command could not complete."
+        );
+        let request = request(
+            Method::GET,
+            &format!("/api/v2/commands/{}", record.receipt.envelope.command_id),
+            "owner-a",
+            None,
+            None,
+        );
+        let (status, body) = fixtures::json_response(&f.router, request).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "failed");
+        assert_eq!(body["failure"], "execution_failed");
+        assert!(body["delivery"].is_null());
     }
 }

@@ -147,7 +147,7 @@ impl From<CommandStatusView> for V2CommandStatus {
             turn_sequence: value.turn_sequence,
             observed_cursor: value.observed_cursor,
             delivery: value.delivery.map(Into::into),
-            failure: value.failure.map(Into::into),
+            failure: value.failure.map(|code| code.legacy_code().into()),
         }
     }
 }
@@ -216,6 +216,42 @@ impl From<ResponseControlObservation> for V2ResponseControls {
                 steer: value.runtime_support.steer,
                 resolve_approval: value.runtime_support.resolve_approval,
             },
+        }
+    }
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+    use layer2_core::sandbox::agent_io::{
+        AgentResponseStatus, CommandFailureCode, CommandReceiptView,
+    };
+
+    #[test]
+    fn retained_precise_failures_project_to_legacy_status_without_changing_the_read() {
+        for failure in [
+            CommandFailureCode::CredentialSetupRequired,
+            CommandFailureCode::ConnectionsRequired,
+        ] {
+            let retained = CommandStatusView {
+                receipt: CommandReceiptView {
+                    command_id: layer2_core::ids::AgentCommandId("cmd_compat".into()),
+                    agent_id: layer2_core::AgentId("agt_compat".into()),
+                    response_id: None,
+                    admitted_at: "2026-11-06T00:00:00Z".into(),
+                    agent_order: 1,
+                    event_cursor: 1,
+                },
+                status: AgentResponseStatus::Failed,
+                queue_deadline: "2026-11-06T00:05:00Z".into(),
+                turn_sequence: None,
+                observed_cursor: None,
+                delivery: None,
+                failure: Some(failure),
+            };
+            let wire = serde_json::to_value(V2CommandStatus::from(retained.clone())).unwrap();
+            assert_eq!(wire["failure"], "execution_failed");
+            assert_eq!(retained.failure, Some(failure));
         }
     }
 }
