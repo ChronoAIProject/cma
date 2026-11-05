@@ -714,6 +714,14 @@ routing policy; every other channel response is unchanged and carries no
 A full channel PUT keeps its routing and its consumers' keys exactly as stored.
 Dedicated policy changes use the gated routing endpoint described under
 [Node diagnostics and routing policy](#node-diagnostics-and-routing-policy).
+Neither `POST /v1/channels` nor `PUT /v1/channels/{channel_id}` accepts a
+top-level `routing` field. Both schemas reject unknown fields. A misplaced
+top-level `routing` returns 400 `invalid_request` with the bounded detail
+`/routing: not accepted in channel create or full update; use PUT /v1/channels/{channel_id}/routing with {expected_version,routing} after creation`.
+Other schema errors retain the generic channel-schema detail; submitted values
+and arbitrary field names are never echoed. See the
+[NyxID native Discord activation contract](CMAEG_NyxID_Discord_Activation.md)
+for the create, routing, version and acknowledgement sequence.
 Owner-authored durable Custom creation initializes the default-only policy with
 its immutable execution marker; it does not migrate existing channel records.
 
