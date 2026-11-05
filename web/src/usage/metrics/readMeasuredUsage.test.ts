@@ -34,19 +34,17 @@ it('does not enable measured usage for an anonymous session', async () => {
 it('propagates unavailable settings for the caller to fail closed', async () => {
   const sdk = createClient({
     baseUrl: 'http://localhost',
-    fetch: vi
-      .fn()
-      .mockResolvedValue(
-        Response.json(
-          {
-            status: 503,
-            code: 'settings_unavailable',
-            title: 'Settings unavailable',
-            detail: 'Retry later',
-          },
-          { status: 503 },
-        ),
+    fetch: vi.fn().mockResolvedValue(
+      Response.json(
+        {
+          status: 503,
+          code: 'settings_unavailable',
+          title: 'Settings unavailable',
+          detail: 'Retry later',
+        },
+        { status: 503 },
       ),
+    ),
   });
   await expect(
     measuredUsageReader(sdk.auth)({ signal: new AbortController().signal }),
