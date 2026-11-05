@@ -7,6 +7,21 @@ metadata:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 data:
+  # Measured reporting is independent of allocated billing. Enable only after
+  # monitoring service-account GET reachability and reader/schema readiness.
+  CHRONO_USAGE_METRICS_ENABLED: "false"
+  CHRONO_USAGE_METRICS_CLUSTER: "chronoai-prod-asia-southeast1-gke"
+  # Empty selects the fixed monitoring/tenant-0 Kubernetes API proxy GET route.
+  # An internal read gateway may instead provide /select/0/prometheus/.
+  CHRONO_USAGE_METRICS_URL: ""
+  CHRONO_USAGE_METRICS_WORKERS: "2"
+  CHRONO_USAGE_METRICS_QUEUE: "8"
+  CHRONO_USAGE_METRICS_SOURCE_CALLS: "2"
+  CHRONO_USAGE_METRICS_SOURCE_SECONDS: "5"
+  CHRONO_USAGE_METRICS_REPORT_SECONDS: "60"
+  CHRONO_USAGE_METRICS_REPORT_MIB: "256"
+  CHRONO_USAGE_METRICS_TENANT_MIB: "512"
+  CHRONO_USAGE_METRICS_GLOBAL_MIB: "2048"
   # Full provider API base, verified against NyxID's existing Lago installation.
   # Recording remains active even while billing delivery is disabled.
   CHRONO_USAGE_BILLING_ENABLED: "false"
