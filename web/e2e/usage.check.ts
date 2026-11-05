@@ -11,6 +11,7 @@ test('LOCAL legacy owner allocation route preserves mobile layout', async ({
     route.fulfill({
       json: {
         authenticated: true,
+        visitor: false,
         subject: 'local-owner',
         display_name: 'Local owner',
         capabilities: ['use_own_sandboxes', 'create_sandbox', 'read_all_sandboxes'],
