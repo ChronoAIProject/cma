@@ -274,3 +274,6 @@ mod event_context_tests;
 
 #[path = "media_continuation_tests.rs"]
 mod media_continuation_tests;
+
+#[path = "binding_preparation_tests.rs"]
+mod preparation;
