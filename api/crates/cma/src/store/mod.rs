@@ -170,3 +170,9 @@ mod legacy_sandbox;
 pub(crate) mod runtime_routing;
 
 pub(crate) mod native_warm_pools;
+
+// Measured reporting read models (#1332); independent of lifecycle writes.
+pub(crate) mod sandbox_metric_bindings;
+pub(crate) mod sandbox_metric_rollups;
+pub(crate) mod sandbox_usage_rollups;
+pub(crate) mod usage_reports;
