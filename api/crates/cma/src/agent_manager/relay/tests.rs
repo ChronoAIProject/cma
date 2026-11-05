@@ -16,9 +16,9 @@ use layer2_core::{
 };
 use tokio::task::JoinHandle;
 
-struct Instance {
-    coordinator: Arc<OwnershipCoordinator>,
-    relay: Arc<Relay>,
+pub(crate) struct Instance {
+    pub(crate) coordinator: Arc<OwnershipCoordinator>,
+    pub(crate) relay: Arc<Relay>,
     updates: Arc<DurableAgentUpdateRecorder>,
     address: String,
     server: JoinHandle<()>,
@@ -29,7 +29,7 @@ impl Drop for Instance {
     }
 }
 
-async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
+pub(crate) async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
     let store = Arc::new(MemoryOwnershipStore::default());
     let mut instances = Vec::new();
     for index in 0..count {
@@ -104,7 +104,7 @@ async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
     (store, instances)
 }
 
-async fn acquire(
+pub(crate) async fn acquire(
     store: &MemoryOwnershipStore,
     instances: &[Instance],
     id: &AgentId,

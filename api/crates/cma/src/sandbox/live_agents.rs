@@ -55,6 +55,12 @@ pub(crate) struct LiveAgentAttachment {
     inserted: bool,
 }
 
+impl LiveAgentAttachment {
+    pub(crate) fn inserted(&self) -> bool {
+        self.inserted
+    }
+}
+
 struct RegistryEntry {
     manager_authority: Option<Arc<layer2_core::agent_ownership::Authority>>,
     conversation_id: String,

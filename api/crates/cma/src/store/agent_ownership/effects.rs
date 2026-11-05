@@ -7,6 +7,32 @@ use layer2_core::sandbox::store::SandboxStoreError;
 pub(super) const WORK_EPOCH: &str = "agent_manager_work_epoch";
 
 impl MongoSandboxStore {
+    pub(in crate::store) async fn fence_reopened_owners(
+        &self,
+        mutation: &layer2_core::sandbox::store::SandboxLifecycleMutation,
+        session: &mut ClientSession,
+    ) -> Result<(), SandboxStoreError> {
+        let Some(ownership) = &self.agent_ownership else {
+            return Ok(());
+        };
+        for change in &mutation.agents {
+            if change.logs.iter().any(|log| {
+                matches!(
+                    log,
+                    layer2_core::sandbox::AgentLogKind::ConversationOpened { .. }
+                )
+            }) {
+                let token = layer2_core::agent_ownership::observed_transport(&change.agent.id)
+                    .ok_or(SandboxStoreError::Conflict)?;
+                ownership
+                    .fence_transaction(&token, session)
+                    .await
+                    .map_err(effect_error)?;
+            }
+        }
+        Ok(())
+    }
+
     pub(in crate::store) async fn fence_checkpoint_owners(
         &self,
         mutation: &layer2_core::sandbox::store::SandboxCheckpointMutation,
