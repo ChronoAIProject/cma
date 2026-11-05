@@ -87,6 +87,7 @@ mod operator_sandboxes;
 mod profile_documents;
 #[cfg(test)]
 mod profile_index_tests;
+mod profile_mongo;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;
 mod profile_references;
