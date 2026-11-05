@@ -59,7 +59,7 @@ function canMessage(status: AgentStatus): boolean {
 }
 
 function placeholder(status: AgentStatus): string {
-  if (status === 'paused') return 'Send a message to continue.';
+  if (status === 'paused') return 'Reply to Chrono Agent…';
   // Startup is represented by the lifecycle progress surface and the
   // disabled/queued controls. Keep the composer quiet so it never adds a
   // second visible "starting" notification to the conversation area.
@@ -68,7 +68,7 @@ function placeholder(status: AgentStatus): string {
   if (status === 'stopped') return 'This Agent has stopped.';
   if (status === 'deleted') return 'This Agent was deleted.';
   if (status === 'failed') return 'This Agent is unavailable.';
-  return 'Message Agent';
+  return 'Reply to Chrono Agent…';
 }
 
 function fit(field: HTMLTextAreaElement): void {
@@ -366,7 +366,7 @@ export function Composer({
               preparing
                 ? 'Message Agent'
                 : running && queueWhileRunning
-                  ? 'Add a follow-up while the Agent works.'
+                  ? "Add a follow-up — it'll be queued while the agent works"
                   : placeholder(status)
             }
             onChange={(event) => {
@@ -397,6 +397,11 @@ export function Composer({
               )
                 return;
               if (commands.onKeyDown(event)) return;
+              if (event.key === 'Escape' && running && !busy && !controlsUnavailable) {
+                event.preventDefault();
+                void onStop();
+                return;
+              }
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 submit();
@@ -427,7 +432,7 @@ export function Composer({
               </span>
             ) : null}
             <div className="agent-composer__actions">
-              {!running || queueWhileRunning ? (
+              {messageContent !== '' || !running ? (
                 <Button
                   placement="agent-composer__submit"
                   variant="primary"
@@ -449,6 +454,7 @@ export function Composer({
                   }
                   disabled={
                     !usable ||
+                    (running && !queueWhileRunning) ||
                     busy ||
                     submitting ||
                     starting ||
@@ -461,22 +467,23 @@ export function Composer({
                   aria-describedby={hasNotice ? noticeId : undefined}
                 />
               ) : null}
-              {running ? (
-                <Button
-                  placement="agent-composer__submit agent-composer__submit--stop"
-                  variant="outline"
-                  icon={<IconStopFill16 />}
-                  aria-label="Stop response"
-                  title={
-                    controlsUnavailable
-                      ? 'This turn does not support response controls.'
-                      : 'Stop response'
-                  }
-                  disabled={busy || controlsUnavailable}
-                  onClick={() => void onStop()}
-                >
-                  Stop
-                </Button>
+              {running && messageContent === '' ? (
+                <>
+                  <span className="agent-composer__stop-hint">Esc to stop</span>
+                  <Button
+                    placement="agent-composer__submit agent-composer__submit--stop"
+                    variant="primary"
+                    icon={<IconStopFill16 />}
+                    aria-label="Stop response"
+                    title={
+                      controlsUnavailable
+                        ? 'This turn does not support response controls.'
+                        : 'Stop response (Esc)'
+                    }
+                    disabled={busy || controlsUnavailable}
+                    onClick={() => void onStop()}
+                  ></Button>
+                </>
               ) : null}
             </div>
           </div>
