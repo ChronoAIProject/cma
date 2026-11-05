@@ -136,7 +136,8 @@ pub(super) async fn production_adapter(
             settings.clone(),
             &connection.authority,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+        .with_monotonic_funding_deadlines(config.agent_manager_replicas.is_some());
         client
             .inventory()
             .await
