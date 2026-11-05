@@ -3,7 +3,7 @@ import type { Cma, UsageMetricRow } from '@chronoai/cma-sdk';
 import { Button } from '../../ui/Button';
 import { UsageHistory } from '../UsageHistory';
 import { MetricChart } from './MetricChart';
-import { AllocatedPeriod, MetricReading } from './MetricSummary';
+import { AllocatedCapacity, AllocatedPeriod, MetricReading } from './MetricSummary';
 import { MetricsNotice } from './MetricsNotice';
 import { useUsageRead } from './useReport';
 import { metricLabels, type MetricsClient } from './model';
@@ -16,6 +16,7 @@ export function MetricDetail({
   sandboxId,
   active,
   admin,
+  measured,
   onClose,
   onOwner,
   onFailure,
@@ -27,6 +28,7 @@ export function MetricDetail({
   readonly sandboxId: string;
   readonly active: boolean;
   readonly admin: boolean;
+  readonly measured: boolean;
   readonly onClose: () => void;
   readonly onOwner?: (owner: string) => void;
   readonly onFailure: (failure: MetricsFailure) => void;
@@ -37,13 +39,13 @@ export function MetricDetail({
     async (signal: AbortSignal) => {
       const [row, ...series] = await Promise.all([
         api.sandbox(reportId, sandboxId, { signal }),
-        ...(['cpu', 'memory', 'disk'] as const).map((metric) =>
+        ...(measured ? (['cpu', 'memory', 'disk'] as const) : []).map((metric) =>
           api.series(reportId, { metric, group_by: 'sandbox', series_id: sandboxId, signal }),
         ),
       ]);
       return { row, series };
     },
-    [api, reportId, sandboxId],
+    [api, reportId, sandboxId, measured],
   );
   const detail = useUsageRead(load, active);
   useEffect(() => {
@@ -65,7 +67,7 @@ export function MetricDetail({
             {detail.data.row.runtime_version ?? 'not bound'}
           </p>
           {detail.data.row.shared_sandbox_usage && (
-            <p>Shared Sandbox usage: multiple Agents share these CPU, memory and disk readings.</p>
+            <p>Shared Sandbox usage: multiple Agents share these CPU, memory and disk resources.</p>
           )}
           {admin && (
             <Button size="sm" onClick={() => onOwner?.(detail.data!.row.owner.subject)}>
@@ -73,26 +75,30 @@ export function MetricDetail({
             </Button>
           )}
           {actions?.(detail.data.row)}
-          <div className="usage-metric-cards">
-            {(['cpu', 'memory', 'disk'] as const).map((metric) => (
-              <section key={metric} aria-label={metricLabels[metric]}>
-                <h3>{metricLabels[metric]}</h3>
-                <MetricReading
-                  metric={metric}
-                  reading={detail.data!.row.measured[metric]}
-                  capacity={
-                    detail.data!.row.allocation[
-                      metric === 'cpu'
-                        ? 'cpu_cores'
-                        : metric === 'memory'
-                          ? 'memory_bytes'
-                          : 'disk_bytes'
-                    ]
-                  }
-                />
-              </section>
-            ))}
-          </div>
+          {measured ? (
+            <div className="usage-metric-cards">
+              {(['cpu', 'memory', 'disk'] as const).map((metric) => (
+                <section key={metric} aria-label={metricLabels[metric]}>
+                  <h3>{metricLabels[metric]}</h3>
+                  <MetricReading
+                    metric={metric}
+                    reading={detail.data!.row.measured[metric]}
+                    capacity={
+                      detail.data!.row.allocation[
+                        metric === 'cpu'
+                          ? 'cpu_cores'
+                          : metric === 'memory'
+                            ? 'memory_bytes'
+                            : 'disk_bytes'
+                      ]
+                    }
+                  />
+                </section>
+              ))}
+            </div>
+          ) : (
+            <AllocatedCapacity value={detail.data.row.allocation} />
+          )}
           <AllocatedPeriod value={detail.data.row.allocated_period} />
           {detail.data.series.map((series) => (
             <MetricChart
