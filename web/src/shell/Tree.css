@@ -162,6 +162,17 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+.task-state-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--dsw-specific-task-muted-icon);
+}
+.task-state-dot[data-tone='ready'] {
+  background: var(--dsw-specific-task-accent);
+}
+
 /* A person must act: the word takes the tone as well as the dot. */
 .tree-row__state[data-tone='warning'] {
   color: var(--dsw-alias-state-warn-label);

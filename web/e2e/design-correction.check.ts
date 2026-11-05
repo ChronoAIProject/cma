@@ -247,9 +247,19 @@ for (const width of [1440, 390]) {
           ).toBeVisible();
           await expect(page.getByLabel('GitHub repository')).not.toBeVisible();
           await page.getByLabel('Your task').fill('Compare three project management tools');
+          await expect(page.getByRole('button', { name: 'Start task' })).toBeEnabled();
+          await expect
+            .poll(() =>
+              page
+                .locator('.frame__center')
+                .evaluate((element) => element.getBoundingClientRect().right),
+            )
+            .toBe(width);
+          await page.evaluate(() => document.fonts.ready);
           await page.screenshot({ path: info.outputPath(`home-${width}.png`) });
-          await page.getByText('Add a GitHub repo', { exact: true }).click();
-          await expect(page.getByLabel('GitHub repository')).toBeVisible();
+          await page.getByRole('button', { name: 'Add git repo', exact: true }).click();
+          await expect(page.getByRole('dialog', { name: 'Add git repo' })).toBeVisible();
+          await expect(page.getByLabel('GitHub repository')).toBeFocused();
           await expect(page.getByLabel('Your task')).toHaveValue(
             'Compare three project management tools',
           );
@@ -417,3 +427,108 @@ test('LOCAL shared desktop uses the same computer panel and releases control on 
     'Retain this draft',
   );
 });
+
+for (const theme of ['light', 'dark']) {
+  for (const width of [1440, 390]) {
+    test(`LOCAL New agent ${theme} at ${width}px keeps repository and menu accessible`, async ({
+      page,
+      baseURL,
+    }, info) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.addInitScript(
+        (appearance) => localStorage.setItem('cma:appearance', appearance),
+        theme,
+      );
+      const boundary = new LocalStartup();
+      await boundary.route(page, baseURL!);
+      await policy(page);
+      await page.goto('/');
+      const input = page.getByLabel('Your task');
+      await expect(input).toBeVisible();
+      await expect
+        .poll(() =>
+          page
+            .locator('.frame__center')
+            .evaluate((element) => element.getBoundingClientRect().right),
+        )
+        .toBe(width);
+      await page.evaluate(() => document.fonts.ready);
+      await expect(page.getByRole('button', { name: 'Start task' })).toBeDisabled();
+      await expect(page.locator('.task-home__composer')).toHaveCSS(
+        'background-color',
+        theme === 'dark' ? 'rgb(19, 19, 21)' : 'rgb(250, 250, 250)',
+      );
+      await expect(page.locator('.task-home__panel')).toHaveCSS('border-radius', '20px');
+      await expect(input).toHaveCSS('min-height', '128px');
+      await expect(
+        page.getByRole('heading', { name: 'What should your Agent work on?' }),
+      ).toHaveCSS('font-size', width === 1440 ? '56px' : '32px');
+      await page.getByRole('button', { name: 'Research a topic' }).click();
+      await expect
+        .poll(() =>
+          input.evaluate((element: HTMLTextAreaElement) =>
+            element.value.slice(element.selectionStart, element.selectionEnd),
+          ),
+        )
+        .toBe('[topic]');
+      await expect(page.getByRole('button', { name: 'Start task' })).toBeEnabled();
+      await expect(page.getByRole('button', { name: 'Start task' })).toHaveCSS(
+        'background-color',
+        theme === 'dark' ? 'rgb(200, 245, 66)' : 'rgb(63, 98, 18)',
+      );
+      const trigger = page.getByRole('button', { name: /^Cloud computer/ });
+      await trigger.click();
+      const menu = page.getByRole('menu', { name: 'Run this task on' });
+      await expect(menu).toHaveCSS('opacity', '1');
+      await expect(menu).toHaveCSS('border-radius', '18px');
+      await expect(menu).toHaveCSS('width', width < 352 ? `${width - 32}px` : '320px');
+      await expect(menu.getByRole('menuitemradio', { name: 'Cloud computer' })).toBeChecked();
+      await expect(menu.getByRole('menuitemcheckbox', { name: 'Agent browser' })).toBeDisabled();
+      await page.keyboard.press('ArrowDown');
+      await expect(menu.getByRole('menuitemcheckbox', { name: 'Agent browser' })).toBeFocused();
+      await page.screenshot({ path: info.outputPath(`menu-${theme}-${width}.png`) });
+      await page.keyboard.press('Escape');
+      await expect(trigger).toBeFocused();
+      await page.getByRole('button', { name: 'Add git repo' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Add git repo' });
+      await expect(dialog).toHaveAttribute('aria-modal', 'true');
+      await expect(dialog.locator('..')).toHaveCSS('opacity', '1');
+      await expect(dialog).toHaveCSS('border-radius', '26px');
+      await expect(dialog).toHaveCSS('width', width < 512 ? `${width - 32}px` : '480px');
+      await expect(page.locator('.modal__mask')).toHaveCSS('backdrop-filter', 'blur(8px)');
+      const repo = dialog.getByLabel('GitHub repository');
+      await expect(repo).toBeFocused();
+      await repo.fill('owner/project.git/');
+      await dialog.getByLabel('Repository ref').fill('bad..ref');
+      await expect(dialog.getByRole('button', { name: 'Add repo' })).toBeDisabled();
+      await dialog.getByLabel('Repository ref').fill('feature/landing');
+      await expect(dialog.getByRole('button', { name: 'Add repo' })).toBeEnabled();
+      await expect(dialog.getByRole('button', { name: 'Add repo' })).toHaveCSS(
+        'background-color',
+        theme === 'dark' ? 'rgb(200, 245, 66)' : 'rgb(63, 98, 18)',
+      );
+      await dialog.getByRole('button', { name: 'Close repository dialog' }).focus();
+      await page.keyboard.press('Tab');
+      await expect(repo).toBeFocused();
+      await page.keyboard.press('Shift+Tab');
+      await expect(dialog.getByRole('button', { name: 'Close repository dialog' })).toBeFocused();
+      await page.screenshot({ path: info.outputPath(`repository-${theme}-${width}.png`) });
+      await repo.press('Enter');
+      await expect(dialog).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'owner/project' })).toBeFocused();
+      await page.getByRole('button', { name: 'Remove repository' }).click();
+      await expect(page.getByRole('button', { name: 'Add git repo' })).toBeFocused();
+      if (width < 600) {
+        for (const button of await page
+          .getByRole('group', { name: 'Task templates' })
+          .getByRole('button')
+          .all())
+          expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      expect(boundary.writes).toEqual([]);
+    });
+  }
+}
