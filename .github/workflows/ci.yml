@@ -90,6 +90,10 @@ jobs:
         run: .github/scripts/check-file-size-tests.sh
       - name: API secret scanner build contract
         run: bash .github/secret-scanner-build-tests.sh
+      - name: Web artifact identity contract
+        run: |
+          python3 .github/scripts/web-build-identity-tests.py
+          ruby .github/scripts/web-build-contract.rb
       - name: Final image metadata declarations
         run: bash .github/image-metadata-tests.sh
       - name: Source files stay within size limits
@@ -548,6 +552,11 @@ jobs:
         # than hold a runner for the workflow's whole timeout.
         timeout-minutes: 5
         run: npm run check:styles
+      - name: Compiled web build identity
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
+        run: npx playwright test --config e2e/build-identity.config.ts
       - name: Desktop and conversation browser layout
         timeout-minutes: 5
         env:
@@ -645,6 +654,9 @@ jobs:
       # If an arm64 pool ever appears, the place to restore this is a publish
       # job on merge, not the PR path: the guarantee is worth having on images
       # that ship, not on every push.
+      - name: Set immutable image version
+        id: build-identity
+        run: echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
       - name: Build image for all target platforms
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -654,6 +666,7 @@ jobs:
           push: false
           outputs: type=cacheonly
           build-args: |
+            CHRONO_BUILD=${{ steps.build-identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             RUNTIME_DESKTOP=${{ matrix.component == 'runtime-desktop' && '1' || '0' }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
@@ -673,6 +686,7 @@ jobs:
           load: true
           tags: cma-${{ matrix.component }}:ci
           build-args: |
+            CHRONO_BUILD=${{ steps.build-identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             RUNTIME_DESKTOP=${{ matrix.component == 'runtime-desktop' && '1' || '0' }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
@@ -738,6 +752,9 @@ jobs:
           retention-days: 90
       # Preserve the exact native bytes that passed this job. PR artifacts keep
       # their actual merge-checkout revision; consumers must verify tree equality.
+      - name: Verify web bundle identity against image metadata
+        if: matrix.component == 'web'
+        run: python3 .github/scripts/web-build-identity.py cma-web:ci "$GITHUB_SHA" "git-${GITHUB_SHA:0:12}"
       - name: Export tested native image
         if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
         timeout-minutes: 10
