@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use kube::{
     api::{DynamicObject, ListParams},
@@ -104,6 +104,7 @@ impl AgentSandboxPools {
         // members may be garbage-collected before status records their name.
         // An orphan Sandbox-owned Pod is therefore conservatively pending,
         // even when its old parent was not in our first discovery snapshot.
+        let mut live_members = None;
         for pod in complete(&self.pods).await? {
             if pod.namespace().as_deref() != Some(&self.config.namespace) {
                 return Err(rejected("native cleanup Pod is outside its namespace"));
@@ -121,8 +122,26 @@ impl AgentSandboxPools {
                 {
                     return Err(unavailable("native member Pods remain present"));
                 }
-                let live = self.members.get_opt(&owner.name).await.map_err(api_error)?;
-                let Some(live) = live.filter(|v| v.uid().as_deref() == Some(&owner.uid)) else {
+                // One fresh, complete member snapshot after the Pod snapshot
+                // replaces a serial GET for every unrelated running Pod. Never
+                // reuse discovery from a previous cleanup item or attempt.
+                if live_members.is_none() {
+                    let mut members = BTreeMap::new();
+                    for member in complete(&self.members).await? {
+                        if member.namespace().as_deref() != Some(&self.config.namespace)
+                            || members.insert(member.name_any(), member).is_some()
+                        {
+                            return Err(rejected("native cleanup member inventory is ambiguous"));
+                        }
+                    }
+                    live_members = Some(members);
+                }
+                let live = live_members
+                    .as_ref()
+                    .unwrap()
+                    .get(&owner.name)
+                    .filter(|member| member.uid().as_deref() == Some(&owner.uid));
+                let Some(live) = live else {
                     return Err(unavailable("native Pod parent finality remains uncertain"));
                 };
                 if original.claim.as_ref().is_some_and(|claim| {
