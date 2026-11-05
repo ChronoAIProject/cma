@@ -14,6 +14,22 @@ export class LocalUsageMetrics {
   readonly reports = new Map<string, UsageMetricReport>();
   failure = 0;
   pending = false;
+  /** Read-only session exposure; the test may change it after an admin save. */
+  measuredVisible = false;
+  async session(page: Page, capabilities = ['use_own_sandboxes']) {
+    await page.route('**/auth/session', (route) =>
+      route.fulfill({
+        json: {
+          authenticated: true,
+          subject: 'local-owner',
+          display_name: 'Local operator',
+          visitor: false,
+          capabilities,
+          usage_reporting: { measured_visible: this.measuredVisible },
+        },
+      }),
+    );
+  }
   async route(page: Page) {
     await page.route('**/api/v1/**usage/metrics/reports**', async (route) => {
       const request = route.request();
