@@ -27,6 +27,7 @@ pub(super) fn fold_update(
     assembly: &AgentMessageAssembly,
     update: ConversationUpdate,
     appended_at: &str,
+    durable_tool_output: bool,
 ) -> Result<FoldedConversationUpdate, AgentConversationError> {
     if !current.status.is_live() {
         return Err(AgentConversationError::InvalidState(
@@ -76,9 +77,14 @@ pub(super) fn fold_update(
         | ConversationUpdate::Said(SessionUpdate::UserMessageChunk(_)) => {
             Ok(FoldedConversationUpdate::Quiet(assembly.clone()))
         }
-        ConversationUpdate::Said(update) => {
-            fold_semantic_update(current, assembly, update, prompt_evidence, appended_at)
-        }
+        ConversationUpdate::Said(update) => fold_semantic_update(
+            current,
+            assembly,
+            update,
+            prompt_evidence,
+            appended_at,
+            durable_tool_output,
+        ),
         ConversationUpdate::Asked(request) => {
             let turn = active_turn(current)?;
             if !matches!(
@@ -278,6 +284,7 @@ fn fold_semantic_update(
     update: SessionUpdate,
     prompt_evidence: bool,
     appended_at: &str,
+    durable_tool_output: bool,
 ) -> Result<FoldedConversationUpdate, AgentConversationError> {
     let mut agent = current.clone();
     let mut logs = flush_message(assembly);
@@ -301,12 +308,17 @@ fn fold_semantic_update(
                     .as_ref()
                     .map(wire_name)
                     .unwrap_or_else(|| "updated".into()),
-                output: recorded_tool_output(&update.fields),
+                output: durable_tool_output
+                    .then(|| recorded_tool_output(&update.fields))
+                    .flatten(),
                 title: update.fields.title.map(|value| bounded(value, 4 * 1024)),
             }
         }
         SessionUpdate::ToolCallUpdate(update) => {
-            let Some(output) = recorded_tool_output(&update.fields) else {
+            let Some(output) = durable_tool_output
+                .then(|| recorded_tool_output(&update.fields))
+                .flatten()
+            else {
                 return if logs.is_empty() {
                     Ok(FoldedConversationUpdate::Quiet(assembly.clone()))
                 } else {
