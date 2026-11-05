@@ -1,12 +1,15 @@
 use cmaeg::records::{
+    import::import_with,
     mongo::{self, MongoRecords},
-    RecordError,
+    ImportGate, RecordError,
 };
 use mongodb::{
     bson::{doc, Document},
     options::{ClientOptions, Credential},
     Client,
 };
+#[path = "support/github_import.rs"]
+mod github_import;
 #[path = "support/record_domains.rs"]
 mod record_domains;
 #[path = "support/shared_schema.rs"]
@@ -18,6 +21,16 @@ async fn gateway_records_are_exclusive_owner_immutable_and_revision_fenced() {
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_eg_contract_{}", uuid::Uuid::new_v4().simple());
     let result = exercise(&uri, &admin, &name).await;
+    admin.database(&name).drop().await.unwrap();
+    result.unwrap();
+}
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn disabled_github_import_refuses_new_github_channels_and_retains_stored_ones() {
+    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_eg_github_import_{}", uuid::Uuid::new_v4().simple());
+    let result = github_import::verify(&admin.database(&name)).await;
     admin.database(&name).drop().await.unwrap();
     result.unwrap();
 }
@@ -81,21 +94,21 @@ async fn exercise(uri: &str, admin: &Client, name: &str) -> Result<(), Box<dyn s
     let path = std::env::temp_dir().join(format!("cma-record-export-{}", uuid::Uuid::new_v4()));
     let export = serde_json::json!({"record_id":imported_id,"owner":"imported-owner","version":"7","blob":"b3BhcXVl"}).to_string();
     std::fs::write(&path, format!("{export}\n"))?;
-    let imported = cmaeg::records::import::import(&migrator.database(name), &path).await?;
+    // Opaque record mechanics only; the GitHub write gate has its own contract.
+    let gate = ImportGate::new(true, None);
+    let imported = import_with(&migrator.database(name), &path, &gate).await?;
     assert_eq!(imported, 1);
     assert_eq!(
-        cmaeg::records::import::import(&migrator.database(name), &path).await?,
+        import_with(&migrator.database(name), &path, &gate).await?,
         1
     );
     assert_eq!(records.get(&imported_id).await?.version, 7);
     records
         .put(&imported_id, "imported-owner", b"changed", Some(7))
         .await?;
-    assert!(
-        cmaeg::records::import::import(&migrator.database(name), &path)
-            .await
-            .is_err()
-    );
+    assert!(import_with(&migrator.database(name), &path, &gate)
+        .await
+        .is_err());
     assert_eq!(records.get(&imported_id).await?.blob, b"changed");
     std::fs::remove_file(path)?;
     assert_eq!(records.put("record", "alice", b"opaque-v1", None).await?, 1);
