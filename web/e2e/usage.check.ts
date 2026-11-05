@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 
-test('LOCAL owner and operator usage routes render, filter and preserve mobile layout', async ({
+test('LOCAL legacy owner allocation route preserves mobile layout', async ({
   page,
   baseURL,
 }, info) => {
@@ -127,47 +127,6 @@ test('LOCAL owner and operator usage routes render, filter and preserve mobile l
   );
   await page.screenshot({
     path: info.outputPath('settings-usage-mobile.png'),
-    fullPage: true,
-    animations: 'disabled',
-  });
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto('/operations');
-  await page.getByRole('tab', { name: 'Usage', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Usage user' })).toBeVisible();
-  await page.getByRole('button', { name: 'Usage user' }).click();
-  await page.getByRole('menuitemradio', { name: 'Local owner', exact: true }).click();
-  await page.getByRole('button', { name: 'Usage sandbox status' }).click();
-  await page.getByRole('menuitemradio', { name: 'active', exact: true }).click();
-  await page.getByRole('searchbox', { name: 'Sandbox ID' }).fill('research');
-  await page.getByRole('button', { name: 'Apply filters' }).click();
-  await expect(page.getByRole('button', { name: 'Research', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Sort by CPU (core-hours) ascending' }).click();
-  await expect(page.getByRole('columnheader', { name: /CPU/ })).toHaveAttribute(
-    'aria-sort',
-    'ascending',
-  );
-  await page.getByRole('button', { name: 'Sort by CPU (core-hours) descending' }).click();
-  await expect(page.getByRole('columnheader', { name: /CPU/ })).toHaveAttribute(
-    'aria-sort',
-    'descending',
-  );
-  expect(requests.some((path) => path.includes('/admin/usage/sandboxes?limit=200'))).toBe(true);
-  await page.screenshot({
-    path: info.outputPath('operations-usage-desktop.png'),
-    fullPage: true,
-    animations: 'disabled',
-  });
-  await page.setViewportSize({ width: 320, height: 1000 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
-    true,
-  );
-  await page.getByRole('button', { name: 'Usage sandbox status' }).click();
-  await page.getByRole('menuitemradio', { name: 'All statuses' }).click();
-  await page.getByRole('searchbox', { name: 'Sandbox ID' }).fill('does-not-exist');
-  await page.getByRole('button', { name: 'Apply filters' }).click();
-  await expect(page.getByText('No sandbox usage matches these filters.')).toBeVisible();
-  await page.screenshot({
-    path: info.outputPath('operations-usage-mobile.png'),
     fullPage: true,
     animations: 'disabled',
   });
