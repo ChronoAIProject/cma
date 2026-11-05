@@ -128,7 +128,7 @@ pub async fn check(
         Source::Github { app_ref, .. } => {
             let configured = state
                 .github
-                .as_ref()
+                .get()
                 .is_some_and(|gateway| gateway.has_app(app_ref));
             checks.push(github_webhook_check(app_ref, configured));
             "github".into()
