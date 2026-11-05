@@ -7,8 +7,8 @@ use layer2_core::sandbox::{Sandbox, SandboxEventKind, SandboxStatus, SandboxWork
 use layer3_adapter::RuntimeHandle;
 
 use super::support::{
-    adapter_failure, credential_failure, dependency_failure, operation_id, system_time,
-    WorkerFailure,
+    adapter_failure, credential_failure, dependency_failure, funding_failure, operation_id,
+    system_time, WorkerFailure,
 };
 use super::SandboxWorker;
 
@@ -196,6 +196,11 @@ impl SandboxWorker {
                     .retry_failure(sandbox, adapter_failure(error), now)
                     .await;
             }
+        }
+        if let Err(error) = self.funding.settle(&sandbox, now).await {
+            return self
+                .retry_failure(sandbox, funding_failure(error), now)
+                .await;
         }
         sandbox.runtime = None;
         self.advance(

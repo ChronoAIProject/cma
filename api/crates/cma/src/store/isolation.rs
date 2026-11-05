@@ -120,6 +120,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "resource_share_commands",
     "resource_shares",
     "sandbox_admissions",
+    super::sandbox_mongo::SANDBOX_BILLING,
     super::sandbox_colors::COLLECTION,
     "sandbox_controls",
     "sandbox_credential_revocations",
@@ -279,6 +280,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires authenticated disposable service Mongo fixture"]
     async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
+        use futures_util::TryStreamExt as _;
         use mongodb::{
             options::{ClientOptions, Credential},
             Client,
@@ -334,6 +336,22 @@ mod tests {
             .await
             .expect("the complete production store assembly must initialize with runtime grants");
             stores.ping().await.unwrap();
+            let indexes: Vec<_> = isolated
+                .collection::<Document>(super::super::sandbox_mongo::SANDBOX_BILLING)
+                .list_indexes()
+                .await
+                .unwrap()
+                .try_collect()
+                .await
+                .unwrap();
+            assert!(indexes.iter().any(|index| {
+                index
+                    .options
+                    .as_ref()
+                    .and_then(|options| options.name.as_deref())
+                    == Some("sandbox_billing_due")
+                    && index.keys == doc! {"retry_at":1,"_id":1}
+            }));
             assert!(stores.sandbox_model.warm_runtime_version.is_none());
             assert!(stores.sandbox_model.warm_home_policy.is_none());
             assert_eq!(
@@ -409,6 +427,7 @@ mod tests {
             super::super::native_warm_pools::COLLECTION,
             super::super::native_prepared::COLLECTION,
             super::super::media_uploads::COLLECTION,
+            super::super::sandbox_mongo::SANDBOX_BILLING,
         ] {
             let mut grants = role("cma").get_array("privileges").unwrap().clone();
             let grant = grants
@@ -423,7 +442,7 @@ mod tests {
                         .unwrap()
                         == target
                 })
-                .expect("the generated runtime role includes durable native pool targets");
+                .expect("the generated runtime role includes every durable target");
             assert!(grant
                 .as_document()
                 .unwrap()
@@ -449,7 +468,12 @@ mod tests {
     #[test]
     fn index_removal_is_confined_to_the_binding_migration() {
         let grants = role("cma").get_array("privileges").unwrap().clone();
-        for collection in ["sandboxes", "agents", ""] {
+        for collection in [
+            "sandboxes",
+            "agents",
+            super::super::sandbox_mongo::SANDBOX_BILLING,
+            "",
+        ] {
             let mut changed = grants.clone();
             changed.push(
                 doc! {"resource":{"db":"cma","collection":collection},"actions":["dropIndex"]}
