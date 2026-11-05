@@ -52,7 +52,10 @@ impl AgentWorker {
         if !super::startup_publication::holds_startup_authority(&claimed, &self.config.holder, at) {
             return Err(SandboxStoreError::Conflict);
         }
-        self.open_conversation_with_context(claimed, Some(context), at)
+        let result = self
+            .open_conversation_with_context(claimed.clone(), Some(context), at)
+            .await;
+        self.finish_capacity_attempt(&claimed, result, now + started.elapsed())
             .await
     }
 

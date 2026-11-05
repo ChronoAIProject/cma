@@ -11,6 +11,8 @@ use super::agent_admission_tests::{admission, created, ready_store, NOW};
 const MINUTE: &str = "2026-09-05T00:01:00Z";
 const TWO_MINUTES: &str = "2026-09-05T00:02:00Z";
 
+mod capacity_tests;
+
 #[tokio::test]
 async fn immutable_skill_material_is_atomic_fenced_and_protected_from_ordinary_saves() {
     use crate::profiles::{SkillRef, SkillSource};

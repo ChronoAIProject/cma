@@ -725,6 +725,105 @@
         ],
         "type": "string"
       },
+      "AppIntegration": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "app_ref": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "verification": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AppVerification"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verification_credential": {
+            "$ref": "#/components/schemas/CredentialStatus"
+          },
+          "version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "webhook_credential": {
+            "$ref": "#/components/schemas/WebhookCredentialStatus"
+          },
+          "webhook_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_ref",
+          "host",
+          "app_id",
+          "display_name",
+          "version",
+          "status",
+          "webhook_url",
+          "webhook_credential",
+          "verification_credential"
+        ],
+        "type": "object"
+      },
+      "AppList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AppIntegration"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "AppVerification": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ref": {
+            "type": "string"
+          },
+          "verified_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "verified_by": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "verified_by",
+          "verified_at",
+          "evidence_ref"
+        ],
+        "type": "object"
+      },
       "Attachment": {
         "additionalProperties": false,
         "description": "One attachment of an activity.\n\nEvery fact is what the source declared. Content derived from the bytes\n(transcripts, pixels, extracted text) never enters the Activity: the sealed\nactivity digest covers only what the source reported, and derived content is\nproduced on demand from the locator.",
@@ -1319,6 +1418,94 @@
           "download"
         ],
         "type": "string"
+      },
+      "BindRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "app_ref": {
+            "type": "string"
+          },
+          "installation_id": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "proof_ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_ref",
+          "installation_id",
+          "proof_ref"
+        ],
+        "type": "object"
+      },
+      "Binding": {
+        "additionalProperties": false,
+        "properties": {
+          "account_id": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "app_id": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "app_ref": {
+            "type": "string"
+          },
+          "authority_revision": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "binding_id": {
+            "type": "string"
+          },
+          "installation_id": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "repository_ids": {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "status": {
+            "type": "string"
+          },
+          "verification_ref": {
+            "type": "string"
+          },
+          "verified_by": {
+            "type": "string"
+          },
+          "verified_until": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "binding_id",
+          "app_ref",
+          "app_id",
+          "installation_id",
+          "account_id",
+          "status",
+          "authority_revision",
+          "verified_until",
+          "verified_by",
+          "verification_ref",
+          "repository_ids"
+        ],
+        "type": "object"
       },
       "BindingId": {
         "type": "string"
@@ -2940,6 +3127,35 @@
         ],
         "type": "string"
       },
+      "CreateAppRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "app_id": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "webhook_secret": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "app_id",
+          "display_name"
+        ],
+        "type": "object"
+      },
       "CreateConnection": {
         "additionalProperties": false,
         "properties": {
@@ -3063,6 +3279,26 @@
             ]
           }
         },
+        "type": "object"
+      },
+      "CredentialStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "present": {
+            "type": "boolean"
+          },
+          "version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "present"
+        ],
         "type": "object"
       },
       "CredentialsRequest": {
@@ -3871,6 +4107,41 @@
             "type": "object"
           }
         ]
+      },
+      "GitHubCapabilities": {
+        "properties": {
+          "app_identity_verification": {
+            "type": "boolean"
+          },
+          "automatic_reconciliation": {
+            "type": "boolean"
+          },
+          "dynamic_app_registration": {
+            "type": "boolean"
+          },
+          "native_app_webhook": {
+            "type": "boolean"
+          },
+          "ownership_verification": {
+            "type": "boolean"
+          },
+          "store_ready": {
+            "type": "boolean"
+          },
+          "webhook_secret_rotation": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "store_ready",
+          "dynamic_app_registration",
+          "native_app_webhook",
+          "webhook_secret_rotation",
+          "app_identity_verification",
+          "ownership_verification",
+          "automatic_reconciliation"
+        ],
+        "type": "object"
       },
       "GroupAdmission": {
         "enum": [
@@ -5597,6 +5868,11 @@
           "payload_too_large",
           "unsupported_media_type",
           "internal",
+          "github_signature_invalid",
+          "github_installation_forbidden",
+          "github_resource_not_found",
+          "github_delivery_conflict",
+          "github_source_unavailable",
           "attachment_not_found",
           "media_unavailable"
         ],
@@ -6021,6 +6297,83 @@
           "text",
           "truncated",
           "origin"
+        ],
+        "type": "object"
+      },
+      "Receipt": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "app_ref": {
+            "type": "string"
+          },
+          "authority_revision": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "body_sha256": {
+            "type": "string"
+          },
+          "delivery_id": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string"
+          },
+          "installation_id": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "raw_body_expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "receipt_id": {
+            "type": "string"
+          },
+          "received_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "repository_id": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "receipt_id",
+          "app_ref",
+          "delivery_id",
+          "event",
+          "status",
+          "received_at",
+          "raw_body_expires_at",
+          "body_sha256",
+          "task_ids",
+          "authority_revision"
         ],
         "type": "object"
       },
@@ -7160,6 +7513,70 @@
           },
           {
             "properties": {
+              "actions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "app_ref": {
+                "type": "string"
+              },
+              "deny_repository_ids": {
+                "items": {
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "events": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "installation_ids": {
+                "items": {
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "prompt_template": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "repository_ids": {
+                "items": {
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "github"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "app_ref",
+              "installation_ids",
+              "repository_ids",
+              "events",
+              "actions",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "admission": {
                 "$ref": "#/components/schemas/AdmissionPolicy"
               },
@@ -7339,7 +7756,7 @@
         "type": "string"
       },
       "SourceId": {
-        "description": "A source slot's stable id, derived from a configured source and never stored\nwith it, though routing policies refer to slots by it: \"telegram\", \"relay_<platform>\"\n(\"relay_telegram\", \"relay_lark\", \"relay_feishu\", \"relay_discord\", \"relay_slack\",\n\"relay_whatsapp\"), native \"discord\" or \"whatsapp\", \"custom\", or the reserved \"agent\" (hand-offs only; never configurable).\n\nAn id names a slot rather than a source instance. A channel holds at most\none source per variant and relay platform, so the id is unique within it,\nand a relay that is detached and later re-attached gets the same id back.",
+        "description": "A source slot's stable id, derived from a configured source and never stored\nwith it, though routing policies refer to slots by it: \"telegram\", \"relay_<platform>\"\n(\"relay_telegram\", \"relay_lark\", \"relay_feishu\", \"relay_discord\", \"relay_slack\",\n\"relay_whatsapp\"), native \"discord\" or \"whatsapp\", \"github\", \"custom\", or the\nreserved \"agent\" (hand-offs only; never configurable).\n\nAn id names a slot rather than a source instance. A channel holds at most\none source per variant and relay platform, so the id is unique within it,\nand a relay that is detached and later re-attached gets the same id back.",
         "type": "string"
       },
       "SourceKind": {
@@ -7427,6 +7844,36 @@
             },
             "required": [
               "bot_id",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "app_ref": {
+                "type": "string"
+              },
+              "installation_id": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "repository_id": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "github"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "app_ref",
+              "installation_id",
+              "repository_id",
               "type"
             ],
             "type": "object"
@@ -7622,6 +8069,70 @@
               "bot_id",
               "intents",
               "admission",
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "actions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "app_ref": {
+                "type": "string"
+              },
+              "deny_repository_ids": {
+                "items": {
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "events": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "installation_ids": {
+                "items": {
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "prompt_template": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "repository_ids": {
+                "items": {
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "type": {
+                "enum": [
+                  "github"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "app_ref",
+              "installation_ids",
+              "repository_ids",
+              "events",
+              "actions",
               "type"
             ],
             "type": "object"
@@ -7850,6 +8361,102 @@
             "type": "object"
           }
         ]
+      },
+      "Task": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "channel_id": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "record_id": {
+            "type": "string"
+          },
+          "response_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "result": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TaskResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retained_until": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "target_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "task_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "status",
+          "channel_id",
+          "record_id",
+          "event_id",
+          "target_count",
+          "accepted_at",
+          "retained_until"
+        ],
+        "type": "object"
+      },
+      "TaskResult": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pull_request": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskResultStatus"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "TaskResultStatus": {
+        "enum": [
+          "succeeded",
+          "no_change"
+        ],
+        "type": "string"
       },
       "TelegramReaction": {
         "oneOf": [
@@ -8405,6 +9012,42 @@
         ],
         "type": "object"
       },
+      "UpdateAppRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version",
+          "display_name"
+        ],
+        "type": "object"
+      },
+      "VerifyAppRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ref": {
+            "type": "string"
+          },
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version",
+          "evidence_ref"
+        ],
+        "type": "object"
+      },
       "VisualSupport": {
         "description": "The still images a gateway can show for a video.",
         "enum": [
@@ -8413,6 +9056,81 @@
           "keyframes"
         ],
         "type": "string"
+      },
+      "WebhookCredentialOverlap": {
+        "additionalProperties": false,
+        "properties": {
+          "valid_until": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "valid_until"
+        ],
+        "type": "object"
+      },
+      "WebhookCredentialStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "present": {
+            "type": "boolean"
+          },
+          "previous": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WebhookCredentialOverlap"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "present"
+        ],
+        "type": "object"
+      },
+      "WebhookSecretRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "overlap_seconds": {
+            "default": 600,
+            "format": "int32",
+            "maximum": 3600,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "webhook_secret": {
+            "$ref": "#/components/schemas/Secret",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "expected_version",
+          "webhook_secret"
+        ],
+        "type": "object"
       },
       "WhatsappCredentials": {
         "additionalProperties": false,
@@ -11197,6 +11915,716 @@
         ],
         "tags": [
           "tools"
+        ]
+      }
+    },
+    "/github/apps": {
+      "get": {
+        "operationId": "listGitHubAppIntegrations",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppList"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      },
+      "post": {
+        "operationId": "createGitHubAppIntegration",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAppRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppIntegration"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppIntegration"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/github/apps/{app_ref}": {
+      "get": {
+        "operationId": "getGitHubAppIntegration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppIntegration"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      },
+      "patch": {
+        "operationId": "updateGitHubAppIntegration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAppRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppIntegration"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/github/apps/{app_ref}/deliveries/{delivery_id}": {
+      "get": {
+        "operationId": "lookupGitHubDelivery",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "delivery_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/github/apps/{app_ref}/verification": {
+      "post": {
+        "operationId": "verifyGitHubAppIntegration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyAppRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppIntegration"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/github/apps/{app_ref}/webhook-secret": {
+      "put": {
+        "operationId": "setGitHubWebhookSecret",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookSecretRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppIntegration"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/github/apps/{app_ref}/webhooks": {
+      "post": {
+        "operationId": "receiveGitHubWebhook",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-GitHub-Delivery",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-GitHub-Event",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Hub-Signature-256",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/github/capabilities": {
+      "get": {
+        "operationId": "getGitHubCapabilities",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitHubCapabilities"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/github/deliveries/{receipt_id}": {
+      "get": {
+        "operationId": "getGitHubDelivery",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "receipt_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/github/installation-bindings": {
+      "post": {
+        "operationId": "bindGitHubInstallation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BindRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Binding"
+                }
+              }
+            },
+            "description": ""
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Binding"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/github/installation-bindings/{binding_id}": {
+      "get": {
+        "operationId": "getGitHubInstallationBinding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Binding"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/github/tasks/{task_id}": {
+      "get": {
+        "operationId": "getGitHubTask",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
         ]
       }
     },

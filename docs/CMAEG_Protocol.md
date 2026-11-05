@@ -1,5 +1,11 @@
 # CMA Event Gateway protocol 1.0
 
+The optional [native GitHub integration](CMAEG_GitHub_Integration_Design.md)
+provides persisted App management, administrator App-identity verification,
+write-only webhook rotation and signed ping/receipt recovery. Installation
+approval, automatic reconciliation and dynamic execution remain unavailable;
+registration or App-identity verification alone never activates Agent work.
+
 For service ownership, deployment topology and the provider integration sequence,
 see [Event Gateway architecture](CMAEG_Architecture.md). This document remains
 the normative wire contract.
@@ -2909,7 +2915,94 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/channel-connections` | List eligible ready connections for the selected owner. |
 | `GET /v1/channel-connections/{connection_ref}` | Read generic connection status and setup action. |
 | `DELETE /v1/channel-connections/{connection_ref}` | Cancel an unbound connection operation. |
+| `GET /v1/github/capabilities` | Report integration schema readiness and implemented native GitHub capabilities. |
+| `POST /v1/github/apps` | Register a pending App integration with an optional write-only webhook secret and required idempotency key. |
+| `GET /v1/github/apps` | List redacted App metadata for the authenticated owner with bounded cursor pagination. |
+| `GET /v1/github/apps/{app_ref}` | Read the authenticated owner's redacted App integration. |
+| `PATCH /v1/github/apps/{app_ref}` | Versioned, replay-safe display-name update for the owner; App identity and authority are immutable through this interface. |
+| `PUT /v1/github/apps/{app_ref}/webhook-secret` | Write-only setup/rotation for the owner with bounded credential overlap and redacted metadata. |
+| `POST /v1/github/apps/{app_ref}/verification` | Gateway-admin App-identity approval and atomic identity reservation; does not approve an installation or activate execution. |
+| `POST /v1/github/installation-bindings` | Historical binding interface; dynamic installation ownership approval is not yet available. |
+| `GET /v1/github/installation-bindings/{binding_id}` | Read the owner's GitHub installation binding. |
+| `POST /v1/github/apps/{app_ref}/webhooks` | Receive and durably admit a signed native GitHub webhook. |
+| `GET /v1/github/deliveries/{receipt_id}` | Read a GitHub delivery receipt owned by the authenticated owner. |
+| `GET /v1/github/apps/{app_ref}/deliveries/{delivery_id}` | Recover a receipt by the original GitHub delivery ID. |
+| `GET /v1/github/tasks/{task_id}` | Read the durable admission task associated with a GitHub delivery. |
 <!-- openapi-operations:end -->
+
+GitHub App registration derives ownership from creator authentication and returns
+201 on creation or 200 for an exact replay of the same `Idempotency-Key` and
+private request. A changed request under that owner/key returns 409 `conflict`.
+The integration, sealed webhook credential and replay result commit atomically;
+an uncertain commit returns 503 and is recovered by replaying the same key/body.
+Credentials never appear in registration, read, list or capability responses.
+Responses use `Cache-Control: no-store`; another owner's App returns 404.
+Listing accepts `limit` (1–100, default 50) and `after` and returns `items` plus
+an optional `next_cursor` to pass as the next `after` value.
+
+Existing-resource mutations require `expected_version` and `Idempotency-Key`.
+PATCH accepts only `expected_version` and `display_name`. Unknown fields,
+including `app_id`, `owner` or `status`, return 400. PUT accepts
+`expected_version`, `webhook_secret` (16–4096 UTF-8 bytes, write-only) and optional
+`overlap_seconds` (0–3600, default 600). It keeps at most the current and previous
+credential eligible, reporting the previous `version` and `valid_until` under
+`webhook_credential.previous`. A new positive overlap during an active overlap
+returns 409; explicit zero retires all earlier versions when replacement commits.
+Expired previous metadata may remain visible but never extends credential validity.
+Missing credentials refuse webhook authentication. Replay checks current
+credentials before returning an existing receipt, so a retired key cannot recover it.
+
+Verification accepts only `expected_version` and a nonempty `evidence_ref`
+(at most 512 bytes). It requires current service permission `cma-eg:admin` and
+the correct owner scope; the legacy identity-only authentication path cannot
+grant verifier authority. A trusted administrator makes the independent App
+administration decision and supplies its evidence reference; a reference string
+from an ordinary creator is insufficient. Approval atomically reserves the
+`(github.com, app_id)` identity and records `verification.verified_by`,
+`verified_at` and `evidence_ref`. Concurrent conflicting approvals yield one
+verified integration; the other draft remains pending. Numeric App IDs may
+repeat among pending drafts. The resulting `verified` status does not grant
+installation ownership, access to repositories or permission to dispatch.
+
+Organization selection through `X-CMAEG-Owner` requires current NyxID admin
+membership as well as the operation's service permission. Requests cannot select
+ownership through JSON. Another owner's resource returns 404; missing verifier
+permission returns 403. Stale versions, changed operation input and reserved App
+identity conflicts return 409. A stale-version error reports the safe current
+version; read the App to obtain current metadata. A 503 or lost write response
+requires replay with the same key/body. Replays return the original result,
+even if later mutations have advanced state, and never restore earlier authority
+or credentials. Read current metadata after recovering an operation.
+
+Signed ping returns 200 only after retaining its receipt. It remains `ignored`
+with no task IDs, even before App approval or installation setup. Verify
+`X-Hub-Signature-256` over the exact request bytes, with the stored credential
+selected by `app_ref`, before parsing or looking up duplicates. Changed bytes
+under a valid signature or a changed event type under the same delivery ID
+conflict with the original receipt (409); an invalid signature returns 401 and
+creates no receipt. The stable identity is scoped to integration reference and
+delivery ID, including for unverified drafts sharing a numeric App ID. Both GET
+lookup routes enforce the retained receipt owner. Webhook and receipt responses
+use `Cache-Control: no-store`.
+
+The deployment-wide `CMAEG_GITHUB_ENABLED` flag defaults to false and is read at
+startup. Disabled GitHub support performs no GitHub schema changes, starts no
+GitHub worker and returns 503 for integration operations; the authenticated
+capability query remains available with `store_ready: false`. When enabled,
+startup automatically prepares missing or version-1 integration storage using
+the existing database credential, then verifies runtime authority and non-TTL
+indexes before exposing availability. The version-2 marker is committed last;
+restarts skip completed migration, and unknown future versions are refused.
+The 30-second initialization bound or any failure leaves GitHub unavailable
+without disabling other sources; a later startup can resume after the cause is
+fixed. Disabling the flag preserves records and schema. The normal release needs
+no manual `--migrate-automation` command, and the program grants no database roles.
+No App configuration is loaded from environment or deployment files; onboarding
+subsequent Apps needs no restart. Capabilities report `native_app_webhook`, `webhook_secret_rotation`
+and `app_identity_verification` as true. `ownership_verification` refers to
+installation approval and remains false; `automatic_reconciliation` also
+remains false until those slices are delivered. These flags do not prove a
+deployed release, GitHub installation access or successful agent execution.
 
 ## Platform connections and optional management capabilities
 

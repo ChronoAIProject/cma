@@ -6353,7 +6353,12 @@
     "unsupported_media_type",
     "internal",
     "attachment_not_found",
-    "media_unavailable"
+    "media_unavailable",
+    "github_signature_invalid",
+    "github_installation_forbidden",
+    "github_resource_not_found",
+    "github_delivery_conflict",
+    "github_source_unavailable"
   ],
   "ProfileMetadata": [
     {
@@ -7159,6 +7164,65 @@
         "type": "all"
       },
       "topic_creation": true
+    },
+    {
+      "type": "github",
+      "app_ref": "app-fixture",
+      "installation_ids": [
+        99
+      ],
+      "repository_ids": [
+        1001
+      ],
+      "events": [
+        "issues",
+        "pull_request"
+      ],
+      "actions": [
+        "opened",
+        "closed"
+      ]
+    },
+    {
+      "type": "github",
+      "app_ref": "app-fixture",
+      "installation_ids": [
+        99
+      ],
+      "repository_ids": [
+        1001
+      ],
+      "events": [
+        "issues",
+        "pull_request"
+      ],
+      "actions": [
+        "opened",
+        "closed"
+      ],
+      "deny_repository_ids": [
+        1002
+      ],
+      "prompt_template": "Sync the configured board"
+    },
+    {
+      "type": "github",
+      "app_ref": "app-fixture",
+      "installation_ids": [
+        99
+      ],
+      "repository_ids": [
+        1001
+      ],
+      "events": [
+        "issues",
+        "pull_request"
+      ],
+      "actions": [
+        "opened",
+        "closed"
+      ],
+      "prompt_template": null
     }
   ],
   "SourceKind": [
@@ -7196,6 +7260,12 @@
       "app_id": "cli_separate_app",
       "tenant_key": "native_tenant",
       "bot_open_id": "ou_separate_bot"
+    },
+    {
+      "type": "github",
+      "app_ref": "app-fixture",
+      "installation_id": 99,
+      "repository_id": 1001
     }
   ],
   "SourceRequest": [
@@ -7386,6 +7456,65 @@
         "type": "all"
       },
       "topic_creation": true
+    },
+    {
+      "type": "github",
+      "app_ref": "app-fixture",
+      "installation_ids": [
+        99
+      ],
+      "repository_ids": [
+        1001
+      ],
+      "events": [
+        "issues",
+        "pull_request"
+      ],
+      "actions": [
+        "opened",
+        "closed"
+      ]
+    },
+    {
+      "type": "github",
+      "app_ref": "app-fixture",
+      "installation_ids": [
+        99
+      ],
+      "repository_ids": [
+        1001
+      ],
+      "events": [
+        "issues",
+        "pull_request"
+      ],
+      "actions": [
+        "opened",
+        "closed"
+      ],
+      "deny_repository_ids": [
+        1002
+      ],
+      "prompt_template": "Sync the configured board"
+    },
+    {
+      "type": "github",
+      "app_ref": "app-fixture",
+      "installation_ids": [
+        99
+      ],
+      "repository_ids": [
+        1001
+      ],
+      "events": [
+        "issues",
+        "pull_request"
+      ],
+      "actions": [
+        "opened",
+        "closed"
+      ],
+      "prompt_template": null
     }
   ],
   "TestChannelResponse": [
@@ -8422,7 +8551,8 @@
     "telegram",
     "relay_lark",
     "custom",
-    "agent"
+    "agent",
+    "github"
   ],
   "ActivityRouting": [
     {
@@ -10759,6 +10889,325 @@
       "longitude": 103.8198,
       "title": "Meeting point",
       "address": "Singapore"
+    }
+  ],
+  "AppIntegration": [
+    {
+      "app_ref": "app-fixture",
+      "host": "github.com",
+      "app_id": 42,
+      "display_name": "Fixture App",
+      "version": 1,
+      "status": "pending_verification",
+      "webhook_url": "https://gateway.example/v1/github/apps/app-fixture/webhooks",
+      "webhook_credential": {
+        "present": false,
+        "version": null
+      },
+      "verification_credential": {
+        "present": false,
+        "version": null
+      }
+    },
+    {
+      "app_ref": "app-fixture",
+      "host": "github.com",
+      "app_id": 42,
+      "display_name": "Fixture App",
+      "version": 2,
+      "status": "verified",
+      "webhook_url": "https://gateway.example/v1/github/apps/app-fixture/webhooks",
+      "webhook_credential": {
+        "present": true,
+        "version": 2,
+        "previous": {
+          "version": 1,
+          "valid_until": 1700000600
+        }
+      },
+      "verification_credential": {
+        "present": false,
+        "version": null
+      },
+      "verification": {
+        "verified_by": "admin-fixture",
+        "verified_at": 1700000000,
+        "evidence_ref": "verification-fixture"
+      }
+    }
+  ],
+  "AppList": [
+    {
+      "items": []
+    },
+    {
+      "items": [
+        {
+          "app_ref": "app-fixture",
+          "host": "github.com",
+          "app_id": 42,
+          "display_name": "Fixture App",
+          "version": 2,
+          "status": "verified",
+          "webhook_url": "https://gateway.example/v1/github/apps/app-fixture/webhooks",
+          "webhook_credential": {
+            "present": true,
+            "version": 2,
+            "previous": {
+              "version": 1,
+              "valid_until": 1700000600
+            }
+          },
+          "verification_credential": {
+            "present": false,
+            "version": null
+          },
+          "verification": {
+            "verified_by": "admin-fixture",
+            "verified_at": 1700000000,
+            "evidence_ref": "verification-fixture"
+          }
+        }
+      ],
+      "next_cursor": "cursor-fixture"
+    },
+    {
+      "items": [],
+      "next_cursor": null
+    }
+  ],
+  "AppVerification": [
+    {
+      "verified_by": "admin-fixture",
+      "verified_at": 1700000000,
+      "evidence_ref": "verification-fixture"
+    },
+    {
+      "verified_by": "admin-fixture",
+      "verified_at": -1,
+      "evidence_ref": "verification-fixture"
+    }
+  ],
+  "BindRequest": [
+    {
+      "app_ref": "app-fixture",
+      "installation_id": 99,
+      "proof_ref": "proof-fixture"
+    }
+  ],
+  "Binding": [
+    {
+      "binding_id": "binding-fixture",
+      "app_ref": "app-fixture",
+      "app_id": 42,
+      "installation_id": 99,
+      "account_id": 123,
+      "status": "active",
+      "authority_revision": 1,
+      "verified_until": 1700000900,
+      "verified_by": "admin-fixture",
+      "verification_ref": "verification-fixture",
+      "repository_ids": [
+        1001
+      ]
+    }
+  ],
+  "CreateAppRequest": [
+    {
+      "app_id": 42,
+      "display_name": "Fixture App"
+    },
+    {
+      "app_id": 42,
+      "display_name": "Fixture App",
+      "webhook_secret": null
+    },
+    {
+      "app_id": 42,
+      "display_name": "Fixture App",
+      "webhook_secret": "fixture-webhook-secret"
+    }
+  ],
+  "CredentialStatus": [
+    {
+      "present": false
+    },
+    {
+      "present": false,
+      "version": null
+    },
+    {
+      "present": true,
+      "version": 1
+    }
+  ],
+  "GitHubCapabilities": [
+    {
+      "store_ready": true,
+      "dynamic_app_registration": true,
+      "native_app_webhook": true,
+      "webhook_secret_rotation": true,
+      "app_identity_verification": true,
+      "ownership_verification": false,
+      "automatic_reconciliation": false
+    }
+  ],
+  "Receipt": [
+    {
+      "receipt_id": "receipt-fixture",
+      "app_ref": "app-fixture",
+      "delivery_id": "delivery-fixture",
+      "event": "ping",
+      "status": "ignored",
+      "received_at": 1700000000,
+      "raw_body_expires_at": 1700086400,
+      "body_sha256": "fixture-body-digest",
+      "task_ids": [],
+      "authority_revision": 0
+    },
+    {
+      "receipt_id": "receipt-fixture",
+      "app_ref": "app-fixture",
+      "delivery_id": "delivery-fixture",
+      "event": "ping",
+      "status": "ignored",
+      "received_at": 1700000000,
+      "raw_body_expires_at": 1700086400,
+      "body_sha256": "fixture-body-digest",
+      "task_ids": [],
+      "authority_revision": 0,
+      "installation_id": null,
+      "repository_id": null,
+      "action": null
+    },
+    {
+      "receipt_id": "receipt-fixture",
+      "app_ref": "app-fixture",
+      "delivery_id": "delivery-fixture",
+      "event": "issues",
+      "status": "accepted",
+      "received_at": 1700000000,
+      "raw_body_expires_at": 1700086400,
+      "body_sha256": "fixture-body-digest",
+      "task_ids": [
+        "task-fixture"
+      ],
+      "authority_revision": 1,
+      "action": "opened",
+      "installation_id": 99,
+      "repository_id": 1001
+    }
+  ],
+  "Task": [
+    {
+      "task_id": "task-fixture",
+      "status": "accepted",
+      "channel_id": "channel-fixture",
+      "record_id": "record-fixture",
+      "event_id": "event-fixture",
+      "target_count": 1,
+      "accepted_at": 1700000000,
+      "retained_until": 1700086400
+    },
+    {
+      "task_id": "task-fixture",
+      "status": "accepted",
+      "channel_id": "channel-fixture",
+      "record_id": "record-fixture",
+      "event_id": "event-fixture",
+      "target_count": 1,
+      "accepted_at": 1700000000,
+      "retained_until": 1700086400,
+      "response_id": null
+    },
+    {
+      "task_id": "task-fixture",
+      "status": "succeeded",
+      "channel_id": "channel-fixture",
+      "record_id": "record-fixture",
+      "event_id": "event-fixture",
+      "target_count": 1,
+      "accepted_at": 1700000000,
+      "retained_until": 1700086400,
+      "response_id": "response-fixture",
+      "result": {
+        "status": "succeeded",
+        "pull_request": "https://github.com/example/goals/pull/7",
+        "branch": "automation/fixture",
+        "commit": "fixture-commit"
+      }
+    }
+  ],
+  "TaskResult": [
+    {
+      "status": "succeeded",
+      "pull_request": "https://github.com/example/goals/pull/7",
+      "branch": "automation/fixture",
+      "commit": "fixture-commit"
+    },
+    {
+      "status": "no_change"
+    },
+    {
+      "status": "no_change",
+      "pull_request": null,
+      "branch": null,
+      "commit": null
+    }
+  ],
+  "TaskResultStatus": [
+    "succeeded",
+    "no_change"
+  ],
+  "UpdateAppRequest": [
+    {
+      "expected_version": 1,
+      "display_name": "Updated Fixture App"
+    }
+  ],
+  "VerifyAppRequest": [
+    {
+      "expected_version": 1,
+      "evidence_ref": "verification-fixture"
+    }
+  ],
+  "WebhookCredentialOverlap": [
+    {
+      "version": 1,
+      "valid_until": 1700000600
+    }
+  ],
+  "WebhookCredentialStatus": [
+    {
+      "present": false
+    },
+    {
+      "present": false,
+      "version": null
+    },
+    {
+      "present": true,
+      "version": 2,
+      "previous": {
+        "version": 1,
+        "valid_until": 1700000600
+      }
+    }
+  ],
+  "WebhookSecretRequest": [
+    {
+      "expected_version": 2,
+      "webhook_secret": "fixture-webhook-secret"
+    },
+    {
+      "expected_version": 2,
+      "webhook_secret": "fixture-webhook-secret",
+      "overlap_seconds": 0
+    },
+    {
+      "expected_version": 2,
+      "webhook_secret": "fixture-webhook-secret",
+      "overlap_seconds": 3600
     }
   ]
 }

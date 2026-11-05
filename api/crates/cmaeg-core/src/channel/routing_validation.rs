@@ -76,7 +76,8 @@ impl RoutingPolicy {
                 Source::NativeLark(_)
                 | Source::Custom { .. }
                 | Source::Discord { .. }
-                | Source::Whatsapp { .. } => None,
+                | Source::Whatsapp { .. }
+                | Source::Github { .. } => None,
             })
             .collect();
         let known: BTreeSet<&ConsumerId> = self.consumers.iter().map(|c| &c.id).collect();

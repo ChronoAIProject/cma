@@ -55,10 +55,16 @@ pub async fn capabilities(State(service): State<ConnectionService>, _creator: Cr
     no_store(
         Json(CapabilityView {
             agent_tools: Some(crate::mcp::catalog::view(&service.tools)),
-            source_features: if service.management.native_bot_mentions_writes_enabled {
-                vec!["native_bot_mentions_v1".into()]
-            } else {
-                Vec::new()
+            source_features: {
+                let mut features = if service.management.native_bot_mentions_writes_enabled {
+                    vec!["native_bot_mentions_v1".into()]
+                } else {
+                    Vec::new()
+                };
+                if service.management.github.is_some() {
+                    features.push("github_native_receipts_v1".into());
+                }
+                features
             },
             relay_authoring: Some(super::relay_capabilities::view(&service.management)),
             platforms: vec![PlatformCapability {

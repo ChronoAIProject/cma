@@ -1,3 +1,4 @@
+use layer2_core::sandbox::task_experience::TaskExperienceWriter;
 use layer2_core::sandbox::{agent_io::AnswerContext, suggestions::*, AgentReadError};
 use layer2_core::{AgentId, StoreError, SubjectId};
 use mongodb::{
@@ -104,13 +105,23 @@ impl SuggestionStore for MongoSandboxStore {
         &self,
         now_ms: u64,
     ) -> Result<Option<SuggestionWork>, AgentReadError> {
+        let mut filter = doc! {"version":STRATEGY_VERSION,"$or": [
+            {"status":"pending"}, {"status":"running", "deadline_ms":{"$lte": now_ms as i64}}
+        ]};
+        if let Some(accounts) = self
+            .writer_policy
+            .writer_accounts(TaskExperienceWriter::Suggestions)
+        {
+            if accounts.is_empty() {
+                return Ok(None);
+            }
+            filter.insert("owner", doc! {"$in": accounts});
+        }
         let mut session = self.client.start_session().await.map_err(unavailable)?;
         start_transaction(&mut session).await.map_err(unavailable)?;
         let Some(row) = self
             .suggestions
-            .find_one(doc! {"version":STRATEGY_VERSION,"$or": [
-                {"status":"pending"}, {"status":"running", "deadline_ms":{"$lte": now_ms as i64}}
-            ]})
+            .find_one(filter)
             .sort(doc! {"created_at_ms":1,"_id":1})
             .session(&mut session)
             .await

@@ -58,7 +58,13 @@ pub(super) async fn fixture() -> Fixture {
         vec![],
     )
     .await;
-    let recorder = DurableAgentUpdateRecorder::new(store.clone());
+    let policy = Arc::new(
+        serde_json::from_value(json!({
+            "mode":"accounts", "accounts":["owner-a"], "capabilities":["replay_presentation"]
+        }))
+        .unwrap(),
+    );
+    let recorder = DurableAgentUpdateRecorder::with_writer_policy(store.clone(), policy);
     let state = command_test_support::compose(state, store.clone()).with_updates(recorder.clone());
     Fixture {
         router: command_test_support::router(state, store),
