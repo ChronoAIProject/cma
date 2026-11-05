@@ -85,6 +85,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
           sequence: event.seq,
           kind: text(kind.kind),
           status: text(kind.status) ?? 'running',
+          startedAt: event.appendedAt,
         },
         true,
       );
@@ -99,6 +100,9 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         ...current,
         title: text(kind.title) ?? current.title,
         status: text(kind.status) ?? current.status,
+        finishedAt: ['completed', 'failed', 'cancelled', 'error'].includes(text(kind.status) ?? '')
+          ? (current.finishedAt ?? event.appendedAt)
+          : current.finishedAt,
         output:
           typeof output?.text === 'string' && typeof output.truncated === 'boolean'
             ? { text: output.text, truncated: output.truncated }
