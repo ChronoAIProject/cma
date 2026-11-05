@@ -460,7 +460,7 @@ shared §12.3 menu titled **CMA services**. Agent Manager and Event Gateway are 
 modified or middle click opens a new tab, with the current one checked. **Image Manager** stays
 listed, `aria-disabled`, with the reason *Coming soon. Image Manager is not available yet.* under
 its label, and never routes. Consumer routes belong to Event Gateway. Collapsed, the button keeps
-only its glyph. The build revision is no longer in the header; it is the copyable **Build `<rev>`**
+only its glyph. The build revision is no longer in the header; it is the **Copy build version · <version>**
 row of the account menu.
 
 **Action row.** Directly under the header, in this order. Every entry is a plain full-width row,
