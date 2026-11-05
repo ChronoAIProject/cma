@@ -3,6 +3,8 @@ use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum FundingError {
+    #[error("Sandbox is outside paid admission")]
+    NotEnrolled,
     #[error("prepaid funding temporarily unavailable: {0}")]
     Retryable(String),
     #[error("prepaid window not funded: {0}")]
@@ -96,6 +98,9 @@ pub(crate) struct SandboxBillingState {
     pub source_operation: String,
     pub operation_id: String,
     pub runtime_generation: u64,
+    /// A confirmed exclusion pins this generation to the ordinary unbilled lifecycle.
+    #[serde(default)]
+    pub unbilled_generation: Option<u64>,
     pub quote: Option<FundingQuote>,
     pub pending: Option<ReserveRequest>,
     pub current: Option<FundingWindow>,
@@ -123,6 +128,7 @@ impl SandboxBillingState {
             source_operation: source_operation(sandbox),
             operation_id: uuid::Uuid::new_v4().to_string(),
             runtime_generation: generation,
+            unbilled_generation: None,
             quote: None,
             pending: None,
             current: None,

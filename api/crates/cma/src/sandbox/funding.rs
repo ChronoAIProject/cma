@@ -12,6 +12,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+mod admission;
 mod evidence;
 mod model;
 mod mongo;
@@ -20,6 +21,8 @@ mod nyxid;
 mod tests;
 pub(crate) use model::*;
 use nyxid::NyxIdFundingProvider;
+#[cfg(test)]
+pub(crate) use tests::pilot::excluded_funding;
 
 const WINDOW_SECONDS: u64 = 300;
 const RENEWAL_MARGIN_SECONDS: u64 = 30;
@@ -105,142 +108,6 @@ impl ProviderFundingAdapter {
         })
     }
 
-    async fn recover_pending(&self, state: &mut SandboxBillingState) -> Result<(), FundingError> {
-        let Some(request) = state.pending.clone() else {
-            return Ok(());
-        };
-        // A 404 is not proof of non-commit: reserve replays the identical durable payload.
-        let receipt = match self.provider.recover(&request.request_id).await? {
-            Some(receipt) => receipt,
-            None => self.provider.reserve(request.clone()).await?,
-        };
-        validate_receipt(&request, &receipt, state.current.as_ref())?;
-        if state
-            .current
-            .as_ref()
-            .is_none_or(|p| p.runtime_generation != receipt.runtime_generation)
-        {
-            state.coverage_start = receipt.covered_from;
-        }
-        state.current = Some(receipt.clone());
-        state.windows.push(RetainedWindow {
-            window: receipt,
-            evidence: None,
-        });
-        state.pending = None;
-        state.attempts = 0;
-        state.last_error = None;
-        self.state.save(state).await
-    }
-
-    async fn fund(
-        &self,
-        sandbox: &Sandbox,
-        state: &mut SandboxBillingState,
-        allocation: Allocation,
-        now: u64,
-    ) -> Result<(), FundingError> {
-        // Finish any ambiguous mutation before deciding whether to create another one.
-        if state.pending.is_some() {
-            self.recover_pending(state).await?;
-        }
-        let target_generation = generation(sandbox);
-        if target_generation != state.runtime_generation {
-            if target_generation
-                != state
-                    .runtime_generation
-                    .checked_add(1)
-                    .ok_or_else(|| FundingError::Invalid("generation overflow".into()))?
-            {
-                return Err(FundingError::Invalid(
-                    "NyxID requires the next consecutive funded runtime generation".into(),
-                ));
-            }
-            if state
-                .current
-                .as_ref()
-                .is_some_and(|w| w.covered_until > now)
-                || !state.windows.is_empty()
-            {
-                return Err(FundingError::Retryable(
-                    "prior coverage and retained evidence must finish before replacement".into(),
-                ));
-            }
-            state.runtime_generation = target_generation;
-            state.operation_id = uuid::Uuid::new_v4().to_string();
-            state.source_operation = source_operation(sandbox);
-            state.quote = None;
-            state.stopped = false;
-            self.state.save(state).await?;
-        }
-        if let Some(current) = state
-            .current
-            .as_ref()
-            .filter(|w| w.runtime_generation == target_generation)
-        {
-            if allocation.cpu_millis > current.allocation.cpu_millis
-                || allocation.memory_mib > current.allocation.memory_mib
-                || allocation.disk_gib > current.allocation.disk_gib
-            {
-                return Err(FundingError::Unfunded("confirmed window does not cover the requested allocation; a new generation is required".into()));
-            }
-            if current.covered_until <= now {
-                return Err(FundingError::Unfunded(
-                    "coverage expired; a new authorized runtime generation is required".into(),
-                ));
-            }
-            if current.covered_until > now.saturating_add(RENEWAL_MARGIN_SECONDS) {
-                return Ok(());
-            }
-        }
-        if state.windows.len() >= 32 {
-            return Err(FundingError::Retryable(
-                "retained evidence backlog prevents new coverage".into(),
-            ));
-        }
-        if state.quote.is_none() {
-            let maximum = maximum_allocation(sandbox);
-            let quote = self
-                .provider
-                .quote(QuoteRequest {
-                    owner_id: state.owner_id.clone(),
-                    sandbox_id: state.sandbox_id.clone(),
-                    allocation: maximum.clone(),
-                })
-                .await?;
-            if quote.owner_id != state.owner_id
-                || quote.sandbox_id != state.sandbox_id
-                || quote.maximum_allocation != maximum
-                || quote.accept_before <= now
-            {
-                return Err(FundingError::Invalid(
-                    "quote differs from owner, Sandbox or maximum allocation".into(),
-                ));
-            }
-            state.quote = Some(quote);
-            self.state.save(state).await?;
-        }
-        let quote_id = state
-            .quote
-            .as_ref()
-            .expect("persisted quote")
-            .quote_id
-            .clone();
-        state.pending = Some(ReserveRequest {
-            request_id: uuid::Uuid::new_v4().to_string(),
-            quote_id,
-            owner_id: state.owner_id.clone(),
-            sandbox_id: state.sandbox_id.clone(),
-            runtime_generation: state.runtime_generation,
-            operation_id: state.operation_id.clone(),
-            previous_window_id: state.current.as_ref().map(|w| w.window_id.clone()),
-            seconds: WINDOW_SECONDS,
-            allocation,
-        });
-        self.state.save(state).await?;
-        self.recover_pending(state).await
-    }
-
     async fn failure(
         &self,
         sandbox: &Sandbox,
@@ -269,6 +136,10 @@ impl ProviderFundingAdapter {
         mut state: SandboxBillingState,
         now: SystemTime,
     ) -> Result<(), FundingError> {
+        // Excluded generations are admitted only by lifecycle callers, never a sweep.
+        if state.unbilled_generation.is_some() {
+            return Ok(());
+        }
         let id = SandboxId(state.sandbox_id.clone());
         let Some(sandbox) = self.state.sandbox(&id).await? else {
             // Ledger survives purge. Never infer a zero tail from missing runtime records.
@@ -364,6 +235,9 @@ impl SandboxFundingAdapter for ProviderFundingAdapter {
         if state.owner_id != sandbox.owner.as_str() || state.sandbox_id != sandbox.id.as_str() {
             return Err(FundingError::Invalid("funding owner changed".into()));
         }
+        if state.unbilled_generation == Some(generation) {
+            return Ok(None);
+        }
         if state.stopped && state.runtime_generation == generation {
             return Err(FundingError::Unfunded(
                 "stopped compute requires a new runtime generation".into(),
@@ -383,6 +257,9 @@ impl SandboxFundingAdapter for ProviderFundingAdapter {
         {
             self.failure(sandbox, &mut state, &error, now).await?;
             return Err(error);
+        }
+        if state.unbilled_generation == Some(generation) {
+            return Ok(None);
         }
         let receipt = state
             .current
@@ -406,6 +283,9 @@ impl SandboxFundingAdapter for ProviderFundingAdapter {
 
     async fn settle(&self, sandbox: &Sandbox, now: SystemTime) -> Result<(), FundingError> {
         if let Some(mut state) = self.state.load(&sandbox.id).await? {
+            if state.unbilled_generation.is_some() {
+                return Ok(());
+            }
             state.stopped = true;
             state.retry_at = seconds(now);
             self.state.save(&mut state).await?;
