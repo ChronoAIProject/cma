@@ -9,26 +9,35 @@ import {
 } from '../ui/icons';
 import type { MessageFeedbackControls } from './useMessageFeedback';
 import { FeedbackReasons } from './FeedbackReasons';
-
-const singaporeTime = new Intl.DateTimeFormat('en-GB', {
-  timeZone: 'Asia/Singapore',
-  day: '2-digit',
-  month: 'short',
-  year: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
-});
+import { Modal } from '../ui/Modal';
+import { relativeMessageTime, relativeMessageDelay } from './relativeTime';
 
 export function MessageTimestamp({ at }: { readonly at?: string }) {
-  const timestamp = at === undefined ? NaN : Date.parse(at);
-  return Number.isFinite(timestamp) ? (
-    <time className="message__timestamp" dateTime={at}>
-      {singaporeTime.format(timestamp)} SGT
+  const [now, setNow] = useState(Date.now);
+  const label = relativeMessageTime(at, now);
+  useEffect(() => {
+    if (!at || !Number.isFinite(Date.parse(at))) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const update = () => {
+      clearTimeout(timer);
+      const current = Date.now();
+      setNow(current);
+      timer = setTimeout(update, relativeMessageDelay(at, current));
+    };
+    timer = setTimeout(update, relativeMessageDelay(at, Date.now()));
+    window.addEventListener('focus', update);
+    document.addEventListener('visibilitychange', update);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('focus', update);
+      document.removeEventListener('visibilitychange', update);
+    };
+  }, [at]);
+  return label ? (
+    <time className="message__timestamp" dateTime={at} aria-live="off">
+      {label}
     </time>
-  ) : (
-    <span className="message__timestamp">Time unavailable</span>
-  );
+  ) : null;
 }
 
 export function MessageFooter({
@@ -37,6 +46,7 @@ export function MessageFooter({
   content,
   committed,
   canVote,
+  showVotes = canVote,
   feedback,
 }: {
   readonly id: string;
@@ -44,6 +54,7 @@ export function MessageFooter({
   readonly content: string;
   readonly committed: boolean;
   readonly canVote: boolean;
+  readonly showVotes?: boolean;
   readonly feedback?: MessageFeedbackControls;
 }) {
   const [copy, setCopy] = useState<'copied' | 'failed'>();
@@ -55,111 +66,119 @@ export function MessageFooter({
   const voting = canVote && committed && feedback !== undefined;
   const row = voting ? feedback.rows[id] : undefined;
   const vote = row?.vote ?? null;
-  const unavailable = !committed
-    ? 'Available when this message is recorded.'
-    : feedback === undefined
-      ? 'Only the owner can save message feedback.'
-      : !feedback.ready
-        ? (feedback.error ?? 'Loading your message feedback…')
-        : row?.pending
-          ? 'Saving your vote…'
-          : row?.error
-            ? 'Retry this vote to confirm its outcome before changing it.'
-            : undefined;
+  const unavailable = !canVote
+    ? 'Feedback is available for a final answer.'
+    : !committed
+      ? 'Available when this message is recorded.'
+      : feedback === undefined
+        ? 'Only the owner can save message feedback.'
+        : !feedback.ready
+          ? (feedback.error ?? 'Loading your message feedback…')
+          : row?.pending
+            ? 'Saving your vote…'
+            : row?.error
+              ? 'Retry this vote to confirm its outcome before changing it.'
+              : undefined;
   return (
-    <footer
-      className="message-footer"
-      data-voted={vote ?? undefined}
-      data-feedback-status={
-        Boolean(copy || row?.pending || row?.saved || row?.error || (voting && feedback.error)) ||
-        undefined
-      }
-    >
-      <div className="message-footer__row">
-        <MessageTimestamp at={at} />
-        <div className="message-footer__actions" role="group" aria-label="Message actions">
-          <Button
-            size="sm"
-            icon={<IconCopyOutline16 />}
-            aria-label="Copy content"
-            title={copy === 'copied' ? 'Copied' : 'Copy content'}
-            disabled={content === ''}
-            onClick={() => {
-              void (async () => {
-                try {
-                  if (!navigator.clipboard) throw new Error('Clipboard unavailable.');
-                  await navigator.clipboard.writeText(content);
-                  setCopy('copied');
-                } catch {
-                  setCopy('failed');
-                }
-              })();
-            }}
-          />
-          {voting ? (
-            <>
-              <Button
-                size="sm"
-                icon={vote === 'up' ? <IconLikeFill16 /> : <IconLikeOutline16 />}
-                aria-label="Helpful"
-                aria-pressed={vote === 'up'}
-                disabled={unavailable !== undefined}
-                title={unavailable ?? (vote === 'up' ? 'Remove helpful vote' : 'Helpful')}
-                onClick={() => feedback?.setVote(id, vote === 'up' ? null : 'up')}
-              />
-              <Button
-                size="sm"
-                icon={vote === 'down' ? <IconDislikeFill16 /> : <IconDislikeOutline16 />}
-                aria-label="Needs improvement"
-                aria-pressed={vote === 'down'}
-                disabled={unavailable !== undefined}
-                title={
-                  unavailable ??
-                  (vote === 'down' ? 'Remove needs improvement vote' : 'Needs improvement')
-                }
-                onClick={() => feedback?.setVote(id, vote === 'down' ? null : 'down')}
-              />
-            </>
+    <>
+      <footer
+        className="message-footer"
+        data-voted={vote ?? undefined}
+        data-feedback-status={
+          Boolean(copy || row?.pending || row?.saved || row?.error || (voting && feedback.error)) ||
+          undefined
+        }
+      >
+        <div className="message-footer__row">
+          <div className="message-footer__actions" role="group" aria-label="Message actions">
+            <Button
+              size="sm"
+              icon={<IconCopyOutline16 />}
+              aria-label="Copy content"
+              title={copy === 'copied' ? 'Copied' : 'Copy content'}
+              disabled={content === ''}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    if (!navigator.clipboard) throw new Error('Clipboard unavailable.');
+                    await navigator.clipboard.writeText(content);
+                    setCopy('copied');
+                  } catch {
+                    setCopy('failed');
+                  }
+                })();
+              }}
+            />
+            {showVotes ? (
+              <>
+                <Button
+                  size="sm"
+                  icon={vote === 'up' ? <IconLikeFill16 /> : <IconLikeOutline16 />}
+                  aria-label="Helpful"
+                  aria-pressed={vote === 'up'}
+                  disabled={unavailable !== undefined}
+                  title={unavailable ?? (vote === 'up' ? 'Remove helpful vote' : 'Helpful')}
+                  onClick={() => feedback?.setVote(id, vote === 'up' ? null : 'up')}
+                />
+                <Button
+                  size="sm"
+                  icon={vote === 'down' ? <IconDislikeFill16 /> : <IconDislikeOutline16 />}
+                  aria-label="Needs improvement"
+                  aria-pressed={vote === 'down'}
+                  disabled={unavailable !== undefined}
+                  title={
+                    unavailable ??
+                    (vote === 'down' ? 'Remove needs improvement vote' : 'Needs improvement')
+                  }
+                  onClick={() => feedback?.setVote(id, vote === 'down' ? null : 'down')}
+                />
+              </>
+            ) : null}
+          </div>
+          <MessageTimestamp key={at ?? 'pending'} at={at} />
+          {copy === 'copied' ? (
+            <span className="message-footer__status" role="status">
+              Copied
+            </span>
+          ) : null}
+          {row?.pending ? (
+            <span className="message-footer__status" role="status" aria-label="Vote status">
+              Saving vote…
+            </span>
+          ) : null}
+          {row?.saved ? (
+            <span className="message-footer__status" role="status" aria-label="Vote status">
+              {vote === null ? 'Vote removed' : 'Vote recorded'}
+            </span>
           ) : null}
         </div>
-        {copy === 'copied' ? (
+        {copy === 'failed' ? (
           <span className="message-footer__status" role="status">
-            Copied
+            Copy failed. Use Copy content to retry.
           </span>
         ) : null}
-        {row?.pending ? (
-          <span className="message-footer__status" role="status" aria-label="Vote status">
-            Saving vote…
-          </span>
+        {row?.error ? (
+          <div className="message-footer__error" role="status">
+            <span>{row.error}</span>
+            <Button size="sm" onClick={() => feedback?.setVote(id, row.retryVote ?? null)}>
+              Retry vote
+            </Button>
+          </div>
         ) : null}
-        {row?.saved ? (
-          <span className="message-footer__status" role="status" aria-label="Vote status">
-            {vote === null ? 'Vote removed' : 'Vote recorded'}
-          </span>
+        {voting && feedback.error ? (
+          <div className="message-footer__error" role="status">
+            <span>{feedback.error}</span>
+            <Button size="sm" onClick={feedback.reload}>
+              Retry feedback
+            </Button>
+          </div>
         ) : null}
-      </div>
-      {copy === 'failed' ? (
-        <span className="message-footer__status" role="status">
-          Copy failed. Use Copy content to retry.
-        </span>
+      </footer>
+      {voting && feedback.reasons?.rows[id]?.open ? (
+        <Modal open title="Reasons for improvement" onClose={() => feedback.reasons?.close(id)}>
+          <FeedbackReasons id={id} feedback={feedback} />
+        </Modal>
       ) : null}
-      {row?.error ? (
-        <div className="message-footer__error" role="status">
-          <span>{row.error}</span>
-          <Button size="sm" onClick={() => feedback?.setVote(id, row.retryVote ?? null)}>
-            Retry vote
-          </Button>
-        </div>
-      ) : null}
-      {voting && feedback.error ? (
-        <div className="message-footer__error" role="status">
-          <span>{feedback.error}</span>
-          <Button size="sm" onClick={feedback.reload}>
-            Retry feedback
-          </Button>
-        </div>
-      ) : null}
-      {voting ? <FeedbackReasons id={id} feedback={feedback} /> : null}
-    </footer>
+    </>
   );
 }
