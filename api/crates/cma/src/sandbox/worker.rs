@@ -192,7 +192,10 @@ impl SandboxWorker {
             return Ok(false);
         };
         let claim_ms = claiming.elapsed().as_millis() as u64;
-        self.run_claimed(sandbox, now, claim_ms).await
+        layer2_core::agent_ownership::transport_observation_scope(
+            self.run_claimed(sandbox, now, claim_ms),
+        )
+        .await
     }
 
     async fn run_claimed(

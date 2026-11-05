@@ -2,6 +2,7 @@
 use std::sync::Arc;
 mod access;
 mod adapter;
+mod agent_manager;
 mod bindings;
 mod bots;
 mod credentials;
@@ -39,6 +40,7 @@ use layer2_core::{
 };
 pub(crate) struct ControlPlaneComposition {
     pub router: Router,
+    pub agent_manager: Option<Arc<crate::agent_manager::AgentManager>>,
     pub bindings: bindings::BindingComposition,
     pub bots: Option<bots::BotComposition>,
     pub actor_continuations: Option<Arc<crate::bot_setups::ActorContinuationWorker>>,
@@ -55,26 +57,7 @@ pub(crate) struct ControlPlaneComposition {
 }
 impl ControlPlaneComposition {
     pub(crate) async fn build(config: &Config) -> Result<Self, String> {
-        let mut stores = MongoStores::connect_with_authority(
-            &config.mongodb_uri,
-            &config.mongodb_database,
-            &config.deployment_id,
-            &config.auth_encryption_key,
-            config.activity_retention,
-            (
-                &config.runtime.sandbox_image,
-                config.runtime.home_policy.as_ref(),
-            ),
-            config.mongodb_authority,
-        )
-        .await
-        .map_err(|error| format!("durable stores are not usable: {error}"))?;
-        stores.sandbox_model = Arc::new(
-            (*stores.sandbox_model)
-                .clone()
-                .with_machine_runtime_version(config.runtime.machine_sandbox_image.clone()),
-        );
-        let stores = Arc::new(stores.with_writer_policy(config.task_experience.clone()));
+        let stores = agent_manager::stores(config).await?;
         let activity = ActivityService::new(stores.activity.clone());
         let documents = documents::compose(config, &stores)?;
         let users = UserDirectory::new(stores.users.clone());
@@ -148,6 +131,7 @@ impl ControlPlaneComposition {
         )
         .with_connections(connection_prerequisite.clone());
         let live_agents = Arc::new(LiveAgentRegistry::default());
+        let agent_manager = agent_manager::register(config, &stores, &live_agents).await?;
         let resource_access = bindings::resource_access(&stores, auth.clone());
         let agent_page_origin = layer1_public::agent_page::AgentPageOrigin::new(&config.public_url)
             .map_err(|error| error.to_string())?;
@@ -275,6 +259,9 @@ impl ControlPlaneComposition {
                 skills: agent_skills,
             },
             SandboxLifecycleConfig {
+                ownership: agent_manager
+                    .as_ref()
+                    .map(|manager| manager.coordinator.clone()),
                 access_transport_migration: config.agent_access_transport_migration.clone(),
                 managed_documents_enabled: config.document_storage.is_some(),
                 home_policy: config
@@ -334,6 +321,9 @@ impl ControlPlaneComposition {
                 context: context.clone(),
             },
             worker_holder.clone(),
+            agent_manager
+                .as_ref()
+                .map(|manager| manager.coordinator.clone()),
         )?;
         let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
             layer2_core::sandbox::control::SandboxControlWorker::new(
@@ -473,14 +463,23 @@ impl ControlPlaneComposition {
             auth.clone(),
             recorder,
             limits,
-            stores,
+            stores.clone(),
             tool_routes.merge(service_portal::router(
                 auth.clone(),
                 config.gateway.as_ref(),
             )?),
         );
+        let router = agent_manager::relay(
+            config,
+            &agent_manager,
+            &sandbox_lifecycle,
+            router,
+            stores.sandbox_model.clone(),
+            adapters.owner_controls,
+        )?;
         Ok(Self {
             router,
+            agent_manager,
             auth,
             bindings,
             bots,

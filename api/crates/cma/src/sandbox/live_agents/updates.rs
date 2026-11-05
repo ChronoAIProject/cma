@@ -22,41 +22,54 @@ pub(super) fn spawn_update_task(
     mut updates: mpsc::Receiver<ConversationUpdate>,
     recorder: Arc<dyn AgentUpdateRecorder>,
 ) -> AbortHandle {
+    let authority = layer2_core::agent_ownership::execution_authority();
+    let cleanup = registry.clone();
     let task = tokio::spawn(async move {
-        let Ok(attachment) = activated.await else {
-            return;
-        };
-        let mut assembly = AgentMessageAssembly::default();
-        if restore_assembly(
-            recorder.as_ref(),
-            &attachment.agent_id,
-            attachment.runtime_generation,
-            &mut assembly,
-        )
-        .await
-        .is_err()
-        {
-            if let Some(registry) = registry.upgrade() {
-                registry.connection_ended(attachment).await;
-            }
-            return;
-        }
-        while let Some(update) = updates.recv().await {
-            if record_update(
+        let recording = async move {
+            let Ok(attachment) = activated.await else {
+                return;
+            };
+            let mut assembly = AgentMessageAssembly::default();
+            if restore_assembly(
                 recorder.as_ref(),
                 &attachment.agent_id,
                 attachment.runtime_generation,
                 &mut assembly,
-                update,
             )
             .await
             .is_err()
             {
-                break;
+                if let Some(registry) = registry.upgrade() {
+                    registry.connection_ended(attachment).await;
+                }
+                return;
             }
-        }
-        if let Some(registry) = registry.upgrade() {
-            registry.connection_ended(attachment).await;
+            while let Some(update) = updates.recv().await {
+                if record_update(
+                    recorder.as_ref(),
+                    &attachment.agent_id,
+                    attachment.runtime_generation,
+                    &mut assembly,
+                    update,
+                )
+                .await
+                .is_err()
+                {
+                    break;
+                }
+            }
+            if let Some(registry) = registry.upgrade() {
+                registry.connection_ended(attachment).await;
+            }
+        };
+        match authority {
+            Some(authority) => {
+                let _ = authority.run(recording).await;
+                if let Some(registry) = cleanup.upgrade() {
+                    registry.detach_owner(&authority.token);
+                }
+            }
+            None => recording.await,
         }
     });
     task.abort_handle()

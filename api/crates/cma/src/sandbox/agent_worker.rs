@@ -46,6 +46,7 @@ pub(crate) struct AgentWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct AgentWorkerConfig {
+    pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub holder: String,
@@ -60,6 +61,7 @@ pub(crate) struct AgentWorkerConfig {
 impl AgentWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
+            ownership: None,
             managed_documents_enabled: false,
             access_transport_migration: None,
             holder: holder.into(),
@@ -77,6 +79,14 @@ impl AgentWorkerConfig {
         value: Option<crate::config::AgentAccessMigration>,
     ) -> Self {
         self.access_transport_migration = value;
+        self
+    }
+
+    pub(crate) fn with_ownership(
+        mut self,
+        ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    ) -> Self {
+        self.ownership = ownership;
         self
     }
 
@@ -121,6 +131,40 @@ impl AgentWorker {
     }
 
     pub async fn run_one(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
+        if let Some(coordinator) = &self.config.ownership {
+            let Some(authority) = coordinator
+                .acquire(id)
+                .await
+                .map_err(|_| SandboxStoreError::Conflict)?
+            else {
+                return Ok(false);
+            };
+            let result = authority
+                .run(self.run_claimed(id, now))
+                .await
+                .map_err(|_| SandboxStoreError::Conflict)?;
+            if result.is_ok()
+                && self
+                    .dependencies
+                    .store
+                    .get_agent(id)
+                    .await?
+                    .is_none_or(|agent| {
+                        !agent.status.is_live() && agent.work.step == AgentWorkStep::None
+                    })
+            {
+                self.dependencies.registry.detach_owner(&authority.token);
+                coordinator
+                    .handoff(&authority, authority.revoke_transports())
+                    .await
+                    .map_err(|_| SandboxStoreError::Conflict)?;
+            }
+            return result;
+        }
+        self.run_claimed(id, now).await
+    }
+
+    async fn run_claimed(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
         let started = tokio::time::Instant::now();
         let Some(agent) = self
             .dependencies

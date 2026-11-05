@@ -51,13 +51,20 @@ pub(super) fn compose(
 pub(super) fn commands(
     dependencies: crate::commands::ProductionCommandDependencies,
     holder: String,
+    ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
 ) -> Result<crate::commands::CommandScheduler, String> {
     let store = dependencies.store.clone();
-    let worker = AgentCommandWorker::new(
-        store,
-        crate::commands::ResourceCommandExecution::production(dependencies),
-        holder,
-    )
-    .map_err(|error| format!("Agent command worker is not usable: {error}"))?;
+    let execution: Arc<dyn layer2_core::sandbox::agent_io::AgentCommandExecution> =
+        crate::commands::ResourceCommandExecution::production(dependencies);
+    let execution = match ownership {
+        Some(ownership) => Arc::new(crate::commands::ownership::OwnedCommandExecution {
+            inner: execution,
+            ownership,
+        })
+            as Arc<dyn layer2_core::sandbox::agent_io::AgentCommandExecution>,
+        None => execution,
+    };
+    let worker = AgentCommandWorker::new(store, execution, holder)
+        .map_err(|error| format!("Agent command worker is not usable: {error}"))?;
     Ok(crate::commands::CommandScheduler::new(worker))
 }
