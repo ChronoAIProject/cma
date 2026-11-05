@@ -383,25 +383,6 @@ export function AgentSurface({
               }
             />
           ) : null}
-          {controller.queuedInputs === undefined ? null : (
-            <QueuedMessages
-              items={messageQueue.items}
-              disabled={readOnly || historyIncomplete || !controller.inputAvailability.allowed}
-              onEdit={controller.queuedInputs.edit}
-              onRemove={controller.queuedInputs.remove}
-              onRecover={controller.queuedInputs.recover}
-              uploadAttachment={uploadAttachment}
-              user={user}
-            />
-          )}
-          {controller.queuedInputs?.error ? (
-            <p className="queued-messages__error" role="status">
-              {controller.queuedInputs.error}{' '}
-              <Button size="sm" onClick={controller.queuedInputs.refresh}>
-                Refresh queue
-              </Button>
-            </p>
-          ) : null}
           <AgentSandboxStatus
             observation={controller.progressObservation}
             onNavigate={onNavigate}
@@ -409,6 +390,25 @@ export function AgentSurface({
         </MessageStream>
       </div>
       <div className="agent-surface__input">
+        {controller.queuedInputs === undefined ? null : (
+          <QueuedMessages
+            items={messageQueue.items}
+            disabled={readOnly || historyIncomplete || !controller.inputAvailability.allowed}
+            onEdit={controller.queuedInputs.edit}
+            onRemove={controller.queuedInputs.remove}
+            onRecover={controller.queuedInputs.recover}
+            uploadAttachment={uploadAttachment}
+            user={user}
+          />
+        )}
+        {controller.queuedInputs?.error ? (
+          <p className="queued-messages__error" role="status">
+            {controller.queuedInputs.error}{' '}
+            <Button size="sm" onClick={controller.queuedInputs.refresh}>
+              Refresh queue
+            </Button>
+          </p>
+        ) : null}
         <Composer
           editorRef={editing.editorRef}
           suggestionScope={
