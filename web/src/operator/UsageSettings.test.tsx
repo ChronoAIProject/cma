@@ -62,16 +62,14 @@ it('allows an administrator to turn measured visibility off', async () => {
 it('retains a conflicted visibility draft and requires review before another write', async () => {
   const client = operatorClient();
   const actor = userEvent.setup();
-  client.admin.readSettings
-    .mockResolvedValueOnce(stored)
-    .mockResolvedValue({
-      revision: 8,
-      settings: {
-        ...settings,
-        retention: { agent_log_days: 45 },
-        usage_reporting: { measured_visible: false },
-      },
-    });
+  client.admin.readSettings.mockResolvedValueOnce(stored).mockResolvedValue({
+    revision: 8,
+    settings: {
+      ...settings,
+      retention: { agent_log_days: 45 },
+      usage_reporting: { measured_visible: false },
+    },
+  });
   client.admin.replaceSettings.mockRejectedValueOnce(
     new ApiError(409, 'Conflict', 'settings_conflict'),
   );
