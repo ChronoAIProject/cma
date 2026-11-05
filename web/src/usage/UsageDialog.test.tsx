@@ -22,7 +22,12 @@ it('defers Agent discovery until an owner report authorizes the selected Sandbox
       next: 'agents-next',
     }),
   };
-  const client = { usageMetrics: api, usage: { events: vi.fn() }, agents };
+  const client = {
+    readMeasuredUsage: vi.fn().mockResolvedValue(false),
+    usageMetrics: api,
+    usage: { events: vi.fn() },
+    agents,
+  };
   render(<UsageDialog client={client} open onClose={vi.fn()} />);
   await screen.findByRole('button', { name: 'Agent: All Agents in this Sandbox' });
   expect(agents.list).not.toHaveBeenCalled();
@@ -58,7 +63,12 @@ it('never discovers Agents when the owner Sandbox report is refused', async () =
   const agents = { list: vi.fn() };
   render(
     <UsageDialog
-      client={{ usageMetrics: api, usage: { events: vi.fn() }, agents }}
+      client={{
+        readMeasuredUsage: vi.fn().mockResolvedValue(false),
+        usageMetrics: api,
+        usage: { events: vi.fn() },
+        agents,
+      }}
       open
       onClose={vi.fn()}
     />,
