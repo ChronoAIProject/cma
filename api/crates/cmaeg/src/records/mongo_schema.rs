@@ -66,6 +66,7 @@ pub async fn verify_with_authority(
                     && ![
                         THREAD_FENCES,
                         WHATSAPP_FLOWS,
+                        "eg_automation_records",
                         MEDIA_CONTINUATIONS,
                         USES,
                         CUTOVERS,
@@ -80,7 +81,9 @@ pub async fn verify_with_authority(
                     &["find", "insert", "listIndexes"][..]
                 } else if collection == CUTOVERS {
                     &["find", "listIndexes"][..]
-                } else if [THREAD_FENCES, WHATSAPP_FLOWS].contains(&collection) {
+                } else if [THREAD_FENCES, WHATSAPP_FLOWS, "eg_automation_records"]
+                    .contains(&collection)
+                {
                     &["find", "insert", "update", "listIndexes"][..]
                 } else if collection != MIGRATIONS {
                     &["find", "insert", "update", "remove", "listIndexes"][..]
@@ -150,7 +153,8 @@ pub(crate) fn migration_validator() -> Document {
         "$or":[{"_id":"schema","version":2},
             {"_id":"thread_fences","version":1},{"_id":"whatsapp_forms","version":1},
             {"_id":"media_continuations","version":1},{"_id":"worker_credentials","version":1},
-            {"_id":"worker_tracking_cutover","version":1}]
+            {"_id":"worker_tracking_cutover","version":1},
+            {"_id":"github_integrations","version":{"$in":[1,2]}}]
     }
 }
 pub async fn migrate(db: &Database) -> Result<(), RecordError> {

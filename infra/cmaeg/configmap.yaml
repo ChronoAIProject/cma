@@ -7,6 +7,7 @@ metadata:
     app.kubernetes.io/name: cma-event-gateway
     app.kubernetes.io/part-of: cma
 data:
+  CMAEG_GITHUB_ENABLED: "true"
   # Desired activation state: deploy compatible readers with prior values first,
   # wait for predecessor Pods to drain, then apply these native messaging gates.
   CMAEG_MULTI_CONSUMER_WRITES_ENABLED: "true"

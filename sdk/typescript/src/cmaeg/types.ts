@@ -16,3 +16,4 @@ export * from './types/outbound.js';
 export * from './types/form-preparation.js';
 export * from './types/media-continuation.js';
 export * from './types/structured-content.js';
+export * from './types/github.js';

@@ -156,6 +156,7 @@ pub struct Config {
     pub management: ManagementConfig,
     pub cma_service_account: Option<ServiceAccountConfig>,
     pub channel_cache: ChannelCacheConfig,
+    pub github_enabled: bool,
     pub native_bot_mentions_writes_enabled: bool,
     /// Allows new thread contracts only after every reader supports them.
     pub thread_contract_writes_enabled: bool,
@@ -278,6 +279,7 @@ impl Config {
             management,
             cma_service_account: ServiceAccountConfig::from_env()?,
             channel_cache: ChannelCacheConfig::from_env()?,
+            github_enabled: routing::write_flag("CMAEG_GITHUB_ENABLED")?,
             native_bot_mentions_writes_enabled: match env::var(
                 "CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED",
             ) {

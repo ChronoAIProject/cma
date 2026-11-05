@@ -56,3 +56,6 @@ pub use media_continuation::*;
 
 mod structured_content;
 pub use structured_content::*;
+
+mod github;
+pub use github::*;
