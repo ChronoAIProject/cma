@@ -2,6 +2,8 @@
 //! never performs a routing-store read or retains its raw body here.
 #[path = "routed_custom.rs"]
 mod custom;
+#[path = "routed_github.rs"]
+mod github;
 #[path = "routed_problem.rs"]
 mod problem;
 use problem::admission_problem;
