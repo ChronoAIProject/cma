@@ -70,6 +70,9 @@ pub use evidence::CommandEvidence;
 pub use execution_authority::{CommandExecutionAuthorization, CommandExecutionFence};
 pub use external_event::{external_event_key, ExternalEventContext, MAX_EXTERNAL_EVENT_BYTES};
 pub use input::{AgentAttachmentReference, AgentContent, AgentInput};
+mod preparation_diagnostics;
+pub use preparation_diagnostics::{command_access_error_kind, observe_command_preparation};
+
 pub use lane::{command_ready_for_claim, CommandLane};
 pub use ledger::{
     command_key_digest, validate_command_reservation, AdmittedAgentCommand, AgentCommandStore,

@@ -16,6 +16,9 @@ mod failures;
 #[path = "command_driver_retry_tests.rs"]
 mod retries;
 
+#[path = "command_diagnostics_tests.rs"]
+mod diagnostics;
+
 enum Behavior {
     Execute,
     RejectAfterBinding,
