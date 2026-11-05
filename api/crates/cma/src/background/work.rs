@@ -60,6 +60,28 @@ impl BackgroundWork {
     where
         F: Future<Output = Result<T, SandboxStoreError>>,
     {
+        self.run_with(operation, |_| true).await
+    }
+
+    /// `false` yields a resumable sweep without counting a completion or failure.
+    pub(crate) async fn run_resumable<F>(
+        &self,
+        operation: impl FnOnce() -> F,
+    ) -> Result<Option<bool>, SandboxStoreError>
+    where
+        F: Future<Output = Result<bool, SandboxStoreError>>,
+    {
+        self.run_with(operation, |complete| *complete).await
+    }
+
+    async fn run_with<T, F>(
+        &self,
+        operation: impl FnOnce() -> F,
+        complete: impl FnOnce(&T) -> bool,
+    ) -> Result<Option<T>, SandboxStoreError>
+    where
+        F: Future<Output = Result<T, SandboxStoreError>>,
+    {
         let next = self.progress.lock().unwrap().next;
         tokio::time::sleep_until(next).await;
         let Some(mut attempt) = self.try_start() else {
@@ -69,7 +91,13 @@ impl BackgroundWork {
         // Callers must be replay-safe: a cancelled write is never proof of failure.
         let result = tokio::time::timeout(self.deadline, operation()).await;
         let reason = match &result {
-            Ok(Ok(_)) => "complete",
+            Ok(Ok(value)) => {
+                if complete(value) {
+                    "complete"
+                } else {
+                    "yielded"
+                }
+            }
             Ok(Err(_)) => "unavailable",
             Err(_) => "deadline",
         };
@@ -131,6 +159,9 @@ impl Attempt {
             progress.pending_since = None;
             progress.completed += 1;
             self.work.interval
+        } else if reason == "yielded" {
+            progress.failures = 0;
+            BUSY_DELAY
         } else {
             progress.failures = (progress.failures + 1).min(6);
             Duration::from_secs(1 << progress.failures).min(MAX_RETRY)
