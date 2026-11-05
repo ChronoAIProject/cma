@@ -45,6 +45,23 @@ impl SandboxPolicySource for LiveSandboxPolicy {
             baseline_services: self.baseline_services.clone(),
         })
     }
+
+    async fn automatic_pause_allowed(&self, now: &str) -> Result<bool, StoreError> {
+        let stored = self.settings.current().await.map_err(settings_error)?;
+        if !stored.settings.inactivity.auto_pause_enabled {
+            return Ok(false);
+        }
+        let Some(started) = stored.settings.inactivity.grace_started_at.as_deref() else {
+            return Ok(false);
+        };
+        let Some(started) = layer2_core::seconds_from_rfc3339(started) else {
+            return Ok(false);
+        };
+        let Some(now) = layer2_core::seconds_from_rfc3339(now) else {
+            return Ok(false);
+        };
+        Ok(now >= started.saturating_add(stored.settings.inactivity.pause_after_seconds))
+    }
 }
 
 fn settings_error(error: CoreError) -> StoreError {

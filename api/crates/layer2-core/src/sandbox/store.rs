@@ -420,6 +420,7 @@ struct State {
     agent_logs: HashMap<AgentId, Vec<AgentLogEntry>>,
     agent_message_checkpoints: HashMap<AgentId, AgentMessageCheckpoint>,
     checkpoints: HashMap<(SandboxId, u64), super::SandboxCheckpointRef>,
+    sandbox_sessions: std::collections::BTreeMap<(SandboxId, String), String>,
 }
 
 impl InMemorySandboxStore {

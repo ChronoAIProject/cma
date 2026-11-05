@@ -58,6 +58,7 @@ pub(super) fn sandbox(id: &str, launch_id: &str) -> Sandbox {
             id: SandboxProfileId("sbp_trigger".into()),
             revision: 1,
             digest: content_digest(&content).unwrap(),
+            always_on: None,
             content,
         },
         status: SandboxStatus::Provisioning,
