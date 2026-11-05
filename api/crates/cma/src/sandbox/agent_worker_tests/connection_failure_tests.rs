@@ -4,6 +4,83 @@ use super::*;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{AgentMessageAssembly, AgentUpdateRecorder as _};
 
+mod capacity_cleanup_tests;
+
+#[tokio::test]
+async fn capacity_failure_refreshes_metadata_and_settles_the_same_claim() {
+    let (harness, claimed, updated) = claimed_after_metadata().await;
+    harness
+        .worker
+        .finish_capacity_attempt(
+            &claimed,
+            Err(SandboxStoreError::AgentLogCapacityExceeded),
+            harness.now,
+        )
+        .await
+        .unwrap();
+    let failed = harness.stored(&claimed.id).await;
+    assert_eq!(failed.status, AgentStatus::Failed);
+    assert_eq!(failed.work.step, AgentWorkStep::None);
+    assert!(failed.work.lease.is_none());
+    assert_eq!(
+        failed.failure.as_ref().unwrap().class,
+        "agent_log_capacity_exceeded"
+    );
+    let mut conversation = updated.conversation.clone();
+    conversation.last_seq += 1;
+    assert_eq!(failed.conversation, conversation);
+    assert_eq!(failed.work.receipts, updated.work.receipts);
+    assert_eq!(failed.work.cleanup_debt, updated.work.cleanup_debt);
+}
+
+#[tokio::test]
+async fn capacity_recovery_never_interprets_unknown_commits_or_stale_claims_as_abort() {
+    for replace in [false, true] {
+        let (harness, claimed, updated) = claimed_after_metadata().await;
+        for error in [
+            SandboxStoreError::Unavailable("ambiguous commit".into()),
+            SandboxStoreError::Conflict,
+        ] {
+            assert_eq!(
+                harness
+                    .worker
+                    .finish_capacity_attempt(&claimed, Err(error.clone()), harness.now)
+                    .await,
+                Err(error)
+            );
+            assert_eq!(harness.stored(&claimed.id).await, updated);
+        }
+        let later = harness.now + Duration::from_secs(31);
+        let expected = if replace {
+            harness
+                .store
+                .claim_agent_work(
+                    &claimed.id,
+                    "replacement-worker",
+                    rfc3339_at(later),
+                    rfc3339_at(later + Duration::from_secs(30)),
+                )
+                .await
+                .unwrap()
+                .unwrap()
+        } else {
+            updated
+        };
+        assert_eq!(
+            harness
+                .worker
+                .finish_capacity_attempt(
+                    &claimed,
+                    Err(SandboxStoreError::AgentLogCapacityExceeded),
+                    later
+                )
+                .await,
+            Err(SandboxStoreError::Conflict)
+        );
+        assert_eq!(harness.stored(&claimed.id).await, expected);
+    }
+}
+
 async fn claimed_after_metadata() -> (Harness, Agent, Agent) {
     let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     let agent = harness.admit("reconnect-metadata-failure", vec![]).await;

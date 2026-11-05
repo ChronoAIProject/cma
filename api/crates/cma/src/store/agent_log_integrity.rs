@@ -34,6 +34,16 @@ pub(super) enum AppendCapacity {
     Delete,
 }
 
+impl AppendCapacity {
+    fn limits(self) -> (u64, usize) {
+        match self {
+            Self::Normal => (NORMAL_AGENT_LOG_ENTRIES, NORMAL_AGENT_LOG_BYTES),
+            Self::StopOrFailure => (STOP_AGENT_LOG_ENTRIES, STOP_AGENT_LOG_BYTES),
+            Self::Delete => (PHYSICAL_AGENT_LOG_ENTRIES, PHYSICAL_AGENT_LOG_BYTES),
+        }
+    }
+}
+
 pub(super) struct LogSummary {
     entry_count: u64,
     encoded_bytes: usize,
@@ -79,6 +89,12 @@ where
     F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
 {
     if last_seq > PHYSICAL_AGENT_LOG_ENTRIES {
+        tracing::warn!(
+            limit_kind = "physical_entries",
+            existing_entries = last_seq,
+            max_entries = PHYSICAL_AGENT_LOG_ENTRIES,
+            "Agent log capacity rejected"
+        );
         return Err(capacity_error().into());
     }
     let raw_log = collection.clone_with_type::<RawDocumentBuf>();
@@ -117,7 +133,17 @@ where
         encoded_bytes = encoded_bytes
             .checked_add(document_bytes)
             .filter(|total| *total <= PHYSICAL_AGENT_LOG_BYTES)
-            .ok_or_else(capacity_error)
+            .ok_or_else(|| {
+                tracing::warn!(
+                    limit_kind = "physical_bytes",
+                    scanned_entries = entry_count,
+                    scanned_bytes = encoded_bytes,
+                    document_bytes,
+                    max_bytes = PHYSICAL_AGENT_LOG_BYTES,
+                    "Agent log capacity rejected"
+                );
+                capacity_error()
+            })
             .map_err(TransactionLogError::Domain)?;
         visit(entry).map_err(TransactionLogError::Domain)?;
         entry_count = expected.unwrap_or_default();
@@ -148,6 +174,12 @@ pub(super) fn ensure_append_capacity(
         let document = log_document(entry)?;
         let document_bytes = encoded_document_len(&document)?;
         if document_bytes > MAX_AGENT_LOG_DOCUMENT_BYTES {
+            tracing::warn!(
+                limit_kind = "document_bytes",
+                document_bytes,
+                max_document_bytes = MAX_AGENT_LOG_DOCUMENT_BYTES,
+                "Agent log capacity rejected"
+            );
             return Err(capacity_error());
         }
         pending_bytes = pending_bytes
@@ -163,6 +195,18 @@ pub(super) fn ensure_append_capacity(
     ) {
         Ok(())
     } else {
+        let (max_entries, max_bytes) = capacity.limits();
+        tracing::warn!(
+            ?capacity,
+            limit_kind = "retained_log",
+            existing_entries = complete.entry_count,
+            existing_bytes = complete.encoded_bytes,
+            pending_entries = pending_count,
+            pending_bytes,
+            max_entries,
+            max_bytes,
+            "Agent log capacity rejected"
+        );
         Err(capacity_error())
     }
 }
@@ -171,6 +215,12 @@ pub(super) fn ensure_append_batch_size(pending: usize) -> Result<(), SandboxStor
     if pending <= MAX_AGENT_LOG_BATCH_SIZE {
         Ok(())
     } else {
+        tracing::warn!(
+            limit_kind = "batch_entries",
+            pending_entries = pending,
+            max_entries = MAX_AGENT_LOG_BATCH_SIZE,
+            "Agent log capacity rejected"
+        );
         Err(capacity_error())
     }
 }
@@ -189,11 +239,7 @@ fn capacity_allows(
     pending_bytes: usize,
     capacity: AppendCapacity,
 ) -> bool {
-    let (max_count, max_bytes) = match capacity {
-        AppendCapacity::Normal => (NORMAL_AGENT_LOG_ENTRIES, NORMAL_AGENT_LOG_BYTES),
-        AppendCapacity::StopOrFailure => (STOP_AGENT_LOG_ENTRIES, STOP_AGENT_LOG_BYTES),
-        AppendCapacity::Delete => (PHYSICAL_AGENT_LOG_ENTRIES, PHYSICAL_AGENT_LOG_BYTES),
-    };
+    let (max_count, max_bytes) = capacity.limits();
     existing_count
         .checked_add(pending_count)
         .is_some_and(|count| count <= max_count)

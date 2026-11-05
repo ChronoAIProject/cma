@@ -1,6 +1,7 @@
 //! Atomic Mongo publication for one fenced agent work step.
 
 use layer2_core::sandbox::store::{
+    agent_cleanup_capacity_retry, validate_agent_cleanup_capacity_log,
     validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox, AgentWorkMutation,
     SandboxStoreError,
 };
@@ -127,14 +128,23 @@ async fn apply_publication_observed(
         .transpose()
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    let needs_capacity_marker = agent_cleanup_capacity_retry(&current, mutation);
+    let mut last_log = None;
     let complete_log = scan_complete_log_with_session(
         store,
         &current.id,
         current.conversation.last_seq,
         session,
-        |_| Ok(()),
+        |entry| {
+            if needs_capacity_marker && entry.seq == current.conversation.last_seq {
+                last_log = Some(entry);
+            }
+            Ok(())
+        },
     )
     .await?;
+    validate_agent_cleanup_capacity_log(&current, mutation, last_log.as_ref())
+        .map_err(ApplyError::Domain)?;
     if current.work.step == AgentWorkStep::WaitForWorkspace
         && mutation.agent.work.step == AgentWorkStep::AddWorktree
     {
