@@ -6,6 +6,22 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        // A replacement is funded only after its exact generation and home
+        // are durably reserved. Cleanup must remain available without credit.
+        if sandbox.runtime.is_some()
+            && !matches!(
+                sandbox.status,
+                layer2_core::sandbox::SandboxStatus::Pausing
+                    | layer2_core::sandbox::SandboxStatus::Retiring
+                    | layer2_core::sandbox::SandboxStatus::Rotating
+            )
+        {
+            if let Err(error) = self.funding.ensure_coverage(&sandbox, now).await {
+                return self
+                    .retry_failure(sandbox, super::support::funding_failure(error), now)
+                    .await;
+            }
+        }
         if matches!(
             sandbox.work.step,
             SandboxWorkStep::StopAgents

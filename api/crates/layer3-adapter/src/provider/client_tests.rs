@@ -116,6 +116,7 @@ pub(super) async fn read_request(stream: &mut tokio::net::TcpStream) -> String {
 
 fn provider_request() -> ProviderSandboxRequest {
     ProviderSandboxRequest {
+        funded_until: None,
         image: ProviderImage {
             uri: "runtime:test".into(),
         },
