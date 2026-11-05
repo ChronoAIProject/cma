@@ -94,6 +94,8 @@ const commandStatus = strict({
       'queue_timeout',
       'authority_revoked',
       'authority_unavailable',
+      'credential_setup_required',
+      'connections_required',
       'agent_unavailable',
       'target_turn_changed',
       'runtime_unavailable',

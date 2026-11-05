@@ -143,3 +143,51 @@ async fn starting_fixture() -> Fixture {
         access,
     }
 }
+
+#[tokio::test]
+async fn revival_refusals_replay_typed_codes_and_actionable_messages() {
+    for (failure, code, detail) in [
+        (
+            CommandFailureCode::CredentialSetupRequired,
+            "sandbox_credential_setup_required",
+            "restore credentials",
+        ),
+        (
+            CommandFailureCode::ConnectionsRequired,
+            "connections_required",
+            "required services",
+        ),
+    ] {
+        let f = fixture().await;
+        let response = create(&f, false).await;
+        drop(response);
+        let record = f
+            .store
+            .command_work_page(&PageRequest::default())
+            .await
+            .unwrap()
+            .items
+            .remove(0);
+        f.store
+            .reject_unclaimed_command(
+                &record.receipt.envelope.command_id,
+                record.revision,
+                failure,
+                layer2_core::now_rfc3339(),
+            )
+            .await
+            .unwrap();
+        let replay = create(&f, false).await;
+        let bytes = axum::body::to_bytes(replay.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let frames = events(&bytes);
+        let terminal = frames.last().unwrap();
+        assert_eq!(terminal["type"], "response.failed");
+        assert_eq!(terminal["response"]["error"]["code"], code);
+        assert!(terminal["response"]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(detail));
+    }
+}
