@@ -108,6 +108,7 @@ export interface ConversationState {
   };
   readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly ownerTitle?: string;
+  readonly title?: string;
   readonly availableCommands?: readonly SessionCommand[];
   readonly activeRunId?: string;
   readonly latestTurnId?: string;
