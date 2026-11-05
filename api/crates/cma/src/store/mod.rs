@@ -21,6 +21,7 @@ mod agent_log_integrity;
 mod agent_log_reads;
 mod agent_log_receipts;
 pub(crate) mod agent_log_segments;
+mod agent_log_store;
 mod agent_profiles;
 mod agent_provenance;
 mod agent_provenance_backfill;

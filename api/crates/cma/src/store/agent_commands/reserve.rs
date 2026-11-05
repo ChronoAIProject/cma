@@ -156,32 +156,29 @@ pub(in crate::store) async fn apply(
         {
             return Err(CommandLedgerError::NotAdmissible.into());
         }
-        let mut entries = Vec::new();
-        super::super::agent_log::scan_complete_log_with_session(
-            store,
-            &agent.id,
-            agent.conversation.last_seq,
-            session,
-            |entry| {
-                entries.push(entry);
-                Ok(())
-            },
-        )
-        .await
-        .map_err(|error| match error {
-            super::super::agent_log_integrity::TransactionLogError::Driver(error) => {
-                ApplyError::Driver(error)
-            }
-            super::super::agent_log_integrity::TransactionLogError::Domain(_) => {
-                ApplyError::Domain(CommandLedgerError::Corrupt)
-            }
-        })?;
-        layer2_core::sandbox::agent_io::require_answer_context(
-            request,
-            &agent,
-            waiting,
-            layer2_core::sandbox::agent_io::answer_context_for_log(&agent, &entries)?,
-        )?;
+        let answer = if let Some(answer) =
+            super::super::agent_log_segments::answer::context(store, &agent, session)
+                .await
+                .map_err(log_error)?
+        {
+            answer
+        } else {
+            let mut entries = Vec::new();
+            super::super::agent_log::scan_complete_log_with_session(
+                store,
+                &agent.id,
+                agent.conversation.last_seq,
+                session,
+                |entry| {
+                    entries.push(entry);
+                    Ok(())
+                },
+            )
+            .await
+            .map_err(log_error)?;
+            layer2_core::sandbox::agent_io::answer_context_for_log(&agent, &entries)?
+        };
+        layer2_core::sandbox::agent_io::require_answer_context(request, &agent, waiting, answer)?;
     }
     if store
         .agent_commands
@@ -248,4 +245,15 @@ pub(in crate::store) async fn apply(
         .session(session)
         .await?;
     Ok(CommandReservationResult::Created(Box::new(record)))
+}
+
+fn log_error(error: super::super::agent_log_integrity::TransactionLogError) -> ApplyError {
+    match error {
+        super::super::agent_log_integrity::TransactionLogError::Driver(error) => {
+            ApplyError::Driver(error)
+        }
+        super::super::agent_log_integrity::TransactionLogError::Domain(_) => {
+            ApplyError::Domain(CommandLedgerError::Corrupt)
+        }
+    }
 }

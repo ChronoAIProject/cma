@@ -851,6 +851,7 @@ async fn agent_work_reopen_reconciliation_requires_every_exact_artifact() {
         })
         .collect::<Vec<_>>();
     let receipt = PublicationReceipt {
+        publication: None,
         agent: next,
         worktree: Some(worktree),
         sign_in_sandbox: None,

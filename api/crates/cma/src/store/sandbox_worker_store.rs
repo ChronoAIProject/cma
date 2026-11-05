@@ -206,6 +206,28 @@ async fn purge_in_transaction(
     {
         return Err(PurgeError::Conflict);
     }
+    // Runtime retirement cannot erase retained segmented history or its
+    // ownership lineage. Unknown envelopes and partial markers also retain
+    // the hierarchy: damage must never make a segmented Agent purgeable.
+    if store
+        .agents
+        .find_one(doc! {
+            "sandbox_id": id.as_str(),
+            "$or": [
+                { "document_schema_version": { "$exists": true, "$ne": 1_i64 } },
+                { "agent_log_format": { "$exists": true } },
+                { "agent_log_incarnation": { "$exists": true } },
+                { "agent_log_head_revision": { "$exists": true } },
+            ],
+        })
+        .projection(doc! { "_id": 1 })
+        .session(&mut *session)
+        .await
+        .map_err(PurgeError::Driver)?
+        .is_some()
+    {
+        return Err(PurgeError::Conflict);
+    }
     let sandbox = read_sandbox(&aggregate).map_err(|_| PurgeError::Conflict)?;
     if sandbox.status != SandboxStatus::Retired || !sandbox.credential.revoke_debt.is_empty() {
         return Err(PurgeError::Conflict);

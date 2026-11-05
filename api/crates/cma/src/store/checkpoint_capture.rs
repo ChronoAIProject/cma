@@ -9,7 +9,6 @@ use layer2_core::sandbox::{Agent, Sandbox, SandboxAgentActivity};
 use mongodb::bson::{doc, Document};
 use mongodb::{ClientSession, Collection};
 
-use super::agent_log::scan_complete_log_with_session;
 use super::agent_log_integrity::TransactionLogError;
 use super::lifecycle_execution::LifecycleLoadError;
 use super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
@@ -48,22 +47,13 @@ pub(super) async fn validate_and_fence_begin(
 
     let mut activities = Vec::new();
     for agent in agents {
-        let mut newest = None;
-        scan_complete_log_with_session(
-            store,
-            &agent.id,
-            agent.conversation.last_seq,
-            session,
-            |entry| {
-                newest = Some(entry);
-                Ok(())
-            },
-        )
-        .await
-        .map_err(|error| match error {
-            TransactionLogError::Domain(error) => LifecycleLoadError::Domain(error),
-            TransactionLogError::Driver(error) => LifecycleLoadError::Driver(error),
-        })?;
+        let newest = super::agent_log_context::validate(store, agent, session, false)
+            .await
+            .map_err(|error| match error {
+                TransactionLogError::Domain(error) => LifecycleLoadError::Domain(error),
+                TransactionLogError::Driver(error) => LifecycleLoadError::Driver(error),
+            })?
+            .last;
         if agent.status.is_live() {
             activities.push(
                 SandboxAgentActivity::from_live_agent(agent, newest.as_ref()).map_err(|error| {

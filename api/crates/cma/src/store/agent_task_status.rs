@@ -39,7 +39,12 @@ pub(super) async fn read(
     if agent.status != AgentStatus::Ready {
         return Ok(AgentTaskStatus::from_latest(agent, None, None, false));
     }
-    let document = store.agent_log.find_one(doc! {
+    let (latest, gap) = if let Some(evidence) =
+        super::agent_log_segments::task_status::read(store, agent, session).await?
+    {
+        evidence
+    } else {
+        let document = store.agent_log.find_one(doc! {
         "agent_id": agent.id.as_str(),
         "record.kind.type": { "$in": ["created", "turn_started", "turn_completed", "turn_failed", "turn_interrupted", "conversation_gap"] },
     })
@@ -48,13 +53,13 @@ pub(super) async fn read(
         .session(&mut *session)
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let latest = document.as_ref().map(read_entry).transpose()?;
-    let gap = if let Some(entry) = latest
-        .as_ref()
-        .filter(|entry| entry.seq <= agent.conversation.last_seq)
-    {
-        if let AgentLogKind::TurnCompleted { turn_sequence } = entry.kind {
-            store.agent_log.find_one(doc! {
+        let latest = document.as_ref().map(read_entry).transpose()?;
+        let gap = if let Some(entry) = latest
+            .as_ref()
+            .filter(|entry| entry.seq <= agent.conversation.last_seq)
+        {
+            if let AgentLogKind::TurnCompleted { turn_sequence } = entry.kind {
+                store.agent_log.find_one(doc! {
                 "agent_id": agent.id.as_str(),
                 "seq": {
                     "$gt": signed(turn_sequence, "turn sequence").map_err(SandboxStoreError::Corrupt)?,
@@ -68,11 +73,13 @@ pub(super) async fn read(
                 .await
                 .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
                 .as_ref().map(read_entry).transpose()?
+            } else {
+                None
+            }
         } else {
             None
-        }
-    } else {
-        None
+        };
+        (latest, gap)
     };
     let pending = store.agent_commands.find_one(doc! {
         "agent_id": agent.id.as_str(), "status": { "$in": ["queued", "in_progress", "waiting_action"] },

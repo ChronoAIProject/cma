@@ -155,9 +155,70 @@ async fn read_snapshot_sequential(
         .map(super::agent_log::read_entry)
         .transpose()
         .map_err(|_| ResourceAccessStoreError::Corrupt)?;
-    Ok::<_, ReadError>(AgentProvenanceSnapshot {
+    let snapshot = AgentProvenanceSnapshot {
         resource,
         creation,
         first_log,
-    })
+    };
+    // The aggregation may omit an oversized Agent. Recover its discriminator
+    // in the same snapshot before trusting the separately fetched source row.
+    let aggregate = store
+        .agents
+        .find_one(doc! {"_id":id.as_str()})
+        .session(&mut *session)
+        .await?
+        .ok_or(ResourceAccessStoreError::Corrupt)?;
+    verify_first_log(store, &aggregate, &snapshot, session).await?;
+    Ok(snapshot)
+}
+
+async fn verify_first_log(
+    store: &MongoSandboxStore,
+    aggregate: &Document,
+    snapshot: &AgentProvenanceSnapshot,
+    session: &mut ClientSession,
+) -> Result<(), ReadError> {
+    use super::agent_log_integrity::TransactionLogError;
+    use super::agent_log_segments as segments;
+
+    if segments::read_format(aggregate)
+        .map_err(|_| ResourceAccessStoreError::Corrupt)?
+        .is_none()
+    {
+        return Ok(());
+    }
+    let agent =
+        super::agents::read_agent(aggregate).map_err(|_| ResourceAccessStoreError::Corrupt)?;
+    if snapshot.resource.lineage.agent.as_ref() != Some(&agent) {
+        return Err(ResourceAccessStoreError::Corrupt.into());
+    }
+    let error = |error| match error {
+        TransactionLogError::Driver(error) => ReadError::Driver(error),
+        TransactionLogError::Domain(_) => ReadError::Domain(ResourceAccessStoreError::Corrupt),
+    };
+    let head = segments::read_head(store, aggregate, session, false)
+        .await
+        .map_err(error)?;
+    let mut first = None;
+    segments::visit_range(
+        store,
+        &head,
+        segments::LogRange {
+            after: 0,
+            through: (head.last_seq as u64).min(1),
+            limit: 1,
+        },
+        session,
+        false,
+        |entry| {
+            first = Some(entry);
+            Ok(())
+        },
+    )
+    .await
+    .map_err(error)?;
+    if first != snapshot.first_log {
+        return Err(ResourceAccessStoreError::Corrupt.into());
+    }
+    Ok(())
 }

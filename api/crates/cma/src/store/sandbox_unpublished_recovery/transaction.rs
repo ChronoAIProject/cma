@@ -1,15 +1,14 @@
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
-    apply_unpublished_runtime_recovery, AgentLogKind, Sandbox, SandboxEvent,
-    SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoverySnapshot,
+    apply_unpublished_runtime_recovery, Sandbox, SandboxEvent, SandboxUnpublishedRecoveryRequest,
+    SandboxUnpublishedRecoverySnapshot,
 };
 use layer2_core::SandboxId;
 use mongodb::bson::{doc, Timestamp};
 use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 
-use super::super::agent_log::scan_complete_log_with_session;
 use super::super::agent_log_integrity::TransactionLogError;
 use super::super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
 use super::super::sandbox_events::{
@@ -88,25 +87,16 @@ pub(super) async fn load(
         .and_then(|binding| binding.provision_generation)
         .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
     for agent in &agents {
-        scan_complete_log_with_session(
-            store,
-            &agent.id,
-            agent.conversation.last_seq,
-            session,
-            |entry| {
-                if matches!(entry.kind,
-                AgentLogKind::ConversationOpened { runtime_generation, .. }
-                | AgentLogKind::RuntimeGenerationRetired { runtime_generation, .. }
-                    if runtime_generation >= generation)
-                {
-                    return Err(SandboxStoreError::InvalidTransaction(
-                        "runtime generation was already published",
-                    ));
-                }
-                Ok(())
-            },
-        )
-        .await?;
+        let context =
+            super::super::agent_log_context::validate(store, agent, session, false).await?;
+        if context
+            .latest_generation
+            .is_some_and(|published| published >= generation)
+        {
+            return Err(ApplyError::Domain(SandboxStoreError::InvalidTransaction(
+                "runtime generation was already published",
+            )));
+        }
     }
     let mut cursor = store
         .workspaces

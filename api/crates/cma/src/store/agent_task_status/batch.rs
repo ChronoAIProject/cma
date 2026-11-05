@@ -19,11 +19,15 @@ fn bounded() -> Document {
 fn pipeline(agents: &[&Agent]) -> Vec<Document> {
     vec![
         doc! {"$match": {"_id": {"$in": agents.iter().map(|a| a.id.as_str()).collect::<Vec<_>>()}}},
-        doc! {"$project": {"_id": 1, "last_seq": 1}},
+        doc! {"$project": {
+            "_id": 1, "last_seq": 1, "document_schema_version": 1,
+            "agent_log_format": 1, "agent_log_incarnation": 1, "agent_log_head_revision": 1,
+        }},
         doc! {"$lookup": {
             "from": "agent_log", "localField": "_id", "foreignField": "agent_id", "as": "latest",
+            "let": {"legacy": {"$eq": ["$document_schema_version", 1_i64]}},
             "pipeline": [
-                {"$match": {"record.kind.type": {"$in": ["created", "turn_started", "turn_completed", "turn_failed", "turn_interrupted", "conversation_gap"]}}},
+                {"$match": {"$expr": "$$legacy", "record.kind.type": {"$in": ["created", "turn_started", "turn_completed", "turn_failed", "turn_interrupted", "conversation_gap"]}}},
                 {"$sort": {"seq": -1}}, {"$limit": 1}, {"$replaceWith": bounded()},
             ],
         }},
@@ -43,13 +47,15 @@ fn pipeline(agents: &[&Agent]) -> Vec<Document> {
         }},
         doc! {"$lookup": {
             "from": "agent_commands", "localField": "_id", "foreignField": "agent_id", "as": "pending",
+            "let": {"legacy": {"$eq": ["$document_schema_version", 1_i64]}},
             "pipeline": [
-                {"$match": {"status": {"$in": ["queued", "in_progress", "waiting_action"]}}},
+                {"$match": {"$expr": "$$legacy", "status": {"$in": ["queued", "in_progress", "waiting_action"]}}},
                 {"$limit": 1}, {"$replaceWith": bounded()},
             ],
         }},
         doc! {"$project": {
-            "_id": 1, "latest": 1,
+            "_id": 1, "document_schema_version": 1, "latest": 1,
+            "agent_log_format": 1, "agent_log_incarnation": 1, "agent_log_head_revision": 1,
             "gap": {"$arrayElemAt": ["$gap", 0]},
             "pending": {"$arrayElemAt": ["$pending", 0]},
         }},
@@ -103,6 +109,9 @@ pub(in crate::store) async fn read_many<'a>(
 }
 
 fn decode(agent: &Agent, row: &Document) -> Result<Option<AgentTaskStatus>, SandboxStoreError> {
+    if crate::store::agent_log_segments::read_format(row)?.is_some() {
+        return Ok(None);
+    }
     for field in ["latest", "gap", "pending"] {
         if let Some(value) = row.get(field) {
             if value

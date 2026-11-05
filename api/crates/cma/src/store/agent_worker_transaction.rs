@@ -1,16 +1,15 @@
 //! Atomic Mongo publication for one fenced agent work step.
 
 use layer2_core::sandbox::store::{
-    agent_cleanup_capacity_retry, validate_agent_cleanup_capacity_log,
-    validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox, AgentWorkMutation,
-    SandboxStoreError,
+    validate_agent_cleanup_capacity_log, validate_agent_work_mutation,
+    validate_agent_work_mutation_with_sandbox, AgentWorkMutation, SandboxStoreError,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogEntry, AgentStatus, AgentWorkStep, Sandbox, SandboxEvent, Worktree,
 };
 use mongodb::bson::{doc, Bson, Document};
 
-use super::agent_log::{log_document, scan_complete_log_with_session};
+use super::agent_log::log_document;
 use super::agent_log_integrity::{
     ensure_append_batch_size, ensure_append_capacity, TransactionLogError,
 };
@@ -38,6 +37,7 @@ mod prepared_open_ready_tests;
 
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct PublicationReceipt {
+    pub(super) publication: Option<super::agent_log_segments::publication::PublicationIdentity>,
     pub(super) agent: Agent,
     pub(super) worktree: Option<Worktree>,
     pub(super) logs: Vec<AgentLogEntry>,
@@ -128,21 +128,9 @@ async fn apply_publication_observed(
         .transpose()
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    let needs_capacity_marker = agent_cleanup_capacity_retry(&current, mutation);
-    let mut last_log = None;
-    let complete_log = scan_complete_log_with_session(
-        store,
-        &current.id,
-        current.conversation.last_seq,
-        session,
-        |entry| {
-            if needs_capacity_marker && entry.seq == current.conversation.last_seq {
-                last_log = Some(entry);
-            }
-            Ok(())
-        },
-    )
-    .await?;
+    let context = super::agent_log_context::validate(store, &current, session, false).await?;
+    let last_log = context.last;
+    let complete_log = context.summary;
     validate_agent_cleanup_capacity_log(&current, mutation, last_log.as_ref())
         .map_err(ApplyError::Domain)?;
     if current.work.step == AgentWorkStep::WaitForWorkspace
@@ -194,7 +182,7 @@ async fn apply_publication_observed(
         layer2_core::sandbox::store::validate_prepared_agent_open_ready(
             &current,
             &current_worktree,
-            complete_log.entry_count(),
+            complete_log.last_sequence(),
             mutation,
         )
         .map_err(ApplyError::Domain)?;
@@ -233,7 +221,7 @@ async fn apply_publication_observed(
         validate_agent_work_mutation_with_sandbox(
             &current,
             &current_worktree,
-            complete_log.entry_count(),
+            complete_log.last_sequence(),
             mutation,
             &sandbox,
         )
@@ -260,7 +248,7 @@ async fn apply_publication_observed(
         validate_agent_work_mutation(
             &current,
             &current_worktree,
-            complete_log.entry_count(),
+            complete_log.last_sequence(),
             mutation,
         )
         .map_err(ApplyError::Domain)?;
@@ -302,6 +290,7 @@ async fn apply_publication_observed(
         None => None,
     };
     Ok(PublicationReceipt {
+        publication: None,
         agent: final_agent,
         worktree: mutation
             .worktree

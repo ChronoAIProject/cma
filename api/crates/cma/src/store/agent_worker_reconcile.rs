@@ -4,8 +4,6 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::bson::doc;
 use mongodb::options::ReadConcern;
 
-use super::agent_log::scan_complete_log_with_snapshot_session;
-use super::agent_log_integrity::TransactionLogError;
 use super::agent_worker_transaction::PublicationReceipt;
 use super::agents::read_agent;
 use super::sandbox_events::reconcile_event_with_snapshot_session;
@@ -47,6 +45,33 @@ async fn reconcile_publication_snapshot(
     receipt: &PublicationReceipt,
     session: &mut mongodb::ClientSession,
 ) -> Result<bool, SandboxStoreError> {
+    let digest = super::agent_log_segments::publication::result_digest(&(
+        &receipt.agent,
+        &receipt.worktree,
+        &receipt.logs,
+        &receipt.event,
+        &receipt.sign_in_sandbox,
+    ))?;
+    if let Some(committed) = super::agent_log_segments::publication::reconcile(
+        store,
+        receipt.publication.as_ref(),
+        &receipt.agent,
+        &receipt.logs,
+        &digest,
+        session,
+    )
+    .await?
+    {
+        if !committed {
+            return Ok(false);
+        }
+        return match &receipt.event {
+            Some(event) => Ok(reconcile_event_with_snapshot_session(store, event, session)
+                .await?
+                .is_some()),
+            None => Ok(true),
+        };
+    }
     let agent = store
         .agents
         .find_one(doc! { "_id": receipt.agent.id.as_str() })
@@ -98,29 +123,7 @@ async fn reconcile_publication_snapshot(
     {
         return Ok(false);
     }
-    let first_receipt_seq = receipt.logs.first().map(|entry| entry.seq);
-    let mut receipt_offset = 0;
-    scan_complete_log_with_snapshot_session(
-        store,
-        &receipt.agent.id,
-        receipt.agent.conversation.last_seq,
-        session,
-        |entry| {
-            if first_receipt_seq.is_some_and(|first| entry.seq >= first) {
-                let Some(expected) = receipt.logs.get(receipt_offset) else {
-                    return Err(SandboxStoreError::SequenceConflict);
-                };
-                if &entry != expected {
-                    return Err(SandboxStoreError::SequenceConflict);
-                }
-                receipt_offset += 1;
-            }
-            Ok(())
-        },
-    )
-    .await
-    .map_err(log_error)?;
-    if receipt_offset != receipt.logs.len() {
+    if !super::agent_log_receipts::matches(store, &receipt.agent, &receipt.logs, session).await? {
         return Ok(false);
     }
     if let Some(event) = receipt.event.as_ref() {
@@ -132,11 +135,4 @@ async fn reconcile_publication_snapshot(
         }
     }
     Ok(true)
-}
-
-fn log_error(error: TransactionLogError) -> SandboxStoreError {
-    match error {
-        TransactionLogError::Domain(error) => error,
-        TransactionLogError::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
-    }
 }

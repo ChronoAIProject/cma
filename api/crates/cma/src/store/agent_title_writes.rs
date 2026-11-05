@@ -10,9 +10,7 @@ use layer2_core::seconds_from_rfc3339;
 use mongodb::bson::{doc, Bson, Document, Timestamp};
 use mongodb::options::ReadConcern;
 
-use super::agent_log::{
-    log_document, scan_complete_log_with_session, scan_complete_log_with_snapshot_session,
-};
+use super::agent_log::log_document;
 use super::agent_log_integrity::{
     ensure_append_capacity, AppendCapacity, LogSummary, TransactionLogError,
 };
@@ -46,6 +44,7 @@ enum TitleApply {
 
 #[derive(Clone)]
 struct TitleReceipt {
+    publication: Option<super::agent_log_segments::publication::PublicationIdentity>,
     agent: Agent,
     entry: AgentLogEntry,
     stored: StoredAgentTitle,
@@ -265,6 +264,7 @@ async fn apply_title(
     let proof = mutation.proof();
     let outcome = mutation.success_outcome();
     Ok(TitleApply::Written(Box::new(TitleReceipt {
+        publication: None,
         agent: next,
         entry,
         stored,
@@ -392,16 +392,10 @@ async fn transaction_log(
     agent: &Agent,
     session: &mut mongodb::ClientSession,
 ) -> Result<LogSummary, ApplyError> {
-    let summary = scan_complete_log_with_session(
-        store,
-        &agent.id,
-        agent.conversation.last_seq,
-        session,
-        |_| Ok(()),
-    )
-    .await
-    .map_err(map_transaction_log)?;
-    Ok(summary)
+    let summary = super::agent_log_context::validate(store, agent, session, false)
+        .await
+        .map_err(map_transaction_log)?;
+    Ok(summary.summary)
 }
 
 async fn reconcile_title(
@@ -410,6 +404,28 @@ async fn reconcile_title(
     snapshot_time: Timestamp,
 ) -> Result<bool, AgentTitleStoreError> {
     let mut session = snapshot_session(store, Some(snapshot_time)).await?;
+    let digest = super::agent_log_segments::publication::result_digest(&(
+        &receipt.agent,
+        &receipt.entry,
+        &receipt.stored.agent_id,
+        receipt.stored.title.as_str(),
+        receipt.stored.source.as_str(),
+        &receipt.stored.set_at,
+    ))
+    .map_err(map_store_error)?;
+    let publication = super::agent_log_segments::publication::reconcile(
+        store,
+        receipt.publication.as_ref(),
+        &receipt.agent,
+        std::slice::from_ref(&receipt.entry),
+        &digest,
+        &mut session,
+    )
+    .await
+    .map_err(map_store_error)?;
+    if publication == Some(false) {
+        return Ok(false);
+    }
     let document = store
         .agents
         .find_one(doc! { "_id": receipt.agent.id.as_str() })
@@ -421,33 +437,24 @@ async fn reconcile_title(
         return Ok(false);
     };
     let agent = read_agent(&document).map_err(map_store_error)?;
-    if agent != receipt.agent {
+    if publication.is_none() && agent != receipt.agent {
         return Ok(false);
     }
     let state = read_title_state(&document, &agent)?;
     if state.stored.as_ref() != Some(&receipt.stored) || !receipt.proof.matches(&state) {
         return Ok(false);
     }
-    let mut found = None;
-    scan_complete_log_with_snapshot_session(
+    if publication == Some(true) {
+        return Ok(true);
+    }
+    super::agent_log_receipts::matches(
         store,
-        &agent.id,
-        agent.conversation.last_seq,
+        &agent,
+        std::slice::from_ref(&receipt.entry),
         &mut session,
-        |entry| {
-            if entry.seq == receipt.entry.seq {
-                found = Some(entry);
-            }
-            Ok(())
-        },
     )
     .await
-    .map_err(map_reconciliation_log)?;
-    match found {
-        Some(entry) if entry == receipt.entry => Ok(true),
-        Some(_) => Err(AgentTitleStoreError::SequenceConflict),
-        None => Ok(false),
-    }
+    .map_err(map_store_error)
 }
 
 impl CompletionProof {
@@ -482,12 +489,5 @@ fn map_transaction_log(error: TransactionLogError) -> ApplyError {
     match error {
         TransactionLogError::Domain(error) => map_domain(error),
         TransactionLogError::Driver(error) => ApplyError::Driver(error),
-    }
-}
-
-fn map_reconciliation_log(error: TransactionLogError) -> AgentTitleStoreError {
-    match error {
-        TransactionLogError::Domain(error) => map_store_error(error),
-        TransactionLogError::Driver(_) => AgentTitleStoreError::Unavailable,
     }
 }

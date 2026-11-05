@@ -6,7 +6,7 @@ use layer2_core::SandboxId;
 use mongodb::bson::{doc, Document};
 use mongodb::ClientSession;
 
-use super::super::agent_log::{log_document, scan_complete_log_with_session};
+use super::super::agent_log::log_document;
 use super::super::agent_log_integrity::{ensure_append_capacity, AppendCapacity, LogSummary};
 use super::super::agents::agent_replacement_fields;
 use super::super::lifecycle_execution::load_sandbox_agents;
@@ -23,14 +23,9 @@ pub(super) async fn load_agents(
     let agents = load_sandbox_agents(store, id, session).await?;
     let mut rows = Vec::with_capacity(agents.len());
     for agent in agents {
-        let complete = scan_complete_log_with_session(
-            store,
-            &agent.id,
-            agent.conversation.last_seq,
-            session,
-            |_| Ok(()),
-        )
-        .await?;
+        let complete = super::super::agent_log_context::validate(store, &agent, session, false)
+            .await?
+            .summary;
         rows.push((agent, complete));
     }
     Ok(rows)

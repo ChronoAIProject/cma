@@ -84,7 +84,7 @@ pub(super) async fn apply(
     let rows = load_agents(store, &current.id, session).await?;
     let evidence = rows
         .iter()
-        .map(|(agent, summary)| (agent.clone(), summary.entry_count()))
+        .map(|(agent, summary)| (agent.clone(), summary.last_sequence()))
         .collect::<Vec<_>>();
     let mutation = match apply_sandbox_runtime_loss(&current, &evidence, request)
         .map_err(ApplyError::Domain)?

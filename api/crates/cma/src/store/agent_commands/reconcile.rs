@@ -40,23 +40,35 @@ pub(super) async fn apply(
         .await?
         .ok_or(CommandLedgerError::Corrupt)?;
     let mut lane = lane_records::read(&lane, agent_id.as_str())?;
-    let mut evidence = CommandEvidence::new(&command)?;
-    scan_complete_log_with_session(
-        store,
-        agent_id,
-        agent.conversation.last_seq,
-        session,
-        |entry| {
-            evidence
-                .observe(&entry)
-                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
-        },
-    )
-    .await
-    .map_err(|error| match error {
-        TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
-        TransactionLogError::Driver(error) => ApplyError::Driver(error),
-    })?;
+    let projected =
+        super::super::agent_log_segments::command_evidence(store, &agent, &command, session)
+            .await
+            .map_err(|error| match error {
+                TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
+                TransactionLogError::Driver(error) => ApplyError::Driver(error),
+            })?;
+    let evidence = if let Some(evidence) = projected {
+        evidence
+    } else {
+        let mut evidence = CommandEvidence::new(&command)?;
+        scan_complete_log_with_session(
+            store,
+            agent_id,
+            agent.conversation.last_seq,
+            session,
+            |entry| {
+                evidence
+                    .observe(&entry)
+                    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
+            },
+        )
+        .await
+        .map_err(|error| match error {
+            TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
+            TransactionLogError::Driver(error) => ApplyError::Driver(error),
+        })?;
+        evidence
+    };
     let retry_current = if evidence.has_source_deferred() {
         let current = store
             .bindings

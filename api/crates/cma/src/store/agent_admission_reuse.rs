@@ -105,25 +105,10 @@ pub(super) async fn reuse_profile_agent(
     admission
         .materialize(workspace)
         .map_err(ApplyError::Domain)?;
-    let mut initial_log = None;
-    let mut has_input = false;
-    let summary = scan_complete_log_with_session(
-        store,
-        &agent.id,
-        agent.conversation.last_seq,
-        session,
-        |entry| {
-            has_input |= matches!(
-                entry.kind,
-                layer2_core::sandbox::AgentLogKind::OwnerMessage { .. }
-            );
-            if initial_log.is_none() {
-                initial_log = Some(entry);
-            }
-            Ok(())
-        },
-    )
-    .await?;
+    let context = crate::store::agent_log_context::validate(store, &agent, session, false).await?;
+    let initial_log = context.initial_entry(store, session, false).await?;
+    let mut has_input = context.has_owner_input;
+    let summary = context.summary;
     if prepared_only && has_input {
         return Ok(None);
     }

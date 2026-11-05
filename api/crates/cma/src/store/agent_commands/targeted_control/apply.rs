@@ -77,27 +77,40 @@ pub(super) async fn apply(
     request
         .validate_target(&agent, &response)
         .map_err(|error| trace_rejection(request, "target", error.into()))?;
-    if matches!(
-        request.command.envelope.command,
-        AgentCommand::AnswerApproval { .. }
-    ) {
-        let mut pending = PendingAgentApprovals::default();
-        scan_complete_log_with_session(
+    if let AgentCommand::AnswerApproval { approval_id, .. } = &request.command.envelope.command {
+        let projected = crate::store::agent_log_segments::approvals::exact(
             store,
-            &agent.id,
-            agent.conversation.last_seq,
+            &agent,
+            approval_id,
             session,
-            |entry| {
-                pending.observe(&entry);
-                Ok(())
-            },
+            false,
         )
         .await
         .map_err(|error| match error {
             TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
             TransactionLogError::Driver(error) => ApplyError::Driver(error),
         })?;
-        request.validate_approval(&pending.into_entries())?;
+        if let Some((entry, _)) = projected {
+            request.validate_approval(&entry.into_iter().collect::<Vec<_>>())?;
+        } else {
+            let mut pending = PendingAgentApprovals::default();
+            scan_complete_log_with_session(
+                store,
+                &agent.id,
+                agent.conversation.last_seq,
+                session,
+                |entry| {
+                    pending.observe(&entry);
+                    Ok(())
+                },
+            )
+            .await
+            .map_err(|error| match error {
+                TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
+                TransactionLogError::Driver(error) => ApplyError::Driver(error),
+            })?;
+            request.validate_approval(&pending.into_entries())?;
+        }
     }
     fences::response(store, &response, session)
         .await

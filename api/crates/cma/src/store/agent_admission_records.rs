@@ -8,7 +8,7 @@ use mongodb::bson::{doc, Document, Timestamp};
 use mongodb::options::ReadConcern;
 use mongodb::{ClientSession, Collection};
 
-use super::agent_log::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
+use super::agent_log::scan_complete_log_with_snapshot_session;
 use super::agent_log_integrity::TransactionLogError;
 use super::agents::read_agent;
 use super::sandbox_events::read_event;
@@ -155,28 +155,9 @@ async fn load_replay_with_session(
         .session(&mut *session)
         .await
         .map_err(LoadError::Driver)?;
-    let last_seq = agent.conversation.last_seq;
-    let mut initial_log = None;
-    match read {
-        ReplayRead::Transaction => {
-            scan_complete_log_with_session(store, &agent.id, last_seq, session, |entry| {
-                if initial_log.is_none() {
-                    initial_log = Some(entry);
-                }
-                Ok(())
-            })
-            .await?;
-        }
-        ReplayRead::Snapshot => {
-            scan_complete_log_with_snapshot_session(store, &agent.id, last_seq, session, |entry| {
-                if initial_log.is_none() {
-                    initial_log = Some(entry);
-                }
-                Ok(())
-            })
-            .await?;
-        }
-    }
+    let snapshot = matches!(read, ReplayRead::Snapshot);
+    let context = super::agent_log_context::validate(store, &agent, session, snapshot).await?;
+    let initial_log = context.initial_entry(store, session, snapshot).await?;
     let creation =
         assemble_creation(agent, worktree_document, initial_log).map_err(LoadError::Domain)?;
     if binding.is_some() {

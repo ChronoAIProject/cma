@@ -9,9 +9,7 @@ use layer2_core::seconds_from_rfc3339;
 use mongodb::bson::doc;
 use mongodb::options::ReadConcern;
 
-use super::agent_log::{
-    log_document, scan_complete_log_with_session, scan_complete_log_with_snapshot_session,
-};
+use super::agent_log::{log_document, scan_complete_log_with_snapshot_session};
 use super::agent_log_integrity::{
     ensure_append_batch_size, ensure_append_capacity, AppendCapacity, TransactionLogError,
 };
@@ -39,6 +37,7 @@ pub(super) use checkpoint::carry_fields as carry_checkpoint_fields;
 
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct ConversationReceipt {
+    pub(super) publication: Option<super::agent_log_segments::publication::PublicationIdentity>,
     pub(super) command_dispatch: Option<layer2_core::sandbox::agent_io::CommandDispatch>,
     pub(super) agent: Agent,
     pub(super) logs: Vec<AgentLogEntry>,
@@ -158,24 +157,10 @@ async fn apply_mutation(
     super::trigger_first_messages::require_mutation(store, &current, mutation, session)
         .await
         .map_err(ApplyError::Domain)?;
-    let mut actual_last_seq = 0;
-    let mut latest_turn = None;
-    let log_summary = scan_complete_log_with_session(
-        store,
-        &mutation.agent.id,
-        current.conversation.last_seq,
-        session,
-        |entry| {
-            actual_last_seq = entry.seq;
-            if let layer2_core::sandbox::AgentLogKind::TurnStarted { turn_sequence, .. } =
-                entry.kind
-            {
-                latest_turn = Some(turn_sequence);
-            }
-            Ok(())
-        },
-    )
-    .await?;
+    let context = super::agent_log_context::validate(store, &current, session, false).await?;
+    let actual_last_seq = context.summary.last_sequence();
+    let latest_turn = context.latest_turn;
+    let log_summary = context.summary;
     validate_mutation(&current, actual_last_seq, mutation).map_err(ApplyError::Domain)?;
     cleanup_admission::require(&current_row, &current, mutation).map_err(ApplyError::Domain)?;
     let logs = conversation_logs(mutation).map_err(ApplyError::Domain)?;
@@ -197,6 +182,7 @@ async fn apply_mutation(
     insert_logs(store, &logs, session).await?;
     super::suggestions::enqueue(store, &mutation.agent, &logs, session).await?;
     Ok(ConversationReceipt {
+        publication: None,
         command_dispatch,
         agent: mutation.agent.clone(),
         logs,
@@ -376,6 +362,31 @@ pub(super) async fn reconcile_conversation_snapshot(
     receipt: &ConversationReceipt,
     session: &mut mongodb::ClientSession,
 ) -> Result<bool, SandboxStoreError> {
+    let digest = super::agent_log_segments::publication::result_digest(&(
+        &receipt.agent,
+        &receipt.logs,
+        &receipt.command_dispatch,
+    ))?;
+    if let Some(committed) = super::agent_log_segments::publication::reconcile(
+        store,
+        receipt.publication.as_ref(),
+        &receipt.agent,
+        &receipt.logs,
+        &digest,
+        session,
+    )
+    .await?
+    {
+        if !committed {
+            return Ok(false);
+        }
+        return match &receipt.command_dispatch {
+            Some(dispatch) => {
+                super::agent_commands::binding::matches_snapshot(store, dispatch, session).await
+            }
+            None => Ok(true),
+        };
+    }
     let agent = store
         .agents
         .find_one(doc! { "_id": receipt.agent.id.as_str() })
@@ -394,46 +405,12 @@ pub(super) async fn reconcile_conversation_snapshot(
             return Ok(false);
         }
     }
-    let Some(first_receipt_seq) = receipt.logs.first().map(|entry| entry.seq) else {
-        return Ok(false);
-    };
-    let mut logs = Vec::with_capacity(receipt.logs.len());
-    scan_complete_log_with_snapshot_session(
-        store,
-        &receipt.agent.id,
-        receipt.agent.conversation.last_seq,
-        session,
-        |entry| {
-            if entry.seq >= first_receipt_seq {
-                logs.push(entry);
-            }
-            Ok(())
-        },
-    )
-    .await
-    .map_err(|error| snapshot_error(error.into()))?;
-    receipt_logs_match(&logs, receipt)
-}
-
-fn receipt_logs_match(
-    logs: &[AgentLogEntry],
-    receipt: &ConversationReceipt,
-) -> Result<bool, SandboxStoreError> {
-    if receipt.logs.last().map(|entry| entry.seq) != Some(receipt.agent.conversation.last_seq) {
+    if receipt.logs.is_empty()
+        || receipt.logs.last().map(|entry| entry.seq) != Some(receipt.agent.conversation.last_seq)
+    {
         return Ok(false);
     }
-    if logs.len() != receipt.logs.len() {
-        return Ok(false);
-    }
-    for (actual, expected) in logs.iter().zip(&receipt.logs) {
-        if actual.seq != expected.seq {
-            return Ok(false);
-        }
-        if actual != expected {
-            return Err(SandboxStoreError::SequenceConflict);
-        }
-    }
-    Ok(true)
+    super::agent_log_receipts::matches(store, &receipt.agent, &receipt.logs, session).await
 }
 
 async fn pending_approvals(
@@ -460,6 +437,13 @@ async fn pending_approvals_snapshot(
         .map(read_agent)
         .transpose()?
         .ok_or(SandboxStoreError::NotFound)?;
+    if let Some(page) =
+        super::agent_log_segments::approval_pages::page(store, &agent, 0, 200, session)
+            .await
+            .map_err(super::agent_log_segments::approvals::store_error)?
+    {
+        return super::agent_log_segments::approval_pages::complete(page);
+    }
     let mut pending = PendingAgentApprovals::default();
     scan_complete_log_with_snapshot_session(
         store,

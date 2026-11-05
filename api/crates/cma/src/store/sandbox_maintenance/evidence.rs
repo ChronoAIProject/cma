@@ -3,7 +3,6 @@ use layer2_core::sandbox::{Agent, SandboxAgentActivity};
 use mongodb::bson::doc;
 use mongodb::ClientSession;
 
-use super::super::agent_log::scan_complete_log_with_session;
 use super::super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::transaction::ApplyError;
 
@@ -14,18 +13,9 @@ pub(super) async fn live_activities(
 ) -> Result<Vec<SandboxAgentActivity>, ApplyError> {
     let mut activities = Vec::new();
     for agent in agents.iter().filter(|agent| agent.status.is_live()) {
-        let mut newest = None;
-        scan_complete_log_with_session(
-            store,
-            &agent.id,
-            agent.conversation.last_seq,
-            session,
-            |entry| {
-                newest = Some(entry);
-                Ok(())
-            },
-        )
-        .await?;
+        let newest = super::super::agent_log_context::validate(store, agent, session, false)
+            .await?
+            .last;
         activities.push(
             SandboxAgentActivity::from_live_agent(agent, newest.as_ref()).map_err(|error| {
                 ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string()))

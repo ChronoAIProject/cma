@@ -33,6 +33,7 @@ pub(in crate::store) async fn project_terminal(
     binding
         .require_command(command)
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+    let original = agent.clone();
     let first = agent
         .conversation
         .first_message
@@ -51,18 +52,15 @@ pub(in crate::store) async fn project_terminal(
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
     let previous_revision = agent.revision;
     let previous_seq = agent.conversation.last_seq;
-    let summary = super::super::agent_log::scan_complete_log_with_session(
-        store,
-        &agent.id,
-        previous_seq,
-        session,
-        |_| Ok(()),
-    )
-    .await
-    .map_err(|error| match error {
-        super::super::agent_log_integrity::TransactionLogError::Domain(error) => error,
-        super::super::agent_log_integrity::TransactionLogError::Driver(error) => unavailable(error),
-    })?;
+    let summary = super::super::agent_log_context::validate(store, &original, session, false)
+        .await
+        .map_err(|error| match error {
+            super::super::agent_log_integrity::TransactionLogError::Domain(error) => error,
+            super::super::agent_log_integrity::TransactionLogError::Driver(error) => {
+                unavailable(error)
+            }
+        })?
+        .summary;
     agent.revision = previous_revision
         .checked_add(1)
         .ok_or(SandboxStoreError::Conflict)?;

@@ -152,6 +152,12 @@ async fn transcript_at_snapshot(
     agent: &Agent,
     session: &mut mongodb::ClientSession,
 ) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
+    if let Some(result) = super::agent_log_segments::title_transcript(store, agent, session, true)
+        .await
+        .map_err(map_log_error)?
+    {
+        return Ok(result);
+    }
     let mut logs = Vec::new();
     scan_complete_log_with_snapshot_session(
         store,

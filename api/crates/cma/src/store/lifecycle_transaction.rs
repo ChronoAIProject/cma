@@ -10,7 +10,7 @@ use layer2_core::sandbox::{Agent, AgentLogEntry, Sandbox, SandboxEvent};
 use mongodb::bson::{doc, Bson, Timestamp};
 use mongodb::options::ReadConcern;
 
-use super::agent_log::{log_document, read_entry, scan_complete_log_with_session};
+use super::agent_log::{log_document, read_entry};
 use super::agent_log_integrity::{ensure_append_capacity, AppendCapacity, TransactionLogError};
 use super::agents::{agent_replacement_fields, read_agent};
 use super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
@@ -185,14 +185,9 @@ async fn apply_lifecycle(
             .get(&change.agent.id)
             .copied()
             .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-        let complete = scan_complete_log_with_session(
-            store,
-            &stored.id,
-            stored.conversation.last_seq,
-            session,
-            |_| Ok(()),
-        )
-        .await?;
+        let complete = super::agent_log_context::validate(store, stored, session, false)
+            .await?
+            .summary;
         let batch = materialize_logs(stored, change, &mutation.appended_at)?;
         ensure_append_capacity(&complete, &batch, AppendCapacity::StopOrFailure)
             .map_err(ApplyError::Domain)?;
@@ -200,7 +195,7 @@ async fn apply_lifecycle(
             .iter_mut()
             .find(|(agent, _)| agent.id == stored.id)
             .expect("loaded lifecycle agent has a validation row");
-        row.1 = complete.entry_count();
+        row.1 = complete.last_sequence();
         logs.extend(batch);
     }
     validate_lifecycle_mutation(&current, &rows, mutation).map_err(ApplyError::Domain)?;

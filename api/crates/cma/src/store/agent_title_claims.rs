@@ -175,6 +175,12 @@ async fn title_transcript(
     agent: &Agent,
     session: &mut mongodb::ClientSession,
 ) -> Result<Option<AgentTitleTranscript>, ApplyError> {
+    if let Some(result) = super::agent_log_segments::title_transcript(store, agent, session, false)
+        .await
+        .map_err(map_transaction_log)?
+    {
+        return Ok(result);
+    }
     let mut logs = Vec::new();
     scan_complete_log_with_session(
         store,
@@ -215,6 +221,13 @@ async fn reconcile_claim(
         .is_some_and(|lease| lease.matches_claim(claim))
     {
         return Ok(false);
+    }
+    if let Some(result) =
+        super::agent_log_segments::title_transcript(store, &agent, &mut session, true)
+            .await
+            .map_err(map_reconciliation_log)?
+    {
+        return Ok(result.is_some());
     }
     let mut logs = Vec::new();
     scan_complete_log_with_snapshot_session(

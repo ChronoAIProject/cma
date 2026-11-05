@@ -155,7 +155,9 @@ async fn task_status_batch_matches_sequential_evidence_and_bounds_round_trips() 
     let after_ms = started.elapsed().as_secs_f64() * 1000.0;
     let after = trace.lock().unwrap().clone();
     assert_eq!(actual, expected);
-    assert_eq!(before, 60);
+    // The sequential compatible reader also checks each Agent's envelope
+    // before selecting legacy evidence; the batch carries that discriminator.
+    assert_eq!(before, 80);
     assert_eq!(after, ["aggregate"]);
     assert_eq!(
         actual
@@ -218,7 +220,10 @@ async fn task_status_batch_retains_corruption_large_record_and_snapshot_contract
         .await
         .unwrap();
     assert_eq!(result[&agent.id], AgentTaskStatus::Working);
-    assert_eq!(*trace.lock().unwrap(), ["aggregate", "find", "find"]);
+    assert_eq!(
+        *trace.lock().unwrap(),
+        ["aggregate", "find", "find", "find"]
+    );
     // A concurrent append does not change this transaction's existing snapshot.
     log(
         &store,
