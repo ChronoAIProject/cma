@@ -17,6 +17,7 @@ pub mod history;
 pub(crate) mod html;
 pub mod management;
 mod management_responses;
+mod management_schema;
 pub mod media;
 pub mod media_responses;
 pub mod message_effects;
