@@ -884,6 +884,15 @@ and unknown-source observations cannot replace it; a valid provider title can.
 Owner `owner_title` from revisioned preferences remains the display priority and
 supports repeated renames even when an automatic title was already saved. The
 separate legacy title setter retains its write-once compatibility behavior.
+Reported edit diffs use the existing `tool_output_reported.output.text` and
+`tool_call_updated.output.text` fields; no event kind or API schema changes.
+Their text begins with `File changes: <count> +<added> −<removed>`, followed by
+`File: <JSON-quoted path> +<added> −<removed>` lines and unified diffs. Totals
+come from the reported before/after contents. Summaries precede diff bodies so
+the existing 16 KiB output limit preserves totals; `truncated` remains explicit.
+Tool status still determines whether an edit completed. A proposed or failed
+edit does not prove that a file was modified. Ordinary text output is unchanged.
+
 Automatic title generation excludes a recorded setup/unknown first turn and
 uses the first subsequent task; names and sources remain durable across reads.
 The persisted `title` takes precedence over a prompt preview or runtime label;
