@@ -103,6 +103,7 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
                   },
           },
     profile: value.profile,
+    alwaysOn: value.always_on,
     lastActivityAt: value.last_activity_at,
     createdAt: value.created_at,
     updatedAt: value.updated_at,

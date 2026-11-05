@@ -31,8 +31,12 @@ pub(crate) struct PlatformDefaultsBody {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct InactivitySettingsBody {
+    #[serde(default)]
+    auto_pause_enabled: bool,
     #[schema(minimum = 60, maximum = 86400)]
     pause_after_seconds: u64,
+    #[serde(default)]
+    grace_started_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -105,7 +109,9 @@ impl From<PlatformSettings> for PlatformSettingsBody {
                 },
             },
             inactivity: InactivitySettingsBody {
+                auto_pause_enabled: value.inactivity.auto_pause_enabled,
                 pause_after_seconds: value.inactivity.pause_after_seconds,
+                grace_started_at: value.inactivity.grace_started_at,
             },
             retention: RetentionSettingsBody {
                 agent_log_days: value.retention.agent_log_days,
@@ -148,7 +154,9 @@ impl From<PlatformDefaultsBody> for PlatformDefaults {
 impl From<InactivitySettingsBody> for InactivitySettings {
     fn from(value: InactivitySettingsBody) -> Self {
         Self {
+            auto_pause_enabled: value.auto_pause_enabled,
             pause_after_seconds: value.pause_after_seconds,
+            grace_started_at: value.grace_started_at,
         }
     }
 }
@@ -303,7 +311,11 @@ const DEFAULTS: &[FieldSpec] = &[
     branch("workspace_profile", REF),
     branch("agent_profile", REF),
 ];
-const INACTIVITY: &[FieldSpec] = &[leaf("pause_after_seconds")];
+const INACTIVITY: &[FieldSpec] = &[
+    leaf("auto_pause_enabled"),
+    leaf("pause_after_seconds"),
+    leaf("grace_started_at"),
+];
 const RETENTION: &[FieldSpec] = &[leaf("agent_log_days")];
 const LIMITS: &[FieldSpec] = &[
     leaf("max_sandboxes_per_user"),

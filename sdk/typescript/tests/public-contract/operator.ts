@@ -12,6 +12,11 @@ export const operatorDispatch: Record<string, Dispatch> = {
   'PUT /api/v1/admin/settings': ({ client, body }) => client.admin.replaceSettings(body),
   'PATCH /api/v1/admin/settings': ({ client, body }) => client.admin.patchSettings(body),
   'POST /api/v1/admin/settings/reset': ({ client, body }) => client.admin.resetSettings(body),
+  'GET /api/v1/admin/auto-pause/preview': ({ client }) => client.admin.previewAutoPause(),
+  'POST /api/v1/admin/auto-pause/pause-idle-now': ({ client, body }) =>
+    client.admin.pauseIdleNow((body as { confirmed: boolean }).confirmed),
+  'POST /api/v1/admin/sandboxes/{id}/always-on': ({ client, param, body }) =>
+    client.admin.setSandboxAlwaysOn(param('id'), body),
   'POST /api/v1/admin/triggers/pause': ({ client }) => client.admin.pauseTriggers(),
   'POST /api/v1/admin/triggers/resume': ({ client }) => client.admin.resumeTriggers(),
   'GET /api/v1/admin/sandboxes': ({ client, options }) => client.admin.listSandboxes(options),
