@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { BUILD_INFO } from '../shell/build';
 import { ProfileMenu, initialsFor } from './ProfileMenu';
 
 const user = {
@@ -100,18 +101,16 @@ it('keeps text preferences in sync between retained portal account menus', async
   await actor.click(screen.getByRole('menuitemradio', { name: 'Medium' }));
 });
 
-it('copies the build revision from the account menu', async () => {
+it('copies the immutable build identity from the account menu', async () => {
   const writeText = vi.fn().mockResolvedValue(undefined);
   // After setup, which installs its own clipboard on the navigator.
   const actor = userEvent.setup();
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
   render(<ProfileMenu user={user} onSignOut={vi.fn()} onNavigate={vi.fn()} />);
   await actor.click(screen.getByRole('button', { name: /account menu/i }));
-  await actor.click(screen.getByRole('menuitem', { name: 'Build dev' }));
-  expect(writeText).toHaveBeenCalledWith('dev');
-  expect(
-    await screen.findByRole('menuitem', { name: 'Build revision copied' }),
-  ).toBeInTheDocument();
+  await actor.click(screen.getByRole('menuitem', { name: /Copy build version · dev \(local\)/ }));
+  expect(writeText).toHaveBeenCalledWith(BUILD_INFO.copyText);
+  expect(await screen.findByRole('menuitem', { name: 'Build version copied' })).toBeInTheDocument();
 });
 
 it('keeps the build revision readable when the clipboard refuses it', async () => {
@@ -121,7 +120,23 @@ it('keeps the build revision readable when the clipboard refuses it', async () =
   Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
   render(<ProfileMenu user={user} onSignOut={vi.fn()} onNavigate={vi.fn()} />);
   await actor.click(screen.getByRole('button', { name: /account menu/i }));
-  await actor.click(screen.getByRole('menuitem', { name: 'Build dev' }));
+  await actor.click(screen.getByRole('menuitem', { name: /Copy build version · dev \(local\)/ }));
   expect(writeText).toHaveBeenCalledOnce();
-  expect(screen.getByRole('menuitem', { name: 'Build dev' })).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Could not copy');
+  expect(screen.getByText(BUILD_INFO.copyText)).toBeInTheDocument();
+  expect(window.getSelection()?.toString()).toBe(BUILD_INFO.copyText);
+  writeText.mockResolvedValue(undefined);
+  await actor.click(screen.getByRole('menuitem', { name: /Copy build version/ }));
+  expect(screen.getByRole('status')).toHaveTextContent('Build version copied');
+});
+
+it('provides a selectable identity when the Clipboard API is absent', async () => {
+  const actor = userEvent.setup();
+  Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+  render(<ProfileMenu user={user} onSignOut={vi.fn()} />);
+  await actor.click(screen.getByRole('button', { name: /account menu/i }));
+  await actor.click(screen.getByRole('menuitem', { name: /Copy build version/ }));
+  expect(screen.getByRole('status')).toHaveTextContent('Could not copy');
+  expect(screen.getByText(BUILD_INFO.copyText)).toBeInTheDocument();
+  expect(screen.getByRole('menuitem', { name: /Copy build version/ })).toBeEnabled();
 });

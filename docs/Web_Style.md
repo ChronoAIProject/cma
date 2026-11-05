@@ -562,8 +562,15 @@ starts no work. Visitors do not get it.
 
 The account row is the only foot content: avatar, name, and email. Long identity lines truncate
 within the fixed seat. Its upward-opening menu contains Docs, capability-gated Operations,
-Appearance, System text size, the copyable **Build `<rev>`** row (*Build revision copied* once
-copied; a refused clipboard leaves the revision readable) and Sign out.
+Appearance, System text size, **Copy build version · <version>**, and Sign out.
+The build row copies `CMA <version> (<full commit SHA>)` from the bundle's own
+compile-time identity; local runs show `dev (local)`. It announces **Build version
+copied** on success. A denied or absent clipboard announces **Could not copy. Select
+the build version to copy it manually.** and exposes the full selectable identity
+in the same enabled row for retry. The identity wraps in the existing secondary
+menu text style; its code text permits selection and uses the established mono face.
+Deployable artifacts reject missing or placeholder version/revision metadata;
+ordinary local builds remain supported. Existing tabs keep their own identity.
 
 There is no Chat/Agent switch, session group, pricing control, or terminal plane
 choice. Selecting an Agent opens its conversation; selecting a Sandbox opens
@@ -5121,3 +5128,5 @@ button, 32px desktop height, 44px mobile height, 12px horizontal padding and an 
 radius. Existing control availability and pending-request guards are unchanged.
 
 | 2026-11-04 | Clarify supported running follow-ups and label Stop without changing queue or interruption semantics. |
+
+- 2026-11-05 — Name the account action Copy build version, copy the immutable bundle version and full revision, and expose accessible clipboard feedback with selectable fallback identity.
