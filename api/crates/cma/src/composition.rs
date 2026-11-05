@@ -61,7 +61,7 @@ impl ControlPlaneComposition {
                 .clone()
                 .with_machine_runtime_version(config.runtime.machine_sandbox_image.clone()),
         );
-        let stores = Arc::new(stores);
+        let stores = Arc::new(stores.with_writer_policy(config.task_experience.clone()));
         let activity = ActivityService::new(stores.activity.clone());
         let documents = documents::compose(config, &stores)?;
         let users = UserDirectory::new(stores.users.clone());

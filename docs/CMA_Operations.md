@@ -620,6 +620,55 @@ implementation or verification remains outstanding.
 Controlled test enablement for the final journeys is distinct from public
 publication and must be withdrawn if verification fails.
 
+### Data compatibility before image recovery
+
+Disabled admissions do not make an API image rollback reversible. Assess every
+ordinary, background, startup and recovery writer and all retained shapes before
+selecting a recovery image. For the November 4 #1311 formats, the concrete
+compatible API reader reference is
+`us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:b0499635ea0345e513d2032108236be449787f144e1247d553647b2307c08756`,
+source `1f345ff2cf6016972ae00912ea19ee58327d9f07`, tree
+`e42b7ee42abc3e9b9a47c99b936ab2e566613f3a`.
+
+This floor depends on readers/recovery for `ToolCallUpdated.output` and
+`ToolOutputReported` in Agent logs and checkpoint outcomes, expanded feedback
+(including nullable votes, revisions, reasons and exact request receipts), saved
+suggestions and accepted answer-context inputs, and all retained task/browser/
+desktop state. The predecessor API digest
+`sha256:2626145db5111aeede9c11d985dff5e468dc226542446ffcd4d283dfd5505601`
+is incompatible with the tool and feedback formats even if task admission is off.
+Wire filtering for an old web client does not change stored BSON for an old API.
+
+The safety fix binds new tool-output and feedback enrichment to each owner's
+`replay_presentation`, and suggestion enqueue/claim/generation to
+`suggested_followup_admission`. Reads never consult these writer gates.
+Legacy up/down feedback remains in the old shape; while closed, clearing a
+legacy vote or changing an expanded row is refused to preserve existing records.
+Exact accepted feedback retries and already-claimed suggestion settlement retain
+their recovery paths. Enabled cohorts retain current behavior. See the full
+[writer inventory and compatibility limits](plans/cma-ui-optimization/19-COMPATIBILITY.md#november-4-production-reader-floor-and-writer-admission).
+
+Before delivery or recovery:
+
+1. Record the observed policy/cohort and every active writer image. Close new
+   writers where supported and naturally drain predecessors; an old process with
+   the previous policy can continue writing until drained. Preserve runtime pins.
+2. Select an immutable recovery digest retaining the union of all required
+   readers and recovery semantics. Prefer a forward fix containing the admission
+   checks. The original #1311 image above has compatible readers but still has
+   ungated writers; it is not evidence that writer closure was implemented.
+3. Test the exact candidate with old and already-written new data, retained
+   checkpoint/source receipts, feedback retries, suggestion work, and accepted
+   operations. Record source/tree, digest, fixture results and unproved coverage.
+   Ticket19's retained pre-policy17 executable did not certify the actual
+   pre-#1311 production API. This runbook does not claim a production rollback test.
+4. Recompute the floor for the complete release batch. In particular, #1318 can
+   write a new undispatched startup-failure shape; include its compatible reader
+   requirement before approving recovery. Preserve #1316 history behavior.
+5. Keep Mongo records, keys, PVC/home identities, external receipts and browser
+   journals. Verify narrow image/template changes preserve all hashed web assets,
+   configuration and routes; never reset or downgrade data to fit the candidate.
+
 ## Retired bridge compatibility
 
 CMAEG owns event ingress, channel configuration and delivery. CMA no longer
@@ -905,7 +954,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_CORS_ORIGIN` | Comma-separated exact allowed browser origins; default local `http://localhost:5173`. Cookie-authenticated Event Gateway writes and actor-link consent accept these origins plus `CHRONO_SERVER_PUBLIC_URL`; Desktop WebSockets use the same explicit origin set; duplicate, missing cookie-auth Origin and unlisted origins remain refused. Retain both CMA domains during migration. |
 | `CHRONO_AUTH_MODE` | `provider` in production; `trusted` is local fixed-subject development only |
 | `CHRONO_V2_UI_TRANSPORT_ENABLED` | Eligibility for the integrated v2 browser transport; false code default, true in the production ConfigMap for new Agent tabs (including durable Starting input). Existing tabs retain their selected transport. Deploy with the matching API/Web release, ConfigMap compare-and-set, and API rollout; does not disable existing public v2 API routes or change an accepted request protocol |
-| `CHRONO_TASK_EXPERIENCE_POLICY` | Strict JSON, absent defaults to `{"mode":"disabled","accounts":[],"capabilities":[]}`; production also disables it. Modes: `disabled`, `accounts`, `all`. Exact authenticated subject ids only (at most1000, nonempty, at most256 UTF-8 bytes, no whitespace/control characters); ids are never returned to clients. Explicit capabilities: `task_home_admission`, `suggested_followup_admission`, `desktop_enable`, `browser_takeover`, `replay_presentation`. Unknown/duplicate fields, capabilities or accounts and contradictory settings fail startup: accounts must be empty outside accounts mode; disabled must have no capabilities. Empty account cohort admits nobody. Policy eligibility does not establish environment capability. Changes require an API rollout with compatible retained readers; closing new admission preserves exact accepted recovery, manual conversation, retained history/files/feedback, browser status and explicit return. See `plans/cma-ui-optimization/19-ROLLOUT-POLICY.md`. |
+| `CHRONO_TASK_EXPERIENCE_POLICY` | Strict JSON, absent defaults to `{"mode":"disabled","accounts":[],"capabilities":[]}`; checked-in manifests disable it; live cohort selection must be observed at delivery. Modes: `disabled`, `accounts`, `all`. Exact authenticated subject ids only (at most1000, nonempty, at most256 UTF-8 bytes, no whitespace/control characters); ids are never returned to clients. Explicit capabilities: `task_home_admission`, `suggested_followup_admission`, `desktop_enable`, `browser_takeover`, `replay_presentation`. Unknown/duplicate fields, capabilities or accounts and contradictory settings fail startup: accounts must be empty outside accounts mode; disabled must have no capabilities. Empty account cohort admits nobody. Policy eligibility does not establish environment capability. Changes require an API rollout with compatible retained readers; closing new admission preserves exact accepted recovery, manual conversation, retained history/files/feedback, browser status and explicit return. See `plans/cma-ui-optimization/19-ROLLOUT-POLICY.md`. |
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
 | `CHRONO_IMAGE_MANAGER_BASE_URL` | Image Manager service base URL used for delegated image resolution; defaults to the CMA public origin with `/api/image-manager` when unset |

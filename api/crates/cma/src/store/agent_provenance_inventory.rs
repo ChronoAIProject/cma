@@ -83,6 +83,7 @@ impl AgentProvenanceInventoryStore for MongoSandboxStore {
                         .id;
                     rows.push(read_snapshot(self, &id, &mut session).await?);
                 }
+                read_statuses(self, &mut rows, &mut session).await?;
                 Ok::<_, ReadError>(rows)
             }
             .await;
@@ -162,6 +163,7 @@ async fn scan(
     for id in ids {
         rows.push(read_snapshot(store, &id, session).await?);
     }
+    read_statuses(store, &mut rows, session).await?;
     Ok(rows)
 }
 
@@ -174,7 +176,7 @@ async fn read_snapshot(
     id: &layer2_core::AgentId,
     session: &mut ClientSession,
 ) -> Result<AgentChannelUsageSnapshot, ReadError> {
-    let mut snapshot = super::agent_channel_usage::read_inventory_snapshot(store, id, session)
+    let snapshot = super::agent_channel_usage::read_inventory_snapshot(store, id, session)
         .await
         .map_err(|error| match error {
             super::agent_channel_usage::UsageError::Driver(error) => ReadError::Driver(error),
@@ -187,15 +189,39 @@ async fn read_snapshot(
                 })
             }
         })?;
-    let agent = snapshot
-        .provenance
-        .resource
-        .lineage
-        .agent
-        .as_ref()
-        .ok_or(ResourceAccessStoreError::Corrupt)?;
-    snapshot.task_status = super::agent_task_status::read(store, agent, session)
+    Ok(snapshot)
+}
+
+async fn read_statuses(
+    store: &MongoSandboxStore,
+    rows: &mut [AgentChannelUsageSnapshot],
+    session: &mut ClientSession,
+) -> Result<(), ReadError> {
+    let agents = rows
+        .iter()
+        .map(|row| {
+            row.provenance
+                .resource
+                .lineage
+                .agent
+                .as_ref()
+                .ok_or(ResourceAccessStoreError::Corrupt)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let statuses = super::agent_task_status::read_many(store, agents, session)
         .await
         .map_err(|_| ResourceAccessStoreError::Unavailable)?;
-    Ok(snapshot)
+    for row in rows {
+        let agent = row
+            .provenance
+            .resource
+            .lineage
+            .agent
+            .as_ref()
+            .ok_or(ResourceAccessStoreError::Corrupt)?;
+        row.task_status = *statuses
+            .get(&agent.id)
+            .ok_or(ResourceAccessStoreError::Corrupt)?;
+    }
+    Ok(())
 }
