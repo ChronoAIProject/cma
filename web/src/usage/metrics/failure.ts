@@ -36,8 +36,7 @@ export function metricsFailure(error: unknown): MetricsFailure {
       return {
         ...base,
         title: 'Usage reporting is unavailable',
-        message:
-          'Measured usage is unavailable right now. Try again later; unavailable readings are not zero usage.',
+        message: 'Usage could not be loaded. Try again later; unavailable data is not zero usage.',
       };
   }
   return { ...base, title: 'Could not load usage', message: 'Retry to load this selection.' };

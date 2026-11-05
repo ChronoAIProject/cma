@@ -119,10 +119,12 @@ export function AllocatedPeriod({ value }: { readonly value: UsageMetricRow['all
 
 export function MetricSummary({
   report,
+  measured,
   selectedMetric,
   onMetric,
 }: {
   readonly report: UsageMetricReport;
+  readonly measured: boolean;
   readonly selectedMetric?: Metric;
   readonly onMetric?: (metric: Metric) => void;
 }) {
@@ -135,50 +137,64 @@ export function MetricSummary({
         {displayQuantity(summary.running_count)} running. Updated {metricTime(report.as_of)}.
       </p>
       <p>
-        Measured through {metricTime(report.measurement_cutoff)}. Source health:{' '}
-        {report.source_health}. Tracking started {metricTime(report.tracking_started_at)};
-        measurements available from {metricTime(report.available_from)}.
+        Allocation period: {metricTime(report.effective_range.from)} –{' '}
+        {metricTime(report.effective_range.to)}.
       </p>
-      {report.warnings.length > 0 && (
-        <ul aria-label="Usage report coverage notices">
-          {report.warnings.map((warning) => (
-            <li key={warning}>{warning}</li>
-          ))}
-        </ul>
+      {measured && (
+        <>
+          <p>
+            Measured through {metricTime(report.measurement_cutoff)}. Source health:{' '}
+            {report.source_health}. Tracking started {metricTime(report.tracking_started_at)};
+            measurements available from {metricTime(report.available_from)}.
+          </p>
+          {report.warnings.length > 0 && (
+            <ul aria-label="Usage report coverage notices">
+              {report.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          )}
+          {!report.report_complete && (
+            <p role="status">
+              This report is incomplete. Review coverage and allocation-history gaps.
+            </p>
+          )}
+          <div className="usage-metric-cards">
+            {(['cpu', 'memory', 'disk'] as const).map((metric) => (
+              <section className="usage-metric-card" key={metric} aria-label={metricLabels[metric]}>
+                <h3>
+                  {onMetric ? (
+                    <Button
+                      aria-pressed={metric === selectedMetric}
+                      onClick={() => onMetric(metric)}
+                    >
+                      {metricLabels[metric]}
+                    </Button>
+                  ) : (
+                    metricLabels[metric]
+                  )}
+                </h3>
+                <MetricReading
+                  metric={metric}
+                  reading={summary.measured?.[metric]}
+                  capacity={
+                    summary.total_allocated_capacity[
+                      metric === 'cpu'
+                        ? 'cpu_cores'
+                        : metric === 'memory'
+                          ? 'memory_bytes'
+                          : 'disk_bytes'
+                    ]
+                  }
+                />
+              </section>
+            ))}
+          </div>
+        </>
       )}
-      {!report.report_complete && (
-        <p role="status">This report is incomplete. Review coverage and allocation-history gaps.</p>
-      )}
-      <div className="usage-metric-cards">
-        {(['cpu', 'memory', 'disk'] as const).map((metric) => (
-          <section className="usage-metric-card" key={metric} aria-label={metricLabels[metric]}>
-            <h3>
-              {onMetric ? (
-                <Button aria-pressed={metric === selectedMetric} onClick={() => onMetric(metric)}>
-                  {metricLabels[metric]}
-                </Button>
-              ) : (
-                metricLabels[metric]
-              )}
-            </h3>
-            <MetricReading
-              metric={metric}
-              reading={summary.measured?.[metric]}
-              capacity={
-                summary.total_allocated_capacity[
-                  metric === 'cpu'
-                    ? 'cpu_cores'
-                    : metric === 'memory'
-                      ? 'memory_bytes'
-                      : 'disk_bytes'
-                ]
-              }
-            />
-          </section>
-        ))}
-      </div>
+      {!measured && <AllocatedCapacity value={summary.total_allocated_capacity} />}
       <AllocatedPeriod value={summary.allocated_period} />
-      {report.scope.admin && summary.infrastructure && (
+      {measured && report.scope.admin && summary.infrastructure && (
         <details>
           <summary>Infrastructure diagnostics (excluded from owner totals)</summary>
           <p>
@@ -195,5 +211,30 @@ export function MetricSummary({
         </details>
       )}
     </>
+  );
+}
+
+export function AllocatedCapacity({ value }: { readonly value: UsageMetricRow['allocation'] }) {
+  return (
+    <section aria-label="Allocated capacity now">
+      <h3>Allocated capacity now</h3>
+      <div className="usage-metric-cards">
+        {(
+          [
+            ['CPU', value.cpu_cores, 'cpu'],
+            ['Memory', value.memory_bytes, 'memory'],
+            ['Disk', value.disk_bytes, 'disk'],
+          ] as const
+        ).map(([label, amount, metric]) => (
+          <dl className="usage-metric-card" key={metric}>
+            <dt>{label} allocated</dt>
+            <dd>{metricValue(amount, metric)}</dd>
+          </dl>
+        ))}
+      </div>
+      <p>
+        Allocated CPU, memory and disk capacity. Resource-hours below cover the selected period.
+      </p>
+    </section>
   );
 }
