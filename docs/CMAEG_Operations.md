@@ -1,5 +1,49 @@
 # CMA Event Gateway operations
 
+## Native GitHub startup initialization
+
+`CMAEG_GITHUB_ENABLED` is the deployment-wide feature flag, default `false` when unset.
+Only `true` and `false` are accepted. It is read at process startup; activation
+uses the existing deployment/restart flow, not a live management API toggle.
+It contains no App, installation, tenant, repository, channel or credential data.
+Those resources remain dynamic integration operations.
+
+The checked-in `infra/cmaeg/configmap.yaml` sets this flag to `"true"` for the
+authorized onboarding rollout. Apply that configuration with the compatible
+CMAEG version and restart the service to initialize GitHub storage. Updating
+only the image does not change a previously applied ConfigMap. Initial acceptance
+covers App management, signed ping and durable receipts; installation routing
+and the goal-agent workflow remain later slices.
+
+When disabled, the gateway performs no GitHub schema updates, starts no GitHub
+worker and refuses integration operations with 503; the authenticated capability
+query remains available with `store_ready: false`. Existing records are retained.
+When enabled, startup uses the existing gateway Mongo connection and keyring.
+Missing or version-1 `github_integrations` storage is prepared in service code:
+the record validator, owner/kind index and migration-marker validator are updated,
+then the version-2 marker is committed with majority acknowledgement. No stored
+App or receipt is rewritten or deleted by this migration. Version 2 skips DDL
+and is checked for runtime authority and required non-TTL indexes; unknown
+versions are refused without downgrading them.
+
+The normal rollout needs no `--migrate-automation` command or external migration
+script. Initialization verifies the existing credential's effective migration
+authority before DDL; it never creates users or grants roles. Shared-schema
+deployments can use their existing database-scoped grants. Exact isolated-mode
+checks remain unchanged; a least-privilege runtime account can open prepared
+storage, but cannot initialize unprepared storage without the necessary authority.
+The retained CLI and role-printing commands remain explicit operator tools.
+
+Initialization has a 30-second bound. A failure keeps GitHub unavailable while
+ordinary channels remain available, with a sanitized reason in startup logs.
+After correcting the cause, a subsequent startup resumes incomplete preparation.
+Concurrent startup reconciles a duplicate marker write against the majority-read
+current version before proceeding. Readiness is exposed only after storage checks
+pass. Rollback by disabling the flag preserves schema and records; re-enabling
+uses them. Verify the deployed version, effective flag and
+`GET /v1/github/capabilities` before running the
+[signed-ping acceptance](CMAEG_GitHub_Online_Verification.md).
+
 ## Durable recent activity
 
 Public channel activity uses independent encrypted `channel_recent_activity_v1`

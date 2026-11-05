@@ -44,6 +44,15 @@ pub struct MongoStores {
 }
 
 impl MongoStores {
+    pub(crate) fn with_writer_policy(
+        mut self,
+        policy: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
+    ) -> Self {
+        Arc::make_mut(&mut self.sandbox_model).writer_policy = policy.clone();
+        Arc::make_mut(&mut self.message_feedback).writer_policy = policy;
+        self
+    }
+
     #[cfg(test)]
     pub async fn connect(
         uri: &str,

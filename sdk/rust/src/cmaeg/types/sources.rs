@@ -17,6 +17,34 @@ pub struct CustomAttachments {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Source {
+    /// Native GitHub source identity and owner-selected routing fields.
+    #[serde(rename = "github")]
+    Github {
+        /// Wire field `actions`.
+        actions: Vec<String>,
+        /// Wire field `app_ref`.
+        app_ref: String,
+        /// Wire field `deny_repository_ids`.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "super::native_media_update::present"
+        )]
+        deny_repository_ids: Option<Vec<u64>>,
+        /// Wire field `events`.
+        events: Vec<String>,
+        /// Wire field `installation_ids`.
+        installation_ids: Vec<u64>,
+        /// Wire field `prompt_template`.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "super::native_media_update::present"
+        )]
+        prompt_template: Option<Option<String>>,
+        /// Wire field `repository_ids`.
+        repository_ids: Vec<u64>,
+    },
     /// Separate native app, independent of NyxID relay sources.
     #[serde(rename = "native_lark")]
     NativeLark(NativeLarkSource),
@@ -138,6 +166,34 @@ pub enum Source {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SourceRequest {
+    /// Native GitHub source identity and owner-selected routing fields.
+    #[serde(rename = "github")]
+    Github {
+        /// Wire field `actions`.
+        actions: Vec<String>,
+        /// Wire field `app_ref`.
+        app_ref: String,
+        /// Wire field `deny_repository_ids`.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "super::native_media_update::present"
+        )]
+        deny_repository_ids: Option<Vec<u64>>,
+        /// Wire field `events`.
+        events: Vec<String>,
+        /// Wire field `installation_ids`.
+        installation_ids: Vec<u64>,
+        /// Wire field `prompt_template`.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "super::native_media_update::present"
+        )]
+        prompt_template: Option<Option<String>>,
+        /// Wire field `repository_ids`.
+        repository_ids: Vec<u64>,
+    },
     /// Separate native app, independent of NyxID relay sources.
     #[serde(rename = "native_lark")]
     NativeLark(NativeLarkSource),
@@ -257,6 +313,16 @@ pub enum SourceRequest {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum SourceKind {
+    /// Native GitHub source identity and owner-selected routing fields.
+    #[serde(rename = "github")]
+    Github {
+        /// Wire field `app_ref`.
+        app_ref: String,
+        /// Wire field `installation_id`.
+        installation_id: u64,
+        /// Wire field `repository_id`.
+        repository_id: u64,
+    },
     /// Separate native app, independent of NyxID relay sources.
     #[serde(rename = "native_lark")]
     NativeLark(NativeLarkIdentity),

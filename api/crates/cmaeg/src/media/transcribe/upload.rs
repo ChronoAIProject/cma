@@ -210,6 +210,7 @@ fn count_refusal(target: &MediaTarget, attachment: &Attachment, refusal: SpendRe
         SourceKind::NyxidRelay { .. } => "nyxid_relay",
         SourceKind::NativeLark(_) => "native_lark",
         SourceKind::Custom => "custom",
+        SourceKind::Github { .. } => "github",
     };
     let kind = match attachment.kind {
         AttachmentKind::Image => "image",

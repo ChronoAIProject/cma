@@ -77,3 +77,40 @@ impl TaskExperiencePolicy {
             }
     }
 }
+
+/// Admission of optional durable formats. Readers never consult this gate.
+#[derive(Debug, Clone, Copy)]
+pub enum TaskExperienceWriter {
+    ToolOutput,
+    FeedbackDetails,
+    Suggestions,
+}
+
+impl TaskExperienceWriter {
+    fn capability(self) -> TaskExperienceCapability {
+        match self {
+            Self::ToolOutput | Self::FeedbackDetails => {
+                TaskExperienceCapability::ReplayPresentation
+            }
+            Self::Suggestions => TaskExperienceCapability::SuggestedFollowupAdmission,
+        }
+    }
+}
+
+impl TaskExperiencePolicy {
+    pub fn allows_writer(&self, account: &crate::SubjectId, writer: TaskExperienceWriter) -> bool {
+        self.allows(account, writer.capability())
+    }
+
+    /// None admits all accounts; an empty selection admits no writers.
+    /// Lets durable work queues select eligible owners without claiming other work.
+    pub fn writer_accounts(&self, writer: TaskExperienceWriter) -> Option<Vec<&str>> {
+        if !self.capabilities.contains(&writer.capability()) || self.mode == Mode::Disabled {
+            return Some(Vec::new());
+        }
+        match self.mode {
+            Mode::All => None,
+            _ => Some(self.accounts.iter().map(String::as_str).collect()),
+        }
+    }
+}
