@@ -6,7 +6,7 @@ use crate::activity::SourceKind;
 
 impl ChannelDefinition {
     /// The source an activity arrived on: Telegram{bot_id} → the native source with that
-    /// bot_id; NyxidRelay{platform,..} → the relay with that platform; Custom → the custom source.
+    /// bot_id; NyxidRelay{platform,..} → the relay with that platform; Custom and Github → their source.
     pub fn source_of(&self, kind: &SourceKind) -> Option<&Source> {
         self.sources.iter().find(|source| match (kind, source) {
             (SourceKind::NativeLark(identity), Source::NativeLark(source)) => {
@@ -44,6 +44,25 @@ impl ChannelDefinition {
                     bot_id: configured, ..
                 },
             ) => bot_id == configured,
+            (
+                SourceKind::Github {
+                    app_ref,
+                    installation_id,
+                    repository_id,
+                },
+                Source::Github {
+                    app_ref: configured,
+                    installation_ids,
+                    repository_ids,
+                    deny_repository_ids,
+                    ..
+                },
+            ) => {
+                app_ref == configured
+                    && installation_ids.contains(installation_id)
+                    && repository_ids.contains(repository_id)
+                    && !deny_repository_ids.contains(repository_id)
+            }
             (SourceKind::Custom, Source::Custom { .. }) => true,
             _ => false,
         })
@@ -66,7 +85,8 @@ impl ChannelDefinition {
             Source::NativeLark(_)
             | Source::Whatsapp { .. }
             | Source::Custom { .. }
-            | Source::Discord { .. } => None,
+            | Source::Discord { .. }
+            | Source::Github { .. } => None,
         }
     }
 
@@ -85,7 +105,40 @@ impl Source {
             | Self::Telegram { admission, .. }
             | Self::Discord { admission, .. }
             | Self::NyxidRelay { admission, .. } => admission.native_bot_mentions(),
-            Self::Custom { .. } => false,
+            Self::Custom { .. } | Self::Github { .. } => false,
         }
+    }
+
+    pub fn github_accepts(&self, event: &str, action: Option<&str>) -> bool {
+        let Self::Github {
+            events, actions, ..
+        } = self
+        else {
+            return false;
+        };
+        events.iter().any(|candidate| candidate == event)
+            && action.is_some_and(|value| actions.iter().any(|candidate| candidate == value))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn github_source_requires_pinned_facts_and_allowlisted_action() {
+        let source = Source::Github {
+            app_ref: "chrono".into(),
+            installation_ids: vec![7],
+            repository_ids: vec![42],
+            deny_repository_ids: vec![],
+            events: vec!["issues".into()],
+            actions: vec!["opened".into()],
+            prompt_template: None,
+        };
+        assert!(source.github_accepts("issues", Some("opened")));
+        assert!(!source.github_accepts("issues", Some("closed")));
+        assert!(!source.github_accepts("pull_request", Some("opened")));
+        assert_eq!(source.source_id().as_str(), "github");
     }
 }

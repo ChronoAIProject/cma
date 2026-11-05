@@ -275,6 +275,7 @@ fn config(media: MediaConfig) -> Config {
         native_whatsapp_templates_enabled: false,
         native_whatsapp_groups_enabled: false,
         native_bot_mentions_writes_enabled: false,
+        github_enabled: false,
         thread_contract_writes_enabled: false,
         multi_consumer_writes_enabled: false,
         dynamic_sources_writes_enabled: false,
