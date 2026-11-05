@@ -2038,8 +2038,10 @@ key derived from `CHRONO_AUTH_ENCRYPTION_KEY`, scoped to the deployment, sender,
 request and expected epoch; proofs expire after ten seconds and cannot be replayed.
 Peers use advertised pod IP origins, with redirects and proxy discovery disabled.
 Missing membership, incompatible protocols and uncertain routing fail closed.
-The internal endpoints must remain inside the cluster; do not publish them through
-a public HTTPRoute. Secret rotation requires all serving peers to use the same
+Configure peer origins with discovered pod addresses, never public ingress URLs.
+The legacy API HTTPRoute has a catch-all path, so path reachability alone does not
+establish peer authority: every peer relay request requires a valid signed proof
+and live membership. Secret rotation requires all serving peers to use the same
 existing deployment key; do not rotate that key as part of scaling.
 
 Live fragments use bounded authenticated subscriptions to the owner below the
