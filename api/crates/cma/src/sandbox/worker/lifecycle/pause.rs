@@ -8,7 +8,7 @@ use layer2_core::sandbox::{
     AgentLogKind, AgentStatus, Sandbox, SandboxEventKind, SandboxStatus, SandboxWorkStep,
 };
 
-use super::super::support::{adapter_failure, runtime, WorkerFailure};
+use super::super::support::{adapter_failure, funding_failure, runtime, WorkerFailure};
 use super::super::SandboxWorker;
 use super::checkpoint::require_quiet_agent;
 use super::support::{lifecycle_lease, model_error};
@@ -218,6 +218,11 @@ impl SandboxWorker {
                 self.abort_lifecycle_hold(sandbox, adapter_failure(error), now)
                     .await
             };
+        }
+        if let Err(error) = self.funding.settle(&sandbox, now).await {
+            return self
+                .handle_lifecycle_failure(sandbox, funding_failure(error), now)
+                .await;
         }
         let stamp = rfc3339_at(now);
         let lease = lifecycle_lease(&sandbox, &self.config.holder)?;

@@ -20,6 +20,8 @@ pub enum SandboxLifecycleCommandKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxLifecycleCommand {
+    /// Optional authority fence for a system decision made from one snapshot.
+    pub expected_revision: Option<u64>,
     pub managed_runtime_version: Option<String>,
     pub sandbox_id: SandboxId,
     pub owner: SubjectId,
@@ -28,6 +30,11 @@ pub struct SandboxLifecycleCommand {
 }
 
 impl SandboxLifecycleCommand {
+    pub fn at_revision(mut self, revision: u64) -> Self {
+        self.expected_revision = Some(revision);
+        self
+    }
+
     pub fn pause(
         sandbox_id: SandboxId,
         owner: SubjectId,
@@ -35,6 +42,7 @@ impl SandboxLifecycleCommand {
         notice: Option<String>,
     ) -> Self {
         Self {
+            expected_revision: None,
             managed_runtime_version: None,
             sandbox_id,
             owner,
@@ -50,6 +58,7 @@ impl SandboxLifecycleCommand {
         cause: SandboxReviveCause,
     ) -> Self {
         Self {
+            expected_revision: None,
             managed_runtime_version: None,
             sandbox_id,
             owner,
@@ -176,6 +185,12 @@ pub fn apply_sandbox_lifecycle_command(
     validate_command(command)?;
     if current.id != command.sandbox_id || current.owner != command.owner {
         return Err(SandboxStoreError::NotFound);
+    }
+    if command
+        .expected_revision
+        .is_some_and(|revision| revision != current.revision)
+    {
+        return Err(SandboxStoreError::Conflict);
     }
     current
         .validate()

@@ -46,6 +46,7 @@ fn only_explicit_retained_tool_authority_changes_the_runtime_specification() {
 
 fn request() -> ProviderSandboxRequest {
     ProviderSandboxRequest {
+        funded_until: None,
         image: ProviderImage {
             uri: "registry.example/runtime@sha256:abc".into(),
         },

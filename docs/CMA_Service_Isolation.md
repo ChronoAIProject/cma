@@ -124,6 +124,34 @@ so the same restricted credential can initialize and operate the actual stores.
 two also support `--print-migration-role` and `--migrate`. None creates users or
 assigns NyxID roles implicitly. Provision those identities before rollout.
 
+### Sandbox funding grants
+
+NyxID funding adds one Agent Manager collection, `sandbox_billing_state`, with
+the standard unique `_id_` index and the non-unique `sandbox_billing_due` index
+on `{retry_at: 1, _id: 1}`. Existing `sandbox_usage` and
+`sandbox_usage_events` remain in the Agent Manager catalog. Startup initializes
+the funding collection and its index even when the funding adapter is disabled.
+
+The generated `cma_am_runtime` role therefore grants `find`, `insert`, `update`,
+`remove`, `createCollection`, `createIndex`, `listIndexes` and `collMod` on
+`sandbox_billing_state`, following Agent Manager's startup DDL policy. It grants
+no `dropIndex` on that collection and no database-wide data access. Agent Manager
+has no separate migrator role; Gateway and Image Manager runtime/migrator roles
+must not receive funding collection privileges.
+
+Before rolling out this binary with isolated credentials, regenerate the role
+with `CHRONO_MONGODB_DATABASE=chrono-bot cma --print-runtime-role`. An authorized
+database operator must reconcile the existing role's privileges from that
+reviewed output before starting the new binary; printing the role does not
+update it. For an existing `cma_am_runtime`, use MongoDB's `updateRole` command
+with the generated `privileges` and `roles` fields, rather than rerunning
+`createRole`. For a fresh role, use the generated `createRole` command and assign
+it to the Agent Manager identity. Preserve the database and existing records.
+The old role fails the new binary's authority check before store initialization.
+Keep `CHRONO_NYXID_SANDBOX_BILLING_ENABLED=false` and
+`CHRONO_USAGE_BILLING_ENABLED=false`; granting storage authority does not
+activate either billing adapter.
+
 
 兼容的 NyxID 个人 access token 可以没有 RFC 8707 resource 限制；这类 token
 仍必须具有目标服务自己的 `cma-eg:*` / `cma-im:*` permission。显式限制到其他
