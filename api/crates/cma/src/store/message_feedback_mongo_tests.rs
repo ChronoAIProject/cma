@@ -23,7 +23,7 @@ fn reasons(version: u64) -> FeedbackReasonRequest {
 #[ignore = "requires disposable Mongo fixture"]
 async fn message_feedback_mongo_concurrent_reasons_and_legacy_up_or_null_clear_atomically() {
     let database = database().await;
-    let store = Arc::new(MongoMessageFeedbackStore::open(&database).await.unwrap());
+    let store = Arc::new(enabled_store(&database).await);
     let owner = SubjectId::new("owner");
     let agent = AgentId("agt_ticket10".into());
     for target in [Some(MessageVote::Up), None] {
@@ -50,7 +50,7 @@ async fn message_feedback_mongo_concurrent_reasons_and_legacy_up_or_null_clear_a
                 reason_result.is_ok()
                     || matches!(reason_result, Err(FeedbackReasonError::Conflict))
             );
-            let reopened = MongoMessageFeedbackStore::open(&database).await.unwrap();
+            let reopened = enabled_store(&database).await;
             let current = reopened.get(&owner, &agent, sequence).await.unwrap();
             assert_eq!(current.vote, target);
             assert!(current.reasons.is_empty());
@@ -90,7 +90,7 @@ async fn message_feedback_mongo_concurrent_reasons_and_legacy_up_or_null_clear_a
 #[ignore = "requires disposable Mongo fixture"]
 async fn message_feedback_mongo_concurrent_exact_retries_are_one_durable_version() {
     let database = database().await;
-    let store = Arc::new(MongoMessageFeedbackStore::open(&database).await.unwrap());
+    let store = Arc::new(enabled_store(&database).await);
     let owner = SubjectId::new("owner");
     let agent = AgentId("agt_ticket10".into());
     let votes = (0..12).map(|_| store.set(&owner, &agent, 5, Some(MessageVote::Down)));
@@ -100,7 +100,7 @@ async fn message_feedback_mongo_concurrent_exact_retries_are_one_durable_version
     let request = reasons(1);
     let writes = (0..12).map(|_| store.set_reasons(&owner, &agent, 5, &request));
     let results = futures_util::future::join_all(writes).await;
-    let reopened = MongoMessageFeedbackStore::open(&database).await.unwrap();
+    let reopened = enabled_store(&database).await;
     let current = reopened.get(&owner, &agent, 5).await.unwrap();
     assert_eq!(current.version, 2);
     assert_eq!(
@@ -132,7 +132,7 @@ async fn message_feedback_mongo_concurrent_exact_retries_are_one_durable_version
 #[ignore = "requires disposable Mongo fixture"]
 async fn message_feedback_mongo_legacy_vote_reads_empty_and_migrates_without_aba() {
     let database = database().await;
-    let store = MongoMessageFeedbackStore::open(&database).await.unwrap();
+    let store = enabled_store(&database).await;
     let owner = SubjectId::new("owner");
     let agent = AgentId("agt_ticket10".into());
     database
@@ -153,7 +153,7 @@ async fn message_feedback_mongo_legacy_vote_reads_empty_and_migrates_without_aba
         .unwrap();
     assert_eq!(saved.version, 1);
     store.set(&owner, &agent, 5, None).await.unwrap();
-    let reopened = MongoMessageFeedbackStore::open(&database).await.unwrap();
+    let reopened = enabled_store(&database).await;
     assert!(reopened
         .list(&owner, &agent, 0, 5, 200)
         .await
@@ -172,4 +172,15 @@ async fn message_feedback_mongo_legacy_vote_reads_empty_and_migrates_without_aba
         Err(FeedbackReasonError::Conflict)
     ));
     database.drop().await.unwrap();
+}
+
+pub(super) async fn enabled_store(database: &Database) -> MongoMessageFeedbackStore {
+    let mut store = MongoMessageFeedbackStore::open(database).await.unwrap();
+    store.writer_policy = Arc::new(
+        serde_json::from_value(serde_json::json!({
+            "mode":"all", "accounts":[], "capabilities":["replay_presentation"]
+        }))
+        .unwrap(),
+    );
+    store
 }
