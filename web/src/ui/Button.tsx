@@ -29,7 +29,12 @@ interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'cla
   readonly size?: ButtonSize;
   /** A leading 16px glyph. Sized by the button so callers cannot drift. */
   readonly icon?: ReactNode;
-  /** Extra classes for placement only. Never for colour, depth or size. */
+  /**
+   * Extra classes for placement only. Never for colour, depth or size.
+   * Sole exception: task-home landing controls (composer toolbar, send,
+   * repository chip, templates, recovery actions) and repository dialog
+   * controls, documented in Web_Style 2026-11-05.
+   */
   readonly placement?: string;
 }
 
