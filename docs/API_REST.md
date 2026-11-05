@@ -245,7 +245,7 @@ The composed identity/discovery/static routes also include:
 | `GET /openapi.json` | Anonymous machine-readable contract |
 | `GET /auth/login` | Begin NyxID OAuth; return destination is validated |
 | `GET /auth/callback` | Complete identity exchange; never starts Agent work |
-| `GET /auth/session` | Browser identity, capabilities and visitor flag; 401 when signed out |
+| `GET /auth/session` | Browser identity, capabilities, visitor flag and effective usage presentation policy; 401 when signed out |
 | `POST /auth/logout` | Revoke browser login and expire cookie; redirect to `/` |
 | `GET /embed/v1.js` | Fixed versioned-by-integrity embed script; no credential access |
 | `POST /api/v1/mcp` | Typed 501 `interface_not_available` |
@@ -1402,6 +1402,15 @@ Settings replacement uses `{ expected_revision, settings }`; patch uses
 JSON Patch operations. Reset uses `{ expected_revision }`. Read the resulting
 revision after every successful change. Runtime inventory can fail unavailable
 without proving that a runtime is absent.
+
+The **Show measured usage** setting is `usage_reporting.measured_visible`,
+default false. Admin settings responses include the effective boolean; PUT,
+PATCH and reset retain revision CAS and audit behavior. All authenticated
+`GET /auth/session` responses expose the same read-only section, including
+ordinary owners and visitors. A missing section from an older server means
+false. Collection remains controlled by `CHRONO_USAGE_METRICS_ENABLED`.
+See [Measured usage visibility](CMA_Usage_Reporting.md) for SDK names, write
+examples and predecessor-compatible persistence.
 
 Native warm-pool administration requires `ConfigurePlatform`:
 

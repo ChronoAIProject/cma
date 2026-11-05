@@ -22,7 +22,7 @@ use body::SettingsJson;
 pub(crate) use body::{
     InactivitySettingsBody, MarketplaceSettingsBody, PatchRequest, PlatformDefaultsBody,
     PlatformLimitsBody, PlatformSettingsBody, ProfileReferenceBody, ReplaceRequest, ResetRequest,
-    RetentionSettingsBody, SettingsView, TriggerSettingsBody,
+    RetentionSettingsBody, SettingsView, TriggerSettingsBody, UsageReportingSettingsBody,
 };
 
 pub(crate) enum Failure {

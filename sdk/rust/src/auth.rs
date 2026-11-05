@@ -16,9 +16,18 @@ string_enum! { /// Public entitlement reported by the identity endpoint.
     }
 }
 
+/// Effective presentation policy for every authenticated caller.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct UsageReporting {
+    /// Whether measured usage may be displayed; independent of collection.
+    pub measured_visible: bool,
+}
+
 /// Public profile and capability evidence for an authenticated caller.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Identity {
+    /// Absent on older servers; treat absence as false.
+    pub usage_reporting: Option<UsageReporting>,
     /// Authenticated subject identity.
     pub subject: String,
     /// Explicit allowed operations.
