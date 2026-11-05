@@ -5225,6 +5225,11 @@ authorization, exact request recovery and unsaved drafts keep their existing
 contracts. These changes reduce repeated status and put the conversation beside
 the environment the Agent actually operates.
 
+Task names prefer an owner rename, then the durable generated/task title, then
+eligible runtime metadata, then Untitled task. Both durable title events and the
+public live title delta update the existing conversation without remounting it.
+This replaces the older preview-first ordering, which masked generated names.
+
 The following alias tokens are defined on `body`, with dark overrides on
 `body[data-ds-dark-theme]`. Components read the aliases, never literal colors.
 The `workspace` role scopes this palette to Agent Manager; other services keep §2.
