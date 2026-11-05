@@ -29,7 +29,7 @@ describe('the shared Agent display title', () => {
   it('keeps an explicit native title even when it exactly equals setup text', () => {
     expect(
       agentDisplayTitle({
-        title: configuredName,
+        title: undefined,
         runtimeMetadata: {
           description: setup,
           descriptionSource: 'provider_title',
@@ -49,7 +49,7 @@ describe('the shared Agent display title', () => {
       descriptionIsSetupPreview: false,
     },
   ])('preserves an unknown legacy or unconfirmed description: %j', (runtimeMetadata) => {
-    expect(agentDisplayTitle({ title: configuredName, runtimeMetadata })).toBe(
+    expect(agentDisplayTitle({ runtimeMetadata })).toBe(
       runtimeMetadata.descriptionSource === 'prompt_preview'
         ? 'Prepare this empty workspace and wait for the ow'
         : setup,
@@ -60,7 +60,7 @@ describe('the shared Agent display title', () => {
     const task = `${setup} Then investigate the bug reported by the owner.`;
     expect(
       agentDisplayTitle({
-        title: configuredName,
+        title: undefined,
         runtimeMetadata: { description: task, descriptionSource: 'prompt_preview' },
       }),
     ).toBe('Prepare this empty workspace and wait for the ow');
@@ -143,9 +143,7 @@ describe('metadata replay and presentation', () => {
         working_directory: '/home/cma/restored',
       }),
     );
-    expect(
-      agentDisplayTitle({ title: configuredName, runtimeMetadata: resumed.runtimeMetadata }),
-    ).toBe(setup);
+    expect(agentDisplayTitle({ runtimeMetadata: resumed.runtimeMetadata })).toBe(setup);
     expect(resumed.runtimeMetadata).toMatchObject({
       descriptionSource: 'provider_title',
       workingDirectory: '/home/cma/restored',
@@ -174,6 +172,7 @@ describe('metadata replay and presentation', () => {
       status: 'ready',
       detail: {
         ...AGENT_DETAIL,
+        title: undefined,
         runtimeMetadata: { description: 'Native name', descriptionSource: 'provider_title' },
       },
       workspace: workspaceFixture(),
@@ -236,4 +235,46 @@ it('keeps an owner rename above native titles while preserving all conversation 
   expect(agentDisplayTitle(renamed.detail)).toBe('Owner chosen name');
   expect(renamed.conversation).toBe(conversation);
   expect(renamed.detail.id).toBe(state.detail.id);
+});
+
+it.each(['generated', 'fallback', 'user'])(
+  'applies a durable %s title without replacing history',
+  (source) => {
+    const before = conversationFromTranscript(AGENT_TRANSCRIPT);
+    const conversation = foldAgentEvent(before, {
+      seq: before.cursor + 1,
+      appendedAt: '2026-11-05T01:00:00Z',
+      kind: { type: 'title_set', source, title: 'European cottage game' },
+    });
+    const state: AgentResourceState = {
+      status: 'ready',
+      detail: {
+        ...AGENT_DETAIL,
+        runtimeMetadata: { description: 'hi，我想做个游戏', descriptionSource: 'prompt_preview' },
+      },
+      workspace: workspaceFixture(),
+      conversation,
+    };
+    const presented = presentAgent(state);
+    if (presented.status !== 'ready') throw new Error('Expected retained Agent');
+    expect(agentDisplayTitle(presented.detail)).toBe('European cottage game');
+    expect(presented.conversation.messages).toBe(before.messages);
+    expect(agentDisplayTitle({ ...presented.detail, ownerTitle: 'My cottage' })).toBe('My cottage');
+  },
+);
+
+it('applies the public title delta on retained AG-UI tabs', () => {
+  const before = conversationFromTranscript(AGENT_TRANSCRIPT);
+  const next = foldLiveEvent(
+    before,
+    {
+      type: 'STATE_DELTA',
+      threadId: 'agt_1',
+      runId: '1',
+      delta: [{ op: 'replace', path: '/title', value: 'European cottage game' }],
+    },
+    'agt_1',
+  );
+  expect(next.title).toBe('European cottage game');
+  expect(next.messages).toBe(before.messages);
 });

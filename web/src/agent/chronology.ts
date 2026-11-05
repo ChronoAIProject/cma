@@ -250,6 +250,10 @@ export function mergeTranscriptSnapshot(
   const activeRunId = useSnapshotState ? snapshot.activeRunId : current.activeRunId;
   return {
     ...result,
+    title: useSnapshotState ? (snapshot.title ?? current.title) : (current.title ?? snapshot.title),
+    ownerTitle: useSnapshotState
+      ? (snapshot.ownerTitle ?? current.ownerTitle)
+      : (current.ownerTitle ?? snapshot.ownerTitle),
     latestTurnId:
       Number(current.latestTurnId ?? 0) >= Number(snapshot.latestTurnId ?? 0)
         ? current.latestTurnId
