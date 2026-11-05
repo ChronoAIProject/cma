@@ -203,3 +203,19 @@ it('keeps the Gateway creation action in the shared top row through collapse', a
   await userEvent.click(screen.getByRole('button', { name: 'New channel' }));
   expect(onCreate).toHaveBeenCalledOnce();
 });
+
+it('marks the current New agent page and renders the platform search shortcut as a kbd', () => {
+  const view = render(
+    <Sidebar
+      collapsed={false}
+      account="Account"
+      onSearch={vi.fn()}
+      newAgent={{ current: true, onCreate: vi.fn() }}
+    />,
+  );
+  expect(screen.getByRole('button', { name: 'New agent' })).toHaveAttribute('aria-current', 'page');
+  const search = screen.getByRole('button', { name: 'Search' });
+  expect(search.querySelector('kbd')).toHaveTextContent(/⌘K|Ctrl K/);
+  view.rerender(<Sidebar collapsed={false} account="Account" newAgent={{ onCreate: vi.fn() }} />);
+  expect(screen.getByRole('button', { name: 'New agent' })).not.toHaveAttribute('aria-current');
+});
