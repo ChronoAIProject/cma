@@ -29,7 +29,12 @@ it('retires the profile-driven Sandbox creation entry from the Agent Manager hom
     </AuthContextProvider>,
   );
   await screen.findByRole('heading', { name: 'What should your Agent work on?' });
-  expect(screen.getAllByRole('button', { name: 'New agent' }).length).toBeGreaterThan(0);
+  expect(
+    within(screen.getByRole('complementary', { name: 'Application navigation' })).getByRole(
+      'button',
+      { name: 'New agent' },
+    ),
+  ).toHaveAttribute('aria-current', 'page');
   expect(screen.queryByRole('button', { name: 'New sandbox' })).not.toBeInTheDocument();
 });
 
@@ -99,6 +104,11 @@ it('creates the Agent in the Workspace whose row opened New agent', async () => 
   await actor.click(screen.getByRole('menuitem', { name: 'New agent' }));
   const dialog = await screen.findByRole('dialog', { name: 'New task' });
   expect(within(dialog).getByText('Creating in Workspace wsp_1')).toBeInTheDocument();
+  expect(within(dialog).getByRole('button', { name: 'Add git repo' })).toBeDisabled();
+  expect(within(dialog).getByRole('button', { name: 'Add git repo' })).toHaveAccessibleDescription(
+    /Repository context is inherited/,
+  );
+  expect(screen.getAllByRole('dialog')).toHaveLength(1);
   await actor.type(within(dialog).getByLabelText('Your task'), 'Read the selected workspace');
   await actor.click(within(dialog).getByRole('button', { name: 'Start task' }));
   await waitFor(() => expect(createAgentLifecycle).toHaveBeenCalledOnce());
