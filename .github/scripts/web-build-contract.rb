@@ -4,6 +4,9 @@ require "yaml"
 root = File.expand_path("../..", __dir__)
 
 def validate(ci, publish, dockerfile)
+  frontend = ci.fetch("jobs").fetch("frontend").fetch("steps")
+  compiled = frontend.find { |step| step["name"] == "Production build" }
+  raise "browser gate needs immutable bundle inputs" unless compiled && compiled["run"] == 'CHRONO_BUILD="git-${GITHUB_SHA:0:12}" npm run build' && compiled["env"] == { "CHRONO_BUILD_SHA" => "${{ github.sha }}", "CHRONO_BUILD_ARTIFACT" => "promotable" }
   images = ci.fetch("jobs").fetch("images").fetch("steps")
   candidate = images.find { |step| step["id"] == "build-identity" }
   raise "candidate identity missing" unless candidate && candidate["run"] == 'echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"'
