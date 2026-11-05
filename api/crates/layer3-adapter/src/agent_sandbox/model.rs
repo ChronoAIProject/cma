@@ -200,6 +200,7 @@ pub(super) fn desired_at(
         SPEC_ANNOTATION.into(),
         crate::provider_request_digest(&spec)?,
     );
+    super::funding::apply(&mut spec, request.funded_until)?;
     serde_json::from_value(json!({"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox",
         "metadata":{"name":name,"namespace":config.namespace,"labels":labels,"annotations":annotations},"spec":spec}))
         .map_err(|_| rejected("cannot encode Sandbox resource"))
