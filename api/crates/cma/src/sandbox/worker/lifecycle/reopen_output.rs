@@ -57,19 +57,40 @@ async fn drain<T>(
                     ConversationUpdate::Lost { .. } => return Err(AdapterError::Unavailable("reopen output contains a gap".into())),
                     _ => None,
                 };
-                loop {
-                    match recorder.record_reopen_update(agent_id, guard, &mut assembly, update.clone(), now_rfc3339()).await {
-                        Ok(_) => {
-                            if let Some(receipt) = receipt {
-                                if let Err(error) = receipt.acknowledge().await {
-                                    return prefer_opening_failure(operation.as_mut(), error);
-                                }
-                            }
-                            break;
+                let recording = async {
+                    loop {
+                        match recorder.record_reopen_update(agent_id, guard, &mut assembly, update.clone(), now_rfc3339()).await {
+                            Ok(_) => break,
+                            Err(AgentConversationError::Unavailable(_)) => tokio::time::sleep(Duration::from_secs(1)).await,
+                            Err(error) => return Err(AdapterError::Unavailable(format!("durable reopen output was refused: {error}"))),
                         }
-                        Err(AgentConversationError::Unavailable(_)) => tokio::time::sleep(Duration::from_secs(1)).await,
-                        Err(error) => return Err(AdapterError::Unavailable(format!("durable reopen output was refused: {error}"))),
                     }
+                    if let Some(receipt) = receipt {
+                        receipt.acknowledge().await?;
+                    }
+                    Ok(())
+                };
+                tokio::pin!(recording);
+                let mut completed = None;
+                let recorded = loop {
+                    // Tool confirmation inside the opener can hold the Agent
+                    // writer needed by this receipt and by accepted stop work.
+                    // Drive it through recording/retry/ACK, but finish custody
+                    // of this update before handing off a completed channel.
+                    tokio::select! {
+                        result = &mut operation, if completed.is_none() => completed = Some(result),
+                        result = &mut recording => break result,
+                    }
+                };
+                if let Err(error) = recorded {
+                    return match completed {
+                        Some(Err(original)) => Err(original),
+                        Some(Ok(_)) => Err(error),
+                        None => prefer_opening_failure(operation.as_mut(), error),
+                    };
+                }
+                if let Some(result) = completed {
+                    return result;
                 }
             }
         }
