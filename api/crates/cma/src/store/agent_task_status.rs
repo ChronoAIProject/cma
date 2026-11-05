@@ -7,6 +7,30 @@ use layer2_core::sandbox::{
 };
 use mongodb::{bson::doc, ClientSession};
 
+mod batch;
+pub(super) use batch::read_many;
+
+pub(super) async fn ensure_indexes(
+    collection: &mongodb::Collection<mongodb::bson::Document>,
+) -> Result<(), layer2_core::StoreError> {
+    collection
+        .create_index(
+            mongodb::IndexModel::builder()
+                .keys(doc! {"agent_id": 1, "record.kind.type": 1, "seq": -1})
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .name("agent_log_task_status".to_owned())
+                        .build(),
+                )
+                .build(),
+        )
+        .await
+        .map(|_| ())
+        .map_err(|error| {
+            layer2_core::StoreError::Unavailable(format!("agent task status index: {error}"))
+        })
+}
+
 pub(super) async fn read(
     store: &MongoSandboxStore,
     agent: &Agent,
