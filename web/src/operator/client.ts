@@ -6,9 +6,12 @@ import type {
   ProfileKind,
   ResourcePage,
 } from '@chronoai/cma-sdk';
+import { measuredUsageReader } from '../usage/metrics/readMeasuredUsage';
+import type { ReadMeasuredUsage } from '../usage/metrics/useMeasuredUsage';
 import type { MetricsClient } from '../usage/metrics/model';
 
 export interface OperatorClient {
+  readonly readMeasuredUsage: ReadMeasuredUsage;
   readonly adminUsageMetrics: MetricsClient;
   readonly usage: Pick<
     Cma['usage'],
@@ -40,6 +43,7 @@ export interface OperatorClient {
 
 export function createOperatorClient(client: Cma): OperatorClient {
   return {
+    readMeasuredUsage: measuredUsageReader(client.auth),
     usage: client.usage,
     adminUsageMetrics: client.adminUsageMetrics,
     admin: client.admin,

@@ -295,7 +295,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   };
   await page.setViewport({ width: 1440, height: 1000 });
   await page.goto(`${base}/operations`, { waitUntil: 'networkidle0' });
-  await page.waitForSelector('[aria-label="Sandboxes and measured usage"] tbody tr');
+  await page.waitForSelector('[aria-label="Sandboxes and allocated usage"] tbody tr');
   await assertLayout();
   await page.screenshot({ path: join(output, 'desktop-sandboxes.png'), fullPage: true });
   await page.focus('.operator-tabs [role="tab"][aria-selected="true"]');
