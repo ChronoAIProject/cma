@@ -29,6 +29,7 @@ trait SandboxSweep: Send + Sync {
 #[async_trait::async_trait]
 impl SandboxSweep for SandboxWorker {
     async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        let _priority = crate::background::shared().foreground();
         SandboxWorker::run_due(self, now).await
     }
 }
@@ -36,6 +37,7 @@ impl SandboxSweep for SandboxWorker {
 #[async_trait::async_trait]
 impl SandboxSweep for WorkspaceWorker {
     async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        let _priority = crate::background::shared().foreground();
         WorkspaceWorker::run_due(self, now).await
     }
 }

@@ -16,7 +16,8 @@ use tower::ServiceExt;
 async fn reported_output_crosses_durable_snapshot_tail_and_response_boundaries_without_status_invention(
 ) {
     let fixture = fixture(true, false).await;
-    let recorder = DurableAgentUpdateRecorder::new(fixture.store.clone());
+    let recorder =
+        DurableAgentUpdateRecorder::with_writer_policy(fixture.store.clone(), task_policy());
     let mut assembly = AgentMessageAssembly::default();
     for update in [
         json!({"sessionUpdate":"tool_call", "toolCallId":"output-proof", "title":"printf native-computer-proof", "kind":"execute", "status":"in_progress"}),
