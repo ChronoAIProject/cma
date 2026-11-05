@@ -104,8 +104,8 @@ spec:
     spec:
       # Shutdown drains HTTP for up to 30s, then background workers for up to
       # 30s. Leave another five seconds for process and kubelet teardown.
-      # 30s endpoint propagation + 660s HTTP + 30s workers + scheduling margin.
-      terminationGracePeriodSeconds: 735
+      # 20s owner drain + 30s propagation + 660s HTTP + 30s workers + margin.
+      terminationGracePeriodSeconds: 760
       # The sandbox key is delivered by the platform's secret provider, which
       # identifies the workload by its service account. Running as "default"
       # would present the wrong principal and the mount would be refused
@@ -113,6 +113,21 @@ spec:
       # deliberately rather than switched off.
       serviceAccountName: chrono-bot-ksa
       automountServiceAccountToken: true
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: cma-agent-manager
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          nodeTaintsPolicy: Honor
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: cma-agent-manager
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -145,6 +160,12 @@ spec:
             - secretRef:
                 name: cma-agent-manager
           env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: CHRONO_AGENT_MANAGER_RELAY_ADDRESS
+              value: "http://$(POD_IP):8080"
             # Keep interactive IO schedulable alongside reconciliation and BSON
             # decoding. Match workers to the four-core burst limit below.
             - name: TOKIO_WORKER_THREADS
@@ -200,7 +221,7 @@ spec:
           lifecycle:
             preStop:
               exec:
-                command: ["/bin/sleep", "30"]
+                command: ["/bin/sh", "-c", "/usr/local/bin/cma --agent-manager-drain; exec /bin/sleep 30"]
           livenessProbe:
             httpGet:
               path: /livez

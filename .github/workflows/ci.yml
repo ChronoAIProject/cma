@@ -157,7 +157,7 @@ jobs:
           # this repository never declares a Deployment or Service for it.
           expected=$(printf '%s\n' \
             infra/api/Dockerfile infra/api/configmap.yaml infra/api/deployment.yaml \
-            infra/api/secret.yaml infra/api/service.yaml \
+            infra/api/secret.yaml infra/api/service.yaml infra/api/pdb.yaml \
             infra/api/serviceaccount.yaml infra/api/secretproviderclass.yaml \
             infra/api/httproute.yaml infra/api/healthcheckpolicy.yaml \
             infra/api/gcpbackendpolicy.yaml \

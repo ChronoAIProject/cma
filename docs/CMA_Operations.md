@@ -1013,6 +1013,9 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_BASELINE_SERVICES` | Default `chrono-llm-public,ornn-api`; unioned into newly admitted Sandbox scope |
 | `CHRONO_SANDBOX_CPU` | Seed default Sandbox Profile size; default `1`, accepts positive cores or millicores |
 | `CHRONO_SANDBOX_MEMORY` | Seed default size; default `1Gi`, accepts positive whole Mi/Gi |
+| `CHRONO_AGENT_MANAGER_REPLICAS_ENABLED` | Strict `true`/`false`, default `false`. Enables ownership protocol v1 for any number of Agent Managers. Keep disabled until the no-overlap enablement and retained-runtime compatibility checks below are complete. Disabled processes use the existing single-instance path. |
+| `CHRONO_AGENT_MANAGER_RELAY_ADDRESS` | Required only in replica mode: an absolute HTTP(S) origin reachable by peers, without credentials, path, query or fragment. Deployment sets `http://$(POD_IP):8080` using the downward API. Each random process incarnation advertises its address through Mongo; no static peers or new secret are required. |
+| `CHRONO_AGENT_MANAGER_MAX_OWNED_AGENTS` | Positive per-process ownership capacity; default `256`. Rendezvous placement chooses compatible live members with remaining capacity, and existing owners cooperate on scale-up. This bounds transport ownership, independently of Sandbox admission quotas. |
 | `CHRONO_AGENT_MANAGER_SANDBOX_CPU` | New Agent Manager Sandbox CPU and native default warm/prepared capacity; default `2`, accepts positive cores or millicores. Independent of retained system Profiles. |
 | `CHRONO_AGENT_MANAGER_SANDBOX_MEMORY` | New Agent Manager Sandbox memory and native default warm/prepared capacity; default `8Gi`, accepts positive whole Mi/Gi. Existing Sandbox reservations are unchanged. |
 | `CHRONO_DEFAULT_AGENT_MODEL` | Seed default Agent model; default `gpt-5.6-sol`, nonblank |
@@ -1115,10 +1118,11 @@ Visitor daily charging happens only when idempotency proves a new Launch was
 created. Exact replay and later reviewed Start do not consume another unit.
 Exhaustion is `resource_quota` with the next UTC reset time. Sandbox counts are
 transactional, so concurrent Launches cannot bypass the visitor's one-Sandbox
-limit. The request and visitor daily counters are process-local: production
-must remain **one API replica**, with Recreate rollout, until a durable atomic
-ledger replaces them. Restart resets of process-local counters are a known
-operational limitation, not proof of a distributed quota.
+limit. Authenticated request budgets and visitor daily charges use shared Mongo
+records. Cheap pre-authentication network admission is per process. Multiple
+serving API replicas additionally require the Agent Manager ownership protocol
+and enablement procedure below; shared quotas alone do not establish transport
+ownership.
 
 ## Deployment continuity and historical reset procedure
 
@@ -1990,3 +1994,190 @@ URLs to `https://cma.nyxid.ai/event-gateway` and retain
 `https://bot.chrono-ai.fun/event-gateway` in both alias lists. Keep
 `https://bot-gateway.chrono-ai.fun` as the legacy public origin. On rollback retain
 readers and all three reachable bases for links and webhooks already issued.
+
+## Agent Manager active-active operation
+
+Replica mode uses the existing Mongo replica set, runtime control authentication
+and deployment encryption secret. It adds no broker or cache service. Every
+process registers a random incarnation in `cma_agent_manager_members`; its
+30-second expiry is renewed every five seconds. TTL removes old membership
+records but never decides whether a member is live. `/ready` requires a healthy
+cached store probe, current membership and completed startup, and becomes false
+as soon as draining or ownership renewal fails. `/livez` remains a process probe.
+A failed incarnation exits; it cannot renew itself back into authority.
+
+`cma_agent_manager_owners` stores each Agent's permanent epoch, owner and 30-second lease.
+Never delete these rows or install a TTL index: that would reset fencing history.
+Majority writes and transaction fences protect transport-dependent publication;
+receiving runtimes also enforce the epoch for input, control effects and output
+ACKs. Their challenge/confirm lease expires before the corresponding Mongo lease
+without depending on synchronized wall clocks. A stale provider response cannot
+publish a conversation mutation or checkpoint. Missing a local connection does
+not permit taking another live instance's ownership.
+
+Rendezvous order over discovered compatible members assigns new/expired claims,
+subject to the configured capacity. Scale-up rebalances existing owners through
+at most four cooperative handoffs per maintenance pass; busy Agents may defer a
+handoff for at most 60 seconds. Completed terminal work releases its ownership.
+Scale-down and SIGTERM cancel local authority, revoke contacted runtime receivers,
+and release durable claims. The preStop command invokes an authenticated loopback
+drain before the existing 30-second endpoint propagation delay. Drain work has a
+20-second bound; a receiver that cannot confirm revocation retains its durable
+lease until expiry, so a network failure cannot authorize overlapping readers.
+The termination grace is 760 seconds, including drain, HTTP and worker budgets.
+
+Accepted commands retain the durable command ledger and caller/resource authority.
+Only the transport owner executes them. Direct Agent runtime requests relay once
+to the current owner with original authorization, body and replay/request IDs.
+The destination rechecks authorization. Peer requests are signed with a separate
+key derived from `CHRONO_AUTH_ENCRYPTION_KEY`, scoped to the deployment, sender,
+request and expected epoch; proofs expire after ten seconds and cannot be replayed.
+Peers use advertised pod IP origins, with redirects and proxy discovery disabled.
+Missing membership, incompatible protocols and uncertain routing fail closed.
+The internal endpoints must remain inside the cluster; do not publish them through
+a public HTTPRoute. Secret rotation requires all serving peers to use the same
+existing deployment key; do not rotate that key as part of scaling.
+
+Live fragments use bounded authenticated subscriptions to the owner below the
+public SSE projections. Subscribers on any manager receive v1/v2, AG-UI and
+Responses live events while their existing Mongo catch-up remains authoritative.
+Every private frame names its exact owner epoch; buffered local frames lose
+validity when their authority is revoked. Reconnect/overflow signals a live gap
+and resumes durable catch-up. Each manager admits at most 256 relay operations
+or subscriptions, with 32 buffered fragments per public subscription. A public
+subscriber can continue durable catch-up when the optional live lane is full.
+Relayed request bodies share a 64 MiB reservation budget while preserving the
+existing file and attachment size limits. Direct responses retain their capacity
+slot until completion and have a total 60-second deadline.
+Desktop WebSockets already use a durable Sandbox route and the runtime's desktop
+connection lease; they do not use the conversation fragment hub.
+
+Replica mode shares one Mongo client between application stores and runtime
+routing and explicitly caps its application pool at **10 per server per process**.
+For primary-directed traffic, N managers therefore permit N × 10 application
+connections to the primary. With the observed three-member Atlas set, reserve up
+to N × 6 monitoring connections as well. At N=2/3/5 this is respectively 20/30/50
+primary application connections and approximately 32/48/80 connections across the
+set including monitors. Budget surge and terminating processes separately:
+`N + 1 + terminating`, plus Event Gateway, Image Manager and other consumers.
+Failover/secondary reads can retain application pools on additional servers;
+the conservative full-set maximum is N × (3 × 10 + 6), before other consumers.
+Server headroom and historical outage cause have not been established by the
+available Mongo diagnostics. Do not increase the pool to compensate for scaling.
+
+The PDB uses `maxUnavailable: 1` and `unhealthyPodEvictionPolicy: AlwaysAllow` so
+an already-unready manager cannot block node drain. Hostname spread is required
+with zone spread preferred. The checked-in Deployment stays at one replica and
+the ConfigMap keeps the switch off. Apply the PDB only after at least two replicas are Ready. HPA is
+not enabled: operators may vary N without rebuilding, but must first validate
+Mongo, node and owned-Agent capacity. Membership `owned_agents` and
+`max_owned_agents`, readiness, request latency and existing Mongo checkout/hold
+instrumentation are the capacity inputs for a later HPA policy.
+
+### Production rollout (lead only)
+
+This procedure changes production only after the reviewed PR and all local/CI
+gates pass. It does not authorize this agent to deploy. Record the reviewed
+manager/runtime image digests and source identity using the OCI evidence procedure
+above. Verify **every retained runtime that can receive Agent traffic** advertises
+ownership protocol v1, including native and hosted paths. Updating only the default
+runtime image leaves retained runtimes incompatible. Upgrade those through their
+existing reviewed lifecycle; do not replace retained resources automatically.
+
+All serving managers must use protocol v1, the same deployment/database identity
+and existing deployment secret. Check Mongo roles for the two new collections and
+indexes. For isolated credentials, generate the expanded role with
+`CHRONO_AGENT_MANAGER_REPLICAS_ENABLED=true CHRONO_MONGODB_DATABASE=<database> cma --print-runtime-role`
+and review/install only its additive ownership collection grants before enablement.
+The switch-off verifier accepts those grants but does not require them; the
+switch-on verifier requires both collections before initializing stores.
+Confirm server/node headroom for N, surge and terminating processes,
+current topology constraints, initial per-pod load and public readiness/5xx/Mongo
+baselines. Keep the compatible image as the rollback floor. Run owned disposable
+canaries through different ingress pods, including live output and takeover.
+
+The first switch-on is an explicit **no-overlap** transition: older or switch-off
+managers never coexist with participating managers. Schedule the short service
+window with the lead. PDBs do not prevent Deployment scaling to zero. Capture the
+existing narrow Deployment fields and whether a PDB exists; do not export Secrets
+or whole configuration objects into an issue or terminal. Set `am_image` to the
+reviewed manager digest, then execute these narrow operations in order:
+
+```sh
+am_context=gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke
+am_namespace=chrono-bot
+# Assign the reviewed immutable image reference before continuing.
+: "${am_image:?set the reviewed cma-api image digest}"
+kubectl --context "$am_context" -n "$am_namespace" patch deployment cma-agent-manager --type=merge -p '{"spec":{"replicas":0}}'
+kubectl --context "$am_context" -n "$am_namespace" wait --for=delete pod -l app.kubernetes.io/name=cma-agent-manager --timeout=20m
+kubectl --context "$am_context" -n "$am_namespace" set image deployment/cma-agent-manager "api=$am_image"
+kubectl --context "$am_context" -n "$am_namespace" patch deployment cma-agent-manager --type=strategic -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":1,"maxUnavailable":0}},"template":{"spec":{"terminationGracePeriodSeconds":760,"containers":[{"name":"api","env":[{"name":"POD_IP","valueFrom":{"fieldRef":{"fieldPath":"status.podIP"}}},{"name":"CHRONO_AGENT_MANAGER_RELAY_ADDRESS","value":"http://$(POD_IP):8080"},{"name":"CHRONO_AGENT_MANAGER_REPLICAS_ENABLED","value":"true"},{"name":"CHRONO_AGENT_MANAGER_MAX_OWNED_AGENTS","value":"256"}],"lifecycle":{"preStop":{"exec":{"command":["/bin/sh","-c","/usr/local/bin/cma --agent-manager-drain; exec /bin/sleep 30"]}}}}]}}}}'
+```
+
+If no topology constraints exist, add the following exact array. If constraints
+already exist, preserve them and merge these reviewed entries before patching.
+
+```sh
+kubectl --context "$am_context" -n "$am_namespace" patch deployment cma-agent-manager --type=merge -p '{"spec":{"template":{"spec":{"topologySpreadConstraints":[{"maxSkew":1,"topologyKey":"kubernetes.io/hostname","whenUnsatisfiable":"DoNotSchedule","nodeTaintsPolicy":"Honor","labelSelector":{"matchLabels":{"app.kubernetes.io/name":"cma-agent-manager"}}},{"maxSkew":1,"topologyKey":"topology.kubernetes.io/zone","whenUnsatisfiable":"ScheduleAnyway","nodeTaintsPolicy":"Honor","labelSelector":{"matchLabels":{"app.kubernetes.io/name":"cma-agent-manager"}}}]}}}}'
+kubectl --context "$am_context" -n "$am_namespace" patch deployment cma-agent-manager --type=merge -p '{"spec":{"replicas":1}}'
+kubectl --context "$am_context" -n "$am_namespace" rollout status deployment/cma-agent-manager --timeout=35m
+```
+
+Verify protocol negotiation and owned canaries at one participating replica before
+scaling. Set `am_replicas=2` initially; later stages can use 3, 5 or another capacity
+validated N without a code change. Wait for each stage before increasing N.
+
+```sh
+am_replicas=2
+kubectl --context "$am_context" -n "$am_namespace" scale deployment/cma-agent-manager --replicas="$am_replicas"
+kubectl --context "$am_context" -n "$am_namespace" rollout status deployment/cma-agent-manager --timeout=35m
+kubectl --context "$am_context" -n "$am_namespace" get pods -l app.kubernetes.io/name=cma-agent-manager -o wide
+kubectl --context "$am_context" -n "$am_namespace" get endpointslice -l kubernetes.io/service-name=cma-agent-manager
+# Create only if the named PDB was absent; otherwise inspect and narrowly patch it.
+kubectl --context "$am_context" -n "$am_namespace" create -f infra/api/pdb.yaml
+kubectl --context "$am_context" -n "$am_namespace" get pdb cma-agent-manager
+```
+
+Require N Ready/Available pods, ready endpoints and healthy NEG backends; verify
+requests reach every pod with content-free telemetry. In disposable canaries,
+admit on one manager, observe fragments on another, drain the owner, and verify
+one committed terminal result per operation, increasing ownership epoch, preserved
+cursor/ACK semantics and resumed live output. Exercise a 2→3→2 stage and a compatible
+rolling update. Observe at least two five-minute background/metering cycles and
+the tested takeover horizon; compare readiness, 5xx, background completion/lag,
+Mongo checkout/hold/occupancy and live-gap counts with baseline. Use approved
+VictoriaMetrics/VictoriaLogs read-only kube API proxy GETs, not Cloud Logging or
+ordinary users' records. Stop promotion for duplicates, lost terminal evidence,
+unsafe overlap, sustained routing/readiness errors or Mongo regression.
+
+### Rollback and version compatibility
+
+The first rollback keeps ownership enabled and scales to one compatible manager:
+
+```sh
+kubectl --context "$am_context" -n "$am_namespace" patch deployment cma-agent-manager --type=merge -p '{"spec":{"replicas":1}}'
+kubectl --context "$am_context" -n "$am_namespace" rollout status deployment/cma-agent-manager --timeout=35m
+# At one replica prohibit voluntary eviction while investigating.
+kubectl --context "$am_context" -n "$am_namespace" patch pdb cma-agent-manager --type=merge -p '{"spec":{"maxUnavailable":0}}'
+```
+
+Wait for extra processes and their receivers to drain; verify the survivor's
+canary before any image change. Compatible binaries with protocol v1 may roll
+with surge one and zero unavailable. An incompatible live membership version
+fails closed; use an expand/contract reader release or a no-overlap window for
+future protocol changes. Never enable a new writer while an incompatible reader
+can still send input or ACK output.
+
+Disabling the switch or reverting to a nonparticipating manager requires another
+full stop: scale to zero, wait for every participating pod to terminate and every
+receiver lease to be revoked/expired. Use the authenticated runtime
+`POST /runtime/agents/{agent}/manager-ownership/legacy` operation with that runtime's last
+exact ownership token for each opted-in Agent; it preserves the epoch watermark
+and rejects old owned attachments. Inventory and review those runtime-specific
+operations before execution; there is no safe blanket downgrade command. Only
+then patch the switch off and start exactly one compatible legacy manager.
+If a receiver cannot be verified/reset, retain protocol mode at one replica and
+escalate instead of bypassing its fence. Do not delete ownership history, rotate
+Sandboxes, apply whole manifests or blindly run `rollout undo`. Restore only the
+captured narrow fields responsible for a regression. A full-stop rollback is an
+outage; no PDB can make it continuously available.

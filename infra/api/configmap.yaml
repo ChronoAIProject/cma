@@ -220,6 +220,11 @@ data:
   CHRONO_SANDBOX_MEMORY: "1Gi"
   # New Agent Manager environments and their native warm pool. Retained system
   # Profiles above and existing Sandbox reservations keep their recorded values.
+  # Default-off until all retained runtimes and managers support ownership v1.
+  CHRONO_AGENT_MANAGER_REPLICAS_ENABLED: "false"
+  # Overridden by the Deployment with this pod's downward-API address.
+  CHRONO_AGENT_MANAGER_RELAY_ADDRESS: ""
+  CHRONO_AGENT_MANAGER_MAX_OWNED_AGENTS: "256"
   CHRONO_AGENT_MANAGER_SANDBOX_CPU: "2"
   CHRONO_AGENT_MANAGER_SANDBOX_MEMORY: "8Gi"
   CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE: ""
