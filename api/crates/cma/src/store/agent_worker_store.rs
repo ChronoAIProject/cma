@@ -142,6 +142,9 @@ impl AgentWorkerStore for MongoSandboxStore {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
+        if self.agent_ownership.is_some() {
+            return self.due_owned_agent_work(now, limit).await;
+        }
         let mut cursor = self
             .agents
             .find(doc! {
@@ -185,6 +188,7 @@ impl AgentWorkerStore for MongoSandboxStore {
             let Some(mut agent) = self.get_agent(id).await? else {
                 return Ok(None);
             };
+            self.recover_agent_work_owner(&mut agent).await?;
             if !agent.work.is_due(&now) {
                 return Ok(None);
             }

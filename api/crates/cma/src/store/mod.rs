@@ -101,7 +101,7 @@ pub(crate) mod sandbox_colors;
 mod sandbox_controls;
 mod sandbox_credentials;
 mod sandbox_events;
-mod sandbox_maintenance;
+pub(crate) mod sandbox_maintenance;
 mod sandbox_mongo;
 #[cfg(test)]
 mod sandbox_mongo_integration_tests;

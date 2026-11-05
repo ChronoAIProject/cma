@@ -177,6 +177,10 @@ async fn apply(
     guard: Option<&layer2_core::sandbox::store::AgentReopenGuard>,
     session: &mut mongodb::ClientSession,
 ) -> Result<AgentUpdateOutcome, ApplyError> {
+    store
+        .fence_agent_effect(&current.id, session)
+        .await
+        .map_err(ApplyError::Domain)?;
     let row = store
         .agents
         .find_one(doc! { "_id": current.id.as_str() })

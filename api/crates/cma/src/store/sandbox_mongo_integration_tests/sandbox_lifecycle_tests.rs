@@ -593,7 +593,7 @@ async fn lifecycle_recapture_atomically_fences_already_paused_rows_without_dupli
     client.database(&name).drop().await.unwrap();
 }
 
-pub(super) async fn claimed_pause_fixture(
+pub(in crate::store) async fn claimed_pause_fixture(
     store: &MongoSandboxStore,
     suffix: &str,
 ) -> (Sandbox, Vec<Agent>) {
@@ -649,7 +649,10 @@ fn lifecycle_agent(sandbox: &Sandbox, id: &str, conversation_id: &str) -> Agent 
     agent
 }
 
-pub(super) fn checkpoint_for_agents(agents: &[Agent], epoch: u64) -> SandboxCheckpointRef {
+pub(in crate::store) fn checkpoint_for_agents(
+    agents: &[Agent],
+    epoch: u64,
+) -> SandboxCheckpointRef {
     let captures = agents
         .iter()
         .map(|agent| {
@@ -680,7 +683,7 @@ pub(super) fn checkpoint_for_agents(agents: &[Agent], epoch: u64) -> SandboxChec
     .unwrap()
 }
 
-pub(super) fn checkpoint_mutation(
+pub(in crate::store) fn checkpoint_mutation(
     claimed: &Sandbox,
     agents: &[Agent],
     checkpoint: SandboxCheckpointRef,

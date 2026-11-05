@@ -32,6 +32,8 @@ mod cleanup_admission;
 mod contention;
 mod implementation;
 mod reopen;
+mod snapshot;
+use snapshot::{snapshot_error, snapshot_session};
 #[cfg(test)]
 mod reopen_tests;
 
@@ -140,6 +142,10 @@ async fn apply_mutation(
     mutation: &AgentConversationMutation,
     session: &mut mongodb::ClientSession,
 ) -> Result<ConversationReceipt, ApplyError> {
+    store
+        .fence_agent_effect(&mutation.agent.id, session)
+        .await
+        .map_err(ApplyError::Domain)?;
     let current_row = store
         .agents
         .find_one(doc! { "_id": mutation.agent.id.as_str() })
@@ -474,26 +480,4 @@ async fn pending_approvals_snapshot(
     .await
     .map_err(|error| snapshot_error(error.into()))?;
     Ok(pending.into_entries())
-}
-
-async fn snapshot_session(
-    store: &MongoSandboxStore,
-    snapshot_time: Option<mongodb::bson::Timestamp>,
-) -> Result<mongodb::ClientSession, SandboxStoreError> {
-    let session = store.client.start_session().snapshot(true);
-    let session = match snapshot_time {
-        Some(snapshot_time) => session.snapshot_time(snapshot_time),
-        None => session,
-    };
-    let session = session
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    Ok(session)
-}
-
-fn snapshot_error(error: ApplyError) -> SandboxStoreError {
-    match error {
-        ApplyError::Domain(error) => error,
-        ApplyError::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
-    }
 }

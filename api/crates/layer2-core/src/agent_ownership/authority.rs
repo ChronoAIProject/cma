@@ -4,16 +4,20 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use super::{OwnershipError, OwnershipToken};
+use super::{OwnershipError, OwnershipStore, OwnershipToken};
 
 tokio::task_local! {
-    static EXECUTION_OWNER: OwnershipToken;
+    static EXECUTION_AUTHORITY: Arc<Authority>;
 }
 
 /// The token captured at the start of this execution, never a lookup of whatever
 /// epoch happens to be current when a late provider result finally returns.
 pub fn execution_owner() -> Option<OwnershipToken> {
-    EXECUTION_OWNER.try_with(Clone::clone).ok()
+    execution_authority().map(|authority| authority.token.clone())
+}
+
+pub fn execution_authority() -> Option<Arc<Authority>> {
+    EXECUTION_AUTHORITY.try_with(Arc::clone).ok()
 }
 
 /// Monotonic local cancellation complements the durable and receiving-runtime
@@ -21,12 +25,38 @@ pub fn execution_owner() -> Option<OwnershipToken> {
 pub struct Authority {
     pub token: OwnershipToken,
     deadline: watch::Sender<Option<Instant>>,
+    pub(super) store: Option<Arc<dyn OwnershipStore>>,
+    pub(super) receivers: std::sync::Mutex<
+        std::collections::BTreeMap<
+            String,
+            Arc<dyn layer3_adapter::owner_protocol::ReceiverRevocation>,
+        >,
+    >,
 }
 
 impl Authority {
     pub fn new(token: OwnershipToken, deadline: Instant) -> Arc<Self> {
         let (deadline, _) = watch::channel(Some(deadline));
-        Arc::new(Self { token, deadline })
+        Arc::new(Self {
+            token,
+            deadline,
+            store: None,
+            receivers: Default::default(),
+        })
+    }
+
+    pub(super) fn with_store(
+        token: OwnershipToken,
+        deadline: Instant,
+        store: Arc<dyn OwnershipStore>,
+    ) -> Arc<Self> {
+        let (deadline, _) = watch::channel(Some(deadline));
+        Arc::new(Self {
+            token,
+            deadline,
+            store: Some(store),
+            receivers: Default::default(),
+        })
     }
 
     pub fn is_current(&self) -> bool {
@@ -75,11 +105,14 @@ impl Authority {
 
     /// Spawned tasks must explicitly capture this authority and enter their own
     /// scope; Tokio task locals intentionally do not transfer implicitly.
-    pub async fn run<F: Future>(&self, operation: F) -> Result<F::Output, OwnershipError> {
+    pub async fn run<F: Future>(
+        self: &Arc<Self>,
+        operation: F,
+    ) -> Result<F::Output, OwnershipError> {
         tokio::select! {
             biased;
             _ = self.revoked() => Err(OwnershipError::Stale),
-            result = EXECUTION_OWNER.scope(self.token.clone(), operation) => {
+            result = EXECUTION_AUTHORITY.scope(self.clone(), layer3_adapter::owner_protocol::scope(self.clone(), operation)) => {
                 if self.is_current() { Ok(result) } else { Err(OwnershipError::Stale) }
             }
         }

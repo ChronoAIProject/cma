@@ -37,7 +37,7 @@ mod restored_connection_integration_tests;
 #[path = "runtime_update_integration_tests.rs"]
 mod runtime_update_integration_tests;
 
-pub(in crate::store) async fn database() -> (Client, String, MongoSandboxStore) {
+pub(crate) async fn database() -> (Client, String, MongoSandboxStore) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a MongoDB replica set");
     let client = Client::with_uri_str(uri).await.unwrap();
@@ -140,7 +140,7 @@ pub(in crate::store) async fn insert_agent(
         .unwrap();
 }
 
-pub(in crate::store) async fn fixture(store: &MongoSandboxStore, id: &str) -> (Sandbox, Agent) {
+pub(crate) async fn fixture(store: &MongoSandboxStore, id: &str) -> (Sandbox, Agent) {
     let sandbox = active_sandbox(id);
     store.create_sandbox(sandbox.clone()).await.unwrap();
     let agent = ready_agent(&sandbox, &format!("agt_{id}"));
