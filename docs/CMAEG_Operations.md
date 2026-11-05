@@ -2,11 +2,18 @@
 
 ## Native GitHub startup initialization
 
-`CMAEG_GITHUB_ENABLED` is the deployment-wide feature flag, default `false`.
+`CMAEG_GITHUB_ENABLED` is the deployment-wide feature flag, default `false` when unset.
 Only `true` and `false` are accepted. It is read at process startup; activation
 uses the existing deployment/restart flow, not a live management API toggle.
 It contains no App, installation, tenant, repository, channel or credential data.
 Those resources remain dynamic integration operations.
+
+The checked-in `infra/cmaeg/configmap.yaml` sets this flag to `"true"` for the
+authorized onboarding rollout. Apply that configuration with the compatible
+CMAEG version and restart the service to initialize GitHub storage. Updating
+only the image does not change a previously applied ConfigMap. Initial acceptance
+covers App management, signed ping and durable receipts; installation routing
+and the goal-agent workflow remain later slices.
 
 When disabled, the gateway performs no GitHub schema updates, starts no GitHub
 worker and refuses integration operations with 503; the authenticated capability
