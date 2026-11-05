@@ -62,7 +62,10 @@ impl AgentSandboxPools {
         self.recovered_native_attachment(&origin, member, volume.map_err(api_error))
     }
 
-    fn native_recovery_claim(&self, original: &NativePoolClaim) -> Result<DynamicObject> {
+    pub(super) fn native_recovery_claim(
+        &self,
+        original: &NativePoolClaim,
+    ) -> Result<DynamicObject> {
         let desired = model::claim(&self.config, &original.request)?;
         if original.name != desired.name_any() {
             return Err(rejected("native claim receipt is invalid"));
@@ -70,7 +73,7 @@ impl AgentSandboxPools {
         Ok(desired)
     }
 
-    fn recovered_native_attachment(
+    pub(super) fn recovered_native_attachment(
         &self,
         origin: &NativePoolHomeOrigin,
         member: std::result::Result<Option<DynamicObject>, kube::Error>,
@@ -96,7 +99,7 @@ impl AgentSandboxPools {
     }
 }
 
-fn recovery_origin(
+pub(super) fn recovery_origin(
     original: &NativePoolClaim,
     desired: &DynamicObject,
     claim: Option<DynamicObject>,

@@ -47,6 +47,7 @@ mod checkpoint_consistency_tests;
 mod checkpoint_lease_tests;
 mod checkpoint_maintenance_tests;
 mod execution_tests;
+mod funding_tests;
 mod home_tests;
 mod hot_scope_tests;
 mod lifecycle_failure_clock_tests;
