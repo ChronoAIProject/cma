@@ -72,11 +72,39 @@ fn roundtrip<T: DeserializeOwned + Serialize>(name: &str, examples: &Value) {
 }
 
 #[test]
+fn github_nullable_objects_preserve_explicit_null_separately_from_absence() {
+    let mut examples = fixtures();
+    examples["AppIntegration"][0]["verification"] = Value::Null;
+    examples["Task"][0]["result"] = Value::Null;
+    examples["WebhookCredentialStatus"][0]["previous"] = Value::Null;
+    roundtrip::<AppIntegration>("AppIntegration", &examples);
+    roundtrip::<Task>("Task", &examples);
+    roundtrip::<WebhookCredentialStatus>("WebhookCredentialStatus", &examples);
+}
+
+#[test]
 fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properties() {
     let examples = fixtures();
     let mut inventory = Vec::new();
     macro_rules! check { ($($ty:ident),+ $(,)?) => {$({ inventory.push(stringify!($ty)); roundtrip::<$ty>(stringify!($ty), &examples); })+}; }
     check!(
+        AppIntegration,
+        AppList,
+        AppVerification,
+        BindRequest,
+        Binding,
+        CreateAppRequest,
+        CredentialStatus,
+        GitHubCapabilities,
+        Receipt,
+        Task,
+        TaskResult,
+        TaskResultStatus,
+        UpdateAppRequest,
+        VerifyAppRequest,
+        WebhookCredentialOverlap,
+        WebhookCredentialStatus,
+        WebhookSecretRequest,
         ActivityMediaResponse,
         EventAttestationRequest,
         EventAttestationResponse,

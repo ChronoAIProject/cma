@@ -95,7 +95,8 @@ pub fn request(edit: impl FnOnce(&mut Value), activity: Activity) -> LaunchReque
             SourceKind::NativeLark(_)
             | SourceKind::Custom
             | SourceKind::Discord { .. }
-            | SourceKind::Whatsapp { .. } => ReplyAddress::None,
+            | SourceKind::Whatsapp { .. }
+            | SourceKind::Github { .. } => ReplyAddress::None,
         },
         consumer: None,
         lineage: None,
