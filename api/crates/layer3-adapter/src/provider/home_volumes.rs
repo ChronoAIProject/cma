@@ -257,39 +257,16 @@ impl HomeVolumeStore for PersistentHomeVolumes {
     }
 
     async fn inventory(&self) -> Result<Vec<HomeVolumeAttachment>> {
-        let mut params = ListParams::default()
-            .labels(&format!("cma/home-managed-by={}", self.controller))
-            .limit(200);
-        let mut cursors = std::collections::BTreeSet::new();
-        let mut volumes = std::collections::BTreeSet::new();
-        let mut inventory = Vec::new();
+        let mut cursor = inventory::Cursor::new(self.clone());
         loop {
-            let page = self
-                .claims
-                .list(&params)
-                .await
-                .map_err(|error| failure("list durable home authority", error))?;
-            for claim in page.items {
-                let request = identity::recorded_request(&claim)?;
-                let receipt = self.receipt(&request, &claim)?;
-                receipt.validate_for(&request)?;
-                if !volumes.insert(request.volume_id.clone()) {
-                    return Err(AdapterError::Rejected(
-                        "durable home inventory repeats an identity".into(),
-                    ));
-                }
-                inventory.push(HomeVolumeAttachment { request, receipt });
+            if let Some(items) = crate::InventoryCursor::advance(&mut cursor).await? {
+                return Ok(items);
             }
-            let Some(cursor) = page.metadata.continue_.filter(|value| !value.is_empty()) else {
-                return Ok(inventory);
-            };
-            if !cursors.insert(cursor.clone()) {
-                return Err(AdapterError::Rejected(
-                    "durable home inventory did not advance".into(),
-                ));
-            }
-            params = params.continue_token(&cursor);
         }
+    }
+
+    fn inventory_cursor(&self) -> Option<Box<dyn crate::InventoryCursor<HomeVolumeAttachment>>> {
+        Some(Box::new(inventory::Cursor::new(self.clone())))
     }
 
     async fn prepare(&self, request: &HomeVolumeRequest) -> Result<HomeVolumeReceipt> {
@@ -412,3 +389,6 @@ fn failure(operation: &str, error: kube::Error) -> AdapterError {
 #[cfg(test)]
 #[path = "home_volumes_tests.rs"]
 mod tests;
+
+#[path = "home_inventory.rs"]
+mod inventory;
