@@ -9,6 +9,7 @@ export function toolCategory(tool: ToolCall): 'command' | 'read' | 'edit' | 'oth
   return 'other';
 }
 export function diffCounts(text: string) {
+  if (!/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m.test(text)) return undefined;
   const lines = text.split('\n');
   return {
     added: lines.filter((line) => line.startsWith('+') && !line.startsWith('+++')).length,
