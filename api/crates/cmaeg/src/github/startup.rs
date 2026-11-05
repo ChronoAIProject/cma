@@ -5,10 +5,7 @@ use mongodb::{bson::doc, Database};
 
 use super::{schema, Config, Gateway};
 
-pub(super) async fn initialize(
-    database: Database,
-    keys: Arc<MasterKeyRing>,
-) -> Option<Arc<Gateway>> {
+pub(super) async fn initialize(database: Database, keys: Arc<MasterKeyRing>) -> Option<Gateway> {
     let initialization = async {
         if schema::migration_required(&database)
             .await
@@ -35,7 +32,7 @@ pub(super) async fn initialize(
     match tokio::time::timeout(Duration::from_secs(30), initialization).await {
         Ok(Ok(gateway)) => {
             tracing::info!("GitHub integration storage is ready");
-            Some(Arc::new(gateway))
+            Some(gateway)
         }
         result => {
             let reason = match result {
