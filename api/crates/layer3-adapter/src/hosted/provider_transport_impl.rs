@@ -61,6 +61,11 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame> {
+        if let Some(router) = &self.owner_router {
+            if let Some(response) = router.route(handle, &request).await {
+                return response;
+            }
+        }
         self.require_supported_operation(&request)?;
         let endpoint = self.endpoint(handle).await?;
         self.exchange_at(handle, &endpoint, request).await
@@ -104,6 +109,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         let epochs = self.open_epochs(&key).await;
         let endpoint = self.endpoint(handle).await?;
         timing.completed("transport_endpoint");
+        let ownership = self.receiver_lease(&endpoint).await?;
         let (mut receipt, socket) = self
             .open_and_connect(handle, &endpoint, &launch, &mut timing)
             .await?;
@@ -133,7 +139,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         )
         .await?;
         timing.completed("conversation_handshake");
-        let channel = self.register_link(key, epochs, opened).await?;
+        let channel = self.register_link(key, epochs, opened, ownership).await?;
         receipt.receipt.conversation_id = channel.conversation_id.clone();
         Ok((channel, receipt))
     }

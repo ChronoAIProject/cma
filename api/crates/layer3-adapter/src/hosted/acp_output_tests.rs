@@ -27,10 +27,41 @@ async fn retained(server: &mut ServerSocket, cursor: u64, value: serde_json::Val
 
 #[tokio::test]
 async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_handshake() {
+    retained_backlog_with_owner(None).await;
+}
+
+#[tokio::test]
+async fn owned_terminal_interleaving_preserves_receipts_and_rejects_late_ack_for_three_epochs() {
+    for epoch in 1..=3 {
+        retained_backlog_with_owner(Some(
+            crate::owner_protocol::test_support::TestAuthority::new(epoch),
+        ))
+        .await;
+    }
+}
+
+async fn retained_backlog_with_owner(
+    authority: Option<std::sync::Arc<crate::owner_protocol::test_support::TestAuthority>>,
+) {
+    use crate::owner_protocol::{scope, TransportAuthority};
     let prompt = crate::PromptIdentity::new("conversation-held", 19, 157);
     let expected_id = prompt.as_str().to_owned();
     let (client, mut server) = socket_pair().await;
-    reliable_ready(&mut server).await;
+    if let Some(authority) = &authority {
+        server
+            .send(Message::Text(
+                serde_json::json!({
+                    "t":"ready", "wireVersion":1,"lanes":["ctl","conv"],"agentId":"agent-1",
+                    "outputAcknowledgement":{"version":1,"streamId":stream()},
+                    "managerOwnership":{"protocol":1,"owner":authority.owner()},
+                })
+                .to_string(),
+            ))
+            .await
+            .unwrap();
+    } else {
+        reliable_ready(&mut server).await;
+    }
     let (backlog_sent, backlog_received) = tokio::sync::oneshot::channel();
     let (verify, verified) = tokio::sync::oneshot::channel();
     let server_task = tokio::spawn(async move {
@@ -72,7 +103,7 @@ async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_h
         assert_eq!(u64::from_be_bytes(bytes[17..25].try_into().unwrap()), 1);
     });
     let (updates, mut received) = mpsc::channel(4);
-    let opening = tokio::spawn(Bridge::open_with_subscription_and_prompt(
+    let opening_future = Bridge::open_with_subscription_and_prompt(
         client,
         "agent-1",
         "/workspace".into(),
@@ -80,7 +111,14 @@ async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_h
         Some("conversation-held".into()),
         Some(prompt),
         updates,
-    ));
+    );
+    let opening_owner = authority.clone();
+    let opening = tokio::spawn(async move {
+        match opening_owner {
+            Some(owner) => scope(owner, opening_future).await,
+            None => opening_future.await,
+        }
+    });
     backlog_received.await.unwrap();
     assert!(
         tokio::time::timeout(Duration::from_millis(40), received.recv())
@@ -124,12 +162,18 @@ async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_h
     use crate::ConversationSettingsSupport;
     let mut progress = opened.bridge.managed_context_progress().await.unwrap();
     assert_eq!(*progress.borrow(), 0);
-    first_receipt.unwrap().acknowledge().await.unwrap();
+    let first_receipt = first_receipt.unwrap();
+    let source = first_receipt.source.clone();
+    first_receipt.acknowledge().await.unwrap();
     tokio::time::timeout(Duration::from_secs(2), progress.changed())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(*progress.borrow(), 1);
+    if let Some(authority) = authority {
+        authority.revoke();
+        assert!(opened.bridge.acknowledge_output(source).await.is_err());
+    }
     server_task.await.unwrap();
     stop(opened).await;
 }
@@ -148,6 +192,39 @@ fn output_capability_is_optional_and_rejects_unknown_versions() {
         validate_ready(Message::Text(ready.to_string()), "agent-1").unwrap(),
         None
     );
+}
+
+#[tokio::test]
+async fn owned_ready_requires_exact_epoch_and_durable_output_without_legacy_downgrade() {
+    use crate::owner_protocol::{scope, test_support::TestAuthority, TransportAuthority};
+    let authority = TestAuthority::new(2);
+    let base = serde_json::json!({
+        "t":"ready", "wireVersion":1,"lanes":["ctl","conv"],"agentId":"agent-1",
+        "outputAcknowledgement":{"version":1,"streamId":stream()},
+        "managerOwnership":{"protocol":1,"owner":authority.owner()},
+    });
+    for defect in ["missing", "epoch", "protocol", "ack"] {
+        let mut ready = base.clone();
+        match defect {
+            "missing" => {
+                ready.as_object_mut().unwrap().remove("managerOwnership");
+            }
+            "epoch" => ready["managerOwnership"]["owner"]["epoch"] = 1.into(),
+            "protocol" => ready["managerOwnership"]["protocol"] = 2.into(),
+            _ => {
+                ready
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("outputAcknowledgement");
+            }
+        }
+        assert!(scope(authority.clone(), async {
+            validate_ready(Message::Text(ready.to_string()), "agent-1")
+        })
+        .await
+        .is_err());
+    }
+    assert!(validate_ready(Message::Text(base.to_string()), "agent-1").is_err());
 }
 
 #[tokio::test]

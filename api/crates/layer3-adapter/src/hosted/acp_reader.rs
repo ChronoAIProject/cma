@@ -21,6 +21,8 @@ pub(super) fn spawn(
     tokio::spawn(async move {
         loop {
             let frame = tokio::select! {
+                biased;
+                _ = reader.owner_revoked() => break,
                 frame = source.next() => match frame {
                     Some(frame) => frame,
                     None => break,

@@ -26,11 +26,21 @@ pub(super) fn spawn(
     output: mpsc::Sender<ConversationUpdate>,
 ) -> (UpdateRelay, tokio::task::JoinHandle<()>) {
     let (ingress, mut queued) = mpsc::unbounded_channel();
+    let authority = crate::owner_protocol::current_authority();
     let task = tokio::spawn(async move {
-        while let Some(update) = queued.recv().await {
-            if output.send(update).await.is_err() {
-                break;
+        let relay = async {
+            while let Some(update) = queued.recv().await {
+                if output.send(update).await.is_err() {
+                    break;
+                }
             }
+        };
+        match authority {
+            Some(authority) => tokio::select! { biased;
+                _ = authority.revoked() => (),
+                _ = relay => (),
+            },
+            None => relay.await,
         }
     });
     (UpdateRelay { ingress }, task)

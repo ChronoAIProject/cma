@@ -21,6 +21,8 @@ mod agent_sandbox;
 mod checkpoint;
 #[path = "provider_transport_history_tests.rs"]
 mod history;
+#[path = "provider_ownership_tests.rs"]
+mod ownership;
 #[path = "provider_transport_restore_tests.rs"]
 mod restore;
 #[path = "provider_transport_retirement_tests.rs"]

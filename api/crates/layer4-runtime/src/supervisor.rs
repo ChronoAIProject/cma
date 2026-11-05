@@ -67,6 +67,7 @@ pub(crate) struct HeldCheckpoint {
 }
 
 pub(crate) struct Supervisor {
+    pub(crate) manager_ownership: crate::manager_ownership::ManagerOwnership,
     config: RuntimeConfig,
     boot_id: String,
     phase: RwLock<Phase>,
@@ -171,6 +172,9 @@ impl Supervisor {
             None
         };
         Ok(Arc::new(Self {
+            manager_ownership: crate::manager_ownership::ManagerOwnership::new(
+                config.state_root.join("agent-manager-owners"),
+            ),
             config,
             boot_id,
             phase: RwLock::new(phase),
