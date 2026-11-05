@@ -76,6 +76,21 @@ async fn main() {
         .init();
 
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments.first().is_some_and(|arg| {
+        matches!(
+            arg.as_str(),
+            "--migrate-agent-log-segments"
+                | "--audit-agent-log-segments"
+                | "--cancel-agent-log-audit"
+                | "--install-agent-log-projection"
+        )
+    }) {
+        if let Err(error) = store::agent_log_segments::command(&arguments).await {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if arguments == ["--print-runtime-role"] {
         match std::env::var("CHRONO_MONGODB_DATABASE") {
             Ok(database) => println!("{}", store::isolation::role(&database)),
@@ -87,7 +102,7 @@ async fn main() {
         return;
     }
     if !arguments.is_empty() {
-        eprintln!("usage: cma [--print-runtime-role]");
+        eprintln!("usage: cma [--print-runtime-role | --migrate-agent-log-segments]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {

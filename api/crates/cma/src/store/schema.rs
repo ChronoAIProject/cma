@@ -58,7 +58,11 @@ pub(super) async fn refuse_unknown_versions(
     for name in collections {
         let unsupported = database
             .collection::<Document>(name)
-            .find_one(unknown_version_filter())
+            .find_one(if *name == "agents" {
+                unknown_agent_version_filter()
+            } else {
+                unknown_version_filter()
+            })
             .projection(doc! { "_id": 1, "document_schema_version": 1 })
             .await
             .map_err(|error| {
@@ -95,6 +99,14 @@ fn unknown_version_filter() -> Document {
             { "document_schema_version": { "$type": "array" } },
         ]
     }
+}
+
+fn unknown_agent_version_filter() -> Document {
+    doc! {"$or":[
+        {"document_schema_version":{"$nin":[1_i64,2_i64]}},
+        {"document_schema_version":{"$not":{"$type":["int","long"]}}},
+        {"document_schema_version":{"$type":"array"}},
+    ]}
 }
 
 #[cfg(test)]

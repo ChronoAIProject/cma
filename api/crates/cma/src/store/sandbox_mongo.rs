@@ -108,6 +108,7 @@ pub struct MongoSandboxStore {
     pub(super) agent_access_requests: Collection<Document>,
     pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
+    pub(super) segment_logs: super::agent_log_segments::SegmentCollections,
     pub(super) suggestions: Collection<Document>,
     pub(super) agent_creation_provenance: Collection<Document>,
     pub(super) agent_channel_usage: Collection<Document>,
@@ -172,6 +173,7 @@ impl MongoSandboxStore {
         let database = client.database(name);
         require_transaction_topology(&database).await?;
         initialize_collections(&database, SANDBOX_COLLECTIONS).await?;
+        super::agent_log_segments::verify(&database).await?;
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
@@ -194,6 +196,7 @@ impl MongoSandboxStore {
             ),
             agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
             agent_log: majority_collection(&database, AGENT_LOG),
+            segment_logs: super::agent_log_segments::SegmentCollections::open(&database),
             suggestions: majority_collection(&database, "agent_suggestions"),
             agent_creation_provenance: majority_collection(&database, "agent_creation_provenance"),
             agent_channel_usage: majority_collection(&database, "agent_channel_usage"),

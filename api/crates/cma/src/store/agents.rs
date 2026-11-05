@@ -12,7 +12,7 @@ use mongodb::{Collection, IndexModel};
 
 use super::agent_title_state::{initial_title_fields, preserve_title_fields, record_title_value};
 use super::sandbox_mongo::{
-    i64_field_matches, is_duplicate_key, read_record, record_bson, require_version, signed,
+    i64_field_matches, is_duplicate_key, record_bson, require_version, signed,
     string_field_matches, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 
@@ -165,7 +165,16 @@ pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreErro
 }
 
 pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError> {
-    let mut agent: Agent = read_record(document).map_err(SandboxStoreError::Corrupt)?;
+    super::agent_log_segments::require_agent_version(document)
+        .map_err(SandboxStoreError::Corrupt)?;
+    let mut agent: Agent = mongodb::bson::deserialize_from_bson(
+        document
+            .get("record")
+            .ok_or_else(|| SandboxStoreError::Corrupt("Agent record is missing".into()))?
+            .clone(),
+    )
+    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+    super::agent_log_segments::validate_identity(document, &agent)?;
     super::trigger_first_messages::hydrate(document, &mut agent)?;
     agent
         .validate_worktree_recoveries()
@@ -226,6 +235,8 @@ pub(super) fn agent_replacement_fields(agent: &Agent) -> Result<Document, Sandbo
     let mut document = agent_document(agent)?;
     document.remove("_id");
     document.remove("last_seq");
+    // $set replacements retain the original envelope and its sidecar binding.
+    document.remove("document_schema_version");
     preserve_title_fields(&mut document);
     Ok(document)
 }

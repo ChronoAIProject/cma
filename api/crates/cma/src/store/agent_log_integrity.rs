@@ -22,6 +22,7 @@ const PHYSICAL_AGENT_LOG_ENTRIES: u64 = STOP_AGENT_LOG_ENTRIES + DELETE_RESERVE_
 const PHYSICAL_AGENT_LOG_BYTES: usize = STOP_AGENT_LOG_BYTES + DELETE_RESERVE_BYTES;
 const MAX_AGENT_LOG_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
+#[derive(Debug)]
 pub(super) enum TransactionLogError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
@@ -47,11 +48,26 @@ impl AppendCapacity {
 pub(super) struct LogSummary {
     entry_count: u64,
     encoded_bytes: usize,
+    global_seq: u64,
 }
 
 impl LogSummary {
-    pub(super) const fn entry_count(&self) -> u64 {
-        self.entry_count
+    pub(super) const fn last_sequence(&self) -> u64 {
+        self.global_seq
+    }
+
+    pub(super) fn segmented(
+        count: i64,
+        bytes: i64,
+        global_seq: i64,
+    ) -> Result<Self, SandboxStoreError> {
+        Ok(Self {
+            entry_count: u64::try_from(count).map_err(|_| SandboxStoreError::SequenceConflict)?,
+            encoded_bytes: usize::try_from(bytes)
+                .map_err(|_| SandboxStoreError::SequenceConflict)?,
+            global_seq: u64::try_from(global_seq)
+                .map_err(|_| SandboxStoreError::SequenceConflict)?,
+        })
     }
 }
 
@@ -156,6 +172,7 @@ where
     Ok(LogSummary {
         entry_count,
         encoded_bytes,
+        global_seq: last_seq,
     })
 }
 
@@ -315,6 +332,7 @@ mod tests {
         let normal_full = LogSummary {
             entry_count: NORMAL_AGENT_LOG_ENTRIES,
             encoded_bytes: NORMAL_AGENT_LOG_BYTES,
+            global_seq: NORMAL_AGENT_LOG_ENTRIES,
         };
         assert_eq!(
             ensure_append_capacity(&normal_full, &[entry(10_001)], AppendCapacity::Normal),
@@ -331,6 +349,7 @@ mod tests {
         let stop_full = LogSummary {
             entry_count: STOP_AGENT_LOG_ENTRIES,
             encoded_bytes: STOP_AGENT_LOG_BYTES,
+            global_seq: STOP_AGENT_LOG_ENTRIES,
         };
         assert!(
             ensure_append_capacity(&stop_full, &[entry(10_065)], AppendCapacity::Delete).is_ok()
