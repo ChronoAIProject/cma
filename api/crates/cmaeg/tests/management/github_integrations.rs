@@ -48,12 +48,36 @@ impl Fixture {
             client: Client::new(),
             shared_schema: false,
         };
-        fixture.base = fixture.replica().await;
+        fixture.base = fixture.replica_with_flag(Some(true)).await;
+        if migrated {
+            fixture.wait_for_github(&fixture.base).await;
+        }
         fixture
     }
 
     async fn replica(&mut self) -> String {
-        self.replica_with_flag(Some(true)).await
+        let base = self.replica_with_flag(Some(true)).await;
+        self.wait_for_github(&base).await;
+        base
+    }
+
+    async fn wait_for_github(&self, base: &str) {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let capabilities = self
+                    .read(base, "/v1/github/capabilities", "token-alice")
+                    .await
+                    .json::<serde_json::Value>()
+                    .await
+                    .unwrap();
+                if capabilities["store_ready"] == true {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("GitHub integration storage becomes available");
     }
 
     async fn replica_with_flag(&mut self, enabled: Option<bool>) -> String {

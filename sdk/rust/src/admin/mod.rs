@@ -57,6 +57,44 @@ pub struct Administration<'a> {
 }
 
 impl Administration<'_> {
+    /// Set an explicit automatic-pause whitelist preference for any Sandbox.
+    pub async fn set_sandbox_always_on(
+        &self,
+        id: &str,
+        body: &AlwaysOnRequest,
+    ) -> Result<crate::instances::Sandbox> {
+        let value: crate::instances::Sandbox = self
+            .client
+            .operation(
+                Method::POST,
+                &["admin", "sandboxes", id, "always-on"],
+                Some(body),
+                StatusCode::OK,
+            )
+            .await?;
+        identity(&value.id, id)?;
+        Ok(value)
+    }
+
+    /// Preview how many Sandboxes satisfy the current idle-pause proof.
+    pub async fn preview_auto_pause(&self) -> Result<AutoPausePreview> {
+        self.client
+            .get(&["admin", "auto-pause", "preview"], &[])
+            .await
+    }
+
+    /// Schedule currently idle Sandboxes for pause after explicit confirmation.
+    pub async fn pause_idle_now(&self, body: &PauseIdleNowRequest) -> Result<PauseIdleNow> {
+        self.client
+            .operation(
+                Method::POST,
+                &["admin", "auto-pause", "pause-idle-now"],
+                Some(body),
+                StatusCode::OK,
+            )
+            .await
+    }
+
     /// List safe operator Sandbox summaries.
     pub async fn list_sandboxes(
         &self,

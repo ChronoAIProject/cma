@@ -18,7 +18,21 @@ and the goal-agent workflow remain later slices.
 When disabled, the gateway performs no GitHub schema updates, starts no GitHub
 worker and refuses integration operations with 503; the authenticated capability
 query remains available with `store_ready: false`. Existing records are retained.
-When enabled, startup uses the existing gateway Mongo connection and keyring.
+The same flag rejects channel writes that introduce or change a GitHub source,
+even when dynamic source writes are enabled. `--import-legacy-records` applies
+the same rule: while the flag is off it opens each channel row it would create
+with the gateway key ring and refuses one carrying a GitHub source, before any
+write for that row. Rows already stored unchanged are re-verified without
+inspection. Unchanged retained sources and their removal remain allowed;
+disabling the flag does not make an old binary capable of reading GitHub source
+records already stored.
+Enabling GitHub in production establishes a rollback floor: every rollback
+image must include the GitHub source reader and these source-write, background
+initialization and source-selection fixes. Turning the flag off preserves data;
+it does not permit a rollback to an image below that floor.
+When enabled, initialization runs in the background after the HTTP listener binds,
+using the existing gateway Mongo connection and keyring. GitHub operations return
+503 until initialization succeeds; ordinary channel traffic can proceed meanwhile.
 Missing or version-1 `github_integrations` storage is prepared in service code:
 the record validator, owner/kind index and migration-marker validator are updated,
 then the version-2 marker is committed with majority acknowledgement. No stored
@@ -34,12 +48,17 @@ checks remain unchanged; a least-privilege runtime account can open prepared
 storage, but cannot initialize unprepared storage without the necessary authority.
 The retained CLI and role-printing commands remain explicit operator tools.
 
-Initialization has a 30-second bound. A failure keeps GitHub unavailable while
+Background initialization has a 30-second bound. A failure keeps GitHub unavailable while
 ordinary channels remain available, with a sanitized reason in startup logs.
+Database delays that clear within the bound allow GitHub to become ready without
+restarting the process. Startup work is cancelled on shutdown. No execution-group
+polling runs without configured execution routes; onboarding alone starts no scan.
 After correcting the cause, a subsequent startup resumes incomplete preparation.
 Concurrent startup reconciles a duplicate marker write against the majority-read
-current version before proceeding. Readiness is exposed only after storage checks
-pass. Rollback by disabling the flag preserves schema and records; re-enabling
+current version before proceeding. GitHub `store_ready` becomes true only after
+storage checks pass. `/readyz` remains the gateway readiness signal and does not
+fail ordinary channels because an optional GitHub integration is unavailable.
+Rollback by disabling the flag preserves schema and records; re-enabling
 uses them. Verify the deployed version, effective flag and
 `GET /v1/github/capabilities` before running the
 [signed-ping acceptance](CMAEG_GitHub_Online_Verification.md).
@@ -137,9 +156,12 @@ refuses to overwrite an existing path. A failed export removes its private
 staging directory; after a killed process, remove any abandoned
 `.cma-gateway-export-*` directory only after confirming that export has stopped.
 Run `cmaeg --import-legacy-records PATH` with the destination migration
-configuration, then verify every live record. Expired interactions remain in
-the export for comparison but the importer deliberately skips them. Keep the
-export protected as sealed production data and remove it after verification.
+configuration, then verify every live record. While `CMAEG_GITHUB_ENABLED` is
+off (the default), the importer also needs the gateway key ring to inspect
+channel rows; an unreadable row, or one that would add a GitHub source, is
+refused before it is written. Expired interactions remain in the export for
+comparison but the importer deliberately skips them. Keep the export protected
+as sealed production data and remove it after verification.
 
 The local authenticated Mongo contract starts the real Gateway executable
 with Console and media enabled, stops the old record server, then verifies

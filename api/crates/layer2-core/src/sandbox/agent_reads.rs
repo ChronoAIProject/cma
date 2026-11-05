@@ -16,6 +16,7 @@ use super::{
 
 pub struct AgentReadService {
     store: Arc<dyn AgentReadStore>,
+    sessions: Option<Arc<dyn super::store::SandboxSessionStore>>,
     resources: Arc<dyn SandboxResourceReader>,
     access: Option<Arc<ResourceAccessService>>,
 }
@@ -34,6 +35,8 @@ pub use source::{AgentSourceReadError, AgentSourceReading, SharedAgentOrigin};
 #[path = "agent_reads/visibility.rs"]
 mod visibility;
 pub use visibility::AgentVisibleLogEntry;
+#[path = "agent_reads/sessions.rs"]
+mod sessions;
 #[path = "agent_reads/stream.rs"]
 mod stream;
 pub use stream::{AgentEventStreamAuthorization, AgentEventStreamSnapshot};
@@ -55,6 +58,7 @@ impl AgentReadService {
     {
         Arc::new(Self {
             store,
+            sessions: None,
             resources,
             access: None,
         })
@@ -63,8 +67,21 @@ impl AgentReadService {
     pub fn with_resource_access(self: &Arc<Self>, access: Arc<ResourceAccessService>) -> Arc<Self> {
         Arc::new(Self {
             store: self.store.clone(),
+            sessions: self.sessions.clone(),
             resources: self.resources.clone(),
             access: Some(access),
+        })
+    }
+
+    pub fn with_sessions(
+        self: &Arc<Self>,
+        sessions: Arc<dyn super::store::SandboxSessionStore>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            store: self.store.clone(),
+            sessions: Some(sessions),
+            resources: self.resources.clone(),
+            access: self.access.clone(),
         })
     }
 

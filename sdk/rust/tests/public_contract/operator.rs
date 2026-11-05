@@ -39,6 +39,15 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "POST /api/v1/admin/settings/reset" => {
             c.check(admin.reset_settings(c.field("expected_revision")?).await)
         }
+        "GET /api/v1/admin/auto-pause/preview" => c.check(admin.preview_auto_pause().await),
+        "POST /api/v1/admin/auto-pause/pause-idle-now" => {
+            c.check(admin.pause_idle_now(&c.body()?).await)
+        }
+        "POST /api/v1/admin/sandboxes/{id}/always-on" => c.check(
+            admin
+                .set_sandbox_always_on(c.param("id"), &c.body::<cma_sdk::admin::AlwaysOnRequest>()?)
+                .await,
+        ),
         "POST /api/v1/admin/triggers/pause" => c.check(admin.pause_triggers().await),
         "POST /api/v1/admin/triggers/resume" => c.check(admin.resume_triggers().await),
         "GET /api/v1/admin/sandboxes" => c.check(

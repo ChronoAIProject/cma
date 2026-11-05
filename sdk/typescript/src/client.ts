@@ -1,6 +1,7 @@
 import { Documents } from './documents.js';
 import { TaskExperiencePolicy } from './task-experience.js';
 import { SandboxUsage } from './usage.js';
+import { SandboxMetrics } from './usage-metrics/index.js';
 import { EventWorkerProfiles } from './event-worker-profiles.js';
 import { ProviderBindings } from './provider-bindings.js';
 import { GatewayRecords } from './gateway-records.js';
@@ -45,6 +46,8 @@ export class Cma {
   readonly documents: Documents;
   readonly taskExperience: TaskExperiencePolicy;
   readonly usage: SandboxUsage;
+  readonly usageMetrics: SandboxMetrics;
+  readonly adminUsageMetrics: SandboxMetrics;
   readonly providerBindings: ProviderBindings;
   readonly gatewayRecords: GatewayRecords;
   readonly gatewayConnectionRecords: GatewayRecords;
@@ -87,6 +90,8 @@ export class Cma {
     this.documents = new Documents(this.#config);
     this.taskExperience = new TaskExperiencePolicy(this.#config);
     this.usage = new SandboxUsage(this.#config);
+    this.usageMetrics = new SandboxMetrics(this.#config);
+    this.adminUsageMetrics = new SandboxMetrics(this.#config, true);
     this.providerBindings = new ProviderBindings(this.#config);
     this.gatewayRecords = new GatewayRecords(this.#config);
     this.gatewayConnectionRecords = new GatewayRecords(this.#config, 'connection-records');

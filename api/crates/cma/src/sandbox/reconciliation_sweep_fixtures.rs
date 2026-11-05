@@ -17,6 +17,7 @@ pub(super) enum Failure {
 pub(super) struct Store {
     pub(super) inner: InMemorySandboxStore,
     pub(super) calls: Mutex<Vec<(String, String)>>,
+    pub(super) pauses: Mutex<Vec<SandboxInactivityPauseRequest>>,
     pub(super) failure: Mutex<Option<(&'static str, String, Failure)>>,
     pub(super) delay: Duration,
 }
@@ -26,6 +27,7 @@ impl Store {
         Arc::new(Self {
             inner: InMemorySandboxStore::default(),
             calls: Mutex::default(),
+            pauses: Mutex::default(),
             failure: Mutex::default(),
             delay,
         })
@@ -147,6 +149,7 @@ impl SandboxMaintenanceStore for Store {
         request: SandboxInactivityPauseRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
         self.observe("pause", request.sandbox_id.as_str()).await?;
+        self.pauses.lock().unwrap().push(request);
         Ok(SandboxMaintenanceOutcome::NotEligible)
     }
     async fn schedule_image_rotation(
@@ -154,6 +157,22 @@ impl SandboxMaintenanceStore for Store {
         request: SandboxImageRotationRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
         self.inner.schedule_image_rotation(request).await
+    }
+    async fn preview_inactivity_pause(
+        &self,
+        request: SandboxInactivityPauseRequest,
+    ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+        self.inner.preview_inactivity_pause(request).await
+    }
+    async fn set_sandbox_always_on(
+        &self,
+        sandbox_id: SandboxId,
+        expected_revision: u64,
+        always_on: bool,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        self.inner
+            .set_sandbox_always_on(sandbox_id, expected_revision, always_on)
+            .await
     }
 }
 
@@ -165,6 +184,7 @@ pub(super) fn sandbox(index: usize) -> Sandbox {
         name: format!("fixture-{index}"),
         origin: SandboxOrigin::Manual,
         profile: SandboxProfileSnapshot {
+            always_on: None,
             id: SandboxProfileId("sbp_fixture".into()),
             revision: 1,
             digest: "a".repeat(64),
