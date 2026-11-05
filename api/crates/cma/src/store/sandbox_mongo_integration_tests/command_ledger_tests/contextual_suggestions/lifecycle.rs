@@ -5,7 +5,7 @@ use super::*;
 async fn contextual_suggestions_mongo_admitted_input_invalidates_a_late_answer_before_new_turn_start(
 ) {
     let (client, name) = database("ticket13_admission").await;
-    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let store = Arc::new(enabled_store(&client, &name).await);
     let (parent, agent) = seed(
         &store,
         "admission",
@@ -45,7 +45,7 @@ async fn contextual_suggestions_mongo_admitted_input_invalidates_a_late_answer_b
     );
     model.release.notify_one();
     assert!(task.await.unwrap().unwrap());
-    let replica = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let replica = Arc::new(enabled_store(&client, &name).await);
     let saved = read(&router(replica), &agent, "owner").await.1;
     assert_eq!(saved["status"], "expired");
     assert!(saved["set"].is_null());
@@ -78,7 +78,7 @@ impl SuggestionGenerator for HeldModel {
 #[ignore = "requires an isolated Mongo replica set"]
 async fn contextual_suggestions_mongo_crash_is_terminal_without_rebilling_on_a_second_replica() {
     let (client, name) = database("ticket13_restart").await;
-    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let store = Arc::new(enabled_store(&client, &name).await);
     let (_, agent) = seed(
         &store,
         "restart",
@@ -95,7 +95,7 @@ async fn contextual_suggestions_mongo_crash_is_terminal_without_rebilling_on_a_s
     let active = model.clone();
     let task = tokio::spawn(async move { worker.run_next(active.as_ref()).await });
     model.entered.notified().await;
-    let replica = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let replica = Arc::new(enabled_store(&client, &name).await);
     assert!(!SuggestionGenerationService::new(replica.clone())
         .run_next(model.as_ref())
         .await
@@ -127,7 +127,7 @@ async fn contextual_suggestions_mongo_crash_is_terminal_without_rebilling_on_a_s
 #[ignore = "requires an isolated Mongo replica set"]
 async fn contextual_suggestions_mongo_late_result_remains_expired_after_scope_changes() {
     let (client, name) = database("ticket13_late").await;
-    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let store = Arc::new(enabled_store(&client, &name).await);
     let (_, agent) = seed(
         &store,
         "late",
@@ -155,7 +155,7 @@ async fn contextual_suggestions_mongo_late_result_remains_expired_after_scope_ch
     assert_eq!(saved["status"], "expired");
     assert!(saved["set"].is_null());
     assert_eq!(saved["observation"]["usage"]["input_tokens"], 23);
-    let replica = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let replica = Arc::new(enabled_store(&client, &name).await);
     assert_eq!(read(&router(replica), &agent, "owner").await.1, saved);
     assert_eq!(model.calls.load(Ordering::SeqCst), 1);
     client.database(&name).drop().await.unwrap();

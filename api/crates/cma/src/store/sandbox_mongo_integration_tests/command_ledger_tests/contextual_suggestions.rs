@@ -18,6 +18,7 @@ mod completed_operation;
 mod lifecycle;
 #[cfg(feature = "real-model-suggestion-samples")]
 mod samples;
+mod writer_admission;
 
 struct NoRuntime;
 #[async_trait::async_trait]
@@ -182,7 +183,7 @@ fn response(output: &str) -> serde_json::Value {
 async fn contextual_suggestions_mongo_saves_exact_generated_text_and_reopens_without_billing_again()
 {
     let (client, name) = database("ticket13_saved").await;
-    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let store = Arc::new(enabled_store(&client, &name).await);
     let (_, agent) = seed(
         &store,
         "saved",
@@ -229,7 +230,7 @@ async fn contextual_suggestions_mongo_saves_exact_generated_text_and_reopens_wit
     );
     assert_eq!(first["observation"]["usage"]["input_tokens"], 123);
     assert_eq!(first["observation"]["usage"]["cost"]["amount"], "0.000123");
-    let replica = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let replica = Arc::new(enabled_store(&client, &name).await);
     assert!(!SuggestionGenerationService::new(replica.clone())
         .run_next(&generator)
         .await
@@ -252,4 +253,15 @@ async fn contextual_suggestions_mongo_saves_exact_generated_text_and_reopens_wit
     );
     server.abort();
     client.database(&name).drop().await.unwrap();
+}
+
+async fn enabled_store(client: &mongodb::Client, name: &str) -> MongoSandboxStore {
+    let mut store = MongoSandboxStore::open(client, name).await.unwrap();
+    store.writer_policy = Arc::new(
+        serde_json::from_value(serde_json::json!({
+            "mode":"accounts", "accounts":["owner"], "capabilities":["suggested_followup_admission"]
+        }))
+        .unwrap(),
+    );
+    store
 }
