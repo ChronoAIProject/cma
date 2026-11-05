@@ -52,45 +52,8 @@ pub(super) const SANDBOX_PROFILE_REVISIONS: &str = "sandbox_profile_revisions";
 pub(super) const WARM_SANDBOXES: &str = "warm_sandboxes";
 pub(super) const SANDBOX_BILLING: &str = "sandbox_billing_state";
 
-const SANDBOX_COLLECTIONS: &[&str] = &[
-    "sandbox_retained_availability",
-    SANDBOXES,
-    WORKSPACES,
-    WORKTREES,
-    AGENTS,
-    super::agent_access_tools::COLLECTION,
-    super::agent_access_requests::COLLECTION,
-    AGENT_REUSE_BINDINGS,
-    super::trigger_first_messages::COLLECTION,
-    AGENT_LOG,
-    "agent_suggestions",
-    "agent_channel_usage",
-    "channel_usage_events",
-    AGENT_COMMANDS,
-    AGENT_ARTIFACTS,
-    super::media_uploads::COLLECTION,
-    SANDBOX_CONTROLS,
-    AGENT_COMMAND_ORDERS,
-    RESOURCE_POLICIES,
-    RESOURCE_SHARES,
-    RESOURCE_SHARE_COMMANDS,
-    SANDBOX_EVENTS,
-    super::sandbox_usage::STATES,
-    super::sandbox_usage::EVENTS,
-    SANDBOX_BILLING,
-    SANDBOX_ADMISSIONS,
-    CHECKPOINTS,
-    WARM_SANDBOXES,
-    super::native_prepared::COLLECTION,
-];
-const PROFILE_COLLECTIONS: &[&str] = &[
-    AGENT_PROFILES,
-    AGENT_PROFILE_REVISIONS,
-    WORKSPACE_PROFILES,
-    WORKSPACE_PROFILE_REVISIONS,
-    SANDBOX_PROFILES,
-    SANDBOX_PROFILE_REVISIONS,
-];
+mod collections;
+use collections::{PROFILE_COLLECTIONS, SANDBOX_COLLECTIONS};
 
 /// One adapter implements every sandbox-model port so cross-port operations
 /// share a client session and therefore a real Mongo transaction.

@@ -1,0 +1,42 @@
+//! Collection initialization inventory for the shared Sandbox Mongo store.
+use super::*;
+
+pub(super) const SANDBOX_COLLECTIONS: &[&str] = &[
+    "sandbox_retained_availability",
+    SANDBOXES,
+    WORKSPACES,
+    WORKTREES,
+    AGENTS,
+    super::super::agent_access_tools::COLLECTION,
+    super::super::agent_access_requests::COLLECTION,
+    AGENT_REUSE_BINDINGS,
+    super::super::trigger_first_messages::COLLECTION,
+    AGENT_LOG,
+    "agent_suggestions",
+    "agent_channel_usage",
+    "channel_usage_events",
+    AGENT_COMMANDS,
+    AGENT_ARTIFACTS,
+    super::super::media_uploads::COLLECTION,
+    SANDBOX_CONTROLS,
+    AGENT_COMMAND_ORDERS,
+    RESOURCE_POLICIES,
+    RESOURCE_SHARES,
+    RESOURCE_SHARE_COMMANDS,
+    SANDBOX_EVENTS,
+    super::super::sandbox_usage::STATES,
+    super::super::sandbox_usage::EVENTS,
+    SANDBOX_BILLING,
+    SANDBOX_ADMISSIONS,
+    CHECKPOINTS,
+    WARM_SANDBOXES,
+    super::super::native_prepared::COLLECTION,
+];
+pub(super) const PROFILE_COLLECTIONS: &[&str] = &[
+    AGENT_PROFILES,
+    AGENT_PROFILE_REVISIONS,
+    WORKSPACE_PROFILES,
+    WORKSPACE_PROFILE_REVISIONS,
+    SANDBOX_PROFILES,
+    SANDBOX_PROFILE_REVISIONS,
+];
