@@ -55,9 +55,7 @@ it('keeps the exact Agent editor and stream across Usage open, selection, Escape
   await within(dialog).findByRole('button', { name: 'Research Sandbox' });
   expect(metrics.create).toHaveBeenCalledTimes(1);
   expect(adminMetrics.create).not.toHaveBeenCalled();
-  await actor.click(
-    within(dialog).getByRole('button', { name: 'Memory working set' }),
-  );
+  await actor.click(within(dialog).getByRole('button', { name: 'Memory working set' }));
   expect(metrics.create).toHaveBeenCalledTimes(1);
   expect(editor).toBeInTheDocument();
   await actor.keyboard('{Escape}');
