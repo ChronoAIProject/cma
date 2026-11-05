@@ -131,6 +131,12 @@ impl RecordClient {
             .and_then(super::mongo::MongoRecords::worker_credentials)
     }
 
+    pub(crate) fn database(&self) -> Option<mongodb::Database> {
+        self.database
+            .as_ref()
+            .map(super::mongo::MongoRecords::database)
+    }
+
     pub(crate) fn with_service_auth(
         mut self,
         service_auth: crate::service_auth::ServiceAuth,
