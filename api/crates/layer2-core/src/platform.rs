@@ -58,8 +58,8 @@ impl Default for PlatformDefaults {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InactivitySettings {
-    /// Global automatic pause admission. Kept off for backwards-compatible rollout.
-    #[serde(default)]
+    /// Omit disabled policy so predecessor strict readers accept ordinary saves.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub auto_pause_enabled: bool,
     pub pause_after_seconds: u64,
     /// The instant from which the current policy is allowed to pause. This is
@@ -208,7 +208,7 @@ mod tests {
                     "workspace_profile": {"id": "wkp_default_v2", "revision": 1},
                     "agent_profile": {"id": "agp_default_v2", "revision": 1}
                 },
-                "inactivity": {"auto_pause_enabled": false, "pause_after_seconds": 900},
+                "inactivity": {"pause_after_seconds": 900},
                 "checkpoints": {"interval_seconds": 1800},
                 "retention": {"checkpoint_grace_days": 7, "agent_log_days": 90},
                 "limits": {
