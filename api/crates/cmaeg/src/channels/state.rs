@@ -13,12 +13,13 @@ use cmaeg_core::{
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
-    pub github: Option<Arc<crate::github::Gateway>>,
+    pub github_enabled: bool,
+    pub github: Arc<OnceLock<Arc<crate::github::Gateway>>>,
     pub native_lark_controls_enabled: bool,
     pub native_lark_forms_enabled: bool,
     pub native_lark_intake_enabled: bool,
@@ -99,6 +100,7 @@ pub(crate) struct CachedResponse {
 impl ManagementState {
     pub(crate) fn write_flags(&self) -> super::write_gate::WriteFlags {
         super::write_gate::WriteFlags {
+            github: self.github_enabled,
             durable_custom_execution: self.custom_durable_execution_enabled,
             native_lark: self.native_lark_writes_enabled,
             native_whatsapp_message_events: self.native_whatsapp_message_events_enabled
@@ -174,7 +176,8 @@ impl ManagementState {
             index.clone(),
         );
         Self {
-            github: None,
+            github: Arc::new(OnceLock::new()),
+            github_enabled: false,
             activity: Arc::new(crate::activity::ActivityStore::new(
                 (*records).clone(),
                 config.master_keys.clone(),
