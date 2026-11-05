@@ -7,6 +7,7 @@ import { IconCheckOutline16, IconRefreshOutline16 } from '../ui/icons';
 import type { OperatorClient } from './client';
 import { operatorFailure, type OperatorFailure } from './failure';
 import { FailureNotice } from './records';
+import { usageSettingsChanged } from '../usage/metrics/useMeasuredUsage';
 import { reviewSettingsDraft } from './settingsDraft';
 
 export function PlatformSettings({ client }: { readonly client: OperatorClient }) {
@@ -103,6 +104,7 @@ function SettingsEditor({
       setRevision(stored.revision);
       setCurrent(undefined);
       setSaved(true);
+      usageSettingsChanged();
     } catch (error) {
       const problem = operatorFailure(error);
       setFailure(problem);
@@ -263,6 +265,30 @@ function SettingsEditor({
           )}
           {pauseNowResult === undefined ? null : <span role="status">{pauseNowResult}</span>}
         </div>
+      </section>
+      <section>
+        <h3>Usage</h3>
+        <label className="operator-switch">
+          <input
+            type="checkbox"
+            disabled={disabled}
+            checked={draft.usage_reporting?.measured_visible === true}
+            onChange={(event) =>
+              update({
+                ...draft,
+                usage_reporting: {
+                  ...draft.usage_reporting,
+                  measured_visible: event.target.checked,
+                },
+              })
+            }
+          />
+          Show measured usage
+        </label>
+        <p className="operator-notice">
+          Show measured CPU, memory and disk alongside allocated resources when measurements are
+          available. Allocated resources remain visible when this setting is off.
+        </p>
       </section>
       <section>
         <h3>Retention</h3>
