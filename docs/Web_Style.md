@@ -2698,6 +2698,8 @@ button. Queue is offered only while running. The compact model/effort reads
 Astra · High; its tooltip retains the full model, reasoning and permission.
 
 Computer tabs are Screen, Terminal, Files with roving tabindex and arrow keys.
+The tab well uses `workspace-selected`; its selected tab uses `bg-layer-1`,
+with primary ink on the selection and secondary ink on the other tabs.
 Terminal exists only after a recorded terminal operation. Opening Computer
 defaults to Screen. Screen follows the Agent's active desktop/browser surface;
 a real desktop includes its native browser, taskbar and current-app highlight.
@@ -5997,3 +5999,5 @@ saving. Use existing form spacing, labels and validation; introduce no new token
 | 2026-11-06 | Reserve trailing Terminal space for the final-command jump and document explicit native desktop input and return while preserving browser lease authority and reconnect behavior. |
 
 | 2026-11-06 | Preserve desktop key and pointer release when a new Agent turn starts; keep explicit Take control available during an existing turn. |
+
+| 2026-11-06 | Match the reference tab treatment with a selected white/light-layer tab on the neutral Workspace tab well in both appearances. |
