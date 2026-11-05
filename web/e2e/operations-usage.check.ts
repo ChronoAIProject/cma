@@ -2,21 +2,15 @@ import { test, expect } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalUsageMetrics } from './usage-metrics.fixture';
 
+const measured = process.env.CMA_E2E_MEASURED_USAGE === 'true';
+
 for (const theme of ['light', 'dark', 'system']) {
-  test(`LOCAL measured Operations dashboard in ${theme}`, async ({ page, baseURL }, info) => {
+  test(`LOCAL Operations dashboard in ${theme}`, async ({ page, baseURL }, info) => {
     const boundary = new LocalStartup();
     const metrics = new LocalUsageMetrics();
     await boundary.route(page, baseURL!);
-    await page.route('**/auth/session', (route) =>
-      route.fulfill({
-        json: {
-          authenticated: true,
-          subject: 'local-owner',
-          display_name: 'Local operator',
-          capabilities: ['use_own_sandboxes', 'read_all_sandboxes'],
-        },
-      }),
-    );
+    metrics.measuredVisible = measured;
+    await metrics.session(page, ['use_own_sandboxes', 'read_all_sandboxes']);
     await metrics.route(page);
     await page.addInitScript(
       (appearance) => localStorage.setItem('cma:appearance', appearance),
@@ -31,7 +25,17 @@ for (const theme of ['light', 'dark', 'system']) {
     await expect(page.getByRole('tab', { name: 'Usage', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Research Sandbox', exact: true })).toBeVisible();
     await expect(page.getByText(/25,001 Sandboxes · 18,000 running/)).toBeVisible();
-    await expect(page.locator('.recharts-line-curve').first()).toBeVisible();
+    if (measured) await expect(page.locator('.recharts-line-curve').first()).toBeVisible();
+    else {
+      await expect(page.getByRole('region', { name: 'Allocated capacity now' })).toContainText(
+        '2 cores',
+      );
+      await expect(page.getByRole('region', { name: 'Allocated resource-hours' })).toContainText(
+        '480',
+      );
+      await expect(page.getByRole('region', { name: 'Measured resource charts' })).toHaveCount(0);
+      await expect(page.getByText('Chart grouping', { exact: true })).toHaveCount(0);
+    }
     await page.locator('.operator-scroll').evaluate((element) => element.scrollTo(0, 0));
     await page.screenshot({
       path: info.outputPath(`operations-${theme}-overview.png`),
@@ -46,14 +50,15 @@ for (const theme of ['light', 'dark', 'system']) {
         (url) => !url.searchParams.has('limit') || url.searchParams.get('limit') === '50',
       ),
     ).toBe(true);
-    await page.getByText('View CPU chart data', { exact: true }).focus();
-    await page.keyboard.press('Enter');
-    await expect(page.getByRole('table', { name: 'CPU chart data' })).toBeVisible();
-    await expect(page.getByRole('cell', { name: /no measurement/ })).toBeVisible();
-    await page
-      .getByRole('button', { name: 'Sort by CPU mean / allocated (cores) ascending' })
-      .click();
-    await expect(page.getByRole('columnheader', { name: /CPU mean/ })).toHaveAttribute(
+    if (measured) {
+      await page.getByText('View CPU chart data', { exact: true }).focus();
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('table', { name: 'CPU chart data' })).toBeVisible();
+      await expect(page.getByRole('cell', { name: /no measurement/ })).toBeVisible();
+    }
+    const sortedColumn = measured ? 'CPU mean / allocated (cores)' : 'Allocated CPU (core-hours)';
+    await page.getByRole('button', { name: `Sort by ${sortedColumn} ascending` }).click();
+    await expect(page.getByRole('columnheader', { name: sortedColumn })).toHaveAttribute(
       'aria-sort',
       'ascending',
     );
@@ -100,6 +105,8 @@ for (const theme of ['light', 'dark', 'system']) {
     await expect(
       page.getByText('Usage reporting is unavailable', { exact: true }).first(),
     ).toBeVisible();
+    if (!measured)
+      expect(metrics.reads.filter((url) => url.pathname.endsWith('/series'))).toEqual([]);
     expect(boundary.writes).toEqual([]);
   });
 }
