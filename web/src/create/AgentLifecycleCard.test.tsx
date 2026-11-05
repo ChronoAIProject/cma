@@ -60,7 +60,9 @@ it('creates from only the optional repository and retries the exact request afte
   const first = show(client);
   const user = await review();
   await user.click(screen.getByRole('button', { name: 'Create agent' }));
-  await screen.findByText('connection lost');
+  await screen.findByText(
+    "We couldn't confirm your Agent was created. Use Recover creation to resend the same request.",
+  );
   const [body, options] = create.mock.calls[0]!;
   expect(body).toEqual({
     name: 'Research',
@@ -197,7 +199,7 @@ it('reports status failures and permits retry without submitting creation again'
     .mockResolvedValue(running);
   const create = vi.fn();
   show(agentClient({ createAgentLifecycle: create, readAgentLifecycle: read }));
-  await screen.findByText('Read interrupted');
+  await screen.findByText("Agent status couldn't be read. Use Retry status to check again.");
   fireEvent.click(screen.getByRole('button', { name: 'Retry status' }));
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
   expect(create).not.toHaveBeenCalled();
@@ -235,7 +237,9 @@ it('keeps contextual Agent creation in the selected workspace and recovers only 
   const user = userEvent.setup();
   await user.type(screen.getByLabelText('Your task'), 'Inspect the workspace');
   await user.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Lost create response');
+  await screen.findByText(
+    "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
+  );
   const [body, options] = create.mock.calls[0]!;
   expect(body.workspace_id).toBe('wsp_1');
   expect(body).not.toHaveProperty('image');
@@ -357,7 +361,9 @@ it('retains the contextual Sandbox and keeps its recovery separate from global c
   expect(screen.queryByLabelText('Agent location')).not.toBeInTheDocument();
   await user.type(screen.getByLabelText('Your task'), 'Inspect the Sandbox');
   await user.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Lost response');
+  await screen.findByText(
+    "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
+  );
   expect(create.mock.calls[0]?.[0]).toEqual({
     name: 'New task',
     sandbox_id: 'sbx_1',
