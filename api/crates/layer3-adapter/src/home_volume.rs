@@ -278,6 +278,13 @@ pub trait HomeVolumeStore: Send + Sync {
     }
     /// Complete, validated inventory in this controller's storage scope.
     async fn inventory(&self) -> Result<Vec<HomeVolumeAttachment>>;
+
+    /// Optional incremental discovery for bounded background maintenance.
+    /// Production stores checkpoint every external read; small in-memory
+    /// implementations may retain the existing single-operation inventory.
+    fn inventory_cursor(&self) -> Option<Box<dyn crate::InventoryCursor<HomeVolumeAttachment>>> {
+        None
+    }
     async fn prepare(&self, request: &HomeVolumeRequest) -> Result<HomeVolumeReceipt>;
     async fn verify(&self, attachment: &HomeVolumeAttachment) -> Result<()>;
     /// Release snapshot/export resources after all capture workers have stopped.
