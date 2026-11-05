@@ -95,8 +95,11 @@ impl IntoResponse for CreatorAuthError {
     }
 }
 
+#[path = "creator_integration.rs"]
+mod integration;
 #[path = "creator_request.rs"]
 mod request;
+pub use integration::{Administrator, IntegrationOwner};
 
 #[derive(Debug, Clone)]
 pub struct CreatorAuthenticator {

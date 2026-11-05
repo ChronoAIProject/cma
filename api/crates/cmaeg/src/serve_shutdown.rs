@@ -22,3 +22,38 @@ pub(super) async fn wait_for_shutdown_signal() {
         let _ = tokio::signal::ctrl_c().await;
     }
 }
+
+pub(super) fn log_drain_results(
+    turns_drained: bool,
+    routed_drained: bool,
+    native_drained: bool,
+    lark_controls_drained: bool,
+    whatsapp_forms_drained: bool,
+) {
+    if !whatsapp_forms_drained {
+        tracing::warn!("native WhatsApp Form drain incomplete; durable write fences retained");
+    }
+    if !lark_controls_drained {
+        tracing::warn!("native Lark callback drain incomplete; consumed cards retain recovery");
+    }
+    if !native_drained {
+        tracing::warn!("native Discord drain incomplete; durable inbox and lease fences retained");
+    }
+    if !turns_drained {
+        tracing::warn!("turn drain deadline reached; remaining consumers cancelled");
+    }
+    if !routed_drained {
+        tracing::warn!("routed execution drain incomplete; durable recovery retained");
+    }
+}
+
+pub(super) async fn drain_github(
+    worker: &mut Option<crate::github::Worker>,
+    deadline: std::time::Instant,
+) {
+    if let Some(worker) = worker {
+        if !worker.drain(deadline).await {
+            tracing::warn!("GitHub execution-group drain incomplete; durable recovery retained");
+        }
+    }
+}
