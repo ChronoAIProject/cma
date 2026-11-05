@@ -111,7 +111,7 @@ impl Fixture {
         let gateway = github::Gateway::open(database, keys.clone(), config)
             .await
             .unwrap();
-        let mut state = cmaeg::http::ManagementState::new(
+        let state = cmaeg::http::ManagementState::new(
             providers,
             records,
             Arc::new(CreatorAuthenticator::new(&self.nyxid.base_url).unwrap()),
@@ -129,7 +129,7 @@ impl Fixture {
             },
             cmaeg::ChannelCacheConfig::default(),
         );
-        state.github = Some(Arc::new(gateway));
+        assert!(state.github.set(Arc::new(gateway)).is_ok());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         self.base = format!("http://{}", listener.local_addr().unwrap());
         let (shutdown, signal) = oneshot::channel();
