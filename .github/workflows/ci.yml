@@ -532,7 +532,10 @@ jobs:
       - name: Tests
         run: npm run test
       - name: Production build
-        run: npm run build
+        env:
+          CHRONO_BUILD_SHA: ${{ github.sha }}
+          CHRONO_BUILD_ARTIFACT: promotable
+        run: CHRONO_BUILD="git-${GITHUB_SHA:0:12}" npm run build
       # The one check the rest of this job cannot make. Everything above runs
       # under jsdom, which resolves no custom properties at all — so a
       # stylesheet that parses and computes to nothing passes every one of
