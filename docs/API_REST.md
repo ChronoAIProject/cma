@@ -893,6 +893,11 @@ the existing 16 KiB output limit preserves totals; `truncated` remains explicit.
 Tool status still determines whether an edit completed. A proposed or failed
 edit does not prove that a file was modified. Ordinary text output is unchanged.
 
+Workspace hierarchy Agent summaries include optional `task_started_at` only when
+the current active turn has a matching recorded start. Clients use that timestamp
+for a running task's elapsed clock; `updated_at` remains activity metadata and
+must not reset an elapsed clock. Idle tasks omit the start timestamp.
+
 Automatic title generation excludes a recorded setup/unknown first turn and
 uses the first subsequent task; names and sources remain durable across reads.
 The persisted `title` takes precedence over a prompt preview or runtime label;
