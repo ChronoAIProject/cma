@@ -12,6 +12,7 @@ mod media;
 mod profiles;
 mod routes;
 mod runtime;
+mod stores;
 use crate::{
     activity::ActivityRecorder,
     auth::{service_portal, AuthState},
@@ -42,26 +43,7 @@ pub(crate) use state::ControlPlaneComposition;
 
 impl ControlPlaneComposition {
     pub(crate) async fn build(config: &Config) -> Result<Self, String> {
-        let mut stores = MongoStores::connect_with_authority(
-            &config.mongodb_uri,
-            &config.mongodb_database,
-            &config.deployment_id,
-            &config.auth_encryption_key,
-            config.activity_retention,
-            (
-                &config.runtime.sandbox_image,
-                config.runtime.home_policy.as_ref(),
-            ),
-            config.mongodb_authority,
-        )
-        .await
-        .map_err(|error| format!("durable stores are not usable: {error}"))?;
-        stores.sandbox_model = Arc::new(
-            (*stores.sandbox_model)
-                .clone()
-                .with_machine_runtime_version(config.runtime.machine_sandbox_image.clone()),
-        );
-        let stores = Arc::new(stores.with_writer_policy(config.task_experience.clone()));
+        let stores = stores::connect(config).await?;
         let activity = ActivityService::new(stores.activity.clone());
         let documents = documents::compose(config, &stores)?;
         let users = UserDirectory::new(stores.users.clone());
@@ -152,6 +134,7 @@ impl ControlPlaneComposition {
         .with_skill_support(Arc::new(crate::projections::AdapterAgentSkillSupport(
             adapter.clone(),
         )))
+        .with_sessions(stores.sandbox_model.clone())
         .with_resource_access(resource_access.clone())
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
         let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
@@ -200,6 +183,7 @@ impl ControlPlaneComposition {
         )
         .with_user_directory(Arc::clone(&users))
         .with_runtime_updates(runtime.updates.clone())
+        .with_maintenance(stores.sandbox_model.clone())
         .with_warm_pools(native_warm_pools.clone());
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
@@ -234,7 +218,6 @@ impl ControlPlaneComposition {
             adapter.clone(),
         )?;
         let agent_skills = credentials::agent_skills(config, sandbox_credentials.clone())?;
-
         let limits = RateLimiters::from_config(
             config.rate_limits,
             config.trusted_proxies.clone(),

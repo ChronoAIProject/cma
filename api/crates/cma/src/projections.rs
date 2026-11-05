@@ -9,7 +9,7 @@ use layer1_public::rest::{
     AgentLifecycleProvisioner,
 };
 use layer2_core::profiles::{AgentProfileStore, ProfileUseRecorder};
-use layer2_core::sandbox::store::{AgentReadStore, AgentServiceStore};
+use layer2_core::sandbox::store::{AgentReadStore, AgentServiceStore, SandboxSessionStore};
 use layer2_core::sandbox::{
     AgentContextService, AgentOperationService, AgentOperationStore, AgentReadService,
     AgentRuntimeRegistry, AgentService, AgentUpdateRecorder, Sandbox, SandboxResourceReadError,
@@ -89,6 +89,11 @@ impl AgentProjectionServices {
         access: Arc<layer2_core::resource_access::ResourceAccessService>,
     ) -> Self {
         self.reads = self.reads.with_resource_access(access);
+        self
+    }
+
+    pub(crate) fn with_sessions(mut self, sessions: Arc<dyn SandboxSessionStore>) -> Self {
+        self.reads = self.reads.with_sessions(sessions);
         self
     }
 

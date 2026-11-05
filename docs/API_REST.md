@@ -1553,6 +1553,7 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/admin/runtime-inventory` | - | - | 200 RuntimeInventoryView |
 | `GET /api/v1/admin/sandboxes` | - | owner, status, runtime_version, cursor, limit | 200 SandboxPageView |
 | `GET /api/v1/admin/sandboxes/{id}` | - | - | 200 SandboxDetailView |
+| `POST /api/v1/admin/sandboxes/{id}/always-on` | AdminAlwaysOnRequest | - | 200 SandboxView |
 | `GET /api/v1/admin/sandboxes/{id}/events` | - | after, limit | 200 array<object> |
 | `POST /api/v1/admin/sandboxes/{id}/retire` | - | - | 200 object |
 | `POST /api/v1/admin/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest | - | 202 SandboxView |
@@ -1560,6 +1561,8 @@ returns 409, including changing an omitted default into an explicit reference.
 | `PUT /api/v1/admin/settings` | ReplaceRequest | - | 200 SettingsView |
 | `PATCH /api/v1/admin/settings` | PatchRequest | - | 200 SettingsView |
 | `POST /api/v1/admin/settings/reset` | ResetRequest | - | 200 SettingsView |
+| `GET /api/v1/admin/auto-pause/preview` | - | - | 200 AutoPausePreviewView |
+| `POST /api/v1/admin/auto-pause/pause-idle-now` | PauseIdleNowRequest | - | 200 PauseIdleNowView |
 | `POST /api/v1/admin/triggers/pause` | - | - | 200 SettingsView |
 | `POST /api/v1/admin/triggers/resume` | - | - | 200 SettingsView |
 | `GET /api/v1/admin/warm-pools` | - | - | 200 WarmPoolList |
@@ -2105,6 +2108,7 @@ conversation, and listing does not download file bodies. See
 | `POST /api/v1/sandboxes/{id}/commands` | SandboxCommandRequest; key | - | 202 SandboxCommandReceiptView |
 | `GET /api/v1/sandbox-commands/{id}` | - | - | 200 SandboxCommandReceiptView |
 | `POST /api/v1/sandboxes/{id}/revive` | -; key | - | 202 SandboxView |
+| `POST /api/v1/sandboxes/{id}/always-on` | AlwaysOnRequest | - | 200 SandboxView |
 | `POST /api/v1/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest; key | - | 202 SandboxView |
 | `POST /api/v1/sandboxes/{id}/service-access` | GrantSandboxServiceAccessRequest; key | - | 200 SandboxView; new grants require fully Paused, existing grants replay without change |
 
