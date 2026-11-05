@@ -17,12 +17,10 @@ it('defers Agent discovery until an owner report authorizes the selected Sandbox
     query: { ...report.query, filters: { ...report.query.filters, sandbox_id: 'sbx-1' } },
   });
   const agents = {
-    list: vi
-      .fn()
-      .mockResolvedValue({
-        items: [{ id: 'agt-1', title: 'Research Agent' }],
-        next: 'agents-next',
-      }),
+    list: vi.fn().mockResolvedValue({
+      items: [{ id: 'agt-1', title: 'Research Agent' }],
+      next: 'agents-next',
+    }),
   };
   const client = { usageMetrics: api, usage: { events: vi.fn() }, agents };
   render(<UsageDialog client={client} open onClose={vi.fn()} />);

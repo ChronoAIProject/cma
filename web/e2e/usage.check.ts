@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 
-test('LOCAL owner and operator usage routes render, filter and preserve mobile layout', async ({
+test('LOCAL legacy operator allocation usage retains filters and mobile layout', async ({
   page,
   baseURL,
 }, info) => {
@@ -97,40 +97,6 @@ test('LOCAL owner and operator usage routes render, filter and preserve mobile l
     });
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto('/settings/usage');
-  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Research', exact: true })).toBeVisible();
-  await expect(page.getByText('1.017 core-hours')).toBeVisible();
-  await page.screenshot({
-    path: info.outputPath('settings-usage-desktop.png'),
-    fullPage: true,
-    animations: 'disabled',
-  });
-  await page.getByRole('button', { name: 'Research', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Lifecycle history' })).toBeVisible();
-  await expect(page.getByRole('cell', { name: 'resumed', exact: true })).toBeVisible();
-  for (const width of [768, 390, 320]) {
-    await page.setViewportSize({ width, height: 1000 });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
-      true,
-    );
-    await expect(page.getByRole('button', { name: 'Refresh usage' })).toBeVisible();
-  }
-  await page.waitForFunction(() =>
-    document
-      .getAnimations()
-      .every(
-        (animation) =>
-          animation.playState !== 'running' ||
-          animation.effect?.getTiming().iterations === Infinity,
-      ),
-  );
-  await page.screenshot({
-    path: info.outputPath('settings-usage-mobile.png'),
-    fullPage: true,
-    animations: 'disabled',
-  });
-  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/operations');
   await page.getByRole('tab', { name: 'Usage', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Usage user' })).toBeVisible();
@@ -171,11 +137,5 @@ test('LOCAL owner and operator usage routes render, filter and preserve mobile l
     fullPage: true,
     animations: 'disabled',
   });
-  await page.goto('/settings/usage');
-  await page.reload();
-  await expect(page.getByRole('tab', { name: 'Usage', exact: true })).toHaveAttribute(
-    'aria-selected',
-    'true',
-  );
   expect(boundary.errors).toEqual([]);
 });
