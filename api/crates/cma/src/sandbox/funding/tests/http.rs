@@ -10,19 +10,19 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::collections::VecDeque;
-struct Reply {
+pub(super) struct Reply {
     status: u16,
     body: String,
     retry_after: Option<String>,
 }
 #[derive(Default)]
-struct HttpState {
+pub(super) struct HttpState {
     replies: Mutex<VecDeque<Reply>>,
-    calls: Mutex<Vec<(Method, String, HeaderMap, Value)>>,
+    pub(super) calls: Mutex<Vec<(Method, String, HeaderMap, Value)>>,
 }
-struct Server {
-    state: Arc<HttpState>,
-    provider: Arc<NyxIdFundingProvider>,
+pub(super) struct Server {
+    pub(super) state: Arc<HttpState>,
+    pub(super) provider: Arc<NyxIdFundingProvider>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Drop for Server {
@@ -85,7 +85,7 @@ async fn handler(
     )
 }
 impl Server {
-    async fn new(replies: Vec<Reply>) -> Self {
+    pub(super) async fn new(replies: Vec<Reply>) -> Self {
         let state = Arc::new(HttpState {
             replies: Mutex::new(replies.into()),
             ..Default::default()
@@ -114,7 +114,7 @@ impl Server {
         }
     }
 }
-fn reply(status: u16, body: Value) -> Reply {
+pub(super) fn reply(status: u16, body: Value) -> Reply {
     Reply {
         status,
         body: body.to_string(),

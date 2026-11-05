@@ -86,6 +86,26 @@ impl NyxIdFundingProvider {
         if !status.is_success() {
             let detail = format!("producer HTTP {}", status.as_u16());
             let code = value.as_ref().ok().and_then(|v| v["error"].as_str());
+            // The published producer uses this envelope for its two explicit
+            // admission gates. Match the complete refusal only on the money-free
+            // quote endpoint; other dependency failures and any window request
+            // must retain their fail-closed/recovery behavior. Never retain text.
+            if path == ["quotes"]
+                && status.as_u16() == 402
+                && code == Some("billing_provider_unavailable")
+                && value.as_ref().is_ok_and(|v| {
+                    v["error_code"] == 11302
+                        && matches!(
+                            v["message"].as_str(),
+                            Some(
+                                "Billing provider unavailable: CMA paid admission is disabled"
+                                    | "Billing provider unavailable: Sandbox owner is outside the billing rollout"
+                            )
+                        )
+                })
+            {
+                return Err(FundingError::NotEnrolled);
+            }
             return Err(match status.as_u16() {
                 404 => FundingError::NotFound,
                 429 => FundingError::RateLimited(retry_after),

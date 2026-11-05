@@ -10,6 +10,8 @@ use std::{
 mod evidence;
 mod fixture;
 mod http;
+pub(crate) mod pilot;
+mod pilot_http;
 use fixture::sandbox;
 
 fn at(n: u64) -> SystemTime {
@@ -64,7 +66,7 @@ impl FundingStateStore for MemoryState {
             .lock()
             .unwrap()
             .values()
-            .filter(|s| s.retry_at <= now)
+            .filter(|s| s.unbilled_generation.is_none() && s.retry_at <= now)
             .cloned()
             .collect())
     }
@@ -99,6 +101,7 @@ struct Provider {
     requests: Mutex<Vec<ReserveRequest>>,
     receipts: Mutex<HashMap<String, FundingWindow>>,
     evidence: Mutex<Vec<EvidenceRequest>>,
+    fail_quote: Mutex<Option<FundingError>>,
     fail_reserve: Mutex<Option<FundingError>>,
     lose_reserve: AtomicBool,
     lose_evidence: AtomicBool,
@@ -113,6 +116,7 @@ impl Provider {
             requests: Mutex::new(vec![]),
             receipts: Mutex::new(HashMap::new()),
             evidence: Mutex::new(vec![]),
+            fail_quote: Mutex::new(None),
             fail_reserve: Mutex::new(None),
             lose_reserve: AtomicBool::new(false),
             lose_evidence: AtomicBool::new(false),
@@ -132,6 +136,9 @@ impl FundingProvider for Provider {
             "owner operation must be durable before quote"
         );
         self.quotes.fetch_add(1, Ordering::SeqCst);
+        if let Some(error) = self.fail_quote.lock().unwrap().clone() {
+            return Err(error);
+        }
         Ok(FundingQuote {
             quote_id: uuid::Uuid::new_v4().to_string(),
             owner_id: request.owner_id,
