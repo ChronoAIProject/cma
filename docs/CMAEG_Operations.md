@@ -19,9 +19,13 @@ When disabled, the gateway performs no GitHub schema updates, starts no GitHub
 worker and refuses integration operations with 503; the authenticated capability
 query remains available with `store_ready: false`. Existing records are retained.
 The same flag rejects channel writes that introduce or change a GitHub source,
-even when dynamic source writes are enabled. Unchanged retained sources and their
-removal remain allowed; disabling the flag does not make an old binary capable
-of reading GitHub source records already stored.
+even when dynamic source writes are enabled. `--import-legacy-records` applies
+the same rule: while the flag is off it opens each channel row it would create
+with the gateway key ring and refuses one carrying a GitHub source, before any
+write for that row. Rows already stored unchanged are re-verified without
+inspection. Unchanged retained sources and their removal remain allowed;
+disabling the flag does not make an old binary capable of reading GitHub source
+records already stored.
 Enabling GitHub in production establishes a rollback floor: every rollback
 image must include the GitHub source reader and these source-write, background
 initialization and source-selection fixes. Turning the flag off preserves data;
@@ -152,9 +156,12 @@ refuses to overwrite an existing path. A failed export removes its private
 staging directory; after a killed process, remove any abandoned
 `.cma-gateway-export-*` directory only after confirming that export has stopped.
 Run `cmaeg --import-legacy-records PATH` with the destination migration
-configuration, then verify every live record. Expired interactions remain in
-the export for comparison but the importer deliberately skips them. Keep the
-export protected as sealed production data and remove it after verification.
+configuration, then verify every live record. While `CMAEG_GITHUB_ENABLED` is
+off (the default), the importer also needs the gateway key ring to inspect
+channel rows; an unreadable row, or one that would add a GitHub source, is
+refused before it is written. Expired interactions remain in the export for
+comparison but the importer deliberately skips them. Keep the export protected
+as sealed production data and remove it after verification.
 
 The local authenticated Mongo contract starts the real Gateway executable
 with Console and media enabled, stops the old record server, then verifies
