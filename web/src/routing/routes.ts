@@ -34,7 +34,7 @@ export type AppRoute =
   | { readonly kind: 'public_trigger'; readonly publicId: string; readonly placementId?: string }
   | { readonly kind: 'launch'; readonly launchId: string }
   | { readonly kind: 'operations' }
-  | { readonly kind: 'settings'; readonly tab: 'general' | 'usage' }
+  | { readonly kind: 'usage' }
   | { readonly kind: 'not_found'; readonly pathname: string };
 
 const PROFILE_KINDS: readonly ProfileKind[] = ['agent', 'workspace', 'sandbox'];
@@ -90,8 +90,9 @@ export function parseRoute(pathname: string): AppRoute {
         return { kind: 'marketplace' };
       case 'operations':
         return { kind: 'operations' };
+      case 'usage':
       case 'settings':
-        return { kind: 'settings', tab: 'general' };
+        return { kind: 'usage' };
       case 'developer':
         // Retired: the SDK reader it named no longer exists. Old links land on
         // the documentation that replaced it, and the address is rewritten.
@@ -103,8 +104,7 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (path.length === 2) {
     const [resource = '', id = ''] = path;
-    if (resource === 'settings' && (id === 'general' || id === 'usage'))
-      return { kind: 'settings', tab: id };
+    if (resource === 'settings' && (id === 'general' || id === 'usage')) return { kind: 'usage' };
     if (resource === 'docs' && id === 'event-gateway')
       return { kind: 'docs', view: 'event_gateway_protocol' };
     if (resource === 'shared' && id === 'agents') return { kind: 'inventory', shared: true };
@@ -215,8 +215,8 @@ export function routePath(route: AppRoute): string {
       return `/launches/${segment(route.launchId)}`;
     case 'operations':
       return '/operations';
-    case 'settings':
-      return `/settings/${route.tab}`;
+    case 'usage':
+      return '/usage';
     case 'not_found':
       return route.pathname;
   }
@@ -224,48 +224,89 @@ export function routePath(route: AppRoute): string {
 
 export interface AppRouter {
   readonly route: AppRoute;
+  readonly backgroundRoute?: AppRoute;
+  readonly usageAppearanceNotice?: boolean;
+  readonly closeUsage?: () => void;
   readonly navigate: (route: AppRoute, options?: { readonly replace?: boolean }) => void;
 }
 
-/** Addresses that still parse, to their replacement, but are never shown. */
-const RETIRED_PATHS: ReadonlySet<string> = new Set(['/developer']);
+interface RouteState {
+  readonly route: AppRoute;
+  readonly backgroundRoute?: AppRoute;
+  readonly usageAppearanceNotice?: boolean;
+}
+const SAFE_USAGE_BACKGROUND: AppRoute = { kind: 'agent_manager' };
 
-/**
- * Read the address bar, rewriting a retired path to the one that replaced it.
- *
- * Replace rather than push: the retired address was never a place somebody
- * chose to be, so Back should not return to it.
- */
-function currentRoute(): AppRoute {
-  const route = parseRoute(window.location.pathname);
-  if (RETIRED_PATHS.has(window.location.pathname)) {
-    window.history.replaceState(window.history.state, '', routePath(route));
+function savedBackground(): AppRoute | undefined {
+  const value: unknown = window.history.state?.usageBackground;
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')) return;
+  const path = new URL(value, window.location.origin).pathname;
+  const route = parseRoute(path);
+  return route.kind === 'usage' || route.kind === 'not_found' ? undefined : route;
+}
+
+/** Retired URLs replace their entry; Back never repeats the redirect. */
+function currentRoute(): RouteState {
+  const path = window.location.pathname;
+  const route = parseRoute(path);
+  const usageAppearanceNotice = path === '/settings' || path === '/settings/general';
+  if (
+    path === '/developer' ||
+    path === '/settings' ||
+    (path.startsWith('/settings/') && route.kind === 'usage')
+  ) {
+    window.history.replaceState(
+      window.history.state,
+      '',
+      routePath(route) + window.location.search + window.location.hash,
+    );
   }
-  return route;
+  return {
+    route,
+    usageAppearanceNotice,
+    backgroundRoute:
+      route.kind === 'usage' ? (savedBackground() ?? SAFE_USAGE_BACKGROUND) : undefined,
+  };
 }
 
 export function useAppRouter(): AppRouter {
-  const [route, setRoute] = useState<AppRoute>(currentRoute);
-
+  const [state, setState] = useState<RouteState>(currentRoute);
   useEffect(() => {
-    const onPopState = () => {
-      setRoute(currentRoute());
-    };
+    const onPopState = () => setState(currentRoute());
     window.addEventListener('popstate', onPopState);
-    return () => {
-      window.removeEventListener('popstate', onPopState);
-    };
+    return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
   const navigate = useCallback<AppRouter['navigate']>((next, options) => {
+    const current = parseRoute(window.location.pathname);
+    const opening = next.kind === 'usage' && current.kind !== 'usage';
+    const background = opening
+      ? window.location.pathname + window.location.search + window.location.hash
+      : undefined;
     const path = routePath(next);
-    if (options?.replace === true) {
-      window.history.replaceState(null, '', path);
-    } else {
-      window.history.pushState(null, '', path);
-    }
-    setRoute(parseRoute(path));
+    const historyState =
+      next.kind === 'usage'
+        ? opening
+          ? { usageBackground: background }
+          : window.history.state
+        : null;
+    if (options?.replace === true) window.history.replaceState(historyState, '', path);
+    else if (current.kind !== 'usage' || next.kind !== 'usage')
+      window.history.pushState(historyState, '', path);
+    setState((previous) => ({
+      route: parseRoute(path),
+      backgroundRoute:
+        next.kind === 'usage'
+          ? opening
+            ? previous.route
+            : (previous.backgroundRoute ?? SAFE_USAGE_BACKGROUND)
+          : undefined,
+    }));
   }, []);
 
-  return { route, navigate };
+  const closeUsage = useCallback(() => {
+    if (savedBackground() && window.history.length > 1) window.history.back();
+    else navigate(SAFE_USAGE_BACKGROUND, { replace: true });
+  }, [navigate]);
+  return { ...state, navigate, closeUsage };
 }

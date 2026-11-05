@@ -219,6 +219,7 @@ export function AppFrame({
   useEffect(() => {
     if (!sidebarOverlay) return;
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
       if (event.key === 'Escape' && !event.defaultPrevented) toggleSidebar();
     };
     document.addEventListener('keydown', onKeyDown);

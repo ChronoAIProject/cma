@@ -1,5 +1,5 @@
 import { SkeletonRows } from './ui/Skeleton';
-import { Documents, Operations, Settings, TriggerPublisherPage } from './ConsolePages';
+import { Documents, Operations, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
@@ -313,8 +313,6 @@ function ConsoleContent({
       <LegacyProfileNotice />
     ) : route.kind === 'marketplace' || route.kind === 'marketplace_profile' ? (
       <LegacyProfileNotice />
-    ) : route.kind === 'settings' && operator ? (
-      <Settings client={operator.usage} tab={route.tab} onNavigate={onNavigate} />
     ) : route.kind === 'operations' ? (
       operator !== undefined && canOpenOperations(user.capabilities) ? (
         <Suspense
@@ -469,7 +467,7 @@ function ConsoleContent({
               collapsed={collapsed}
               onSignOut={onSignOut}
               onNavigate={(next) => {
-                onSidebarNavigate();
+                if (next.kind !== 'usage') onSidebarNavigate();
                 onNavigate(next);
               }}
             />
