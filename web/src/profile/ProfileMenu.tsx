@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { User } from '../auth/types';
 import { canOpenOperations } from '../operator/capabilities';
 import type { AppRoute } from '../routing/routes';
@@ -19,7 +19,7 @@ import {
   storedAppearance,
   type Appearance,
 } from '../theme/appearance';
-import { BUILD } from '../shell/build';
+import { BUILD_INFO } from '../shell/build';
 import './ProfileMenu.css';
 import {
   SYSTEM_TEXT_SIZES,
@@ -61,7 +61,21 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
   const [open, setOpen] = useState(false);
   const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
   const [avatarBroken, setAvatarBroken] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const fallbackRef = useRef<HTMLElement>(null);
+  const copyAttempt = useRef(0);
+  const clearCopy = () => {
+    copyAttempt.current += 1;
+    setCopyState('idle');
+  };
+  useEffect(() => {
+    if (copyState !== 'failed' || !fallbackRef.current) return;
+    const range = document.createRange();
+    range.selectNodeContents(fallbackRef.current);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, [copyState]);
   const textSize = useSystemTextSize();
   const canOperate = canOpenOperations(user.capabilities);
   const items: MenuEntry[] = [
@@ -90,7 +104,19 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
     {
       id: 'build',
       icon: <IconCopyOutline16 />,
-      label: copied ? 'Build revision copied' : `Build ${BUILD}`,
+      label: (
+        <span className="profile__build" role="status" aria-live="polite">
+          {copyState === 'copied'
+            ? 'Build version copied'
+            : `Copy build version · ${BUILD_INFO.label}`}
+          {copyState === 'failed' && (
+            <span className="profile__build-fallback">
+              Could not copy. Select the build version to copy it manually.
+              <code ref={fallbackRef}>{BUILD_INFO.copyText}</code>
+            </span>
+          )}
+        </span>
+      ),
     },
     { id: 'sign-out', icon: <IconRightUpOutline16 />, label: 'Sign out' },
   ];
@@ -115,12 +141,17 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
       return;
     }
     if (id === 'build') {
-      // The revision is what a bug report needs, so it copies in one step.
-      // A refused clipboard leaves the visible text, which can be read out.
-      void navigator.clipboard?.writeText(BUILD).then(
-        () => setCopied(true),
-        () => setCopied(false),
-      );
+      const attempt = ++copyAttempt.current;
+      const copy = async () => {
+        try {
+          if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+          await navigator.clipboard.writeText(BUILD_INFO.copyText);
+          if (attempt === copyAttempt.current) setCopyState('copied');
+        } catch {
+          if (attempt === copyAttempt.current) setCopyState('failed');
+        }
+      };
+      void copy();
       return;
     }
     if (id === 'sign-out') {
@@ -141,7 +172,7 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
       onSelect={choose}
       onClose={() => {
         setOpen(false);
-        setCopied(false);
+        clearCopy();
       }}
       anchor={
         <button
@@ -151,6 +182,7 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
           aria-expanded={open}
           aria-label={`Account menu for ${user.displayName ?? user.handle}`}
           onClick={() => {
+            clearCopy();
             if (!open) setLocalAppearance(storedAppearance());
             setOpen((wasOpen) => !wasOpen);
           }}
