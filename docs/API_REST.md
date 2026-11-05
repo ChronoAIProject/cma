@@ -1806,6 +1806,13 @@ An empty paused, disabled or unsupported observation may withdraw that context;
 a different live context cannot replace it. Current unauthorized reads return
 403 or undisclosing 404. These fields are correlation values, never access grants.
 
+The live Agent browser observation optionally includes `address`, the current
+HTTP(S) origin or `about:blank`. It contains no credentials, path, query or
+fragment. This additive field accompanies the existing current-frame response;
+it is never a historical screen record. Older runtimes omit it and remain
+readable without replacement. The web address bar uses this reported origin and
+retains the existing location label when an origin is absent.
+
 `BrowserView` contains Agent/incarnation/context, `state`, a sanitized `location`
 (`Blank page`, `Local page` or `Web page`), nullable `frame`, and bounded counters.
 It exposes no CDP address, Unix socket, profile path, URL query or credentials.
