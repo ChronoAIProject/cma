@@ -47,7 +47,7 @@ pub(crate) use credential::{
 pub(crate) use live_agents::LiveAgentRegistry;
 pub(crate) use policy::LiveSandboxPolicy;
 pub(crate) use runtime_mapping::{runtime_capabilities, runtime_options};
-pub(crate) use title_worker::ProviderTitleEndpoint;
+pub(crate) use title_worker::PlatformTitleEndpoint;
 pub(crate) use unavailable_credentials::UnavailableSandboxCredentials;
 
 #[cfg(test)]

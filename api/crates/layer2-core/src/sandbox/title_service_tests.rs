@@ -187,7 +187,7 @@ async fn first_completed_turn_generates_once_from_bounded_private_inputs() {
 }
 
 #[tokio::test]
-async fn one_failure_or_invalid_value_retries_but_two_failures_fall_back() {
+async fn one_failure_retries_and_two_failures_defer_until_the_next_lease() {
     let retry = fixture("retry");
     append_turn(&retry, "Explain retries", "They are bounded.", 1);
     let generator = RecordingGenerator::with_replies([
@@ -212,21 +212,15 @@ async fn one_failure_or_invalid_value_retries_but_two_failures_fall_back() {
         GeneratorReply::Error,
         GeneratorReply::Value("forbidden third attempt".into()),
     ]);
-    assert_eq!(
+    assert!(matches!(
         failed
             .service
             .generate_agent_title(&failed.id, Some(&context()), Some(generator.as_ref()))
-            .await
-            .unwrap(),
-        AgentTitleOutcome::Fallback
-    );
+            .await,
+        Err(AgentTitleServiceError::GenerationUnavailable)
+    ));
     assert_eq!(generator.calls(), 2);
-    let stored = failed.service.title(&failed.id).await.unwrap().unwrap();
-    assert_eq!(stored.source, AgentTitleSource::Fallback);
-    assert_eq!(
-        stored.title.as_str(),
-        "\u{754c}".repeat(AGENT_TITLE_FALLBACK_SCALARS)
-    );
+    assert!(failed.service.title(&failed.id).await.unwrap().is_none());
 }
 
 #[tokio::test(start_paused = true)]
@@ -253,7 +247,10 @@ async fn each_of_two_attempts_has_an_exact_ten_second_timeout() {
     wait_for_calls(&generator, 2).await;
     tokio::time::advance(Duration::from_secs(10)).await;
     tokio::task::yield_now().await;
-    assert_eq!(task.await.unwrap().unwrap(), AgentTitleOutcome::Fallback);
+    assert!(matches!(
+        task.await.unwrap(),
+        Err(AgentTitleServiceError::GenerationUnavailable)
+    ));
     assert_eq!(generator.calls(), 2);
 }
 
@@ -290,7 +287,7 @@ async fn concurrent_service_replicas_make_only_one_model_call() {
 }
 
 #[tokio::test]
-async fn expired_takeover_uses_fallback_without_a_second_model_call() {
+async fn expired_takeover_retries_generation_and_fences_the_stale_worker() {
     let fixture = fixture("takeover");
     append_turn(&fixture, "Crash recovery owner", "Use fallback.", 1);
     let stale = fixture
@@ -304,16 +301,16 @@ async fn expired_takeover_uses_fallback_without_a_second_model_call() {
         .unwrap();
     assert_eq!(stale.mode(), AgentTitleClaimMode::Generate);
     let generator =
-        RecordingGenerator::with_replies([GeneratorReply::Value("must never be called".into())]);
+        RecordingGenerator::with_replies([GeneratorReply::Value("Recovered title".into())]);
     assert_eq!(
         fixture
             .service
             .generate_agent_title(&fixture.id, Some(&context()), Some(generator.as_ref()))
             .await
             .unwrap(),
-        AgentTitleOutcome::Fallback
+        AgentTitleOutcome::Generated
     );
-    assert_eq!(generator.calls(), 0);
+    assert_eq!(generator.calls(), 1);
     assert_eq!(
         fixture
             .service
@@ -323,7 +320,7 @@ async fn expired_takeover_uses_fallback_without_a_second_model_call() {
             .unwrap()
             .title
             .as_str(),
-        "Crash recovery owner"
+        "Recovered title"
     );
     assert!(!fixture
         .store

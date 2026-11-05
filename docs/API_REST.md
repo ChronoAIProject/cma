@@ -886,6 +886,17 @@ supports repeated renames even when an automatic title was already saved. The
 separate legacy title setter retains its write-once compatibility behavior.
 Automatic title generation excludes a recorded setup/unknown first turn and
 uses the first subsequent task; names and sources remain durable across reads.
+The persisted `title` takes precedence over a prompt preview or runtime label;
+`owner_title` still wins over every automatic name. `title_set` with source
+`generated` updates that title in both durable replay and the live `/title`
+delta. Title generation uses the owner's scoped model service directly, so it
+does not depend on a legacy hosting-provider port route. Its inputs are the
+first task's owner message and final recorded assistant message. It never opens
+another Agent turn. Each 45-second durable lease admits at most two model calls,
+each bounded to ten seconds. A failed attempt is deferred to a later lease;
+previous fallback titles remain visible and eligible for replacement. Generated
+and user titles are terminal for automatic generation. A user rename during
+generation remains authoritative. No new deployment configuration is required.
 
 
 Sandbox pause/revive and removal return recorded lifecycle state. Stopping an

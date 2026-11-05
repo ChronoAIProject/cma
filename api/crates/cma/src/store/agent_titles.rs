@@ -115,7 +115,10 @@ async fn title_candidates(
     for document in documents {
         let agent = read_agent(&document).map_err(map_store_error)?;
         last_raw_id = Some(agent.id.to_string());
-        if read_title_state(&document, &agent)?.stored.is_none()
+        if read_title_state(&document, &agent)?
+            .stored
+            .as_ref()
+            .is_none_or(|title| title.source == AgentTitleSource::Fallback)
             && transcript_at_snapshot(store, &agent, &mut session)
                 .await?
                 .is_some()

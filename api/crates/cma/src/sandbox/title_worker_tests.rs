@@ -333,17 +333,17 @@ async fn unavailable_or_mismatched_runtime_authority_is_deferred_without_claimin
 }
 
 #[tokio::test]
-async fn own_account_runtime_uses_fallback_without_model_proxy_or_custody_reads() {
+async fn own_account_runtime_generates_with_scoped_service_custody() {
     let mut sandbox = sandbox();
     sandbox.profile.content.model_access = ModelAccess::OwnCredentials;
     let fixture = Fixture::with_records(sandbox, agent(), Capture::default(), None).await;
     fixture.turn(1, "Own account title");
     assert_eq!(
         fixture.worker.run_one(&fixture.id).await.unwrap(),
-        AgentTitleOutcome::Fallback
+        AgentTitleOutcome::Generated
     );
-    assert_eq!(fixture.credentials.1.load(Ordering::SeqCst), 0);
-    assert_eq!(fixture.runtime.calls.load(Ordering::SeqCst), 0);
+    assert!(fixture.credentials.1.load(Ordering::SeqCst) > 0);
+    assert_eq!(fixture.runtime.calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -365,7 +365,10 @@ async fn authority_drift_during_endpoint_lookup_prevents_http_disclosure() {
         .authority
         .provider_state_version += 1;
     gate.add_permits(1);
-    assert_eq!(task.await.unwrap().unwrap(), AgentTitleOutcome::Fallback);
+    assert!(matches!(
+        task.await.unwrap(),
+        Err(AgentTitleServiceError::GenerationUnavailable)
+    ));
     assert!(fixture.capture.requests.lock().unwrap().is_empty());
 }
 
@@ -431,14 +434,16 @@ async fn credential_drift_during_http_refuses_the_stale_generated_result() {
         .authority
         .provider_state_version += 1;
     gate.add_permits(1);
-    assert_eq!(task.await.unwrap().unwrap(), AgentTitleOutcome::Fallback);
-    let stored = fixture.service.title(&fixture.id).await.unwrap().unwrap();
-    assert_eq!(stored.title.as_str(), "Current authority fallback");
+    assert!(matches!(
+        task.await.unwrap(),
+        Err(AgentTitleServiceError::GenerationUnavailable)
+    ));
+    assert!(fixture.service.title(&fixture.id).await.unwrap().is_none());
     assert_eq!(fixture.capture.requests.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
-async fn failed_attempts_use_bounded_fallback_and_expired_claim_never_calls_again() {
+async fn failed_attempts_defer_and_expired_claim_allows_generation() {
     let fixture = Fixture::new(
         Capture {
             malformed: true,
@@ -449,24 +454,12 @@ async fn failed_attempts_use_bounded_fallback_and_expired_claim_never_calls_agai
     .await;
     let owner = "First message ".repeat(10);
     fixture.turn(1, &owner);
-    assert_eq!(
-        fixture.worker.run_one(&fixture.id).await.unwrap(),
-        AgentTitleOutcome::Fallback
-    );
+    assert!(matches!(
+        fixture.worker.run_one(&fixture.id).await,
+        Err(AgentTitleServiceError::GenerationUnavailable)
+    ));
     assert_eq!(fixture.capture.requests.lock().unwrap().len(), 2);
-    assert!(
-        fixture
-            .service
-            .title(&fixture.id)
-            .await
-            .unwrap()
-            .unwrap()
-            .title
-            .as_str()
-            .chars()
-            .count()
-            <= 48
-    );
+    assert!(fixture.service.title(&fixture.id).await.unwrap().is_none());
     let crashed = Fixture::new(Capture::default(), None).await;
     crashed.turn(1, "Restart fallback");
     crashed
@@ -480,9 +473,9 @@ async fn failed_attempts_use_bounded_fallback_and_expired_claim_never_calls_agai
         .unwrap();
     assert_eq!(
         crashed.worker.run_one(&crashed.id).await.unwrap(),
-        AgentTitleOutcome::Fallback
+        AgentTitleOutcome::Generated
     );
-    assert_eq!(crashed.runtime.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(crashed.runtime.calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -522,3 +515,21 @@ fn snapshot_identity_binds_owner_lineage_runtime_and_credential() {
 #[path = "title_worker_tests/fixtures.rs"]
 mod fixtures;
 use fixtures::{agent, sandbox};
+
+#[tokio::test]
+async fn native_title_endpoint_uses_the_scoped_public_model_service() {
+    let endpoint = PlatformTitleEndpoint {
+        platform_base_url: "https://identity.example".into(),
+    };
+    let mut sandbox = sandbox();
+    sandbox.runtime.as_mut().unwrap().runtime_id = "agent-sandbox:retained-home".into();
+    sandbox.credential.reaches = vec![ServiceId::new("chrono-llm-public")];
+    let proxy = endpoint.endpoint(&sandbox).await.unwrap();
+    assert_eq!(
+        proxy.endpoint.endpoint,
+        "https://identity.example/api/v1/proxy/s/chrono-llm-public"
+    );
+    assert!(proxy.authorization.is_none());
+    sandbox.credential.reaches.clear();
+    assert!(endpoint.endpoint(&sandbox).await.is_none());
+}

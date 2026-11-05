@@ -28,6 +28,8 @@ pub enum AgentTitleServiceError {
     InvalidHolder,
     #[error("agent title store returned inconsistent first-turn evidence")]
     InconsistentEvidence,
+    #[error("agent title generation is temporarily unavailable")]
+    GenerationUnavailable,
     #[error(transparent)]
     Store(#[from] AgentTitleStoreError),
 }
@@ -115,6 +117,19 @@ impl AgentTitleService {
         } else {
             None
         };
+        // Retain the existing display title and retry through the durable lease.
+        // A temporary model failure must not permanently settle the first prompt.
+        if generated.is_none() && generator.is_some() && context.is_some() {
+            if self
+                .store
+                .agent_title(id)
+                .await?
+                .is_some_and(|stored| stored.source != AgentTitleSource::Fallback)
+            {
+                return Ok(AgentTitleOutcome::Skipped);
+            }
+            return Err(AgentTitleServiceError::GenerationUnavailable);
+        }
         let (title, source, outcome) = match generated {
             Some(title) => (
                 title,

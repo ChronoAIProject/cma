@@ -147,20 +147,11 @@ async fn concurrent_claim_takeover_and_completion_are_fenced_once() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(successor.mode(), AgentTitleClaimMode::FallbackOnly);
+    assert_eq!(successor.mode(), AgentTitleClaimMode::Generate);
     let generated = AgentTitle::new("Stale generated title").unwrap();
     assert!(!store
         .complete_agent_title(
             &stale,
-            &generated,
-            AgentTitleSource::Generated,
-            MINUTE.into(),
-        )
-        .await
-        .unwrap());
-    assert!(!store
-        .complete_agent_title(
-            &successor,
             &generated,
             AgentTitleSource::Generated,
             MINUTE.into(),
