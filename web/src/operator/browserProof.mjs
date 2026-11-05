@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer-core';
 import { chrome } from '../../scripts/browser.mjs';
+import { metricRow, reportFixture, seriesFixture } from '../usage/metrics/fixtures.test-support.ts';
 
 const base = process.argv[2] ?? 'http://127.0.0.1:5188';
 assert(
@@ -107,6 +108,21 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
       });
     if (!path.startsWith('/api/')) return request.continue();
     requests.push(`${request.method()} ${path}${url.search}`);
+    if (path.startsWith('/api/v1/admin/usage/metrics/reports')) {
+      const report = reportFixture(true);
+      if (path.endsWith('/sandboxes'))
+        return reply({
+          report_id: report.report_id,
+          as_of: report.as_of,
+          items: [
+            { ...metricRow, sandbox_id: sandbox.id, name: sandbox.name, status: sandbox.status },
+          ],
+          next: null,
+          total_count: 1,
+        });
+      if (path.endsWith('/series')) return reply(seriesFixture(url.searchParams.get('metric')));
+      return reply(report);
+    }
     if (request.method() !== 'GET')
       writes.push({
         path,
@@ -279,45 +295,45 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
   };
   await page.setViewport({ width: 1440, height: 1000 });
   await page.goto(`${base}/operations`, { waitUntil: 'networkidle0' });
-  await page.waitForSelector('.operator-table tbody tr');
+  await page.waitForSelector('[aria-label="Sandboxes and measured usage"] tbody tr');
   await assertLayout();
   await page.screenshot({ path: join(output, 'desktop-sandboxes.png'), fullPage: true });
   await page.focus('.operator-tabs [role="tab"][aria-selected="true"]');
   await page.keyboard.press('End');
   await page.waitForFunction(() => document.activeElement?.textContent === 'Activity');
   await page.keyboard.press('Home');
-  await page.waitForFunction(() => document.activeElement?.textContent === 'Sandboxes');
-  await page.waitForSelector('[aria-label="Details for Research environment"]');
-  await page.click('[aria-label="Details for Research environment"]');
-  await page.waitForSelector('.operator-drawer .operator-timeline li');
+  await page.waitForFunction(() => document.activeElement?.textContent === 'Sandboxes & usage');
+  await page.waitForSelector('[aria-label="Runtime details for Research environment"]');
+  await page.click('[aria-label="Runtime details for Research environment"]');
+  await page.waitForSelector('[role="dialog"] .operator-timeline li');
   assert.equal(
-    await page.$eval('.operator-drawer', (element) =>
+    await page.$eval('[role="dialog"]', (element) =>
       Math.round(element.getBoundingClientRect().width),
     ),
-    520,
+    700,
   );
   assert(
-    await page.$eval('.operator-drawer', (element) => element.contains(document.activeElement)),
+    await page.$eval('[role="dialog"]', (element) => element.contains(document.activeElement)),
   );
-  await page.$eval('.operator-drawer', (element) =>
+  await page.$eval('[role="dialog"]', (element) =>
     [...element.querySelectorAll('button:not(:disabled), a[href]')].at(-1).focus(),
   );
   await page.keyboard.press('Tab');
   assert.equal(
     await page.evaluate(() => document.activeElement?.getAttribute('aria-label')),
-    'Close details',
+    'Close',
   );
   await page.keyboard.down('Shift');
   await page.keyboard.press('Tab');
   await page.keyboard.up('Shift');
   assert(
-    await page.$eval('.operator-drawer', (element) => element.contains(document.activeElement)),
+    await page.$eval('[role="dialog"]', (element) => element.contains(document.activeElement)),
   );
   await page.screenshot({ path: join(output, 'desktop-drawer.png'), fullPage: true });
   await page.keyboard.press('Escape');
   assert.equal(
     await page.evaluate(() => document.activeElement?.getAttribute('aria-label')),
-    'Details for Research environment',
+    'Runtime details for Research environment',
   );
   await clickText('[role="tab"]', 'Platform settings');
   await page.waitForSelector('[aria-label="Pause after (seconds)"]');
@@ -351,7 +367,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
     revision: 3,
   });
   assert.equal(writes[1].body.settings.triggers.orchestration_paused, true);
-  for (const view of ['Sandboxes', 'Platform settings', 'Activity']) {
+  for (const view of ['Sandboxes & usage', 'Platform settings', 'Activity']) {
     await page.setViewport({ width: 390, height: 844 });
     await clickText('[role="tab"]', view);
     await page.waitForFunction(
@@ -370,16 +386,16 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
       await page.screenshot({ path: join(output, 'mobile-settings-limits.png'), fullPage: true });
     }
   }
-  await clickText('[role="tab"]', 'Sandboxes');
-  await page.waitForSelector('[aria-label="Details for Research environment"]');
-  await page.click('[aria-label="Details for Research environment"]');
+  await clickText('[role="tab"]', 'Sandboxes & usage');
+  await page.waitForSelector('[aria-label="Runtime details for Research environment"]');
+  await page.click('[aria-label="Runtime details for Research environment"]');
   await page.waitForSelector('.operator-timeline li');
   await assertLayout();
   assert.equal(
-    await page.$eval('.operator-drawer', (element) =>
+    await page.$eval('[role="dialog"]', (element) =>
       Math.round(element.getBoundingClientRect().width),
     ),
-    390,
+    358,
   );
   await page.screenshot({ path: join(output, 'mobile-drawer.png'), fullPage: true });
   await page.keyboard.press('Escape');
