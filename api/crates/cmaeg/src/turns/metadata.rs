@@ -1,7 +1,7 @@
 use crate::ingress::launch::LaunchRequest;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-pub(super) fn render(request: &LaunchRequest) -> BTreeMap<String, String> {
+pub(crate) fn render(request: &LaunchRequest) -> BTreeMap<String, String> {
     render_for_partition(
         request,
         &request

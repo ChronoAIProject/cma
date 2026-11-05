@@ -18,6 +18,7 @@ use std::{
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
+    pub github: Option<Arc<crate::github::Gateway>>,
     pub native_lark_controls_enabled: bool,
     pub native_lark_forms_enabled: bool,
     pub native_lark_intake_enabled: bool,
@@ -173,6 +174,7 @@ impl ManagementState {
             index.clone(),
         );
         Self {
+            github: None,
             activity: Arc::new(crate::activity::ActivityStore::new(
                 (*records).clone(),
                 config.master_keys.clone(),

@@ -297,6 +297,21 @@ pub enum ProblemCode {
     /// Wire value `internal`.
     #[serde(rename = "internal")]
     Internal,
+    /// Wire value `github_signature_invalid`.
+    #[serde(rename = "github_signature_invalid")]
+    GithubSignatureInvalid,
+    /// Wire value `github_installation_forbidden`.
+    #[serde(rename = "github_installation_forbidden")]
+    GithubInstallationForbidden,
+    /// Wire value `github_resource_not_found`.
+    #[serde(rename = "github_resource_not_found")]
+    GithubResourceNotFound,
+    /// Wire value `github_delivery_conflict`.
+    #[serde(rename = "github_delivery_conflict")]
+    GithubDeliveryConflict,
+    /// Wire value `github_source_unavailable`.
+    #[serde(rename = "github_source_unavailable")]
+    GithubSourceUnavailable,
     /// Wire value `attachment_not_found`.
     #[serde(rename = "attachment_not_found")]
     AttachmentNotFound,
