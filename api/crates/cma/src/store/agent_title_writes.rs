@@ -199,7 +199,13 @@ async fn apply_title(
             TitleMutation::User { .. } => Err(ApplyError::Domain(AgentTitleStoreError::NotFound)),
         };
     };
-    if state.stored.is_some() {
+    if state
+        .stored
+        .as_ref()
+        .is_some_and(|title| title.source != AgentTitleSource::Fallback)
+        || matches!(mutation, TitleMutation::User { .. }) && state.stored.is_some()
+        || matches!(mutation, TitleMutation::Automatic { claim, .. } if state.completed_by(claim))
+    {
         return Ok(TitleApply::Settled(match mutation {
             TitleMutation::Automatic { claim, .. } => {
                 TitleOutcome::Automatic(state.completed_by(claim))
@@ -236,8 +242,22 @@ async fn apply_title(
     );
     fields.extend(mutation.completion_fields());
     let mut filter = current_agent_filter(&current);
-    filter.insert(TITLE, Bson::Null);
-    filter.insert("record.title", Bson::Null);
+    filter.insert(
+        TITLE,
+        current
+            .title
+            .clone()
+            .map(Bson::String)
+            .unwrap_or(Bson::Null),
+    );
+    filter.insert(
+        "record.title",
+        current
+            .title
+            .clone()
+            .map(Bson::String)
+            .unwrap_or(Bson::Null),
+    );
     if let TitleMutation::Automatic { claim, .. } = mutation {
         filter.extend(lease_filter(claim));
     }

@@ -124,7 +124,10 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
         let items = raw
             .into_iter()
             .filter(|(_, agent)| {
-                agent.title.is_none()
+                agent
+                    .title
+                    .as_ref()
+                    .is_none_or(|title| title.source == AgentTitleSource::Fallback)
                     && AgentTitleTranscript::from_complete_log(&agent.logs).is_some()
             })
             .map(|(id, _)| id.clone())
@@ -156,10 +159,12 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
         let Some(agent) = state.agents.get_mut(request.agent_id()) else {
             return Ok(None);
         };
-        if agent.title.is_some() || AgentTitleTranscript::from_complete_log(&agent.logs).is_none() {
-            return Ok(None);
-        }
-        if agent.work.completed.is_some() {
+        if agent
+            .title
+            .as_ref()
+            .is_some_and(|title| title.source != AgentTitleSource::Fallback)
+            || AgentTitleTranscript::from_complete_log(&agent.logs).is_none()
+        {
             return Ok(None);
         }
         if let Some(lease) = agent.work.lease.as_ref() {
@@ -169,11 +174,7 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
             }
         }
 
-        let mode = if agent.work.attempted {
-            AgentTitleClaimMode::FallbackOnly
-        } else {
-            AgentTitleClaimMode::Generate
-        };
+        let mode = AgentTitleClaimMode::Generate;
         agent.work.attempted = true;
         let claim = AgentTitleClaim::acquired(request.clone(), mode, now, expires_at);
         agent.work.lease = Some(claim.clone());
@@ -198,7 +199,14 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
         let Some(agent) = state.agents.get_mut(claim.agent_id()) else {
             return Ok(false);
         };
-        if agent.title.is_some() {
+        if agent
+            .title
+            .as_ref()
+            .is_some_and(|title| title.source != AgentTitleSource::Fallback)
+            || agent.work.completed.as_ref().is_some_and(|completed| {
+                completed.holder == claim.holder() && completed.token == claim.token()
+            })
+        {
             let exact = agent.work.completed.as_ref().is_some_and(|completed| {
                 completed.holder == claim.holder() && completed.token == claim.token()
             });

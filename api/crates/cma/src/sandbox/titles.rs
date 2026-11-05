@@ -20,7 +20,7 @@ const RESPONSES_PATH: &str = "/v1/responses";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
-const MAX_OUTPUT_TOKENS: u32 = 32;
+const MAX_OUTPUT_TOKENS: u32 = 1024;
 
 /// One HTTP client bound to the model-proxy endpoint of a single sandbox.
 #[derive(Clone)]
@@ -127,6 +127,7 @@ impl HttpAgentTitleGenerator {
             stream: false,
             store: false,
             max_output_tokens: MAX_OUTPUT_TOKENS,
+            reasoning: TitleReasoning { effort: "low" },
         })
         .map_err(|_| AgentTitleGenerationError::unavailable())?;
         if body.len() > MAX_REQUEST_BYTES {
@@ -221,6 +222,12 @@ struct ResponsesRequest<'a> {
     stream: bool,
     store: bool,
     max_output_tokens: u32,
+    reasoning: TitleReasoning,
+}
+
+#[derive(Serialize)]
+struct TitleReasoning {
+    effort: &'static str,
 }
 
 #[derive(Serialize)]

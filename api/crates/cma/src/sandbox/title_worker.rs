@@ -3,7 +3,6 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use layer2_core::profiles::ModelAccess;
 use layer2_core::sandbox::store::{AgentLifecycleStore, Page, PageRequest};
 use layer2_core::sandbox::{
     Agent, AgentStatus, AgentTitleGenerationContext, AgentTitleGenerationError,
@@ -12,12 +11,9 @@ use layer2_core::sandbox::{
     AGENT_TITLE_CALL_TIMEOUT_SECONDS,
 };
 use layer2_core::{seconds_from_rfc3339, AgentId};
-use layer3_adapter::hosted::MODEL_PROXY_BASE_URL;
-use layer3_adapter::provider::{ProviderEndpoint, SandboxClient};
-use layer3_adapter::SandboxAdapter;
+use layer3_adapter::provider::ProviderEndpoint;
 
 use super::credential::{CredentialMaterial, SandboxCredentialController};
-use super::runtime_attachment::adopt_bound_runtime;
 use super::titles::HttpAgentTitleGenerator;
 use crate::auth::persistence::SecretValue;
 
@@ -33,36 +29,38 @@ pub(crate) struct TitleProxy {
     pub authorization: Option<SecretValue>,
 }
 
-pub(crate) struct ProviderTitleEndpoint {
-    pub adapter: Arc<dyn SandboxAdapter>,
-    pub client: SandboxClient,
-    pub deployment_id: String,
+/// Resolve the scoped model service independently of the Sandbox hosting provider.
+/// Native homes have no legacy provider port endpoint; title generation only
+/// needs the same scoped upstream and exact credential used by model discovery.
+pub(crate) struct PlatformTitleEndpoint {
+    pub platform_base_url: String,
 }
 
 #[async_trait::async_trait]
-impl TitleRuntimeEndpoint for ProviderTitleEndpoint {
+impl TitleRuntimeEndpoint for PlatformTitleEndpoint {
     async fn endpoint(&self, sandbox: &Sandbox) -> Option<TitleProxy> {
-        let handle = adopt_bound_runtime(self.adapter.as_ref(), sandbox, &self.deployment_id)
-            .await
-            .ok()?;
-        let port = reqwest::Url::parse(MODEL_PROXY_BASE_URL).ok()?.port()?;
-        let mut endpoint = self.client.endpoint(handle.as_str(), port).await.ok()?;
-        let configured = reqwest::Url::parse(self.client.base_url()).ok()?;
-        if !matches!(configured.scheme(), "http" | "https") {
+        let reaches = sandbox.credential.effective_reaches();
+        let service = ["chrono-llm-public", "chrono-llm"]
+            .into_iter()
+            .find(|name| reaches.iter().any(|scope| scope.as_str() == *name))?;
+        let mut endpoint = reqwest::Url::parse(&self.platform_base_url).ok()?;
+        if !matches!(endpoint.scheme(), "http" | "https")
+            || !endpoint.username().is_empty()
+            || endpoint.password().is_some()
+            || endpoint.query().is_some()
+            || endpoint.fragment().is_some()
+        {
             return None;
         }
-        if !endpoint.endpoint.contains("://") {
-            endpoint.endpoint = format!("{}://{}", configured.scheme(), endpoint.endpoint);
-        }
-        let mut normalized = reqwest::Url::parse(&endpoint.endpoint).ok()?;
-        if !matches!(normalized.scheme(), "http" | "https") {
-            return None;
-        }
-        normalized.set_scheme(configured.scheme()).ok()?;
-        endpoint.endpoint = normalized.into();
+        endpoint
+            .path_segments_mut()
+            .ok()?
+            .extend(["api", "v1", "proxy", "s", service]);
         Some(TitleProxy {
-            endpoint,
-            authorization: Some(SecretValue::new(self.client.auth_header().1.into())),
+            endpoint: ProviderEndpoint {
+                endpoint: endpoint.into(),
+            },
+            authorization: None,
         })
     }
 }
@@ -110,10 +108,6 @@ impl AgentTitleWorker {
         else {
             return Ok(AgentTitleOutcome::Skipped);
         };
-        if authority.sandbox.profile.content.model_access == ModelAccess::OwnCredentials {
-            // Own-account runtimes intentionally have no deployment model proxy.
-            return self.service.generate_agent_title(id, None, None).await;
-        }
         let Some(material) = tokio::time::timeout(PREPARE_TIMEOUT, self.material(&authority))
             .await
             .ok()
@@ -141,7 +135,6 @@ impl AgentTitleWorker {
         if agent.id != *id
             || agent.sandbox_id != sandbox.id
             || agent.owner != sandbox.owner
-            || agent.title.is_some()
             || agent.status == AgentStatus::Deleted
             || sandbox.status != SandboxStatus::Active
             || sandbox.lifecycle.operation.is_some()
@@ -151,6 +144,15 @@ impl AgentTitleWorker {
             })
             || !sandbox.credential.validate()
             || !sandbox.credential.delivered
+        {
+            return None;
+        }
+        if self
+            .service
+            .title(id)
+            .await
+            .ok()?
+            .is_some_and(|title| title.source != layer2_core::sandbox::AgentTitleSource::Fallback)
         {
             return None;
         }
