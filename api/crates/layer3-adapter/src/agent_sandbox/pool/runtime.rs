@@ -140,6 +140,7 @@ impl AgentSandboxPools {
             super::super::SPEC_ANNOTATION.into(),
             crate::provider_request_digest(&spec)?,
         );
+        super::super::funding::apply(&mut spec, request.funded_until)?;
         serde_json::from_value(json!({"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox",
             "metadata":{"name":name,"namespace":self.config.namespace,
                 "labels":{OWNER_LABEL:self.config.deployment},"annotations":annotations},"spec":spec}))

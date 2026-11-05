@@ -227,3 +227,18 @@ pub(super) fn operation_id(sandbox: &Sandbox, action: &str) -> Result<String, Sa
         .ok_or_else(|| SandboxStoreError::Corrupt("lifecycle authority is absent".into()))?;
     Ok(format!("{}:{action}", authority.operation_id))
 }
+
+pub(super) fn replacement_runtime_version(sandbox: &Sandbox, deployed: &str) -> String {
+    sandbox
+        .admitted_runtime_update_target()
+        .map(str::to_owned)
+        .or_else(|| {
+            sandbox
+                .lifecycle
+                .suspended_runtime
+                .as_ref()
+                .map(|binding| binding.runtime_version.clone())
+        })
+        .or_else(|| sandbox.profile.content.runtime_image.clone())
+        .unwrap_or_else(|| deployed.to_owned())
+}

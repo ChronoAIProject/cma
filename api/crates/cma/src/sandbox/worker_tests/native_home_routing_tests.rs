@@ -128,6 +128,7 @@ async fn native_claim_recovery_and_cleanup_refuse_legacy_or_unknown_cluster_befo
     let pools = pools(&harness, &[]);
     let adapter = adapter(&harness, local.clone(), pools.clone());
     let runtime = RuntimeProvisionRequest {
+        funded_until: None,
         generation: 1,
         spec: SandboxSpec {
             sandbox_id: local.home.request.sandbox_id.clone(),
