@@ -24,6 +24,7 @@ use super::problems::{no_store, problem, protocol_headers};
 
 pub fn management_router(state: ManagementState) -> Router {
     Router::new()
+        .merge(crate::github::http::routes())
         .route(
             "/v1/channels/{channel_id}/partition",
             get(super::partitions::inspect),
