@@ -5,6 +5,9 @@ use layer3_adapter::{RuntimeOutputReceipt, RuntimeOutputSource};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
+#[path = "reopen_contention_tests.rs"]
+mod contention;
+
 struct Recorder {
     entered: Notify,
     release: Notify,
