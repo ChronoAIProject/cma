@@ -15,6 +15,15 @@ pub(super) async fn window(
         .reads
         .event_stream_window(authorization, after, through, limit)
         .await?;
+    bind_window(state, authorization, window, message_bindings).await
+}
+
+pub(super) async fn bind_window(
+    state: &AgentV2State,
+    authorization: &AgentEventStreamAuthorization,
+    window: AgentReplayWindow,
+    message_bindings: bool,
+) -> Result<AgentReplayWindow, Error> {
     // The core read already fenced current authority after checking the tail.
     // With no entries there is no command correlation IO to authorize again.
     // Live and durable frames retain their separate release-time checks.

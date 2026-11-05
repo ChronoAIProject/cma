@@ -45,6 +45,7 @@ pub(crate) enum InstanceProblem {
     CheckpointInProgress,
     DeliveryAmbiguous,
     ResourcesUnsupported,
+    HistoryPaginationRequired,
     Unavailable,
 }
 
@@ -110,6 +111,7 @@ impl From<AgentReadError> for InstanceProblem {
             AgentReadError::Forbidden => Self::Forbidden,
             AgentReadError::NotFound => Self::AgentNotFound,
             AgentReadError::InvalidPage => Self::InvalidQuery,
+            AgentReadError::PaginationRequired => Self::HistoryPaginationRequired,
             AgentReadError::CapabilityUnsupported { capability } => {
                 Self::CapabilityUnsupported { capability }
             }
@@ -288,6 +290,12 @@ impl IntoResponse for InstanceProblem {
                 "agent-delivery-ambiguous",
                 "The operation outcome is ambiguous and requires durable reconciliation.",
                 "agent_delivery_ambiguous",
+            ),
+            Self::HistoryPaginationRequired => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "history-pagination-required",
+                "Use the Agent v2 snapshot/events API to read the complete retained history in bounded pages.",
+                "history_pagination_required",
             ),
             Self::ResourcesUnsupported => (
                 StatusCode::UNPROCESSABLE_ENTITY,

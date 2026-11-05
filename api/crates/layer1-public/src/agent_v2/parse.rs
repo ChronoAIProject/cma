@@ -21,7 +21,24 @@ pub(super) fn head(raw: Option<String>) -> Result<(), Error> {
     query(raw, &[]).map(|_| ())
 }
 pub(super) fn snapshot(raw: Option<String>) -> Result<(u16, Option<String>), Error> {
-    let mut query = query(raw, &["limit", "page_cursor"])?;
+    page_query(raw, "page_cursor")
+}
+pub(super) fn history(raw: Option<String>) -> Result<(u16, Option<String>), Error> {
+    page_query(raw, "through_cursor")
+}
+pub(super) fn current_state(
+    raw: Option<String>,
+) -> Result<(Option<String>, Option<String>), Error> {
+    let mut query = query(raw, &["through_cursor", "after_approval_cursor"])?;
+    let through = query.remove("through_cursor");
+    let after = query.remove("after_approval_cursor");
+    if after.is_some() && through.is_none() {
+        return Err(Error::Query);
+    }
+    Ok((through, after))
+}
+fn page_query(raw: Option<String>, cursor: &str) -> Result<(u16, Option<String>), Error> {
+    let mut query = query(raw, &["limit", cursor])?;
     let limit = match query.remove("limit") {
         None => 100,
         Some(value) => value
@@ -31,7 +48,7 @@ pub(super) fn snapshot(raw: Option<String>) -> Result<(u16, Option<String>), Err
             .filter(|n| n.to_string() == value)
             .ok_or(Error::Query)?,
     };
-    Ok((limit, query.remove("page_cursor")))
+    Ok((limit, query.remove(cursor)))
 }
 pub(super) fn tail(
     raw: Option<String>,
