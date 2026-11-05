@@ -178,6 +178,28 @@ pub fn observe(
     at: &str,
     checkpoint: bool,
 ) -> Result<Option<(SandboxUsage, UsageEvent)>, UsageError> {
+    observe_inner(previous, sandbox, source_seq, at, checkpoint, false)
+}
+
+/// Close observed zero-allocation time only while a funded window needs proof.
+/// Callers must use an actual observation time, never a projected future cutoff.
+pub fn observe_funded_checkpoint(
+    previous: Option<&SandboxUsage>,
+    sandbox: &Sandbox,
+    source_seq: u64,
+    at: &str,
+) -> Result<Option<(SandboxUsage, UsageEvent)>, UsageError> {
+    observe_inner(previous, sandbox, source_seq, at, true, true)
+}
+
+fn observe_inner(
+    previous: Option<&SandboxUsage>,
+    sandbox: &Sandbox,
+    source_seq: u64,
+    at: &str,
+    checkpoint: bool,
+    include_zero: bool,
+) -> Result<Option<(SandboxUsage, UsageEvent)>, UsageError> {
     let observed = timestamp(at)?;
     let created_at = timestamp(&sandbox.created_at)?;
     let allocation = Allocation::from_sandbox(sandbox);
@@ -247,7 +269,7 @@ pub fn observe(
         && !source_advanced
         && (!checkpoint
             || ended_at == previous.last_observed_at
-            || previous.allocation == Allocation::default())
+            || (!include_zero && previous.allocation == Allocation::default()))
     {
         return Ok(None);
     }
