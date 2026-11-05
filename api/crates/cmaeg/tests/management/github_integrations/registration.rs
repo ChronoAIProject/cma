@@ -85,7 +85,7 @@ async fn old_schema_waits_for_startup_authority_then_upgrades_without_a_migratio
         )
         .await
         .unwrap();
-    let outdated = fixture.replica().await;
+    let outdated = fixture.replica_with_flag(Some(true)).await;
     let capabilities = fixture
         .read(&outdated, "/v1/github/capabilities", "token-alice")
         .await

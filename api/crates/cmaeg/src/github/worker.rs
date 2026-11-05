@@ -30,9 +30,24 @@ pub(crate) struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn start(gateway: Arc<Gateway>) -> Self {
+    pub(crate) fn start(
+        state: crate::channels::management::ManagementState,
+        ingress: crate::ingress::IngressState,
+    ) -> Self {
         let (stop, mut stopped) = watch::channel(false);
         let task = tokio::spawn(async move {
+            let gateway = tokio::select! {
+                gateway = Gateway::from_records(&state.records, state.master_keys.clone()) => gateway,
+                _ = stopped.changed() => None,
+            };
+            let Some(mut gateway) = gateway else { return };
+            gateway.attach_providers(state.providers.clone());
+            gateway.attach_ingress(Arc::new(ingress));
+            gateway.attach_activity(state.activity.clone());
+            let gateway = Arc::new(gateway);
+            if state.github.set(gateway.clone()).is_err() || !gateway.config.has_routes() {
+                return;
+            }
             let mut interval =
                 tokio::time::interval(std::time::Duration::from_secs(POLL_INTERVAL_SECONDS));
             loop {

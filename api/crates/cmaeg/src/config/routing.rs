@@ -243,6 +243,11 @@ pub(super) fn discord_received_reactions() -> Result<bool, super::ConfigError> {
     write_flag("CMAEG_NATIVE_DISCORD_RECEIVED_REACTIONS_ENABLED")
 }
 
+/// The GitHub write flag, shared by the server and the offline importer.
+pub(crate) fn github_writes_enabled() -> Result<bool, super::ConfigError> {
+    write_flag("CMAEG_GITHUB_ENABLED")
+}
+
 /// Reader-first authoring gate; an unset value never enables a new stored shape.
 pub(super) fn write_flag(name: &str) -> Result<bool, super::ConfigError> {
     match std::env::var(name).as_deref() {
