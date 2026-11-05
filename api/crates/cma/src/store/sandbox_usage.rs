@@ -2,7 +2,9 @@
 
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Sandbox, SandboxEvent};
-use layer2_core::sandbox_usage::{observe, rebaseline, SandboxUsage, UsageEvent};
+use layer2_core::sandbox_usage::{
+    observe, observe_funded_checkpoint, rebaseline, SandboxUsage, UsageEvent,
+};
 use mongodb::{
     bson::{doc, Document},
     ClientSession, IndexModel,
@@ -137,9 +139,25 @@ pub(super) async fn lifecycle_event(
             event.seq.saturating_sub(1),
             expected_revision.unwrap_or(sandbox.revision),
         ),
-        false,
+        UsageObservation::Lifecycle,
     )
     .await
+}
+
+pub(super) enum UsageObservation {
+    Lifecycle,
+    Checkpoint,
+    FundedCheckpoint,
+}
+
+impl From<bool> for UsageObservation {
+    fn from(checkpoint: bool) -> Self {
+        if checkpoint {
+            Self::Checkpoint
+        } else {
+            Self::Lifecycle
+        }
+    }
 }
 
 pub(super) async fn record(
@@ -149,7 +167,7 @@ pub(super) async fn record(
     source_seq: u64,
     at: &str,
     expected_source: (u64, u64),
-    checkpoint: bool,
+    mode: impl Into<UsageObservation>,
 ) -> Result<(), TransactionEventError> {
     let current = store
         .sandbox_usage
@@ -169,7 +187,18 @@ pub(super) async fn record(
         Some(previous) if (previous.source_seq, previous.source_revision) != expected_source => {
             rebaseline(previous, sandbox, source_seq, at)
         }
-        _ => observe(previous.as_ref(), sandbox, source_seq, at, checkpoint),
+        _ => match mode.into() {
+            UsageObservation::FundedCheckpoint => {
+                observe_funded_checkpoint(previous.as_ref(), sandbox, source_seq, at)
+            }
+            mode => observe(
+                previous.as_ref(),
+                sandbox,
+                source_seq,
+                at,
+                matches!(mode, UsageObservation::Checkpoint),
+            ),
+        },
     }
     .map_err(|error| {
         TransactionEventError::Domain(SandboxStoreError::Corrupt(error.to_string()))

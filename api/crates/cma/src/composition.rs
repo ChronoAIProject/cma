@@ -257,6 +257,7 @@ impl ControlPlaneComposition {
                 operations: projections.operations(),
                 policy: sandbox_policy.clone(),
                 skills: agent_skills,
+                funding: runtime::funding(config, &stores, adapter.clone())?,
             },
             SandboxLifecycleConfig {
                 ownership: agent_manager

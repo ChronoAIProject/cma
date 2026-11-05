@@ -10,6 +10,7 @@ use layer2_core::{rfc3339_at, SandboxId};
 use layer3_adapter::{RuntimeHandle, SandboxAdapter};
 
 use super::credential::SandboxCredentialController;
+use super::funding::SandboxFundingAdapter;
 use super::live_agents::LiveAgentRegistry;
 
 #[cfg(test)]
@@ -144,13 +145,28 @@ impl SandboxWorkerConfig {
 pub(crate) struct SandboxWorker {
     dependencies: SandboxWorkerDependencies,
     config: SandboxWorkerConfig,
+    funding: Arc<dyn SandboxFundingAdapter>,
 }
 
 impl SandboxWorker {
+    #[cfg(test)]
     pub fn new(dependencies: SandboxWorkerDependencies, config: SandboxWorkerConfig) -> Arc<Self> {
+        Self::new_with_funding(
+            dependencies,
+            config,
+            Arc::new(super::funding::NoopFundingAdapter),
+        )
+    }
+
+    pub fn new_with_funding(
+        dependencies: SandboxWorkerDependencies,
+        config: SandboxWorkerConfig,
+        funding: Arc<dyn SandboxFundingAdapter>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             dependencies,
             config,
+            funding,
         })
     }
 
