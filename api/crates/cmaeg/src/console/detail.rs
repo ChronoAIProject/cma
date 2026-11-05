@@ -293,6 +293,31 @@ fn source_view(source: &Source) -> SourceView {
                 settings,
             }
         }
+        Source::Github {
+            app_ref,
+            installation_ids,
+            repository_ids,
+            deny_repository_ids,
+            events,
+            actions,
+            prompt_template,
+        } => SourceView {
+            id,
+            kind: "github",
+            platform: Some("github"),
+            route_count: Some(repository_ids.len()),
+            bot_username: None,
+            bot_id: None,
+            admission: None,
+            auth: "GitHub App installation binding".into(),
+            key_ids: Vec::new(),
+            settings: vec![
+                format!("App {app_ref}; {} installation(s)", installation_ids.len()),
+                format!("{} repository allowlist item(s), {} deny item(s)", repository_ids.len(), deny_repository_ids.len()),
+                format!("Events: {}; actions: {}", events.join(","), actions.join(",")),
+                if prompt_template.is_some() { "prompt template".into() } else { "default event rendering".into() },
+            ],
+        },
     }
 }
 

@@ -3,7 +3,11 @@ use crate::ingress::routing_store::{
     AdmissionError, AdmittedPlan, EventIdentity, PlanStore, RecoveryPage,
 };
 use futures_util::future::BoxFuture;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     sync::{mpsc, watch},
     task::{Id, JoinSet},
@@ -39,6 +43,9 @@ pub struct WorkItem {
 impl WorkItem {
     fn key(&self) -> (String, String) {
         (self.identity.admission_id(), self.target_id.clone())
+    }
+    fn serial_key(&self) -> (String, String) {
+        (self.identity.record_id.to_string(), self.target_id.clone())
     }
 }
 
@@ -139,6 +146,14 @@ pub struct ScheduleReport {
     pub aborted: usize,
     pub recovery_failed: bool,
 }
+
+#[derive(Default)]
+struct Pending {
+    items: VecDeque<WorkItem>,
+    keys: HashSet<(String, String)>,
+    cooldown: HashMap<(String, String), Instant>,
+}
+
 impl Scheduler {
     pub fn new(
         source: Arc<dyn RecoverySource>,
@@ -187,7 +202,7 @@ impl Scheduler {
         )));
         let mut tasks = JoinSet::new();
         let mut active = HashMap::<Id, WorkItem>::new();
-        let mut cooldown = HashMap::<(String, String), Instant>::new();
+        let mut pending = Pending::default();
         let mut scan_finished = false;
         loop {
             tokio::select! {
@@ -207,23 +222,53 @@ impl Scheduler {
                             Err(error) => (error.id(), Disposition::Retry(self.config.sweep_delay)),
                         };
                         if let Some(work) = active.remove(&id) {
-                            remember(&mut cooldown, work.key(), disposition, self.config.queue_capacity);
+                            remember(
+                                &mut pending.cooldown,
+                                work.key(),
+                                disposition,
+                                self.config.queue_capacity,
+                            );
                         }
                         report.finished += 1;
+                        start_pending(
+                            &mut pending,
+                            &mut active,
+                            &mut tasks,
+                            &self.executor,
+                            self.config,
+                            &mut report,
+                        );
                     }
                 }
                 work = self.receiver.recv(), if tasks.len() < self.config.concurrency => {
                     let Some(work) = work else { break; };
                     let key = work.key();
                     if active.values().any(|item| item.key() == key)
-                        || cooldown.get(&key).is_some_and(|until| *until > Instant::now()) {
+                        || pending.keys.contains(&key)
+                        || pending
+                            .cooldown
+                            .get(&key)
+                            .is_some_and(|until| *until > Instant::now())
+                    {
                         continue;
                     }
-                    let executor = self.executor.clone();
-                    let running = work.clone();
-                    let task = tasks.spawn(async move { executor.execute(&running).await });
-                    active.insert(task.id(), work);
-                    report.started += 1;
+                    if active
+                        .values()
+                        .any(|item| item.serial_key() == work.serial_key())
+                    {
+                        if pending.items.len() < self.config.queue_capacity {
+                            pending.keys.insert(key);
+                            pending.items.push_back(work);
+                        }
+                    } else {
+                        spawn_work(
+                            work,
+                            &mut active,
+                            &mut tasks,
+                            &self.executor,
+                            &mut report,
+                        );
+                    }
                 }
             }
         }
@@ -250,6 +295,54 @@ impl Scheduler {
         }
         report
     }
+}
+
+fn start_pending(
+    pending: &mut Pending,
+    active: &mut HashMap<Id, WorkItem>,
+    tasks: &mut JoinSet<Disposition>,
+    executor: &Arc<dyn TargetExecutor>,
+    config: ScheduleConfig,
+    report: &mut ScheduleReport,
+) {
+    let mut deferred = VecDeque::new();
+    while tasks.len() < config.concurrency {
+        let Some(work) = pending.items.pop_front() else {
+            break;
+        };
+        pending.keys.remove(&work.key());
+        if pending
+            .cooldown
+            .get(&work.key())
+            .is_some_and(|until| *until > Instant::now())
+        {
+            continue;
+        }
+        if active
+            .values()
+            .any(|item| item.serial_key() == work.serial_key())
+        {
+            pending.keys.insert(work.key());
+            deferred.push_back(work);
+            continue;
+        }
+        spawn_work(work, active, tasks, executor, report);
+    }
+    pending.items.extend(deferred);
+}
+
+fn spawn_work(
+    work: WorkItem,
+    active: &mut HashMap<Id, WorkItem>,
+    tasks: &mut JoinSet<Disposition>,
+    executor: &Arc<dyn TargetExecutor>,
+    report: &mut ScheduleReport,
+) {
+    let running = work.clone();
+    let executor = executor.clone();
+    let task = tasks.spawn(async move { executor.execute(&running).await });
+    active.insert(task.id(), work);
+    report.started += 1;
 }
 
 /// Aborting the outer service must also stop its otherwise detached scanner.
