@@ -75,7 +75,6 @@ impl StoredClaim {
 }
 
 pub(super) struct TitleState {
-    pub(super) attempted: bool,
     pub(super) lease: Option<StoredClaim>,
     pub(super) stored: Option<StoredAgentTitle>,
     pub(super) completed_claim: Option<StoredClaim>,
@@ -176,7 +175,9 @@ pub(super) fn read_title_state(
                 .transpose()?
                 .unwrap_or(AgentTitleSource::User);
             let set_at = set_at.unwrap_or_else(|| agent.created_at.clone());
-            if seconds_from_rfc3339(&set_at).is_none() || lease.is_some() {
+            if seconds_from_rfc3339(&set_at).is_none()
+                || (lease.is_some() && source != AgentTitleSource::Fallback)
+            {
                 return corrupt();
             }
             match source {
@@ -209,7 +210,6 @@ pub(super) fn read_title_state(
         _ => None,
     };
     Ok(TitleState {
-        attempted,
         lease,
         stored,
         completed_claim,

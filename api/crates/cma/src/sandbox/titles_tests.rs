@@ -8,8 +8,8 @@ use axum::routing::post;
 use axum::{Json, Router};
 use layer2_core::sandbox::{
     AgentLogKind, AgentTitleGenerationContext, AgentTitleOutcome, AgentTitleService,
-    AgentTitleSource, InMemoryAgentTitleStore, StoredAgentTitle, AGENT_TITLE_FALLBACK_SCALARS,
-    AGENT_TITLE_MAX_SCALARS, AGENT_TITLE_SYSTEM_PROMPT,
+    AgentTitleServiceError, AgentTitleSource, InMemoryAgentTitleStore, StoredAgentTitle,
+    AGENT_TITLE_FALLBACK_SCALARS, AGENT_TITLE_MAX_SCALARS, AGENT_TITLE_SYSTEM_PROMPT,
 };
 use layer2_core::AgentId;
 
@@ -62,7 +62,10 @@ async fn generate_title(
     bearer: &str,
     owner: &str,
     assistant: &str,
-) -> (AgentTitleOutcome, StoredAgentTitle) {
+) -> (
+    Result<AgentTitleOutcome, AgentTitleServiceError>,
+    Option<StoredAgentTitle>,
+) {
     let id = AgentId("agt_http_title_fixture".into());
     let store = Arc::new(InMemoryAgentTitleStore::default());
     store.register_agent(id.clone()).expect("agent registers");
@@ -88,13 +91,8 @@ async fn generate_title(
     let context = AgentTitleGenerationContext::new(model, bearer).expect("context builds");
     let outcome = service
         .generate_agent_title(&id, Some(&context), Some(generator))
-        .await
-        .expect("title settles");
-    let stored = service
-        .title(&id)
-        .await
-        .expect("title reads")
-        .expect("title is settled");
+        .await;
+    let stored = service.title(&id).await.expect("title reads");
     (outcome, stored)
 }
 
@@ -126,7 +124,8 @@ async fn sandbox_proxy_uses_deployment_model_prompt_roles_and_scoped_bearer() {
     )
     .await;
 
-    assert_eq!(outcome, AgentTitleOutcome::Generated);
+    assert_eq!(outcome, Ok(AgentTitleOutcome::Generated));
+    let stored = stored.expect("generated title is persisted");
     assert_eq!(stored.source, AgentTitleSource::Generated);
     assert_eq!(stored.title.as_str(), "Durable Proxy Title");
     assert!(stored.title.as_str().chars().count() <= AGENT_TITLE_MAX_SCALARS);
@@ -153,6 +152,7 @@ async fn sandbox_proxy_uses_deployment_model_prompt_roles_and_scoped_bearer() {
     assert_eq!(body["stream"], false);
     assert_eq!(body["store"], false);
     assert_eq!(body["max_output_tokens"], MAX_OUTPUT_TOKENS);
+    assert_eq!(body["reasoning"]["effort"], "low");
     assert_eq!(body["input"][0]["role"], "user");
     assert_eq!(
         body["input"][0]["content"],
@@ -167,7 +167,7 @@ async fn sandbox_proxy_uses_deployment_model_prompt_roles_and_scoped_bearer() {
 }
 
 #[tokio::test]
-async fn mismatched_request_model_falls_back_without_contacting_proxy() {
+async fn mismatched_request_model_defers_without_contacting_proxy() {
     let calls = Arc::new(AtomicUsize::new(0));
     async fn counted_success(State(calls): State<Arc<AtomicUsize>>) -> Json<serde_json::Value> {
         calls.fetch_add(1, Ordering::SeqCst);
@@ -196,14 +196,13 @@ async fn mismatched_request_model_falls_back_without_contacting_proxy() {
     .await;
 
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert_eq!(outcome, AgentTitleOutcome::Fallback);
-    assert_eq!(stored.source, AgentTitleSource::Fallback);
-    assert_eq!(stored.title.as_str(), "model-bound fallback");
+    assert_eq!(outcome, Err(AgentTitleServiceError::GenerationUnavailable));
+    assert!(stored.is_none());
     server.abort();
 }
 
 #[tokio::test]
-async fn model_failures_retry_once_then_use_first_48_owner_characters() {
+async fn model_failures_retry_once_then_defer_without_committing_the_prompt() {
     let calls = Arc::new(AtomicUsize::new(0));
     async fn unavailable(State(calls): State<Arc<AtomicUsize>>) -> Response {
         calls.fetch_add(1, Ordering::SeqCst);
@@ -234,13 +233,8 @@ async fn model_failures_retry_once_then_use_first_48_owner_characters() {
         generate_title(&generator, "deployment-model", BEARER, &owner, "answer").await;
 
     assert_eq!(calls.load(Ordering::SeqCst), 2);
-    assert_eq!(outcome, AgentTitleOutcome::Fallback);
-    assert_eq!(stored.source, AgentTitleSource::Fallback);
-    assert_eq!(
-        stored.title.as_str(),
-        "f".repeat(AGENT_TITLE_FALLBACK_SCALARS)
-    );
-    assert!(!stored.title.as_str().contains("private"));
+    assert_eq!(outcome, Err(AgentTitleServiceError::GenerationUnavailable));
+    assert!(stored.is_none());
     server.abort();
 }
 
@@ -268,7 +262,7 @@ fn standard_response_shapes_are_parsed_and_malformed_shapes_are_refused() {
 }
 
 #[tokio::test]
-async fn malformed_oversized_non_success_timeout_and_redirect_fail_to_fallback() {
+async fn malformed_oversized_non_success_timeout_and_redirect_defer_generation() {
     async fn malformed() -> Response {
         ([(header::CONTENT_TYPE, "application/json")], "not-json").into_response()
     }
@@ -296,8 +290,8 @@ async fn malformed_oversized_non_success_timeout_and_redirect_fail_to_fallback()
         );
         let (outcome, stored) =
             generate_title(&generator, "deployment-model", BEARER, "fallback", "answer").await;
-        assert_eq!(outcome, AgentTitleOutcome::Fallback);
-        assert_eq!(stored.title.as_str(), "fallback");
+        assert_eq!(outcome, Err(AgentTitleServiceError::GenerationUnavailable));
+        assert!(stored.is_none());
         server.abort();
     }
 
@@ -312,7 +306,7 @@ async fn malformed_oversized_non_success_timeout_and_redirect_fail_to_fallback()
         generate_title(&generator, "deployment-model", BEARER, "timeout", "answer")
             .await
             .0,
-        AgentTitleOutcome::Fallback
+        Err(AgentTitleServiceError::GenerationUnavailable)
     );
     server.abort();
 
@@ -340,7 +334,7 @@ async fn malformed_oversized_non_success_timeout_and_redirect_fail_to_fallback()
         generate_title(&generator, "deployment-model", BEARER, "redirect", "answer")
             .await
             .0,
-        AgentTitleOutcome::Fallback
+        Err(AgentTitleServiceError::GenerationUnavailable)
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     server.abort();
@@ -384,9 +378,8 @@ async fn reflected_sandbox_bearer_is_never_accepted_as_title_content() {
             "answer",
         )
         .await;
-        assert_eq!(outcome, AgentTitleOutcome::Fallback);
-        assert_eq!(stored.title.as_str(), "credential safe fallback");
-        assert!(!stored.title.as_str().contains(bearer));
+        assert_eq!(outcome, Err(AgentTitleServiceError::GenerationUnavailable));
+        assert!(stored.is_none());
         server.abort();
     }
 }
@@ -466,7 +459,7 @@ async fn provider_routing_authority_is_sensitive_and_never_becomes_a_title() {
         "answer",
     )
     .await;
-    assert_eq!(outcome, AgentTitleOutcome::Fallback);
-    assert_eq!(stored.title.as_str(), "Safe routing fallback");
+    assert_eq!(outcome, Err(AgentTitleServiceError::GenerationUnavailable));
+    assert!(stored.is_none());
     server.abort();
 }
