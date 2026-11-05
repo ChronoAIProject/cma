@@ -266,3 +266,55 @@ async fn sandbox_saves_and_desktop_sessions_preserve_neutral_snapshots() {
     }
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
+async fn measured_usage_visibility_off_on_off_preserves_predecessor_settings() {
+    let (client, name) = database().await;
+    let store = MongoPlatformSettingsStore::open(&client, &name)
+        .await
+        .unwrap();
+    let collection = client.database(&name).collection::<Document>(SETTINGS);
+    let initial = store.read().await.unwrap();
+    assert_eq!(initial.revision, 0);
+    assert!(!initial.settings.usage_reporting.measured_visible);
+    let mut settings = initial.settings;
+    for (revision, visible) in [(0, false), (1, true), (2, false)] {
+        settings.usage_reporting.measured_visible = visible;
+        let stored = store.replace(revision, &settings).await.unwrap();
+        assert_eq!(stored.revision, revision + 1);
+        assert_eq!(store.read().await.unwrap(), stored);
+        assert!(store.replace(revision, &settings).await.is_err());
+        let raw = collection
+            .find_one(doc! {"_id": "platform"})
+            .await
+            .unwrap()
+            .unwrap();
+        let saved = raw.get_document("settings").unwrap();
+        if visible {
+            assert_eq!(
+                saved.get_document("usage_reporting").unwrap(),
+                &doc! {"measured_visible": true}
+            );
+            assert!(
+                deserialize_from_document::<PredecessorPlatformSettings>(saved.clone()).is_err()
+            );
+        } else {
+            assert!(!saved.contains_key("usage_reporting"));
+            assert_predecessor_settings(&raw, &settings);
+        }
+    }
+    client.database(&name).drop().await.unwrap();
+}
+
+#[test]
+fn strict_predecessor_rejects_even_an_explicit_disabled_usage_section() {
+    let mut saved = serialize_to_document(&PlatformSettings::default()).unwrap();
+    assert!(!saved.contains_key("usage_reporting"));
+    for visible in [false, true] {
+        saved.insert("usage_reporting", doc! {"measured_visible": visible});
+        assert!(deserialize_from_document::<PredecessorPlatformSettings>(saved.clone()).is_err());
+        let current = deserialize_from_document::<PlatformSettings>(saved.clone()).unwrap();
+        assert_eq!(current.usage_reporting.measured_visible, visible);
+    }
+}

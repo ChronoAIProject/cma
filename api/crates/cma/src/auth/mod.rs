@@ -43,6 +43,7 @@ mod signup_options;
 pub(crate) mod test_resources;
 mod token;
 mod tokens;
+mod usage_reporting;
 mod verification_error;
 mod worker_credentials;
 
@@ -98,6 +99,7 @@ impl std::fmt::Debug for AuthMode {
 }
 
 pub struct AuthState {
+    platform_settings: Option<Arc<layer2_core::PlatformSettingsService>>,
     bot_father_username: Option<String>,
     agent_key_service_id: Option<String>,
     resource_request_enabled: bool,
@@ -165,6 +167,7 @@ impl AuthState {
             AuthMode::Trusted { .. } => vec![],
         };
         Arc::new(Self {
+            platform_settings: None,
             bot_father_username: None,
             bindings: None,
             agent_key_service_id: None,
