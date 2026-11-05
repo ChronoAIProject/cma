@@ -10,12 +10,13 @@ COPY sdk/typescript/src/ /build/sdk/typescript/src/
 # Public Event Gateway documentation shares the backend's canonical sources.
 COPY docs/CMAEG_Integration.md docs/CMAEG_Architecture.md docs/CMAEG_Protocol.md /build/docs/
 COPY api/crates/cmaeg/assets/docs/ /build/api/crates/cmaeg/assets/docs/
-# Which build the status band names (docs/Web_Style.md section 6). Baked into
-# the bundle here because that is the only moment the answer is knowable and
-# cannot later disagree with the code. The publisher passes the release
-# version; a plain `docker build` leaves the honest default.
+# Every image is a promotable artifact; local Vite builds remain explicitly local.
+# The bundle and final OCI metadata receive identical immutable inputs.
 ARG CHRONO_BUILD=dev
-ENV CHRONO_BUILD=$CHRONO_BUILD
+ARG CHRONO_BUILD_SHA=development
+ENV CHRONO_BUILD=$CHRONO_BUILD \
+    CHRONO_BUILD_SHA=$CHRONO_BUILD_SHA \
+    CHRONO_BUILD_ARTIFACT=promotable
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
