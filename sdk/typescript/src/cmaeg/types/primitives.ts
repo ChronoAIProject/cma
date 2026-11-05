@@ -165,6 +165,11 @@ export const ProblemCodeSchema = enumeration(
   'payload_too_large',
   'unsupported_media_type',
   'internal',
+  'github_signature_invalid',
+  'github_installation_forbidden',
+  'github_resource_not_found',
+  'github_delivery_conflict',
+  'github_source_unavailable',
   'attachment_not_found',
   'media_unavailable',
 );

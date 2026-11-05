@@ -238,8 +238,11 @@ async fn introspect(
     assert_eq!(form["client_id"], "gateway-management");
     assert_eq!(form["client_secret"], "gateway-management-fixture");
     let subject = match form.get("token").map(String::as_str) {
-        Some("token-alice") => "alice",
-        Some("token-bob") => "bob",
+        Some("token-alice" | "token-alice-manager") => "alice".to_owned(),
+        Some("token-bob") => "bob".to_owned(),
+        Some(token) if state.oauth.subject_of(token).is_some() => {
+            state.oauth.subject_of(token).unwrap()
+        }
         _ => return Json(serde_json::json!({"active":false})),
     };
     let expiry = std::time::SystemTime::now()
@@ -250,6 +253,8 @@ async fn introspect(
     Json(
         serde_json::json!({"active":true,"sub":subject,"iss":state.issuer,"exp":expiry,
         "token_type":"access","resource":[format!("{}/api/v1/proxy/s/cma-event-gateway",state.issuer)],
-        "permissions":["cma-eg:admin"]}),
+        "permissions":if form.get("token").map(String::as_str) == Some("token-alice-manager") {
+            vec!["cma-eg:channels:read", "cma-eg:channels:create", "cma-eg:channels:update"]
+        } else { vec!["cma-eg:admin"] }}),
     )
 }

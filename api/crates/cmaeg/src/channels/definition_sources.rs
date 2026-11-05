@@ -112,6 +112,23 @@ pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, Va
                 conversation_history: *conversation_history,
                 admission: admission.clone(),
             },
+            SourceRequest::Github {
+                app_ref,
+                installation_ids,
+                repository_ids,
+                deny_repository_ids,
+                events,
+                actions,
+                prompt_template,
+            } => Source::Github {
+                app_ref: app_ref.clone(),
+                installation_ids: installation_ids.clone(),
+                repository_ids: repository_ids.clone(),
+                deny_repository_ids: deny_repository_ids.clone(),
+                events: events.clone(),
+                actions: actions.clone(),
+                prompt_template: prompt_template.clone(),
+            },
             SourceRequest::NyxidRelay {
                 issuer,
                 key_id,

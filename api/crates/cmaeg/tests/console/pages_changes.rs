@@ -208,6 +208,23 @@ impl SourceChanges for RecordingSources {
                     schema,
                     attachments,
                 },
+                SourceRequest::Github {
+                    app_ref,
+                    installation_ids,
+                    repository_ids,
+                    deny_repository_ids,
+                    events,
+                    actions,
+                    prompt_template,
+                } => Source::Github {
+                    app_ref,
+                    installation_ids,
+                    repository_ids,
+                    deny_repository_ids,
+                    events,
+                    actions,
+                    prompt_template,
+                },
             };
             let id = source.source_id();
             definition.sources.push(source);

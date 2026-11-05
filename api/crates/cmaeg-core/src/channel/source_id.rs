@@ -22,7 +22,8 @@ const PLATFORMS: [Platform; 6] = [
 /// A source slot's stable id, derived from a configured source and never stored
 /// with it, though routing policies refer to slots by it: "telegram", "relay_<platform>"
 /// ("relay_telegram", "relay_lark", "relay_feishu", "relay_discord", "relay_slack",
-/// "relay_whatsapp"), native "discord" or "whatsapp", "custom", or the reserved "agent" (hand-offs only; never configurable).
+/// "relay_whatsapp"), native "discord" or "whatsapp", "github", "custom", or the
+/// reserved "agent" (hand-offs only; never configurable).
 ///
 /// An id names a slot rather than a source instance. A channel holds at most
 /// one source per variant and relay platform, so the id is unique within it,
@@ -38,7 +39,13 @@ impl SourceId {
     pub fn parse(value: &str) -> Result<Self, ValidationError> {
         let known = matches!(
             value,
-            "native_lark" | "telegram" | "discord" | "whatsapp" | "custom" | AGENT_SOURCE_ID
+            "native_lark"
+                | "telegram"
+                | "discord"
+                | "whatsapp"
+                | "github"
+                | "custom"
+                | AGENT_SOURCE_ID
         ) || value.strip_prefix(RELAY_PREFIX).is_some_and(|platform| {
             PLATFORMS
                 .iter()
@@ -49,7 +56,7 @@ impl SourceId {
         } else {
             Err(ValidationError::new(
                 "/source_id",
-                "must be telegram, discord, whatsapp, relay_<platform>, custom or agent",
+                "must be telegram, discord, whatsapp, github, relay_<platform>, custom or agent",
             ))
         }
     }
@@ -78,6 +85,10 @@ impl SourceId {
 
     fn telegram() -> Self {
         Self("telegram".to_owned())
+    }
+
+    fn github() -> Self {
+        Self("github".to_owned())
     }
 
     fn relay(platform: Platform) -> Self {
@@ -112,6 +123,7 @@ impl Source {
             Self::Discord { .. } => SourceId::discord(),
             Self::NyxidRelay { platform, .. } => SourceId::relay(*platform),
             Self::Custom { .. } => SourceId::custom(),
+            Self::Github { .. } => SourceId::github(),
         }
     }
 }
@@ -126,6 +138,7 @@ impl SourceKind {
             Self::Discord { .. } => SourceId::discord(),
             Self::NyxidRelay { platform, .. } => SourceId::relay(*platform),
             Self::Custom => SourceId::custom(),
+            Self::Github { .. } => SourceId::github(),
         }
     }
 }

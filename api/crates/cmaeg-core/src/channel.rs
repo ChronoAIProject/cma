@@ -119,6 +119,17 @@ pub enum Source {
         conversation_history: bool,
         admission: AdmissionPolicy,
     },
+    Github {
+        app_ref: String,
+        installation_ids: Vec<u64>,
+        repository_ids: Vec<u64>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        deny_repository_ids: Vec<u64>,
+        events: Vec<String>,
+        actions: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt_template: Option<String>,
+    },
     NyxidRelay {
         issuer: String,
         jwks_url: String,

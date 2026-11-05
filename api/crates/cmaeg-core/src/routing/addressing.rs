@@ -200,7 +200,8 @@ fn bot_username(source: Option<&Source>) -> Option<&str> {
         Source::NativeLark(_)
         | Source::Custom { .. }
         | Source::Discord { .. }
-        | Source::Whatsapp { .. } => None,
+        | Source::Whatsapp { .. }
+        | Source::Github { .. } => None,
     }
 }
 
