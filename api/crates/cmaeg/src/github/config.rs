@@ -123,6 +123,10 @@ impl Config {
     pub(super) fn routes(&self, reference: &str) -> Option<&[Route]> {
         self.app(reference).map(|app| app.routes.as_slice())
     }
+
+    pub(super) fn has_routes(&self) -> bool {
+        self.apps.iter().any(|app| !app.routes.is_empty())
+    }
 }
 
 pub(super) fn valid_ref(value: &str) -> bool {

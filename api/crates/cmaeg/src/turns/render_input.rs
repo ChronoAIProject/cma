@@ -66,15 +66,17 @@ pub fn render(
                 None => std::borrow::Cow::Borrowed(ce),
             };
             let text = if let Some(template) =
-                definition.sources.iter().find_map(|source| match source {
-                    Source::Custom {
-                        prompt_template, ..
-                    }
-                    | Source::Github {
-                        prompt_template, ..
-                    } => prompt_template.as_deref(),
-                    _ => None,
-                }) {
+                definition
+                    .source_of(&activity.source)
+                    .and_then(|source| match source {
+                        Source::Custom {
+                            prompt_template, ..
+                        }
+                        | Source::Github {
+                            prompt_template, ..
+                        } => prompt_template.as_deref(),
+                        _ => None,
+                    }) {
                 crate::ingress::custom::template::render(template, &ce)
             } else {
                 let data = ce
