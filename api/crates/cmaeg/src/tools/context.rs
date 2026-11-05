@@ -306,6 +306,7 @@ pub(super) fn project(
             SourceKind::NyxidRelay { platform, .. } => {
                 Capabilities::relay_with_text_edits(platform, state.relay_text_edits_enabled)
             }
+            SourceKind::Github { .. } => Capabilities::custom(),
         }
     };
     if activity_verified
