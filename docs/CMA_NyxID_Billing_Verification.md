@@ -158,3 +158,84 @@ exited successfully with one nextest lingering-process warning in the existing
 `lost_create_response_recovers_same_uid_and_changed_spec_is_refused` HTTP fixture;
 its exact isolated rerun passed without the warning. These are local results;
 production role provisioning, rollout and activation remain the lead's work.
+
+## Chronoai organization pilot integration — 5 November 2026
+
+The integration includes `origin/develop` through `b7d9bd9f3`. The Mongo runner
+conflict retains both the funding contracts and develop's task-status/capacity
+contracts. The local pilot gates below supersede the historical full-suite
+commands above for this update; the lead requested affected checks to expedite
+the internal pilot, with broader validation left to CI.
+
+An explicit exclusion on the money-free quote persists `unbilled_generation`
+before runtime creation/resume. That generation returns ordinary unbilled
+coverage on retries/restart and is excluded from renewal and settlement. No
+reservation intent, `POST /windows`, funding deadline or funding pause occurs.
+A later authorized generation may enroll prospectively; the running free
+generation and its history cannot be backcharged. A stale quote without any
+reservation is rechecked before a hold can be attempted.
+
+The relevant success and failure regressions are:
+
+- `non_cohort_generation_remains_unbilled_across_retry_restart_and_sweep`
+- `non_cohort_resumes_are_unbilled_and_later_enrollment_is_prospective`
+- `stale_unfunded_quote_is_rechecked_before_attempting_a_hold`
+- `nyxid_cohort_and_fleet_refusals_allow_create_and_resume_without_any_hold_request`
+- `non_cohort_user_creates_pauses_and_resumes_with_enabled_funding_adapter`
+- `non_cohort_mongo_decision_survives_restart_and_is_not_due_for_funding`
+- `unknown_or_malformed_admission_refusals_cannot_enable_free_compute`
+- `admission_closure_never_discards_an_ambiguous_reservation`
+- `cohort_removal_after_paid_history_never_silently_bypasses_funding`
+- `exclusion_envelope_on_receipt_lookup_is_not_proof_of_no_hold`
+
+The transport currently recognizes only quote HTTP 402 with
+`billing_provider_unavailable` / `11302` and one of the two exact serialized
+NyxID gate messages. Other failures retain the existing paid-admission behavior.
+NyxID must return exclusion before paid rate/catalog/wallet/provider
+dependencies; the published producer at `e0588860a` still checks some of those
+dependencies first. Therefore the complete cross-service guarantee requires
+that upstream ordering fix before activation. A generic provider error is not
+evidence that the owner is excluded.
+
+Read-only production inspection confirmed the Agent Manager ConfigMap has
+`CHRONO_USAGE_BILLING_ENABLED=false`, inherited by the API container with no
+billing environment override. The checked-in configuration keeps both emitters
+off. `validates_configuration_without_reading_secrets_or_allowing_two_emitters`
+rejects enabling the legacy Lago exporter together with NyxID funding.
+
+Final local validation used Rust 1.96.1, `CARGO_BUILD_JOBS=4` under the lead's
+explicit release-priority override, disabled incremental/debug output and
+`RUST_MIN_STACK=33554432`. Resources were checked before each heavy stage.
+
+| Pilot gate | Result |
+| --- | --- |
+| Funding/config/store and Sandbox worker lifecycle selection | 238 passed |
+| Funding, allocation ledger and exporter Mongo contracts | 12 passed |
+| Authenticated Agent Manager authority/startup/reopen contracts | 4 passed |
+| `cargo fmt --all --check` | Passed |
+| Clippy for `cma`, `layer2-core`, `layer3-adapter`, all targets/features, `-D warnings` | Passed |
+| Repository source size | Passed; 5,147 files checked |
+| Root/SDK/infra/docs structure and layer boundaries | Passed |
+| Config key/docs and API inventory | Passed |
+| Mongo runner union/inventory regressions | 7 passed |
+
+The Mongo selections reused the repository fixture setup with its pinned
+Docker MongoDB 8.0.13 image, task-owned containers/volumes and cleanup traps.
+The lifecycle and Clippy commands were:
+
+```sh
+cargo nextest run -p cma -p layer2-core -p layer3-adapter --locked --test-threads 2 \
+  -E 'test(sandbox::funding::) | test(sandbox::worker_tests::) | test(config::sandbox_billing::) | test(store::sandbox_billing::) | test(agent_sandbox::funding_) | test(funded_zero_tail)'
+cargo clippy -p cma -p layer2-core -p layer3-adapter \
+  --all-targets --all-features --locked -- -D warnings
+```
+
+Mongo execution used `--run-ignored only --test-threads 1` for
+`test(sandbox::funding::tests::mongo::) | test(store::sandbox_mongo_integration_tests::sandbox_usage_tests::) | test(usage_billing::tests::)`.
+The authenticated run used `--run-ignored all --test-threads 1` with
+`package(=cma) and test(~store::isolation::tests::)`.
+The full workspace and frontend suites were not rerun for this pilot update.
+
+The [pilot runbook](CMA_Billing_Pilot.md) covers the internal-only cohort,
+quote/hold, settlement/refund/receipt acceptance and admission-off recovery
+before disabling CMA. No production activation or write was performed.
