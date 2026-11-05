@@ -254,7 +254,8 @@ pub use hierarchy::{
 };
 pub use home::SandboxHome;
 pub use inactivity::{
-    inactivity_pause_notice, is_inactivity_pause_candidate, SandboxAgentActivity,
+    has_open_desktop_session, inactivity_pause_notice, is_inactivity_pause_candidate,
+    register_open_desktop_session, unregister_open_desktop_session, SandboxAgentActivity,
     SandboxAgentLogActivity,
 };
 pub use interruption::{SandboxInterruption, SandboxInterruptionCause};

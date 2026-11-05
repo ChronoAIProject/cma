@@ -89,6 +89,7 @@ mod reconciliation;
 mod reconciliation_tests;
 mod resource_access;
 mod sandbox_controls;
+mod sessions;
 mod targeted_controls;
 #[cfg(test)]
 mod targeted_controls_tests;
