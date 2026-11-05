@@ -34,6 +34,7 @@ reqwest = { workspace = true, features = ["multipart"] }
 ring = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_path_to_error = "0.1"
 sha2 = { workspace = true }
 subtle = { workspace = true }
 time = { workspace = true }
