@@ -145,26 +145,56 @@ pub(super) async fn complete<K>(api: &Api<K>) -> Result<Vec<K>>
 where
     K: Clone + std::fmt::Debug + serde::de::DeserializeOwned + kube::Resource,
 {
-    let mut params = ListParams::default().limit(200);
-    let mut cursors = BTreeSet::new();
-    let mut identities = BTreeSet::new();
-    let mut version = None;
+    let mut cursor = PageCursor::default();
     let mut objects = Vec::new();
-    for _ in 0..100 {
-        let page = api.list(&params).await.map_err(api_error)?;
+    loop {
+        let page = api.list(&cursor.params()).await.map_err(api_error)?;
+        let complete = cursor.accept(&page)?;
+        objects.extend(page.items);
+        if complete {
+            return Ok(objects);
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub(super) struct PageCursor {
+    cursor: Option<String>,
+    cursors: BTreeSet<String>,
+    identities: BTreeSet<String>,
+    version: Option<String>,
+    pages: usize,
+}
+
+impl PageCursor {
+    pub(super) fn params(&self) -> ListParams {
+        let params = ListParams::default().limit(200);
+        self.cursor
+            .as_ref()
+            .map_or(params.clone(), |cursor| params.continue_token(cursor))
+    }
+
+    pub(super) fn accept<K>(&mut self, page: &kube::api::ObjectList<K>) -> Result<bool>
+    where
+        K: kube::Resource + Clone,
+    {
+        // Validate on a temporary checkpoint so an invalid later page cannot
+        // partially advance identity, continuation or snapshot authority.
+        let mut next = self.clone();
         let observed = page
             .metadata
             .resource_version
+            .as_ref()
             .filter(|v| !v.is_empty())
             .ok_or_else(|| unavailable("native cleanup inventory has no version"))?;
-        if version.as_ref().is_some_and(|v| v != &observed) {
+        if next.version.as_ref().is_some_and(|v| v != observed) {
             return Err(unavailable(
                 "native cleanup inventory changed between pages",
             ));
         }
-        version = Some(observed);
-        for object in page.items {
-            if !identities.insert(
+        next.version = Some(observed.clone());
+        for object in &page.items {
+            if !next.identities.insert(
                 object
                     .uid()
                     .filter(|v| !v.is_empty())
@@ -172,20 +202,24 @@ where
             ) {
                 return Err(rejected("native cleanup inventory repeats an identity"));
             }
-            objects.push(object);
-            if objects.len() > 10_000 {
+            if next.identities.len() > 10_000 {
                 return Err(unavailable("native cleanup inventory exceeds its bound"));
             }
         }
-        let Some(cursor) = page.metadata.continue_.filter(|v| !v.is_empty()) else {
-            return Ok(objects);
-        };
-        if cursor.len() > 16_384 || !cursors.insert(cursor.clone()) {
-            return Err(unavailable("native cleanup inventory did not advance"));
+        next.pages += 1;
+        next.cursor = page.metadata.continue_.clone().filter(|v| !v.is_empty());
+        if let Some(cursor) = &next.cursor {
+            if cursor.len() > 16_384 || !next.cursors.insert(cursor.clone()) {
+                return Err(unavailable("native cleanup inventory did not advance"));
+            }
+            if next.pages >= 100 {
+                return Err(unavailable(
+                    "native cleanup inventory exceeds its page bound",
+                ));
+            }
         }
-        params = params.continue_token(&cursor);
+        let complete = next.cursor.is_none();
+        *self = next;
+        Ok(complete)
     }
-    Err(unavailable(
-        "native cleanup inventory exceeds its page bound",
-    ))
 }
