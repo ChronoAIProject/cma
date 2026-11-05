@@ -29,12 +29,10 @@ pub trait SandboxAdapter: Send + Sync {
     async fn open_desktop(&self, _: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
         Err(unsupported("runtime desktop is unavailable"))
     }
-
     /// Optional durable storage authority; absence must never fall back to an empty home.
     fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
         None
     }
-
     /// Persist home authority before allocation; retain runtime and storage policy on retry.
     async fn reserve_home_request(
         &self,
@@ -69,9 +67,13 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
         Ok(None)
     }
+    /// Bound an adopted runtime to confirmed prepaid coverage. Unsupported
+    /// providers must fail closed; callers cannot replace this with a timer.
+    async fn set_runtime_deadline(&self, _: &RuntimeAdoptionRequest, _: u64) -> Result<()> {
+        Err(unsupported("funded runtime deadlines are unavailable"))
+    }
 
     async fn provision(&self, spec: &SandboxSpec) -> Result<RuntimeHandle>;
-
     /// Stop the exact runtime Pod while retaining its provider object and volume.
     async fn suspend_runtime(&self, _request: &RuntimeAdoptionRequest) -> Result<()> {
         Err(unsupported("runtime suspension is unavailable"))
@@ -80,12 +82,10 @@ pub trait SandboxAdapter: Send + Sync {
     async fn verify_suspended_runtime(&self, _request: &RuntimeAdoptionRequest) -> Result<()> {
         Err(unsupported("runtime suspension observation is unavailable"))
     }
-
     /// Delete a persisted provider identity and all Pods without requiring a live process.
     async fn teardown_retained_runtime(&self, _handle: &RuntimeHandle) -> Result<()> {
         Err(unsupported("retained runtime deletion is unavailable"))
     }
-
     /// Resume the same provider object with a reserved generation and admitted service scope.
     async fn resume_runtime(
         &self,
@@ -94,7 +94,6 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<RuntimeHandle> {
         Err(unsupported("runtime resumption is unavailable"))
     }
-
     /// Explicitly replace only the image of an idle, suspended native runtime.
     /// The successor pins its image and retains the original provider and home.
     async fn upgrade_runtime(
@@ -104,7 +103,6 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<RuntimeHandle> {
         Err(unsupported("native runtime upgrades are unavailable"))
     }
-
     /// Exactly one creation dispatch; failures cannot be upgraded by name-only recovery.
     async fn provision_runtime_receipted(
         &self,
@@ -115,7 +113,6 @@ pub trait SandboxAdapter: Send + Sync {
             "original provider incarnation receipts are unavailable",
         ))
     }
-
     /// Delete only the original incarnation and return actual provider effect receipts.
     async fn finalize_runtime(
         &self,
@@ -124,14 +121,15 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<crate::RuntimeFinalityReceipt> {
         Err(unsupported("exact provider finality is unavailable"))
     }
-
     /// Read the current process incarnation only for a verified persistent home.
     async fn runtime_status(&self, _handle: &RuntimeHandle) -> Result<crate::RuntimeStatus> {
         Err(unsupported("persistent runtime status is not supported"))
     }
-
     /// Provision an exact non-zero runtime generation.
     async fn provision_runtime(&self, request: &RuntimeProvisionRequest) -> Result<RuntimeHandle> {
+        if request.funded_until.is_some() {
+            return Err(unsupported("funded provider creation is unavailable"));
+        }
         if request.generation == 0 {
             return Err(crate::AdapterError::Rejected(
                 "runtime generation must be non-zero".into(),
@@ -144,7 +142,6 @@ pub trait SandboxAdapter: Send + Sync {
             "generation-specific provisioning is not supported",
         ))
     }
-
     /// Optional exact termination evidence. Queried only after runtime loss is confirmed.
     async fn runtime_termination(
         &self,
