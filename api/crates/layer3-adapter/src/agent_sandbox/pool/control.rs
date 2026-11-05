@@ -40,6 +40,9 @@ pub trait NativePoolControl: Send + Sync {
             "native claim inventory is unavailable".into(),
         ))
     }
+    fn claim_inventory_cursor(&self) -> Option<Box<dyn crate::InventoryCursor<NativePoolClaim>>> {
+        None
+    }
     async fn reclaim_claim(&self, _claim: &NativePoolClaim) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "native claim reclamation is unavailable".into(),
@@ -86,6 +89,9 @@ impl NativePoolControl for AgentSandboxPools {
     }
     async fn inventory_claims(&self) -> Result<Vec<NativePoolClaim>> {
         self.inventory_claims().await
+    }
+    fn claim_inventory_cursor(&self) -> Option<Box<dyn crate::InventoryCursor<NativePoolClaim>>> {
+        Some(self.claim_inventory_cursor())
     }
     async fn reclaim_claim(&self, claim: &NativePoolClaim) -> Result<()> {
         self.reclaim_claim(claim).await

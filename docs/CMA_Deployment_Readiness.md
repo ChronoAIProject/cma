@@ -850,6 +850,17 @@ Agent Manager initializes its own collections and indexes and has no separate
 migration role. Every selected credential mode must still supply the required
 operations for those collections.
 
+The NyxID funding release also requires `sandbox_billing_state`, including its
+`sandbox_billing_due` index on `{retry_at: 1, _id: 1}`, before enabling any paid
+admission. Collection/index initialization runs even with billing disabled.
+Reconcile the existing isolated `cma_am_runtime` role from the new binary's
+output before rollout; see [funding grant provisioning](CMA_Service_Isolation.md#sandbox-funding-grants)
+for the exact actions and existing-role update procedure. Keep both billing
+flags false during this deployment. After the lead's rollout, confirm Agent
+Manager becomes ready without schema-authority or MongoDB Unauthorized errors
+using read-only workload status and logs. Paid activation and invoice acceptance
+remain a separate controlled verification.
+
 ## Deferred Image Manager / Cloud Build activation
 
 This is a separate later activation, outside the current Agent Manager/Event
