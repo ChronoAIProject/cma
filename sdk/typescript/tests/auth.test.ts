@@ -23,6 +23,25 @@ describe('public authentication helpers', () => {
     expect(t.client.triggers).toBe(t.client.triggerAuthoring);
   });
 
+  it('reads default-off and enabled usage presentation and rejects malformed values', async () => {
+    const t = transport();
+    const identity = { authenticated: true, subject: 'owner', visitor: false, capabilities: [] };
+    for (const measured_visible of [false, true]) {
+      t.answer({ ...identity, usage_reporting: { measured_visible } });
+      const session = await t.client.auth.readSession();
+      expect(session.authenticated && session.usage_reporting?.measured_visible).toBe(
+        measured_visible,
+      );
+    }
+    t.answer({ ...identity, usage_reporting: { measured_visible: 'true' } });
+    await expect(t.client.auth.readSession()).rejects.toBeInstanceOf(ProtocolError);
+    t.answer({ status: 503, code: 'settings_unavailable', detail: 'Settings unavailable.' }, 503);
+    await expect(t.client.auth.readSession()).rejects.toMatchObject({
+      status: 503,
+      code: 'settings_unavailable',
+    });
+  });
+
   it('distinguishes signed out, auth-store failure, malformed status, and ordinary problems', async () => {
     const t = transport();
     t.answer({ authenticated: false }, 401);

@@ -132,9 +132,25 @@ impl Default for MarketplaceSettings {
     }
 }
 
+/// Controls presentation only; metrics collection has a separate deployment switch.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UsageReportingSettings {
+    pub measured_visible: bool,
+}
+
+impl UsageReportingSettings {
+    fn is_disabled(&self) -> bool {
+        !self.measured_visible
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlatformSettings {
+    /// Presentation policy; omit the complete disabled section for strict predecessors.
+    #[serde(default, skip_serializing_if = "UsageReportingSettings::is_disabled")]
+    pub usage_reporting: UsageReportingSettings,
     pub defaults: PlatformDefaults,
     pub inactivity: InactivitySettings,
     #[serde(default)]
@@ -195,6 +211,31 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::*;
+
+    #[test]
+    fn usage_visibility_defaults_off_and_omits_the_disabled_section() {
+        let mut settings = PlatformSettings::default();
+        assert!(!settings.usage_reporting.measured_visible);
+        for visible in [false, true, false] {
+            settings.usage_reporting.measured_visible = visible;
+            let value = serde_json::to_value(&settings).unwrap();
+            assert_eq!(value.get("usage_reporting").is_some(), visible);
+            assert_eq!(
+                serde_json::from_value::<PlatformSettings>(value).unwrap(),
+                settings
+            );
+        }
+        let mut value = serde_json::to_value(settings).unwrap();
+        for invalid in [
+            json!(null),
+            json!({}),
+            json!({"measured_visible": "true"}),
+            json!({"measured_visible": true, "extra": true}),
+        ] {
+            value["usage_reporting"] = invalid;
+            assert!(serde_json::from_value::<PlatformSettings>(value.clone()).is_err());
+        }
+    }
 
     #[test]
     fn shipped_settings_match_the_platform_contract() {
