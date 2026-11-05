@@ -1,3 +1,4 @@
+import type { FileChange } from '../fileChanges';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AgentFileError,
@@ -11,7 +12,7 @@ import {
 import { Alert } from '../../ui/Alert';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
-import { FileExplorerFrame } from './FileExplorerFrame';
+import { FileExplorerFrame, FileLocation } from './FileExplorerFrame';
 import { IconFolderOpen16 } from '../../ui/icons';
 import { FileToolbar } from './FileToolbar';
 import { FileTree } from './FileTree';
@@ -27,7 +28,11 @@ export function FileExplorer({
   panel = false,
   embedded = false,
   active = true,
+  initialDirectory = '',
+  changes,
 }: {
+  readonly initialDirectory?: string;
+  readonly changes?: ReadonlyMap<string, FileChange>;
   readonly panel?: boolean;
   readonly embedded?: boolean;
   readonly active?: boolean;
@@ -41,9 +46,11 @@ export function FileExplorer({
     new Map(),
   );
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const [loading, setLoading] = useState<ReadonlySet<string>>(new Set(['']));
+  const [loading, setLoading] = useState<ReadonlySet<string>>(new Set([initialDirectory]));
   const [hidden, setHidden] = useState(false);
-  const [directory, setDirectory] = useState('');
+  const initialRoot = useRef(initialDirectory);
+  const [rootPath, setRootPath] = useState(initialDirectory);
+  const [directory, setDirectory] = useState(initialDirectory);
   const [selected, setSelected] = useState<AgentFileEntry>();
   const [content, setContent] = useState<AgentFileContent>();
   const [draft, setDraft] = useState<string>();
@@ -118,7 +125,7 @@ export function FileExplorer({
     const request = new AbortController();
     lifetime.current = request;
     queueMicrotask(() => {
-      if (!request.signal.aborted) void load('', request.signal);
+      if (!request.signal.aborted) void load(initialRoot.current, request.signal);
     });
     return () => {
       request.abort();
@@ -424,14 +431,20 @@ export function FileExplorer({
             type="button"
             className="agent-files__row"
             disabled={busy || denied}
-            onClick={() => setDirectory('')}
+            onClick={() => {
+              setRootPath('');
+              setDirectory('');
+              if (lifetime.current && !directories.has('')) void load('', lifetime.current.signal);
+            }}
             aria-current={directory === '' ? 'true' : undefined}
           >
             <IconFolderOpen16 />
             <span>/home/</span>
           </button>
-          {loading.has('') ? <p role="status">Loading files…</p> : null}
+          {loading.has(rootPath) ? <p role="status">Loading files…</p> : null}
           <FileTree
+            rootPath={rootPath}
+            changes={changes}
             directories={directories}
             expanded={expanded}
             hidden={hidden}
@@ -471,19 +484,12 @@ export function FileExplorer({
           }}
         />
       </div>
-      <footer className="agent-files__location">
-        <code title={`/home/${directory}`}>/home/{directory}</code>
-        {directory && !blocked ? (
-          <Button
-            size="sm"
-            variant="danger"
-            disabled={busy}
-            onClick={() => remove(directory, true)}
-          >
-            Delete folder
-          </Button>
-        ) : null}
-      </footer>
+      <FileLocation
+        directory={directory}
+        canDelete={!blocked}
+        busy={busy}
+        onDelete={() => remove(directory, true)}
+      />
     </FileExplorerFrame>
   );
 }

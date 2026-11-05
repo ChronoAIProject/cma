@@ -60,7 +60,7 @@ export function OwnerAgentHeader({
               agentId={detail.id}
               mode={dialog}
               currentTitle={header.title}
-              active={busy}
+              active={dialog === 'prompt' && busy}
               onTitleUpdated={onTitleUpdated}
               onClose={() => setDialog(undefined)}
             />
