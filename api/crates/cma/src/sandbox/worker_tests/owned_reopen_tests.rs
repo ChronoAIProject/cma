@@ -129,9 +129,26 @@ async fn lifecycle_worker_on_any_replica_reopens_and_activates_only_at_owner() {
         assert!(store.owner(&agent.id).await.unwrap().is_none());
         let workers = workers(&harness, &instances);
         let caller = (owner + 1) % count;
-        assert!(workers[caller].0.run_one(&parent.id, now).await.unwrap());
+        let publication_at = now + Duration::from_secs(30);
+        assert!(workers[caller]
+            .0
+            .run_one(&parent.id, publication_at)
+            .await
+            .unwrap());
         let ready = harness.store.get_agent(&agent.id).await.unwrap().unwrap();
         assert_eq!(ready.status, AgentStatus::Ready);
+        assert_eq!(
+            ready
+                .work
+                .receipts
+                .iter()
+                .find(
+                    |receipt| receipt.step == layer2_core::sandbox::AgentWorkStep::OpenConversation
+                )
+                .unwrap()
+                .completed_at,
+            rfc3339_at(publication_at)
+        );
         let target = target(&parent, &ready);
         until(|| workers[owner].1.published_target_is_attached(&target)).await;
         for (index, (_, registry)) in workers.iter().enumerate() {
