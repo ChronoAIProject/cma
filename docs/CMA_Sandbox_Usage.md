@@ -161,6 +161,18 @@ funding HTTP calls and no lifecycle behavior change. The configuration rejects
 simultaneously enabling the direct Lago exporter (`CHRONO_USAGE_BILLING_ENABLED`).
 NyxID's reconciler is the only emitter for these prepaid windows.
 
+With the CMA adapter enabled, an explicit NyxID quote refusal for a disabled
+fleet/cohort admits a never-funded Sandbox generation without billing. CMA
+persists `unbilled_generation` and returns no runtime funding deadline. Repeated
+worker calls, restart, pause and the renewal sweep cannot reserve or charge that
+generation. A later lifecycle generation rechecks eligibility prospectively.
+Generic producer outages, authorization failures and insufficient funds do not
+mean exclusion; pending/confirmed reservations always retain recovery and
+settlement authority. The NyxID deployment must check rollout exclusion before
+paid dependencies. See the [chronoai pilot runbook](CMA_Billing_Pilot.md) for the
+contract acceptance gate, configuration, cohort scope and drain-before-disable
+rollback procedure.
+
 The provider-neutral lifecycle port admits an exact runtime generation before
 creation/resumption and returns the confirmed exclusive deadline. MongoDB's
 `sandbox_billing_state` collection persists the owner/Sandbox binding, source
