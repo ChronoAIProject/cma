@@ -138,7 +138,7 @@ impl ProviderHostedControlTransport {
         let mut token = http::HeaderValue::from_str(token)
             .map_err(|_| AdapterError::Rejected("runtime token is not a valid header".into()))?;
         token.set_sensitive(true);
-        let request = http::Request::builder()
+        let mut request = http::Request::builder()
             .method(method)
             .uri(&url[url::Position::BeforePath..])
             .header(
@@ -154,7 +154,11 @@ impl ProviderHostedControlTransport {
                     crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
                 ),
             )
-            .header(name, token)
+            .header(name, token);
+        if let Some(owner) = crate::owner_protocol::current_header()? {
+            request = request.header(crate::owner_protocol::OWNER_HEADER, owner);
+        }
+        let request = request
             .body(Full::new(Bytes::from(body)))
             .map_err(|_| AdapterError::Rejected("runtime HTTP request is invalid".into()))?;
         // One attempt to this fenced Pod. An ambiguous response must never cause

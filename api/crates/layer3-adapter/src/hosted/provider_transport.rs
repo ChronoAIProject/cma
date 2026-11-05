@@ -32,8 +32,10 @@ pub enum NativeRuntimeTransport {
 }
 
 /// Concrete authenticated control and ACP transport for provider-hosted runtimes.
+#[derive(Clone)]
 pub struct ProviderHostedControlTransport {
     client: RuntimeDiscovery,
+    owner_router: Option<Arc<crate::owner_control::OwnerControlRoute>>,
     http: reqwest::Client,
     archive_factory: Option<Arc<dyn CheckpointArchiveStoreFactory>>,
     state: Arc<Mutex<TransportState>>,
@@ -71,6 +73,7 @@ struct ActiveLink {
     bridge: Arc<Bridge>,
     reader: tokio::task::AbortHandle,
     relay: tokio::task::AbortHandle,
+    _ownership: Option<Arc<ownership::ReceiverLease>>,
 }
 
 impl ActiveLink {
@@ -82,6 +85,14 @@ impl ActiveLink {
 }
 
 impl ProviderHostedControlTransport {
+    pub fn with_owner_router(
+        mut self,
+        router: Arc<crate::owner_control::OwnerControlRoute>,
+    ) -> Self {
+        self.owner_router = Some(router);
+        self
+    }
+
     pub fn with_subscriptions(mut self, source: Arc<dyn super::HostedSubscriptionSource>) -> Self {
         self.subscriptions = Some(source);
         self
@@ -193,6 +204,7 @@ impl ProviderHostedControlTransport {
         key: (RuntimeHandle, AgentSlot),
         epochs: (u64, u64),
         opened: OpenedBridge,
+        ownership: Option<ownership::ReceiverLease>,
     ) -> crate::Result<ConversationChannel> {
         let OpenedBridge {
             channel,
@@ -226,6 +238,7 @@ impl ProviderHostedControlTransport {
                     bridge: Arc::clone(&bridge),
                     reader: reader_abort,
                     relay: relay_abort,
+                    _ownership: ownership.map(Arc::new),
                 },
             );
             (id, replaced)
@@ -288,6 +301,14 @@ impl ProviderHostedControlTransport {
             .map_err(|_| AdapterError::Rejected("provider API key is not a valid header".into()))?;
         value.set_sensitive(true);
         request.headers_mut().insert(name, value);
+        if let Some(owner) = crate::owner_protocol::current_header()? {
+            request.headers_mut().insert(
+                crate::owner_protocol::OWNER_HEADER,
+                owner
+                    .parse()
+                    .map_err(|_| AdapterError::Rejected("invalid ownership header".into()))?,
+            );
+        }
         let config = WebSocketConfig {
             max_message_size: Some(MAX_FRAME_BYTES + 25),
             max_frame_size: Some(MAX_FRAME_BYTES + 25),
@@ -340,6 +361,8 @@ mod control;
 mod native_pool;
 #[path = "provider_open.rs"]
 mod open;
+#[path = "provider_ownership.rs"]
+mod ownership;
 
 #[path = "native_status.rs"]
 mod native_status;

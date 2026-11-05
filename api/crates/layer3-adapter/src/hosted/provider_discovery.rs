@@ -51,6 +51,7 @@ impl ProviderHostedControlTransport {
                 ))
             })?;
         Ok(Self {
+            owner_router: None,
             client,
             http,
             archive_factory,

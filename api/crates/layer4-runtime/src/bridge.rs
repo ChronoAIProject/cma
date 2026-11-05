@@ -7,12 +7,15 @@ use std::time::Duration;
 use layer3_adapter::AgentLaunch;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
+use tokio::io::{AsyncReadExt as _, BufReader};
 use tokio::sync::{mpsc, Mutex};
 
 #[path = "bridge_output.rs"]
 mod retained_output;
 pub(crate) use retained_output::OutputRetention;
+#[path = "bridge_input.rs"]
+mod input;
+use input::{spawn_writer, BridgeInput};
 
 const BUFFER_BYTES: usize = 8 * 1024 * 1024;
 const INPUT_BUFFER: usize = 256;
@@ -75,7 +78,7 @@ impl Pending {
 }
 
 pub(crate) struct Bridge {
-    input: mpsc::Sender<Vec<u8>>,
+    input: mpsc::Sender<BridgeInput>,
     output: tokio::sync::broadcast::Sender<Outbound>,
     pending: Arc<Mutex<Pending>>,
     pub(crate) retained_output: Arc<OutputRetention>,
@@ -153,8 +156,33 @@ impl Bridge {
         })
     }
 
+    #[cfg(test)]
     pub(crate) async fn send(&self, frame: Vec<u8>) -> bool {
-        frame.len() <= MAX_FRAME_BYTES && self.input.send(frame).await.is_ok()
+        frame.len() <= MAX_FRAME_BYTES
+            && self
+                .input
+                .send(BridgeInput {
+                    frame,
+                    authority: None,
+                })
+                .await
+                .is_ok()
+    }
+
+    pub(crate) async fn send_owned(
+        &self,
+        frame: Vec<u8>,
+        authority: crate::manager_ownership::OwnerSession,
+    ) -> bool {
+        frame.len() <= MAX_FRAME_BYTES
+            && self
+                .input
+                .send(BridgeInput {
+                    frame,
+                    authority: Some(authority),
+                })
+                .await
+                .is_ok()
     }
 
     /// Legacy recording has no durable cursor. Never replay that history into a
@@ -220,19 +248,6 @@ impl Drop for Bridge {
         // a full journal has no possible consumer and its waiter must end.
         self.reader.abort();
     }
-}
-
-fn spawn_writer(mut stdin: tokio::process::ChildStdin, mut input: mpsc::Receiver<Vec<u8>>) {
-    tokio::spawn(async move {
-        while let Some(frame) = input.recv().await {
-            if stdin.write_all(&frame).await.is_err()
-                || stdin.write_all(b"\n").await.is_err()
-                || stdin.flush().await.is_err()
-            {
-                break;
-            }
-        }
-    });
 }
 
 fn spawn_reader(

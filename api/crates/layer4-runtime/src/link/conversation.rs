@@ -4,13 +4,14 @@ use axum::extract::{
     ws::{Message, WebSocket},
     Path, Query, State, WebSocketUpgrade,
 };
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use futures_util::{SinkExt as _, StreamExt as _};
 
 use super::protocol_failure;
 use crate::bridge::{Bridge, Outbound, MAX_FRAME_BYTES};
 use crate::lanes::{self, Ready};
+use crate::manager_ownership::OwnerSession;
 use crate::supervisor::Supervisor;
 
 #[derive(Default, serde::Deserialize)]
@@ -24,7 +25,16 @@ pub(super) async fn conversation(
     Path(agent_id): Path<String>,
     Query(query): Query<ConversationQuery>,
     State(supervisor): State<Arc<Supervisor>>,
+    headers: HeaderMap,
 ) -> Response {
+    let owner = match ownership_header(&headers) {
+        Ok(owner) => owner,
+        Err(error) => return super::runtime_failure(error),
+    };
+    let authority = match supervisor.manager_ownership.session(&agent_id, owner).await {
+        Ok(authority) => authority,
+        Err(error) => return super::runtime_failure(error),
+    };
     let Some(bridge) = supervisor.bridge(&agent_id).await else {
         return protocol_failure(
             StatusCode::NOT_FOUND,
@@ -47,7 +57,9 @@ pub(super) async fn conversation(
         };
     ws.max_message_size(MAX_FRAME_BYTES + 1 + lanes::OUTPUT_IDENTITY_BYTES)
         .max_frame_size(MAX_FRAME_BYTES + 1 + lanes::OUTPUT_IDENTITY_BYTES)
-        .on_upgrade(move |socket| relay_conversation(socket, bridge, agent_id, acknowledge_output))
+        .on_upgrade(move |socket| {
+            relay_conversation(socket, bridge, agent_id, acknowledge_output, authority)
+        })
         .into_response()
 }
 
@@ -56,6 +68,7 @@ async fn relay_conversation(
     bridge: Arc<Bridge>,
     agent_id: String,
     acknowledge_output: bool,
+    authority: OwnerSession,
 ) {
     // Subscribe before the first snapshot; cursor filtering makes notifications
     // observed on both sides of a snapshot harmless.
@@ -65,7 +78,8 @@ async fn relay_conversation(
         Ready::agent(&agent_id).with_acknowledgement(bridge.retained_output.stream_id())
     } else {
         Ready::agent(&agent_id)
-    };
+    }
+    .with_owner(authority.owner());
     let ready = match serde_json::to_string(&ready) {
         Ok(ready) => ready,
         Err(error) => {
@@ -73,12 +87,12 @@ async fn relay_conversation(
             return;
         }
     };
-    if socket.send(Message::Text(ready.into())).await.is_err() {
+    if !send_owned(&mut socket, Message::Text(ready.into()), &authority).await {
         return;
     }
     if !acknowledge_output {
         for held in bridge.backlog().await {
-            if socket.send(outbound(held)).await.is_err() {
+            if !send_owned(&mut socket, outbound(held), &authority).await {
                 return;
             }
         }
@@ -86,15 +100,18 @@ async fn relay_conversation(
 
     let (sink, mut source) = socket.split();
     let output_bridge = Arc::clone(&bridge);
+    let output_authority = authority.clone();
     let mut output = tokio::spawn(async move {
         if let Some(live) = reliable_live {
-            pump_reliable_output(sink, live, output_bridge, &agent_id).await;
+            pump_reliable_output(sink, live, output_bridge, &agent_id, output_authority).await;
         } else if let Some(mut live) = legacy_live {
-            pump_output(sink, &mut live, output_bridge, &agent_id).await;
+            pump_output(sink, &mut live, output_bridge, &agent_id, output_authority).await;
         }
     });
     loop {
         tokio::select! {
+            biased;
+            _ = authority.expired() => { output.abort(); return; }
             result = &mut output => {
                 if let Err(error) = result {
                     tracing::warn!(%error, "conversation output task failed");
@@ -104,6 +121,7 @@ async fn relay_conversation(
             incoming = source.next() => match incoming {
                 Some(Ok(Message::Binary(bytes))) => match lanes::unframe(&bytes) {
                     Some((lanes::OUTPUT_ACKNOWLEDGEMENT, payload)) if acknowledge_output => {
+                        let Ok(_permit) = authority.permit().await else { output.abort(); return; };
                         let accepted = match lanes::output_acknowledgement(payload) {
                             Some((stream_id, cursor)) => {
                                 bridge.retained_output.acknowledge(stream_id, cursor).await
@@ -116,12 +134,11 @@ async fn relay_conversation(
                             return;
                         }
                     }
-                    Some((lanes::CONVERSATION, payload))
-                        if bridge.send(payload.to_vec()).await => {}
-                    Some((lanes::CONVERSATION, _)) => {
-                        tracing::warn!("conversation bridge stopped accepting input");
-                        output.abort();
-                        return;
+                    Some((lanes::CONVERSATION, payload)) => {
+                        if authority.permit().await.is_err() || !bridge.send_owned(payload.to_vec(), authority.clone()).await {
+                            output.abort();
+                            return;
+                        }
                     }
                     Some((lane, _)) => {
                         tracing::warn!(lane, "frame arrived on an unsupported conversation lane");
@@ -151,6 +168,7 @@ async fn pump_reliable_output(
     mut live: tokio::sync::watch::Receiver<()>,
     bridge: Arc<Bridge>,
     agent_id: &str,
+    authority: OwnerSession,
 ) {
     let mut sent_cursor = 0;
     loop {
@@ -158,7 +176,7 @@ async fn pump_reliable_output(
             Ok(snapshot) => snapshot,
             Err(frames) => {
                 tracing::error!(%agent_id, frames, "conversation output retention exhausted");
-                let _ = sink.send(gap(frames)).await;
+                let _ = send_owned(&mut sink, gap(frames), &authority).await;
                 break;
             }
         };
@@ -168,7 +186,7 @@ async fn pump_reliable_output(
                 frame.cursor,
                 &frame.bytes,
             );
-            if sink.send(Message::Binary(bytes.into())).await.is_err() {
+            if !send_owned(&mut sink, Message::Binary(bytes.into()), &authority).await {
                 return;
             }
             sent_cursor = frame.cursor;
@@ -179,7 +197,7 @@ async fn pump_reliable_output(
             break;
         }
     }
-    let _ = sink.send(Message::Close(None)).await;
+    let _ = send_owned(&mut sink, Message::Close(None), &authority).await;
 }
 
 async fn pump_output(
@@ -187,6 +205,7 @@ async fn pump_output(
     live: &mut tokio::sync::broadcast::Receiver<Outbound>,
     bridge: Arc<Bridge>,
     agent_id: &str,
+    authority: OwnerSession,
 ) {
     loop {
         let said = tokio::select! {
@@ -201,11 +220,55 @@ async fn pump_output(
             }
             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
         };
-        if sink.send(message).await.is_err() {
+        if !send_owned(&mut sink, message, &authority).await {
             return;
         }
     }
-    let _ = sink.send(Message::Close(None)).await;
+    let _ = send_owned(&mut sink, Message::Close(None), &authority).await;
+}
+
+async fn send_owned<S>(sink: &mut S, message: Message, authority: &OwnerSession) -> bool
+where
+    S: futures_util::Sink<Message> + Unpin,
+{
+    let Ok(permit) = authority.permit().await else {
+        return false;
+    };
+    if authority.owner().is_none() {
+        return sink.send(message).await.is_ok();
+    }
+    let bounded = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let until = permit
+        .deadline()
+        .map_or(bounded, |deadline| deadline.min(bounded));
+    tokio::time::timeout_at(until, sink.send(message))
+        .await
+        .is_ok_and(|result| result.is_ok())
+}
+
+pub(super) fn ownership_header(
+    headers: &HeaderMap,
+) -> crate::failure::Result<Option<layer3_adapter::owner_protocol::TransportOwner>> {
+    let mut values = headers
+        .get_all(layer3_adapter::owner_protocol::OWNER_HEADER)
+        .iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    let invalid = || {
+        crate::failure::RuntimeError::rejected(
+            "manager_ownership_invalid",
+            "invalid ownership header",
+        )
+    };
+    if values.next().is_some() {
+        return Err(invalid());
+    }
+    layer3_adapter::owner_protocol::TransportOwner::from_header(
+        value.to_str().map_err(|_| invalid())?,
+    )
+    .map(Some)
+    .map_err(|_| invalid())
 }
 
 fn outbound(said: Outbound) -> Message {

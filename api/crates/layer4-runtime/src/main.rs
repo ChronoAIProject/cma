@@ -26,6 +26,7 @@ mod install_state;
 mod install_state_validation;
 mod lanes;
 mod link;
+mod manager_ownership;
 mod mutation_authority;
 mod mutation_journal;
 mod mutation_scope;

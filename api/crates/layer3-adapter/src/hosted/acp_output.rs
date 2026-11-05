@@ -2,7 +2,6 @@
 
 use std::collections::VecDeque;
 
-use futures_util::SinkExt as _;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use tokio::sync::mpsc;
@@ -81,6 +80,7 @@ impl Bridge {
         bytes: &[u8],
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
+        self.check_owner().await?;
         let fail = || AdapterError::Rejected("invalid retained runtime output position".into());
         let state = self.output.as_ref().ok_or_else(fail)?;
         if bytes.len() < HEADER_BYTES || bytes.len() > MAX_FRAME_BYTES + HEADER_BYTES {
@@ -226,14 +226,7 @@ impl Bridge {
         bytes.push(LANE_OUTPUT_ACK);
         bytes.extend_from_slice(stream.as_bytes());
         bytes.extend_from_slice(&source.cursor.to_be_bytes());
-        self.sink
-            .lock()
-            .await
-            .send(Message::Binary(bytes))
-            .await
-            .map_err(|error| {
-                AdapterError::Unavailable(format!("runtime acknowledgement write failed: {error}"))
-            })?;
+        self.write_owned(Message::Binary(bytes)).await?;
         if let Some(state) = &self.output {
             state
                 .lock()

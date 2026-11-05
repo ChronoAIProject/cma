@@ -61,6 +61,9 @@ mod output;
 #[path = "acp_reader.rs"]
 mod reader;
 
+#[path = "acp_ownership.rs"]
+mod ownership;
+
 pub(super) struct PendingCall {
     pub(super) answer: tokio::sync::oneshot::Sender<serde_json::Value>,
     pub(super) prompt: bool,
@@ -80,6 +83,7 @@ struct ConversationState {
 }
 
 pub(super) struct Bridge {
+    authority: Option<Arc<dyn crate::owner_protocol::TransportAuthority>>,
     pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
     sink: Arc<Mutex<Sink>>,
     pub(super) pending: Pending,
@@ -212,6 +216,7 @@ impl Bridge {
         let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
+            authority: crate::owner_protocol::current_authority(),
             subscription,
             sink: Arc::new(Mutex::new(sink)),
             pending: Arc::new(Mutex::new(HashMap::new())),
@@ -427,14 +432,7 @@ impl Bridge {
         let mut framed = Vec::with_capacity(body.len() + 1);
         framed.push(LANE_CONVERSATION);
         framed.extend_from_slice(&body);
-        self.sink
-            .lock()
-            .await
-            .send(Message::Binary(framed))
-            .await
-            .map_err(|error| {
-                AdapterError::Unavailable(format!("conversation write failed: {error}"))
-            })
+        self.write_owned(Message::Binary(framed)).await
     }
 
     pub(super) async fn retire(&self) {

@@ -14,6 +14,8 @@ struct Ready {
     agent_id: String,
     #[serde(default, rename = "outputAcknowledgement")]
     output_acknowledgement: Option<output::OutputCapability>,
+    #[serde(default, rename = "managerOwnership")]
+    manager_ownership: Option<crate::owner_protocol::OwnerAcknowledgement>,
 }
 
 pub(super) fn validate_ready(
@@ -35,6 +37,21 @@ pub(super) fn validate_ready(
     {
         return Err(AdapterError::Rejected(
             "runtime Ready declaration does not match the requested agent".into(),
+        ));
+    }
+    if let Some(authority) = crate::owner_protocol::current_authority() {
+        if ready.manager_ownership.as_ref().is_none_or(|negotiated| {
+            negotiated.protocol != crate::owner_protocol::OWNER_PROTOCOL_VERSION
+                || negotiated.owner != authority.owner()
+        }) || ready.output_acknowledgement.is_none()
+        {
+            return Err(AdapterError::Rejected(
+                "runtime lacks the exact ownership and durable output capabilities".into(),
+            ));
+        }
+    } else if ready.manager_ownership.is_some() {
+        return Err(AdapterError::Rejected(
+            "runtime requires an owned attachment".into(),
         ));
     }
     ready
