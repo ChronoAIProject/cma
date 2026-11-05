@@ -53,15 +53,18 @@ it('lets an unsupported retained draft clear desktop without changing its task o
     taskExperience: taskExperience('owner'),
   };
   render(<TaskHome client={client} viewerId="owner" canCreateSandbox onCreated={() => {}} />);
+  computerOption('Agent browser');
   await screen.findByText(/retained runtime requires an explicit upgrade/);
   expect(writes).toHaveLength(0);
-  const checkbox = screen.getByRole('checkbox', { name: 'Enable desktop' });
+  const checkbox = computerOption('Agent browser');
   expect(checkbox).toBeChecked();
-  expect(checkbox).toBeEnabled();
+  expect(checkbox).toHaveAttribute('aria-disabled', 'false');
   fireEvent.click(checkbox);
   expect(screen.getByLabelText('Your task')).toHaveValue('Retain my draft');
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Receipt unavailable');
+  await screen.findByText(
+    "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
+  );
   expect(writes).toEqual([{ name: 'New task', initial_message: 'Retain my draft' }]);
 });
 
@@ -194,18 +197,20 @@ it('recovers a lost desktop creation receipt after reload into the same task Age
     );
   }
   const first = render(<Journey />);
-  const toggle = await screen.findByRole('checkbox', { name: 'Enable desktop' });
-  await waitFor(() => expect(toggle).toBeEnabled());
+  const toggle = computerOption('Agent browser');
+  await waitFor(() => expect(toggle).toHaveAttribute('aria-disabled', 'false'));
   expect(toggle).not.toBeChecked();
   fireEvent.click(toggle);
   expect(requests).toHaveLength(0);
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: task } });
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Creation receipt lost');
+  await screen.findByText(
+    "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
+  );
   first.unmount();
   render(<Journey />);
-  expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toBeChecked();
-  expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toBeDisabled();
+  expect(computerOption('Agent browser')).toBeChecked();
+  expect(computerOption('Agent browser')).toHaveAttribute('aria-disabled', 'true');
   fireEvent.click(screen.getByRole('button', { name: 'Recover original task' }));
   await waitFor(() =>
     expect(opened).toHaveBeenCalledExactlyOnceWith({ kind: 'agent', agentId: 'agent-1' }),
@@ -217,3 +222,9 @@ it('recovers a lost desktop creation receipt after reload into the same task Age
   ]);
   expect(reads).toContain('/api/v1/agents/agent-1/browser');
 });
+
+function computerOption(name: string) {
+  if (!screen.queryByRole('menu', { name: 'Run this task on' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Cloud computer/ }));
+  return screen.getByRole('menuitemcheckbox', { name });
+}

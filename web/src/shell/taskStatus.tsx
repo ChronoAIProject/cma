@@ -46,14 +46,21 @@ export function taskStatus(
 }
 
 export function taskStateMeta(status: TaskStatus, stale = false) {
-  const tone = statusTone(
-    status === 'not_started' || status === 'completed' || status === 'unknown' ? 'ready' : status,
-  );
+  const tone =
+    status === 'not_started'
+      ? 'ready'
+      : status === 'completed'
+        ? 'completed'
+        : statusTone(status === 'unknown' ? 'ready' : status);
   return (
     <>
       <span className="sr-only">, </span>
       <span className="tree-row__state" data-tone={stale ? 'muted' : tone}>
-        {stale ? null : toneDot(tone)}
+        {stale ? null : tone === 'ready' || tone === 'completed' ? (
+          <span className="task-state-dot" data-tone={tone} aria-hidden="true" />
+        ) : (
+          toneDot(tone)
+        )}
         {taskWords[status]}
       </span>
     </>
