@@ -294,7 +294,7 @@ export function useAppRouter(): AppRouter {
     else if (current.kind !== 'usage' || next.kind !== 'usage')
       window.history.pushState(historyState, '', path);
     setState((previous) => ({
-      route: next,
+      route: parseRoute(path),
       backgroundRoute:
         next.kind === 'usage'
           ? opening
