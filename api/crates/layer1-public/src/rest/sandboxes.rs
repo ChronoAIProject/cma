@@ -57,6 +57,10 @@ pub(super) fn routes() -> Router<HierarchyState> {
         .route("/api/v1/sandboxes/{id}/pause", post(pause))
         .route("/api/v1/sandboxes/{id}/revive", post(revive))
         .route(
+            "/api/v1/sandboxes/{id}/always-on",
+            post(super::sandbox_always_on::always_on),
+        )
+        .route(
             "/api/v1/sandboxes/{id}/runtime-update",
             post(super::sandbox_runtime_update::update),
         )

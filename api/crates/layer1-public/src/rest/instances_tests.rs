@@ -317,6 +317,7 @@ fn stored_sandbox(id: &str, owner: &str, status: SandboxStatus, max_workspaces: 
             id: SandboxProfileId("sbp_stored".into()),
             revision: 1,
             digest: "a".repeat(64),
+            always_on: None,
             content: sandbox_content(max_workspaces),
         },
         status,

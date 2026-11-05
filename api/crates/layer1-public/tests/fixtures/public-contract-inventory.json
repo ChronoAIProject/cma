@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 260,
+  "openapi_operations": 264,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3632,6 +3632,40 @@
       "non_problem_statuses": {
         "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
       }
+    },
+    "POST /api/v1/sandboxes/{id}/always-on": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_always_on.rs# Owner Sandbox Always on preference is an idempotent, CAS-protected control projected through the hierarchy service.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/admin/sandboxes/{id}/always-on": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/sandboxes.rs# Operator Sandbox Always on override is a CAS-protected maintenance control.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "operator_resource_not_found"
+      ]
+    },
+    "GET /api/v1/admin/auto-pause/preview": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/auto_pause.rs# Operator preview evaluates the same maintenance eligibility proof without persisting a pause.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/admin/auto-pause/pause-idle-now": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/auto_pause.rs# Confirmed operator action schedules eligible idle Sandboxes through the durable maintenance lifecycle.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated"
+      ]
     }
   }
 }

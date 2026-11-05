@@ -11,7 +11,18 @@ pub(super) async fn live_activities(
     store: &MongoSandboxStore,
     agents: &[Agent],
     session: &mut ClientSession,
+    observed_at: &str,
 ) -> Result<Vec<SandboxAgentActivity>, ApplyError> {
+    let open_session = store
+        .sandbox_sessions
+        .find_one(doc! {
+            "sandbox_id": agents.first().map(|agent| agent.sandbox_id.as_str()).unwrap_or_default(),
+            "lease_expires_at": { "$gt": observed_at },
+        })
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .is_some();
     let mut activities = Vec::new();
     for agent in agents.iter().filter(|agent| agent.status.is_live()) {
         let mut newest = None;
@@ -26,11 +37,26 @@ pub(super) async fn live_activities(
             },
         )
         .await?;
-        activities.push(
-            SandboxAgentActivity::from_live_agent(agent, newest.as_ref()).map_err(|error| {
-                ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string()))
-            })?,
-        );
+        let mut activity = SandboxAgentActivity::from_live_agent(agent, newest.as_ref())
+            .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
+        // A durable command receipt may arrive before the Agent checkpoint.
+        // Keep every nonterminal UI/API/channel/trigger command visible to the
+        // inactivity proof so admitted work cannot be paused as idle.
+        activity.external_activity_present = store
+            .agent_commands
+            .find_one(doc! {
+                "agent_id": agent.id.as_str(),
+                "status": {
+                    "$in": ["queued", "in_progress", "waiting_action"]
+                },
+            })
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .is_some();
+        activity.open_terminal_or_desktop_session =
+            open_session || layer2_core::sandbox::has_open_desktop_session(&agent.sandbox_id);
+        activities.push(activity);
     }
     Ok(activities)
 }

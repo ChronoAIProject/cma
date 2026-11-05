@@ -64,10 +64,26 @@ impl PlatformSettingsService {
         settings: &PlatformSettings,
     ) -> Result<StoredPlatformSettings, CoreError> {
         caller.require(Capability::ConfigurePlatform)?;
-        settings.validate()?;
+        let current = self.current().await?;
+        let mut effective = settings.clone();
+        let policy_changed = current.settings.inactivity.auto_pause_enabled
+            != settings.inactivity.auto_pause_enabled
+            || current.settings.inactivity.pause_after_seconds
+                != settings.inactivity.pause_after_seconds;
+        if settings.inactivity.auto_pause_enabled {
+            effective.inactivity.grace_started_at =
+                if policy_changed || current.settings.inactivity.grace_started_at.is_none() {
+                    Some(crate::now_rfc3339())
+                } else {
+                    current.settings.inactivity.grace_started_at.clone()
+                };
+        } else {
+            effective.inactivity.grace_started_at = None;
+        }
+        effective.validate()?;
         let stored = self
             .store
-            .replace(expected_revision, settings)
+            .replace(expected_revision, &effective)
             .await
             .map_err(store_failed)?;
         self.audit(

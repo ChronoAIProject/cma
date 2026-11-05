@@ -359,6 +359,7 @@ pub(super) fn sandbox(id: &str, owner: &str) -> Sandbox {
             id: SandboxProfileId("sbp_route".into()),
             revision: 3,
             digest: "a".repeat(64),
+            always_on: None,
             content: SandboxProfileContent {
                 runtime_image: None,
                 cpu_millis: 1_000,

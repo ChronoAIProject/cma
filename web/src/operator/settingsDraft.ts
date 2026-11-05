@@ -32,7 +32,9 @@ export function reviewSettingsDraft(
       agent_profile: reference('agent_profile'),
     },
     inactivity: merge(base.inactivity, draft.inactivity, current.inactivity, [
+      'auto_pause_enabled',
       'pause_after_seconds',
+      'grace_started_at',
     ]),
     retention: merge(base.retention, draft.retention, current.retention, ['agent_log_days']),
     limits: merge(base.limits, draft.limits, current.limits, [

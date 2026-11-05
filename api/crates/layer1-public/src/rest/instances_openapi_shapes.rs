@@ -123,6 +123,10 @@ pub struct SandboxView {
     #[schema(value_type = String)]
     pub status: SandboxStatus,
     pub profile: ProfileReferenceView,
+    /// Explicit owner preference; absent means the historical profile policy
+    /// is still in effect until global auto-pause is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub always_on: Option<bool>,
     /// Creation scope plus explicitly authorized instance services.
     pub nyxid_services: Vec<String>,
     pub limits: SandboxLimitsView,
@@ -154,6 +158,7 @@ impl From<&Sandbox> for SandboxView {
                 id: value.profile.id.to_string(),
                 revision: value.profile.revision,
             },
+            always_on: value.profile.always_on,
             nyxid_services: value
                 .credential
                 .effective_reaches()

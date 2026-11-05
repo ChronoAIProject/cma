@@ -87,6 +87,7 @@ mod operator_sandboxes;
 mod profile_documents;
 #[cfg(test)]
 mod profile_index_tests;
+mod profile_mongo;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;
 mod profile_references;
@@ -109,6 +110,7 @@ mod sandbox_mongo_integration_tests;
 mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
 mod sandbox_reconciliation;
+mod sandbox_sessions;
 mod sandbox_transactions;
 mod sandbox_unpublished_recovery;
 pub(crate) mod sandbox_usage;
