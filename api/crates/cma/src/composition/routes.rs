@@ -35,6 +35,9 @@ pub(super) fn compose(
     Router::new()
         .merge(public)
         .merge(tools)
+        .layer(axum::middleware::from_fn(
+            crate::background::interactive_request,
+        ))
         .merge(crate::health::router(stores))
         .layer(axum::middleware::from_fn_with_state(
             limits,

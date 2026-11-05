@@ -1,12 +1,12 @@
 //! Adopt durable runtime bindings before workers run, then reconcile continuously.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{
-    PageRequest, SandboxInactivityPauseRequest, SandboxMaintenanceStore,
-    SandboxReconciliationStore, SandboxRuntimeLossRequest, SandboxStore, SandboxStoreError,
+    SandboxMaintenanceStore, SandboxReconciliationStore, SandboxRuntimeLossRequest, SandboxStore,
+    SandboxStoreError,
 };
 use layer2_core::sandbox::{AgentService, Sandbox, SandboxPolicySource, SandboxStatus};
 use layer2_core::{rfc3339_at, SandboxId};
@@ -28,6 +28,13 @@ mod homes;
 #[path = "reconciliation_updates.rs"]
 mod updates;
 
+#[path = "reconciliation_authority.rs"]
+mod authority;
+#[path = "reconciliation_sweep.rs"]
+mod sweep;
+#[path = "reconciliation_telemetry.rs"]
+mod telemetry;
+
 pub(crate) trait ReconciliationStore:
     SandboxReconciliationStore + SandboxMaintenanceStore + SandboxStore
 {
@@ -47,6 +54,7 @@ pub(crate) struct SandboxReconciler {
     runtime_version: Option<String>,
     failed_runtime_recovery: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
     recovery_schedule_cursor: std::sync::atomic::AtomicUsize,
+    progress: tokio::sync::Mutex<Option<sweep::Progress>>,
 }
 
 impl SandboxReconciler {
@@ -65,6 +73,7 @@ impl SandboxReconciler {
             runtime_version: None,
             failed_runtime_recovery: None,
             recovery_schedule_cursor: std::sync::atomic::AtomicUsize::new(0),
+            progress: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -98,100 +107,85 @@ impl SandboxReconciler {
             self.reconcile_binding(sandbox, &inventory, now).await?;
         }
         for observation in &inventory {
-            let id = SandboxId(observation.sandbox_id.clone());
-            // Read pool authority first: a concurrent claim publishes its owned
-            // Sandbox atomically, before the following fresh owned-record read.
-            if self
-                .store
-                .unowned_runtime_authority(&id, observation.generation, observation.handle.as_str())
-                .await?
-            {
-                continue;
-            }
-            if let Some(current) = self.store.get_sandbox(&id).await? {
-                current
-                    .validate()
-                    .map_err(|error| corrupt(&error.to_string()))?;
-                // A settled pause/retirement cannot bind an equal generation;
-                // any later revive reserves a newer one before provider I/O.
-                let settled_unbound = current.runtime.is_none()
-                    && matches!(
-                        current.status,
-                        SandboxStatus::Paused | SandboxStatus::Retiring | SandboxStatus::Retired
-                    )
-                    && current.lifecycle.runtime_provision.is_none()
-                    && current.lifecycle.operation.is_none()
-                    && current.lifecycle.checkpoint_capture.is_none();
-                if current
-                    .lifecycle
-                    .suspended_runtime
-                    .as_ref()
-                    .is_some_and(|binding| binding.runtime_id == observation.handle.0)
-                    || observation.generation > current.lifecycle.runtime_generation_high_water
-                    || (observation.generation == current.lifecycle.runtime_generation_high_water
-                        && !settled_unbound)
-                    || current.runtime.as_ref().is_some_and(|binding| {
-                        binding.runtime_id == observation.handle.0
-                            || binding.provision_generation.is_none()
-                    })
-                {
-                    continue;
-                }
-                // Older recovery records can reserve a successor generation
-                // without retaining the original provider binding. Its object
-                // still owns the home; only explicit retirement may delete it.
-                if observation.handle.as_str().starts_with("agent-sandbox:")
-                    && current
-                        .lifecycle
-                        .home
-                        .as_ref()
-                        .is_some_and(|home| !home.released)
-                {
-                    continue;
-                }
-            }
-            self.adapter
-                .reclaim_runtime(observation)
-                .await
-                .map_err(provider_error)?;
+            self.reconcile_runtime(observation).await?;
         }
         self.reconcile_homes().await
     }
 
-    async fn authority(&self) -> Result<BTreeMap<SandboxId, Sandbox>, SandboxStoreError> {
-        let mut authority = BTreeMap::new();
-        let mut request = PageRequest::default();
-        let mut cursors = BTreeSet::new();
-        loop {
-            let page = self.store.sandbox_runtime_authority(&request).await?;
-            let mut previous = request.cursor.as_deref();
-            for sandbox in &page.items {
-                sandbox
-                    .validate()
-                    .map_err(|error| corrupt(&error.to_string()))?;
-                if previous.is_some_and(|id| id >= sandbox.id.as_str())
-                    || authority.contains_key(&sandbox.id)
-                {
-                    return Err(corrupt("runtime authority scan is not strictly ordered"));
-                }
-                previous = Some(sandbox.id.as_str());
-            }
-            if page.items.len() > usize::from(request.limit)
-                || page.next.as_ref().is_some_and(|next| {
-                    previous != Some(next.as_str()) || !cursors.insert(next.clone())
+    // Each resumed cleanup item repeats this complete pool-first/owned fence.
+    async fn reconcile_runtime(
+        &self,
+        observation: &RuntimeObservation,
+    ) -> Result<(), SandboxStoreError> {
+        let id = SandboxId(observation.sandbox_id.clone());
+        // Read pool authority first: a concurrent claim publishes its owned
+        // Sandbox atomically, before the following fresh owned-record read.
+        if self
+            .store
+            .unowned_runtime_authority(&id, observation.generation, observation.handle.as_str())
+            .await?
+        {
+            return Ok(());
+        }
+        if let Some(current) = self.store.get_sandbox(&id).await? {
+            current
+                .validate()
+                .map_err(|error| corrupt(&error.to_string()))?;
+            // A settled pause/retirement cannot bind an equal generation;
+            // any later revive reserves a newer one before provider I/O.
+            let settled_unbound = current.runtime.is_none()
+                && matches!(
+                    current.status,
+                    SandboxStatus::Paused | SandboxStatus::Retiring | SandboxStatus::Retired
+                )
+                && current.lifecycle.runtime_provision.is_none()
+                && current.lifecycle.operation.is_none()
+                && current.lifecycle.checkpoint_capture.is_none();
+            if current
+                .lifecycle
+                .suspended_runtime
+                .as_ref()
+                .is_some_and(|binding| binding.runtime_id == observation.handle.0)
+                || observation.generation > current.lifecycle.runtime_generation_high_water
+                || (observation.generation == current.lifecycle.runtime_generation_high_water
+                    && !settled_unbound)
+                || current.runtime.as_ref().is_some_and(|binding| {
+                    binding.runtime_id == observation.handle.0
+                        || binding.provision_generation.is_none()
                 })
             {
-                return Err(corrupt("runtime authority scan did not advance completely"));
+                return Ok(());
             }
-            authority.extend(
-                page.items
-                    .into_iter()
-                    .map(|sandbox| (sandbox.id.clone(), sandbox)),
-            );
-            let Some(next) = page.next else {
-                return Ok(authority);
-            };
-            request.cursor = Some(next);
+            // Older recovery records can reserve a successor generation
+            // without retaining the original provider binding. Its object
+            // still owns the home; only explicit retirement may delete it.
+            if observation.handle.as_str().starts_with("agent-sandbox:")
+                && current
+                    .lifecycle
+                    .home
+                    .as_ref()
+                    .is_some_and(|home| !home.released)
+            {
+                return Ok(());
+            }
+        }
+        self.adapter
+            .reclaim_runtime(observation)
+            .await
+            .map_err(provider_error)?;
+        Ok(())
+    }
+
+    async fn authority(&self) -> Result<BTreeMap<SandboxId, Sandbox>, SandboxStoreError> {
+        let mut authority = authority::Authority::default();
+        loop {
+            let page = self
+                .store
+                .sandbox_runtime_authority(&authority.request)
+                .await?;
+            if authority.accept(page)? {
+                return Ok(authority.items);
+            }
         }
     }
 
@@ -360,54 +354,6 @@ impl SandboxReconciler {
         Ok(())
     }
 
-    pub(super) async fn run_due(&self, now: SystemTime) -> Result<(), SandboxStoreError> {
-        self.initialize(now).await?;
-        self.recover_failed_unpublished_runtime().await?;
-        let policy = self
-            .policy
-            .current_sandbox_policy()
-            .await
-            .map_err(|error| {
-                SandboxStoreError::Unavailable(format!(
-                    "sandbox maintenance policy is unavailable: {error}"
-                ))
-            })?;
-        let mut page = PageRequest::default();
-        let mut seen = BTreeSet::new();
-        loop {
-            let candidates = self.store.sandbox_maintenance_candidates(&page).await?;
-            for sandbox_id in candidates.items {
-                if let Some(agents) = &self.profile_agents {
-                    if let Err(error) = agents.reconcile_profile_agents(&sandbox_id).await {
-                        tracing::error!(sandbox_id = %sandbox_id, error = %error, "automatic profile agent reconciliation failed");
-                    }
-                }
-                if self.reconcile_runtime_update(&sandbox_id, now).await? {
-                    continue;
-                }
-                self.store
-                    .schedule_inactivity_pause(SandboxInactivityPauseRequest {
-                        sandbox_id,
-                        requested_at: rfc3339_at(now),
-                        pause_after_seconds: policy.inactivity_pause_after_seconds,
-                    })
-                    .await?;
-            }
-            let Some(next) = candidates.next else {
-                return Ok(());
-            };
-            if !seen.insert(next.clone())
-                || page
-                    .cursor
-                    .as_ref()
-                    .is_some_and(|previous| previous >= &next)
-            {
-                return Err(corrupt("maintenance candidate scan did not advance"));
-            }
-            page.cursor = Some(next);
-        }
-    }
-
     pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(RECONCILIATION_INTERVAL);
@@ -421,7 +367,7 @@ impl SandboxReconciler {
                         if changed.is_err() || *shutdown.borrow() { break; }
                     }
                     _ = ticker.tick() => {
-                        if let Err(error) = self.run_due(SystemTime::now()).await {
+                        if let Err(error) = crate::background::sandbox_reconciliation(|| self.run_due(SystemTime::now())).await {
                             tracing::error!(error = %error, "sandbox runtime reconciliation failed");
                         }
                     }

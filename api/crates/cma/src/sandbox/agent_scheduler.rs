@@ -17,6 +17,7 @@ const MAX_CONCURRENT_AGENTS: usize = 50;
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(25);
 
 pub(crate) struct AgentScheduler {
+    budget: Arc<crate::background::BackgroundBudget>,
     worker: Arc<dyn AgentScheduleWork>,
     sweep_interval: Duration,
     concurrency: usize,
@@ -49,6 +50,7 @@ impl AgentScheduleWork for AgentWorker {
 impl AgentScheduler {
     pub(crate) fn new(worker: Arc<AgentWorker>, admitted: Arc<Notify>) -> Self {
         Self {
+            budget: crate::background::shared(),
             worker,
             sweep_interval: SWEEP_INTERVAL,
             concurrency: MAX_CONCURRENT_AGENTS,
@@ -59,7 +61,7 @@ impl AgentScheduler {
 
     pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let mut work = ScheduledWork::new(self.worker, self.concurrency);
+            let mut work = ScheduledWork::new(self.worker, self.concurrency, self.budget);
             let mut ticker = tokio::time::interval(self.sweep_interval);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
@@ -120,6 +122,7 @@ enum TaskOutput {
 type TaskResult = Result<TaskOutput, SandboxStoreError>;
 
 struct ScheduledWork {
+    reconciliation: crate::background::BackgroundWork,
     worker: Arc<dyn AgentScheduleWork>,
     concurrency: usize,
     tasks: JoinSet<TaskResult>,
@@ -131,8 +134,18 @@ struct ScheduledWork {
 }
 
 impl ScheduledWork {
-    fn new(worker: Arc<dyn AgentScheduleWork>, concurrency: usize) -> Self {
+    fn new(
+        worker: Arc<dyn AgentScheduleWork>,
+        concurrency: usize,
+        budget: Arc<crate::background::BackgroundBudget>,
+    ) -> Self {
         Self {
+            reconciliation: crate::background::BackgroundWork::new(
+                budget,
+                "agent_reconciliation",
+                Duration::from_secs(30),
+                SWEEP_INTERVAL,
+            ),
             worker,
             concurrency,
             tasks: JoinSet::new(),
@@ -147,11 +160,12 @@ impl ScheduledWork {
     fn poll(&mut self) {
         if !self.reconciling {
             let worker = Arc::clone(&self.worker);
+            let reconciliation = self.reconciliation.clone();
             let task = self.tasks.spawn(async move {
-                worker
-                    .reconcile(SystemTime::now())
+                reconciliation
+                    .run(|| async { worker.reconcile(SystemTime::now()).await })
                     .await
-                    .map(TaskOutput::Completed)
+                    .map(|completed| TaskOutput::Completed(completed.unwrap_or(0)))
             });
             self.kinds.insert(task.id(), TaskKind::Reconcile);
             self.reconciling = true;
@@ -186,8 +200,10 @@ impl ScheduledWork {
                 continue;
             }
             let worker = Arc::clone(&self.worker);
+            let priority = self.reconciliation.clone();
             let work_id = id.clone();
             let task = self.tasks.spawn(async move {
+                let _priority = priority.foreground();
                 // The query and local queue confer no authority; claim using fresh time.
                 worker
                     .run_one(&work_id, SystemTime::now())

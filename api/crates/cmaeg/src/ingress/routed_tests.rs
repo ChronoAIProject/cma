@@ -8,7 +8,9 @@ use crate::{
     ingress::{launch::TurnLauncher, routing_plan::fixture, routing_store::test_server::Server},
     turns::routed::scheduler::{Disposition, ScheduleConfig, Scheduler, TargetExecutor, WorkItem},
 };
+use cmaeg_core::{activity::SourceKind, seal::event_ref::activity_digest};
 use futures_util::future::BoxFuture;
+use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Legacy(AtomicUsize);
@@ -86,6 +88,10 @@ impl Setup {
         let permit = self.state.inflight.clone().try_acquire_owned().unwrap();
         self.state.launch_verified(request, source, permit).await
     }
+
+    async fn launch_github(&self, request: LaunchRequest, bytes: &[u8]) -> LaunchOutcome {
+        self.state.launch_github(request, bytes.to_vec()).await
+    }
 }
 fn request() -> LaunchRequest {
     fixture::request(fixture::targets, fixture::message("original message"))
@@ -109,6 +115,57 @@ fn sync_request(waiter: Option<&str>) -> LaunchRequest {
         });
     });
     request
+}
+
+fn github_request() -> LaunchRequest {
+    let mut request = fixture::request(
+        |value| {
+            value["sources"].as_array_mut().unwrap().push(json!({
+                "type": "github",
+                "app_ref": "github-pilot",
+                "installation_ids": [7],
+                "repository_ids": [42],
+                "events": ["issues"],
+                "actions": ["opened"]
+            }));
+        },
+        fixture::custom(None),
+    );
+    request.activity.source = SourceKind::Github {
+        app_ref: "github-pilot".into(),
+        installation_id: 7,
+        repository_id: 42,
+    };
+    let digest = activity_digest(&request.activity);
+    fixture::rewrite_ref(&mut request, |event| {
+        event.activity_sha256 = Some(digest);
+    });
+    request
+}
+
+#[tokio::test]
+async fn github_event_reaches_durable_routed_admission() {
+    let request = github_request();
+    let setup = Setup::new(&request, true).await;
+
+    let outcome = setup
+        .launch_github(request, br#"{"action":"opened"}"#)
+        .await;
+    let (admission_id, conversation_id) = admitted(outcome);
+
+    let restored = setup
+        .server
+        .store()
+        .lookup_task("user-1", &admission_id)
+        .await
+        .unwrap()
+        .expect("durable GitHub admission");
+    assert_eq!(restored.admission_id, admission_id);
+    assert_eq!(
+        restored.targets[0].launch.event.conversation_id,
+        conversation_id
+    );
+    assert_eq!(setup.legacy.0.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

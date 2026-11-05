@@ -12,10 +12,14 @@ const IO_DEADLINE: Duration = Duration::from_secs(15);
 
 pub(crate) struct AgentProvenanceBackfill {
     store: Arc<dyn AgentProvenanceBackfillStore>,
+    budget: Arc<crate::background::BackgroundBudget>,
 }
 impl AgentProvenanceBackfill {
     pub(crate) fn new(store: Arc<dyn AgentProvenanceBackfillStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            budget: crate::background::shared(),
+        }
     }
 
     pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
@@ -31,35 +35,46 @@ impl AgentProvenanceBackfill {
     async fn run(&self, shutdown: &mut watch::Receiver<bool>) {
         // Leave startup and initial user reconnection free of migration traffic.
         tokio::time::sleep(Duration::from_secs(30)).await;
+        let scan = crate::background::BackgroundWork::new(
+            self.budget.clone(),
+            "provenance_scan",
+            IO_DEADLINE,
+            Duration::ZERO,
+        );
+        let item = crate::background::BackgroundWork::new(
+            self.budget.clone(),
+            "provenance_item",
+            IO_DEADLINE,
+            ITEM_DELAY,
+        );
         let mut page = PageRequest::new(PAGE_SIZE, None).expect("fixed bounded page");
         loop {
             if *shutdown.borrow() {
                 return;
             }
-            let batch = match tokio::time::timeout(
-                IO_DEADLINE,
-                self.store.scan_agent_provenance_backfill(&page),
-            )
-            .await
+            let batch = match scan
+                .run(|| self.store.scan_agent_provenance_backfill(&page))
+                .await
             {
-                Ok(Ok(batch)) => batch,
-                _ => {
+                Ok(Some(batch)) => batch,
+                Ok(None) => continue,
+                Err(_) => {
                     tracing::warn!("Agent provenance backfill scan unavailable; retrying later");
-                    tokio::time::sleep(SWEEP_DELAY).await;
                     continue;
                 }
             };
             let mut recorded = 0_u16;
             let mut refused = 0_u16;
             for id in &batch.items {
-                match tokio::time::timeout(IO_DEADLINE, self.store.backfill_agent_provenance(id))
-                    .await
-                {
-                    Ok(Ok(ProvenanceBackfillOutcome::Recorded)) => recorded += 1,
-                    Ok(Ok(ProvenanceBackfillOutcome::Retained)) => (),
-                    _ => refused += 1,
+                loop {
+                    match item.run(|| self.store.backfill_agent_provenance(id)).await {
+                        Ok(Some(ProvenanceBackfillOutcome::Recorded)) => recorded += 1,
+                        Ok(Some(ProvenanceBackfillOutcome::Retained)) => (),
+                        Ok(None) => continue,
+                        Err(_) => refused += 1,
+                    }
+                    break;
                 }
-                tokio::time::sleep(ITEM_DELAY).await;
             }
             if recorded > 0 || refused > 0 {
                 tracing::info!(
