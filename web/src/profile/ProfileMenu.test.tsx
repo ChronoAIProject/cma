@@ -25,7 +25,7 @@ describe('account menu', () => {
     expect(screen.queryByRole('menuitem', { name: 'Marketplace' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Operations' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'CMA Trigger' })).not.toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /appearance/i })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Appearance' })).toBeInTheDocument();
 
     await actor.click(screen.getByRole('menuitem', { name: 'Docs' }));
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'docs' });
@@ -124,4 +124,44 @@ it('keeps the build revision readable when the clipboard refuses it', async () =
   await actor.click(screen.getByRole('menuitem', { name: 'Build dev' }));
   expect(writeText).toHaveBeenCalledOnce();
   expect(screen.getByRole('menuitem', { name: 'Build dev' })).toBeInTheDocument();
+});
+
+it('replaces Settings with Usage and focuses the retained trigger before navigation', async () => {
+  const actor = userEvent.setup();
+  let focused: Element | null = null;
+  const onNavigate = vi.fn(() => {
+    focused = document.activeElement;
+  });
+  render(<ProfileMenu user={user} onSignOut={vi.fn()} onNavigate={onNavigate} />);
+  const trigger = screen.getByRole('button', { name: /Account menu for/ });
+  await actor.click(trigger);
+  expect(screen.queryByRole('menuitem', { name: 'Settings' })).not.toBeInTheDocument();
+  await actor.click(screen.getByRole('menuitem', { name: 'Usage' }));
+  expect(onNavigate).toHaveBeenCalledWith({ kind: 'usage' });
+  expect(focused).toBe(trigger);
+});
+it('offers one explicit Appearance group and synchronizes retained menus and storage', async () => {
+  const actor = userEvent.setup();
+  const one = render(<ProfileMenu user={user} onSignOut={vi.fn()} />);
+  const two = render(
+    <ProfileMenu user={{ ...user, displayName: 'Second surface' }} onSignOut={vi.fn()} />,
+  );
+  await actor.click(within(one.container).getByRole('button'));
+  const appearance = screen.getByRole('group', { name: 'Appearance' });
+  for (const value of ['System', 'Light', 'Dark']) {
+    await actor.click(within(appearance).getByRole('menuitemradio', { name: value }));
+    expect(localStorage.getItem('cma:appearance')).toBe(value.toLowerCase());
+    expect(within(appearance).getByRole('menuitemradio', { name: value })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  }
+  await actor.click(within(two.container).getByRole('button'));
+  expect(screen.getByRole('menuitemradio', { name: 'Dark' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  localStorage.setItem('cma:appearance', 'light');
+  window.dispatchEvent(new StorageEvent('storage', { key: 'cma:appearance' }));
+  await screen.findByRole('menuitemradio', { name: 'Light', checked: true });
 });
