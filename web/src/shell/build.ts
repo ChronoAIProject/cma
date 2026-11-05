@@ -1,7 +1,7 @@
 /**
  * Which build of the frontend is on screen — docs/Web_Style.md §6.
  *
- * The status band names it because a person reporting something odd, and the
+ * The account menu names it because a person reporting something odd, and the
  * person reading that report, need to be talking about the same bundle. It is
  * baked in at build time rather than fetched: a build identifier the running
  * page asks a server for is one that can disagree with the code answering the
