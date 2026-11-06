@@ -180,9 +180,24 @@ impl Gateway {
         app: &AppIntegration,
         installation_id: u64,
     ) -> Result<Binding, Error> {
-        let id = identity("binding", &(app.app_id, installation_id));
-        let binding = self.binding(owner, &id).await?;
-        if binding.app_ref != app.app_ref {
+        if app.status == "retired" {
+            return Err(Error::Retired);
+        }
+        // New registrations never reuse a retired integration's binding identity.
+        // Older bindings remain addressable under their original IDs and owner.
+        let id = identity("binding", &(&app.app_ref, installation_id));
+        let binding = match self.binding(owner, &id).await {
+            Ok(binding) => binding,
+            Err(Error::NotFound) => {
+                self.binding(owner, &identity("binding", &(app.app_id, installation_id)))
+                    .await?
+            }
+            Err(error) => return Err(error),
+        };
+        if binding.app_ref != app.app_ref
+            || binding.app_id != app.app_id
+            || binding.installation_id != installation_id
+        {
             return Err(Error::NotFound);
         }
         Ok(binding)
@@ -196,7 +211,8 @@ impl Gateway {
             || binding.app_id == 0
             || binding.installation_id == 0
             || binding.account_id == 0
-            || identity("binding", &(binding.app_id, binding.installation_id)) != id
+            || (identity("binding", &(&binding.app_ref, binding.installation_id)) != id
+                && identity("binding", &(binding.app_id, binding.installation_id)) != id)
         {
             return Err(Error::Unavailable);
         }
