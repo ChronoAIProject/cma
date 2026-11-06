@@ -43,6 +43,8 @@ jobs:
         run: ruby .github/scripts/ci-contract.rb provider
       - name: Provider contract mutation regressions
         run: ruby .github/scripts/ci-contract-tests.rb provider
+      - name: Backend capacity preparation regressions
+        run: python3 .github/scripts/backend-capacity-tests.py
       - name: Staging authority and evidence regressions
         run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs
       - name: Authenticated Mongo startup regressions
@@ -296,6 +298,12 @@ jobs:
         working-directory: api
     steps:
       - uses: actions/checkout@v5
+      - name: Prepare Backend capacity
+        working-directory: .
+        run: >-
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS
+          python3 .github/scripts/backend-capacity.py
+          || echo "::warning::Backend capacity preparation unavailable"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
