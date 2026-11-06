@@ -36,7 +36,7 @@ docker run --detach --name "$contract_name" --label "$contract_label" \
   --publish 127.0.0.1::27017 --memory 2g --memory-swap 2g --cpus 2 --pids-limit 256 \
   --tmpfs /data/db:rw,size=1073741824 --tmpfs /data/configdb:rw,size=16777216 \
   --env MONGO_INITDB_ROOT_USERNAME --env MONGO_INITDB_ROOT_PASSWORD --env CMA_IM_REPLICA_KEY \
-  --entrypoint sh "$mongo_image" -c 'umask 077; printf "%s" "$CMA_IM_REPLICA_KEY" > /tmp/replica-key; chown mongodb:mongodb /tmp/replica-key; exec docker-entrypoint.sh mongod --replSet cma-im-contract --keyFile /tmp/replica-key --wiredTigerCacheSizeGB 0.25' >/dev/null
+  --entrypoint sh "$mongo_image" -c 'umask 077; printf "%s" "$CMA_IM_REPLICA_KEY" > /tmp/replica-key; chown mongodb:mongodb /tmp/replica-key; exec docker-entrypoint.sh mongod --replSet cma-im-contract --keyFile /tmp/replica-key --wiredTigerCacheSizeGB 0.25 --setParameter enableTestCommands=1' >/dev/null
 readiness_script=$(cat "$script_directory/authenticated-mongo-readiness.js")
 for attempt in $(seq 1 60); do
   if docker exec "$contract_name" mongosh --quiet \
@@ -70,6 +70,7 @@ cargo nextest run --workspace --locked \
 cargo test --locked -p cmaeg --lib whatsapp_retention_on_real_mongo -- --ignored --test-threads=1
 cargo test --locked -p cmaeg --test mongo_isolation -- --ignored --test-threads=1
 cargo test --locked -p cmaeg --test management github_integrations:: -- --ignored --test-threads=1
+cargo test --locked -p cmaeg --test management organization_channels:: -- --ignored --test-threads=1
 cargo test --locked -p cmaeg --test github_source -- --ignored --test-threads=1
 cargo test --locked -p cmaeg --lib tools::threads::ledger::mongo_tests:: -- --ignored --test-threads=1
 # Keep the workspace feature graph used by the earlier Backend tests, avoiding

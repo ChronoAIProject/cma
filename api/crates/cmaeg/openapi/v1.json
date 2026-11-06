@@ -742,6 +742,13 @@
           "host": {
             "type": "string"
           },
+          "retired_at": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "status": {
             "type": "string"
           },
@@ -1422,6 +1429,11 @@
       "BindRequest": {
         "additionalProperties": false,
         "properties": {
+          "account_id": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "app_ref": {
             "type": "string"
           },
@@ -1431,13 +1443,22 @@
             "type": "integer"
           },
           "proof_ref": {
+            "description": "Retained for legacy requests; static proofs no longer grant authority.",
             "type": "string"
+          },
+          "repository_ids": {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 256,
+            "type": "array"
           }
         },
         "required": [
           "app_ref",
-          "installation_id",
-          "proof_ref"
+          "installation_id"
         ],
         "type": "object"
       },
@@ -1457,6 +1478,24 @@
           "app_ref": {
             "type": "string"
           },
+          "approval": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BindingApproval"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approved_repository_ids": {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "authority_revision": {
             "format": "int64",
             "minimum": 0,
@@ -1465,12 +1504,28 @@
           "binding_id": {
             "type": "string"
           },
+          "excluded_repository_ids": {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "installation_id": {
             "format": "int64",
             "minimum": 0,
             "type": "integer"
           },
           "repository_ids": {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "requested_repository_ids": {
             "items": {
               "format": "int64",
               "minimum": 0,
@@ -1490,6 +1545,11 @@
           "verified_until": {
             "format": "int64",
             "type": "integer"
+          },
+          "version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
@@ -1503,6 +1563,42 @@
           "verified_until",
           "verified_by",
           "verification_ref",
+          "repository_ids"
+        ],
+        "type": "object"
+      },
+      "BindingApproval": {
+        "additionalProperties": false,
+        "properties": {
+          "approved_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "authority_revision": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "evidence_ref": {
+            "type": "string"
+          },
+          "repository_ids": {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "verified_by": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "verified_by",
+          "evidence_ref",
+          "approved_at",
+          "authority_revision",
           "repository_ids"
         ],
         "type": "object"
@@ -4116,6 +4212,9 @@
           "automatic_reconciliation": {
             "type": "boolean"
           },
+          "durable_dispatch": {
+            "type": "boolean"
+          },
           "dynamic_app_registration": {
             "type": "boolean"
           },
@@ -5873,6 +5972,10 @@
           "github_resource_not_found",
           "github_delivery_conflict",
           "github_source_unavailable",
+          "github_dispatch_unavailable",
+          "github_integration_retired",
+          "github_proof_withdrawn",
+          "github_delivery_expired",
           "attachment_not_found",
           "media_unavailable"
         ],
@@ -6338,6 +6441,12 @@
             "format": "int64",
             "type": "integer"
           },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "receipt_id": {
             "type": "string"
           },
@@ -6348,6 +6457,14 @@
           "repository_id": {
             "format": "int64",
             "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "retained_until": {
+            "description": "End of the bounded receipt and duplicate-detection window.",
+            "format": "int64",
             "type": [
               "integer",
               "null"
@@ -7031,6 +7148,20 @@
           "kind",
           "status",
           "delivery"
+        ],
+        "type": "object"
+      },
+      "RetireAppRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
         ],
         "type": "object"
       },
@@ -8387,7 +8518,8 @@
           "result": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/TaskResult"
+                "$ref": "#/components/schemas/TaskResult",
+                "description": "Retained v1 compatibility field; the gateway never interprets agent results."
               },
               {
                 "type": "null"
@@ -9045,6 +9177,34 @@
         "required": [
           "expected_version",
           "evidence_ref"
+        ],
+        "type": "object"
+      },
+      "VerifyBindingRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ref": {
+            "type": "string"
+          },
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "repository_ids": {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 256,
+            "type": "array"
+          }
+        },
+        "required": [
+          "expected_version",
+          "evidence_ref",
+          "repository_ids"
         ],
         "type": "object"
       },
@@ -9947,6 +10107,18 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
@@ -10380,6 +10552,18 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -11077,6 +11261,18 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "requestBody": {
@@ -11140,6 +11336,18 @@
             "schema": {
               "minimum": 0,
               "type": "integer"
+            }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -12195,6 +12403,69 @@
         ]
       }
     },
+    "/github/apps/{app_ref}/retirement": {
+      "post": {
+        "operationId": "retireGitHubAppIntegration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetireAppRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppIntegration"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      }
+    },
     "/github/apps/{app_ref}/verification": {
       "post": {
         "operationId": "verifyGitHubAppIntegration",
@@ -12486,6 +12757,19 @@
     "/github/installation-bindings": {
       "post": {
         "operationId": "bindGitHubInstallation",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -12551,6 +12835,69 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Binding"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/github/installation-bindings/{binding_id}/verification": {
+      "post": {
+        "operationId": "verifyGitHubInstallationBinding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyBindingRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {

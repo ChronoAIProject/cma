@@ -77,7 +77,7 @@ impl IngressState {
         self
     }
 
-    pub(crate) async fn launch_github(
+    pub async fn launch_github(
         &self,
         request: super::launch::LaunchRequest,
         body: Vec<u8>,
