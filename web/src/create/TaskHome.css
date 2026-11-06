@@ -134,7 +134,7 @@
 }
 .task-home__send {
   border-radius: 50%;
-  background: var(--dsw-specific-task-accent);
+  background: var(--dsw-specific-task-button-fill);
   color: var(--dsw-specific-task-on-accent);
 }
 .task-home__send:hover:not(:disabled) {
