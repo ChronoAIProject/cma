@@ -30,6 +30,14 @@ module OmarchyCIContractTests
         end
       end
     end
+    ["python3 .github/scripts/omarchy-close-browser-tests.py",
+     "python3 .github/scripts/omarchy-browser-input-tests.py",
+     "node --test .github/scripts/omarchy-browser-page.test.cjs"].each do |command|
+      reject.call("Omarchy omits regression #{command}") do |value|
+        step = value["ci"]["jobs"]["omarchy"]["steps"].find { |entry| entry["name"] == "Omarchy desktop fixture regressions" }
+        step["run"] = step["run"].sub("#{command}\n", "")
+      end
+    end
     {
       "target" => "default-runtime", "platforms" => "linux/arm64", "push" => true,
       "context" => "https://example.invalid/old-source.git", "load" => false,
