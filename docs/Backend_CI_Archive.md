@@ -19,8 +19,9 @@ for durations, artifact identity and the successful rerun.
 ## Build and runner boundaries
 
 All jobs use standard `ubuntu-latest` runners. Lint retains the pinned dependency
-auditor, format check, both Python process/recovery proofs, all-target/all-feature
-Clippy, the locked workspace build, and doctests. Doctests cannot be archived.
+auditor, format check, the desktop browser launch/ownership regression, both
+Python process/recovery proofs, all-target/all-feature Clippy, the locked
+workspace build, and doctests. Doctests cannot be archived.
 The independent producer runs `cargo nextest archive --workspace --locked`.
 Producers and consumers install exactly `cargo-nextest@0.9.151`.
 
