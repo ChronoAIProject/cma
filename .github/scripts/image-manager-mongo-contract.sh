@@ -70,6 +70,7 @@ cargo nextest run --workspace --locked \
 cargo test --locked -p cmaeg --lib whatsapp_retention_on_real_mongo -- --ignored --test-threads=1
 cargo test --locked -p cmaeg --test mongo_isolation -- --ignored --test-threads=1
 cargo test --locked -p cmaeg --test management github_integrations:: -- --ignored --test-threads=1
+cargo test --locked -p cmaeg --test management organization_channels:: -- --ignored --test-threads=1
 cargo test --locked -p cmaeg --test github_source -- --ignored --test-threads=1
 cargo test --locked -p cmaeg --lib tools::threads::ledger::mongo_tests:: -- --ignored --test-threads=1
 # Keep the workspace feature graph used by the earlier Backend tests, avoiding
