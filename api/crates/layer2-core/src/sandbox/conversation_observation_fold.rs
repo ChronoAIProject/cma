@@ -60,7 +60,7 @@ pub(super) fn metadata(
         }
     }
     if *metadata == current.conversation.observations.metadata {
-        return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
+        return Ok(FoldedConversationUpdate::Quiet(Box::new(assembly.clone())));
     }
     let metadata = metadata.clone();
     changed(
@@ -81,13 +81,13 @@ pub(super) fn usage(
     at: &str,
 ) -> Result<FoldedConversationUpdate, AgentConversationError> {
     let Some(conversation_id) = current.conversation.conversation_id.as_ref() else {
-        return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
+        return Ok(FoldedConversationUpdate::Quiet(Box::new(assembly.clone())));
     };
     if observation.turn_id.is_empty()
         || observation.turn_id.len() > 256
         || observation.turn_id.chars().any(char::is_control)
     {
-        return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
+        return Ok(FoldedConversationUpdate::Quiet(Box::new(assembly.clone())));
     }
     let previous = current.conversation.observations.usage.as_ref();
     let mut next = previous.cloned().unwrap_or_default();
@@ -105,7 +105,7 @@ pub(super) fn usage(
         {
             // A regressing snapshot without an explicit reset is ambiguous. Do
             // not turn replay, estimates, or missing evidence into consumption.
-            return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
+            return Ok(FoldedConversationUpdate::Quiet(Box::new(assembly.clone())));
         }
         (
             observation.input_tokens - next.source_input,
@@ -155,7 +155,7 @@ pub(super) fn usage(
     next.context_used = observation.context_used;
     next.context_window = observation.context_window;
     if previous == Some(&next) {
-        return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
+        return Ok(FoldedConversationUpdate::Quiet(Box::new(assembly.clone())));
     }
     let log = usage_log(&next);
     let mut agent = current.clone();
