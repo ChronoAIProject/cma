@@ -3810,7 +3810,7 @@
     },
     "POST /api/v1/admin/usage/metrics/options": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Administrator option discovery reauthorizes every request, validates bounded queries and maps reporting pressure and availability failures.",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Administrator option discovery reauthorizes every request, validates bounded queries and maps reporting pressure and availability failures. Duplicate names exhaust safe owner/creation/join context with progressive UTC time precision before a last-resort secondary reference; primary labels stay plain.",
       "required_problems": [
         "not_authenticated",
         "forbidden",

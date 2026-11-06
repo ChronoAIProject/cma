@@ -364,8 +364,13 @@ principal/query-bound `cursor` return `{items:[{value,label,disambiguator?}],nex
 resolves one value for URL restoration and cannot accompany search or cursor.
 Owner names come from the retained public directory. Primary labels stay plain.
 Only duplicates on the returned page receive a disambiguator: join date for
-owners, owner name for Sandboxes, and a derived reference only as a last resort
-when human context is missing or also duplicates. Selected labels remain plain.
+owners; owner name, then creation date for Sandboxes. Matching dates gain UTC
+time at the least distinguishing precision (minutes, seconds, then available
+fractional seconds). All dates are normalized to UTC. A derived reference is
+secondary text only when all available safe human context still ties or is
+unavailable. Selected labels remain plain. The shared Core `OptionContext` and
+`disambiguate_options_with_context` policy also supports owner rankings; the
+single-hint helpers remain compatible for callers without timestamp context.
 Sandbox names come
 from the retained usage inventory; runtime choices include suspended runtimes.
 Discovery honors the existing reporting circuit before database work, without
