@@ -10,6 +10,7 @@ pub mod creation;
 mod custom_execution;
 pub mod definition;
 mod definition_sources;
+mod github_sources;
 pub(crate) use definition_sources::check_github_sources;
 mod lifecycle;
 pub mod management;
