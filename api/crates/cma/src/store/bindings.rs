@@ -53,6 +53,16 @@ pub(super) struct BindingCollections {
 }
 
 impl BindingCollections {
+    pub(super) fn open_read_only(database: &Database) -> Self {
+        Self {
+            records: majority_collection(database, BINDINGS),
+            conversations: majority_collection(database, CONVERSATIONS),
+            tool_opens: majority_collection(database, TOOL_OPENS),
+            tool_relays: majority_collection(database, TOOL_RELAYS),
+            preparations: majority_collection(database, reprovision::PREPARATIONS),
+        }
+    }
+
     pub(super) async fn open(database: &Database) -> Result<Self, StoreError> {
         initialize_collections(
             database,

@@ -1,5 +1,8 @@
 use super::*;
-use crate::sandbox::store::{AgentMessageCheckpoint, Page, PageRequest, SandboxStoreError};
+use crate::sandbox::store::{
+    AgentMessageCheckpoint, Page, PageRequest, SandboxStore, SandboxStoreError,
+};
+use crate::sandbox::SandboxStatus;
 use crate::sandbox::{Agent, AgentUpdateOutcome, MAX_DURABLE_AGENT_MESSAGE_BYTES};
 use crate::sandbox::{
     AgentOperationDelivery, AgentOperationIntent, AgentOperationRecord, AgentTurnUsage,
@@ -132,7 +135,7 @@ async fn native_completion_reconciliation_is_guarded_and_idempotent() {
             &working.id,
             1,
             &mut assembly,
-            message_chunk("reply", "preserved answer"),
+            message_chunk("reply", "prefix"),
             NOW.into(),
         )
         .await
@@ -150,7 +153,57 @@ async fn native_completion_reconciliation_is_guarded_and_idempotent() {
         history_complete: true,
         history_prefix_unchanged: true,
         history_sha256: "a".repeat(64),
+        final_answer: "prefix suffix".into(),
+        final_answer_durable: false,
+        operation_sequence: 1,
+        sandbox_revision: store
+            .get_sandbox(&working.sandbox_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .revision,
+        sandbox_status: SandboxStatus::Active,
     };
+    let mut invalid = evidence.clone();
+    invalid.task_complete = false;
+    assert!(matches!(
+        recorder
+            .reconcile_completion(
+                &working.id,
+                1,
+                &mut assembly,
+                invalid,
+                PromptResponse::new(TurnStopReason::EndTurn),
+                RECONCILED_AT.into(),
+            )
+            .await,
+        Err(AgentConversationError::InvalidState(_))
+    ));
+    store
+        .lock()
+        .agents
+        .get_mut(&working.id)
+        .unwrap()
+        .requested_stop_reason = Some(AgentStopReason::Owner);
+    assert!(matches!(
+        recorder
+            .reconcile_completion(
+                &working.id,
+                1,
+                &mut assembly,
+                evidence.clone(),
+                PromptResponse::new(TurnStopReason::EndTurn),
+                RECONCILED_AT.into(),
+            )
+            .await,
+        Err(AgentConversationError::InvalidState(_))
+    ));
+    store
+        .lock()
+        .agents
+        .get_mut(&working.id)
+        .unwrap()
+        .requested_stop_reason = None;
     let first = recorder
         .reconcile_completion(
             &working.id,
@@ -182,6 +235,7 @@ async fn native_completion_reconciliation_is_guarded_and_idempotent() {
             .count(),
         1
     );
+    assert_eq!(messages(&logs), ["prefix suffix"]);
 }
 
 #[tokio::test]
@@ -360,6 +414,7 @@ async fn unrelated_semantic_write_advances_private_anchor_without_public_message
             execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: None,
+            reconciliation_fence: None,
             expected_agent_revision: working.revision,
             expected_last_seq: working.conversation.last_seq,
             runtime_generation: 1,
@@ -463,6 +518,7 @@ impl AgentConversationStore for LostCommitReply {
                     execution_fence: None,
                     trigger_execution_fence: None,
                     admission_guard: None,
+                    reconciliation_fence: None,
                     expected_agent_revision: current.revision,
                     expected_last_seq: current.conversation.last_seq,
                     runtime_generation: 1,

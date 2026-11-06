@@ -58,6 +58,7 @@ pub(super) async fn complete_then_change_model(store: &InMemorySandboxStore) {
             execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: Some(SandboxMutationGuard::capture(&parent)),
+            reconciliation_fence: None,
             expected_agent_revision: current.revision,
             expected_last_seq: current.conversation.last_seq,
             runtime_generation: target.runtime_generation,

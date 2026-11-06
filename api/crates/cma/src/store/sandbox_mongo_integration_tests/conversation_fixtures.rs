@@ -27,6 +27,7 @@ pub(super) fn begin_conversation_turn(mut agent: Agent) -> AgentConversationMuta
         execution_fence: None,
         trigger_execution_fence: None,
         admission_guard: None,
+        reconciliation_fence: None,
         expected_agent_revision,
         expected_last_seq,
         runtime_generation: 1,

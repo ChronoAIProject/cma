@@ -26,6 +26,19 @@ impl DurableAgentUpdateRecorder {
                 "native completion proof is incomplete",
             ));
         }
+        let final_answer = evidence.final_answer.as_str();
+        if evidence.final_answer_durable {
+            assembly.content.clear();
+            assembly.message_id = None;
+        } else if assembly.content != final_answer {
+            if !final_answer.starts_with(&assembly.content) {
+                return Err(AgentConversationError::InvalidState(
+                    "native completion answer does not extend the durable prefix",
+                ));
+            }
+            assembly.content = evidence.final_answer.clone();
+            assembly.prompt_evidence = true;
+        }
         assembly.reconciliation = Some(evidence.clone());
         let result = self
             .record_update(

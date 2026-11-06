@@ -54,6 +54,7 @@ pub(super) async fn commit(f: &Fixture, mut agent: Agent, logs: Vec<AgentLogKind
             execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: None,
+            reconciliation_fence: None,
             expected_agent_revision: current.revision,
             expected_last_seq: current.conversation.last_seq,
             runtime_generation: 1,

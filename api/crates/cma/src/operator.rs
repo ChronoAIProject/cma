@@ -1,7 +1,7 @@
 //! Explicit, bounded operator commands. Repair is read-only unless `--apply`
 //! is supplied; target Agents are always named explicitly.
 
-use std::time::SystemTime;
+use std::{sync::Arc, time::SystemTime};
 
 use layer2_core::AgentId;
 
@@ -57,6 +57,25 @@ pub(crate) fn parse(arguments: &[String]) -> Result<Command, String> {
 pub(crate) async fn run_repair(agents: Vec<AgentId>, apply: bool) -> Result<(), String> {
     let config =
         Config::from_env().map_err(|error| format!("configuration is not usable: {error}"))?;
+    if !apply {
+        let client = mongodb::Client::with_uri_str(&config.mongodb_uri)
+            .await
+            .map_err(|error| format!("read-only Mongo connection failed: {error}"))?;
+        let store = Arc::new(
+            crate::store::MongoSandboxStore::open_read_only(&client, &config.mongodb_database)
+                .await
+                .map_err(|error| format!("read-only repair store failed: {error}"))?,
+        );
+        let adapter = crate::composition::repair_history_adapter(&config).await?;
+        let report = crate::sandbox::inspect_stale_turns_read_only(store, adapter, &agents)
+            .await
+            .map_err(|error| format!("repair scan failed: {error}"))?;
+        println!(
+            "stale-turn repair mode=dry-run inspected={} eligible={} repaired=0 held={}",
+            report.inspected, report.eligible, report.held
+        );
+        return Ok(());
+    }
     let composition = ControlPlaneComposition::build(&config).await?;
     let report = composition
         .sandbox_lifecycle

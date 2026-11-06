@@ -12,6 +12,8 @@ mod maintenance;
 pub(super) use maintenance::MaintenanceChecks;
 
 const MANAGED_GUIDANCE_REVISION: u64 = 1;
+const MAX_COMPLETION_CANDIDATES_PER_SWEEP: u64 = 16;
+const MAX_COMPLETION_BYTES_PER_SWEEP: usize = 32 * 1024 * 1024;
 
 impl AgentWorker {
     /// Reconcile every durable live conversation into the process-local registry.
@@ -28,6 +30,8 @@ impl AgentWorker {
         let mut context_checks = 0_u64;
         let mut context_throttled = 0_u64;
         let mut transport_attempts = 0_u64;
+        let mut completion_candidates = 0_u64;
+        let mut completion_bytes = 0_usize;
         loop {
             let page = self
                 .dependencies
@@ -48,7 +52,14 @@ impl AgentWorker {
                         .get_agent(&candidate.agent_id)
                         .await?
                     {
-                        let _ = self.reconcile_native_completion(&agent, now).await;
+                        if completion_candidates < MAX_COMPLETION_CANDIDATES_PER_SWEEP
+                            && completion_bytes < MAX_COMPLETION_BYTES_PER_SWEEP
+                        {
+                            completion_candidates += 1;
+                            if let Ok(bytes) = self.reconcile_native_completion(&agent, now).await {
+                                completion_bytes = completion_bytes.saturating_add(bytes);
+                            }
+                        }
                     }
                     // The scan already validated this monotonic applied revision.
                     // Skip completed maintenance without rereading the entire Agent.
@@ -127,6 +138,8 @@ impl AgentWorker {
                     context_checks,
                     context_throttled,
                     transport_attempts,
+                    completion_candidates,
+                    completion_bytes,
                     scheduled,
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     "Agent connection reconciliation completed"

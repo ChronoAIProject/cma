@@ -243,6 +243,7 @@ pub(super) async fn seed_waiting_approval(store: &InMemorySandboxStore) -> Agent
             execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: None,
+            reconciliation_fence: None,
             expected_agent_revision: working.revision,
             expected_last_seq: 0,
             runtime_generation: 3,

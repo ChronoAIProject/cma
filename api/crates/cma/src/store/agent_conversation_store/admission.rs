@@ -38,10 +38,20 @@ pub(super) async fn validate_and_fence(
     mutation: &AgentConversationMutation,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
-    let parent = match mutation.admission_guard.as_ref() {
-        Some(guard) => store
+    let parent_id = mutation
+        .admission_guard
+        .as_ref()
+        .map(|guard| guard.sandbox_id.as_str())
+        .or_else(|| {
+            mutation
+                .reconciliation_fence
+                .as_ref()
+                .map(|fence| fence.sandbox_id.as_str())
+        });
+    let parent = match parent_id {
+        Some(parent_id) => store
             .sandboxes
-            .find_one(doc! { "_id": guard.sandbox_id.as_str() })
+            .find_one(doc! { "_id": parent_id })
             .session(&mut *session)
             .await
             .map_err(ApplyError::Driver)?
@@ -53,6 +63,9 @@ pub(super) async fn validate_and_fence(
     };
     validate_agent_conversation_admission(current, parent.as_ref(), mutation)
         .map_err(ApplyError::Domain)?;
+    if mutation.reconciliation_fence.is_some() {
+        return Ok(());
+    }
     let Some(mut parent) = parent else {
         return Ok(());
     };

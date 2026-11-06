@@ -36,6 +36,7 @@ pub(crate) mod worker;
 mod workspace_worker;
 
 pub(crate) use agent_skills::OrnnAgentSkillResolver;
+pub(crate) use agent_worker::reconcile_completion::inspect_stale_turns_read_only;
 pub(crate) use composition::{
     SandboxLifecycleComposition, SandboxLifecycleConfig, SandboxLifecycleDependencies,
 };

@@ -41,6 +41,12 @@ use layer2_core::{
 mod state;
 pub(crate) use state::ControlPlaneComposition;
 
+pub(crate) async fn repair_history_adapter(
+    config: &Config,
+) -> Result<Arc<dyn layer3_adapter::SandboxAdapter>, String> {
+    adapter::repair_history_adapter(config).await
+}
+
 impl ControlPlaneComposition {
     pub(crate) async fn build(config: &Config) -> Result<Self, String> {
         let stores = stores::connect(config).await?;

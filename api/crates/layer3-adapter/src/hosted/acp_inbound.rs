@@ -30,6 +30,7 @@ impl Bridge {
                         updates.send(super::acp_turn::scoped_turn_outcome(
                             super::acp_turn::turn_outcome(frame.clone()),
                             true,
+                            id.as_str().and_then(crate::PromptIdentity::parse),
                         ));
                     }
                     let _ = waiting.answer.send(frame);

@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use crate::sandbox::conversation::PendingAgentUpdate;
 use crate::sandbox::conversation_fold::{fold_update, FoldedConversationUpdate};
 use crate::sandbox::store::AgentConversationMutation;
+use crate::sandbox::Agent;
 
 impl DurableAgentUpdateRecorder {
     pub(super) async fn record_with_reopen(
@@ -102,11 +103,25 @@ impl DurableAgentUpdateRecorder {
                     evidence.validate_against(&current)?;
                 }
             }
-            let replayed = if let Some(source) = &source {
-                output_replayed(source, &current, previous.as_ref())?
+            let completed_replay = self
+                .completed_prompt_replay(&current, update.as_ref())
+                .await
+                .map_err(store_error)?;
+            let output_replay = if let Some(source) = &source {
+                if completed_replay {
+                    true
+                } else if is_identity_terminal_for_current(&current, update.as_ref()) {
+                    // An old observer may have ACKed the same cursor while
+                    // treating an identity-bearing terminal as quiet. Let the
+                    // current observer apply its verified terminal meaning.
+                    false
+                } else {
+                    output_replayed(source, &current, previous.as_ref())?
+                }
             } else {
-                false
+                completed_replay
             };
+            let replayed = output_replay;
             if let Some(recorded) = recorded {
                 if recorded.update_fingerprint != fingerprint {
                     return Err(AgentConversationError::Corrupt(
@@ -114,7 +129,7 @@ impl DurableAgentUpdateRecorder {
                     ));
                 }
             }
-            let recovered = match checkpoint::recover_assembly(
+            let mut recovered = match checkpoint::recover_assembly(
                 self.store.as_ref(),
                 &current,
                 previous.as_ref(),
@@ -134,7 +149,59 @@ impl DurableAgentUpdateRecorder {
                     return Err(error);
                 }
             };
-            if replayed {
+            if let Some(evidence) = assembly.reconciliation.as_ref() {
+                if evidence.final_answer_durable {
+                    recovered.content.clear();
+                    recovered.message_id = None;
+                } else if recovered.content != evidence.final_answer {
+                    if !evidence.final_answer.starts_with(&recovered.content) {
+                        return Err(AgentConversationError::InvalidState(
+                            "native completion answer does not extend the durable prefix",
+                        ));
+                    }
+                    recovered.content = evidence.final_answer.clone();
+                    recovered.prompt_evidence = true;
+                }
+            }
+            if replayed && recorded.is_none() {
+                if completed_replay {
+                    let mut checkpoint = previous.clone().unwrap_or(AgentMessageCheckpoint {
+                        version: 1,
+                        update_id: update_id.clone(),
+                        update_fingerprint: fingerprint.clone(),
+                        native_conversation_id: current
+                            .conversation
+                            .conversation_id
+                            .clone()
+                            .ok_or(AgentConversationError::InvalidState(
+                                "conversation identity is missing",
+                            ))?,
+                        runtime_generation,
+                        active_turn: current.conversation.active_turn,
+                        after_seq: current.conversation.last_seq,
+                        assembly: recovered.clone(),
+                        outcome: AgentUpdateOutcome::quiet(),
+                        output: None,
+                    });
+                    checkpoint.update_id = update_id.clone();
+                    checkpoint.update_fingerprint = fingerprint.clone();
+                    checkpoint.after_seq = current.conversation.last_seq;
+                    checkpoint.active_turn = current.conversation.active_turn;
+                    checkpoint.assembly = recovered.clone();
+                    checkpoint.outcome = AgentUpdateOutcome::quiet();
+                    checkpoint.output = source.clone();
+                    checkpoint.validate().map_err(store_error)?;
+                    match self
+                        .commit_output(persisted.clone(), previous.clone(), checkpoint, None, guard)
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(SandboxStoreError::Conflict) => continue,
+                        Err(error) => return Err(store_error(error)),
+                    }
+                    *assembly = recovered;
+                    return Ok(AgentUpdateOutcome::quiet());
+                }
                 // A reconnect may parse an old terminal as a no-op after the turn closed.
                 // The immutable source position is the receipt, independent of that parsing.
                 if let Some(reanchored) = previous
@@ -298,6 +365,13 @@ impl DurableAgentUpdateRecorder {
                 execution_fence: None,
                 trigger_execution_fence: None,
                 admission_guard: None,
+                reconciliation_fence: assembly.reconciliation.as_ref().map(|evidence| {
+                    crate::sandbox::store::AgentReconciliationFence {
+                        sandbox_id: current.sandbox_id.clone(),
+                        sandbox_revision: evidence.sandbox_revision,
+                        sandbox_status: evidence.sandbox_status,
+                    }
+                }),
                 expected_agent_revision: current.revision,
                 expected_last_seq: current.conversation.last_seq,
                 runtime_generation,
@@ -337,4 +411,62 @@ impl DurableAgentUpdateRecorder {
             "conversation changed during every commit attempt".into(),
         ))
     }
+
+    async fn completed_prompt_replay(
+        &self,
+        current: &Agent,
+        update: Option<&ConversationUpdate>,
+    ) -> Result<bool, SandboxStoreError> {
+        let prompt_id = match update {
+            Some(ConversationUpdate::TurnEndedForPrompt { prompt_id, .. })
+            | Some(ConversationUpdate::FailedForPrompt { prompt_id, .. }) => prompt_id,
+            _ => return Ok(false),
+        };
+        let Some(conversation) = current.conversation.conversation_id.as_deref() else {
+            return Ok(false);
+        };
+        let Some(generation) = current.conversation.runtime_generation else {
+            return Ok(false);
+        };
+        let after = current
+            .conversation
+            .last_seq
+            .saturating_sub(u64::from(crate::sandbox::store::MAX_PAGE_SIZE));
+        let logs = self
+            .store
+            .agent_log(
+                &current.id,
+                after,
+                current.conversation.last_seq.saturating_sub(after) as u16,
+            )
+            .await?;
+        Ok(logs.iter().any(|entry| {
+            matches!(
+                &entry.kind,
+                crate::sandbox::AgentLogKind::TurnCompleted { turn_sequence }
+                    if *prompt_id
+                        == layer3_adapter::PromptIdentity::new(conversation, generation, *turn_sequence)
+            )
+        }))
+    }
+}
+
+fn is_identity_terminal_for_current(current: &Agent, update: Option<&ConversationUpdate>) -> bool {
+    let Some(update) = update else { return false };
+    let Some(conversation) = current.conversation.conversation_id.as_deref() else {
+        return false;
+    };
+    let Some(generation) = current.conversation.runtime_generation else {
+        return false;
+    };
+    let Some(turn) = current.conversation.active_turn else {
+        return false;
+    };
+    let expected = layer3_adapter::PromptIdentity::new(conversation, generation, turn);
+    matches!(
+        update,
+        ConversationUpdate::TurnEndedForPrompt { prompt_id, .. }
+            | ConversationUpdate::FailedForPrompt { prompt_id, .. }
+            if prompt_id == &expected
+    )
 }

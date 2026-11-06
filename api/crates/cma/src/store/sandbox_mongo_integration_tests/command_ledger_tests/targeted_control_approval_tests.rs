@@ -74,6 +74,7 @@ async fn approval_uses_complete_pending_snapshot_and_replay_survives_resolution(
             execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: None,
+            reconciliation_fence: None,
             expected_agent_revision: waiting.revision,
             expected_last_seq: waiting.conversation.last_seq,
             runtime_generation: 1,
