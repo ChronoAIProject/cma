@@ -543,3 +543,6 @@ async fn source_user_transport_lifecycle_never_reserves_or_retires_an_agent() {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }
+
+#[path = "bindings_tests/queue_policy.rs"]
+mod queue_policy;
