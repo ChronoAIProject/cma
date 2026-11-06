@@ -155,6 +155,7 @@ async fn funding_mongo_cas_restart_retained_zero_evidence_and_due_recovery() {
                 .parse()
                 .unwrap(),
             credential_ref: "NYX_TEST_SECRET_REFERENCE".into(),
+            client_credentials: None,
             producer_id: uuid::Uuid::new_v4().to_string(),
         }),
         store,
