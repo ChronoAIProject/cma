@@ -191,6 +191,13 @@ module CIContract
       "Local browser guard mechanics" => "npm run e2e:mechanics",
     }.each { |name, command| step(gate, name, command) }
     backend = job(ci, "backend", "Backend")
+    require!(backend.dig("env", "BASH_ENV") == "${{ github.workspace }}/.github/scripts/backend-resource-env.sh", "Backend resource hook changed")
+    require!(!backend.dig("defaults", "run").key?("shell"), "Backend must retain the original step shell")
+    backend.fetch("steps").each do |row|
+      require!(!row.key?("shell") && !row.fetch("env", {}).key?("BASH_ENV"), "Backend step overrides resource hook or shell")
+    end
+    step(job(ci, "trigger-provider-smoke-contract", "Trigger provider smoke contract"),
+      "Backend resource sampling regressions", "python3 .github/scripts/backend-resource-sampler-tests.py")
     step(backend, "Image normalization budgets", "cargo nextest run --workspace --locked -E 'binary(=media_image_peak)' --test-threads 1 --success-output final")
     step(backend, "Tests", "cargo nextest run --workspace --locked --no-fail-fast -E 'not (binary(=media_image_peak) or binary(=turn_metrics))'")
     step(backend, "Gateway socket latency budget", "cargo nextest run --workspace --locked -E 'binary(=turn_metrics)' --test-threads 1 --success-output final")
