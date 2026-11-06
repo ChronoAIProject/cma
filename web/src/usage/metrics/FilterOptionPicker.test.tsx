@@ -260,3 +260,41 @@ for (const [kind, contexts] of [
     expect(trigger).not.toHaveTextContent(/Created|Joined|reference|opaque/);
   });
 }
+
+it('announces distinct final contexts when an owner name resembles generated creation text', async () => {
+  const api = metricsClient(true);
+  const change = vi.fn();
+  const contexts = [
+    'Alice · Created 2026-11-01 12:30 UTC',
+    'Alice · Created 2026-11-02',
+    'Alice · Created 2026-11-01 · Created 2026-11-03',
+  ];
+  api.options.mockResolvedValue({
+    items: contexts.map((disambiguator, index) => ({
+      value: `sandbox-${index}`,
+      label: 'Research',
+      disambiguator,
+    })),
+    next: null,
+  });
+  const view = render(
+    <FilterOptionPicker api={api} kind="sandbox" value="" onChange={change} active />,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Sandbox: All Sandboxes' }));
+  for (const context of contexts) {
+    const option = await screen.findByRole('menuitemradio', {
+      name: `Research ${context}`,
+    });
+    expect(option).toHaveTextContent(context);
+    expect(option).not.toHaveTextContent('reference');
+  }
+  expect(screen.getAllByRole('menuitemradio', { name: /^Research / })).toHaveLength(3);
+  await userEvent.click(screen.getByRole('menuitemradio', { name: `Research ${contexts[2]}` }));
+  expect(change).toHaveBeenLastCalledWith('sandbox-2');
+  view.rerender(
+    <FilterOptionPicker api={api} kind="sandbox" value="sandbox-2" onChange={change} active />,
+  );
+  const selected = screen.getByRole('button', { name: 'Sandbox: Research' });
+  expect(selected.title).toBe('Research');
+  expect(selected).not.toHaveTextContent(/Created|reference/);
+});
