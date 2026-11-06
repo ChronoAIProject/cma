@@ -233,9 +233,8 @@ fn same_join_date_owners_use_utc_time_and_available_fractional_precision() {
             ],
         ),
     ] {
-        let items = contextual_pair(
-            ["2026-11-01T20:30:00+08:00", other].map(|at| OptionContext::owner(Some(at))),
-        );
+        let items =
+            contextual_pair(["2026-11-01T20:30:00+08:00", other].map(|at| precise_owner(Some(at))));
         for (item, at) in items.iter().zip(expected) {
             assert_eq!(item.disambiguator, Some(format!("Joined {at}")));
         }
@@ -262,17 +261,14 @@ fn creation_context_survives_missing_or_unsafe_owner_names() {
 #[test]
 fn references_are_last_resort_for_missing_invalid_or_identical_human_context() {
     for contexts in [
-        [
-            OptionContext::owner(None),
-            OptionContext::owner(Some("invalid")),
-        ],
+        [precise_owner(None), precise_owner(Some("invalid"))],
         [
             OptionContext::sandbox("one", None, None),
             OptionContext::sandbox("two", None, Some(u64::MAX)),
         ],
         [
-            OptionContext::owner(Some("2026-11-01T12:30:00.123Z")),
-            OptionContext::owner(Some("2026-11-01T20:30:00.123+08:00")),
+            precise_owner(Some("2026-11-01T12:30:00.123Z")),
+            precise_owner(Some("2026-11-01T20:30:00.123+08:00")),
         ],
         [
             OptionContext::sandbox("one", Some("Alice"), Some(1000)),
@@ -326,4 +322,8 @@ fn mixed_duplicate_group_only_escalates_context_for_remaining_ties() {
         items[3].disambiguator.as_deref(),
         Some("Alice · Created 1970-01-02")
     );
+}
+
+fn precise_owner(at: Option<&str>) -> OptionContext {
+    OptionContext::owner_with_access(at, OwnerContextAccess::DirectoryRead)
 }
