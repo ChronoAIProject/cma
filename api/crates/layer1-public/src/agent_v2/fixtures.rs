@@ -124,8 +124,11 @@ pub(crate) fn with_live_frames(f: &Fixture, lagged: bool) -> Router {
             let response = next.run(request).await;
             if !response.status().is_success() { return response; }
             let mut assembly = AgentMessageAssembly::default();
-            for index in 0..if lagged { 40 } else { 2 } {
-                let thought = !lagged && index == 1;
+            let count = if lagged { AgentLiveSubscription::BUFFER_FRAGMENTS + 8 } else { 2 };
+            for index in 0..count {
+                // Alternating kinds keep the first retained delta distinct even
+                // when the server coalesces consecutive fragments of one kind.
+                let thought = index % 2 == 1;
                 let update = serde_json::json!({
                     "sessionUpdate": if thought { "agent_thought_chunk" } else { "agent_message_chunk" },
                     "messageId": if thought { "contract-thought" } else { "contract-live-message" },

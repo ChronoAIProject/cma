@@ -19,6 +19,7 @@ import { MessageMediaContext, type MessageMediaAccess } from './mediaSources';
 import { AnswerDeliveryContext, type AnswerDeliveryAccess } from './answerDeliveries';
 import { ConversationEmpty } from './ConversationEmpty';
 import type { ResourceStatus } from '../character/status';
+import { messageStreamKey } from './streamTimeline';
 
 interface MessageStreamProps {
   readonly onReplay?: (turn: string) => void;
@@ -144,7 +145,7 @@ export function MessageStream({
           ) : (
             <StreamEntry
               onReplay={onReplay}
-              key={`${entry.kind}:${entry.item.id}`}
+              key={messageStreamKey(entry)}
               entry={entry}
               approvalBusy={approvalBusy}
               approvalReadOnly={approvalReadOnly}
@@ -185,6 +186,15 @@ export function MessageStream({
             />
           ),
         )}
+        <div className="message-stream__live-recovery-slot" aria-live="polite">
+          {conversation.recovery
+            .filter((notice) => notice.clearsOn !== undefined)
+            .map((notice) => (
+              <p className="message__delivery" role="status" key={notice.id}>
+                {notice.title}
+              </p>
+            ))}
+        </div>
         <ActiveThinking conversation={conversation} />
         {optimisticMessages?.map((message, index) => (
           <article
