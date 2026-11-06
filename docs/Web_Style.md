@@ -5709,6 +5709,31 @@ hints stay beside the action they explain.
 | 2026-11-06 | Apply lead review to Usage toolbar alignment, overview spacing, refresh placement, history disclosure, chart labels and compact inventory rows. |
 | 2026-11-06 | Specify Ops usage dropdown search, bounded paging, keyboard navigation, visible discovery states and human-readable identity labels; preserve Custom date ranges and atomic Apply/Clear. |
 
+| 2026-11-06 | Add complete-cohort owner allocation rankings with plain identity labels, Top 5/10/50/All, bounded internal scrolling and an always-visible value axis. |
+
+#### Owner allocation rankings — 2026-11-06
+
+Operations owner allocation uses the complete frozen report cohort, independently
+of the Sandbox inventory page. Keep the existing resource and grouping Pickers;
+add a chart-only Top 5 / Top 10 / Top 50 / All Picker, default Top 10. Rank recorded
+resource-hours descending. Changing the visible count never applies report filters
+or creates another report. All loads bounded owner pages as the user scrolls;
+show loaded and total owner counts and an explicit retry if a page is unavailable.
+
+Use the filter discovery identity policy for plain owner display names, safe
+unnamed labels and duplicate-only secondary context. A derived reference is a
+last resort when human context cannot distinguish real duplicates. No raw owner
+identifier may appear in chart text, accessible names, titles or tooltips.
+
+Owner bars use fixed 48px rows in a focusable chart-local scroll area, at most
+384px high, with overscroll containment and a visible scrollbar gutter. Render
+only visible rows with a small overscan. Keep a 136px left name column aligned
+with bars and a persistent numeric value axis outside the scrolling rows. Long
+names truncate; hover and keyboard-readable chart data retain the full name.
+The data table also pages rather than rendering the entire owner list. Use the
+existing Recharts library, theme tokens and nonanimated bars. Empty, loading,
+partial-history and failure states stay explicit in both themes.
+
 
 #### Settled landing capability checks — 2026-11-06
 
