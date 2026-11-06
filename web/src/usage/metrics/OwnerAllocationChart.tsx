@@ -4,6 +4,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { Picker } from '../../ui/Picker';
 import { Button } from '../../ui/Button';
 import { OwnerAllocationTable } from './OwnerAllocationTable';
+import { OwnerAllocationName, ownerAllocationText } from './OwnerAllocationName';
 import { MetricsNotice } from './MetricsNotice';
 import { displayQuantity, type Metric, type MetricsClient } from './model';
 import type { MetricsFailure } from './failure';
@@ -127,9 +128,10 @@ export function OwnerAllocationChart({
                       <XAxis type="number" domain={[0, max]} ticks={ticks} hide />
                       <YAxis type="category" dataKey="position" hide />
                       <Tooltip
-                        labelFormatter={(position) =>
-                          rows.find((row) => row.position === Number(position))?.label ?? 'Owner'
-                        }
+                        labelFormatter={(position) => {
+                          const row = rows.find((row) => row.position === Number(position));
+                          return row ? ownerAllocationText(row) : 'Owner';
+                        }}
                         formatter={(value) => [displayQuantity(Number(value)), unit]}
                         cursor={{ fill: 'var(--dsw-alias-interactive-bg-hover)' }}
                         contentStyle={{
@@ -161,14 +163,7 @@ export function OwnerAllocationChart({
                       aria-setsize={count === 'all' ? data.total : size}
                       style={{ height: ROW }}
                     >
-                      <span className="usage-owner-allocation__name" tabIndex={0} title={row.label}>
-                        <span>{row.label}</span>
-                        {row.disambiguator && <small>{row.disambiguator}</small>}
-                        <span className="usage-owner-allocation__full" role="tooltip">
-                          {row.label}
-                          {row.disambiguator ? ` · ${row.disambiguator}` : ''}
-                        </span>
-                      </span>
+                      <OwnerAllocationName label={row.label} disambiguator={row.disambiguator} />
                       <span className="usage-owner-allocation__sr">
                         {displayQuantity(row.allocated_hours)} {unit};{' '}
                         {displayQuantity(row.sandbox_count)} Sandboxes;{' '}

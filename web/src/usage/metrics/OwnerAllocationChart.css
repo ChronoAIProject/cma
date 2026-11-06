@@ -53,23 +53,18 @@
   font-size: 10px;
 }
 .usage-owner-allocation__full {
-  display: none;
-  position: absolute;
-  z-index: 2;
-  inset-inline-start: 0;
-  top: 100%;
+  position: fixed;
+  z-index: 1100;
   width: max-content;
-  max-width: min(320px, 70vw);
+  max-width: min(320px, calc(100vw - 24px));
   padding: 4px 8px;
   border-radius: 4px;
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l2);
   text-align: left;
   overflow-wrap: anywhere;
-}
-.usage-owner-allocation__name:hover .usage-owner-allocation__full,
-.usage-owner-allocation__name:focus .usage-owner-allocation__full {
-  display: block;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xs-13);
 }
 .usage-owner-allocation__axis {
   --cma-scrollbar-thumb: transparent;
