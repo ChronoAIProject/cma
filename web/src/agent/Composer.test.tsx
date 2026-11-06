@@ -289,6 +289,27 @@ it('replaces Send with Stop while an Agent response is running', async () => {
   expect(onStop).toHaveBeenCalledOnce();
 });
 
+it('clears the running composer state when the recorded turn completes', () => {
+  const draw = (running: boolean) => (
+    <Composer
+      status={running ? 'working' : 'ready'}
+      running={running}
+      queueWhileRunning
+      inputAvailability={{ allowed: true }}
+      busy={false}
+      onSend={vi.fn()}
+      onStop={vi.fn()}
+    />
+  );
+  const { rerender } = render(draw(true));
+  expect(screen.getByPlaceholderText('Add a follow-up while the Agent works.')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Stop response' })).toBeInTheDocument();
+  rerender(draw(false));
+  expect(screen.getByPlaceholderText('Message Agent')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument();
+});
+
 it('keeps every control inside the box and offers steering only while a turn runs', async () => {
   const actor = userEvent.setup();
   const onSteeringModeChange = vi.fn();
