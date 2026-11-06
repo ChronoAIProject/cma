@@ -130,12 +130,21 @@ pub(crate) async fn generate_fixture(
     store: Arc<ReportingStore>,
     lease: &crate::store::usage_reports::ReportLease,
 ) -> layer2_core::sandbox_metrics::Result<layer2_core::sandbox_metrics::Report> {
+    generate_fixture_with_collection(store, lease, true).await
+}
+
+#[cfg(test)]
+pub(crate) async fn generate_fixture_with_collection(
+    store: Arc<ReportingStore>,
+    lease: &crate::store::usage_reports::ReportLease,
+    enabled: bool,
+) -> layer2_core::sandbox_metrics::Result<layer2_core::sandbox_metrics::Report> {
     let worker = MetricsWorkers {
         store,
         source: None,
         native: None,
         cluster: "fixture".into(),
-        enabled: true,
+        enabled,
     };
     tokio::time::timeout(Duration::from_secs(60), worker.generate(lease))
         .await
