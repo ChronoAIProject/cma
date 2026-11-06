@@ -5734,6 +5734,13 @@ The data table also pages rather than rendering the entire owner list. Use the
 existing Recharts library, theme tokens and nonanimated bars. Empty, loading,
 partial-history and failure states stay explicit in both themes.
 
+Owner-name disclosure is portalled outside the scrolling chart and placed with
+the shared viewport placement helper. Hover and keyboard focus show the same
+full name and secondary context; Escape dismisses it. Reposition it on scrolling
+and resizing so the final row and bottom visible row cannot clip its text.
+Owner identity context is resolved across the report cohort, not each API page,
+with the same authorized human-context policy used by filter discovery.
+
 
 #### Settled landing capability checks — 2026-11-06
 
@@ -5859,3 +5866,5 @@ summary's last reported task status while requesting a navigation refresh.
 reported a task status.
 
 | 2026-11-06 | Keep the open Agent's last reported task status in the sidebar while its stale summary refreshes; show Status unavailable only when no status was ever reported. |
+
+| 2026-11-06 | Resolve owner chart identities across report pages with the shared authorized context policy; portal full-name disclosure outside the scroll viewport and clamp it on keyboard focus and hover. |
