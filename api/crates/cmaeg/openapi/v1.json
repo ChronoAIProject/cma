@@ -671,6 +671,13 @@
           "permission": {
             "$ref": "#/components/schemas/PermissionConfig"
           },
+          "queue_lifetime_seconds": {
+            "description": "Binding message queue lifetime; omitted uses 300 seconds, maximum 86400.",
+            "format": "int32",
+            "maximum": 86400,
+            "minimum": 1,
+            "type": "integer"
+          },
           "schema_version": {
             "format": "int32",
             "minimum": 0,
@@ -3918,6 +3925,13 @@
           },
           "permission": {
             "$ref": "#/components/schemas/PermissionConfig"
+          },
+          "queue_lifetime_seconds": {
+            "description": "Binding message queue lifetime; omitted uses 300 seconds, maximum 86400.",
+            "format": "int32",
+            "maximum": 86400,
+            "minimum": 1,
+            "type": "integer"
           },
           "schema_version": {
             "format": "int32",
