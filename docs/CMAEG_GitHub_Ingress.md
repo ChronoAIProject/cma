@@ -50,7 +50,10 @@ The public response never contains raw chunks or credentials.
 
 `GET /v1/github/deliveries/{receipt_id}` and
 `GET /v1/github/apps/{app_ref}/deliveries/{delivery_id}` enforce the retained owner,
-including after retirement. Other owners receive 404. Delivery ID conflicts
+including after retirement. Retired bindings preserve their recorded history but
+authorize no work. A newly verified integration can request and independently
+approve the same installation with its own binding ID; it inherits neither the old
+approval nor its receipts. Other owners receive 404. Delivery ID conflicts
 never overwrite the original receipt. A 404 during an uncertain request is not
 proof that an in-flight transaction cannot later commit.
 

@@ -12,6 +12,8 @@ mod lifecycle;
 mod registration;
 #[path = "github_integrations/retirement.rs"]
 mod retirement;
+#[path = "github_integrations/retirement_rebinding.rs"]
+mod retirement_rebinding;
 #[path = "github_integrations/rotation.rs"]
 mod rotation;
 #[path = "github_integrations/sources.rs"]

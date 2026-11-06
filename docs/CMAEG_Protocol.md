@@ -3059,8 +3059,16 @@ reactivate the integration. An exact retirement replay returns its original
 retirement result. Existing metadata and receipts remain owner-readable. A verified
 App identity reservation is atomically released, allowing independent verification
 of another owner’s pending integration. Concurrent reclaims have one winner. Old
-retirement/verification replays cannot disturb a later reservation. Historical
-bindings and receipts keep their original owners; they are not transferred.
+retirement/verification replays cannot disturb a later reservation. Retirement
+terminates all of that integration's installation authority. New binding identities
+are scoped to the integration and installation, so a newly verified integration can
+request and independently approve the same installation. No previous repository
+approval is inherited. Historical binding IDs and receipts remain readable only by
+their original owner; recorded binding state is history, not authority after the
+parent integration retires. Existing App/installation-derived binding IDs remain
+readable and usable only with their original non-retired integration. Source checks
+and webhook resolution use the current integration and never adopt another
+integration's historical binding.
 
 Webhook authentication uses the stored integration's current credentials before
 parsing or duplicate lookup. Only uncompressed UTF-8 JSON, at most 256 KiB, and
