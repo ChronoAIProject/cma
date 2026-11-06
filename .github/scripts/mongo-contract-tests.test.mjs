@@ -4,6 +4,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const scaleTest = 'store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages';
 const requiredPrefixes = [
@@ -178,7 +179,7 @@ if (command === 'cargo') {
   };
   return {
     directory, log, env, foreignVolume,
-    args: [new URL('./mongo-contract-tests.sh', import.meta.url).pathname],
+    args: [fileURLToPath(new URL('./mongo-contract-tests.sh', import.meta.url))],
     calls: () => readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line)),
     containers: () => readdirSync(directory).filter(name => name.startsWith('calls.ndjson.container-')),
     volumes: () => readdirSync(directory).filter(name => /^calls\.ndjson\.volume-cma-mongo-ci-/.test(name)),

@@ -69,6 +69,7 @@ fn is_visitor(authorization: &Authorization) -> bool {
 }
 
 pub(super) async fn logout(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {
+    auth.identity_store.clear();
     if let Some(value) = request_cookie(&headers, AUTH_COOKIE) {
         if let Err(error) = auth.revoke_browser_login(value).await {
             tracing::error!(error = %error, "could not revoke browser authentication");

@@ -48,12 +48,12 @@ pub(super) fn log_drain_results(
 }
 
 pub(super) async fn drain_github(
-    worker: &mut Option<crate::github::Worker>,
+    worker: &mut Option<crate::github::Initialization>,
     deadline: std::time::Instant,
 ) {
     if let Some(worker) = worker {
         if !worker.drain(deadline).await {
-            tracing::warn!("GitHub execution-group drain incomplete; durable recovery retained");
+            tracing::warn!("GitHub storage initialization did not stop before shutdown");
         }
     }
 }
