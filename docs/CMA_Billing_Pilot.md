@@ -17,13 +17,18 @@ Keep the repository's default-off configuration until the activation step.
 | `CHRONO_USAGE_BILLING_ENABLED` | `false` throughout deployment, pilot and rollback; NyxID remains the only billing emitter |
 | `CHRONO_NYXID_SANDBOX_BILLING_BASE_URL` | The approved HTTPS NyxID API origin followed by `/api/v1/billing/sandboxes/`; no query, credentials or fragment |
 | `CHRONO_NYXID_SANDBOX_BILLING_PRODUCER_ID` | The canonical UUID v4 of the NyxID General-purpose producer service account, equal to NyxID's `CMA_BILLING_SERVICE_ACCOUNT_ID` |
-| `CHRONO_NYXID_SANDBOX_BILLING_CREDENTIAL_REF` | `NYXID_CMA_BILLING_PRODUCER_TOKEN`, the name of an environment key injected from the approved Secret; never the token value |
+| `CHRONO_NYXID_SANDBOX_BILLING_CREDENTIAL_REF` | Static mode: `NYXID_CMA_BILLING_PRODUCER_TOKEN`, an environment key injected from the approved Secret. Ignored when both client-credentials refs are set. |
+| `CHRONO_NYXID_SANDBOX_BILLING_CLIENT_ID_REF` | Renewable mode: `NYXID_CMA_BILLING_PRODUCER_CLIENT_ID`, an environment key in `chrono-bot/cma-agent-manager`. Empty by default. |
+| `CHRONO_NYXID_SANDBOX_BILLING_CLIENT_SECRET_REF` | Renewable mode: `NYXID_CMA_BILLING_PRODUCER_CLIENT_SECRET`, an environment key in the same Secret. Empty by default. |
 
-Inject that named key into the Agent Manager process with a valid service-account
-JWT whose live account and token both have `billing:sandbox:write`. Rotation
-requires refreshing the process environment. Retain the existing native
-agent-sandbox provider/controller and runtime-image pins. Unsupported provider
-deadline capabilities cannot admit paid Sandboxes.
+For renewable mode, inject both referenced values through the deployment's
+existing Secret `envFrom`. The SA must have `billing:sandbox:write`. Startup
+rejects a partial pair, invalid references, or missing/empty referenced values.
+With both new refs absent or empty, static mode remains unchanged and resolves
+its JWT at request time. Both refs set selects renewable mode even if the old
+static ref remains present. Retain existing native agent-sandbox
+provider/controller and runtime-image pins. Unsupported provider deadline
+capabilities cannot admit paid Sandboxes.
 
 NyxID owns eligibility: `CMA_BILLING_ENABLED=false` is the independent fleet
 admission switch. The effective `experimental:cma-sandbox-billing` flag uses
@@ -35,6 +40,87 @@ accounts; personal false overrides can exclude a chronoai member. Organization
 membership selects people whose **personal wallets** pay; it does not make the
 organization a payer. Ordinary NyxID billing eligibility, price synchronization,
 wallet readiness and entitlement must also pass for pilot participants.
+
+## Producer token lifecycle and secret rotation
+
+CMA obtains tokens using form-encoded `POST /oauth/token` on the configured
+NyxID origin with `grant_type=client_credentials` and scope
+`billing:sandbox:write`. No separate token URL or custom lifetime is configured.
+Each API/Agent Manager process owns its own cache; tokens and client credentials
+are held in process memory and never persisted in funding state. The first
+funding request fetches a token. Subsequent requests refresh before use at the
+earlier of 80% of the reported lifetime or five minutes before expiry. For a
+lifetime of five minutes or less, the margin is 20%. NyxID's current one-hour
+lifetime therefore refreshes after approximately 48 minutes of active use.
+Idle replicas exchange on the next call. Concurrent callers share refreshes;
+401 recovery also reuses a newer token if another caller already refreshed.
+
+A funding 401 triggers one refresh and one replay with identical payload and
+idempotency keys. A second 401 surfaces the existing error. Transient token
+endpoint failures have three attempts, two-second total deadlines per attempt,
+and 100/200 ms backoff plus up to 49 ms jitter each. A one-second failure cache
+coalesces waiting callers. Credential rejection, malformed responses and
+oversized responses fail immediately. Existing admission, pause and recovery
+semantics remain unchanged; a token outage never implies cohort exclusion.
+
+The authorized production operator performs the following rollout; this code
+change performs no production writes:
+
+1. Deploy the new image with the existing static configuration first, or with
+   billing disabled if the pilot has already drained. Keep
+   `CHRONO_USAGE_BILLING_ENABLED=false`. Verify readiness and preserve every
+   existing billing record, home and runtime identity. This is configuration-only
+   compatibility: no durable fields or migration are introduced.
+2. Prepare the two new non-secret ConfigMap values listed above and the Secret
+   update/restart procedure before rotation. Use producer SA
+   `fba7e196-0a9f-4221-ad74-9b7f7baeeff1`; verify it is active, authorized for CMA,
+   and allowed scope `billing:sandbox:write`. Keep the existing approved billing
+   base URL and producer ID. Resolve outstanding funded holds using the drain
+   procedure below before any planned interruption of producer authentication.
+3. Rotate the SA secret through the authorized NyxID admin operation
+   `POST /api/v1/admin/service-accounts/{producer_id}/rotate-secret`. This revokes
+   existing SA tokens immediately. Capture `client_id` and `client_secret` only
+   in memory; never print the response, put it in shell arguments/history, or
+   save it to a local file. Do not blindly retry an ambiguous rotation response.
+   Old replicas retain the previous environment and cannot renew after rotation;
+   this is a coordinated authentication transition, not a zero-interruption
+   credential reload. Schedule rotation after the existing pilot drain or an
+   explicitly planned admission interruption.
+4. Update only these two keys in the existing Secret
+   `chrono-bot/cma-agent-manager`, preserving all other keys and using the
+   approved secret-management flow or a memory-only stdin patch:
+   `NYXID_CMA_BILLING_PRODUCER_CLIENT_ID` = returned client ID;
+   `NYXID_CMA_BILLING_PRODUCER_CLIENT_SECRET` = returned client secret.
+   Do not replace the complete Secret with the checked-in empty template.
+5. Set the existing `chrono-bot/cma-agent-manager` ConfigMap keys
+   `CHRONO_NYXID_SANDBOX_BILLING_CLIENT_ID_REF=NYXID_CMA_BILLING_PRODUCER_CLIENT_ID`
+   and
+   `CHRONO_NYXID_SANDBOX_BILLING_CLIENT_SECRET_REF=NYXID_CMA_BILLING_PRODUCER_CLIENT_SECRET`.
+   Keep `CHRONO_USAGE_BILLING_ENABLED=false`. The old static ref/key may remain
+   during transition; renewable mode ignores it. Set the NyxID adapter enabled
+   according to the existing owner-approved activation/drain state.
+6. Roll the `chrono-bot/cma-agent-manager` Deployment through the approved
+   release/restart workflow. The existing `envFrom` imports both Secret keys;
+   no Deployment environment mapping is added. Wait for all old replicas to
+   exit, all new replicas to be Ready, and rollout completion. Secret/ConfigMap
+   changes alone do not update running process environments. Account for the
+   deployment's existing termination grace period.
+7. Verify a permitted funding operation produces a successful
+   `Sandbox producer token refresh` log with an expiry approximately one hour
+   ahead. Record only category, outcome, expiry and sanitized operation IDs.
+   Verify included/excluded create/resume behavior through the existing acceptance
+   procedure. During sustained funding activity, observe another successful
+   refresh near 48 minutes and continued funding beyond the original one-hour
+   expiry; verify each active replica independently. Do not expand the cohort
+   before the existing billing acceptance gates pass.
+
+For later SA rotations, repeat the coordinated drain/rotation, Secret update
+and rolling restart. No routine restart is needed for normal token expiry.
+If rollback requires static mode, obtain a fresh scoped JWT, inject it under the
+static reference, clear both new refs together and roll all replicas. A previous
+JWT is invalid after rotation and any new static JWT still expires in one hour.
+Keep the compatible adapter available while existing liabilities drain; never
+replace pending request identities or erase funding state to recover credentials.
 
 ## Deploy and enable in order
 
