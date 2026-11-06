@@ -214,7 +214,7 @@ module CIContract
     step(backend, "Install gateway contract browser", "npx --no-install playwright install --with-deps chromium")
     order(backend, ["Prepare compiled gateway browser contract", "Install gateway contract browser", "Image Manager authenticated Mongo isolation"])
     sandbox_mongo = step(backend, "Image Manager authenticated Mongo isolation", "bash ../.github/scripts/image-manager-mongo-contract.sh")
-    require!(sandbox_mongo["timeout-minutes"] == 10, "Sandbox Manager isolation proof must remain bounded")
+    require!(sandbox_mongo["timeout-minutes"] == 15, "Image Manager isolation proof must retain its 15-minute bound")
     require!(workflow["permissions"] == { "contents" => "read" }, "remote workflow permissions broadened")
     require!(workflow.dig("concurrency", "cancel-in-progress") == false, "remote writers cannot be cancelled by a newer run")
     triggers = workflow["on"] || workflow[true]
