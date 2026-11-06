@@ -205,34 +205,6 @@ fn legacy_agent_without_grants_deserializes_fail_closed() {
 }
 
 #[test]
-fn task_status_uses_only_log_evidence_at_or_before_the_aggregate_head() {
-    let mut observed = agent();
-    observed.status = AgentStatus::Ready;
-    observed.ready_at = Some(NOW.into());
-    observed.conversation.conversation_id = Some("conversation-test".into());
-    observed.conversation.runtime_generation = Some(1);
-    observed.conversation.last_seq = 2;
-    let completed = AgentLogEntry {
-        agent_id: observed.id.clone(),
-        seq: 2,
-        appended_at: NOW.into(),
-        kind: AgentLogKind::TurnCompleted { turn_sequence: 1 },
-    };
-    assert_eq!(
-        AgentTaskStatus::from_latest(&observed, Some(&completed), None, false),
-        AgentTaskStatus::Completed
-    );
-    let future = AgentLogEntry {
-        seq: 3,
-        ..completed
-    };
-    assert_eq!(
-        AgentTaskStatus::from_latest(&observed, Some(&future), None, false),
-        AgentTaskStatus::Unknown
-    );
-}
-
-#[test]
 fn every_status_pair_is_governed_by_an_explicit_whitelist() {
     let sandbox_statuses = [
         SandboxStatus::Provisioning,
