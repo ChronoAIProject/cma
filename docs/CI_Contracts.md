@@ -42,7 +42,8 @@ addresses measured capacity: #1425/#1426 observed about 263 MiB available disk
 late in Backend and 117 MiB free of 3 GiB swap during test compilation; #1424
 separately failed with ENOSPC. It is **not a fix for the unexplained runner
 shutdowns**. Runner size, Cargo concurrency, existing gate commands, assertions,
-thresholds, relative order and timeouts are unchanged.
+thresholds and relative order are unchanged. The separately authorized Image
+Manager deadline adjustment below is the sole timeout change.
 
 The helper accepts no input paths and runs only as root on an ephemeral Linux
 GitHub-hosted runner whose workspace shares the root filesystem. Its exact
@@ -130,7 +131,25 @@ pages, root cgroup counters have their own scope, and a ten-second sample can
 miss a short peak. A missing sample or an exit-143 runner shutdown alone does
 not prove OOM, disk exhaustion, or manual cancellation. Compare passing and
 failed timelines before proposing a fix. The Image Manager step's existing
-ten-minute timeout remains a distinct failure mode and is unchanged.
+deadline remains a distinct failure mode.
+
+## Image Manager Deadline Margin
+
+`Image Manager authenticated Mongo isolation` retains a finite **15-minute**
+step deadline. This deliberate CI policy change has its own commit: the former
+10-minute bound expired on #1419 and #1418, and a passing run took 9m57s. Measured
+compilation took 242-434 seconds before a comparatively stable 150-166 seconds
+of tests, leaving no reliable setup/cleanup margin. Capacity measurement run
+42299517097 retained the old bound and reproduced the deadline: its final
+eight-test success summary preceded the timeout error by 0.60 seconds, despite
+10.35 GiB of sampled available disk. That output order does not prove when
+cancellation began, but does confirm that disk reclamation alone does not
+address the step's deadline margin.
+
+The 15-minute limit preserves hang protection. Commands, tests, assertions,
+concurrency and gate order are unchanged. The executable contract and mutation
+regressions reject removing the deadline, restoring 10 minutes, or silently
+extending it to 30. No reporting-circuit threshold or retry behavior changes.
 
 ## Historical Guarantee Mapping
 

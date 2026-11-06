@@ -69,6 +69,12 @@ guarded.each do |workflow, id, name|
 end
 
 if mode == "provider"
+  [nil, 10, 30].each do |timeout|
+    reject.call("Image Manager loses its measured finite margin: #{timeout.inspect}") do |value|
+      row = value["ci"]["jobs"]["backend"]["steps"].find { |step| step["name"] == "Image Manager authenticated Mongo isolation" }
+      timeout.nil? ? row.delete("timeout-minutes") : row["timeout-minutes"] = timeout
+    end
+  end
   reject.call("capacity runs after compilation") do |value|
     rows = value["ci"]["jobs"]["backend"]["steps"]
     rows << rows.delete_at(1)
