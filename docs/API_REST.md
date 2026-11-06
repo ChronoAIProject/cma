@@ -1871,6 +1871,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v1/usage/metrics/reports/{report}/series` | - | metric*, group_by, series_id, top | 200 UsageMetricSeries |
 | `GET /api/v1/usage/metrics/reports/{report}/sandboxes/{sandbox}` | - | - | 200 UsageMetricRow |
 | `POST /api/v1/admin/usage/metrics/reports` | UsageMetricQuery | - | 200/202 UsageMetricReport |
+| `POST /api/v1/admin/usage/metrics/options` | UsageFilterOptionsQuery | - | 200 UsageFilterOptions |
 | `GET /api/v1/admin/usage/metrics/reports/{report}` | - | - | 200 UsageMetricReport |
 | `GET /api/v1/admin/usage/metrics/reports/{report}/sandboxes` | - | limit, cursor, sort, order | 200 UsageMetricPage |
 | `GET /api/v1/admin/usage/metrics/reports/{report}/series` | - | metric*, group_by, series_id, top | 200 UsageMetricSeries |

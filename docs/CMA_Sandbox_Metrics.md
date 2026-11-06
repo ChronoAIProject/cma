@@ -352,3 +352,25 @@ API GETs plus authorized CMA API requests:
 6. Check AM checkout/conversation latency and reporting budgets before widening
    collection. Record source/identity gaps explicitly. No Agent test message,
    direct production database connection, Pod exec or runtime restart is needed.
+
+### Administrator filter discovery
+
+`POST /api/v1/admin/usage/metrics/options` requires `read_all_sandboxes` on every
+request, including pagination and selected-value resolution. The read-only JSON
+body keeps search names out of proxy request URLs. It does not create
+or require a report. `kind=owner|sandbox|runtime`, optional literal name `search`
+(up to 128 bytes), `owner` (Sandbox choices only), `limit` (1–50), and an opaque
+principal/query-bound `cursor` return `{items:[{value,label,disambiguator?}],next}`. `selected`
+resolves one value for URL restoration and cannot accompany search or cursor.
+Owner names come from the retained public directory. Primary labels stay plain.
+Only duplicates on the returned page receive a disambiguator: join date for
+owners, owner name for Sandboxes, and a derived reference only as a last resort
+when human context is missing or also duplicates. Selected labels remain plain.
+Sandbox names come
+from the retained usage inventory; runtime choices include suspended runtimes.
+Discovery honors the existing reporting circuit before database work, without
+requiring a report. An open circuit returns 429. Response sizes, connection count
+and database/request time are bounded; name scans and grouping may still visit
+the candidate cohort. Results are private/no-store, and
+errors never log search text or display names. The Ops web filter requires this
+API extension; report endpoints remain compatible with #1398 and later.

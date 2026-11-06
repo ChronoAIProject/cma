@@ -129,6 +129,38 @@ fn row() -> Row {
 }
 #[async_trait]
 impl MetricsStore for Store {
+    async fn options(&self, _: &Scope, query: OptionQuery) -> Result<FilterOptions> {
+        self.check()?;
+        if query.selected.as_deref() == Some("missing") {
+            return Ok(FilterOptions {
+                items: vec![],
+                next: None,
+            });
+        }
+        let (value, label) = match query.kind {
+            OptionKind::Owner => ("owner", "Alex Chen"),
+            OptionKind::Sandbox => (SANDBOX, "Research"),
+            OptionKind::Runtime => ("v1", "v1"),
+        };
+        let duplicate = query.search == "duplicate";
+        let mut items = vec![FilterOption {
+            value: value.into(),
+            label: label.into(),
+            disambiguator: duplicate.then(|| "Joined 2026-01-01".into()),
+        }];
+        if duplicate {
+            items.push(FilterOption {
+                value: "other-owner".into(),
+                label: label.into(),
+                disambiguator: Some("Joined 2026-02-01".into()),
+            });
+        }
+        Ok(FilterOptions {
+            items,
+            next: (query.cursor.is_none() && query.selected.is_none() && !duplicate)
+                .then(|| "fixture-options-cursor".into()),
+        })
+    }
     async fn resolve_agent(&self, s: &Scope, _: &str) -> Result<String> {
         self.authorize_sandbox(s, SANDBOX).await?;
         Ok(SANDBOX.into())

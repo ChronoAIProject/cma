@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalUsageMetrics } from './usage-metrics.fixture';
+import { LocalUsageFilterOptions, filterOwners } from './usage-filter-options.fixture';
 
 const measured = process.env.CMA_E2E_MEASURED_USAGE === 'true';
 
@@ -12,6 +13,7 @@ for (const theme of ['light', 'dark', 'system']) {
     metrics.measuredVisible = measured;
     await metrics.session(page, ['use_own_sandboxes', 'read_all_sandboxes']);
     await metrics.route(page);
+    await new LocalUsageFilterOptions().route(page);
     await page.addInitScript(
       (appearance) => localStorage.setItem('cma:appearance', appearance),
       theme,
@@ -73,13 +75,16 @@ for (const theme of ['light', 'dark', 'system']) {
       animations: 'disabled',
     });
     await page.getByRole('button', { name: 'Owner: Everyone' }).click();
-    await page.getByRole('button', { name: 'Next choices' }).click();
-    await page.getByRole('button', { name: 'Choose owner' }).click();
-    await page.getByRole('menuitemradio', { name: 'Remote owner (owner-25001)' }).click();
+    await page
+      .getByRole('menuitemradio', { name: /Alex Chen/ })
+      .first()
+      .click();
     await page.getByRole('button', { name: 'Apply usage filters' }).click();
-    await expect.poll(() => metrics.creates.at(-1)?.input.filters?.owner).toBe('owner-25001');
+    await expect
+      .poll(() => metrics.creates.at(-1)?.input.filters?.owner)
+      .toBe(filterOwners[0]!.value);
     await expect(page.getByRole('button', { name: 'Research Sandbox', exact: true })).toBeVisible();
-    expect(new URL(page.url()).searchParams.get('owner')).toBe('owner-25001');
+    expect(new URL(page.url()).searchParams.get('owner')).toBe(filterOwners[0]!.value);
     await page.getByRole('button', { name: 'Research Sandbox', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Sandbox usage details' })).toBeVisible();
     await page.getByRole('button', { name: 'Lifecycle history', exact: true }).click();
@@ -97,7 +102,8 @@ for (const theme of ['light', 'dark', 'system']) {
       fullPage: true,
       animations: 'disabled',
     });
-    await page.getByRole('searchbox', { name: 'Usage Sandbox search' }).fill('empty');
+    await page.getByRole('button', { name: 'Usage Sandbox status' }).click();
+    await page.getByRole('menuitemradio', { name: 'retired', exact: true }).click();
     await page.getByRole('button', { name: 'Apply usage filters' }).click();
     await expect(page.getByText('No Sandboxes match this selection.')).toBeVisible();
     metrics.failure = 503;
