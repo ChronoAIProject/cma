@@ -5,6 +5,7 @@ mod integrations;
 mod model;
 mod mutations;
 mod receiver;
+mod retry;
 mod schema;
 mod startup;
 mod store;
@@ -47,6 +48,7 @@ pub enum Error {
     DispatchUnavailable,
     Retired,
     ProofWithdrawn,
+    DeliveryExpired,
     TooLarge,
     MediaType,
 }
@@ -70,6 +72,9 @@ impl std::fmt::Display for Error {
             }
             Self::ProofWithdrawn => {
                 "Static installation proofs are withdrawn; request administrator approval"
+            }
+            Self::DeliveryExpired => {
+                "GitHub delivery retention expired; use a fresh authorized reconciliation"
             }
             Self::Retired => "GitHub integration is retired",
             Self::DispatchUnavailable => {
@@ -95,6 +100,7 @@ struct Delivery {
 
 struct LifecycleDelivery<'a> {
     integration: &'a AppIntegration,
+    received_at: i64,
     receipt_id: String,
     delivery_id: &'a str,
     fingerprint: &'a str,
@@ -119,6 +125,12 @@ impl Gateway {
             ingress: None,
             activity: None,
         })
+    }
+
+    /// Supply an external retention clock; production uses system UTC.
+    pub fn with_receipt_clock(mut self, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
+        self.store.clock = clock;
+        self
     }
 
     pub(crate) fn attach_ingress(&mut self, ingress: Arc<crate::ingress::IngressState>) {

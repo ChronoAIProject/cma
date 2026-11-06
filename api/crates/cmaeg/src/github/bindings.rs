@@ -18,6 +18,15 @@ impl Gateway {
         key: &str,
         request: BindRequest,
     ) -> Result<(Binding, bool), Error> {
+        retry::run(|| self.bind_once(owner, key, request.clone())).await
+    }
+
+    async fn bind_once(
+        &self,
+        owner: &str,
+        key: &str,
+        request: BindRequest,
+    ) -> Result<(Binding, bool), Error> {
         let app = self.read_app(owner, &request.app_ref).await?;
         if app.status == "retired" {
             return Err(Error::Retired);
@@ -101,11 +110,10 @@ impl Gateway {
             store::NewRecord::new(&binding.binding_id, "binding", &binding)?,
             store::NewRecord::new(&operation_id, "binding_operation", &operation)?,
         ];
-        if self
+        if let Err(failure) = self
             .store
             .create_many_guarded(owner, records, Some(&app))
             .await
-            .is_err()
         {
             return self
                 .binding_operation(owner, &operation_id, &fingerprint)
@@ -113,7 +121,7 @@ impl Gateway {
                 .map(|binding| (binding, false))
                 .map_err(|error| {
                     if matches!(error, Error::NotFound) {
-                        Error::Unavailable
+                        failure
                     } else {
                         error
                     }
@@ -142,6 +150,17 @@ impl Gateway {
     }
 
     pub(super) async fn verify_binding(
+        &self,
+        owner: &str,
+        id: &str,
+        verifier: &str,
+        key: &str,
+        request: VerifyBindingRequest,
+    ) -> Result<Binding, Error> {
+        retry::run(|| self.verify_binding_once(owner, id, verifier, key, request.clone())).await
+    }
+
+    async fn verify_binding_once(
         &self,
         owner: &str,
         id: &str,
@@ -190,11 +209,22 @@ impl Gateway {
         if binding.status == "uninstalled" {
             return Err(Error::Forbidden);
         }
+        let eligibility_changed = binding.status != "active"
+            || binding
+                .repository_ids
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                != request
+                    .repository_ids
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>();
         binding.version = binding.version.checked_add(1).ok_or(Error::Unavailable)?;
-        binding.authority_revision = binding
-            .authority_revision
-            .checked_add(1)
-            .ok_or(Error::Unavailable)?;
+        if eligibility_changed {
+            binding.authority_revision = binding
+                .authority_revision
+                .checked_add(1)
+                .ok_or(Error::Unavailable)?;
+        }
         binding.status = "active".into();
         binding.approved_repository_ids = request.repository_ids.clone();
         binding.repository_ids = request.repository_ids.clone();

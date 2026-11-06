@@ -353,3 +353,40 @@ async fn binding_scope_is_bounded_and_the_maximum_scope_can_be_approved() {
         json!(&ids[..256])
     );
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn administrator_approved_scope_is_authoritative_even_when_it_differs_from_the_request() {
+    let f = Fixture::new(true).await;
+    let (_, binding) = pending(&f).await;
+    let response=f.client.post(format!("{}/v1/github/installation-bindings/{}/verification",f.base,binding["binding_id"].as_str().unwrap()))
+        .bearer_auth("token-alice").header("Idempotency-Key","independent-scope")
+        .json(&json!({"expected_version":1,"evidence_ref":"review:independent-repository-scope","repository_ids":[2001]})).send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    let approved: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(approved["requested_repository_ids"], json!([1001, 1002]));
+    assert_eq!(approved["approved_repository_ids"], json!([2001]));
+    assert_eq!(approved["repository_ids"], json!([2001]));
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn reapproving_unchanged_eligibility_changes_audit_version_only() {
+    let f = Fixture::new(true).await;
+    let (_, binding) = pending(&f).await;
+    let approved = verification(&f, &binding, "token-alice", "approve")
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    let response = verification(&f, &approved, "token-alice", "refresh-audit")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let repeated: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(repeated["version"], 3);
+    assert_eq!(repeated["authority_revision"], 1);
+}

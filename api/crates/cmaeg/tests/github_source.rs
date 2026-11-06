@@ -25,6 +25,7 @@ struct Fixture {
     base: String,
     app_ref: String,
     shutdown: Option<oneshot::Sender<()>>,
+    clock: Arc<std::sync::atomic::AtomicI64>,
 }
 
 impl Fixture {
@@ -45,6 +46,9 @@ impl Fixture {
             base: String::new(),
             app_ref: String::new(),
             shutdown: None,
+            clock: Arc::new(std::sync::atomic::AtomicI64::new(
+                time::OffsetDateTime::now_utc().unix_timestamp(),
+            )),
         };
         fixture.start().await;
         let response = fixture
@@ -88,7 +92,13 @@ impl Fixture {
             )
             .unwrap(),
         );
-        let gateway = github::Gateway::open(database, keys.clone()).await.unwrap();
+        let clock = self.clock.clone();
+        let gateway = github::Gateway::open(database, keys.clone())
+            .await
+            .unwrap()
+            .with_receipt_clock(Arc::new(move || {
+                clock.load(std::sync::atomic::Ordering::SeqCst)
+            }));
         let state = cmaeg::http::ManagementState::new(
             providers,
             records,
@@ -536,4 +546,80 @@ async fn signed_issue_has_an_owner_scoped_durable_receipt_after_restart() {
         .unwrap();
     assert_eq!(found.status(), StatusCode::OK);
     assert_eq!(found.json::<Value>().await.unwrap(), accepted);
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated MongoDB replica set"]
+async fn ignored_receipts_have_a_bounded_recovery_window() {
+    let fixture = Fixture::new().await;
+    let body = issue();
+    let response = fixture.deliver("bounded-receipt", &body, &body).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let receipt: Value = response.json().await.unwrap();
+    let received = receipt["received_at"].as_i64().unwrap();
+    assert_eq!(receipt["retained_until"], json!(received + 7 * 86400));
+    assert!(receipt["raw_body_expires_at"].as_i64().unwrap() <= received + 86400);
+    assert_eq!(
+        fixture
+            .deliver("bounded-receipt", &body, &body)
+            .await
+            .json::<Value>()
+            .await
+            .unwrap(),
+        receipt
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated MongoDB replica set"]
+async fn receipt_expiry_refuses_replay_without_restoring_preapproval_work() {
+    use std::sync::atomic::Ordering;
+    let mut fixture = Fixture::new().await;
+    let body=json!({"action":"opened","installation":{"id":99},"repository":{"id":1001,"owner":{"id":123}},"issue":{"id":9001,"number":7}}).to_string();
+    let first = fixture.deliver("preapproval-expiry", &body, &body).await;
+    assert_eq!(first.status(), 200);
+    let receipt: Value = first.json().await.unwrap();
+    assert_eq!(receipt["reason"], "installation_unbound");
+    let binding = fixture.bind().await;
+    let received = receipt["received_at"].as_i64().unwrap();
+    fixture.clock.store(received + 86401, Ordering::SeqCst);
+    let replay = fixture.deliver("preapproval-expiry", &body, &body).await;
+    assert_eq!(replay.status(), 200);
+    assert_eq!(replay.json::<Value>().await.unwrap(), receipt);
+    fixture.clock.store(received + 7 * 86400, Ordering::SeqCst);
+    for _ in 0..2 {
+        let replay = fixture.deliver("preapproval-expiry", &body, &body).await;
+        assert_eq!(replay.status(), 410);
+        assert_eq!(
+            replay.json::<Value>().await.unwrap()["code"],
+            "github_delivery_expired"
+        );
+    }
+    fixture.shutdown.take().unwrap().send(()).unwrap();
+    fixture.start().await;
+    let read = fixture
+        .client
+        .get(format!(
+            "{}/v1/github/deliveries/{}",
+            fixture.base,
+            receipt["receipt_id"].as_str().unwrap()
+        ))
+        .bearer_auth("token-alice")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(read.status(), 410);
+    let active = fixture
+        .client
+        .get(format!(
+            "{}/v1/github/installation-bindings/{}",
+            fixture.base,
+            binding["binding_id"].as_str().unwrap()
+        ))
+        .bearer_auth("token-alice")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(active.status(), 200);
+    assert_eq!(active.json::<Value>().await.unwrap()["status"], "active");
 }

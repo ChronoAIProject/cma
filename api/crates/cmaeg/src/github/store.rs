@@ -1,3 +1,6 @@
+#[path = "integration_store.rs"]
+mod integrations;
+pub(super) use integrations::RecordUpdate;
 #[path = "binding_store.rs"]
 mod bindings;
 use std::sync::Arc;
@@ -6,7 +9,7 @@ use base64::Engine;
 use cmaeg_core::seal::{open_blob, seal_blob, MasterKeyRing};
 use futures_util::TryStreamExt;
 use mongodb::{
-    bson::{doc, spec::BinarySubtype, Binary, Document},
+    bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
     options::{Acknowledgment, CollectionOptions, ReadConcern, WriteConcern},
     Collection, Database, IndexModel,
 };
@@ -22,6 +25,7 @@ pub(super) struct Store {
     raw: crate::records::mongo::MongoRecords,
     records: Collection<Row>,
     keys: Arc<MasterKeyRing>,
+    pub(super) clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -35,6 +39,8 @@ struct Row {
     schema_version: i32,
     #[serde(default)]
     guard_revision: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expires_at: Option<DateTime>,
     blob: Binary,
 }
 
@@ -74,7 +80,7 @@ impl Store {
         }
         let marker = database
             .collection::<Document>(crate::records::mongo::MIGRATIONS)
-            .find_one(doc! {"_id":"github_integrations","version":3})
+            .find_one(doc! {"_id":"github_integrations","version":4})
             .read_concern(ReadConcern::majority())
             .await
             .map_err(|_| Error::Unavailable)?;
@@ -99,13 +105,19 @@ impl Store {
             .try_collect()
             .await
             .map_err(|_| Error::Unavailable)?;
-        if indexes.len() != 2
+        if indexes.len() != 3
             || !indexes
                 .iter()
                 .any(|index| index.keys == doc! {"owner":1,"kind":1,"_id":1})
+            || !indexes.iter().any(|index| {
+                index.keys == doc! {"expires_at":1}
+                    && index.options.as_ref().is_some_and(|options| {
+                        options.expire_after == Some(std::time::Duration::ZERO)
+                    })
+            })
             || indexes.iter().any(|index| {
                 index.options.as_ref().is_some_and(|options| {
-                    options.expire_after.is_some()
+                    (index.keys != doc! {"expires_at":1} && options.expire_after.is_some())
                         || options.partial_filter_expression.is_some()
                         || options.sparse == Some(true)
                 })
@@ -129,7 +141,12 @@ impl Store {
             raw,
             database,
             keys,
+            clock: Arc::new(super::now),
         })
+    }
+
+    pub(super) fn current_time(&self) -> i64 {
+        (self.clock)()
     }
 
     pub async fn create(
@@ -166,18 +183,18 @@ impl Store {
             .client()
             .start_session()
             .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
         session
             .start_transaction()
             .read_concern(ReadConcern::snapshot())
             .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
             .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
         self.records
             .insert_many(rows)
             .session(&mut session)
             .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
         if let Some(integration) = integration {
             self.guard_integration(owner, integration, &mut session)
                 .await?;
@@ -185,55 +202,7 @@ impl Store {
         session
             .commit_transaction()
             .await
-            .map_err(|_| Error::Unavailable)?;
-        Ok(())
-    }
-
-    pub async fn update_integration(
-        &self,
-        owner: &str,
-        expected_version: u64,
-        integration: &super::AppIntegration,
-        records: Vec<NewRecord>,
-    ) -> Result<(), Error> {
-        let expected = i64::try_from(expected_version).map_err(|_| Error::ManagementConflict)?;
-        let next = expected.checked_add(1).ok_or(Error::ManagementConflict)?;
-        let row = self.row(
-            &integration.app_ref,
-            owner,
-            "app_integration",
-            next,
-            integration,
-        )?;
-        let rows = records
-            .iter()
-            .map(|record| self.row(&record.id, owner, record.kind, 1, &record.value))
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut session = self
-            .database
-            .client()
-            .start_session()
-            .await
-            .map_err(|_| Error::Unavailable)?;
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
-            .await
-            .map_err(|_| Error::Unavailable)?;
-        let result = self.records.replace_one(doc! {"_id":&integration.app_ref,"owner":owner,"kind":"app_integration","version":expected}, row).session(&mut session).await.map_err(|_| Error::Unavailable)?;
-        if result.matched_count != 1 {
-            return Err(Error::ManagementConflict);
-        }
-        self.records
-            .insert_many(rows)
-            .session(&mut session)
-            .await
-            .map_err(|_| Error::Unavailable)?;
-        session
-            .commit_transaction()
-            .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
         Ok(())
     }
 
@@ -276,11 +245,33 @@ impl Store {
         version: i64,
         value: &impl Serialize,
     ) -> Result<Row, Error> {
+        let value = serde_json::to_value(value).map_err(|_| Error::Unavailable)?;
+        let expires_at = if kind == "delivery" {
+            let received = value
+                .pointer("/receipt/received_at")
+                .and_then(serde_json::Value::as_i64)
+                .ok_or(Error::Unavailable)?;
+            let until = value
+                .pointer("/receipt/retained_until")
+                .and_then(serde_json::Value::as_i64)
+                .ok_or(Error::Unavailable)?;
+            if until <= self.current_time()
+                || until <= received
+                || until.saturating_sub(received) > 7 * 86400
+            {
+                return Err(Error::DeliveryExpired);
+            }
+            Some(DateTime::from_millis(
+                until.checked_mul(1000).ok_or(Error::Unavailable)?,
+            ))
+        } else {
+            None
+        };
         let sealed = Sealed {
             id: id.into(),
             owner: owner.into(),
             kind: kind.into(),
-            value: serde_json::to_value(value).map_err(|_| Error::Unavailable)?,
+            value,
         };
         let bytes = serde_json::to_vec(&sealed).map_err(|_| Error::Unavailable)?;
         let blob = seal_blob(&self.keys, &bytes).map_err(|_| Error::Unavailable)?;
@@ -291,6 +282,7 @@ impl Store {
             version,
             schema_version: 1,
             guard_revision: 0,
+            expires_at,
             blob: Binary {
                 subtype: BinarySubtype::Generic,
                 bytes: blob,
@@ -390,7 +382,7 @@ impl Store {
 
     fn open_row<T: DeserializeOwned>(&self, row: Row) -> Result<(String, u64, T), Error> {
         let opened = open_blob(&self.keys, &row.blob.bytes).map_err(|_| Error::Unavailable)?;
-        let sealed: Sealed =
+        let mut sealed: Sealed =
             serde_json::from_slice(&opened.payload).map_err(|_| Error::Unavailable)?;
         if sealed.id != row.id
             || sealed.owner != row.owner
@@ -398,6 +390,26 @@ impl Store {
             || row.schema_version != 1
             || row.version < 1
         {
+            return Err(Error::Unavailable);
+        }
+        if row.kind == "delivery" {
+            let until = row.expires_at.ok_or(Error::Unavailable)?.timestamp_millis() / 1000;
+            if until <= self.current_time() {
+                return Err(Error::DeliveryExpired);
+            }
+            let receipt = sealed
+                .value
+                .get_mut("receipt")
+                .and_then(serde_json::Value::as_object_mut)
+                .ok_or(Error::Unavailable)?;
+            if receipt
+                .get("retained_until")
+                .is_some_and(|value| !value.is_null() && value.as_i64() != Some(until))
+            {
+                return Err(Error::Unavailable);
+            }
+            receipt.insert("retained_until".into(), serde_json::json!(until));
+        } else if row.expires_at.is_some() {
             return Err(Error::Unavailable);
         }
         Ok((
@@ -440,7 +452,10 @@ fn guarded_update(row: Row) -> Document {
 }
 
 fn transaction_error(error: mongodb::error::Error) -> Error {
-    if error.contains_label("TransientTransactionError") {
+    if error.contains_label("TransientTransactionError")
+        || matches!(error.kind.as_ref(),
+        mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(write)) if write.code == 11000)
+    {
         Error::Retry
     } else {
         Error::Unavailable

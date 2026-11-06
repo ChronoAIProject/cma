@@ -396,6 +396,7 @@ impl IntoResponse for Error {
                 StatusCode::UNPROCESSABLE_ENTITY,
                 ProblemCode::GithubProofWithdrawn,
             ),
+            Self::DeliveryExpired => (StatusCode::GONE, ProblemCode::GithubDeliveryExpired),
             Self::Retired => (StatusCode::GONE, ProblemCode::GithubIntegrationRetired),
             Self::DispatchUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
