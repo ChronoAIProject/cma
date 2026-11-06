@@ -22,10 +22,8 @@ fn pipeline(agents: &[&Agent]) -> Vec<Document> {
         doc! {"$project": {"_id": 1, "last_seq": 1}},
         doc! {"$lookup": {
             "from": "agent_log", "localField": "_id", "foreignField": "agent_id", "as": "latest",
-            "let": {"head": "$last_seq"},
             "pipeline": [
                 {"$match": {"record.kind.type": {"$in": ["created", "turn_started", "turn_completed", "turn_failed", "turn_interrupted", "conversation_gap"]}}},
-                {"$match": {"$expr": {"$lte": ["$seq", "$$head"]}}},
                 {"$sort": {"seq": -1}}, {"$limit": 1}, {"$replaceWith": bounded()},
             ],
         }},
