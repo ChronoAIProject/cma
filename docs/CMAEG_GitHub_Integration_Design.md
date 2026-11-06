@@ -126,8 +126,15 @@ version as 409. No retry silently updates the caller's expected version.
 Retiring a verified integration atomically marks its App identity reservation
 released. Another owner's pending integration can then be independently verified;
 concurrent claims still have one winner. Replaying old retirement/verification
-cannot release or reclaim the new reservation. Existing bindings/receipts remain
-with their original owner; retirement does not transfer those resources.
+cannot release or reclaim the new reservation. Retirement terminates the old
+integration's installation authority through the same integration guard used by
+binding approval and lifecycle writes. New bindings derive their identity from
+`(app_ref, installation_id)`, allowing the replacement integration to request and
+independently approve the same installation. Its approval starts empty. Historical
+bindings and receipts retain their original IDs, owner and recorded state; their
+retired parent prevents any authority use or reactivation. Lookup also supports
+existing `(app_id, installation_id)` IDs, but only when their owner and integration
+match. It never reuses a retired integration's approval for its replacement.
 
 The feature-gated migration advances versions 1–3 to version 4, adds receipt TTL
 metadata/indexes, and stamps legacy receipts with one fixed seven-day migration

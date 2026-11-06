@@ -84,7 +84,11 @@ Using **personal scope**, GET the draft and submit
 version and a stable key. Read back `retired`. Existing ping receipts remain
 readable; subsequent webhook requests, including ping, must receive typed 410 and
 create no receipt. No verification, rotation or binding operation can reactivate
-it. Return to organization scope for subsequent work.
+it. Any existing personal installation approval becomes historical and cannot
+authorize work. The organization independently requests and approves the same
+installation under a new binding ID; verify the personal owner still reads its old
+binding/receipts and cannot read the organization's replacements. Return to
+organization scope for subsequent work.
 
 ## 3. Independent App and installation approval
 
