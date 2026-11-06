@@ -172,3 +172,96 @@ describe('the identity adapter', () => {
     await expect(createNyxidAuthProvider().current()).resolves.toBeDefined();
   });
 });
+
+describe('silent sign-in', () => {
+  function stubLocation(pathname: string) {
+    const replace = vi.fn();
+    const assign = vi.fn();
+    vi.stubGlobal('location', {
+      ...window.location,
+      origin: 'https://cma.example',
+      pathname,
+      replace,
+      assign,
+    });
+    return { replace, assign };
+  }
+
+  afterEach(() => {
+    sessionStorage.clear();
+    localStorage.clear();
+  });
+
+  it('asks the provider without interaction and returns to the opened Agent', () => {
+    const { replace } = stubLocation('/agents/agt_88faf0ed');
+    expect(createNyxidAuthProvider().signInSilently?.()).toBe(true);
+    expect(replace).toHaveBeenCalledWith(
+      '/auth/login?return_to=%2Fagents%2Fagt_88faf0ed&prompt=none',
+    );
+  });
+
+  it('sends the home page to the Agent Manager', () => {
+    const { replace } = stubLocation('/');
+    expect(createNyxidAuthProvider().signInSilently?.()).toBe(true);
+    expect(replace).toHaveBeenCalledWith('/auth/login?return_to=%2Fagent-manager&prompt=none');
+  });
+
+  it('tries once per tab, so a declined attempt shows the landing', () => {
+    const { replace } = stubLocation('/agents/agt_88faf0ed');
+    const provider = createNyxidAuthProvider();
+    expect(provider.signInSilently?.()).toBe(true);
+    expect(provider.signInSilently?.()).toBe(false);
+    expect(replace).toHaveBeenCalledTimes(1);
+  });
+
+  it('tries again once this tab has been signed in', async () => {
+    const { replace } = stubLocation('/agents/agt_88faf0ed');
+    const provider = createNyxidAuthProvider();
+    expect(provider.signInSilently?.()).toBe(true);
+    stubFetch(() => jsonResponse(200, { authenticated: true, subject: '76fe9d91' }));
+    await provider.current();
+    expect(provider.signInSilently?.()).toBe(true);
+    expect(replace).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not sign back in after signing out of CMA, until sign-in is chosen', async () => {
+    const { replace } = stubLocation('/agents/agt_88faf0ed');
+    const provider = createNyxidAuthProvider();
+    await provider.signOut();
+    expect(provider.signInSilently?.()).toBe(false);
+    await provider.signIn('/agents/agt_88faf0ed');
+    sessionStorage.clear();
+    expect(provider.signInSilently?.()).toBe(true);
+    expect(replace).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves visitor journeys, share links and unknown pages to their own sign-in', () => {
+    for (const pathname of [
+      '/t/pub_example',
+      '/launches/lch_example',
+      '/agent-manager/share/shr_example',
+      '/artifacts/doc_example',
+      '/connection-return',
+      '/agents',
+      '/settings/general',
+    ]) {
+      const { replace } = stubLocation(pathname);
+      expect(createNyxidAuthProvider().signInSilently?.(), pathname).toBe(false);
+      expect(replace, pathname).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does not try when storage is unavailable, since it could not stop a loop', () => {
+    const { replace } = stubLocation('/agents/agt_88faf0ed');
+    const refused = {
+      getItem: () => {
+        throw new Error('denied');
+      },
+    };
+    vi.stubGlobal('localStorage', refused);
+    vi.stubGlobal('sessionStorage', refused);
+    expect(createNyxidAuthProvider().signInSilently?.()).toBe(false);
+    expect(replace).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+});

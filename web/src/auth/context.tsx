@@ -28,6 +28,14 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+/**
+ * How long a silent sign-in may hold the page before it is shown signed out.
+ * The navigation normally unloads the page well within this; one the person
+ * stopped, or that stalled, leaves the landing and its sign-in rather than an
+ * indefinite "Signing you in".
+ */
+const SILENT_SIGN_IN_TIMEOUT_MS = 10000;
+
 interface AuthProviderProps {
   readonly provider: AuthProvider;
   readonly children: ReactNode;
@@ -42,16 +50,35 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     // StrictMode makes routine by running effects twice in development.
     let live = true;
 
+    // Only the read that opens the page may leave it for a silent sign-in.
+    // Later refreshes on focus or reconnection never navigate away from work.
+    let opening = true;
+    let leaving: ReturnType<typeof setTimeout> | undefined;
     const refresh = () => {
+      if (leaving !== undefined) return;
       const version = ++currentRead.current;
+      const first = opening;
+      opening = false;
       void provider
         .current()
         .then((next) => {
-          if (live && version === currentRead.current) {
-            if (next.status === 'authenticated') retainTaskViewer(next.user.id);
-            if (next.status === 'anonymous') retainTaskViewer();
-            setState(next);
+          if (!live || version !== currentRead.current) return;
+          // A browser still signed in to the identity provider is taken
+          // straight through, rather than shown a landing it would click past.
+          // The state stays 'checking' while the page navigates away; if the
+          // page is still here after the bound, the navigation was stopped.
+          if (first && next.status === 'anonymous' && provider.signInSilently?.() === true) {
+            leaving = setTimeout(() => {
+              leaving = undefined;
+              if (!live || version !== currentRead.current) return;
+              retainTaskViewer();
+              setState(next);
+            }, SILENT_SIGN_IN_TIMEOUT_MS);
+            return;
           }
+          if (next.status === 'authenticated') retainTaskViewer(next.user.id);
+          if (next.status === 'anonymous') retainTaskViewer();
+          setState(next);
         })
         .catch((error: unknown) => {
           // The contract says implementations must not throw, but a provider is
@@ -75,6 +102,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
 
     return () => {
       live = false;
+      clearTimeout(leaving);
       window.removeEventListener('focus', refresh);
       window.removeEventListener('online', refresh);
       document.removeEventListener('visibilitychange', visible);
