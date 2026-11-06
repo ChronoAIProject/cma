@@ -12,11 +12,13 @@ export function RepositoryChip({
   url,
   reference,
   unavailableReason,
+  checking = false,
   onChange,
 }: {
   readonly url: string;
   readonly reference: string;
   readonly unavailableReason?: string;
+  readonly checking?: boolean;
   readonly onChange: (url: string, reference: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -69,7 +71,7 @@ export function RepositoryChip({
         </Button>
       )}
       {unavailableReason ? (
-        <p className="task-home__repository-reason" id={reasonId}>
+        <p className={checking ? 'sr-only' : 'task-home__repository-reason'} id={reasonId}>
           {unavailableReason}
         </p>
       ) : null}
