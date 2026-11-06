@@ -25,6 +25,7 @@ pub(super) async fn verify(
     auth: &AuthState,
     metadata: &ProviderMetadata,
     key: &str,
+    deadline: tokio::time::Instant,
 ) -> Result<VerifiedSubject, ProviderVerificationError> {
     use ProviderVerificationError::{Rejected, Unavailable};
     let service = auth
@@ -45,26 +46,14 @@ pub(super) async fn verify(
             "agent keys require provider authentication".into(),
         ));
     };
-    let response = auth
-        .http
-        .post(endpoint)
-        .form(&[
-            ("token", key),
-            ("token_type_hint", "api_key"),
-            ("client_id", client_id),
-            ("client_secret", client_secret),
-            ("service_id", service),
-        ])
-        .send()
-        .await
-        .map_err(|_| Unavailable("agent key introspection unavailable".into()))?;
-    if !response.status().is_success() {
-        return Err(Unavailable("agent key introspection unavailable".into()));
-    }
-    let body = response
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|_| Unavailable("invalid agent key introspection response".into()))?;
+    let request = auth.http.post(endpoint).form(&[
+        ("token", key),
+        ("token_type_hint", "api_key"),
+        ("client_id", client_id),
+        ("client_secret", client_secret),
+        ("service_id", service),
+    ]);
+    let body = super::identity_http::json(request, deadline).await?;
     match body.get("active").and_then(serde_json::Value::as_bool) {
         Some(false) => return Err(Rejected("agent key is inactive for this service".into())),
         Some(true) => {}
@@ -108,6 +97,7 @@ pub(super) async fn verify(
         ),
         profile: Profile::default(),
         api_expires_at: expires_at,
+        token_expires_at: expires_at,
         independent_commands: true,
     })
 }
