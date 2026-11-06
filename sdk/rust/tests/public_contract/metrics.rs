@@ -10,6 +10,9 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         c.client.usage_metrics()
     };
     let op = c.case.operation.as_str();
+    if op == "POST /api/v1/admin/usage/metrics/options" {
+        return c.check(api.options(&c.body()?).await);
+    }
     if op.starts_with("POST ") {
         return c.check(api.create(&c.body()?).await);
     }
