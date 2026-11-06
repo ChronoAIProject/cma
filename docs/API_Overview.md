@@ -59,16 +59,22 @@ starts no work. Any other provider refusal, including `login_required`, redirect
 to the validated `return_to` without a cookie instead of reporting a failed
 sign-in; the provider's `error_description` is accepted and ignored. `prompt=none`
 cannot be combined with `screen=register`, and no other `prompt` value is
-accepted. An anonymous `GET /auth/session` reports `"silent_sign_in": true`, and a
-client attempts the silent form only when it is reported, so a web client never
-sends it to a control plane that would refuse it.
+accepted. An anonymous `GET /auth/session` reports `"silent_sign_in": true`, and the
+web client attempts the silent form only when it is reported, so a web release
+deployed ahead of its API, or left running after an API rollback, does not use
+it. The report cannot coordinate requests within one API rollout: while old and
+new replicas overlap, an attempt that reaches an old replica is refused with that
+replica's error once, and that tab does not try again. Deploy the API first.
 
 CMA logout ends the CMA cookie, not the NyxID session. The web client therefore
 sets a `cma_signed_out` cookie as it signs out. While a browser presents it, CMA
-declines a silent sign-in at entry and on its callback, so an attempt already in
-flight in another tab issues no CMA login; the next completed interactive
-sign-in clears it. The cookie can only decline a silent sign-in, so it carries no
-authority. The web client tries the silent form once per tab before showing the
+declines a silent sign-in at entry and on its callback, so an attempt in another
+tab whose callback arrives after the sign-out issues no CMA login; the next
+completed interactive sign-in clears it. The cookie can only decline a silent
+sign-in, so it carries no authority. Two cases are outside this guarantee: a
+callback CMA is already processing when the sign-out happens, and a navigation
+to `/auth/logout` that does not go through the web client's Sign out, which sets
+no marker. The web client tries the silent form once per tab before showing the
 signed-out landing, only on pages that are valid return targets without a query
 or fragment, and only on its first identity read.
 
