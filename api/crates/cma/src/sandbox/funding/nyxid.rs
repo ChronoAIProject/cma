@@ -51,7 +51,6 @@ impl NyxIdFundingProvider {
         let mut request = self
             .http
             .request(method, url)
-            .bearer_auth(credential.bearer())
             .header(reqwest::header::ACCEPT, "application/json");
         // NyxID establishes the producer from its verified SA JWT. This local
         // identity reference is validated as configuration, never an authority header.
@@ -73,7 +72,13 @@ impl NyxIdFundingProvider {
             .ok_or_else(|| FundingError::Invalid("funding request cannot be replayed".into()))?;
         let transport_error =
             |_| FundingError::Retryable("producer request timed out or transport failed".into());
-        let mut response = request.send().await.map_err(transport_error)?;
+        // reqwest appends headers: clone before authentication so a replay carries
+        // exactly one Authorization value, belonging to the refreshed token.
+        let mut response = request
+            .bearer_auth(credential.bearer())
+            .send()
+            .await
+            .map_err(transport_error)?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             if let Some(token) = self.tokens.rejected(&credential).await? {
                 drop(response);
