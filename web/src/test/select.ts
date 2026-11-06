@@ -58,3 +58,9 @@ export async function chooseOptionValue(
   if (option === undefined) throw new Error(`Picker option unavailable: ${value}`);
   await user.click(option);
 }
+
+/** Expand the persistent sidebar filter disclosure without toggling an already open panel. */
+export async function expandNavigationFilters(user: UserEvent): Promise<void> {
+  const trigger = await screen.findByRole('button', { name: 'Filter' });
+  if (trigger.getAttribute('aria-expanded') !== 'true') await user.click(trigger);
+}
