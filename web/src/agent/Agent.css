@@ -477,6 +477,8 @@
   transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 .message:hover .message__timestamp,
+.message--assistant:hover .message__timestamp,
+.message--assistant:focus-within .message__timestamp,
 .message:focus-within .message__timestamp,
 .message-footer:hover .message__timestamp,
 .message-footer:focus-within .message__timestamp {

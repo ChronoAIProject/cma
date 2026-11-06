@@ -102,7 +102,7 @@ export function PlanCard({
         onClick={() => setChosen(!open)}
       >
         {open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
-        {active ? (open ? 'Hide plan' : 'Show plan') : 'View plan and operations'}
+        {active ? (open ? 'Hide plan' : 'Show plan') : 'View plan'}
       </button>
       {open ? (
         <ol className="plan-card__steps" id={stepsId}>

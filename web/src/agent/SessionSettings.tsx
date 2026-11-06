@@ -1,3 +1,5 @@
+import type { AgentUsage } from '../api/types';
+import { usageDescription } from './usageDescription';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useCmaClient } from '../api/context';
 import type { AgentModelOption, AgentSettingsView } from '../api/client';
@@ -16,7 +18,9 @@ export function SessionSettings({
   runtimeReady,
   busy,
   authorizeUpdate,
+  usage,
 }: {
+  readonly usage?: AgentUsage;
   readonly agentId: string;
   readonly active: boolean;
   readonly runtimeReady: boolean;
@@ -26,6 +30,8 @@ export function SessionSettings({
   const client = useCmaClient();
   const [expanded, setExpanded] = useState(false);
   const settingsId = useId();
+  const usageId = useId();
+  const usageText = usageDescription(usage);
   const [value, setValue] = useState<AgentSettingsView>();
   const [saved, setSaved] = useState<AgentSettingsView>();
   const [error, setError] = useState<string>();
@@ -158,9 +164,24 @@ export function SessionSettings({
   };
   if (!client.readAgentSettings || !client.updateAgentSettings)
     return (
-      <div className="agent-settings__status">
-        <p>Agent settings are unavailable from this connection.</p>
-      </div>
+      <>
+        <button
+          type="button"
+          className="composer-chip agent-settings__summary"
+          aria-label="Agent settings: unavailable"
+          aria-disabled="true"
+          aria-describedby={usageId}
+          title={`Agent settings are unavailable from this connection.\n${usageText}`}
+        >
+          Agent settings
+        </button>
+        <span id={usageId} className="sr-only">
+          {usageText}
+        </span>
+        <div className="agent-settings__status">
+          <p>Agent settings are unavailable from this connection.</p>
+        </div>
+      </>
     );
   const locked = pending || intent !== undefined || draft?.pending === true;
   const change = (next: AgentSettingsView) => {
@@ -178,6 +199,9 @@ export function SessionSettings({
     : undefined;
   return (
     <>
+      <span id={usageId} className="sr-only">
+        {usageText}
+      </span>
       {draft ? (
         <>
           <button
@@ -186,7 +210,8 @@ export function SessionSettings({
             aria-label={`Agent settings: ${summary}`}
             aria-expanded={expanded}
             aria-controls={settingsId}
-            title={settingsTooltip}
+            title={`${settingsTooltip}\n${usageText}`}
+            aria-describedby={usageId}
             onClick={() => setExpanded((current) => !current)}
           >
             <span className="composer-chip__label">{compactSummary}</span>
