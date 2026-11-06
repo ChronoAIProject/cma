@@ -60,6 +60,9 @@ pub struct BindingRefusal {
 }
 #[derive(Serialize, ToSchema)]
 pub struct BindingView {
+    /// Maximum queue wait for newly admitted binding messages, in seconds.
+    #[schema(required = false)]
+    pub queue_lifetime_seconds: u32,
     pub binding_id: String,
     #[serde(skip_serializing_if = "BindingTarget::is_profile")]
     pub target: BindingTarget,
@@ -390,6 +393,7 @@ impl From<ProviderBinding> for BindingView {
             BindingState::Failed { reason } => ("failed", Some(reason)),
         };
         Self {
+            queue_lifetime_seconds: value.profile.effective_queue_lifetime_seconds(),
             binding_id: value.binding_id,
             target: value
                 .existing_agent
