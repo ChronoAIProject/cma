@@ -57,6 +57,7 @@ for (const theme of ['light', 'dark']) {
     await page.getByRole('menuitemradio', { name: 'By owner', exact: true }).click();
     const chart = page.getByRole('region', { name: 'Allocation comparison chart' });
     const scroll = page.getByRole('region', { name: 'Scrollable owner allocations' });
+    const labels = scroll.getByRole('list', { name: 'Owner allocation values' });
     await expect(chart.getByText('10 of 20,001 owners · largest allocation first')).toBeVisible();
     const creates = metrics.creates.length;
     const select = async (name: string) => {
@@ -65,8 +66,11 @@ for (const theme of ['light', 'dark']) {
     };
     await chart.scrollIntoViewIfNeeded();
     await expect(scroll.locator('.recharts-bar-rectangle').first()).toBeVisible();
+    // A value tooltip also contains a list item inside the scroll region.
+    await scroll.locator('.recharts-bar-rectangle').first().hover();
+    await expect(scroll.locator('.recharts-tooltip-item').first()).toBeVisible();
     const firstBar = await scroll.locator('.recharts-bar-rectangle').first().boundingBox();
-    const firstLabel = await scroll.locator('li').first().boundingBox();
+    const firstLabel = await labels.getByRole('listitem').first().boundingBox();
     expect(
       Math.abs(firstBar!.y + firstBar!.height / 2 - firstLabel!.y - firstLabel!.height / 2),
     ).toBeLessThan(3);
@@ -90,7 +94,7 @@ for (const theme of ['light', 'dark']) {
       await expect(
         chart.getByText(`${top} of 20,001 owners · largest allocation first`),
       ).toBeVisible();
-      await expect(scroll.locator('li')).toHaveCount(Math.min(Number(top), 12));
+      await expect(labels.getByRole('listitem')).toHaveCount(Math.min(Number(top), 12));
       await page.screenshot({ path: info.outputPath(`top-${top}-${theme}.png`) });
     }
     await select('All');
@@ -102,7 +106,7 @@ for (const theme of ['light', 'dark']) {
     await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     expect(await page.evaluate(() => window.scrollY)).toBe(before);
     await page.screenshot({ path: info.outputPath(`scrolled-${theme}.png`) });
-    expect(await scroll.locator('li').count()).toBeLessThanOrEqual(12);
+    expect(await labels.getByRole('listitem').count()).toBeLessThanOrEqual(12);
     await scroll.evaluate((element) => element.scrollTo(0, element.scrollHeight));
     await expect(chart.getByText(/400 of 20,001 owners loaded/)).toBeVisible();
     await scroll.evaluate((element) => element.scrollTo(0, 199 * 48));
