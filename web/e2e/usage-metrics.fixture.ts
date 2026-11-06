@@ -13,6 +13,8 @@ export class LocalUsageMetrics {
   readonly creates: { admin: boolean; input: UsageMetricQuery; id: string }[] = [];
   readonly reports = new Map<string, UsageMetricReport>();
   presentationRows?: UsageMetricRow[];
+  summaryCount?: (query: UsageMetricQuery) => number;
+  runningCount?: (query: UsageMetricQuery) => number;
   failure = 0;
   pending = false;
   /** Read-only session exposure; the test may change it after an admin save. */
@@ -69,8 +71,13 @@ export class LocalUsageMetrics {
           },
           summary: {
             ...base.summary!,
-            sandbox_count: input.filters?.search === 'empty' ? 0 : 25001,
-            running_count: input.filters?.search === 'empty' ? 0 : 18000,
+            sandbox_count:
+              this.summaryCount?.(input) ??
+              (input.filters?.search === 'empty' || input.filters?.statuses?.includes('retired')
+                ? 0
+                : 25001),
+            running_count:
+              this.runningCount?.(input) ?? (input.filters?.search === 'empty' ? 0 : 18000),
           },
         };
         if (this.presentationRows && report.summary) {
@@ -153,7 +160,8 @@ export class LocalUsageMetrics {
             report_id: id,
             as_of: asOf,
             items:
-              report.query.filters.search === 'empty'
+              report.query.filters.search === 'empty' ||
+              report.query.filters.statuses.includes('retired')
                 ? []
                 : (this.presentationRows ?? [
                     {
@@ -182,7 +190,8 @@ export class LocalUsageMetrics {
           json: {
             ...series,
             lines:
-              report.query.filters.search === 'empty'
+              report.query.filters.search === 'empty' ||
+              report.query.filters.statuses.includes('retired')
                 ? []
                 : [
                     { ...line, points },
