@@ -140,6 +140,10 @@ async fn exchange(
                 .await
                 .is_ok_and(|body| body.error == "invalid_grant")
         {
+            if let Some(tokens) = &state.tokens {
+                auth.identity_store
+                    .invalidate(&auth.identity_store.key(tokens.access_token.expose()));
+            }
             return Ok(None);
         }
         return Err(StoreError::Unavailable(

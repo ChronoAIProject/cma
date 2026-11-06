@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 pub(super) struct PermissionObservation {
     pub permissions: PermissionEvidence,
     pub api_expires_at: Option<SystemTime>,
+    pub token_expires_at: Option<SystemTime>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -102,7 +103,7 @@ pub(super) async fn fetch_introspection(
         .await
         .map_err(|e| {
             super::identity::verification_failure("introspection", "transport", None);
-            Unavailable(format!("introspection request failed: {e}"))
+            ProviderVerificationError::transport(e)
         })?;
     if !resp.status().is_success() {
         super::identity::verification_failure(
@@ -110,26 +111,50 @@ pub(super) async fn fetch_introspection(
             "http_status",
             Some(resp.status().as_u16()),
         );
-        // This endpoint authenticates CMA's client, not the inspected token.
-        // Only successful inactive evidence establishes token revocation.
-        return Err(Unavailable(format!(
-            "introspection returned {}",
-            resp.status()
-        )));
+        // A client refusal also closes this identity boundary; it never
+        // permits using previously successful evidence.
+        return Err(ProviderVerificationError::status(resp.status()));
     }
     let body: serde_json::Value = resp.json().await.map_err(|e| {
         super::identity::verification_failure("introspection", "invalid_json", None);
-        Unavailable(format!("introspection body not usable: {e}"))
+        ProviderVerificationError::transport(e)
     })?;
+    if body.get("active").and_then(serde_json::Value::as_bool) == Some(false) {
+        return Err(ProviderVerificationError::Rejected(
+            "provider reports an inactive token".into(),
+        ));
+    }
+    // Partial/malformed success cannot be masked by the other endpoint's outage.
+    if body.get("active").and_then(serde_json::Value::as_bool) != Some(true) {
+        return Err(Unavailable(
+            "introspection response has no boolean active disposition".into(),
+        ));
+    }
+    permissions_claim(&body).map_err(Unavailable)?;
+    token_expiry(&body)?;
     Ok(Some(IntrospectionResponse(body)))
 }
 
 impl IntrospectionResponse {
+    pub(super) fn require_subject(&self, expected: &str) -> Result<(), ProviderVerificationError> {
+        if self
+            .0
+            .get("sub")
+            .is_some_and(|value| value.as_str() != Some(expected))
+        {
+            return Err(ProviderVerificationError::Rejected(
+                "introspection subject does not match retained owner".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn verify(
         self,
         expected_subject: &str,
     ) -> Result<PermissionObservation, ProviderVerificationError> {
         let body = self.0;
+        let token_expires_at = token_expiry(&body)?;
         introspection_claim(&body, expected_subject)
             .map(|permissions| {
                 let api_expires_at = (body.get("active").and_then(serde_json::Value::as_bool)
@@ -150,12 +175,31 @@ impl IntrospectionResponse {
                 PermissionObservation {
                     permissions,
                     api_expires_at,
+                    token_expires_at,
                 }
             })
             .inspect_err(|_| {
                 super::identity::verification_failure("introspection", "invalid_evidence", None);
             })
     }
+}
+
+pub(super) fn token_expiry(
+    body: &serde_json::Value,
+) -> Result<Option<SystemTime>, ProviderVerificationError> {
+    body.get("exp")
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|seconds| {
+                    SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds))
+                })
+                .filter(|expiry| *expiry > SystemTime::now())
+                .ok_or_else(|| {
+                    ProviderVerificationError::Rejected("invalid or expired token lifetime".into())
+                })
+        })
+        .transpose()
 }
 
 #[cfg(test)]
