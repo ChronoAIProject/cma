@@ -57,7 +57,13 @@ fn classify(method: &Method, path: &str) -> ActivityAction {
     if path.starts_with("/auth/") && path != "/auth/session" {
         return ActivityAction::Authenticate;
     }
-    if method == Method::POST && path == "/api/v1/profile-authoring/repositories/resolve" {
+    if method == Method::POST
+        && matches!(
+            path,
+            "/api/v1/profile-authoring/repositories/resolve"
+                | "/api/v1/admin/usage/metrics/options"
+        )
+    {
         return ActivityAction::Read;
     }
     match *method {
@@ -100,6 +106,10 @@ mod tests {
                 &Method::POST,
                 "/api/v1/profile-authoring/repositories/resolve"
             ),
+            ActivityAction::Read
+        );
+        assert_eq!(
+            classify(&Method::POST, "/api/v1/admin/usage/metrics/options"),
             ActivityAction::Read
         );
     }

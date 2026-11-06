@@ -24,6 +24,7 @@ export interface PickerOption<Value extends string> {
 }
 
 interface PickerProps<Value extends string> {
+  readonly searchable?: boolean;
   /** Names the control for a screen reader, and never drawn by it. */
   readonly label: string;
   readonly value: Value;
@@ -59,41 +60,58 @@ export function Picker<Value extends string>({
   invalid,
   placement,
   size,
+  searchable,
 }: PickerProps<Value>) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const chosen = options.find((option) => option.value === value);
 
-  const items: MenuEntry[] = options.map((option) => ({
-    id: option.value,
-    /*
-     * The reason rides with the row rather than in a tooltip: §7 wants a
-     * disabled control to say why where it is, and a tooltip is not there for
-     * anybody reading with the keyboard.
-     */
-    label:
-      option.unavailable === undefined ? (
-        option.label
-      ) : (
-        <span className="picker__unavailable">
-          {option.label} <span className="picker__reason">{option.unavailable}</span>
-        </span>
-      ),
-    disabled: option.unavailable !== undefined,
-  }));
+  const items: MenuEntry[] = options
+    .filter(
+      (option) =>
+        !searchable || option.label.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
+    )
+    .map((option) => ({
+      id: option.value,
+      /*
+       * The reason rides with the row rather than in a tooltip: §7 wants a
+       * disabled control to say why where it is, and a tooltip is not there for
+       * anybody reading with the keyboard.
+       */
+      label:
+        option.unavailable === undefined ? (
+          option.label
+        ) : (
+          <span className="picker__unavailable">
+            {option.label} <span className="picker__reason">{option.unavailable}</span>
+          </span>
+        ),
+      disabled: option.unavailable !== undefined,
+    }));
 
   return (
     <Menu
       open={open}
       label={label}
+      search={
+        searchable
+          ? { label: `Search ${label.toLowerCase()}`, value: search, onChange: setSearch }
+          : undefined
+      }
+      footer={
+        searchable && items.length === 0 ? <p role="status">No matching choices.</p> : undefined
+      }
       selectedId={value}
       items={items}
       placement={[filter ? 'picker--filter' : 'picker', placement].filter(Boolean).join(' ')}
       onSelect={(id_) => {
         setOpen(false);
+        setSearch('');
         onChange(id_ as Value);
       }}
       onClose={() => {
         setOpen(false);
+        setSearch('');
       }}
       anchor={
         <Button

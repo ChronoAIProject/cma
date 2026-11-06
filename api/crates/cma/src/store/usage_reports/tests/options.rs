@@ -1,0 +1,306 @@
+use super::*;
+
+fn query(kind: OptionKind) -> OptionQuery {
+    OptionQuery {
+        kind,
+        search: String::new(),
+        owner: None,
+        selected: None,
+        cursor: None,
+        limit: Some(50),
+    }
+}
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
+    for count in [400, 20_001] {
+        let store = fixture().await;
+        let states: Vec<_> = (0..count)
+            .map(|n| {
+                let mut row = state(n, now() - 60);
+                row.owner = SubjectId(format!("owner-{}", n % 120));
+                row
+            })
+            .collect();
+        seed(&store, &states).await;
+        let users: Vec<_> = (0..120).filter(|n| *n != 3).map(|n| {
+            let name = match n { 0 | 1 => "Alex Chen".into(), 2 => "Priya [Research]".into(), _ => format!("Operator {n}") };
+            doc! {"_id":format!("owner-{n}"),"display_name":name,"first_seen_at":format!("2026-11-{:02}T12:30:00Z",n%28+1)}
+        }).collect();
+        store.collection("users").insert_many(users).await.unwrap();
+        let inventory: Vec<_> = states.iter().enumerate().map(|(n, row)| {
+            if n % 2 == 0 {
+                doc! {"_id":row.sandbox_id.as_str(),"record":{"runtime":{"runtime_version":"runtime-stable"}}}
+            } else {
+                doc! {"_id":row.sandbox_id.as_str(),"record":{"lifecycle":{"suspended_runtime":{"runtime_version":"runtime-previous"}}}}
+            }
+        }).collect();
+        store
+            .collection("sandboxes")
+            .insert_many(inventory)
+            .await
+            .unwrap();
+        let operator = scope("operator", true);
+        let owner_started = std::time::Instant::now();
+        let mut owner_ids = std::collections::BTreeSet::new();
+        let mut owner_query = query(OptionKind::Owner);
+        let mut owner_pages = 0;
+        loop {
+            let page = tokio::time::timeout(
+                Duration::from_secs(5),
+                store.options(&operator, owner_query.clone()),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            owner_pages += 1;
+            assert!(page.items.len() <= 50);
+            for item in page.items {
+                assert!(owner_ids.insert(item.value));
+            }
+            if let Some(next) = page.next {
+                owner_query.cursor = Some(next);
+            } else {
+                break;
+            }
+        }
+        assert_eq!(owner_ids.len(), 120);
+        assert_eq!(owner_pages, 3);
+        let owner_elapsed = owner_started.elapsed();
+        let first = store
+            .options(&operator, query(OptionKind::Sandbox))
+            .await
+            .unwrap();
+        assert_eq!(first.items.len(), 50);
+        assert!(first.next.is_some());
+        assert!(first
+            .items
+            .iter()
+            .all(|item| item.label.starts_with("Sandbox ") && !item.label.contains(&item.value)));
+        let second_query = OptionQuery {
+            cursor: first.next.clone(),
+            ..query(OptionKind::Sandbox)
+        };
+        let second = store
+            .options(&operator, second_query.clone())
+            .await
+            .unwrap();
+        assert_eq!(second.items.len(), 50);
+        assert!(first.items.iter().all(|item| item.disambiguator.is_none()));
+        assert!(first
+            .items
+            .iter()
+            .all(|item| second.items.iter().all(|other| item.value != other.value)));
+        assert!(store
+            .options(&scope("other-operator", true), second_query.clone())
+            .await
+            .is_err());
+        assert!(store
+            .options(
+                &operator,
+                OptionQuery {
+                    search: "Research".into(),
+                    ..second_query.clone()
+                }
+            )
+            .await
+            .is_err());
+        assert!(store
+            .options(
+                &operator,
+                OptionQuery {
+                    owner: Some("owner-0".into()),
+                    ..second_query
+                }
+            )
+            .await
+            .is_err());
+        assert!(matches!(
+            store
+                .options(&scope("owner-0", false), query(OptionKind::Owner))
+                .await,
+            Err(MetricsError::Forbidden)
+        ));
+        let target = count - 1;
+        let found = store
+            .options(
+                &operator,
+                OptionQuery {
+                    search: format!("Sandbox {target:06}"),
+                    ..query(OptionKind::Sandbox)
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(found.items.len(), 1);
+        assert_eq!(found.items[0].value, states[target].sandbox_id.as_str());
+        let narrowed = store
+            .options(
+                &operator,
+                OptionQuery {
+                    owner: Some("owner-0".into()),
+                    ..query(OptionKind::Sandbox)
+                },
+            )
+            .await
+            .unwrap();
+        assert!(narrowed.items.iter().all(|item| states
+            .iter()
+            .any(|s| s.sandbox_id.as_str() == item.value && s.owner.as_str() == "owner-0")));
+        let owners = store
+            .options(
+                &operator,
+                OptionQuery {
+                    search: "alex".into(),
+                    ..query(OptionKind::Owner)
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(owners.items.len(), 2);
+        assert_eq!(owners.items[0].label, owners.items[1].label);
+        assert_eq!(
+            owners.items[0].disambiguator.as_deref(),
+            Some("Joined 2026-11-01")
+        );
+        assert_eq!(
+            owners.items[1].disambiguator.as_deref(),
+            Some("Joined 2026-11-02")
+        );
+        assert!(owners.items.iter().all(|item| item.label == "Alex Chen"));
+        let literal = store
+            .options(
+                &operator,
+                OptionQuery {
+                    search: "[Research]".into(),
+                    ..query(OptionKind::Owner)
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(literal.items.len(), 1);
+        let unnamed = store
+            .options(
+                &operator,
+                OptionQuery {
+                    selected: Some("owner-3".into()),
+                    ..query(OptionKind::Owner)
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(unnamed.items[0].label, "Unnamed owner");
+        assert!(unnamed.items[0].disambiguator.is_none());
+        for (n, owner) in [(0, "owner-0"), (1, "owner-2")] {
+            store
+                .collection(super::super::super::sandbox_usage::STATES)
+                .update_one(
+                    doc! {"_id":states[n].sandbox_id.as_str()},
+                    doc! {"$set":{"record.name":"Shared research","owner":owner}},
+                )
+                .await
+                .unwrap();
+        }
+        let duplicates = store
+            .options(
+                &operator,
+                OptionQuery {
+                    search: "Shared research".into(),
+                    ..query(OptionKind::Sandbox)
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(duplicates.items.len(), 2);
+        assert_eq!(duplicates.items[0].label, "Shared research");
+        assert_eq!(
+            duplicates.items[0].disambiguator.as_deref(),
+            Some("Alex Chen")
+        );
+        assert_eq!(
+            duplicates.items[1].disambiguator.as_deref(),
+            Some("Priya [Research]")
+        );
+        let only = store
+            .options(
+                &operator,
+                OptionQuery {
+                    selected: Some(duplicates.items[0].value.clone()),
+                    ..query(OptionKind::Sandbox)
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(only.items[0].label, "Shared research");
+        assert!(only.items[0].disambiguator.is_none());
+        let runtime_started = std::time::Instant::now();
+        let runtimes = tokio::time::timeout(
+            Duration::from_secs(5),
+            store.options(&operator, query(OptionKind::Runtime)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        println!("option scale: sandboxes={count}, owners={}, owner_pages={owner_pages}, owner_ms={}, runtime_ms={}", owner_ids.len(), owner_elapsed.as_millis(), runtime_started.elapsed().as_millis());
+        assert_eq!(
+            runtimes
+                .items
+                .iter()
+                .map(|item| item.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["runtime-previous", "runtime-stable"]
+        );
+        let identifier_name = "Research-91892afa-5fa5-4f4f-9100-2b8d986d2f71";
+        store
+            .collection(super::super::super::sandbox_usage::STATES)
+            .update_one(
+                doc! {"_id":states[0].sandbox_id.as_str()},
+                doc! {"$set":{"record.name":identifier_name}},
+            )
+            .await
+            .unwrap();
+        store.collection("sandboxes").insert_one(doc! {"_id":"uuid-runtime", "record":{"runtime":{"runtime_version":identifier_name}}}).await.unwrap();
+        for (kind, value, label) in [
+            (
+                OptionKind::Sandbox,
+                states[0].sandbox_id.as_str(),
+                "Unnamed Sandbox",
+            ),
+            (OptionKind::Runtime, identifier_name, "Unnamed runtime"),
+        ] {
+            let selected = store
+                .options(
+                    &operator,
+                    OptionQuery {
+                        selected: Some(value.into()),
+                        ..query(kind)
+                    },
+                )
+                .await
+                .unwrap();
+            assert_eq!(selected.items[0].value, value);
+            assert_eq!(selected.items[0].label, label);
+            assert!(selected.items[0].disambiguator.is_none());
+        }
+        let empty = store
+            .options(
+                &operator,
+                OptionQuery {
+                    search: "absent".into(),
+                    ..query(OptionKind::Sandbox)
+                },
+            )
+            .await
+            .unwrap();
+        assert!(empty.items.is_empty());
+        assert_eq!(
+            store
+                .collection(JOBS)
+                .count_documents(doc! {})
+                .await
+                .unwrap(),
+            0
+        );
+        store.db.drop().await.unwrap();
+    }
+}
