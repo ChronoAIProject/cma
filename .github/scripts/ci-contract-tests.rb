@@ -41,6 +41,7 @@ guarded = mode == "release" ? [
   ["ci", "trigger-provider-smoke-contract", "Backend capacity preparation regressions"],
   ["ci", "trigger-provider-smoke-contract", "Typecheck every harness entry point"],
   ["ci", "trigger-provider-smoke-contract", "Local browser guard mechanics"],
+  ["ci", "trigger-provider-smoke-contract", "Backend resource sampling regressions"],
   ["ci", "backend", "Image normalization budgets"],
   ["ci", "backend", "Prepare Backend capacity"],
   ["ci", "backend", "Tests"],
@@ -276,6 +277,10 @@ if mode == "release"
     raise "Gateway contract accepted incompatible CMA provider origin: #{origin}"
   end
 else
+  reject.call("remove resource hook") { |v| v["ci"]["jobs"]["backend"]["env"].delete("BASH_ENV") }
+  reject.call("wrap Backend shell") { |v| v["ci"]["jobs"]["backend"]["defaults"]["run"]["shell"] = "true {0}" }
+  reject.call("override step shell") { |v| v["ci"]["jobs"]["backend"]["steps"][1]["shell"] = "true {0}" }
+  reject.call("override step hook") { |v| v["ci"]["jobs"]["backend"]["steps"][1]["env"] = { "BASH_ENV" => "/dev/null" } }
   %w[smoke journeys].each do |id|
     reject.call("#{id}: runner context at job scope") do |value|
       value["nightly-staging"]["jobs"][id]["env"]["CMA_E2E_OUTPUT_DIR"] = "${{ runner.temp }}/evidence"
