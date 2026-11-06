@@ -25,7 +25,13 @@ impl std::fmt::Write for BoundedText {
 }
 
 pub(crate) fn reported_diffs(content: &[ToolCallContent]) -> Option<String> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(50);
+    reported_diffs_with_budget(content, || std::time::Duration::from_millis(50))
+}
+
+fn reported_diffs_with_budget(
+    content: &[ToolCallContent],
+    mut budget: impl FnMut() -> std::time::Duration,
+) -> Option<String> {
     let diffs: Vec<_> = content
         .iter()
         .filter_map(|value| match value {
@@ -33,9 +39,11 @@ pub(crate) fn reported_diffs(content: &[ToolCallContent]) -> Option<String> {
             _ => None,
         })
         .map(|value| {
+            let deadline = std::time::Instant::now() + budget();
             let diff = TextDiff::configure()
                 .deadline(deadline)
                 .diff_lines(value.old_text.as_deref().unwrap_or(""), &value.new_text);
+            let exact = std::time::Instant::now() < deadline;
             let mut added = 0_u64;
             let mut removed = 0_u64;
             for change in diff.iter_all_changes() {
@@ -51,6 +59,7 @@ pub(crate) fn reported_diffs(content: &[ToolCallContent]) -> Option<String> {
                 diff,
                 added,
                 removed,
+                exact,
             )
         })
         .collect();
@@ -61,13 +70,21 @@ pub(crate) fn reported_diffs(content: &[ToolCallContent]) -> Option<String> {
         text: String::new(),
         truncated: false,
     };
-    let added: u64 = diffs.iter().map(|(_, _, added, _)| added).sum();
-    let removed: u64 = diffs.iter().map(|(_, _, _, removed)| removed).sum();
-    let _ = writeln!(output, "File changes: {} +{added} −{removed}", diffs.len());
-    for (path, _, added, removed) in &diffs {
-        let _ = writeln!(output, "File: {path} +{added} −{removed}");
+    if diffs.iter().all(|(_, _, _, _, exact)| *exact) {
+        let added: u64 = diffs.iter().map(|(_, _, added, _, _)| added).sum();
+        let removed: u64 = diffs.iter().map(|(_, _, _, removed, _)| removed).sum();
+        let _ = writeln!(output, "File changes: {} +{added} −{removed}", diffs.len());
+    } else {
+        let _ = writeln!(output, "File changes: {} counts unavailable", diffs.len());
     }
-    for (path, diff, _, _) in &diffs {
+    for (path, _, added, removed, exact) in &diffs {
+        if *exact {
+            let _ = writeln!(output, "File: {path} +{added} −{removed}");
+        } else {
+            let _ = writeln!(output, "File: {path} counts unavailable");
+        }
+    }
+    for (path, diff, _, _, _) in &diffs {
         let _ = write!(output, "{}", diff.unified_diff().header(path, path));
     }
     // The core's unchanged 16 KiB budget remains authoritative, including its
@@ -109,5 +126,32 @@ mod tests {
         assert!(values[0].starts_with("File changes: 1 +10000 −0"));
         assert!(values[0].len() > LIMIT && values[0].len() < LIMIT + 20);
         assert_eq!(values[1], "original output");
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    #[test]
+    fn degraded_file_has_no_exact_totals_and_does_not_spend_the_next_files_budget() {
+        let fields: crate::ToolCallUpdateFields =
+            serde_json::from_value(serde_json::json!({"content":[
+                {"type":"diff", "path":"first", "oldText":"a\nb\nc\n", "newText":"a\nx\nc\n"},
+                {"type":"diff", "path":"second", "oldText":"before\n", "newText":"after\n"}
+            ]}))
+            .unwrap();
+        let mut first = true;
+        let text = reported_diffs_with_budget(fields.content.as_ref().unwrap(), || {
+            if std::mem::take(&mut first) {
+                std::time::Duration::ZERO
+            } else {
+                std::time::Duration::from_secs(1)
+            }
+        })
+        .unwrap();
+        assert!(text.starts_with("File changes: 2 counts unavailable\n"));
+        assert!(text.contains("File: \"first\" counts unavailable\n"));
+        assert!(text.contains("File: \"second\" +1 −1\n"));
+        assert!(text.contains("-before\n+after\n"));
     }
 }
