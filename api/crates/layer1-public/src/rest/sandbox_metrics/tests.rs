@@ -32,6 +32,7 @@ impl MetricsStore for Store {
             items: vec![FilterOption {
                 value: "owner-a".into(),
                 label: option_label(query.kind, "owner-a", Some("Alex")),
+                disambiguator: None,
             }],
             next: Some("next-page".into()),
         })

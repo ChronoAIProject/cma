@@ -116,7 +116,7 @@ pub(super) fn schemas() -> Value {
             "kind":{"type":"string","enum":["owner","sandbox","runtime"]},"search":{"type":"string","maxLength":128},
             "owner":{"type":"string","maxLength":255},"selected":{"type":"string","maxLength":255},
             "cursor":{"type":"string","maxLength":4096},"limit":{"type":"integer","minimum":1,"maximum":50,"default":50}}},
-        "UsageFilterOptions":object(json!({"items":array(object(json!({"value":text,"label":text}))),"next":nullable(text.clone())})),
+        "UsageFilterOptions":object(json!({"items":array(json!({"type":"object","additionalProperties":false,"required":["value","label"],"properties":{"value":text,"label":text,"disambiguator":text}})),"next":nullable(text.clone())})),
         "UsageMetricOwners":object(json!({"items":array(owner),"next":nullable(text.clone()),"report_id":text})),
         "UsageMetricPage":object(json!({"items":array(reference("UsageMetricRow")),"next":nullable(text.clone()),"report_id":text,"as_of":integer,"total_count":integer}))})
 }

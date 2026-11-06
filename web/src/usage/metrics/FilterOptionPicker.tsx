@@ -96,7 +96,14 @@ export function FilterOptionPicker({
         }}
         items={[
           { id: '', label: all },
-          ...options.map((option) => ({ id: option.value, label: option.label })),
+          ...options.map((option) => ({
+            id: option.value,
+            label: option.label,
+            reason:
+              options.filter((other) => other.label === option.label).length > 1
+                ? option.disambiguator
+                : undefined,
+          })),
         ]}
         onSelect={(next) => {
           setChosen(options.find((option) => option.value === next));

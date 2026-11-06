@@ -54,7 +54,7 @@ it('narrows Sandbox discovery by the draft owner and applies one report while th
     items:
       query.kind === 'owner'
         ? [{ value: 'owner-two', label: 'Morgan · account reference' }]
-        : [{ value: 'sandbox-two', label: 'Research · Sandbox reference' }],
+        : [{ value: 'sandbox-two', label: 'Research' }],
     next: null,
   }));
   function Dashboard() {
@@ -76,13 +76,11 @@ it('narrows Sandbox discovery by the draft owner and applies one report while th
     await screen.findByRole('menuitemradio', { name: 'Morgan · account reference' }),
   );
   await userEvent.click(screen.getByRole('button', { name: 'Sandbox: All Sandboxes' }));
-  await screen.findByRole('menuitemradio', { name: 'Research · Sandbox reference' });
+  await screen.findByRole('menuitemradio', { name: 'Research' });
   expect(api.options).toHaveBeenLastCalledWith(
     expect.objectContaining({ kind: 'sandbox', owner: 'owner-two' }),
   );
-  await userEvent.click(
-    screen.getByRole('menuitemradio', { name: 'Research · Sandbox reference' }),
-  );
+  await userEvent.click(screen.getByRole('menuitemradio', { name: 'Research' }));
   expect(api.create).toHaveBeenCalledTimes(1);
   const priorSignal = api.create.mock.calls[0]![1].signal as AbortSignal;
   await userEvent.click(screen.getByRole('button', { name: 'Apply usage filters' }));
