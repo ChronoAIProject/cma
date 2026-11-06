@@ -6,8 +6,7 @@ export DISPLAY=:99 OMARCHY_PATH=/usr/share/omarchy
 export XDG_RUNTIME_DIR=/tmp/cma-desktop-runtime
 if [[ ${1:-} == --browser ]]; then
   shift
-  export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1}
-  exec chromium --ozone-platform=wayland --user-data-dir="$HOME/.cma/chrome" --no-first-run --disable-gpu --disable-dev-shm-usage "${@:-about:blank}"
+  exec python3 /usr/local/bin/cma-desktop-browser "$@"
 fi
 [[ ${CMA_DESKTOP_TOKEN:-} =~ ^[0-9a-f]{32}$ ]]
 umask 077
@@ -43,6 +42,7 @@ for name in ('SingletonLock', 'SingletonCookie', 'SingletonSocket'):
         (p / name).unlink()
 PY
 children=()
+# shellcheck disable=SC2329 # Invoked by the desktop signal/exit traps.
 stop() {
   local status=$?
   trap - EXIT INT TERM
@@ -63,7 +63,7 @@ children+=("$!")
 for ((i=0;i<100;i++)); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
 xdpyinfo >/dev/null
 export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe LP_NUM_THREADS=2
-dbus-run-session -- /usr/local/bin/cma-omarchy-inner-session >/tmp/cma-omarchy.log 2>&1 &
+CMA_DESKTOP_OWNER_PID=$$ dbus-run-session -- /usr/local/bin/cma-omarchy-inner-session >/tmp/cma-omarchy.log 2>&1 &
 children+=("$!")
 for ((i=0;i<600;i++)); do
   [[ -f /tmp/cma-omarchy-ready ]] && break

@@ -63,7 +63,7 @@ it('keeps unmounted disk unknown and exposes last-observed data separately from 
   const card = screen.getByRole('region', { name: 'Home PVC disk' });
   expect(within(card).getByText(/Unavailable/)).toBeInTheDocument();
   expect(within(card).getByText(/Last observed: 4 GiB/)).toBeInTheDocument();
-  expect(screen.getAllByText(/Allocation history: partial/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/Partial history/).length).toBeGreaterThan(0);
   expect(screen.queryByText(/charges|credits|price|\$/i)).not.toBeInTheDocument();
 });
 it('shows a distinct empty selection without pretending a source outage is empty', async () => {

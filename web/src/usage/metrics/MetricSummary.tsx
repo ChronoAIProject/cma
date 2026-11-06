@@ -1,4 +1,6 @@
 import type { UsageMetricReport, UsageMetricRow, UsageMetricQuantity } from '@chronoai/cma-sdk';
+import { AllocatedResources } from './AllocatedResources';
+import { AllocationHistory } from './AllocationHistory';
 import { Button } from '../../ui/Button';
 import { displayQuantity, metricLabels, metricTime, metricValue, type Metric } from './model';
 
@@ -91,8 +93,11 @@ export function Coverage({
 
 export function AllocatedPeriod({ value }: { readonly value: UsageMetricRow['allocated_period'] }) {
   return (
-    <section aria-label="Allocated resource-hours">
+    <section className="usage-allocation-period" aria-label="Allocated resource-hours">
       <h3>Allocated resource-hours</h3>
+      <p className="usage-section-description">
+        Capacity reserved over the selected period. This is the basis for billing.
+      </p>
       <dl className="usage-metric-totals">
         <div>
           <dt>CPU (core-hours)</dt>
@@ -107,12 +112,7 @@ export function AllocatedPeriod({ value }: { readonly value: UsageMetricRow['all
           <dd>{displayQuantity(value.disk_gib_hours)}</dd>
         </div>
       </dl>
-      <p>
-        Allocation history: {value.complete ? 'complete' : 'partial'}; unknown{' '}
-        {displayQuantity(value.unknown_seconds)} seconds; projected tail{' '}
-        {displayQuantity(value.projected_tail_seconds)} seconds.
-      </p>
-      <p>Retained disk continues accruing allocated time while a Sandbox is paused.</p>
+      <AllocationHistory value={value} />
     </section>
   );
 }
@@ -132,14 +132,6 @@ export function MetricSummary({
   if (!summary) return null;
   return (
     <>
-      <p>
-        {displayQuantity(summary.sandbox_count)} Sandboxes ·{' '}
-        {displayQuantity(summary.running_count)} running. Updated {metricTime(report.as_of)}.
-      </p>
-      <p>
-        Allocation period: {metricTime(report.effective_range.from)} –{' '}
-        {metricTime(report.effective_range.to)}.
-      </p>
       {measured && (
         <>
           <p>
@@ -192,8 +184,10 @@ export function MetricSummary({
           </div>
         </>
       )}
-      {!measured && <AllocatedCapacity value={summary.total_allocated_capacity} />}
-      <AllocatedPeriod value={summary.allocated_period} />
+      <AllocatedResources
+        capacity={summary.total_allocated_capacity}
+        period={summary.allocated_period}
+      />
       {measured && report.scope.admin && summary.infrastructure && (
         <details>
           <summary>Infrastructure diagnostics (excluded from owner totals)</summary>
@@ -216,7 +210,7 @@ export function MetricSummary({
 
 export function AllocatedCapacity({ value }: { readonly value: UsageMetricRow['allocation'] }) {
   return (
-    <section aria-label="Allocated capacity now">
+    <section className="usage-allocation-capacity" aria-label="Allocated capacity now">
       <h3>Allocated capacity now</h3>
       <div className="usage-metric-cards">
         {(
@@ -232,9 +226,6 @@ export function AllocatedCapacity({ value }: { readonly value: UsageMetricRow['a
           </dl>
         ))}
       </div>
-      <p>
-        Allocated CPU, memory and disk capacity. Resource-hours below cover the selected period.
-      </p>
     </section>
   );
 }
