@@ -103,12 +103,13 @@ pub(super) fn is_identity_terminal_for_current(
 pub(super) fn output_source_for_checkpoint(
     source: Option<&layer3_adapter::RuntimeOutputSource>,
     previous: Option<&AgentMessageCheckpoint>,
+    runtime_generation: u64,
     identity_terminal: bool,
 ) -> Option<layer3_adapter::RuntimeOutputSource> {
-    match (
-        source,
-        previous.and_then(|checkpoint| checkpoint.output.as_ref()),
-    ) {
+    let previous = previous
+        .filter(|checkpoint| checkpoint.runtime_generation == runtime_generation)
+        .and_then(|checkpoint| checkpoint.output.as_ref());
+    match (source, previous) {
         (Some(source), Some(previous)) if identity_terminal && source.cursor < previous.cursor => {
             Some(previous.clone())
         }
