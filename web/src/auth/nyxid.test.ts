@@ -172,3 +172,21 @@ describe('the identity adapter', () => {
     await expect(createNyxidAuthProvider().current()).resolves.toBeDefined();
   });
 });
+
+it('recognizes only the explicit identity outage contract and treats refusal as signed out', async () => {
+  stubFetch(() => jsonResponse(503, { code: 'identity_unavailable' }));
+  expect(await createNyxidAuthProvider().current()).toMatchObject({
+    status: 'error',
+    reason: 'identity_unavailable',
+  });
+  stubFetch(() => jsonResponse(503, { code: 'store_failed' }));
+  expect(await createNyxidAuthProvider().current()).toMatchObject({
+    status: 'error',
+    reason: undefined,
+  });
+  stubFetch(() => jsonResponse(403, {}));
+  expect(await createNyxidAuthProvider().current()).toEqual({ status: 'anonymous' });
+  stubFetch(() => jsonResponse(429, {}));
+  const limited = await createNyxidAuthProvider().current();
+  expect(limited).toMatchObject({ status: 'error', reason: undefined });
+});
