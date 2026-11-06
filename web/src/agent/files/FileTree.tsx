@@ -1,3 +1,4 @@
+import { FileChangeStats } from './FileChangeStats';
 import { useId } from 'react';
 import type { FileChange } from '../fileChanges';
 import type { AgentFileEntry } from '../../api/agentFiles';
@@ -34,12 +35,21 @@ export function FileTree({
   readonly onFile: (file: AgentFileEntry) => void;
 }) {
   const metadataId = useId();
+  const changedFolders = new Set<string>();
+  for (const path of changes?.keys() ?? []) {
+    const parts = path.split('/');
+    parts.pop();
+    while (parts.length) {
+      changedFolders.add(parts.join('/'));
+      parts.pop();
+    }
+  }
   const rows = (path: string, level: number) => (
     <ul className="agent-files__tree" aria-label={level === 0 ? 'Home files' : undefined}>
       {(directories.get(path) ?? [])
         .filter((file) => hidden || !file.hidden)
         .map((file) => {
-          const change = changes?.get(file.path);
+          const change = file.kind === 'file' ? changes?.get(file.path) : undefined;
           const descriptionId = `${metadataId}-${encodeURIComponent(file.path)}`;
           const folder = file.kind === 'directory';
           const open = expanded.has(file.path);
@@ -53,7 +63,9 @@ export function FileTree({
                 title={`/home/${file.path}`}
                 aria-label={file.name}
                 aria-describedby={
-                  change ? `${descriptionId} ${descriptionId}-changes` : descriptionId
+                  change || changedFolders.has(file.path)
+                    ? `${descriptionId} ${descriptionId}-changes`
+                    : descriptionId
                 }
                 onClick={() => (folder ? onDirectory(file.path) : onFile(file))}
                 disabled={disabled || file.kind === 'symlink'}
@@ -84,15 +96,22 @@ export function FileTree({
                     /home/{file.path}
                   </span>
                 </span>
+                {folder && changedFolders.has(file.path) ? (
+                  <span
+                    className="agent-files__changes"
+                    id={`${descriptionId}-changes`}
+                    aria-label="Contains changed files"
+                  >
+                    Changes
+                  </span>
+                ) : null}
                 {change ? (
                   <span
                     className="agent-files__changes"
                     id={`${descriptionId}-changes`}
                     title="Lines changed in completed recorded edits"
                   >
-                    <span className="agent-files__added">+{change.added}</span>
-                    <span className="agent-files__removed">−{change.removed}</span>
-                    <span aria-label="Modified by the Agent">M</span>
+                    <FileChangeStats change={change} />
                   </span>
                 ) : null}
               </button>

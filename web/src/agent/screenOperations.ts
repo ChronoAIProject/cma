@@ -44,31 +44,17 @@ export interface ScreenOperation {
   readonly description: string;
   readonly at?: string;
 }
+/** Surface following also covers window activation/inspection without inventing a step row. */
+export function screenApplication(tool: ToolCall): ScreenOperation['application'] | undefined {
+  if (tool.kind !== 'execute') return undefined;
+  const program = words(tool.title)?.[0]?.split('/').pop();
+  if (program === 'cma-browser') return 'Browser';
+  if (program === 'xdotool' || program === 'wmctrl') return 'Desktop';
+  return undefined;
+}
 export function screenOperation(tool: ToolCall): ScreenOperation | undefined {
   const timestamp = tool.startedAt ?? tool.finishedAt;
   const at = Number.isFinite(Date.parse(timestamp ?? '')) ? timestamp : undefined;
-  if (tool.kind === 'browser' || tool.kind === 'computer') {
-    const match =
-      /^(open(?:ed)?|navigat(?:e|ed)|click(?:ed)?|drag(?:ged)?|typ(?:e|ed)|press(?:ed)?)\b/i.exec(
-        tool.title,
-      );
-    if (!match) return undefined;
-    const verb = match[1]!.toLowerCase();
-    return {
-      action: verb.startsWith('click')
-        ? 'click'
-        : verb.startsWith('drag')
-          ? 'drag'
-          : verb.startsWith('typ')
-            ? 'type'
-            : verb.startsWith('press')
-              ? 'key'
-              : 'navigate',
-      application: tool.kind === 'browser' ? 'Browser' : 'Desktop',
-      description: tool.title,
-      at,
-    };
-  }
   if (tool.kind !== 'execute') return undefined;
   const tokens = words(tool.title);
   if (!tokens) return undefined;

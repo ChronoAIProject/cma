@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, it } from 'vitest';
-import { screenOperation } from './screenOperations';
+import { screenOperation, screenApplication } from './screenOperations';
 import { groupToolCalls } from './timeline';
 import { ToolCallGroup } from './ToolCallRows';
 import type { ToolCall } from './model';
@@ -55,4 +55,18 @@ it('separates consecutive screen operations and shows noninteractive description
   }
   expect(screen.queryByText('private input')).not.toBeInTheDocument();
   expect(screen.queryByRole('img')).not.toBeInTheDocument();
+});
+
+it.each(['browser', 'computer'])(
+  'does not invent a screen producer for unsupported kind %s',
+  (kind) => {
+    expect(screenOperation(tool('Click the page', { kind }))).toBeUndefined();
+  },
+);
+
+it('follows desktop window commands while retaining them as ordinary tool rows', () => {
+  for (const title of ['xdotool windowactivate 44', 'wmctrl -a Browser']) {
+    expect(screenApplication(tool(title))).toBe('Desktop');
+    expect(screenOperation(tool(title))).toBeUndefined();
+  }
 });
