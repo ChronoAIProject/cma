@@ -224,10 +224,13 @@ export function AgentSurface({
           onViewDeletionStatus={onViewDeletionStatus}
           onTitleUpdated={controller.applyAgentTitle}
           detail={detail}
-          availability={controller.resourceAvailability}
           readOnly={readOnly}
+          actionsBusy={actionsBusy || controller.pending !== undefined || historyIncomplete}
           busy={
-            status !== 'ready' || controller.pending !== undefined || state.historyLoading === true
+            status !== 'ready' ||
+            actionsBusy ||
+            controller.pending !== undefined ||
+            state.historyLoading === true
           }
           filesOpen={filesOpen}
           onFilesOpenChange={accessUncertain ? undefined : onFilesOpenChange}

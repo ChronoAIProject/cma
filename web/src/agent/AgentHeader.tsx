@@ -9,6 +9,7 @@ import {
   IconChevronDownOutline14,
   IconEllipsisOutline16,
   IconPanelLeftOutline16,
+  IconComputerOutline16,
   IconShareOutline16,
 } from '../ui/icons';
 import './AgentHeader.css';
@@ -54,17 +55,20 @@ export function AgentHeader({
 }) {
   const [open, setOpen] = useState(false);
   const sidebar = useContext(SidebarContext);
-  const rename = menu.find((item) => item.id === 'rename-agent');
   const remove = moreActions.find((item) => item.id === 'delete_agent');
+  const action = (id: string, label: string, reason: string): MenuEntry => {
+    const item = [...menu, ...moreActions].find((item) => item.id === id && !('type' in item));
+    return item ? { ...item, label } : { id, label, disabled: true, reason };
+  };
   const items: MenuEntry[] = [
-    rename && !('type' in rename)
-      ? { ...rename, label: 'Rename' }
-      : {
-          id: 'rename-agent',
-          label: 'Rename',
-          disabled: true,
-          reason: 'Only the task owner can rename it.',
-        },
+    action('rename-agent', 'Rename', 'Only the task owner can rename it.'),
+    action(
+      'update-prompt',
+      'Update system prompt',
+      'Only the task owner can update its system prompt.',
+    ),
+    action('update-skills', 'Update skills', 'Only the task owner can update its skills.'),
+    action('export_history', 'Export history', 'History export is unavailable with this access.'),
     {
       id: 'deletion-status',
       label: 'View deletion status',
@@ -118,12 +122,7 @@ export function AgentHeader({
           <Button
             size="sm"
             variant="ghost"
-            icon={
-              <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-                <rect x="1" y="2" width="14" height="9" rx="1" fill="none" stroke="currentColor" />
-                <path d="M8 11v3M5 14h6" stroke="currentColor" />
-              </svg>
-            }
+            icon={<IconComputerOutline16 />}
             aria-label={filesOpen ? 'Hide Agent computer' : 'Show Agent computer'}
             title={filesOpen ? 'Hide Agent computer' : 'Show Agent computer'}
             aria-expanded={filesOpen}
@@ -153,7 +152,7 @@ export function AgentHeader({
           onSelect={(id) => {
             setOpen(false);
             if (id === 'deletion-status') onViewDeletionStatus?.();
-            else if (id === 'delete_agent') onMoreAction?.(id);
+            else if (id === 'delete_agent' || id === 'export_history') onMoreAction?.(id);
             else onMenuSelect?.(id);
           }}
         />

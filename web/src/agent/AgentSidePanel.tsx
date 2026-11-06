@@ -1,3 +1,4 @@
+import type { SandboxResourceAvailability } from './sandboxInput';
 import { screenOperation } from './screenOperations';
 import { changedFiles, homeFilePath } from './fileChanges';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -41,7 +42,9 @@ export function AgentSidePanel({
   onSelect,
   observation,
   viewerId,
+  resourceAvailability,
 }: {
+  readonly resourceAvailability?: SandboxResourceAvailability;
   readonly agentId: string;
   readonly shared: boolean;
   readonly detail?: AgentDetail;
@@ -157,6 +160,7 @@ export function AgentSidePanel({
           />
         ) : (
           <AgentDetails
+            availability={resourceAvailability}
             detail={detail}
             open={panel === 'details'}
             onClose={onClose}
