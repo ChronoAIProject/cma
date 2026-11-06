@@ -6,6 +6,7 @@ import { Picker } from '../../ui/Picker';
 import { MetricCharts } from './MetricCharts';
 import { MetricDetail } from './MetricDetail';
 import { MetricFilters } from './MetricFilters';
+import { OpsMetricFilters } from './OpsMetricFilters';
 import { MetricSummary } from './MetricSummary';
 import { MetricTable } from './MetricTable';
 import { MetricsNotice } from './MetricsNotice';
@@ -63,31 +64,40 @@ export function MetricsDashboard({
       className="usage-metrics"
       aria-label={admin ? 'Operations resource dashboard' : 'Your usage resources'}
     >
-      <MetricFilters
-        api={api}
-        selection={effectiveSelection}
-        admin={admin}
-        active={visible}
-        onApply={onSelection}
-        agentPicker={
-          agentPicker
-            ? (draft, update) => {
-                const ownsSelection =
-                  !admin &&
-                  !state.busy &&
-                  !state.stale &&
-                  report?.scope.admin === false &&
-                  report.query.filters.sandbox_id === draft.sandbox &&
-                  Number(report.summary?.sandbox_count) > 0;
-                return ownsSelection ? (
-                  agentPicker(draft, update)
-                ) : (
-                  <p>Choose a Sandbox and apply filters to select an Agent.</p>
-                );
-              }
-            : undefined
-        }
-      />
+      {admin ? (
+        <OpsMetricFilters
+          api={api}
+          selection={effectiveSelection}
+          active={visible}
+          onApply={onSelection}
+        />
+      ) : (
+        <MetricFilters
+          api={api}
+          selection={effectiveSelection}
+          admin={admin}
+          active={visible}
+          onApply={onSelection}
+          agentPicker={
+            agentPicker
+              ? (draft, update) => {
+                  const ownsSelection =
+                    !admin &&
+                    !state.busy &&
+                    !state.stale &&
+                    report?.scope.admin === false &&
+                    report.query.filters.sandbox_id === draft.sandbox &&
+                    Number(report.summary?.sandbox_count) > 0;
+                  return ownsSelection ? (
+                    agentPicker(draft, update)
+                  ) : (
+                    <p>Choose a Sandbox and apply filters to select an Agent.</p>
+                  );
+                }
+              : undefined
+          }
+        />
+      )}
       <UsageOverviewHeader report={report} busy={state.busy} onRefresh={state.refresh} />
       {state.busy && (
         <p role="status">{state.pending ? 'Preparing usage report…' : 'Loading usage report…'}</p>
