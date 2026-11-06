@@ -37,9 +37,9 @@ for (const theme of ['light', 'dark']) {
     expect(
       Math.abs(firstBar!.y + firstBar!.height / 2 - firstLabel!.y - firstLabel!.height / 2),
     ).toBeLessThan(3);
-    await expect(
-      chart.locator('.usage-owner-allocation__axis .recharts-cartesian-axis-tick').first(),
-    ).toBeVisible();
+    const ticks = chart.locator('.usage-owner-allocation__axis .recharts-cartesian-axis-tick-value');
+    await expect(ticks).toHaveText(['0', '5K', '10K', '15K', '20K']);
+    for (const tick of await ticks.all()) await expect(tick).toBeVisible();
     await page.screenshot({ path: info.outputPath(`top-10-duplicates-${theme}.png`) });
     await expect(scroll.getByText('Joined 2026-01-01', { exact: true })).toBeVisible();
     await expect(scroll.getByText('Joined 2026-02-01', { exact: true })).toBeVisible();
