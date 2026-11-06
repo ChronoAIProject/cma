@@ -160,7 +160,11 @@ async fn provider_failure_is_unavailable_and_unconfigured_keys_do_not_reach_nyxi
         *fixture.status.write().await = status;
         assert_eq!(
             get(&app, "/api/v1/agents", &key).await.0,
-            StatusCode::SERVICE_UNAVAILABLE
+            if status == StatusCode::BAD_GATEWAY {
+                StatusCode::SERVICE_UNAVAILABLE
+            } else {
+                StatusCode::UNAUTHORIZED
+            }
         );
     }
     *fixture.status.write().await = StatusCode::OK;

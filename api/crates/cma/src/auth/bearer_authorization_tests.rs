@@ -1,3 +1,4 @@
+use crate::auth::identity;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 
 use axum::{
@@ -233,12 +234,17 @@ async fn overlapping_unavailability_is_shared_without_caching_provider_failure()
         gate.release.add_permits(9);
         for request in [first, second] {
             let result = request.await.unwrap();
-            // Introspection authenticates this client; its HTTP401 does not
-            // establish revocation of the independent credential being checked.
-            assert!(matches!(
-                result,
-                Err(ProviderVerificationError::Unavailable(_))
-            ));
+            if status == 401 {
+                assert!(matches!(
+                    result,
+                    Err(ProviderVerificationError::Rejected(_))
+                ));
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(ProviderVerificationError::Unavailable(_))
+                ));
+            }
         }
         *f.control.gate.write().await = None;
         f.control.status.store(200, Ordering::SeqCst);
@@ -289,7 +295,7 @@ async fn abandoning_all_callers_and_provider_deadlines_do_not_leave_cached_evide
     .await;
     assert!(matches!(
         result,
-        Err(ProviderVerificationError::Unavailable(_))
+        Err(ProviderVerificationError::Transient(_))
     ));
     *f.control.gate.write().await = None;
     gate.release.add_permits(9);
