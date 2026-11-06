@@ -202,7 +202,7 @@ async fn mismatched_request_model_defers_without_contacting_proxy() {
 }
 
 #[tokio::test]
-async fn model_failures_retry_once_then_defer_without_committing_the_prompt() {
+async fn model_failures_defer_after_one_call_without_committing_the_prompt() {
     let calls = Arc::new(AtomicUsize::new(0));
     async fn unavailable(State(calls): State<Arc<AtomicUsize>>) -> Response {
         calls.fetch_add(1, Ordering::SeqCst);
@@ -232,7 +232,7 @@ async fn model_failures_retry_once_then_defer_without_committing_the_prompt() {
     let (outcome, stored) =
         generate_title(&generator, "deployment-model", BEARER, &owner, "answer").await;
 
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(outcome, Err(AgentTitleServiceError::GenerationUnavailable));
     assert!(stored.is_none());
     server.abort();
@@ -462,4 +462,19 @@ async fn provider_routing_authority_is_sensitive_and_never_becomes_a_title() {
     assert_eq!(outcome, Err(AgentTitleServiceError::GenerationUnavailable));
     assert!(stored.is_none());
     server.abort();
+}
+
+#[test]
+fn generation_denials_are_terminal_but_transport_and_rate_limits_are_retryable() {
+    for code in [400, 401, 402, 403, 404, 422] {
+        assert!(generation_failure(StatusCode::from_u16(code).unwrap(), b"{}").is_permanent());
+    }
+    for code in [408, 429, 500, 503] {
+        assert!(!generation_failure(StatusCode::from_u16(code).unwrap(), b"{}").is_permanent());
+    }
+    assert!(generation_failure(
+        StatusCode::TOO_MANY_REQUESTS,
+        br#"{"error":{"code":"insufficient_quota"}}"#
+    )
+    .is_permanent());
 }
