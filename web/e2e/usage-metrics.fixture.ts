@@ -1,5 +1,10 @@
 import type { Page } from '@playwright/test';
-import type { UsageMetricQuery, UsageMetricReport, UsageMetricRow } from '@chronoai/cma-sdk';
+import type {
+  UsageMetricQuery,
+  UsageMetricReport,
+  UsageMetricRow,
+  UsageOwnerAllocation,
+} from '@chronoai/cma-sdk';
 import {
   asOf,
   metricRow,
@@ -16,6 +21,7 @@ export class LocalUsageMetrics {
   summaryCount?: (query: UsageMetricQuery) => number;
   runningCount?: (query: UsageMetricQuery) => number;
   ownerCount = 400;
+  readonly ownerOverrides = new Map<number, Partial<UsageOwnerAllocation>>();
   ownerFailure = 0;
   failure = 0;
   pending = false;
@@ -168,6 +174,7 @@ export class LocalUsageMetrics {
                   allocated_hours: (count - n) * (metric === 'cpu' ? 1 : 2),
                   sandbox_count: 2,
                   complete: n !== 0,
+                  ...this.ownerOverrides.get(n),
                 };
               },
             ),
