@@ -65,6 +65,11 @@ guarded.each do |workflow, id, name|
   end
 end
 
+if mode == "provider"
+  require_relative "omarchy-ci-contract-tests"
+  OmarchyCIContractTests.run(reject)
+end
+
 if mode == "release"
   cache_changes = {
     "fork cache access" => ["Prepare API Cargo cache identity", "if", "matrix.component == 'api'"],
