@@ -74,7 +74,7 @@ async function inspect(page: Page, result: Result, info: TestInfo, agentId: stri
     .fill('Compare three tools with a deliberately long task description. '.repeat(12));
   await expect(page.getByRole('button', { name: 'Start task', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: /^Cloud computer/ }).click();
-  await expect(page.getByRole('menuitemcheckbox', { name: 'Agent browser' })).toBeEnabled();
+  await expect(page.getByRole('menuitemcheckbox', { name: 'Shared desktop' })).toBeEnabled();
   await expect(page.getByText('Checking task creation…', { exact: true })).not.toBeVisible();
   await writeFile(
     info.outputPath(`home-semantics-${result.width}.txt`),
@@ -82,9 +82,9 @@ async function inspect(page: Page, result: Result, info: TestInfo, agentId: stri
   );
   await target(page.getByRole('button', { name: 'Start task', exact: true }), result, 'Start task');
   await target(
-    page.getByRole('menuitemcheckbox', { name: 'Agent browser' }),
+    page.getByRole('menuitemcheckbox', { name: 'Shared desktop' }),
     result,
-    'Agent browser',
+    'Shared desktop',
   );
   await page.screenshot({ path: info.outputPath(`home-${result.width}.png`), fullPage: true });
   await page.goto(`/agents/${agentId}`);

@@ -5371,12 +5371,15 @@ radius, 8px padding and menu fill. Trigger has 1.5px accent outline while open.
 Group labels use 12.5px/20px weak text. The sole location is **Cloud computer**,
 a checked menuitemradio with a 32px icon square, 8px radius, 1px panel border and
 secondary **Its own Linux machine in the cloud**. A separator and **Computer options**
-label precede **Agent browser** and **Shared desktop** menuitemcheckbox rows, with
-existing descriptions/unavailable reasons at 12px/18px. Menu gains per-item roles
+label precede the sole **Shared desktop** menuitemcheckbox for new drafts, with
+its description/unavailable reason at 12px/18px. It includes Chromium for the
+owner and Agent. Only a recorded lifecycle intent with `desktop: true` also shows
+a checked, disabled **Agent browser** row explaining that its choice is saved
+with the submitted task (see the 2026-11-06 refinement). Menu gains per-item roles
 so independent checkboxes and a radio can coexist. Checked rows show an accent
 check; row padding is 8px, gap 12px, minimum height 44px. Choices freeze after intent;
-a retained unavailable choice can still be unchecked before intent. Trigger suffixes
-**Browser**, **Shared desktop** or **2 options** make retained choices visible.
+a retained unavailable choice can still be unchecked before intent. The trigger suffix is
+**Shared desktop** when selected; no Browser or combined suffix is used.
 
 **Repository.** Reuse Modal with a `repository` presentation: full-screen scrim,
 8px backdrop blur, 16px viewport clearance, 480px maximum card width, 26px radius,
@@ -5431,7 +5434,8 @@ and overlay behavior; the sidebar never restacks above the content.
 #### Review refinements — 2026-11-05
 
 Repository capability is tri-state. While checking, the disabled Add git repo control
-says **Checking repository support…**, and submitting a retained repository says
+has the screen-reader-only description **Checking repository support…**, and
+submitting a retained repository says
 **Checking repository support. Wait for the check to finish before starting.** Only a
 confirmed unsupported result or absent capability reader says unavailable.
 
@@ -5447,10 +5451,9 @@ The initial composer must be entirely visible without scrolling at 1440×900 and
 reason is **This Sandbox's existing Linux machine**; preparation says **Preparing
 your Agent…**. New-Sandbox landing retains its original cloud-computer wording.
 
-All Agent browser descriptions and validation identify **Agent browser**. Clearing
-an unavailable choice points to **Agent browser in the Cloud computer menu**;
-shared-desktop validation points to **Shared desktop in the Cloud computer menu**.
-The two-choice trigger suffix is **Browser + desktop**, superseding **2 options**.
+Shared-desktop validation points to **Shared desktop in the Cloud computer menu**.
+As refined on 2026-11-06, new drafts have no Agent browser row, validation or
+capability read. The trigger suffix is only **Shared desktop** when selected.
 
 Repository errors use the same 14px/22px error ink as ref errors. A nonempty invalid
 repository is explained after blur; Enter also validates empty input. The form uses
@@ -5694,3 +5697,76 @@ and status chips share a line, secondary metadata wraps together, and permission
 hints stay beside the action they explain.
 
 | 2026-11-06 | Apply lead review to Usage toolbar alignment, overview spacing, refresh placement, history disclosure, chart labels and compact inventory rows. |
+
+
+#### Settled landing capability checks — 2026-11-06
+
+Task-experience capability is explicitly unknown until settled. Only a settled
+non-admitted result (including a failed read, mismatched account or missing reader)
+may show **Task creation is unavailable. You can create an Agent and start a
+conversation.** and its **New agent** button. Unknown capability never shows that
+fallback. Focus, visible-document and online refreshes preserve the same scope's
+last settled capabilities until the new read succeeds or fails. Client or account
+changes immediately hide the previous scope's capabilities; late responses cannot
+restore them. Suggestions and Agent computer controls use the same behavior.
+
+Going offline aborts the read and invalidates capabilities to unknown, disabling
+new admission without showing misleading unavailable copy. Focus while offline
+does not read or restore capabilities; reconnecting starts a fresh check. All
+capability consumers remain fail-closed until that check settles. Same-scope
+refreshes otherwise keep the last confirmed admission; the server still enforces
+current authority on every submission.
+
+Initial and refresh checks must not insert transient visible content or shift the
+landing. **Checking task creation…** is a screen-reader-only status; **Checking
+repository support…** is a screen-reader-only description of the disabled repo
+control. Settled unsupported/error reasons remain visible, as do meaningful
+submission and preparation statuses. Repository support retains its existing
+tri-state validation and contextual inheritance. Start task stays disabled until
+creation support and task admission are confirmed; pending repository support
+still prevents submitting a retained repository.
+
+| 2026-11-06 | Keep landing capability checks visually stable and scope-safe: no unavailable fallback before a settled result, same-scope refreshes keep the last settled capabilities, offline invalidates admission, and checking statuses are screen-reader-only. |
+
+
+#### Shared desktop as the only landing computer option — 2026-11-06
+
+This refinement supersedes earlier independent Agent browser selection on Home,
+including the 2026-11-03/04 desktop creation rules. Both the new-Sandbox landing
+and contextual Workspace/Sandbox New task menu offer only **Shared desktop** under
+**Computer options** for new drafts. Shared desktop includes Chromium, which the
+owner and Agent can both control. Existing Sandbox and permission restrictions
+remain; a retained unavailable shared-desktop choice can still be cleared.
+The trigger suffix is **Shared desktop** only when selected. New submissions
+never request `desktop: true`, and the landing does not read browser capability
+or use the desktop-enable policy. The owner's **Enable browser** command after
+creation is unchanged.
+
+Version-1 task drafts containing a boolean `desktop` still load their text,
+repository and shared-desktop choice. Ignore that retired field immediately and
+omit it on the next persist. Recorded lifecycle intents are a separate boundary:
+keep their original key and body byte-identical during recovery, including
+`desktop: true`. Only such a frozen intent shows a checked, disabled **Agent
+browser** row, with **Agent browser choice is saved with the submitted task.**
+It does not add a Browser trigger suffix or require a capability read.
+
+| 2026-11-06 | Offer only Shared desktop for new landing tasks, accept and drop the retired desktop field in old drafts, and keep recorded Agent browser intents frozen, visible and byte-identical on recovery. |
+
+
+#### Next draft after confirmed creation — 2026-11-06
+
+Keep the editable next draft through submission, receipt, uncertain recovery,
+connection waits and failed preparation; **Start another task** still offers it.
+When a confirmed successful operation for the retained request's Agent clears
+its intent, discard the same scope's draft only if its exact text, repository URL,
+repository ref and Shared desktop choice still equal the submitted body (missing
+options mean empty/unchecked). An edited next draft survives unchanged. This
+applies to conversation follow-up and creation-dialog success paths, never to
+receipt alone or failed-intent clearing. A later landing starts empty, without a
+repository chip and with Shared desktop unchecked; a mounted matching draft also
+resets immediately so subsequent edits cannot re-save the submitted content.
+Draft cleanup is best-effort: storage errors must not throw or block conversation
+access, and unreadable or different drafts are preserved. Account isolation and
+sign-out clearing keep their existing rules.
+
+| 2026-11-06 | Discard the landing draft only when it still equals a task whose creation was confirmed successful; edited next drafts and failed preparations keep their text. |
