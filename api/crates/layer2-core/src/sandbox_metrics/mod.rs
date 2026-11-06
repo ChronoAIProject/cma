@@ -4,12 +4,14 @@ pub mod allocation;
 pub mod cursor;
 pub mod model;
 pub mod options;
+pub mod owner_allocation;
 pub mod query;
 pub mod series;
 pub mod service;
 
 pub use model::*;
 pub use options::*;
+pub use owner_allocation::*;
 pub use query::*;
 pub use service::*;
 
