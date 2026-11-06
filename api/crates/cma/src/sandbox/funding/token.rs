@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use zeroize::Zeroizing;
 
+pub(super) mod oauth;
+
 #[derive(Clone)]
 pub(super) struct ProducerToken(Arc<Zeroizing<String>>);
 impl ProducerToken {
