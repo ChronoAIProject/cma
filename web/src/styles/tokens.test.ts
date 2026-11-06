@@ -359,15 +359,50 @@ describe('New agent landing palette', () => {
     ['page', '#ffffff', '#0b0b0c'],
     ['shell', '#fafafa', '#131315'],
     ['panel', '#ffffff', '#19191c'],
-    ['accent', '#3f6212', '#c8f542'],
-    ['accent-hover', '#24300f', '#d7ff5a'],
-    ['on-accent', '#ffffff', '#0b0b0c'],
+    ['accent', '#4d7c0f', '#c8f542'],
+    ['accent-hover', '#d7ff5a', '#d7ff5a'],
+    ['on-accent', '#0b0b0c', '#0b0b0c'],
     ['muted-icon', '#71717a', '#71717a'],
-    ['primary', '#09090b', '#f4f4f5'],
+    ['primary', '#111113', '#f4f4f5'],
     ['placeholder', '#52525b', '#85858e'],
+    ['border', '#e4e4e7', '#26262a'],
+    ['panel-border', '#e4e4e7', '#2a2a2e'],
+    ['focus-border', '#a1a1aa', '#3a3a40'],
+    ['disabled', '#e4e4e7', '#26262a'],
+    ['menu', '#ffffff', '#18181b'],
+    ['hover', '#f4f4f5', '#1c1c1f'],
+    ['button-fill', '#c8f542', '#c8f542'],
   ])('resolves task %s in light and dark', (suffix, light, dark) => {
     const palette = themes();
     expect(resolveToken(`dsw-specific-task-${suffix}`, palette.light)).toBe(light);
     expect(resolveToken(`dsw-specific-task-${suffix}`, palette.dark)).toBe(dark);
   });
+});
+
+it('shares app roles only for task page, text, accent and primary button paints', () => {
+  const palette = themes();
+  for (const theme of ['light', 'dark'] as const)
+    for (const suffix of [
+      'page',
+      'primary',
+      'weak',
+      'accent',
+      'accent-hover',
+      'on-accent',
+      'button-fill',
+    ])
+      expect(palette[theme].get(`dsw-specific-task-${suffix}`)).toMatch(/^var\(--dsw-alias-/);
+});
+
+it('retains subtle global borders and non-primary button fill families', () => {
+  const palette = themes();
+  for (const [suffix, light, dark] of [
+    ['border-l3', '#d4d4d8', '#3f3f46'],
+    ['border-l4', '#a1a1aa', '#52525b'],
+    ['button-info-fill', '#18181b', '#c3fd43'],
+    ['button-info-hover', '#27272a', '#aee734'],
+  ]) {
+    expect(resolveToken(`dsw-alias-${suffix}`, palette.light)).toBe(light);
+    expect(resolveToken(`dsw-alias-${suffix}`, palette.dark)).toBe(dark);
+  }
 });
