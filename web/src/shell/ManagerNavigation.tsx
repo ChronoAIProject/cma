@@ -10,8 +10,6 @@ import { sameAgent } from '../agent/status';
 import { Tree, type TreeAction, type TreePermissions } from './Tree';
 import type { NavigationState } from './navigation';
 import { NavigationFilters, type NavigationView } from './NavigationFilters';
-import { Menu } from '../ui/Menu';
-import { IconSettingsOutline16 } from '../ui/icons';
 
 export function ManagerNavigation({
   client,
@@ -47,7 +45,6 @@ export function ManagerNavigation({
   readonly onAction: (action: TreeAction) => void;
 }) {
   const [view, setView] = useState<NavigationView>('agent');
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [environmentsOpened, setEnvironmentsOpened] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const taskFocus = useRef<HTMLElement | null>(null);
@@ -135,37 +132,7 @@ export function ManagerNavigation({
   );
   return (
     <div ref={root}>
-      {view === 'agent' ? (
-        <Menu
-          open={settingsOpen}
-          label="Navigation settings"
-          items={[{ id: 'environments', label: 'Manage environments' }]}
-          onClose={() => setSettingsOpen(false)}
-          onSelect={() => {
-            setTaskReturn({
-              route,
-              scope,
-              scrollTop: root.current?.closest('.sidebar__navigation')?.scrollTop ?? 0,
-            });
-            modeChanged.current = true;
-            setSettingsOpen(false);
-            setEnvironmentsOpened(true);
-            setView('sandbox');
-          }}
-          anchor={
-            <button
-              type="button"
-              className="resource-tree__heading"
-              aria-haspopup="menu"
-              aria-expanded={settingsOpen}
-              onClick={() => setSettingsOpen((open) => !open)}
-            >
-              <IconSettingsOutline16 />
-              Settings
-            </button>
-          }
-        />
-      ) : (
+      {view === 'sandbox' ? (
         <button
           type="button"
           className="resource-tree__heading"
@@ -179,12 +146,26 @@ export function ManagerNavigation({
         >
           Back to tasks
         </button>
-      )}
+      ) : null}
       <NavigationFilters
         scope={
           client === undefined ? undefined : (
             <NavigationScopePicker choices={choices} value={scope} onChange={onScope} />
           )
+        }
+        onManageEnvironments={
+          view === 'agent'
+            ? () => {
+                setTaskReturn({
+                  route,
+                  scope,
+                  scrollTop: root.current?.closest('.sidebar__navigation')?.scrollTop ?? 0,
+                });
+                modeChanged.current = true;
+                setEnvironmentsOpened(true);
+                setView('sandbox');
+              }
+            : undefined
         }
         scopeSummary={
           client === undefined
