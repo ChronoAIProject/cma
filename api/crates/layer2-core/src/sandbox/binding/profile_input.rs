@@ -7,6 +7,8 @@ use serde_json::Value;
 #[serde(deny_unknown_fields)]
 pub(super) struct ExternalProfile {
     pub schema_version: u16,
+    #[serde(default)]
+    pub queue_lifetime_seconds: Option<u32>,
     pub metadata: Metadata,
     pub model: Model,
     pub permission: Permission,

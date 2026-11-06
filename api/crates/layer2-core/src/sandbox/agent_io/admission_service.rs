@@ -336,6 +336,17 @@ impl AgentCommandService {
             return Err(CommandAdmissionError::ModelMismatch);
         }
         let command_id = AgentCommandId::generate();
+        let queue_lifetime = if matches!(command, AgentCommand::Message { .. }) {
+            authorized
+                .binding_authority()
+                .map_or(QUEUE_LIFETIME, |authority| {
+                    Duration::from_secs(u64::from(
+                        authority.binding.profile.effective_queue_lifetime_seconds(),
+                    ))
+                })
+        } else {
+            QUEUE_LIFETIME
+        };
         let request = CommandReservation {
             binding: authorized.binding_authority().cloned(),
             envelope: AgentCommandEnvelope {
@@ -361,7 +372,7 @@ impl AgentCommandService {
             response_id: matches!(command, AgentCommand::Message { .. })
                 .then(AgentResponseId::generate),
             admitted_at: rfc3339_at(started_at),
-            queue_deadline: rfc3339_at(started_at + QUEUE_LIFETIME),
+            queue_deadline: rfc3339_at(started_at + queue_lifetime),
             queue_capacity: MAX_COMMAND_QUEUE_CAPACITY,
             expected_agent_revision: submission.expected_agent_revision.unwrap_or(agent.revision),
             parent: SandboxMutationGuard::capture(&authorized.snapshot.lineage.sandbox),
