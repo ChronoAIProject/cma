@@ -4,6 +4,7 @@ export { asOf, metricRow, reportFixture, seriesFixture } from './fixtures.test-s
 
 export function metricsClient(admin = false) {
   return {
+    options: vi.fn().mockResolvedValue({ items: [], next: null }),
     create: vi.fn().mockResolvedValue(reportFixture(admin)),
     report: vi.fn().mockResolvedValue(reportFixture(admin)),
     sandboxes: vi.fn().mockResolvedValue({
