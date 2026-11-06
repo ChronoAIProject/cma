@@ -26,11 +26,14 @@ inventory validation, and local browser guard mechanics. It uses no provider,
 NyxID, staging fixture, or deployment credential. Neither local mechanics nor
 discovery is evidence that a remote journey ran.
 
-The normal Backend job also runs a disposable, pinned MongoDB replica set.
-Only that new container's loopback address is used. Caller Mongo URIs are
+The required `Backend` aggregate includes a separate Mongo contracts job,
+which runs disposable, pinned MongoDB replica sets from the shared test archive.
+The parallel graph, artifact paths, cache policy and local script modes are
+documented in [Backend CI archive](Backend_CI_Archive.md).
+Each partition uses only its own container's loopback address. Caller Mongo URIs are
 discarded. The selected ignored tests cover legacy schema custody, durable
 Launch admission/progress, checkpoint publication/deletion ambiguity, and
-writer-capture authority; failpoint cases run serially against the same
+writer-capture authority; failpoint cases run serially within each
 disposable replica set. The test runner fails on an empty selection, and
 cleanup removes only containers carrying the generated exact run label.
 
