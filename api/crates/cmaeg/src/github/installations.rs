@@ -1,68 +1,16 @@
 use super::*;
 
 impl Gateway {
-    pub(super) async fn bind(
-        &self,
-        owner: &str,
-        request: BindRequest,
-    ) -> Result<(Binding, bool), Error> {
-        let app = self.config.app(&request.app_ref).ok_or(Error::Forbidden)?;
-        let binding_id = identity("binding", &(app.app_id, request.installation_id));
-        match self.store.read::<Binding>(&binding_id, "binding").await {
-            Ok((stored_owner, binding)) if stored_owner == owner => return Ok((binding, false)),
-            Ok(_) => return Err(Error::Forbidden),
-            Err(Error::NotFound) => (),
-            Err(error) => return Err(error),
-        }
-        let proof = app
-            .attestations
-            .iter()
-            .find(|proof| {
-                proof.owner == owner
-                    && proof.proof_ref == request.proof_ref
-                    && proof.installation_id == request.installation_id
-                    && proof.verified_until > now()
-            })
-            .ok_or(Error::Forbidden)?;
-        let binding = Binding {
-            binding_id,
-            app_ref: app.app_ref.clone(),
-            app_id: app.app_id,
-            installation_id: proof.installation_id,
-            account_id: proof.account_id,
-            status: "active".into(),
-            authority_revision: 1,
-            verified_until: proof.verified_until,
-            verified_by: app.operator_owner.clone(),
-            verification_ref: format!("{:x}", Sha256::digest(proof.proof_ref.as_bytes())),
-            repository_ids: proof.repository_ids.clone(),
-        };
-        if self
-            .store
-            .create(&binding.binding_id, owner, "binding", &binding)
-            .await
-            .is_err()
-        {
-            let (stored_owner, committed) = self
-                .store
-                .read::<Binding>(&binding.binding_id, "binding")
-                .await
-                .map_err(|_| Error::Unavailable)?;
-            if stored_owner != owner {
-                return Err(Error::Forbidden);
-            }
-            return Ok((committed, false));
-        }
-        Ok((binding, true))
-    }
-
     pub(super) async fn installation(
         &self,
         owner: &str,
         mut binding: Binding,
         incoming: LifecycleDelivery<'_>,
     ) -> Result<(Receipt, bool), Error> {
+        let previous = binding.clone();
+        let mut repository_tightening = false;
         let LifecycleDelivery {
+            integration,
             receipt_id,
             delivery_id,
             fingerprint,
@@ -118,7 +66,8 @@ impl Gateway {
                 || action == "deleted"
                 || repository_owner != binding.account_id
             {
-                binding.repository_ids.retain(|id| *id != repository_id);
+                repository_tightening = true;
+                binding.exclude_repository(repository_id);
             }
         } else if event == "installation_repositories" {
             if !matches!(action, "added" | "removed")
@@ -146,7 +95,10 @@ impl Gateway {
                             .ok_or(Error::Invalid)
                     })
                     .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
-                binding.repository_ids.retain(|id| !ids.contains(id));
+                repository_tightening = !ids.is_empty();
+                for id in ids {
+                    binding.exclude_repository(id);
+                }
             }
         } else {
             if !matches!(
@@ -160,19 +112,17 @@ impl Gateway {
             binding.status = match action {
                 "suspend" if binding.status != "uninstalled" => "suspended",
                 "deleted" => "uninstalled",
-                "unsuspend" | "created" | "new_permissions_accepted"
-                    if binding.status != "uninstalled" =>
-                {
-                    "pending_verification"
-                }
                 _ => &binding.status,
             }
             .into();
         }
-        binding.authority_revision = binding
-            .authority_revision
-            .checked_add(1)
-            .ok_or(Error::Unavailable)?;
+        if repository_tightening || binding != previous {
+            binding.authority_revision = binding
+                .authority_revision
+                .checked_add(1)
+                .ok_or(Error::Unavailable)?;
+            binding.version = binding.version.checked_add(1).ok_or(Error::Unavailable)?;
+        }
         let receipt = Receipt {
             receipt_id,
             app_ref: binding.app_ref.clone(),
@@ -182,6 +132,7 @@ impl Gateway {
             event: event.into(),
             action: Some(action.into()),
             status: "ignored".into(),
+            reason: None,
             received_at: now(),
             raw_body_expires_at: now() + 7 * 24 * 60 * 60,
             body_sha256: fingerprint.into(),
@@ -192,18 +143,20 @@ impl Gateway {
             receipt: receipt.clone(),
             raw_body_records: self.store.source(owner, &receipt, body).await?,
         };
-        if self
+        if let Err(error) = self
             .store
-            .commit_with_authority(owner, &binding, binding.authority_revision - 1, &delivery)
+            .commit_with_authority(owner, &binding, integration, previous.version, &delivery)
             .await
-            .is_err()
         {
-            let (_, committed) = self
+            return match self
                 .store
                 .read::<Delivery>(&receipt.receipt_id, "delivery")
                 .await
-                .map_err(|_| Error::Unavailable)?;
-            return duplicate(committed, event, fingerprint);
+            {
+                Ok((_, committed)) => duplicate(committed, event, fingerprint),
+                Err(Error::NotFound) if matches!(error, Error::Retry) => Err(Error::Retry),
+                _ => Err(Error::Unavailable),
+            };
         }
         Ok((receipt, true))
     }

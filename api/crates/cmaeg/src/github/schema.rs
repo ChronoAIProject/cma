@@ -38,8 +38,8 @@ pub(super) async fn migration_required(database: &Database) -> Result<bool, Erro
             .get("version")
             .and_then(|value| value.as_i32().map(i64::from).or_else(|| value.as_i64()))
         {
-            Some(1) => Ok(true),
-            Some(2) => Ok(false),
+            Some(1 | 2) => Ok(true),
+            Some(3) => Ok(false),
             _ => Err(Error::Unavailable),
         },
     }
@@ -49,7 +49,7 @@ pub async fn migrate(database: &Database) -> Result<(), Error> {
     if !migration_required(database).await? {
         return Ok(());
     }
-    let validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","kind","version","schema_version","blob"],"properties":{"_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"kind":{"enum":["binding","delivery","execution_group","app_integration","app_registration","webhook_credential","app_operation","app_identity"]},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"blob":{"bsonType":"binData"}}}};
+    let validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","kind","version","schema_version","blob"],"properties":{"_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"kind":{"enum":["binding","binding_operation","binding_approval","delivery","execution_group","app_integration","app_registration","webhook_credential","app_operation","app_identity"]},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0},"blob":{"bsonType":"binData"}}}};
     match database.run_command(doc! {"create":COLLECTION,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await {
         Ok(_) => (),
         Err(error) if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command) if command.code == 48) => { database.run_command(doc! {"collMod":COLLECTION,"validator":validator,"validationLevel":"strict","validationAction":"error"}).await.map_err(|_| Error::Unavailable)?; },
@@ -68,8 +68,8 @@ pub async fn migrate(database: &Database) -> Result<(), Error> {
     let committed = database
         .collection::<Document>(crate::records::mongo::MIGRATIONS)
         .update_one(
-            doc! {"_id":"github_integrations","version":{"$in":[1,2]}},
-            doc! {"$set":{"version":2}},
+            doc! {"_id":"github_integrations","version":{"$in":[1,2,3]}},
+            doc! {"$set":{"version":3}},
         )
         .upsert(true)
         .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
