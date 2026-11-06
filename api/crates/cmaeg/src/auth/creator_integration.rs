@@ -13,13 +13,6 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let creator = Creator::from_request_parts(parts, state).await?;
-        let auth = state.creator_auth();
-        let creator = if auth.service.is_some() && selected_owner(&parts.headers)?.is_some() {
-            auth.service_creator(creator.subject, &parts.headers)
-                .await?
-        } else {
-            creator
-        };
         Ok(Self {
             subject: creator.subject,
         })
