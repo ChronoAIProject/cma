@@ -45,4 +45,7 @@ mod tests;
 mod options_tests;
 
 #[cfg(test)]
+mod options_regression_tests;
+
+#[cfg(test)]
 mod series_tests;

@@ -2,7 +2,7 @@ use super::*;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::{
     cursor::Cursor, disambiguate_options_with_context, option_label, FilterOption, FilterOptions,
-    OptionContext, OptionKind, OptionQuery, Order, Scope, Sort,
+    OptionContext, OptionKind, OptionQuery, Order, OwnerContextAccess, Scope, Sort,
 };
 
 const DOMAIN: &str = "usage-options-v1";
@@ -11,6 +11,7 @@ impl ReportingStore {
         &self,
         scope: &Scope,
         query: OptionQuery,
+        owner_context: OwnerContextAccess,
     ) -> Result<FilterOptions> {
         if !scope.admin {
             return Err(MetricsError::Forbidden);
@@ -55,7 +56,10 @@ impl ReportingStore {
         {
             let value = row.get_str("_id").map_err(|_| MetricsError::Unavailable)?;
             hints.push(match query.kind {
-                OptionKind::Owner => OptionContext::owner(row.get_str("first_seen_at").ok()),
+                OptionKind::Owner => OptionContext::owner_with_access(
+                    row.get_str("first_seen_at").ok(),
+                    owner_context,
+                ),
                 OptionKind::Sandbox => OptionContext::sandbox(
                     row.get_str("owner").unwrap_or(""),
                     row.get_str("owner_name").ok(),
