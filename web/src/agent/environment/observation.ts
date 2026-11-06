@@ -4,6 +4,7 @@ import type { ToolCall } from '../model';
 interface OperationObservation {
   readonly toolCalls: readonly ToolCall[];
   readonly activeRunId?: string;
+  readonly historyLoaded: boolean;
 }
 
 /** The retained conversation supplies Terminal output without another event subscription. */
@@ -39,9 +40,14 @@ export class AgentComputerObservation {
     this.openTerminal?.();
     for (const listener of this.terminalListeners) listener();
   };
-  publish(toolCalls: readonly ToolCall[] | undefined, activeRunId?: string) {
-    if (this.value?.toolCalls === toolCalls && this.value?.activeRunId === activeRunId) return;
-    this.value = toolCalls === undefined ? undefined : { toolCalls, activeRunId };
+  publish(toolCalls: readonly ToolCall[] | undefined, activeRunId?: string, historyLoaded = true) {
+    if (
+      this.value?.toolCalls === toolCalls &&
+      this.value?.activeRunId === activeRunId &&
+      this.value?.historyLoaded === historyLoaded
+    )
+      return;
+    this.value = toolCalls === undefined ? undefined : { toolCalls, activeRunId, historyLoaded };
     for (const listener of this.listeners) listener();
   }
 }

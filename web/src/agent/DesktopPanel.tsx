@@ -1,3 +1,4 @@
+import { Modal } from '../ui/Modal';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import { IconCloseOutline16 } from '../ui/icons';
@@ -15,7 +16,13 @@ export function DesktopPanel({
   preparation,
   embedded = false,
   application = 'Desktop',
+  onStop,
+  runId,
+  controlUnavailable = false,
 }: {
+  readonly onStop?: () => Promise<void>;
+  readonly runId?: string;
+  readonly controlUnavailable?: boolean;
   readonly agentId: string;
   readonly runtimeReady: boolean;
   readonly running: boolean;
@@ -29,20 +36,65 @@ export function DesktopPanel({
   const [fullScreenError, setFullScreenError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
   const [control, setControl] = useState(false);
-  const { screen, phase, error, focus } = useDesktopConnection(
+  const [takeover, setTakeover] = useState<{
+    run?: string;
+    phase: 'confirm' | 'stopping' | 'waiting' | 'failed';
+    token?: object;
+    error?: string;
+  }>();
+  const [takeoverError, setTakeoverError] = useState<string>();
+  const { screen, phase, error } = useDesktopConnection(
     agentId,
     attempt,
-    control,
+    control && !running && !controlUnavailable,
     runtimeReady,
     preparation,
   );
   const ready = phase === 'ready';
-  const [previousGate, setPreviousGate] = useState({ running, ready });
-  if (running !== previousGate.running || ready !== previousGate.ready) {
-    if ((running && !previousGate.running) || !ready) setControl(false);
-    setPreviousGate({ running, ready });
+  const [previousGate, setPreviousGate] = useState({ running, ready, controlUnavailable });
+  if (
+    running !== previousGate.running ||
+    ready !== previousGate.ready ||
+    controlUnavailable !== previousGate.controlUnavailable
+  ) {
+    if ((running && !previousGate.running) || !ready || controlUnavailable) {
+      setControl(false);
+      if (!ready || controlUnavailable || (running && !previousGate.running)) {
+        setTakeover(undefined);
+      }
+    }
+    setPreviousGate({ running, ready, controlUnavailable });
     // A completed turn or reconnected stream never silently restores input.
   }
+  if (takeover?.phase === 'waiting' && !running && ready && !controlUnavailable) {
+    setControl(true);
+    setTakeover(undefined);
+  }
+  if (takeover && running && takeover.run !== runId) {
+    setTakeover(undefined);
+    setTakeoverError('A new Agent turn started. Take control again when you are ready.');
+  }
+  const confirmTakeover = async () => {
+    if (!onStop || takeover?.phase !== 'confirm') return;
+    const token = {};
+    const requestedRun = runId;
+    setTakeoverError(undefined);
+    setTakeover({ run: requestedRun, phase: 'stopping', token });
+    try {
+      await onStop();
+      setTakeover((current) =>
+        current?.token === token ? { ...current, phase: 'waiting' } : current,
+      );
+    } catch (cause) {
+      const error =
+        cause instanceof Error
+          ? cause.message
+          : 'The Agent could not be stopped. Control was not granted.';
+      setTakeover((current) =>
+        current?.token === token ? { ...current, phase: 'failed', error } : current,
+      );
+    }
+  };
   const controller = control ? 'user' : running ? 'agent' : 'view';
   const notice = useDesktopNotice(phase, controller);
   useEffect(() => {
@@ -122,11 +174,24 @@ export function DesktopPanel({
             size="sm"
             variant="primary"
             placement="workspace-take-control"
-            disabled={!ready}
+            disabled={
+              !ready ||
+              controlUnavailable ||
+              takeover?.phase === 'stopping' ||
+              takeover?.phase === 'waiting'
+            }
+            title={
+              controlUnavailable ? 'Checking Agent activity before taking control.' : undefined
+            }
             onClick={() => {
+              setTakeoverError(undefined);
+              if (!control && running) {
+                setTakeover({ run: runId, phase: 'confirm' });
+                return;
+              }
+              setTakeover(undefined);
               const next = !control;
               setControl(next);
-              if (next) focus();
             }}
           >
             {control ? 'Return to Agent' : embedded ? 'Take control' : 'Control desktop'}
@@ -169,6 +234,36 @@ export function DesktopPanel({
           ) : null}
         </div>
       </header>
+      {takeoverError || takeover?.error ? (
+        <p role="alert">{takeoverError ?? takeover?.error}</p>
+      ) : null}
+      {takeover?.phase === 'waiting' ? <p role="status">Waiting for the Agent to stop…</p> : null}
+      <Modal
+        open={takeover?.phase === 'confirm' || takeover?.phase === 'stopping'}
+        title="Take control"
+        description="Taking control stops the Agent's current turn"
+        dismissible={takeover?.phase !== 'stopping'}
+        onClose={() => {
+          setTakeover(undefined);
+        }}
+      >
+        <Button
+          disabled={takeover?.phase === 'stopping'}
+          onClick={() => {
+            setTakeover(undefined);
+          }}
+        >
+          Cancel
+        </Button>
+        <Button
+          variant="primary"
+          disabled={!onStop || takeover?.phase === 'stopping'}
+          onClick={() => void confirmTakeover()}
+        >
+          {takeover?.phase === 'stopping' ? 'Stopping Agent…' : 'Stop Agent and take control'}
+        </Button>
+        {!onStop ? <p role="status">Stopping this Agent is unavailable with this access.</p> : null}
+      </Modal>
       <div className="agent-desktop__viewport" aria-busy={!ready && phase !== 'error'}>
         <div
           ref={screen}
