@@ -1,9 +1,11 @@
 //! Authorized measured Sandbox reports. Observed resource-time is not invoice evidence.
 mod model;
 mod numeric;
+mod options;
 use crate::{Client, Error, Result, http::Request, resources::identity};
 pub use model::*;
 pub use numeric::Quantity;
+pub use options::{FilterOption, FilterOptions, OptionKind, OptionQuery};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 

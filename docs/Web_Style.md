@@ -862,6 +862,16 @@ equivalence. Profile links remain independently clickable.
 
 ### 12.3 The dropdown
 
+Operations usage filters use this same portalled Menu/Picker. Large identity and
+runtime lists have an inline name-search field, a scrollable page of at most 50
+choices, and Previous/Next controls. Search is debounced; paging replaces the
+current page rather than accumulating DOM rows. Arrow keys move from search to
+choices; Escape closes and restores focus. Loading, empty and retry states stay
+inside the dropdown. Selected identities show a display name with a stable short
+derived reference; missing names use Unnamed owner/Sandbox, never a raw ID.
+The time-range picker retains Custom with local date/time fields. Apply filters
+commits the draft atomically; Clear filters restores Last 24 hours and all choices.
+
 One control for choosing a value and for choosing an action. Both are a card at radius 12 on the menu
 fill with an inverted hairline and the level-3 shadow, holding 40px rows at radius 7. The Lumen row
 radius wins for both appearances; geometry never flips with theme. Hover is the neutral hover
@@ -5697,6 +5707,7 @@ and status chips share a line, secondary metadata wraps together, and permission
 hints stay beside the action they explain.
 
 | 2026-11-06 | Apply lead review to Usage toolbar alignment, overview spacing, refresh placement, history disclosure, chart labels and compact inventory rows. |
+| 2026-11-06 | Specify Ops usage dropdown search, bounded paging, keyboard navigation, visible discovery states and human-readable identity labels; preserve Custom date ranges and atomic Apply/Clear. |
 
 
 #### Settled landing capability checks — 2026-11-06

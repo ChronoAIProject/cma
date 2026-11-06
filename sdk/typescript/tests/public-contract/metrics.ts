@@ -1,5 +1,7 @@
 import type { Dispatch } from './context.js';
 const operations: Record<string, Dispatch> = {};
+operations['POST /api/v1/admin/usage/metrics/options'] = ({ client, body }) =>
+  client.adminUsageMetrics.options(body);
 for (const admin of [false, true]) {
   const base = `/api/v1/${admin ? 'admin/' : ''}usage/metrics/reports`;
   operations[`POST ${base}`] = ({ client, body }) =>
