@@ -91,7 +91,6 @@ impl Gateway {
             .pointer("/installation/id")
             .and_then(serde_json::Value::as_u64)
             .ok_or(Error::Invalid)?;
-        let binding_id = identity("binding", &(app.app_id, installation_id));
         let ignored = |reason: &str, authority_revision: u64| Receipt {
             receipt_id: receipt_id.clone(),
             app_ref: app_ref.into(),
@@ -114,25 +113,25 @@ impl Gateway {
             task_ids: Vec::new(),
             authority_revision,
         };
-        let (owner, mut binding): (String, Binding) =
-            match self.store.read(&binding_id, "binding").await {
-                Ok(value) => value,
-                Err(Error::NotFound) => {
-                    return self
-                        .persist(
-                            &integration_owner,
-                            &app,
-                            ignored("installation_unbound", 0),
-                            &[],
-                            None,
-                        )
-                        .await
-                }
-                Err(error) => return Err(error),
-            };
-        if binding.app_ref != app_ref || owner != integration_owner {
-            return Err(Error::NotFound);
-        }
+        let owner = integration_owner.clone();
+        let mut binding = match self
+            .installation_binding(&owner, &app, installation_id)
+            .await
+        {
+            Ok(value) => value,
+            Err(Error::NotFound) => {
+                return self
+                    .persist(
+                        &integration_owner,
+                        &app,
+                        ignored("installation_unbound", 0),
+                        &[],
+                        None,
+                    )
+                    .await
+            }
+            Err(error) => return Err(error),
+        };
         if matches!(
             event,
             "installation" | "installation_repositories" | "repository"

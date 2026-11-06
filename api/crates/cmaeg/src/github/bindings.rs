@@ -62,11 +62,13 @@ impl Gateway {
         {
             return Err(Error::Invalid);
         }
-        let binding_id = identity("binding", &(app.app_id, request.installation_id));
-        match self.store.read::<Binding>(&binding_id, "binding").await {
-            Ok((stored_owner, binding)) if stored_owner == owner => {
-                if binding.app_ref != app.app_ref
-                    || binding.account_id != account_id
+        let binding_id = identity("binding", &(&app.app_ref, request.installation_id));
+        match self
+            .installation_binding(owner, &app, request.installation_id)
+            .await
+        {
+            Ok(binding) => {
+                if binding.account_id != account_id
                     || binding.requested_repository_ids != repository_ids
                 {
                     return Err(Error::ManagementConflict);
@@ -80,7 +82,6 @@ impl Gateway {
                     .await?;
                 return Ok((binding, false));
             }
-            Ok(_) => return Err(Error::NotFound),
             Err(Error::NotFound) => (),
             Err(error) => return Err(error),
         }
