@@ -2,6 +2,8 @@
 
 require_relative "ci-contract"
 require_relative "gateway-source-contract"
+require "open3"
+require "json"
 
 mode = ARGV.fetch(0)
 raise "expected release or provider" unless %w[release provider].include?(mode)
@@ -20,7 +22,7 @@ reject = lambda do |label, &change|
   raise "accepted unsafe workflow mutation: #{label}"
 end
 
-job_ids = mode == "release" ? { "ci" => %w[trigger-release-contract images], "publish" => %w[runtime-image-gate release] } : { "ci" => %w[trigger-provider-smoke-contract], "nightly-staging" => %w[journeys] }
+job_ids = mode == "release" ? { "ci" => %w[trigger-release-contract images], "publish" => %w[runtime-image-gate release] } : { "ci" => %w[trigger-provider-smoke-contract backend backend-lint backend-test-build backend-tests backend-timing backend-mongo backend-image-manager cmaeg-latency], "nightly-staging" => %w[journeys] }
 job_ids.each do |workflow, ids|
   ids.each do |id|
     reject.call("remove #{id}") { |candidate| candidate[workflow]["jobs"].delete(id) }
@@ -40,11 +42,11 @@ guarded = mode == "release" ? [
   ["ci", "trigger-provider-smoke-contract", "Staging authority and evidence regressions"],
   ["ci", "trigger-provider-smoke-contract", "Typecheck every harness entry point"],
   ["ci", "trigger-provider-smoke-contract", "Local browser guard mechanics"],
-  ["ci", "backend", "Image normalization budgets"],
-  ["ci", "backend", "Tests"],
-  ["ci", "backend", "Gateway socket latency budget"],
-  ["ci", "backend", "Disposable real Mongo persistence contracts"],
-  ["ci", "backend", "Image Manager authenticated Mongo isolation"],
+  ["ci", "backend-timing", "Image normalization budgets"],
+  ["ci", "backend-tests", "Tests"],
+  ["ci", "backend-timing", "Gateway socket latency budget"],
+  ["ci", "backend-mongo", "Disposable real Mongo persistence contracts"],
+  ["ci", "backend-image-manager", "Image Manager authenticated Mongo isolation"],
   ["nightly-staging", "smoke", "Initialize isolated evidence path"],
   ["nightly-staging", "journeys", "Initialize isolated evidence path"],
   ["nightly-staging", "journeys", "Verify approval policy and independently observed deployment before fixture access"],
@@ -258,6 +260,89 @@ if mode == "release"
     raise "Gateway contract accepted incompatible CMA provider origin: #{origin}"
   end
 else
+  ids = CIContract::BACKEND_NEEDS + %w[cmaeg-latency backend]
+  ids.each do |id|
+    reject.call("#{id}: wrong name") { |v| v["ci"]["jobs"][id]["name"] += " optional" }
+    reject.call("#{id}: unbounded job") { |v| v["ci"]["jobs"][id].delete("timeout-minutes") }
+    base["ci"]["jobs"][id]["steps"].each_index do |index|
+      %w[removed skipped optional fake-success extra-step].each do |mutation|
+        reject.call("#{id} step #{index}: #{mutation}") do |v|
+          steps = v["ci"]["jobs"][id]["steps"]
+          case mutation
+          when "removed" then steps.delete_at(index)
+          when "skipped" then steps[index]["if"] = "false"
+          when "optional" then steps[index]["continue-on-error"] = true
+          when "fake-success" then steps[index] = { "name" => steps[index]["name"], "run" => "true" }
+          when "extra-step" then steps.insert(0, { "run" => "true" })
+          end
+        end
+      end
+    end
+    next if id == "backend"
+    reject.call("#{id}: reordered steps") { |v| v["ci"]["jobs"][id]["steps"].reverse! }
+    reject.call("#{id}: missing stack") { |v| v["ci"]["jobs"][id]["env"].delete("RUST_MIN_STACK") }
+    reject.call("#{id}: changed stack") { |v| v["ci"]["jobs"][id]["env"]["RUST_MIN_STACK"] = 1024 }
+    reject.call("#{id}: different checkout path") do |v|
+      v["ci"]["jobs"][id]["steps"].first["with"] = { "path" => "elsewhere" }
+    end
+  end
+  reject.call("join without always") { |v| v["ci"]["jobs"]["backend"].delete("if") }
+  reject.call("missing dependency") { |v| v["ci"]["jobs"]["backend"]["needs"].pop }
+  reject.call("latency effectively required") { |v| v["ci"]["jobs"]["backend"]["needs"] << "cmaeg-latency" }
+  %w[backend-tests backend-timing backend-mongo backend-image-manager cmaeg-latency].each do |id|
+    reject.call("#{id}: wrong archive dependency") { |v| v["ci"]["jobs"][id]["needs"] = "backend" }
+    reject.call("#{id}: source compilation") { |v| v["ci"]["jobs"][id]["env"].delete("CMA_NEXTEST_REUSE") }
+    reject.call("#{id}: different artifact") do |v|
+      v["ci"]["jobs"][id]["steps"].find { |r| r["uses"] == "actions/download-artifact@v4" }["with"]["name"] = "backend-tests-${{ github.run_attempt }}"
+    end
+  end
+  [[], [1, 2], [1, 2, 2], [0, 1, 2], [1, 2, 3, 4]].each do |shards|
+    reject.call("invalid shards #{shards}") { |v| v["ci"]["jobs"]["backend-tests"]["strategy"]["matrix"]["shard"] = shards }
+  end
+  reject.call("partition denominator") do |v|
+    v["ci"]["jobs"]["backend-tests"]["steps"].last["run"].sub!("$SHARD/3", "$SHARD/2")
+  end
+  %w[overwrite retention-days compression-level if-no-files-found name path].each do |key|
+    reject.call("archive upload #{key}") { |v| v["ci"]["jobs"]["backend-test-build"]["steps"].last["with"].delete(key) }
+  end
+  %w[backend-lint backend-test-build].each do |id|
+    %w[save-if shared-key].each do |key|
+      reject.call("#{id} cache #{key}") do |v|
+        v["ci"]["jobs"][id]["steps"].find { |r| r["uses"] == "Swatinem/rust-cache@v2" }["with"].delete(key)
+      end
+    end
+  end
+  { "backend-lint" => "backend", "backend-test-build" => "backend-lint" }.each do |id, wrong_key|
+    reject.call("#{id}: cache writer collision or loss of warm producer cache") do |v|
+      v["ci"]["jobs"][id]["steps"].find { |r| r["uses"] == "Swatinem/rust-cache@v2" }["with"]["shared-key"] = wrong_key
+    end
+  end
+  %w[backend-test-build backend-tests backend-timing backend-mongo backend-image-manager cmaeg-latency].each do |id|
+    reject.call("#{id}: nextest version drift") do |v|
+      v["ci"]["jobs"][id]["steps"].find { |r| r["name"] == "Install pinned nextest" }["with"]["tool"] = "cargo-nextest@latest"
+    end
+  end
+  ["Image normalization budgets", "Gateway socket latency budget", "Isolated Linux Workspace removal writer boundary"].each do |name|
+    reject.call("#{name}: parallel probes") do |v|
+      v["ci"]["jobs"]["backend-timing"]["steps"].find { |r| r["name"] == name }["run"].sub!("--test-threads 1", "--test-threads 2")
+    end
+  end
+  %w[backend-mongo backend-image-manager].each do |id|
+    reject.call("#{id}: unbounded contract") { |v| v["ci"]["jobs"][id]["steps"].last.delete("timeout-minutes") }
+  end
+  # Execute the actual join command as well as checking its spelling.
+  needs = CIContract::BACKEND_NEEDS.to_h { |id| [id, { "result" => "success" }] }
+  output, status = Open3.capture2e({ "NEEDS" => JSON.generate(needs) }, "bash", "-c", CIContract::BACKEND_RESULTS)
+  raise "join rejected success: #{output}" unless status.success?
+  needs.each_key do |id|
+    %w[failure cancelled skipped missing].each do |result|
+      values = Marshal.load(Marshal.dump(needs))
+      result == "missing" ? values.delete(id) : values[id]["result"] = result
+      output, status = Open3.capture2e({ "NEEDS" => JSON.generate(values) }, "bash", "-c", CIContract::BACKEND_RESULTS)
+      raise "join accepted #{id}: #{result}" if status.success? || !output.include?("#{id}: #{result}")
+      tests += 1
+    end
+  end
   %w[smoke journeys].each do |id|
     reject.call("#{id}: runner context at job scope") do |value|
       value["nightly-staging"]["jobs"][id]["env"]["CMA_E2E_OUTPUT_DIR"] = "${{ runner.temp }}/evidence"

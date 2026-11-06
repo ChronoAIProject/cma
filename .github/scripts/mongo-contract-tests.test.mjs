@@ -169,7 +169,7 @@ if (command === 'cargo') {
 `;
   for (const name of ['openssl', 'docker', 'cargo']) writeFileSync(join(directory, name), cli, { mode: 0o755 });
   const env = {
-    ...process.env, CI: 'true', PATH: `${directory}:${process.env.PATH}`, CMA_RUNNER_SCENARIO: scenario, CMA_RUNNER_LOG: log,
+    ...process.env, CI: reuse ? 'true' : 'false', PATH: `${directory}:${process.env.PATH}`, CMA_RUNNER_SCENARIO: scenario, CMA_RUNNER_LOG: log,
     CHRONO_TEST_MONGODB_URI: 'must-not-use-caller-uri', CHRONO_TEST_MONGODB_FAILPOINT_URI: 'must-not-use-caller-uri',
   };
   if (reuse) env.CMA_NEXTEST_REUSE = '1'; else delete env.CMA_NEXTEST_REUSE;
