@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { MenuRow } from './MenuRow';
+import { Input } from './Input';
 import { placeMenu, type MenuAlign, type MenuSide } from './menuPlacement';
 import { presenceAttributes, usePresence, usePresenceExiting } from './Presence';
 import './Menu.css';
@@ -85,6 +86,12 @@ export type MenuEntry = MenuItem | MenuSeparator | MenuLabel | MenuChoices;
 const MEASURING: CSSProperties = { visibility: 'hidden', left: 0, top: 0 };
 
 interface MenuProps {
+  readonly search?: {
+    readonly label: string;
+    readonly value: string;
+    readonly onChange: (value: string) => void;
+  };
+  readonly footer?: ReactNode;
   readonly open: boolean;
   readonly presentation?: 'run-target';
   /** The trigger, rendered in place. */
@@ -135,6 +142,8 @@ export function Menu({
   placement,
   matchAnchorWidth = false,
   label,
+  search,
+  footer,
 }: MenuProps) {
   const rootRef = useRef<HTMLSpanElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -236,7 +245,7 @@ export function Menu({
     }
     const rows = rowsIn(listRef.current);
     const chosen = rows.find((row) => row.dataset.id === selectedId);
-    (chosen ?? rows[0])?.focus();
+    (listRef.current?.querySelector('input') ?? chosen ?? rows[0])?.focus();
   }, [interactive, selectedId]);
 
   /*
@@ -264,6 +273,11 @@ export function Menu({
 
   const onListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!interactive) return;
+    if (
+      event.target instanceof HTMLInputElement &&
+      !['ArrowDown', 'ArrowUp', 'Escape'].includes(event.key)
+    )
+      return;
     const rows = rowsIn(listRef.current);
     if (rows.length === 0) {
       return;
@@ -322,6 +336,15 @@ export function Menu({
         event.stopPropagation();
       }}
     >
+      {search && (
+        <Input
+          aria-label={search.label}
+          placeholder="Search by name"
+          value={search.value}
+          maxLength={128}
+          onChange={(event) => search.onChange(event.target.value)}
+        />
+      )}
       {items.map((entry) => (
         <MenuRow
           key={entry.id}
@@ -333,6 +356,7 @@ export function Menu({
           }}
         />
       ))}
+      {footer}
     </div>
   );
 
