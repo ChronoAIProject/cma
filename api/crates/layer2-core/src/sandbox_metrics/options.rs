@@ -2,6 +2,7 @@
 use super::{MetricsError, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -185,18 +186,16 @@ pub fn disambiguate_options(items: &mut [FilterOption], hints: &[Option<String>]
     disambiguate_options_with_context(items, &contexts);
 }
 
-/// Only duplicates on the returned page need secondary text. Use the shortest
+/// Only duplicates in the supplied set need secondary text. Use the shortest
 /// distinguishing human context, then a reference only for indistinguishable ties.
 pub fn disambiguate_options_with_context(items: &mut [FilterOption], contexts: &[OptionContext]) {
+    let mut counts = HashMap::new();
+    for item in items.iter() {
+        *counts.entry(item.label.as_str()).or_insert(0_usize) += 1;
+    }
     let duplicate: Vec<_> = items
         .iter()
-        .map(|item| {
-            items
-                .iter()
-                .filter(|other| other.label == item.label)
-                .count()
-                > 1
-        })
+        .map(|item| counts[item.label.as_str()] > 1)
         .collect();
     let mut levels = vec![0; items.len()];
     let mut references = vec![0; items.len()];
@@ -226,13 +225,17 @@ pub fn disambiguate_options_with_context(items: &mut [FilterOption], contexts: &
             .collect();
         // Compare the strings actually chosen for display, even when different
         // rows have reached different precision levels or contain generated-looking names.
-        let collisions: Vec<_> = (0..items.len())
-            .filter(|&i| {
-                duplicate[i]
-                    && (0..items.len()).any(|j| {
-                        i != j && items[i].label == items[j].label && details[i] == details[j]
-                    })
-            })
+        let mut groups: HashMap<_, Vec<usize>> = HashMap::new();
+        for (i, item) in items.iter().enumerate().filter(|(i, _)| duplicate[*i]) {
+            groups
+                .entry((item.label.as_str(), details[i].as_deref()))
+                .or_default()
+                .push(i);
+        }
+        let collisions: Vec<_> = groups
+            .into_values()
+            .filter(|group| group.len() > 1)
+            .flatten()
             .collect();
         if collisions.is_empty() {
             for (item, detail) in items.iter_mut().zip(details) {

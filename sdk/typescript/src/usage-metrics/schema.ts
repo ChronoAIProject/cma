@@ -30,7 +30,7 @@ export const quantity = (value: unknown): UsageMetricQuantity => {
     );
   return value;
 };
-const integer = (value: unknown): UsageMetricQuantity => {
+export const integer = (value: unknown): UsageMetricQuantity => {
   const parsed = quantity(value);
   if (
     (typeof parsed === 'number' && !Number.isSafeInteger(parsed)) ||

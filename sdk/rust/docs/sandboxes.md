@@ -245,3 +245,15 @@ every cached request.
 use lossless u64 parsing of either safe JSON integers or canonical decimal
 strings. Choose an explicit presentation conversion; never silently convert
 large byte/second strings into floating-point invoice evidence.
+
+### Owner allocation rankings
+
+`client.admin_usage_metrics().owner_allocations(report_id, &query).await` reads a bounded owner allocation page from an existing administrator
+report. Results cover the full selected cohort, ordered by allocation descending,
+with `total_count` and a signed `next` cursor. Supply that cursor with the same
+report and resource to continue. It does not create another report.
+
+Display `label`, and show `disambiguator` only as secondary duplicate-name context.
+`subject` is an opaque key and must not appear in chart text or tooltips. Respect
+partial `complete` flags, retain loaded/total counts on failures, and handle
+429/503 retries and 410 report expiry explicitly.
