@@ -126,6 +126,7 @@ fn duplicate_context_prefers_humans_and_never_changes_primary_labels() {
         Some(""),
         Some("invalid"),
         Some("2026-99-99T00:00:00Z"),
+        Some("9999-12-31T23:59:59-23:59"),
     ] {
         assert!(option_joined(at).is_none());
     }
