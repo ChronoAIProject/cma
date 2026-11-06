@@ -64,6 +64,14 @@ while the page stays open. Failed jobs retain diagnostic evidence but cannot
 export an accepted image. Evidence lasts 90 days; the exact native transfer lasts
 one day and records source/tree, run/attempt, image identity and archive hash.
 
+The Omarchy input fixture waits for the launch page before keyboard navigation
+to a page with a distinct readiness title. It then requires acknowledgements
+from the page for the full 1280x800 browser viewport, field focus, typed value
+and button result. A stale title or a timeout cannot advance the input sequence.
+Close, input-order and page-acknowledgement regressions run before image build;
+the native Agent, authenticated user input and retained-profile gates remain
+the acceptance proof for the actual desktop.
+
 The provider workflow contract and its Omarchy mutation regressions protect this
 job's native platform, current-source donor, ordered gates and read-only authority.
 The job has no Backend dependency, so it composes with the parallel nextest
