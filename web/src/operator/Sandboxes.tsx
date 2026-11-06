@@ -55,7 +55,6 @@ export function Sandboxes({
   };
   return (
     <section aria-label="Sandbox resource dashboard">
-      {!canControl && <p>Cross-owner control is required to retire a Sandbox.</p>}
       <MetricsDashboard
         key={revision}
         api={client.adminUsageMetrics}
@@ -76,6 +75,9 @@ export function Sandboxes({
             <Button
               size="sm"
               variant="danger"
+              title={
+                !canControl ? 'Cross-owner control is required to retire a Sandbox.' : undefined
+              }
               disabled={
                 disabled || !canControl || row.status === 'retired' || row.status === 'retiring'
               }
@@ -87,6 +89,14 @@ export function Sandboxes({
             >
               Retire
             </Button>
+            {!canControl && (
+              <span
+                className="operator-notice"
+                title="Cross-owner control is required to retire a Sandbox."
+              >
+                Control required
+              </span>
+            )}
           </>
         )}
       />

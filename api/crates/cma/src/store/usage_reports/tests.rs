@@ -388,5 +388,6 @@ async fn metrics_all_sorts_are_indexed_stable_null_last_and_cursor_bound() {
 }
 
 mod allocated;
+mod pressure;
 mod read_models;
 mod scale;
