@@ -64,7 +64,9 @@ and returns at most 50 `{value,label}` entries with a signed cursor. Its JSON
 body keeps searched names out of proxy/access-log URLs. Every request checks
 `ReadAllSandboxes`, including pages and selected-value resolution; cursors bind
 the principal and query. Store errors deliberately discard driver text, which
-can contain search values. No report job is created, no identity is logged and
+can contain search values. The existing reporting circuit admits discovery before aggregation; an open
+circuit returns Busy/429 without a database command. No report job is created,
+no identity is logged and
 no data migration is required. It reuses existing inventory/directory data and
 the bounded reporting connection pool. Report endpoints remain compatible with
 #1398 and later. Deploy this API addition before the web image; the lead must
@@ -83,7 +85,12 @@ belong to the lead and deployment teammate.
 - Disposable Mongo integration exercises actual aggregation queries with 400 and
   20,001 Sandboxes: complete name search, pagination, owner narrowing, duplicate
   and missing names, runtime discovery, selected resolution, literal search,
-  rejected cursor reuse and zero report jobs.
+  rejected cursor reuse and zero report jobs. The expanded fixture includes 120
+  owners over three pages and live/suspended runtime inventory at the full fleet
+  size. An instrumented client verifies no commands while the circuit is open,
+  recovery after expiry, and concurrent discovery/report polling. Response sizes
+  and request/database deadlines are bounded; substring scans and grouping can
+  still visit the candidate cohort.
 - REST/core tests cover per-request authorization, invalid input, cursor binding,
   service failure and safe fallback labels. SDK tests exercise POST transport,
   response validation and administrator-only use.

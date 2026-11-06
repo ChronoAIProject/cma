@@ -368,6 +368,9 @@ owners, owner name for Sandboxes, and a derived reference only as a last resort
 when human context is missing or also duplicates. Selected labels remain plain.
 Sandbox names come
 from the retained usage inventory; runtime choices include suspended runtimes.
-Results are private/no-store, bounded by database and request deadlines, and
+Discovery honors the existing reporting circuit before database work, without
+requiring a report. An open circuit returns 429. Response sizes, connection count
+and database/request time are bounded; name scans and grouping may still visit
+the candidate cohort. Results are private/no-store, and
 errors never log search text or display names. The Ops web filter requires this
 API extension; report endpoints remain compatible with #1398 and later.
