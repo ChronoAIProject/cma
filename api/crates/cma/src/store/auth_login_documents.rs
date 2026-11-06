@@ -24,6 +24,7 @@ impl MongoAuthStore {
                         .seal(LOGIN_KIND, &id, "actor_link_intent", &serialized)
                 })
                 .transpose()?,
+            silent: attempt.silent,
             expires_at: DateTime::from_system_time(attempt.expires_at),
         })
     }
@@ -63,6 +64,7 @@ impl MongoAuthStore {
             verifier: SecretValue::new(verifier),
             return_to: document.return_to,
             actor_link_intent,
+            silent: document.silent,
             expires_at: document.expires_at.to_system_time(),
         })
     }

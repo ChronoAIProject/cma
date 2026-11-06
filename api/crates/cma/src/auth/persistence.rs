@@ -89,6 +89,8 @@ pub struct LoginAttempt {
     pub return_to: Option<String>,
     /// Server-created authority intent; never inferred from return_to.
     pub actor_link_intent: Option<super::actor_links::ActorLoginIntent>,
+    /// Asked the provider not to interact; a refusal returns to `return_to`.
+    pub silent: bool,
     pub expires_at: SystemTime,
 }
 
