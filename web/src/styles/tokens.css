@@ -167,7 +167,7 @@ body {
 
   --primary-fill: var(--dsw-alias-button-primary-fill);
   --primary-fill-hover: var(--dsw-alias-button-primary-hover);
-  --on-primary: var(--dsw-alias-label-primary-foreground);
+  --on-primary: var(--dsw-alias-button-primary-foreground);
 
   --lift-rest: var(--dsw-shadow-lv1);
   --lift-plate: var(--dsw-shadow-lv3);
