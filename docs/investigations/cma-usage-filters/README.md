@@ -66,8 +66,7 @@ body keeps searched names out of proxy/access-log URLs. Every request checks
 the principal and query. Store errors deliberately discard driver text, which
 can contain search values. The existing reporting circuit admits discovery before aggregation; an open
 circuit returns Busy/429 without a database command. No report job is created,
-no identity is logged and
-no data migration is required. It reuses existing inventory/directory data and
+no identity is logged and no data migration is required. It reuses existing inventory/directory data and
 the bounded reporting connection pool. Report endpoints remain compatible with
 #1398 and later. Deploy this API addition before the web image; the lead must
 serialize API deployment with the billing token bridge.
@@ -79,7 +78,8 @@ belong to the lead and deployment teammate.
 
 - Five baseline reproduction tests, retained outside the repository in the task
   evidence directory, passed before implementation.
-- Frontend unit suite: 390 files / 3,624 tests; targeted filter/polling tests cover
+- Frontend unit suite on the merged develop tree: 392 files / 3,650 tests;
+  24 targeted filter/polling tests cover
   pending reports, cancellation, pagination, keyboard clear, deep links, duplicate
   labels, errors/retry and empty states with 400 / 20,001 choices.
 - Disposable Mongo integration exercises actual aggregation queries with 400 and
