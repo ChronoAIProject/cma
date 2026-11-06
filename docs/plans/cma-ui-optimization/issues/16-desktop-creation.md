@@ -8,6 +8,10 @@
 
 **优先级:** P3
 
+2026-11-06 更新：以下为原验收记录。当前首页以 `docs/Web_Style.md` 为准，
+仅提供 Shared desktop，不再选择独立 Agent browser；已记录的 `desktop: true`
+请求仍按原 key/body 恢复。创建后的 Enable browser 命令保留。
+
 ## Acceptance criteria
 
 - [x] 首页上下文提供可理解的可选桌面开关，默认关闭以保留当前成本；说明是否需要额外准备，能力不支持时给出原因而非假开关。

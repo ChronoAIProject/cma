@@ -101,23 +101,6 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     resourceViews: sdk,
     readTaskRepositorySupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-repository'] === true,
-    readDesktopCapability: async (scope, options) => {
-      const document = await sdk.readOpenApi(options);
-      const components = document.components as
-        | {
-            schemas?: { AgentLifecycleCreateRequest?: { properties?: { desktop?: unknown } } };
-          }
-        | undefined;
-      if (!components?.schemas?.AgentLifecycleCreateRequest?.properties?.desktop)
-        return {
-          state: 'unsupported',
-          reason: 'This service does not support desktop creation.',
-          runtime_contract: 3,
-          min_memory_mib: 2048,
-          min_cpu_millis: 1000,
-        };
-      return sdk.agents.desktopCapability(scope, options);
-    },
     readTaskCreationSupport: async (options) => {
       const document = await sdk.readOpenApi(options);
       const components = document.components as
