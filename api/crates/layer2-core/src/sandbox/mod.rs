@@ -219,7 +219,7 @@ pub use checkpoint::{
 pub use checkpoint_capture::{SandboxCheckpointCapture, SandboxCheckpointCapturePhase};
 pub use conversation::{
     AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
-    MAX_DURABLE_AGENT_MESSAGE_BYTES,
+    NativeCompletionEvidence, MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 pub use conversation_recorder::{
     AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription, DurableAgentUpdateRecorder,

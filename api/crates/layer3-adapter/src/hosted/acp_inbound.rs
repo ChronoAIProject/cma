@@ -42,6 +42,31 @@ impl Bridge {
                         self.answered.lock().await.clear();
                         return;
                     }
+                    // A second attachment may receive the response after the
+                    // waiter owning this prompt has disappeared.  Only the
+                    // adapter's exact prompt namespace is eligible here;
+                    // normal bootstrap/configuration responses remain opaque.
+                    if let Some(prompt_id) = crate::PromptIdentity::parse(id) {
+                        if let Some(outcome) = prompt_outcome(&frame) {
+                            updates.send(match outcome {
+                                super::acp::Outcome::Ended(response) => {
+                                    ConversationUpdate::TurnEndedForPrompt {
+                                        prompt_id,
+                                        response,
+                                    }
+                                }
+                                super::acp::Outcome::Failed {
+                                    message,
+                                    capability,
+                                } => ConversationUpdate::FailedForPrompt {
+                                    prompt_id,
+                                    message,
+                                    capability,
+                                },
+                            });
+                            return;
+                        }
+                    }
                 }
                 if id.as_i64().is_some()
                     && self
@@ -211,6 +236,18 @@ impl Bridge {
                 .await;
         }
     }
+}
+
+fn prompt_outcome(frame: &serde_json::Value) -> Option<super::acp::Outcome> {
+    let terminal = frame.get("error").is_some()
+        || frame
+            .get("result")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|result| result.contains_key("stopReason"));
+    if !terminal {
+        return None;
+    }
+    Some(super::acp_turn::turn_outcome(frame.clone()))
 }
 
 pub(super) fn scope_activity(update: ConversationUpdate, owns_prompt: bool) -> ConversationUpdate {

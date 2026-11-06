@@ -19,6 +19,12 @@ impl PromptRecovery {
             outcome: None,
         }
     }
+
+    pub(super) fn expects(&self, id: &str) -> bool {
+        self.expected
+            .as_ref()
+            .is_some_and(|expected| expected.as_str() == id)
+    }
 }
 
 impl Bridge {

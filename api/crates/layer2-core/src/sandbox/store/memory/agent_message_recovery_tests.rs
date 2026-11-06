@@ -1,6 +1,10 @@
 use super::*;
 use crate::sandbox::store::{AgentMessageCheckpoint, Page, PageRequest, SandboxStoreError};
 use crate::sandbox::{Agent, AgentUpdateOutcome, MAX_DURABLE_AGENT_MESSAGE_BYTES};
+use crate::sandbox::{
+    AgentOperationDelivery, AgentOperationIntent, AgentOperationRecord, AgentTurnUsage,
+    AgentUsageCheckpoint, NativeCompletionEvidence,
+};
 use crate::{AgentId, SubjectId};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -19,6 +23,8 @@ fn messages(entries: &[AgentLogEntry]) -> Vec<String> {
         })
         .collect()
 }
+
+const RECONCILED_AT: &str = "2026-09-05T00:00:01Z";
 
 #[tokio::test]
 async fn replacement_recorder_recovers_private_prefix_before_suffix_and_terminal() {
@@ -88,6 +94,93 @@ async fn replacement_recorder_recovers_private_prefix_before_suffix_and_terminal
     assert_eq!(
         messages(&store.agent_log(&working.id, 0, 200).await.unwrap()),
         ["prefix suffix"]
+    );
+}
+
+#[tokio::test]
+async fn native_completion_reconciliation_is_guarded_and_idempotent() {
+    let (store, working, recorder) = working_agent().await;
+    let turn = working.conversation.active_turn.unwrap();
+    {
+        let mut state = store.lock();
+        let agent = state.agents.get_mut(&working.id).unwrap();
+        let mut operation = AgentOperationRecord::new(
+            1,
+            1,
+            turn,
+            AgentOperationIntent::send_message("proof"),
+            NOW.into(),
+        )
+        .unwrap();
+        operation.state = AgentOperationDelivery::ExecutionObserved;
+        operation.execution_observed_at = Some(NOW.into());
+        agent.conversation.operation = Some(operation);
+        agent.conversation.observations.usage = Some(AgentUsageCheckpoint {
+            conversation_id: agent.conversation.conversation_id.clone().unwrap(),
+            source_turn: "native-turn".into(),
+            current_turn: Some(AgentTurnUsage {
+                turn_sequence: turn,
+                input_tokens: 1,
+                output_tokens: 1,
+            }),
+            ..Default::default()
+        });
+    }
+    let mut assembly = AgentMessageAssembly::default();
+    recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            message_chunk("reply", "preserved answer"),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let evidence = NativeCompletionEvidence {
+        native_conversation_id: working.conversation.conversation_id.clone().unwrap(),
+        runtime_generation: 1,
+        turn_sequence: turn,
+        native_turn_id: "native-turn".into(),
+        admitted_at: NOW.into(),
+        completed_at: RECONCILED_AT.into(),
+        task_started: true,
+        task_complete: true,
+        no_later_open_turn: true,
+        history_complete: true,
+        history_prefix_unchanged: true,
+        history_sha256: "a".repeat(64),
+    };
+    let first = recorder
+        .reconcile_completion(
+            &working.id,
+            1,
+            &mut assembly,
+            evidence.clone(),
+            PromptResponse::new(TurnStopReason::EndTurn),
+            RECONCILED_AT.into(),
+        )
+        .await
+        .unwrap();
+    assert!(first.turn_closed);
+    let second = recorder
+        .reconcile_completion(
+            &working.id,
+            1,
+            &mut AgentMessageAssembly::default(),
+            evidence,
+            PromptResponse::new(TurnStopReason::EndTurn),
+            RECONCILED_AT.into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second, first);
+    let logs = store.agent_log(&working.id, 0, 200).await.unwrap();
+    assert_eq!(
+        logs.iter()
+            .filter(|entry| matches!(entry.kind, AgentLogKind::TurnCompleted { .. }))
+            .count(),
+        1
     );
 }
 

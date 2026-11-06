@@ -62,6 +62,7 @@ pub(crate) struct SandboxLifecycleComposition {
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
     updates: Arc<dyn AgentUpdateRecorder>,
+    repair_worker: Arc<AgentWorker>,
     funding_renewal: FundingRenewalWorker,
 }
 
@@ -181,6 +182,7 @@ impl SandboxLifecycleComposition {
             reconciliation,
             sandbox: SandboxScheduler::new(sandbox_worker).with_admission_wake(sandbox_admitted),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
+            repair_worker: Arc::clone(&agent_worker),
             agent: AgentScheduler::new(agent_worker, agent_admitted),
             titles,
             funding_renewal,
@@ -190,6 +192,18 @@ impl SandboxLifecycleComposition {
 
     pub(crate) fn updates(&self) -> Arc<dyn AgentUpdateRecorder> {
         Arc::clone(&self.updates)
+    }
+
+    pub(crate) async fn repair_stale_turns(
+        &self,
+        ids: &[layer2_core::AgentId],
+        now: std::time::SystemTime,
+        apply: bool,
+    ) -> Result<
+        super::agent_worker::reconcile_completion::RepairReport,
+        layer2_core::sandbox::store::SandboxStoreError,
+    > {
+        self.repair_worker.repair_stale_turns(ids, now, apply).await
     }
 
     pub(crate) async fn initialize(&self) -> Result<(), String> {

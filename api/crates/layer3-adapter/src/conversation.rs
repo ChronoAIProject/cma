@@ -152,6 +152,19 @@ pub enum ConversationUpdate {
     Usage(crate::ConversationUsage),
     Asked(PermissionRequest),
     TurnEnded(PromptResponse),
+    /// A terminal response whose local waiter was lost.  The prompt identity
+    /// is durable evidence; callers must verify it against the active turn
+    /// before applying the response.
+    TurnEndedForPrompt {
+        prompt_id: crate::PromptIdentity,
+        response: PromptResponse,
+    },
+    /// Identity-bearing terminal failure from a waiter-less attachment.
+    FailedForPrompt {
+        prompt_id: crate::PromptIdentity,
+        message: String,
+        capability: Option<String>,
+    },
     Lost {
         frames: u64,
     },
@@ -190,8 +203,12 @@ impl ConversationUpdate {
             Self::Asked(_) => Some(TurnEvidence::Activity(
                 TurnScopedEvidence::ApprovalRequested,
             )),
-            Self::TurnEnded(_) => Some(TurnEvidence::TerminalResult),
-            Self::Failed { .. } => Some(TurnEvidence::TerminalFailure),
+            Self::TurnEnded(_) | Self::TurnEndedForPrompt { .. } => {
+                Some(TurnEvidence::TerminalResult)
+            }
+            Self::Failed { .. } | Self::FailedForPrompt { .. } => {
+                Some(TurnEvidence::TerminalFailure)
+            }
             Self::Said(_)
             | Self::Metadata(_)
             | Self::Usage(_)

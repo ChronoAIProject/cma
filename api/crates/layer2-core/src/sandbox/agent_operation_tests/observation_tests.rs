@@ -38,6 +38,49 @@ fn usage(
         counters_reset: false,
     })
 }
+
+#[test]
+fn identity_bearing_terminal_closes_only_the_matching_active_turn() {
+    let mut agent = test_agent(AgentStatus::Working, None);
+    let prompt = layer3_adapter::PromptIdentity::new(
+        agent.conversation.conversation_id.as_deref().unwrap(),
+        agent.conversation.runtime_generation.unwrap(),
+        agent.conversation.active_turn.unwrap(),
+    );
+    let logs = apply(
+        &mut agent,
+        ConversationUpdate::TurnEndedForPrompt {
+            prompt_id: prompt,
+            response: layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn),
+        },
+    );
+    assert!(logs
+        .iter()
+        .any(|log| matches!(log, AgentLogKind::TurnCompleted { .. })));
+    assert_eq!(agent.status, AgentStatus::Ready);
+    assert_eq!(agent.conversation.active_turn, None);
+}
+
+#[test]
+fn identity_bearing_terminal_rejects_a_foreign_turn() {
+    let agent = test_agent(AgentStatus::Working, None);
+    let foreign = layer3_adapter::PromptIdentity::new("other-conversation", 4, 9);
+    let result = fold_update(
+        &agent,
+        &AgentMessageAssembly::default(),
+        ConversationUpdate::TurnEndedForPrompt {
+            prompt_id: foreign,
+            response: layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn),
+        },
+        LATER,
+        false,
+    );
+    assert!(matches!(
+        result,
+        Err(AgentConversationError::InvalidState(message))
+            if message.contains("does not identify")
+    ));
+}
 #[test]
 fn runtime_metadata_persists_only_canonical_observations_and_deduplicates() {
     let mut agent = test_agent(AgentStatus::Ready, None);
