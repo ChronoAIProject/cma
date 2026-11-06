@@ -479,7 +479,7 @@ it('holds approval and Stop response controls during history hydration', async (
       onNavigate={vi.fn()}
     />,
   );
-  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: /^Agent settings:/ })).toBeInTheDocument();
   expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Allow' })).toBeDisabled();
@@ -517,7 +517,7 @@ it('holds approvals while saving and distinguishes pending admission from an act
     savingStartedAt: '2026-09-08T00:00:00Z',
   };
   const { rerender } = render(draw({ inputAvailability }));
-  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: /^Agent settings:/ })).toBeInTheDocument();
   expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   const draft = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(draft, { target: { value: 'Keep my draft' } });
@@ -534,8 +534,8 @@ it('holds approvals while saving and distinguishes pending admission from an act
   expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   expect(draft).toHaveValue('Keep my draft');
   rerender(draw({ pending: 'send', inputAvailability }, 'run-active'));
-  expect(screen.getByRole('button', { name: 'Queue message' })).toBeDisabled();
-  expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Queue message' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
   fireEvent.keyDown(draft, { key: 'Escape' });
   expect(interrupt).toHaveBeenCalledOnce();
   expect(approve).not.toHaveBeenCalled();
@@ -570,7 +570,7 @@ it('focuses the route heading while loading, then the composer for a usable Agen
     />,
   );
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveFocus();
-  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: /^Agent settings:/ })).toBeInTheDocument();
   expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
 });
 
@@ -615,7 +615,7 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
   expect(tool).not.toHaveTextContent(/duration/i);
   expect(screen.queryByText('Check the types.')).not.toBeInTheDocument();
   expect(screen.getByText('Conversation recovery')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Context usage' })).toHaveAccessibleDescription(
+  expect(screen.getByRole('button', { name: /^Agent settings:/ })).toHaveAccessibleDescription(
     /120 input/,
   );
   await actor.click(screen.getByRole('button', { name: 'Allow' }));
@@ -642,7 +642,7 @@ it('removes completed preparation while preserving active and failed preparation
     />
   );
   const { rerender } = render(draw(AGENT_DETAIL));
-  expect(await screen.findByRole('button', { name: 'Context usage' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: /^Agent settings:/ })).toBeInTheDocument();
   expect(screen.queryByLabelText('Sandbox resources')).not.toBeInTheDocument();
   expect(screen.queryByRole('region', { name: 'Agent preparation' })).not.toBeInTheDocument();
   rerender(

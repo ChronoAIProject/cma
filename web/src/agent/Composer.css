@@ -86,11 +86,11 @@
  */
 .agent-composer__controls {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   grid-template-areas:
-    'attach steering settings ring send'
-    'settings-panel settings-panel settings-panel settings-panel settings-panel'
-    'status status status status status';
+    'attach steering settings send'
+    'settings-panel settings-panel settings-panel settings-panel'
+    'status status status status';
   align-items: center;
   column-gap: 4px;
   min-width: 0;
@@ -109,11 +109,6 @@
 
 .agent-composer__steering {
   grid-area: steering;
-}
-
-.agent-composer__ring {
-  grid-area: ring;
-  display: inline-flex;
 }
 
 .agent-composer__actions {
@@ -228,10 +223,10 @@
 
   .agent-composer__controls {
     grid-template-areas:
-      'settings settings settings settings settings'
-      'attach steering . ring send'
-      'settings-panel settings-panel settings-panel settings-panel settings-panel'
-      'status status status status status';
+      'settings settings settings settings'
+      'attach steering . send'
+      'settings-panel settings-panel settings-panel settings-panel'
+      'status status status status';
   }
 }
 

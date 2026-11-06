@@ -90,7 +90,7 @@ it.each([
   });
   view.rerender(<MessageStream conversation={conversation} onApproval={() => {}} />);
   expect(screen.getByText(summary)).toBeVisible();
-  const disclosure = screen.getByRole('button', { name: 'View plan and operations' });
+  const disclosure = screen.getByRole('button', { name: 'View plan' });
   expect(disclosure).toHaveAttribute('aria-expanded', 'false');
   fireEvent.click(disclosure);
   const plan = screen.getByRole('region', { name: 'Plan' });
@@ -137,7 +137,7 @@ it('retains a successful fully reported plan across live completion and transcri
   );
   view.rerender(<MessageStream conversation={conversation} onApproval={() => {}} />);
   expect(screen.getByText('Completed all 3 steps')).toBeVisible();
-  expect(screen.getByRole('button', { name: 'View plan and operations' })).toHaveAttribute(
+  expect(screen.getByRole('button', { name: 'View plan' })).toHaveAttribute(
     'aria-expanded',
     'false',
   );

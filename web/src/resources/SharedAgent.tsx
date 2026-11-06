@@ -431,6 +431,7 @@ export function SharedAgent({
             settings={
               can('operate_agent') ? (
                 <SessionSettings
+                  usage={conversation?.usage}
                   agentId={agentId}
                   active
                   runtimeReady={agentInitialized(status, detail.ready_at)}
