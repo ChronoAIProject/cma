@@ -305,7 +305,7 @@ export function Menu({
         move(here + 1);
         return;
       case 'ArrowUp':
-        move(here - 1);
+        move(here < 0 ? rows.length - 1 : here - 1);
         return;
       case 'Home':
         move(0);
