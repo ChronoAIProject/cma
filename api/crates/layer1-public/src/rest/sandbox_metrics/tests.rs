@@ -16,6 +16,7 @@ const SANDBOX: &str = "sbx_00000000000000000000000000000001";
 pub(super) struct Store {
     pub(super) saved: Mutex<Option<Report>>,
     pub(super) revoked: AtomicBool,
+    pub(super) owner_context: Mutex<Vec<OwnerContextAccess>>,
 }
 #[async_trait]
 impl MetricsStore for Store {
@@ -23,7 +24,9 @@ impl MetricsStore for Store {
         &self,
         r: &Report,
         q: OwnerAllocationQuery,
+        owner_context: OwnerContextAccess,
     ) -> Result<OwnerAllocations> {
+        self.owner_context.lock().unwrap().push(owner_context);
         Ok(OwnerAllocations {
             report_id: r.report_id.clone(),
             metric: q.metric,

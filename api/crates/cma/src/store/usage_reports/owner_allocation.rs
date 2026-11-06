@@ -2,8 +2,9 @@
 use super::*;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::{
-    cursor::Cursor, disambiguate_options, option_joined, option_label, FilterOption, Metric,
-    OptionKind, Order, OwnerAllocation, OwnerAllocationQuery, OwnerAllocations, Report, Sort,
+    cursor::Cursor, disambiguate_options_with_context, option_label, FilterOption, Metric,
+    OptionContext, OptionKind, Order, OwnerAllocation, OwnerAllocationQuery, OwnerAllocations,
+    OwnerContextAccess, Report, Sort,
 };
 
 impl ReportingStore {
@@ -11,6 +12,7 @@ impl ReportingStore {
         &self,
         report: &Report,
         query: OwnerAllocationQuery,
+        owner_context: OwnerContextAccess,
     ) -> Result<OwnerAllocations> {
         if !report.scope.admin {
             return Err(MetricsError::Forbidden);
@@ -52,11 +54,6 @@ impl ReportingStore {
         page.extend([
             doc! {"$sort":{"allocated_hours":-1,"_id":1}},
             doc! {"$limit":i64::from(limit)+1},
-            // Directory reads occur only after selecting a bounded owner page.
-            doc! {"$lookup":{"from":"users","localField":"_id","foreignField":"_id","as":"identity"}},
-            doc! {"$project":{"allocated_hours":1,"sandbox_count":1,"complete":1,
-                "name":{"$arrayElemAt":["$identity.display_name",0]},
-                "first_seen_at":{"$arrayElemAt":["$identity.first_seen_at",0]}}},
         ]);
         let pipeline = [
             doc! {"$match":{"report_id":&report.report_id}},
@@ -64,7 +61,17 @@ impl ReportingStore {
             "allocated_hours":{"$sum":format!("$record.allocated_period.{}",query.field())},
             "sandbox_count":{"$sum":1_i64},
             "complete":{"$min":"$record.allocated_period.complete"}}},
-            doc! {"$facet":{"page":page,"count":[{"$count":"total"}]}},
+            // Names must be resolved against the whole cohort: pages are later
+            // displayed together, including equal-context ties across a boundary.
+            // The thin identity facet stays inside Mongo's document/memory limits,
+            // the existing two-second DB deadline and five-second request budget.
+            doc! {"$facet":{"page":page,"count":[{"$count":"total"}],"identities":[
+                {"$project":{"_id":1}},
+                {"$sort":{"_id":1}},
+                {"$lookup":{"from":"users","localField":"_id","foreignField":"_id","as":"identity"}},
+                {"$project":{"name":{"$arrayElemAt":["$identity.display_name",0]},
+                    "first_seen_at":{"$arrayElemAt":["$identity.first_seen_at",0]}}}
+            ]}},
         ];
         // Mongo errors can include user data. Do not log driver errors here.
 
@@ -91,9 +98,30 @@ impl ReportingStore {
                     .ok()
             })
             .unwrap_or(0) as u64;
-        let mut items = Vec::new();
         let mut labels = Vec::new();
-        let mut hints = Vec::new();
+        let mut contexts = Vec::new();
+        for value in document
+            .get_array("identities")
+            .map_err(|_| MetricsError::Unavailable)?
+        {
+            let row = value.as_document().ok_or(MetricsError::Unavailable)?;
+            let subject = row.get_str("_id").map_err(|_| MetricsError::Unavailable)?;
+            labels.push(FilterOption {
+                value: subject.into(),
+                label: option_label(OptionKind::Owner, subject, row.get_str("name").ok()),
+                disambiguator: None,
+            });
+            contexts.push(OptionContext::owner_with_access(
+                row.get_str("first_seen_at").ok(),
+                owner_context,
+            ));
+        }
+        disambiguate_options_with_context(&mut labels, &contexts);
+        let mut labels: std::collections::HashMap<_, _> = labels
+            .into_iter()
+            .map(|label| (label.value.clone(), label))
+            .collect();
+        let mut items = Vec::new();
         for value in document
             .get_array("page")
             .map_err(|_| MetricsError::Unavailable)?
@@ -109,16 +137,11 @@ impl ReportingStore {
             if !allocated_hours.is_finite() || allocated_hours < 0.0 {
                 return Err(MetricsError::Unavailable);
             }
-            labels.push(FilterOption {
-                value: subject.into(),
-                label: option_label(OptionKind::Owner, subject, row.get_str("name").ok()),
-                disambiguator: None,
-            });
-            hints.push(option_joined(row.get_str("first_seen_at").ok()));
+            let label = labels.remove(subject).ok_or(MetricsError::Unavailable)?;
             items.push(OwnerAllocation {
                 subject: subject.into(),
-                label: String::new(),
-                disambiguator: None,
+                label: label.label,
+                disambiguator: label.disambiguator,
                 allocated_hours,
                 sandbox_count: row
                     .get_i64("sandbox_count")
@@ -130,8 +153,6 @@ impl ReportingStore {
         }
         let next = if items.len() > usize::from(limit) {
             items.pop();
-            labels.pop();
-            hints.pop();
             let last = items.last().ok_or(MetricsError::Unavailable)?;
             Some(self.signer.encode(&Cursor {
                 principal: report.scope.principal.clone(),
@@ -147,11 +168,6 @@ impl ReportingStore {
         } else {
             None
         };
-        disambiguate_options(&mut labels, &hints);
-        for (item, label) in items.iter_mut().zip(labels) {
-            item.label = label.label;
-            item.disambiguator = label.disambiguator;
-        }
         Ok(OwnerAllocations {
             report_id: report.report_id.clone(),
             metric: query.metric,

@@ -2428,6 +2428,15 @@ fallbacks follow administrator filter options. Units are `core-hours` for CPU
 and `GiB-hours` for memory/disk. Partial histories retain their recorded totals
 and explicitly set `complete: false`. Never display `subject` as a label.
 
+Duplicate context is resolved against the complete report cohort before slicing
+the page, so clients can append pages without changing identity policy. It uses
+the same `OptionContext` resolver as filter discovery: join date first, precise
+UTC context only with current `ReadUserDirectory` authority, and a derived
+secondary reference only after authorized human context is exhausted. Directory
+authority is checked afresh for signed continuations; query input cannot grant it.
+The database reads a thin cohort-wide identity projection for each page; it is
+subject to Mongo document/memory limits as well as the reporting deadlines.
+
 Reads use the reporting pool/circuit, a two-second Mongo deadline and a five-second
 HTTP deadline. Open circuits return 429 before database access; source failures
 return 503. Responses are `private, no-store`. An unavailable page is not zero
