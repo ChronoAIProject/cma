@@ -600,6 +600,8 @@ async fn exhausted_shared_generation_budget_never_calls_the_model_or_spends_a_ti
     assert_eq!(f.capture.requests.lock().unwrap().len(), 1);
 }
 
+#[path = "title_worker_tests/suggestions.rs"]
+mod suggestion_tests;
 
 #[tokio::test]
 async fn missing_scoped_model_access_settles_fallback_without_network_retries() {
