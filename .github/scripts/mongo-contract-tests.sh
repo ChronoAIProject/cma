@@ -113,7 +113,7 @@ export CHRONO_TEST_MONGODB_URI="mongodb://${endpoint}/?directConnection=true&rep
 export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
 cd "$repo_root/api"
 if [[ "$selection" == 'scale' ]]; then
-  nextest_contracts run --test-threads 1 --no-fail-fast --success-output final
+  nextest_contracts run --no-tests fail --test-threads 1 --no-fail-fast --success-output final
 else
-  nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition"
+  nextest_contracts run --no-tests fail --test-threads 1 --no-fail-fast --partition "$partition"
 fi
