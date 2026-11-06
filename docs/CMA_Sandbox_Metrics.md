@@ -364,8 +364,20 @@ principal/query-bound `cursor` return `{items:[{value,label,disambiguator?}],nex
 resolves one value for URL restoration and cannot accompany search or cursor.
 Owner names come from the retained public directory. Primary labels stay plain.
 Only duplicates on the returned page receive a disambiguator: join date for
-owners, owner name for Sandboxes, and a derived reference only as a last resort
-when human context is missing or also duplicates. Selected labels remain plain.
+owners; owner name, then creation date for Sandboxes. Matching dates gain UTC
+time at the least distinguishing precision (minutes, seconds, then available
+fractional seconds). Precise owner observation times additionally require
+`ReadUserDirectory` on the current request; `ReadAllSandboxes` alone retains
+join dates and last-resort references. A signed continuation cannot preserve a
+revoked directory capability, and clients cannot request precision in the body.
+All dates are normalized to UTC. Final `(label, disambiguator)` pairs are checked
+after choosing context, including owner names that resemble generated text.
+Colliding rows gain further human detail before a last-resort secondary reference.
+Selected labels remain plain. The shared Core `OptionContext` and
+`disambiguate_options_with_context` policy also supports owner rankings.
+`OptionContext::owner` defaults to dates; an authorized consumer uses
+`owner_with_access` with `OwnerContextAccess::from_authorization` from the current
+caller. The single-hint helpers remain compatible.
 Sandbox names come
 from the retained usage inventory; runtime choices include suspended runtimes.
 Discovery honors the existing reporting circuit before database work, without
