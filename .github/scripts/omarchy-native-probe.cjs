@@ -139,7 +139,9 @@ const server = createServer(async (request, response) => {
     'export DISPLAY=:99',
     'xdotool windowfocus --sync ' + window,
     'xdotool key --clearmodifiers ctrl+d', 'sleep 0.3',
-    'python3 /opt/probes/desktop-browser-reopen.py',
+    // Close the native Wayland window, then require the real launcher to reopen
+    // it and finish both native shell calls while the browser remains alive.
+    'python3 /opt/probes/omarchy-close-browser.py --normal-window',
     '/usr/local/bin/cma-desktop-session --browser ' + origin + '/desktop-test',
     '/usr/local/bin/cma-desktop-session --browser',
     'xdotool key --clearmodifiers ctrl+l',
