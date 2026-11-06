@@ -8,6 +8,14 @@ job names. A failed, cancelled or skipped upstream job cannot turn the required
 check into a passing skip. `CMAEG latency budget` depends on the archive producer
 and remains outside this join.
 
+Hosted run `42170757820` at `ca3bd3cec` completed the first `Backend` join in
+30.1 minutes on cold caches, within the 25–33 minute target. That attempt failed
+on an existing Mongo scale-test timing sensitivity; rerunning only Mongo and the
+join passed using the original archive. `Images (api)` took 47 minutes and was
+the longest job, so image work bounds merge time for PRs that change API crates.
+See [hosted Actions evidence](Backend_CI_Archive_Verification.md#hosted-actions-evidence)
+for durations, artifact identity and the successful rerun.
+
 ## Build and runner boundaries
 
 All jobs use standard `ubuntu-latest` runners. Lint retains the pinned dependency
@@ -125,27 +133,36 @@ invocations.
 
 ## Cache pressure
 
-Only lint and the archive producer use `rust-cache`, with separate writers:
+Only lint and the archive producer use `rust-cache`. They use its default job-ID
+keys, with no `shared-key` or other key override:
 
-| Job | `shared-key` | Cache namespace |
-| --- | --- | --- |
-| Backend test build | `backend` | `v0-rust-backend-*` |
-| Backend lint | `backend-lint` | `v0-rust-backend-lint-*` |
+| Job | Cache namespace |
+| --- | --- |
+| Backend test build | `v0-rust-backend-test-build-*` |
+| Backend lint | `v0-rust-backend-lint-*` |
 
-The producer keeps the existing warm Backend namespace across the job-ID
-transition. Lint populates its own key, so finishing lint first cannot decide
-which artifacts the critical-path producer restores. Both save only on pushes
-to `refs/heads/develop`. PR jobs restore readable develop caches without creating
-merge-ref entries. Compiler/dependency hash changes can create new entries as
-before; consumers have no Rust cache and archives use Actions artifacts.
+The purpose is deterministic ownership: each job restores caches populated by
+that same job, so lint cannot decide which build artifacts the producer restores.
+Both save only on pushes to `refs/heads/develop`. PR jobs restore readable develop
+caches without creating merge-ref entries. Compiler/dependency and environment
+hash changes can still create new entries; consumers have no Rust cache and
+archives use Actions artifacts.
 
-This adds one develop-only lint cache entry per compiler/dependency key,
-compared with the former single Backend key. It stops creating per-PR Backend
-entries and stops using or saving `v0-rust-cmaeg-latency-*` entries. Existing old
-PR and latency entries remain until Actions evicts them; this workflow performs
-no remote cache deletion. See the
-[rust-cache key implementation](https://github.com/Swatinem/rust-cache/blob/v2/src/config.ts)
-and [nextest reuse-build documentation](https://nexte.st/docs/ci-features/archiving/).
+The earlier warm-cache transition claim, including the rationale in commit
+`c1a3bc974`, was incorrect. Keeping `shared-key: backend` preserved only a prefix.
+The producer's toolchain component set changed its environment hash, and the old
+entry had already been evicted. Both compilation jobs were cold in the hosted
+run. Default job-ID keys make the separate writers explicit without suggesting
+that an old entry will be reused.
+
+There are two develop-only cache entries per compiler/dependency/environment
+key, one more than the former Backend job. New per-PR Backend entries and
+`v0-rust-cmaeg-latency-*` writes are eliminated. Old Backend, PR and latency
+entries remain until Actions evicts them; this workflow performs no remote cache
+deletion. The hosted PR run created no Backend merge-ref caches. The first
+develop-push save remains to be verified after merge using the
+[caches API procedure](Backend_CI_Archive_Verification.md#hosted-actions-evidence).
+See the [rust-cache key implementation](https://github.com/Swatinem/rust-cache/blob/v2/src/config.ts).
 
 ## Reproduce selection equality
 

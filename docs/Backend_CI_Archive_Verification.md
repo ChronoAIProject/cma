@@ -156,7 +156,7 @@ rejection test together, passing 32 Node tests and the same checks. Its design
 docs landed with the behavior; the proof script and verification record landed
 in the following commit.
 
-Both validators passed. Provider regressions rejected 477 mutations and executed
+Both validators passed. Provider regressions rejected 481 mutations and executed
 the real aggregate command against success, failure, cancelled, skipped and
 missing dependency results. Release regressions rejected 108 mutations.
 
@@ -188,13 +188,85 @@ docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest .github/workflo
 Actionlint 1.7.12 passed with no findings. ShellCheck also passed for all three
 runner scripts with source following enabled.
 
-`gitleaks git --redact --no-banner --log-opts=8d2c8c109..HEAD .` scanned the three
-commits and found no leaks. `git diff 8d2c8c109 --check` passed as well.
+`gitleaks git --redact --no-banner --log-opts=origin/develop..HEAD .` found no
+leaks. `git diff origin/develop --check` passed as well.
 
-## Evidence boundary
+## Hosted Actions evidence
 
-A real GitHub Actions run must still verify x86_64-only tests, the complete job
-matrix and browser/Mongo campaigns on hosted runners, artifact upload/download
-and failed-job reruns, cache hits/saves, and the proposed 25–33 minute wall-clock
-target. Local inventory equality and representative archive execution do not
-claim those remote results. No branch protection or remote GitHub state changed.
+[Run 42170757820](https://github.com/ChronoAIProject/cma/actions/runs/42170757820)
+executed head `ca3bd3cec` for [PR #1394](https://github.com/ChronoAIProject/cma/pull/1394)
+on standard `ubuntu-latest` runners. Attempt 1 ran from 05:50:17Z to the Backend
+join at 06:20:22Z: **30.1 minutes**, within the 25–33 minute target.
+
+| Attempt 1 job | Minutes |
+| --- | ---: |
+| Backend lint | 19.2 |
+| Backend test build | 18.2 |
+| Backend tests, shards 1 / 2 / 3 | 6.9 / 8.1 / 7.5 |
+| Backend timing budgets | 2.0 |
+| Backend Image Manager Mongo isolation | 5.9 |
+| Backend Mongo contracts | 11.6 (failed) |
+| CMAEG latency budget | 1.4 |
+| Images (api) | 47 |
+
+The archive step took 17.7 minutes and upload took 10 seconds. Consumers started
+2–3 seconds after the producer finished; downloads took 8–49 seconds and
+extraction took 22–35 seconds. `Images (api)` was the longest job because API
+crates had changed upstream; image work still bounds merge time for API-changing
+PRs.
+
+Attempt 1's Mongo scale test
+`store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages`
+failed at `scale.rs:143` with `Err(Busy)` after 68.4 seconds. Develop commit
+`fcade4222` introduced the 250 ms pool-checkout circuit in
+`store/usage_reports/budget.rs`, which opens for 30 seconds. The same test passed
+under the old workflow in 32.6 seconds (run `42158091922`), 48.8 seconds
+(`42160518999`), and 82.8 seconds (`42167106204`, reported as SLOW). With identical
+fixture parameters, this is pre-existing timing sensitivity; this PR changes
+neither the test nor its budget. The Backend join correctly failed for the
+failed Mongo dependency.
+
+Attempt 2 used **Re-run failed jobs**: only Mongo contracts and the Backend join
+reran, without the producer. Download took 31 seconds and extraction 38 seconds.
+The downloaded attempt-1 artifact digest was identical to attempt-1 shard 1's:
+
+```text
+6c41ddc3f640f877a3a5d985c19b573f2f9c5bb7267bfffd66f0c46fcd8f9845
+```
+
+Mongo passed in 9.9 minutes, including the scale test in 52.7 seconds. The Backend
+join reported success, and all 24 PR checks were green after the rerun. This
+verifies hosted archive transfer/reuse and both failure and success aggregation.
+
+Both rust-cache restores reported no cache found. The producer computed
+`v0-rust-backend-Linux-x64-2e774008-a8d22a7a`, while the pre-split entry used
+`v0-rust-backend-Linux-x64-6bcd79e3-a8d22a7a`: installing stable without the old
+rustfmt/clippy components changed the environment hash. The old entry had also
+been evicted at the repository cache cap, so the timings above are fully cold.
+A shared prefix did not preserve a usable warm entry. The follow-up configuration
+uses default job-ID namespaces for deterministic ownership: `backend-lint` and
+`backend-test-build` each restore only their own job's saved artifacts.
+
+The PR run created no `v0-rust-backend*` entries under `refs/pull/1394/merge`,
+verified through
+`GET /repos/ChronoAIProject/cma/actions/caches?ref=refs/pull/1394/merge`.
+This confirms develop-push-only cache saves do not populate PR merge-ref caches.
+
+The remaining post-merge check is the first develop-push cache save. After a
+successful push run on develop, list every page of:
+
+```text
+GET /repos/ChronoAIProject/cma/actions/caches?ref=refs/heads/develop&per_page=100
+```
+
+For example, using authenticated `gh`:
+
+```sh
+gh api --paginate 'repos/ChronoAIProject/cma/actions/caches?ref=refs/heads/develop&per_page=100' \
+  --jq '.actions_caches[] | select(.key | test("^v0-rust-backend-(lint|test-build)-")) | {key, ref, created_at, last_accessed_at, size_in_bytes}'
+```
+
+Confirm that both exact keys printed by that run's lint and producer cache steps
+appear with `ref: refs/heads/develop`, creation times matching the push run, and
+nonzero sizes. That verifies the two separate writers under the final default
+job-ID configuration.

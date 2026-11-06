@@ -29,11 +29,11 @@ module CIContract
     toolchain = { "uses" => "dtolnay/rust-toolchain@stable" }
     install = { "name" => "Install pinned nextest", "uses" => "taiki-e/install-action@v2",
       "with" => { "tool" => "cargo-nextest@0.9.151", "fallback" => "none" } }
+    # No key overrides: rust-cache includes the distinct job ID by default.
     cache = { "uses" => "Swatinem/rust-cache@v2", "with" => {
-      "workspaces" => "api", "shared-key" => "backend",
+      "workspaces" => "api",
       "save-if" => "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}",
     } }
-    lint_cache = cache.merge("with" => cache.fetch("with").merge("shared-key" => "backend-lint"))
     stack = { "RUST_MIN_STACK" => 33554432 }
     compile = stack.merge("CARGO_PROFILE_DEV_DEBUG" => "0", "CARGO_PROFILE_TEST_DEBUG" => "0")
     defaults = { "run" => { "working-directory" => "api" } }
@@ -53,7 +53,7 @@ module CIContract
         "steps" => [checkout, toolchain.merge("with" => { "components" => "rustfmt, clippy" }),
           { "name" => "Install pinned dependency auditor", "uses" => "taiki-e/install-action@v2",
             "with" => { "tool" => "cargo-deny@0.20.2", "fallback" => "none" } },
-          backend_step("Dependency audit", "cargo deny --locked --all-features check advisories licenses bans sources"), lint_cache,
+          backend_step("Dependency audit", "cargo deny --locked --all-features check advisories licenses bans sources"), cache,
           backend_step("Format", "cargo fmt --all --check"),
           backend_step("Native recovery persistence and process fences", "python3 crates/layer3-adapter/src/codex/recovery_test.py"),
           backend_step("Retained transport native goal read-only proof", "python3 crates/layer3-adapter/src/hosted/managed_context/transport_goal_test.py"),
