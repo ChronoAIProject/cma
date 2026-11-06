@@ -51,6 +51,15 @@ client uses CMA's HttpOnly browser cookie. `GET /auth/login` begins OAuth,
 authenticated subject and capabilities, and `GET /auth/logout` ends browser
 sign-in. Do not put a bearer credential in URLs, local storage or embed markup.
 
+`GET /auth/login?prompt=none` asks NyxID to reuse an existing provider session
+without showing anything. NyxID returns a code when the browser is signed in;
+otherwise the callback redirects to the validated `return_to` without a cookie,
+instead of reporting a failed sign-in. `prompt=none` cannot be combined with
+`screen=register`, and no other `prompt` value is accepted. The web client tries
+this once per tab before showing the signed-out landing, only on pages that are
+valid return targets, and not after the person has signed out of CMA until they
+choose to sign in again: CMA logout ends the CMA cookie, not the NyxID session.
+
 `GET /auth/signup-options` is anonymous and returns exactly
 `email_signup`, `social_providers`, `invite_code_required` and
 `register_available`. It reports availability, not a CMA registration endpoint.
