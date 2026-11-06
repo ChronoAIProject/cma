@@ -15,7 +15,7 @@ prerequisite or fallback. The owner's current release decisions govern.
 | Storage | `github/store.rs`, `binding_store.rs`, `schema.rs`, `startup.rs`: sealed records, transactional guards, version-4 feature-gated initialization and bounded receipt TTL |
 | Channel selection | Saved `Source::Github` identities/allowlists; dynamic owner/binding checks and current source diagnostics |
 | Ordinary execution | Second PR: receipt-first recovery into existing routed admission, compact System Event, explicit non-human consent, task ID equals admission ID |
-| Serialization | CMA's existing per-Agent durable command lane; the separate bounded queue-policy fix is a release prerequisite |
+| Serialization | CMA's existing per-Agent durable command lane, capacity 64; both bindings explicitly opt into the deployed bounded queue-lifetime policy |
 | Board publication | chrono-goals scripts and sync skill using managed `gh api`; check/build, exact-head CI and merge recovery |
 | Daily trigger | chrono-goals Actions cron/dispatch → authenticated durable Custom channel → the same Agent |
 
