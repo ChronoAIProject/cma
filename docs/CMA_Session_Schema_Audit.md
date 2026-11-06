@@ -1,6 +1,6 @@
 # Desktop session schema incident and writer audit
 
-Issue: #1390. Incident source: `b31a88603`. Audit baseline: `8d2c8c109` (including the latest develop merge).
+Issue: #1390. Incident source: `b31a88603`. CMA source audit baseline: `8d2c8c109`.
 
 ## Root cause and trigger
 
@@ -109,3 +109,8 @@ script's owned disposable replica sets; production is not accessed or changed.
 - `cargo deny --locked --all-features check advisories licenses bans sources`:
   all four checks passed.
 - Gitleaks scan of the final branch diff: passed with no findings.
+
+Final integration merged `origin/develop` at `6750dac2a`. Its additional changes
+are limited to frontend code, documentation, and a CI browser-test entry; the
+backend source and Mongo harness match the tested tree. Workflow contracts,
+mutation regressions, and source-size checks passed again after that merge.
