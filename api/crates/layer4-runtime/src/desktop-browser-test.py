@@ -65,17 +65,20 @@ class Launcher(unittest.TestCase):
         (self.runtime / 'cma-hyprland-instance').write_text('fixture')
         self.env = dict(os.environ, HOME=str(self.root), FIXTURE=str(self.root),
                         PATH=str(self.root) + ':' + os.environ['PATH'])
-        for name, source in [('fake.py', FAKE), ('xdotool', PROBE), ('hyprctl', PROBE)]:
+        for name, source in [('chromium', FAKE), ('xdotool', PROBE), ('hyprctl', PROBE)]:
             p = self.root / name
+            if name == 'chromium':
+                # A Chromium-named interpreter preserves realistic /proc argv
+                # without altering the manager's production spawn command.
+                source = source.replace('#!/usr/bin/env python3', '#!' + str(self.root / 'chromium-python'))
             p.write_text(source)
             p.chmod(0o755)
-        (self.root / 'chromium').symlink_to(sys.executable)
+        (self.root / 'chromium-python').symlink_to(sys.executable)
         # Configure only the fixture copy; production paths and deadline are fixed.
         helper = self.root / 'manager.py'
         helper.write_text((SOURCE / 'desktop-browser.py').read_text().replace(
             "RUNTIME = Path('/tmp/cma-desktop-runtime')", f'RUNTIME = Path({str(self.runtime)!r})')
-            .replace('TIMEOUT = 20', 'TIMEOUT = 1')
-            .replace("command = ['chromium']", f"command = ['chromium', {str(self.root / 'fake.py')!r}]"))
+            .replace('TIMEOUT = 20', 'TIMEOUT = 1'))
         self.owner = subprocess.Popen(['sleep', '120'], start_new_session=True)
         self.manager = None
         self.helper = helper
