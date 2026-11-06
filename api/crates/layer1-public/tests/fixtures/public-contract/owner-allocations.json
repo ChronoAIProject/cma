@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "metrics-1--report-owner-allocations-ready",
+      "operation": "GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations",
+      "scenario": "metrics_admin_ready",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001/owner-allocations?metric=cpu",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "report_id": "umr_00000000000000000000000000000001",
+          "metric": "cpu",
+          "unit": "core-hours",
+          "items": [
+            {
+              "subject": "owner",
+              "label": "Alex Chen",
+              "allocated_hours": 24.0,
+              "sandbox_count": 2,
+              "complete": false
+            }
+          ],
+          "next": null,
+          "total_count": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-1--report-owner-allocations-anonymous",
+      "operation": "GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations",
+      "scenario": "metrics_admin_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001/owner-allocations?metric=cpu",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-1--report-owner-allocations-forbidden",
+      "operation": "GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations",
+      "scenario": "metrics_admin_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001/owner-allocations?metric=cpu",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "usage authority required",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-1--report-owner-allocations-missing",
+      "operation": "GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations",
+      "scenario": "metrics_admin_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001/owner-allocations?metric=cpu",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not_found",
+          "title": "not_found",
+          "status": 404,
+          "detail": "usage report or resource not found",
+          "code": "not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-1--report-owner-allocations-invalid",
+      "operation": "GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations",
+      "scenario": "metrics_admin_invalid",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001/owner-allocations?metric=cpu",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Invalid retained cursor",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-1--report-owner-allocations-busy",
+      "operation": "GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations",
+      "scenario": "metrics_admin_busy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001/owner-allocations?metric=cpu",
+        "headers": {}
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/reporting_budget_exceeded",
+          "title": "reporting_budget_exceeded",
+          "status": 429,
+          "detail": "reporting budget exhausted; retry with a narrower range",
+          "code": "reporting_budget_exceeded"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-1--report-owner-allocations-unavailable",
+      "operation": "GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations",
+      "scenario": "metrics_admin_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001/owner-allocations?metric=cpu",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "usage reporting is temporarily unavailable; retry or use a narrower range",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-1--report-owner-allocations-expired",
+      "operation": "GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations",
+      "scenario": "metrics_admin_expired",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001/owner-allocations?metric=cpu",
+        "headers": {}
+      },
+      "response": {
+        "status": 410,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/report_expired",
+          "title": "report_expired",
+          "status": 410,
+          "detail": "usage report expired; refresh the report",
+          "code": "report_expired"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

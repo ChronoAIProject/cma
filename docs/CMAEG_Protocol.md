@@ -513,7 +513,14 @@ subject in `profile.metadata.owner` MUST equal the authenticated owner. For an
 organization selected using a human bearer, send `X-CMAEG-Owner: <organization-id>`
 on every management request. CMAEG verifies that exact organization and current
 admin authority with NyxID; cache entries are isolated by bearer and selected
-owner. Omitting the header preserves the token's personal/native organization
+owner. Ordinary channel create/read/update/delete, listing and source diagnostics
+apply that same owner selection under service authentication; gateway permission
+alone does not replace current organization-admin evidence. A personal request
+cannot access an organization channel by knowing its opaque ID. Activity-stream
+refresh preserves the selected owner and rechecks current organization-admin
+authority before further data; losing that authority closes the stream. Provider
+binding requests retain the verified organization owner and exact existing Agent
+target. Omitting the header preserves the token's personal/native organization
 subject. The header is not accepted as authority without that verification.
 The optional [personal owner service-key lane](CMAEG_Owner_Service_Keys.md) uses
 the same Bearer routes and method permissions, requires a verified tracking
