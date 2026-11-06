@@ -141,3 +141,20 @@ describe('ToolCallGroup', () => {
     ).toBe('Edited app.js +2 −1');
   });
 });
+
+it('shows a concise failure while keeping the full recorded output behind row expansion', () => {
+  const output =
+    'exit code 7\n' + 'large earlier output\n'.repeat(500) + 'last one\nlast two\nlast three';
+  render(
+    <ToolCallRow
+      tool={call('failure', 'failed', { output: { text: output, truncated: false } })}
+    />,
+  );
+  fireEvent.click(screen.getByRole('button', { name: /Ran 1 command/ }));
+  const row = screen.getByRole('article');
+  expect(row).not.toHaveTextContent('large earlier output');
+  expect(row).toHaveTextContent('Exit code 7');
+  expect(row).toHaveTextContent('last three');
+  fireEvent.click(within(row).getByRole('button', { name: /Call failure/ }));
+  expect(screen.getByLabelText('Recorded output')).toHaveTextContent('large earlier output');
+});

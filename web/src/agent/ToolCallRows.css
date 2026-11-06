@@ -157,3 +157,11 @@ span.tool-call__terminal {
 .tool-call__added {
   color: var(--dsw-alias-workspace-accent);
 }
+
+.tool-call__error {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  white-space: pre-wrap;
+}
