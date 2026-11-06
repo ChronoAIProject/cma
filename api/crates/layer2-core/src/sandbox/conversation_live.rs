@@ -9,7 +9,7 @@ use crate::AgentId;
 
 use super::super::{Agent, AgentMessageAssembly};
 
-const LIVE_BUFFER_FRAGMENTS: usize = 32;
+pub(crate) const LIVE_BUFFER_FRAGMENTS: usize = 256;
 const LIVE_FRAGMENT_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +51,9 @@ pub struct AgentLiveSubscription {
 }
 
 impl AgentLiveSubscription {
+    /// Number of source fragments retained before a subscriber reports lag.
+    pub const BUFFER_FRAGMENTS: usize = LIVE_BUFFER_FRAGMENTS;
+
     pub async fn recv(&mut self) -> Result<AgentLiveFragment, broadcast::error::RecvError> {
         self.receiver.recv().await
     }
