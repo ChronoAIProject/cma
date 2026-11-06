@@ -349,9 +349,9 @@ pub(crate) async fn serve(
     let connections = connections::ConnectionService::new(state.clone(), tools_state.clone());
     let _connection_worker = connections.start_completion_worker(runner);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
-    let mut github_worker = config
+    let mut github_initialization = config
         .github_enabled
-        .then(|| crate::github::Worker::start(state.clone(), ingress.clone()));
+        .then(|| crate::github::Initialization::start(state.clone(), ingress.clone()));
     let ingress = ingress.with_receipt_observer(Arc::new(connections.clone()));
     let _metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
     let mut routed_workers = crate::serve_routed::start_workers(routed, state.readiness.clone());
@@ -423,7 +423,7 @@ pub(crate) async fn serve(
         for worker in &routed_workers {
             worker.stop_scheduling();
         }
-        if let Some(worker) = &github_worker {
+        if let Some(worker) = &github_initialization {
             worker.stop();
         }
         let (
@@ -462,7 +462,7 @@ pub(crate) async fn serve(
             lark_controls_drained,
             whatsapp_forms_drained,
         );
-        shutdown::drain_github(&mut github_worker, deadline).await;
+        shutdown::drain_github(&mut github_initialization, deadline).await;
         if !delivery_engine.drain(deadline).await {
             tracing::warn!(
                 "delivery drain deadline reached; remaining sends cancelled with unknown outcome"

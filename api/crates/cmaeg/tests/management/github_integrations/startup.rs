@@ -459,3 +459,81 @@ async fn disabled_or_absent_flag_refuses_admission_and_preserves_integrations() 
         .unwrap();
     assert_eq!(restored, app);
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn legacy_receipt_retention_is_stamped_once_across_repeatable_upgrade() {
+    use mongodb::bson::{doc, spec::BinarySubtype, Binary};
+    let mut f = Fixture::new(true).await;
+    let app = f
+        .register(
+            "token-alice",
+            "legacy-receipt",
+            Some("fixture-webhook-secret"),
+        )
+        .await;
+    let body = json!({"zen":"legacy","hook_id":7,"hook":{"type":"App"}}).to_string();
+    let response = f
+        .webhook(
+            &format!(
+                "{}/v1/github/apps/{}/webhooks",
+                f.base,
+                app["app_ref"].as_str().unwrap()
+            ),
+            "fixture-webhook-secret",
+            "legacy-ping",
+            "ping",
+            &body,
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let mut receipt: serde_json::Value = response.json().await.unwrap();
+    receipt.as_object_mut().unwrap().remove("retained_until");
+    let id = receipt["receipt_id"].as_str().unwrap().to_owned();
+    let old=serde_json::to_vec(&json!({"id":id,"owner":"alice","kind":"delivery","value":{"receipt":receipt,"raw_body_records":[]}})).unwrap();
+    let blob = cmaeg_core::seal::seal_blob(&key_ring(1), &old).unwrap();
+    for child in &mut f.children {
+        child.kill().await.unwrap();
+    }
+    let database = f.database.admin.database(&f.database.name);
+    database.collection::<mongodb::bson::Document>("eg_automation_records").update_one(doc! {"_id":&id},doc! {"$set":{"blob":Binary{subtype:BinarySubtype::Generic,bytes:blob}},"$unset":{"expires_at":""}}).bypass_document_validation(true).await.unwrap();
+    database
+        .collection::<mongodb::bson::Document>("eg_schema_migrations")
+        .update_one(
+            doc! {"_id":"github_integrations"},
+            doc! {"$set":{"version":3}},
+        )
+        .await
+        .unwrap();
+    f.allow_startup_migration().await;
+    f.base = f.replica().await;
+    let path = format!("/v1/github/deliveries/{id}");
+    let migrated = f
+        .read(&f.base, &path, "token-alice")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert!(
+        migrated["retained_until"].as_i64().unwrap()
+            >= migrated["received_at"].as_i64().unwrap() + 7 * 86400
+    );
+    database
+        .collection::<mongodb::bson::Document>("eg_schema_migrations")
+        .update_one(
+            doc! {"_id":"github_integrations"},
+            doc! {"$set":{"version":3}},
+        )
+        .await
+        .unwrap();
+    let again = f.replica().await;
+    let reread = f
+        .read(&again, &path, "token-alice")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(reread, migrated);
+}
