@@ -199,3 +199,22 @@ it('keeps a last-resort duplicate reference out of the selected label and title'
   expect(selected.title).toBe('Unnamed owner');
   expect(selected).not.toHaveTextContent('reference');
 });
+
+for (const [kind, label, safe] of [
+  ['owner', 'Owner', 'Unnamed owner'],
+  ['sandbox', 'Sandbox', 'Unnamed Sandbox'],
+  ['runtime', 'Runtime version', 'Unnamed runtime'],
+] as const) {
+  it(`${kind} selected resolution keeps UUIDs out of text, accessible name and title`, async () => {
+    const api = metricsClient(true);
+    const value = 'Research-91892afa-5fa5-4f4f-9100-2b8d986d2f71';
+    api.options.mockResolvedValue({ items: [{ value, label: safe }], next: null });
+    render(<FilterOptionPicker api={api} kind={kind} value={value} onChange={() => {}} active />);
+    const selected = await screen.findByRole('button', { name: `${label}: ${safe}` });
+    expect(selected).toHaveTextContent(safe);
+    expect(selected.title).toBe(safe);
+    expect(selected.getAttribute('aria-label')).toBe(`${label}: ${safe}`);
+    expect(document.body.textContent).not.toContain(value);
+    expect(api.options).toHaveBeenCalledWith(expect.objectContaining({ selected: value }));
+  });
+}
