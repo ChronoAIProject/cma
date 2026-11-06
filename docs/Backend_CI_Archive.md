@@ -77,7 +77,8 @@ target, extraction alone supplied the child binaries and passed both the
 compile-time executable-path test and the gateway fixture lookup. No
 `archive.include` configuration is needed. This is why the separate locked
 workspace build remains a required lint-job gate without blocking archive
-consumers.
+consumers. Exact commands and inventories are recorded in
+[archive verification](Backend_CI_Archive_Verification.md).
 
 ## Local scripts and selection semantics
 
@@ -145,3 +146,21 @@ PR and latency entries remain until Actions evicts them; this workflow performs
 no remote cache deletion. See the
 [rust-cache key implementation](https://github.com/Swatinem/rust-cache/blob/v2/src/config.ts)
 and [nextest reuse-build documentation](https://nexte.st/docs/ci-features/archiving/).
+
+## Reproduce selection equality
+
+Export the two baseline scripts from `8d2c8c109` into a temporary directory.
+After extracting an archive, run from `api/`:
+
+```sh
+CMA_NEXTEST_REUSE=1 python3 ../.github/scripts/backend-selection-proof.py BASELINE_SCRIPTS OUTPUT
+```
+
+The proof compares the old main selection to the disjoint union of three
+partitions, both isolated budgets, the exact Linux case, Mongo, every Image
+Manager invocation, and CMAEG latency. It enumerates original `cargo test`
+filters through the archived binaries' own libtest `--list` interface, then
+compares them to nextest lists. It emits sorted `(binary, test)` inventories and
+counts, and fails on an empty set, any difference, or a duplicate shard member.
+This proves selection semantics on the archive's compiled platform; it does
+not substitute an ARM64 inventory for the x86_64 Actions run.
