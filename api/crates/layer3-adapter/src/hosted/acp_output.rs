@@ -46,6 +46,9 @@ pub(super) struct ReliableOutput {
     session: Option<String>,
     queued: VecDeque<HeldOutput>,
     queued_bytes: usize,
+    /// Cursor of an identity-bearing terminal that could not be committed.
+    /// Cumulative ACKs must not cross this frame.
+    blocked_at: Option<u64>,
     acknowledgements: mpsc::Sender<RuntimeOutputSource>,
     durable_progress: tokio::sync::watch::Sender<u64>,
 }
@@ -61,6 +64,7 @@ impl ReliableOutput {
             session: None,
             queued: VecDeque::new(),
             queued_bytes: 0,
+            blocked_at: None,
             acknowledgements,
             durable_progress: tokio::sync::watch::channel(0).0,
         }
@@ -124,7 +128,33 @@ impl Bridge {
             state.queued.push_back(held);
             return Ok(());
         }
+        if self.unmatched_terminal(&held.payload).await {
+            state.blocked_at = Some(cursor);
+        }
         self.deliver_output(&state, held, updates).await
+    }
+
+    async fn unmatched_terminal(&self, payload: &[u8]) -> bool {
+        let Ok(frame) = serde_json::from_slice::<serde_json::Value>(payload) else {
+            return false;
+        };
+        let Some(id) = frame.get("id").and_then(serde_json::Value::as_str) else {
+            return false;
+        };
+        if crate::PromptIdentity::parse(id).is_none()
+            || frame.get("method").is_some()
+            || (frame.get("error").is_none()
+                && !frame
+                    .get("result")
+                    .and_then(serde_json::Value::as_object)
+                    .is_some_and(|result| result.contains_key("stopReason")))
+        {
+            return false;
+        }
+        if self.pending.lock().await.contains_key(id) {
+            return false;
+        }
+        !self.recovery.lock().await.expects(id)
     }
 
     async fn bootstrap_output(&self, payload: &[u8]) -> bool {
@@ -170,6 +200,9 @@ impl Bridge {
         let mut state = state.lock().await;
         state.session = Some(session.to_owned());
         while let Some(held) = state.queued.pop_front() {
+            if self.unmatched_terminal(&held.payload).await {
+                state.blocked_at = Some(held.cursor);
+            }
             self.deliver_output(&state, held, updates).await?;
         }
         state.queued_bytes = 0;
@@ -222,6 +255,23 @@ impl Bridge {
         let stream = uuid::Uuid::parse_str(&source.stream_id).map_err(|_| {
             AdapterError::Rejected("invalid output acknowledgement identity".into())
         })?;
+        let state = self.output.as_ref().map(|state| state.lock());
+        let mut state = match state {
+            Some(state) => Some(state.await),
+            None => None,
+        };
+        if let Some(blocked) = state.as_ref().and_then(|state| state.blocked_at) {
+            if source.cursor > blocked {
+                return Err(AdapterError::Unavailable(format!(
+                    "runtime output terminal at cursor {blocked} is not durably resolved"
+                )));
+            }
+            if source.cursor < blocked {
+                return Err(AdapterError::Unavailable(
+                    "runtime output acknowledgement is behind an unresolved terminal".into(),
+                ));
+            }
+        }
         let mut bytes = Vec::with_capacity(HEADER_BYTES + 1);
         bytes.push(LANE_OUTPUT_ACK);
         bytes.extend_from_slice(stream.as_bytes());
@@ -234,18 +284,17 @@ impl Bridge {
             .map_err(|error| {
                 AdapterError::Unavailable(format!("runtime acknowledgement write failed: {error}"))
             })?;
-        if let Some(state) = &self.output {
-            state
-                .lock()
-                .await
-                .durable_progress
-                .send_if_modified(|last| {
-                    if source.cursor <= *last {
-                        return false;
-                    }
-                    *last = source.cursor;
-                    true
-                });
+        if let Some(state) = state.as_mut() {
+            if state.blocked_at == Some(source.cursor) {
+                state.blocked_at = None;
+            }
+            state.durable_progress.send_if_modified(|last| {
+                if source.cursor <= *last {
+                    return false;
+                }
+                *last = source.cursor;
+                true
+            });
         }
         Ok(())
     }

@@ -17,6 +17,7 @@ mod document_storage;
 mod gateway;
 mod health;
 mod media_continuations;
+mod operator;
 mod permissions;
 mod profile_authoring;
 mod profile_policy;
@@ -77,19 +78,29 @@ async fn main() {
         .init();
 
     let arguments: Vec<_> = std::env::args().skip(1).collect();
-    if arguments == ["--print-runtime-role"] {
-        match std::env::var("CHRONO_MONGODB_DATABASE") {
-            Ok(database) => println!("{}", store::isolation::role(&database)),
-            Err(_) => {
-                eprintln!("CHRONO_MONGODB_DATABASE is required");
-                std::process::exit(2)
+    match operator::parse(&arguments) {
+        Ok(operator::Command::PrintRuntimeRole) => {
+            match std::env::var("CHRONO_MONGODB_DATABASE") {
+                Ok(database) => println!("{}", store::isolation::role(&database)),
+                Err(_) => {
+                    eprintln!("CHRONO_MONGODB_DATABASE is required");
+                    std::process::exit(2)
+                }
             }
+            return;
         }
-        return;
-    }
-    if !arguments.is_empty() {
-        eprintln!("usage: cma [--print-runtime-role]");
-        std::process::exit(2)
+        Ok(operator::Command::RepairStaleTurns { agents, apply }) => {
+            if let Err(error) = operator::run_repair(agents, apply).await {
+                tracing::error!(error = %error, "CMA repair command failed");
+                std::process::exit(1);
+            }
+            return;
+        }
+        Ok(operator::Command::Serve) => {}
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
     }
     if let Err(error) = serve().await {
         tracing::error!(error = %error, "CMA stopped");

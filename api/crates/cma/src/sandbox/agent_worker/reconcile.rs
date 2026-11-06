@@ -42,6 +42,14 @@ impl AgentWorker {
                     runtime_generation: candidate.runtime_generation,
                 };
                 if self.dependencies.registry.target_is_attached(&target) {
+                    if let Some(agent) = self
+                        .dependencies
+                        .store
+                        .get_agent(&candidate.agent_id)
+                        .await?
+                    {
+                        let _ = self.reconcile_native_completion(&agent, now).await;
+                    }
                     // The scan already validated this monotonic applied revision.
                     // Skip completed maintenance without rereading the entire Agent.
                     // Pending refreshes still reread and fence all mutable authority.

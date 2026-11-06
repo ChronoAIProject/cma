@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -20,6 +21,7 @@ mod live_skills;
 mod prepared_open_ready;
 mod prepared_replay;
 mod reconcile;
+pub(crate) mod reconcile_completion;
 mod startup;
 mod startup_open;
 mod startup_publication;
@@ -95,6 +97,7 @@ pub(crate) struct AgentWorker {
     dependencies: AgentWorkerDependencies,
     config: AgentWorkerConfig,
     maintenance: reconcile::MaintenanceChecks,
+    completion_history: std::sync::Mutex<HashMap<(AgentId, u64), String>>,
 }
 
 impl AgentWorker {
@@ -106,6 +109,7 @@ impl AgentWorker {
             dependencies,
             config,
             maintenance: reconcile::MaintenanceChecks::default(),
+            completion_history: std::sync::Mutex::new(HashMap::new()),
         })
     }
 

@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use layer2_core::sandbox::{AgentUpdateRecorder, DurableAgentUpdateRecorder};
+use layer2_core::sandbox::{
+    AgentOperationDelivery, AgentOperationIntent, AgentOperationRecord, AgentTurnUsage,
+    AgentUpdateRecorder, AgentUsageCheckpoint, DurableAgentUpdateRecorder,
+    NativeCompletionEvidence,
+};
 use layer3_adapter::{
     ContentBlock, ContentChunk, ConversationUpdate, MessageId, PromptResponse, SessionUpdate,
     TurnStopReason,
@@ -82,6 +86,98 @@ async fn replacement_mongo_recorder_recovers_prefix_then_commits_one_complete_me
     assert_eq!(finished.status, AgentStatus::Ready);
     assert_eq!(finished.conversation.active_turn, None);
     assert!(checkpoint.matches(&finished));
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn mongo_reconciliation_commits_one_terminal_and_replays_idempotently() {
+    let (client, name, store) = database().await;
+    let mut current = super::working(&store, "sbx_reconciliation").await;
+    let turn = current.conversation.active_turn.unwrap();
+    let mut operation = AgentOperationRecord::new(
+        1,
+        current.conversation.runtime_generation.unwrap(),
+        turn,
+        AgentOperationIntent::send_message("proof"),
+        NOW.into(),
+    )
+    .unwrap();
+    operation.state = AgentOperationDelivery::ExecutionObserved;
+    operation.execution_observed_at = Some(NOW.into());
+    current.conversation.operation = Some(operation);
+    current.conversation.observations.usage = Some(AgentUsageCheckpoint {
+        conversation_id: current.conversation.conversation_id.clone().unwrap(),
+        source_turn: "native-turn".into(),
+        current_turn: Some(AgentTurnUsage {
+            turn_sequence: turn,
+            input_tokens: 1,
+            output_tokens: 1,
+        }),
+        ..Default::default()
+    });
+    let revision = current.revision;
+    store.save_agent(revision, current.clone()).await.unwrap();
+    let recorder = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
+    let mut assembly = AgentMessageAssembly::default();
+    recorder
+        .record_update(
+            &current.id,
+            current.conversation.runtime_generation.unwrap(),
+            &mut assembly,
+            chunk("mongo answer"),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let evidence = NativeCompletionEvidence {
+        native_conversation_id: current.conversation.conversation_id.clone().unwrap(),
+        runtime_generation: current.conversation.runtime_generation.unwrap(),
+        turn_sequence: turn,
+        native_turn_id: "native-turn".into(),
+        admitted_at: NOW.into(),
+        completed_at: "2026-09-17T00:00:01Z".into(),
+        task_started: true,
+        task_complete: true,
+        no_later_open_turn: true,
+        history_complete: true,
+        history_prefix_unchanged: true,
+        history_sha256: "a".repeat(64),
+    };
+    let first = recorder
+        .reconcile_completion(
+            &current.id,
+            current.conversation.runtime_generation.unwrap(),
+            &mut assembly,
+            evidence.clone(),
+            PromptResponse::new(TurnStopReason::EndTurn),
+            "2026-09-17T00:00:01Z".into(),
+        )
+        .await
+        .unwrap();
+    assert!(first.turn_closed);
+    let second = recorder
+        .reconcile_completion(
+            &current.id,
+            current.conversation.runtime_generation.unwrap(),
+            &mut AgentMessageAssembly::default(),
+            evidence,
+            PromptResponse::new(TurnStopReason::EndTurn),
+            "2026-09-17T00:00:01Z".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second, first);
+    assert_eq!(
+        store
+            .agent_log(&current.id, 0, 100)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|entry| matches!(entry.kind, AgentLogKind::TurnCompleted { .. }))
+            .count(),
+        1
+    );
     client.database(&name).drop().await.unwrap();
 }
 

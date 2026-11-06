@@ -7,7 +7,8 @@ use super::conversation_fold_support::{
 };
 use super::{
     Agent, AgentAvailableCommand, AgentConfigOption, AgentConversationError, AgentLogKind,
-    AgentMessageAssembly, AgentPlanStep, AgentStatus, MAX_DURABLE_AGENT_MESSAGE_BYTES,
+    AgentMessageAssembly, AgentPlanStep, AgentStatus, TypedFailure,
+    MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 
 pub(super) struct ConversationChange {
@@ -16,6 +17,10 @@ pub(super) struct ConversationChange {
     pub(super) assembly: AgentMessageAssembly,
     pub(super) turn_closed: bool,
 }
+
+#[path = "conversation_terminal.rs"]
+mod terminal;
+use terminal::{fold_turn_ended, fold_turn_failed};
 
 pub(super) enum FoldedConversationUpdate {
     Quiet(AgentMessageAssembly),
@@ -124,88 +129,60 @@ pub(super) fn fold_update(
             )
         }
         ConversationUpdate::TurnEnded(completed) => {
-            let turn = active_turn(current)?;
-            let mut agent = current.clone();
-            let mut logs = flush_message(assembly);
-            let interrupted = completed.stop_reason == layer3_adapter::TurnStopReason::Cancelled;
-            observe_operation(
-                &mut agent,
-                prompt_evidence,
-                interrupted,
-                appended_at,
-                &mut logs,
-            )?;
-            if let Some(usage) = completed
-                .usage
-                .filter(|_| agent.conversation.observations.usage.is_none())
-            {
-                logs.push(AgentLogKind::Usage {
-                    input_tokens: usage.input_tokens,
-                    output_tokens: usage.output_tokens,
-                    context_used: 0,
-                    context_window: None,
+            fold_turn_ended(current, assembly, completed, prompt_evidence, appended_at)
+        }
+        ConversationUpdate::TurnEndedForPrompt {
+            prompt_id,
+            response,
+        } => {
+            let expected = current
+                .conversation
+                .conversation_id
+                .as_deref()
+                .zip(current.conversation.runtime_generation)
+                .zip(current.conversation.active_turn)
+                .map(|((conversation, generation), turn)| {
+                    layer3_adapter::PromptIdentity::new(conversation, generation, turn)
                 });
+            if expected.as_ref() != Some(&prompt_id) {
+                return Err(AgentConversationError::InvalidState(
+                    "terminal response does not identify the active prompt",
+                ));
             }
-            if interrupted {
-                fail_first_message(
-                    &mut agent,
-                    "the first-message turn was interrupted",
-                    appended_at,
-                    &mut logs,
-                )?;
-                logs.push(AgentLogKind::TurnInterrupted {
-                    turn_sequence: turn,
+            fold_turn_ended(current, assembly, response, true, appended_at)
+        }
+        ConversationUpdate::FailedForPrompt {
+            prompt_id,
+            message,
+            capability,
+        } => {
+            let expected = current
+                .conversation
+                .conversation_id
+                .as_deref()
+                .zip(current.conversation.runtime_generation)
+                .zip(current.conversation.active_turn)
+                .map(|((conversation, generation), turn)| {
+                    layer3_adapter::PromptIdentity::new(conversation, generation, turn)
                 });
-            } else {
-                complete_first_message(&mut agent, appended_at, &mut logs)?;
-                logs.push(AgentLogKind::TurnCompleted {
-                    turn_sequence: turn,
-                });
+            if expected.as_ref() != Some(&prompt_id) {
+                return Err(AgentConversationError::InvalidState(
+                    "terminal response does not identify the active prompt",
+                ));
             }
-            logs.push(AgentLogKind::StatusChanged {
-                from: current.status,
-                to: AgentStatus::Ready,
-            });
-            changed(
-                agent,
-                logs,
-                AgentMessageAssembly::default(),
-                Some(AgentStatus::Ready),
-                None,
-                true,
-                appended_at,
-            )
+            fold_turn_failed(current, assembly, message, capability, true, appended_at)
         }
         ConversationUpdate::Failed {
             message,
             capability,
-        } => {
-            let turn = active_turn(current)?;
-            let mut agent = current.clone();
-            let mut logs = flush_message(assembly);
-            observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
-            fail_first_message(&mut agent, &message, appended_at, &mut logs)?;
-            logs.push(AgentLogKind::TurnFailed {
-                turn_sequence: turn,
-                failure: super::TypedFailure {
-                    class: capability.unwrap_or_else(|| "agent_turn_failed".into()),
-                    detail: bounded(message, 4 * 1024),
-                },
-            });
-            logs.push(AgentLogKind::StatusChanged {
-                from: current.status,
-                to: AgentStatus::Ready,
-            });
-            changed(
-                agent,
-                logs,
-                AgentMessageAssembly::default(),
-                Some(AgentStatus::Ready),
-                None,
-                true,
-                appended_at,
-            )
-        }
+        } => fold_turn_failed(
+            current,
+            assembly,
+            message,
+            capability,
+            prompt_evidence,
+            appended_at,
+        ),
         ConversationUpdate::Lost { frames } => changed(
             current.clone(),
             vec![AgentLogKind::ConversationGap { frames }],
