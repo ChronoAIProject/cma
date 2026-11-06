@@ -378,7 +378,9 @@ jobs:
         working-directory: web
         run: npx --no-install playwright install --with-deps chromium
       - name: Image Manager authenticated Mongo isolation
-        timeout-minutes: 10
+        # Compilation takes 242-434 seconds before 150-166 seconds of tests.
+        # Repeated 10-minute expirations leave no setup/cleanup margin.
+        timeout-minutes: 15
         run: bash ../.github/scripts/image-manager-mongo-contract.sh
       - name: Doctests
         run: cargo test --doc --workspace --locked
