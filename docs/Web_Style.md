@@ -2653,9 +2653,11 @@ Existing 4/8/12/16/24px gaps, 32px controls, 44px touch targets, 8/12/16px radii
 and the shared easing/focus tokens remain the geometry vocabulary.
 
 Tasks are grouped Active, Today, Yesterday, Earlier. Active includes running and
-confirmed Ready tasks. Rows are 36px with a distinct-hue Agent mask, title and
+confirmed Ready tasks. Rows are 36px with the §28 Agent character (Sandbox colour and status pose), title and
 right-aligned time (today HH:mm; earlier MMM D). Running adds a breathing green
-dot and elapsed time; Ready has a pill. Completed has no visible status word.
+dot and elapsed time (`<1m` before the first minute); Ready has a pill.
+The sidebar clock wakes only at the next displayed minute or local-midnight
+boundary, and on foregrounding. Accessible row names use the displayed date/time. Completed has no visible status word.
 Group headings use the group font and weak ink with 8px preceding space. The
 Tasks heading has 8px before its list. The row menu is revealed by hover or
 focus-within, and always visible for coarse pointers; it retains its target and
@@ -2667,18 +2669,22 @@ The toolbar is a normal grid row above the message scrollport; it never overlays
 messages. The title has a 96px minimum and ellipsizes only after its available
 space is exhausted. The right controls are Share, Computer, More. Computer uses
 the selected fill while open and a transparent ground while closed. More orders
-Rename, View deletion status, separator, Delete task (danger). A collapsed sidebar exposes Show sidebar at
+Rename, Update system prompt, Update skills, Export history, View deletion status,
+separator, Delete task (danger). Existing authority, unsupported-client and busy
+reasons remain. Stop stays in the composer and task-row menu. The title opens
+Details, including Sandbox id, Resources and Agent key scope. A collapsed sidebar exposes Show sidebar at
 the toolbar's left. Below 1180px an open computer automatically collapses the
 sidebar until the user explicitly chooses its state. The conversation floor is
 420px; smaller viewports retain the existing focus-trapped panel overlay.
 
 Tool groups start collapsed, including failures, and summarize actual operations
-(Ran 2 commands · Read 2 files; Edited app.js +86 −14), with recorded duration.
+(Ran 2 commands · Read 2 files; Searched 2 times; Listed 2 folders; Edited app.js +86 −14), with recorded duration.
 Expanded groups have one rounded border and 36px rows. Rows show type icon,
 ellipsized mono command/path, duration, muted success check and a 32px terminal
 jump target (a reserved slot for non-command rows). Activating a row expands its
 full command/path and recorded output or diff. Removed/added diff lines use
-danger/success ink with −/+ markers. Failures show the error text in danger ink.
+danger/success ink with −/+ markers. Failures show at most the last three error lines (240 characters per line),
+clamped to three visible lines in danger ink; expanded details retain full output.
 The Terminal jump is independent of expansion: it opens Terminal, scrolls the
 matching command to 16px below its scrollport top and fades a highlight over
 1.8s. Terminal reserves trailing space when needed to align even its final command
@@ -2688,14 +2694,17 @@ One bottom conversation status reads [logo] Thinking <elapsed> · View activity,
 updating its recorded-start clock once a second. Thinking may shimmer: this is
 an explicit exception to the old status-text motion rule, not animation of an
 Agent's words. Stopped turns read ■ Stopped after <duration>. Neither status contains token usage, including its expanded details.
-The composer has no spinner. With input it shows Send (↑); empty while running
+The composer has no spinner. With input it shows Send (↑) when queueing is supported; when queueing is
+unsupported during a turn, Stop stays visible even with a draft. Empty while running
 it shows a solid contrast Stop square and Esc to stop; empty while idle it shows
 disabled Send. Enter sends, Shift+Enter inserts a newline, Escape stops eligible
 active work. Running placeholder: “Add a follow-up — it'll be queued while the
 agent works”; idle: “Reply to Chrono Agent…”. Admitted follow-ups appear directly
 above the composer as Queued · <content> with an independently named × removal
 button. Queue is offered only while running. The compact model/effort reads
-Astra · High; its tooltip retains the full model, reasoning and permission.
+Astra · High; its tooltip retains the full model, reasoning, permission, context
+usage and token figures. The tooltip also describes the settings chip for screen
+readers. There is no context ring in the composer.
 
 Computer tabs are Screen, Terminal, Files with roving tabindex and arrow keys.
 The tab well uses `workspace-selected`; its selected tab uses `bg-layer-1`,
@@ -2710,11 +2719,18 @@ The Screen-only control bar says “Agent is in control · Working in <app>” o
 This intentionally supersedes the generic dark lime primary: control is a
 high-contrast action beside the picture, with the inverse light fill in dark.
 Browser takeover still requires the existing confirmed lease and permission.
-Native desktop input uses the authorized desktop connection: Take control enables
-input explicitly, including during a turn, and Return to Agent releases held keys
-and pointer buttons. A newly starting turn releases a prior desktop input grant;
-taking control during an already active turn remains explicit. Reconnection
-never restores input automatically.
+Native desktop input uses the authorized desktop connection. While running,
+Take control first asks “Taking control stops the Agent's current turn”, with
+confirm/cancel actions. Confirmation issues the existing public interrupt,
+waits for the turn to stop, then grants input. A failed or uncertain stop never
+grants input and exposes its error. Idle takeover remains immediate. New turns,
+reconnects and scope changes release held keys/buttons and never restore input.
+Screen defaults to desktop where available, then follows the latest identified
+public screen operation: cma-browser selects the agent browser when available;
+xdotool/desktop operations select the desktop. No manual source toggle is shown.
+Only loaded history can invalidate a selected Terminal tab. Screen errors clear
+on successful fullscreen changes, tab changes and reconnect.
+
 
 Screen operations form their own collapsed group, for example “Checked it in
 Browser · 3 steps 19s”. Each noninteractive row has an action icon, description
@@ -2728,7 +2744,10 @@ turn. Every command retains its own block: $ command and duration, then complete
 recorded output, with existing explicit truncation evidence where the service
 bounded a result. It retains scrollback without playback. The end shows a cursor
 while running or “— agent paused —”. Files show name, path, reported +n −n and M
-for modified files; missing change evidence never becomes a zero diff.
+for modified files. A Changed files list above the explorer exposes changes in
+collapsed folders and opens the selected file. Ancestor folders carry a Changes
+marker. Degraded diffs say “Counts unavailable” in groups and file rows; unknown
+counts never become zero. Settled plan disclosure reads “View plan”.
 
 Answer footers contain, in order, the always-visible Copy content, Helpful and
 Needs improvement icon buttons, then a semantic `<time dateTime=...>` using
@@ -2748,9 +2767,13 @@ reasons open in the shared dialog, keeping the footer compact. Selecting an alre
 active Needs improvement icon reopens that dialog; Remove vote inside the dialog
 clears the vote. The dialog has one Close action in its header.
 
-The Agent mask is a static 24px SVG. Its hue comes from a stable hash of the Agent
-identifier applied to the workspace accent, so tasks do not inherit an identical
-Sandbox color. All icon keys have names and tooltips. Status announcements report
+The task character uses its Sandbox colour whenever present. Without one, a
+stable task hash selects the documented theme aliases `workspace-task-blue`
+(light #245b98, dark #9acbff), `workspace-task-purple` (light #7b3f93, dark
+#d9abee), or `workspace-accent`. Each has at least 3:1 contrast on the sidebar
+in both appearances; status pose and text remain independent of hue. The shared
+character stage resolves these aliases and repaints on appearance changes.
+All icon keys have names and tooltips. Status announcements report
 transitions, not timer ticks. Reduced motion removes breathing, shimmer and the
 Terminal highlight fade; the selected command retains its highlight for 1.8s
 without a fade. The shared focus ring and 44px coarse-pointer targets remain.
@@ -6001,3 +6024,5 @@ saving. Use existing form spacing, labels and validation; introduce no new token
 | 2026-11-06 | Preserve desktop key and pointer release when a new Agent turn starts; keep explicit Take control available during an existing turn. |
 
 | 2026-11-06 | Match the reference tab treatment with a selected white/light-layer tab on the neutral Workspace tab well in both appearances. |
+
+| 2026-11-06 | Review round 1: require confirmed interruption before desktop takeover; restore authorized header actions and machine details, Sandbox-coloured characters, minute-boundary clocks, changed-file discovery, truthful degraded-diff counts, concise tool errors, search/list summaries, composer stop access and usage tooltip, live source following, loaded-history tab fallback, and whole-answer timestamp reveal. |
