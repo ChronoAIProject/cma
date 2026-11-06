@@ -10,6 +10,13 @@ Provider acceptance and production image adoption still require a separate
 release decision. Existing explicit-image Machine updates remain tracked in
 [#1416](https://github.com/ChronoAIProject/cma/issues/1416).
 
+The reopen fixture selects and closes Chromium through Hyprland before invoking
+the shared launcher from the native Agent tool. Startup closure preserves the
+normal window state; closure after the input probe restores fullscreen first.
+Both paths wait for the window and the desktop profile process to exit. The
+fixture regressions run before the image build, and the image gate still requires
+native tools and the turn to finish while the reopened page stays visible.
+
 Production preparation on 2026-10-31 exposed a filesystem difference from the
 isolated microVM: Arch already owns `/tmp/.X11-unix` as root with mode 1777.
 Unconditionally running `chmod` as the runtime user stopped the launcher before

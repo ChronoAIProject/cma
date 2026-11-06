@@ -1,10 +1,17 @@
 """Close the actual Wayland browser through Omarchy and await profile flush."""
+import argparse
 import json
 import os
 from pathlib import Path
 import subprocess
 import time
 
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--normal-window', action='store_true',
+                    help='The startup browser has not entered fullscreen yet')
+options = parser.parse_args()
+
+os.environ['XDG_RUNTIME_DIR'] = '/tmp/cma-desktop-runtime'
 os.environ['HYPRLAND_INSTANCE_SIGNATURE'] = Path(
     '/tmp/cma-desktop-runtime/cma-hyprland-instance').read_text().strip()
 
@@ -14,15 +21,21 @@ def browser_windows():
     return [client for client in clients if 'chromium' in client['class'].lower()]
 
 
-assert browser_windows(), 'No browser window to close'
+windows = browser_windows()
+assert len(windows) == 1, 'Expected one fixture browser window to close'
+# The terminal probe may have owned focus. Select the actual Wayland browser,
+# independently of the native tool shell's HOME or Chromium's argv[0].
+subprocess.run(['hyprctl', 'dispatch', 'focuswindow',
+                'address:' + windows[0]['address']], check=True)
 viewer = subprocess.check_output(['pgrep', '-x', 'vncviewer'], text=True).strip()
 window = subprocess.check_output(
     ['xdotool', 'search', '--onlyvisible', '--pid', viewer], text=True).splitlines()[0]
 subprocess.run(['xdotool', 'windowfocus', '--sync', window], check=True)
 # The native input probe entered browser fullscreen. Restore normal placement
 # before closing so the retained profile starts in the same ordinary state.
-subprocess.run(['xdotool', 'key', '--clearmodifiers', 'F11'], check=True)
-time.sleep(0.3)
+if not options.normal_window:
+    subprocess.run(['xdotool', 'key', '--clearmodifiers', 'F11'], check=True)
+    time.sleep(0.3)
 # Omarchy binds SUPER+W to a normal xdg_toplevel.close request.
 subprocess.run(['xdotool', 'key', '--clearmodifiers', 'super+w'], check=True)
 deadline = time.monotonic() + 10
