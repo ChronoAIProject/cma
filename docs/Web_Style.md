@@ -5519,3 +5519,27 @@ identity/storage messages remain unchanged. Copy classification never changes
 request retention, key reuse, polling cadence, or recovery actions.
 
 | 2026-11-05 | Match lifecycle failure guidance to each surface's visible action and distinguish explicit HTTP refusals from uncertain submission. |
+
+
+#### Streaming Markdown safe prefix — 2026-11-06
+
+Streaming replies render only a safe Markdown prefix. An open link or image,
+an unfinished link label, and unmatched `**` or `__` in the final paragraph stay
+hidden until their closing syntax arrives. Emphasis uses CommonMark flanking,
+including adjacent CJK text, punctuation and intraword asterisks. A blank line
+ends the paragraph's emphasis scope: unmatched delimiters in completed
+paragraphs are literal and cannot pair with a later paragraph or hide it.
+Literal underscores in words and spaced mathematical powers remain visible.
+Inline code closes with a backtick
+run of the same width, and the first remaining unclosed run stays hidden.
+Code spans stay within a paragraph; a blank line ends that scope. Unmatched
+backticks in completed paragraphs remain literal and cannot consume a later
+paragraph's code span. A single line break can remain inside a code span.
+Masking code preserves UTF-16 offsets, including emoji. Text inside an open
+fenced code block remains literal. A partial `<!--cma-deliverable:v1:` prefix,
+including a one-character prefix, is hidden only on the final line still being
+written; earlier lines keep their literal characters. Full marker prefixes
+remain hidden outside fences. Completed messages keep their existing bytes and
+marker handling.
+
+| 2026-11-06 | Render streaming replies through a safe Markdown prefix: CommonMark-flanking emphasis and code spans scoped to the paragraph still being written, UTF-16-exact masking, and partial deliverable markers hidden only on the final line. |
