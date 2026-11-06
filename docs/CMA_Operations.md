@@ -963,6 +963,9 @@ The lifecycle flags `machine_included` and `desktop` retain independent meanings
 to task-experience admission and `CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE` proof.
 A request enabling both must verify the selected machine image against that exact
 desktop image reference. Accepted operations retain both original flags on replay.
+The Web landing offers only Shared desktop (`machine_included`); it does not
+request `desktop` for new tasks. Recorded intents still replay their original
+flags, and owners can enable the Agent browser after creation.
 Both runtime build targets install the current browser command alongside the
 supervisor; the Omarchy toolchain donor does not determine that command version.
 

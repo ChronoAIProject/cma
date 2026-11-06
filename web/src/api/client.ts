@@ -223,10 +223,6 @@ export interface CmaWebClient {
   readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly taskExperience?: import('@chronoai/cma-sdk').TaskExperienceClient;
   readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
-  readonly readDesktopCapability?: (
-    scope: { readonly workspace_id?: string; readonly sandbox_id?: string },
-    options?: ReadOptions,
-  ) => Promise<import('@chronoai/cma-sdk').DesktopCapability>;
   readonly createAgentLifecycle?: (
     input: AgentLifecycleCreateInput,
     options: CommandOptions,
