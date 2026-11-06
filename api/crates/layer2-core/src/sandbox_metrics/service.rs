@@ -5,7 +5,12 @@ use std::sync::Arc;
 
 #[async_trait]
 pub trait MetricsStore: Send + Sync {
-    async fn options(&self, _scope: &Scope, _query: OptionQuery) -> Result<FilterOptions> {
+    async fn options(
+        &self,
+        _scope: &Scope,
+        _query: OptionQuery,
+        _owner_context: OwnerContextAccess,
+    ) -> Result<FilterOptions> {
         Err(MetricsError::Unavailable)
     }
     async fn resolve_agent(&self, scope: &Scope, id: &str) -> Result<String>;
@@ -30,7 +35,13 @@ impl MetricsService {
     pub async fn options(&self, caller: &Caller, query: OptionQuery) -> Result<FilterOptions> {
         let scope = authorize(caller, true)?;
         query.validate()?;
-        self.store.options(&scope, query).await
+        self.store
+            .options(
+                &scope,
+                query,
+                OwnerContextAccess::from_authorization(&caller.authorization),
+            )
+            .await
     }
     pub fn new(store: Arc<dyn MetricsStore>) -> Arc<Self> {
         Arc::new(Self { store })
