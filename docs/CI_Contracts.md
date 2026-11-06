@@ -38,13 +38,15 @@ cleanup removes only containers carrying the generated exact run label.
 
 Backend Bash steps source `backend-resource-env.sh` through `BASH_ENV`.
 The hook starts one optional sampler per step; descendant shells inherit its
-marker. It does not wrap commands, install traps, change shell options, wait
+marker. It disowns that child so a caller's bare `wait` cannot wait for telemetry.
+Disowning retains the shell as the process parent. It does not wrap commands,
+install traps, change shell options, wait
 for telemetry, or change gate order, timeouts, assertions or exit status.
 The provider contract checks the hook and runs its failure-path regressions.
 This dedicated CI change diagnoses unexplained runner shutdowns; it does not
 change resource limits or duplicate the archive/job split proposed in #1394.
 
-`[backend-resource]` JSON lines flush directly to the current step log at
+`[backend-resource]` JSON lines are offered directly to the current step log at
 startup and about every ten seconds. They include UTC and elapsed step time,
 memory/swap KiB and swap I/O page counters, disk bytes/free inodes, load
 averages, the ten largest process RSS values in KiB, and root cgroup v2 memory
@@ -52,8 +54,22 @@ counters when available. Processes expose only numeric PIDs and kernel names
 from `/proc/PID/comm`; arguments and environments are never read. JSON escapes
 names so they cannot become workflow commands. Unsupported or failed probes
 report `unavailable` without exception details. Sampling failures cannot set
-the gate result. A finished shell's sampler exits on reparenting within its
-short polling interval; a runner-wide termination may prevent a final sample.
+the gate result. Before probing, the sampler installs Linux `PR_SET_PDEATHSIG`
+with `SIGKILL`, then checks the expected parent again to close the startup race.
+Parent death terminates the sampler independently of probe/output progress;
+polling between samples is not its lifetime guarantee. If protection cannot be
+installed (including non-Linux systems), sampling is disabled.
+
+Output uses a new open file description from `/proc/self/fd/1`, opened with
+`O_NONBLOCK`, and closes the sampler's inherited stdout descriptor. It never
+changes flags on the gate's shared stdout. Only FIFO log output is supported;
+other output types disable sampling. Each record is one atomic write bounded
+by `PIPE_BUF`; full pipes, oversized records, and output errors discard the
+sample without queues, retries or blocking flushes. A stalled probe may lose
+subsequent samples, but cannot defer kernel parent-death termination. Real
+Linux regressions exercise full pipes, a FIFO-blocked probe, descriptor EOF,
+process death, unchanged gate status/stdout flags, and bare `wait`. A runner-wide
+termination may prevent a final sample.
 Action steps without a Bash shell are not sampled by this hook.
 
 Samples show observations, not automatic diagnoses. RSS may include shared
