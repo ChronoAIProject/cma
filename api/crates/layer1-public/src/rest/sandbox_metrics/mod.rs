@@ -1,5 +1,7 @@
 //! Public, principal-scoped measured usage reports; no source query passthrough.
 mod openapi;
+#[cfg(test)]
+mod options_tests;
 mod schemas;
 mod wire;
 use crate::AuthenticatedCaller;
@@ -39,11 +41,26 @@ pub fn sandbox_metrics_router(service: Arc<MetricsService>) -> Router {
         .nest(
             "/api/v1/admin/usage/metrics",
             routes
+                .route("/options", post(options))
                 .route("/reports/{report}/owners", get(owners))
                 .layer(Extension(Admin(true))),
         )
         .layer(axum::middleware::from_fn(private_headers))
         .with_state(service)
+}
+async fn options(
+    State(service): Service,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    query: std::result::Result<Json<OptionQuery>, JsonRejection>,
+) -> Response {
+    if let Err(error) = authorize(&caller, true) {
+        return problem(error);
+    }
+    let query = match query {
+        Ok(Json(value)) => value,
+        Err(_) => return invalid(),
+    };
+    respond(bounded(service.options(&caller, query)).await)
 }
 async fn create(
     State(service): Service,

@@ -81,8 +81,8 @@ it('reconciles direct durable Agent messages without removing another run live b
     kind: { type: 'agent_message', content: 'Durable answer' },
   });
   expect(state.messages.map((message) => message.content)).toEqual([
-    'Another run',
     'Durable answer',
+    'Another run',
   ]);
   expect(state.messages.find((message) => message.content === 'Durable answer')?.order).toBe(1);
 });

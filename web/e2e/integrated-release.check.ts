@@ -70,19 +70,28 @@ test('integrated task file feedback and edited follow-up survive reload with exa
     });
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto('/');
-    await page.getByLabel('Your task').fill(ready.body.initial_message);
-    if (ready.body.repository) {
-      await page.getByRole('button', { name: 'Add git repo' }).click();
-      await page.getByLabel('GitHub repository', { exact: true }).fill(ready.body.repository.url);
-      await page.getByLabel('Repository ref', { exact: true }).fill(ready.body.repository.ref);
-      await page.getByRole('button', { name: 'Add repo', exact: true }).click();
-    }
+    // This fixture retains the original desktop-enabled request for recovery.
+    const identity = await page.request.get('/auth/session');
+    const { subject } = await identity.json();
+    expect(typeof subject).toBe('string');
+    await page.evaluate(
+      ({ body, owner }) => {
+        sessionStorage.setItem(
+          `cma:agent-creation:${JSON.stringify([location.origin, owner])}`,
+          JSON.stringify({ version: 1, intent: { key: crypto.randomUUID(), body } }),
+        );
+      },
+      { body: ready.body, owner: subject },
+    );
+    await page.reload();
     await page.getByRole('button', { name: /^Cloud computer/ }).click();
-    await page.getByRole('menuitemcheckbox', { name: 'Agent browser' }).click();
+    const browserChoice = page.getByRole('menuitemcheckbox', { name: 'Agent browser' });
+    await expect(browserChoice).toBeChecked();
+    await expect(browserChoice).toBeDisabled();
     await page.keyboard.press('Escape');
-    await page.screenshot({ path: info.outputPath('home-current.png') });
+    await page.screenshot({ path: info.outputPath('home-recorded-intent.png') });
     observation.mark('firstIntent');
-    await page.getByRole('button', { name: 'Start task', exact: true }).click();
+    await page.getByRole('button', { name: 'Recover original task' }).click();
     await expect(page.getByRole('button', { name: 'Recover original task' })).toBeVisible();
     await page.reload();
     await page.getByRole('button', { name: 'Recover original task' }).click();
