@@ -5,6 +5,16 @@ use std::sync::Arc;
 
 #[async_trait]
 pub trait MetricsStore: Send + Sync {
+    fn check_read_budget(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn owner_allocations(
+        &self,
+        _report: &Report,
+        _query: OwnerAllocationQuery,
+    ) -> Result<OwnerAllocations> {
+        Err(MetricsError::Unavailable)
+    }
     async fn options(&self, _scope: &Scope, _query: OptionQuery) -> Result<FilterOptions> {
         Err(MetricsError::Unavailable)
     }
@@ -27,6 +37,19 @@ pub struct MetricsService {
     store: Arc<dyn MetricsStore>,
 }
 impl MetricsService {
+    pub async fn owner_allocations(
+        &self,
+        caller: &Caller,
+        id: &str,
+        query: OwnerAllocationQuery,
+        now: u64,
+    ) -> Result<OwnerAllocations> {
+        authorize(caller, true)?;
+        query.validate()?;
+        self.store.check_read_budget()?;
+        let report = self.ready(caller, true, id, now).await?;
+        self.store.owner_allocations(&report, query).await
+    }
     pub async fn options(&self, caller: &Caller, query: OptionQuery) -> Result<FilterOptions> {
         let scope = authorize(caller, true)?;
         query.validate()?;
