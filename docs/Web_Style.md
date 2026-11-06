@@ -5576,3 +5576,22 @@ browser** row, with **Agent browser choice is saved with the submitted task.**
 It does not add a Browser trigger suffix or require a capability read.
 
 | 2026-11-06 | Offer only Shared desktop for new landing tasks, accept and drop the retired desktop field in old drafts, and keep recorded Agent browser intents frozen, visible and byte-identical on recovery. |
+
+
+#### Next draft after confirmed creation — 2026-11-06
+
+Keep the editable next draft through submission, receipt, uncertain recovery,
+connection waits and failed preparation; **Start another task** still offers it.
+When a confirmed successful operation for the retained request's Agent clears
+its intent, discard the same scope's draft only if its exact text, repository URL,
+repository ref and Shared desktop choice still equal the submitted body (missing
+options mean empty/unchecked). An edited next draft survives unchanged. This
+applies to conversation follow-up and creation-dialog success paths, never to
+receipt alone or failed-intent clearing. A later landing starts empty, without a
+repository chip and with Shared desktop unchecked; a mounted matching draft also
+resets immediately so subsequent edits cannot re-save the submitted content.
+Draft cleanup is best-effort: storage errors must not throw or block conversation
+access, and unreadable or different drafts are preserved. Account isolation and
+sign-out clearing keep their existing rules.
+
+| 2026-11-06 | Discard the landing draft only when it still equals a task whose creation was confirmed successful; edited next drafts and failed preparations keep their text. |
