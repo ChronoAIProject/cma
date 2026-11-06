@@ -306,15 +306,13 @@ else
     reject.call("archive upload #{key}") { |v| v["ci"]["jobs"]["backend-test-build"]["steps"].last["with"].delete(key) }
   end
   %w[backend-lint backend-test-build].each do |id|
-    %w[save-if shared-key].each do |key|
-      reject.call("#{id} cache #{key}") do |v|
-        v["ci"]["jobs"][id]["steps"].find { |r| r["uses"] == "Swatinem/rust-cache@v2" }["with"].delete(key)
-      end
+    reject.call("#{id}: missing develop-only cache save condition") do |v|
+      v["ci"]["jobs"][id]["steps"].find { |r| r["uses"] == "Swatinem/rust-cache@v2" }["with"].delete("save-if")
     end
-  end
-  { "backend-lint" => "backend", "backend-test-build" => "backend-lint" }.each do |id, wrong_key|
-    reject.call("#{id}: cache writer collision or loss of warm producer cache") do |v|
-      v["ci"]["jobs"][id]["steps"].find { |r| r["uses"] == "Swatinem/rust-cache@v2" }["with"]["shared-key"] = wrong_key
+    { "shared-key" => "backend", "key" => "backend", "add-job-id-key" => false, "save-if" => true }.each do |key, value|
+      reject.call("#{id}: override per-job cache identity or develop-only saves with #{key}") do |v|
+        v["ci"]["jobs"][id]["steps"].find { |r| r["uses"] == "Swatinem/rust-cache@v2" }["with"][key] = value
+      end
     end
   end
   %w[backend-test-build backend-tests backend-timing backend-mongo backend-image-manager cmaeg-latency].each do |id|
