@@ -867,8 +867,15 @@ runtime lists have an inline name-search field, a scrollable page of at most 50
 choices, and Previous/Next controls. Search is debounced; paging replaces the
 current page rather than accumulating DOM rows. Arrow keys move from search to
 choices; Escape closes and restores focus. Loading, empty and retry states stay
-inside the dropdown. Selected identities show a display name with a stable short
-derived reference; missing names use Unnamed owner/Sandbox, never a raw ID.
+inside the dropdown. Primary and selected labels show only the plain display
+name; missing names use Unnamed owner/Sandbox, never a raw ID. Duplicate names
+on the current page have secondary human context: owners use join date;
+Sandboxes use owner name, then creation date when owner names also match.
+Matching dates add UTC time, increasing precision through minutes, seconds and
+available fractional seconds. A derived reference is a last resort in secondary
+text only when all available safe human context still ties or is unavailable.
+Accessible menu text includes the same context; selected text, title and accessible
+label stay plain.
 The time-range picker retains Custom with local date/time fields. Apply filters
 commits the draft atomically; Clear filters restores Last 24 hours and all choices.
 
@@ -5834,3 +5841,5 @@ summary's last reported task status while requesting a navigation refresh.
 reported a task status.
 
 | 2026-11-06 | Keep the open Agent's last reported task status in the sidebar while its stale summary refreshes; show Status unavailable only when no status was ever reported. |
+
+| 2026-11-06 | Prefer Sandbox creation dates and precise UTC creation/join times for duplicate Ops filter names before a last-resort secondary reference; preserve plain selected labels and accessible duplicate context. |
