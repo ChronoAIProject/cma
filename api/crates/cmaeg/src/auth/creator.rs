@@ -179,11 +179,7 @@ impl CreatorAuthenticator {
             principal
                 .require("cma-eg:channels:read")
                 .map_err(service_error)?;
-            return Ok(Creator {
-                subject: principal.subject,
-                organization: false,
-                token_hash: token_hash(bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?),
-            });
+            return self.service_creator(principal.subject, headers).await;
         }
         let token = bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?;
         let owner = selected_owner(headers)?;
