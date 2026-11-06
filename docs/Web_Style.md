@@ -5781,3 +5781,56 @@ access, and unreadable or different drafts are preserved. Account isolation and
 sign-out clearing keep their existing rules.
 
 | 2026-11-06 | Discard the landing draft only when it still equals a task whose creation was confirmed successful; edited next drafts and failed preparations keep their text. |
+
+
+#### Streaming Markdown safe prefix — 2026-11-06
+
+Streaming replies render only a safe Markdown prefix. An open link or image,
+an unfinished link label, and unmatched `**` or `__` in the final paragraph stay
+hidden until their closing syntax arrives. Emphasis uses CommonMark flanking,
+including adjacent CJK text, punctuation and intraword asterisks. A blank line
+ends the paragraph's emphasis scope: unmatched delimiters in completed
+paragraphs are literal and cannot pair with a later paragraph or hide it.
+Literal underscores in words and spaced mathematical powers remain visible.
+Inline code closes with a backtick
+run of the same width, and the first remaining unclosed run stays hidden.
+Code spans stay within a paragraph; a blank line ends that scope. Unmatched
+backticks in completed paragraphs remain literal and cannot consume a later
+paragraph's code span. A single line break can remain inside a code span.
+Masking code preserves UTF-16 offsets, including emoji. Text inside an open
+fenced code block remains literal. A partial `<!--cma-deliverable:v1:` prefix,
+including a one-character prefix, is hidden only on the final line still being
+written; earlier lines keep their literal characters. Full marker prefixes
+remain hidden outside fences. Completed messages keep their existing bytes and
+marker handling.
+
+| 2026-11-06 | Render streaming replies through a safe Markdown prefix: CommonMark-flanking emphasis and code spans scoped to the paragraph still being written, UTF-16-exact masking, and partial deliverable markers hidden only on the final line. |
+
+
+
+#### Agent conversation streaming continuity — 2026-11-06
+
+A live stream gap preserves every visible message and reasoning row. The client
+freezes that run's live tail after the gap and waits for its durable message;
+it never appends a post-gap fragment to a buffer with a hole. Durable text
+replaces the live row in the same timeline position and keeps its DOM identity.
+Snapshot merges retain that identity on subsequent refreshes too. The durable
+successor replaces a frozen live row even when its text differs; an earlier
+durable message from the same run never consumes the second message's live row.
+The **Refreshing live updates…** status occupies one fixed slot at the end of
+the message stream and clears when the run is recorded or reaches a terminal
+outcome. Active thinking, composer busy state and other turn loading indicators
+also end at that terminal observation.
+
+| 2026-11-06 | Preserve streamed text across live gaps, replace frozen live rows in place with their durable successor and a stable DOM identity, and keep the live recovery status in one slot that clears at the run's terminal outcome. |
+
+
+
+#### Task list status for the open Agent — 2026-11-06
+
+When the open Agent is newer than its sidebar summary, the task list keeps the
+summary's last reported task status while requesting a navigation refresh.
+**Status unavailable** is shown only when the Agent's summary has never
+reported a task status.
+
+| 2026-11-06 | Keep the open Agent's last reported task status in the sidebar while its stale summary refreshes; show Status unavailable only when no status was ever reported. |
