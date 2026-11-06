@@ -46,6 +46,7 @@ async fn registration_wraps_and_persists_the_complete_authorize_attempt() {
         auth,
         Some("/t/pub_123/plc_456".into()),
         Some(LoginScreen::Register),
+        false,
     )
     .await;
 
@@ -184,6 +185,7 @@ async fn trusted_login_restores_a_valid_relative_target() {
         Query(LoginParams {
             return_to: Some("/marketplace".into()),
             screen: None,
+            prompt: None,
         }),
         OriginalUri("/auth/login".parse().unwrap()),
         HeaderMap::new(),

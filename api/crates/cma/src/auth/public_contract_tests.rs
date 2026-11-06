@@ -189,6 +189,7 @@ async fn scenario(name: &str) -> Scenario {
                 verifier: SecretValue::new("contract-verifier".into()),
                 return_to: Some("/t/public-contract/placement-contract".into()),
                 actor_link_intent: None,
+                silent: false,
                 expires_at: if name == "auth_callback_expired" {
                     SystemTime::UNIX_EPOCH
                 } else {

@@ -23,6 +23,7 @@ async fn login_attempts_are_binding_checked_and_single_use() {
             verifier: SecretValue::new("verifier".into()),
             return_to: None,
             actor_link_intent: None,
+            silent: false,
             expires_at: SystemTime::now() + Duration::from_secs(60),
         })
         .await
