@@ -1,4 +1,5 @@
 use super::*;
+use layer2_core::sandbox_metrics::OwnerContextAccess;
 
 fn query(metric: Metric, limit: u16, cursor: Option<String>) -> OwnerAllocationQuery {
     OwnerAllocationQuery {
@@ -66,7 +67,11 @@ async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_c
         ]).await.unwrap();
         let started = std::time::Instant::now();
         let first = store
-            .owner_allocations(&report, query(Metric::Cpu, 200, None))
+            .owner_allocations(
+                &report,
+                query(Metric::Cpu, 200, None),
+                OwnerContextAccess::DateOnly,
+            )
             .await
             .unwrap();
         assert_eq!(first.items.len(), 200);
@@ -86,7 +91,11 @@ async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_c
         assert_eq!(first.items[2].label, "Unnamed owner");
         assert!(started.elapsed() < Duration::from_secs(2));
         let token = store
-            .owner_allocations(&report, query(Metric::Cpu, 2, None))
+            .owner_allocations(
+                &report,
+                query(Metric::Cpu, 2, None),
+                OwnerContextAccess::DateOnly,
+            )
             .await
             .unwrap()
             .next
@@ -118,7 +127,9 @@ async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_c
             ),
         ] {
             assert!(matches!(
-                store.owner_allocations(&changed, q).await,
+                store
+                    .owner_allocations(&changed, q, OwnerContextAccess::DateOnly)
+                    .await,
                 Err(MetricsError::Invalid(_))
             ));
         }
@@ -149,7 +160,11 @@ async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_c
         let mut previous = f64::INFINITY;
         loop {
             let page = store
-                .owner_allocations(&report, query(Metric::Cpu, 200, cursor))
+                .owner_allocations(
+                    &report,
+                    query(Metric::Cpu, 200, cursor),
+                    OwnerContextAccess::DateOnly,
+                )
                 .await
                 .unwrap();
             assert!(page.items.len() <= 200);
@@ -173,7 +188,11 @@ async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_c
         ] {
             assert_eq!(
                 store
-                    .owner_allocations(&report, query(metric, 5, None))
+                    .owner_allocations(
+                        &report,
+                        query(metric, 5, None),
+                        OwnerContextAccess::DateOnly
+                    )
                     .await
                     .unwrap()
                     .items[0]

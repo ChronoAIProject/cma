@@ -12,6 +12,7 @@ pub trait MetricsStore: Send + Sync {
         &self,
         _report: &Report,
         _query: OwnerAllocationQuery,
+        _owner_context: OwnerContextAccess,
     ) -> Result<OwnerAllocations> {
         Err(MetricsError::Unavailable)
     }
@@ -48,7 +49,13 @@ impl MetricsService {
         query.validate()?;
         self.store.check_read_budget()?;
         let report = self.ready(caller, true, id, now).await?;
-        self.store.owner_allocations(&report, query).await
+        self.store
+            .owner_allocations(
+                &report,
+                query,
+                OwnerContextAccess::from_authorization(&caller.authorization),
+            )
+            .await
     }
     pub async fn options(&self, caller: &Caller, query: OptionQuery) -> Result<FilterOptions> {
         let scope = authorize(caller, true)?;

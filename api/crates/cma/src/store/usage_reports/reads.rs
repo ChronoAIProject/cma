@@ -15,8 +15,10 @@ impl MetricsStore for ReportingStore {
         &self,
         report: &Report,
         query: layer2_core::sandbox_metrics::OwnerAllocationQuery,
+        owner_context: layer2_core::sandbox_metrics::OwnerContextAccess,
     ) -> Result<layer2_core::sandbox_metrics::OwnerAllocations> {
-        self.read_owner_allocations(report, query).await
+        self.read_owner_allocations(report, query, owner_context)
+            .await
     }
     async fn options(
         &self,

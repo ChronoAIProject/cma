@@ -136,6 +136,7 @@ impl MetricsStore for Store {
         &self,
         report: &Report,
         query: OwnerAllocationQuery,
+        _owner_context: OwnerContextAccess,
     ) -> Result<OwnerAllocations> {
         self.check()?;
         Ok(OwnerAllocations {
