@@ -134,7 +134,7 @@ invocations.
 ## Cache pressure
 
 Only lint and the archive producer use `rust-cache`. They use its default job-ID
-keys, with no `shared-key` or other key override:
+keys:
 
 | Job | Cache namespace |
 | --- | --- |
@@ -147,13 +147,6 @@ Both save only on pushes to `refs/heads/develop`. PR jobs restore readable devel
 caches without creating merge-ref entries. Compiler/dependency and environment
 hash changes can still create new entries; consumers have no Rust cache and
 archives use Actions artifacts.
-
-The earlier warm-cache transition claim, including the rationale in commit
-`c1a3bc974`, was incorrect. Keeping `shared-key: backend` preserved only a prefix.
-The producer's toolchain component set changed its environment hash, and the old
-entry had already been evicted. Both compilation jobs were cold in the hosted
-run. Default job-ID keys make the separate writers explicit without suggesting
-that an old entry will be reused.
 
 There are two develop-only cache entries per compiler/dependency/environment
 key, one more than the former Backend job. New per-PR Backend entries and
