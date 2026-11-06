@@ -51,7 +51,7 @@ impl SandboxBillingConfig {
                     let value = lookup(reference).map_err(|_| {
                         format!("{key} references an unavailable environment value")
                     })?;
-                    if !value.is_some_and(|value| !value.trim().is_empty()) {
+                    if value.is_none_or(|value| value.trim().is_empty()) {
                         return Err(format!(
                             "{key} must reference a present, nonempty environment value"
                         ));
