@@ -176,6 +176,8 @@ module CIContract
 
   def self.provider(inputs)
     ci = inputs.fetch("ci")
+    require_relative "omarchy-ci-contract"
+    OmarchyCIContract.validate(ci)
     workflow = inputs.fetch("nightly-staging")
     gate = job(ci, "trigger-provider-smoke-contract", "Trigger provider smoke contract")
     require!(!gate.key?("if") && !gate.key?("needs"), "provider contract must execute on every PR")
