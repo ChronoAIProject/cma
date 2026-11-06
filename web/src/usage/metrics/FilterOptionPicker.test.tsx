@@ -7,7 +7,7 @@ import { metricsClient } from './testFixtures';
 
 const owner = {
   value: '91892afa-5fa5-4f4f-9100-2b8d986d2f71',
-  label: 'Alex Chen · account a12bc34de567',
+  label: 'Alex Chen',
 };
 for (const count of [400, 20001]) {
   it(`searches and pages ${count} choices with a bounded DOM, keyboard selection and clear`, async () => {
@@ -21,7 +21,7 @@ for (const count of [400, 20001]) {
           { length: Math.min(query.search ? 1 : 50, count - start) },
           (_, index) => ({
             value: `sbx_${String(start + index).padStart(32, '0')}`,
-            label: `Research ${start + index} · Sandbox reference`,
+            label: `Research ${start + index}`,
           }),
         ),
         next: start + 50 < count ? String(start + 50) : null,
@@ -31,15 +31,15 @@ for (const count of [400, 20001]) {
       <FilterOptionPicker api={api} kind="sandbox" value="" onChange={change} active />,
     );
     await actor.click(screen.getByRole('button', { name: 'Sandbox: All Sandboxes' }));
-    await screen.findByRole('menuitemradio', { name: 'Research 0 · Sandbox reference' });
+    await screen.findByRole('menuitemradio', { name: 'Research 0' });
     expect(screen.getAllByRole('menuitemradio')).toHaveLength(51);
     await actor.click(screen.getByRole('button', { name: 'Next choices' }));
-    await screen.findByRole('menuitemradio', { name: 'Research 50 · Sandbox reference' });
+    await screen.findByRole('menuitemradio', { name: 'Research 50' });
     expect(screen.getAllByRole('menuitemradio')).toHaveLength(51);
     const search = screen.getByRole('textbox', { name: 'Search sandbox choices' });
     await actor.click(search);
     await actor.type(search, `Research ${count - 1}`);
-    await screen.findByRole('menuitemradio', { name: `Research ${count - 1} · Sandbox reference` });
+    await screen.findByRole('menuitemradio', { name: `Research ${count - 1}` });
     expect(screen.getAllByRole('menuitemradio')).toHaveLength(2);
     expect(api.options).toHaveBeenLastCalledWith(
       expect.objectContaining({ search: `Research ${count - 1}`, cursor: undefined, limit: 50 }),
@@ -51,7 +51,7 @@ for (const count of [400, 20001]) {
       <FilterOptionPicker api={api} kind="sandbox" value={value} onChange={change} active />,
     );
     const trigger = screen.getByRole('button', {
-      name: `Sandbox: Research ${count - 1} · Sandbox reference`,
+      name: `Sandbox: Research ${count - 1}`,
     });
     expect(trigger).toHaveFocus();
     expect(document.body.textContent).not.toContain(value);
@@ -88,7 +88,10 @@ it('shows loading, failure/retry and empty choices without changing the selectio
 it('resolves deep-linked labels, preserves duplicate names and never renders a missing selected ID', async () => {
   const api = metricsClient(true);
   api.options.mockResolvedValue({
-    items: [owner, { value: 'second-owner', label: 'Alex Chen · account e8765432abcd' }],
+    items: [
+      { ...owner, disambiguator: 'Joined 2026-11-01' },
+      { value: 'second-owner', label: 'Alex Chen', disambiguator: 'Joined 2026-11-02' },
+    ],
     next: null,
   });
   const view = render(
@@ -98,7 +101,7 @@ it('resolves deep-linked labels, preserves duplicate names and never renders a m
   await screen.findByRole('button', { name: `Owner: ${owner.label}` });
   expect(api.options).toHaveBeenCalledWith(expect.objectContaining({ selected: owner.value }));
   await userEvent.click(screen.getByRole('button', { name: `Owner: ${owner.label}` }));
-  await screen.findByRole('menuitemradio', { name: owner.label });
+  await screen.findByRole('menuitemradio', { name: 'Alex Chen Joined 2026-11-01' });
   expect(screen.getAllByRole('menuitemradio', { name: /Alex Chen/ })).toHaveLength(2);
   api.options.mockResolvedValue({ items: [], next: null });
   view.rerender(
@@ -137,4 +140,62 @@ it('aborts a superseded search and ignores a late response', async () => {
   await userEvent.keyboard('{Escape}');
   await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
   expect(screen.getByRole('button', { name: 'Owner: Everyone' })).toHaveFocus();
+});
+
+for (const kind of ['owner', 'sandbox'] as const) {
+  it(`${kind} shows duplicate context only in the current list and keeps selections plain`, async () => {
+    const api = metricsClient(true);
+    const change = vi.fn();
+    const name = kind === 'owner' ? 'Alex Chen' : 'Research';
+    const context = kind === 'owner' ? 'Joined 2026-11-01' : 'Alex Chen';
+    const otherContext = kind === 'owner' ? 'Joined 2026-11-02' : 'Priya';
+    const item = { value: 'opaque-first', label: name, disambiguator: context };
+    api.options.mockResolvedValue({
+      items: [item, { value: 'opaque-second', label: name, disambiguator: otherContext }],
+      next: null,
+    });
+    const label = kind === 'owner' ? 'Owner' : 'Sandbox';
+    const view = render(
+      <FilterOptionPicker api={api} kind={kind} value="" onChange={change} active />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(`^${label}:`) }));
+    await userEvent.click(await screen.findByRole('menuitemradio', { name: `${name} ${context}` }));
+    expect(change).toHaveBeenLastCalledWith(item.value);
+    view.rerender(
+      <FilterOptionPicker api={api} kind={kind} value={item.value} onChange={change} active />,
+    );
+    const trigger = screen.getByRole('button', { name: `${label}: ${name}` });
+    expect(trigger.title).toBe(name);
+    expect(trigger).not.toHaveTextContent(context);
+    api.options.mockResolvedValue({ items: [item], next: null });
+    await userEvent.click(trigger);
+    await screen.findByRole('menuitemradio', { name });
+    expect(screen.queryByText(context, { exact: true })).not.toBeInTheDocument();
+  });
+}
+
+it('keeps a last-resort duplicate reference out of the selected label and title', async () => {
+  const api = metricsClient(true);
+  const change = vi.fn();
+  const item = { value: 'first', label: 'Unnamed owner', disambiguator: 'reference 123456abcdef' };
+  api.options.mockResolvedValue({
+    items: [
+      item,
+      { value: 'second', label: 'Unnamed owner', disambiguator: 'reference abcdef123456' },
+    ],
+    next: null,
+  });
+  const view = render(
+    <FilterOptionPicker api={api} kind="owner" value="" onChange={change} active />,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Owner: Everyone' }));
+  await userEvent.click(
+    await screen.findByRole('menuitemradio', { name: 'Unnamed owner reference 123456abcdef' }),
+  );
+  view.rerender(
+    <FilterOptionPicker api={api} kind="owner" value="first" onChange={change} active />,
+  );
+  const selected = screen.getByRole('button', { name: 'Owner: Unnamed owner' });
+  expect(selected.title).toBe('Unnamed owner');
+  expect(selected).not.toHaveTextContent('reference');
 });

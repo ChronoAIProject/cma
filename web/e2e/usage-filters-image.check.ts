@@ -55,11 +55,26 @@ for (const theme of ['light', 'dark']) {
     await page.getByRole('textbox', { name: 'Search owner choices' }).fill('Alex');
     await expect(page.getByRole('menuitemradio', { name: /Alex Chen/ })).toHaveCount(2);
     expect(metrics.creates).toHaveLength(1);
-    await page.screenshot({ path: info.outputPath(`owner-search-${theme}.png`) });
+    await expect(
+      page.getByRole('menuitemradio', { name: 'Alex Chen Joined 2026-11-01', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('menuitemradio', { name: 'Unnamed owner', exact: true }),
+    ).toHaveCount(0);
+    expect(await page.getByRole('menu').innerText()).not.toMatch(
+      /account [0-9a-f]{12}|reference [0-9a-f]{12}/,
+    );
+    await page.screenshot({
+      path: info.outputPath(`owner-search-${theme}.png`),
+      animations: 'disabled',
+    });
     await page
       .getByRole('menuitemradio', { name: /Alex Chen/ })
       .first()
       .click();
+    await expect(
+      page.getByRole('button', { name: 'Owner: Alex Chen', exact: true }),
+    ).toHaveAttribute('title', 'Alex Chen');
     await apply();
     expect(metrics.creates.at(-1)?.input.filters?.owner).toBe(filterOwners[0]!.value);
     await page.getByRole('button', { name: 'Sandbox: All Sandboxes' }).click();
@@ -71,12 +86,21 @@ for (const theme of ['light', 'dark']) {
     await expect(page.getByRole('menuitemradio')).toHaveCount(51);
     await page.getByRole('textbox', { name: 'Search sandbox choices' }).fill('Research 19998');
     await expect(page.getByRole('menuitemradio', { name: /Research 19998/ })).toHaveCount(1);
-    await page.screenshot({ path: info.outputPath(`sandbox-search-${theme}.png`) });
+    await expect(
+      page.getByRole('menuitemradio', { name: 'Research 19998', exact: true }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: info.outputPath(`sandbox-search-${theme}.png`),
+      animations: 'disabled',
+    });
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
     await apply();
     expect(metrics.creates.at(-1)?.input.filters?.sandbox_id).toBe(options.rows[19998]!.value);
+    await expect(
+      page.getByRole('button', { name: 'Sandbox: Research 19998', exact: true }),
+    ).toHaveAttribute('title', 'Research 19998');
     await expect(page.getByText(/^1 Sandboxes · 1 running$/)).toBeVisible();
     await page.getByRole('button', { name: /^Sandbox: Research/ }).click();
     await page.getByRole('menuitemradio', { name: 'All Sandboxes' }).click();
@@ -144,7 +168,10 @@ for (const theme of ['light', 'dark']) {
     await expect(
       page.getByRole('alert').filter({ hasText: 'Could not load owner choices' }),
     ).toBeVisible();
-    await page.screenshot({ path: info.outputPath(`option-error-${theme}.png`) });
+    await page.screenshot({
+      path: info.outputPath(`option-error-${theme}.png`),
+      animations: 'disabled',
+    });
     options.failure = 0;
     await page.getByRole('button', { name: 'Retry choices' }).click();
     await expect(page.getByRole('menuitemradio', { name: /Unnamed owner/ })).toBeVisible();
@@ -152,7 +179,7 @@ for (const theme of ['light', 'dark']) {
     await expect(page.getByText('No matching owner choices.')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('button', { name: 'Owner: Everyone' })).toBeFocused();
-    await expect(page.getByRole('menu')).toHaveCount(0);
+    await expect(page.getByRole('menu', { includeHidden: true })).toHaveCount(0);
     expect(await filters.innerText()).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-|sbx_/);
     await page.screenshot({ path: info.outputPath(`overview-${theme}.png`), fullPage: true });
     expect(errors).toEqual([]);

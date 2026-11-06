@@ -20,8 +20,8 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
         store
             .collection("users")
             .insert_many([
-                doc! {"_id":"owner-0","display_name":"Alex Chen"},
-                doc! {"_id":"owner-1","display_name":"Alex Chen"},
+                doc! {"_id":"owner-0","display_name":"Alex Chen","first_seen_at":"2026-11-01T12:30:00Z"},
+                doc! {"_id":"owner-1","display_name":"Alex Chen","first_seen_at":"2026-11-02T12:30:00Z"},
                 doc! {"_id":"owner-2","display_name":"Priya [Research]"},
             ])
             .await
@@ -50,6 +50,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             .await
             .unwrap();
         assert_eq!(second.items.len(), 50);
+        assert!(first.items.iter().all(|item| item.disambiguator.is_none()));
         assert!(first
             .items
             .iter()
@@ -121,11 +122,16 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             .await
             .unwrap();
         assert_eq!(owners.items.len(), 2);
-        assert_ne!(owners.items[0].label, owners.items[1].label);
-        assert!(owners
-            .items
-            .iter()
-            .all(|item| item.label.starts_with("Alex Chen · account ")));
+        assert_eq!(owners.items[0].label, owners.items[1].label);
+        assert_eq!(
+            owners.items[0].disambiguator.as_deref(),
+            Some("Joined 2026-11-01")
+        );
+        assert_eq!(
+            owners.items[1].disambiguator.as_deref(),
+            Some("Joined 2026-11-02")
+        );
+        assert!(owners.items.iter().all(|item| item.label == "Alex Chen"));
         let literal = store
             .options(
                 &operator,
@@ -147,9 +153,50 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             )
             .await
             .unwrap();
-        assert!(unnamed.items[0]
-            .label
-            .starts_with("Unnamed owner · account "));
+        assert_eq!(unnamed.items[0].label, "Unnamed owner");
+        assert!(unnamed.items[0].disambiguator.is_none());
+        for (n, owner) in [(0, "owner-0"), (1, "owner-2")] {
+            store
+                .collection(super::super::super::sandbox_usage::STATES)
+                .update_one(
+                    doc! {"_id":states[n].sandbox_id.as_str()},
+                    doc! {"$set":{"record.name":"Shared research","owner":owner}},
+                )
+                .await
+                .unwrap();
+        }
+        let duplicates = store
+            .options(
+                &operator,
+                OptionQuery {
+                    search: "Shared research".into(),
+                    ..query(OptionKind::Sandbox)
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(duplicates.items.len(), 2);
+        assert_eq!(duplicates.items[0].label, "Shared research");
+        assert_eq!(
+            duplicates.items[0].disambiguator.as_deref(),
+            Some("Alex Chen")
+        );
+        assert_eq!(
+            duplicates.items[1].disambiguator.as_deref(),
+            Some("Priya [Research]")
+        );
+        let only = store
+            .options(
+                &operator,
+                OptionQuery {
+                    selected: Some(duplicates.items[0].value.clone()),
+                    ..query(OptionKind::Sandbox)
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(only.items[0].label, "Shared research");
+        assert!(only.items[0].disambiguator.is_none());
         let runtimes = store
             .options(&operator, query(OptionKind::Runtime))
             .await
