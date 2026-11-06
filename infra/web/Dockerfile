@@ -36,6 +36,9 @@ RUN test -n "${OS_SECURITY_REFRESH}" \
     && apk upgrade --no-cache
 USER 101:101
 COPY --from=build /build/web/dist /usr/share/nginx/html
+# The retained-assets volume overlays html/assets in deployed Pods. Keep the
+# current bundle outside that mount so an image-only rollout can always boot.
+COPY --from=build /build/web/dist/assets /usr/share/nginx/current/assets
 # Same-origin proxy for the API, so the bundle needs no knowledge of where the
 # control plane lives.
 # Includes route-specific 20 MiB attachment uploads, 43 MiB encoded Agent file

@@ -37,6 +37,7 @@ export function MetricFilters({
   return (
     <form
       className="usage-metric-filters"
+      data-admin={admin}
       aria-label="Usage filters"
       onSubmit={(event) => {
         event.preventDefault();
@@ -49,9 +50,10 @@ export function MetricFilters({
         }
       }}
     >
-      <label>
+      <label className="usage-filter-field">
         <span>Time range</span>
         <Picker
+          placement="usage-filter-control"
           label="Usage time range"
           value={draft.range}
           options={[
@@ -66,9 +68,10 @@ export function MetricFilters({
       </label>
       {draft.range === 'custom' && (
         <>
-          <label>
+          <label className="usage-filter-field">
             <span>From (local time)</span>
             <Input
+              placement="usage-filter-control"
               aria-label="Usage range from"
               type="datetime-local"
               required
@@ -76,9 +79,10 @@ export function MetricFilters({
               onChange={(event) => update({ ...draft, from: utcValue(event.target.value) })}
             />
           </label>
-          <label>
+          <label className="usage-filter-field">
             <span>To (local time)</span>
             <Input
+              placement="usage-filter-control"
               aria-label="Usage range to"
               type="datetime-local"
               required
@@ -89,20 +93,23 @@ export function MetricFilters({
         </>
       )}
       {admin && (
-        <ReportSelector
-          api={api}
-          selection={selection}
-          admin
-          active={active}
-          kind="owner"
-          value={draft.owner}
-          onChange={(owner) => update({ ...draft, owner, sandbox: '', agent: '' })}
-        />
+        <div className="usage-filter-discovery">
+          <ReportSelector
+            api={api}
+            selection={selection}
+            admin
+            active={active}
+            kind="owner"
+            value={draft.owner}
+            onChange={(owner) => update({ ...draft, owner, sandbox: '', agent: '' })}
+          />
+        </div>
       )}
       {admin && (
-        <label>
+        <label className="usage-filter-field">
           <span>Status</span>
           <Picker
+            placement="usage-filter-control"
             label="Usage Sandbox status"
             value={draft.status}
             options={[
@@ -114,9 +121,10 @@ export function MetricFilters({
         </label>
       )}
       {admin && (
-        <label>
+        <label className="usage-filter-field">
           <span>Runtime version</span>
           <Input
+            placement="usage-filter-control"
             aria-label="Usage runtime version"
             value={draft.runtime}
             maxLength={255}
@@ -124,9 +132,10 @@ export function MetricFilters({
           />
         </label>
       )}
-      <label>
+      <label className="usage-filter-field">
         <span>Search name or ID</span>
         <Input
+          placement="usage-filter-control"
           type="search"
           aria-label="Usage Sandbox search"
           value={draft.search}
@@ -134,17 +143,28 @@ export function MetricFilters({
           onChange={(event) => update({ ...draft, search: event.target.value })}
         />
       </label>
-      <ReportSelector
-        api={api}
-        selection={{ ...selection, owner: draft.owner }}
-        admin={admin}
-        active={active}
-        kind="sandbox"
-        value={draft.sandbox}
-        onChange={(sandbox) => update({ ...draft, sandbox, agent: '' })}
-      />
-      {agentPicker?.(draft, update)}
-      <Button type="submit">Apply usage filters</Button>
+      <div className="usage-filter-discovery">
+        <ReportSelector
+          api={api}
+          selection={{ ...selection, owner: draft.owner }}
+          admin={admin}
+          active={active}
+          kind="sandbox"
+          value={draft.sandbox}
+          onChange={(sandbox) => update({ ...draft, sandbox, agent: '' })}
+        />
+      </div>
+      {agentPicker && <div className="usage-filter-agent">{agentPicker(draft, update)}</div>}
+      <div className="usage-filter-submit">
+        <Button
+          variant="primary"
+          type="submit"
+          placement="usage-filter-apply"
+          aria-label="Apply usage filters"
+        >
+          Apply filters
+        </Button>
+      </div>
       {error && <p role="alert">{error}</p>}
     </form>
   );
