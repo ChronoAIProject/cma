@@ -49,6 +49,8 @@ jobs:
         run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs
       - name: Authenticated Mongo startup regressions
         run: node --test .github/scripts/authenticated-mongo-readiness.test.mjs
+      - name: Backend resource sampling regressions
+        run: python3 .github/scripts/backend-resource-sampler-tests.py
       - name: Gateway sealed-record migration regressions
         run: node --test .github/scripts/export-gateway-records.test.mjs
       - name: Install harness dependencies
@@ -285,6 +287,8 @@ jobs:
     name: Backend
     runs-on: ubuntu-latest
     env:
+      # Optional streamed evidence; the hook does not wrap or alter gate commands.
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
       # Full debug symbols made rust-lld crash linking the aggregate CMA test
       # binary on the hosted runner. Keep debug assertions and every test while
       # bounding linker output, as in the verified local workspace build.
