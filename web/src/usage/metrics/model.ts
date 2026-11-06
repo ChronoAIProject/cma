@@ -8,7 +8,7 @@ import type {
 
 export type MetricsClient = Pick<
   Cma['usageMetrics'],
-  'create' | 'report' | 'sandboxes' | 'sandbox' | 'series' | 'owners'
+  'create' | 'report' | 'sandboxes' | 'sandbox' | 'series' | 'owners' | 'options'
 >;
 export type Metric = 'cpu' | 'memory' | 'disk';
 export type Group = 'total' | 'owner' | 'sandbox';

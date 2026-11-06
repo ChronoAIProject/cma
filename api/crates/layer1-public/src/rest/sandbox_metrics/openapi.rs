@@ -7,6 +7,7 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
         ("/api/v1/admin/usage/metrics", true),
     ] {
         for (suffix, method, name, schema) in [
+            ("/options", "post", "options", "UsageFilterOptions"),
             (
                 "/reports/{report}/owners",
                 "get",
@@ -34,7 +35,7 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
                 "UsageMetricRow",
             ),
         ] {
-            if name == "owners" && !admin {
+            if matches!(name, "owners" | "options") && !admin {
                 continue;
             }
             let mut operation = json!({"operationId":format!("{}UsageMetrics{name}",if admin{"admin"}else{"owner"}),"tags":["usage-metrics"],
@@ -74,6 +75,10 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
                     json!({"name":"cursor","in":"query","required":false,"schema":{"type":"string"}}),
                 ]);
             }
+            if name == "options" {
+                operation["requestBody"] = json!({"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/UsageFilterOptionsQuery"}}}});
+                operation["summary"] = json!("Read administrator filter choices independently of reports; names stay out of request URLs");
+            }
             if name == "series" {
                 for (key, schema, required) in [
                     (
@@ -98,7 +103,7 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
                 }
             }
             operation["parameters"] = parameters.into();
-            if method == "post" {
+            if name == "create" {
                 operation["requestBody"] = json!({"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/UsageMetricQuery"}}}});
                 operation["responses"]["202"] = json!({"description":"Bounded report job pending; poll_url and Retry-After","content":{"application/json":{"schema":{"$ref":"#/components/schemas/UsageMetricReport"}}}});
             }
