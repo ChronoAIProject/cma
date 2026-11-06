@@ -74,6 +74,7 @@ pub async fn create(
         state.write_flags(),
     )
     .map_err(ManagementError::Invalid)?;
+    super::github_sources::validate(state, None, &definition).await?;
     super::custom_execution::validate_providers(&state.providers, &definition)?;
     super::custom_execution::validate_media(state, None, &definition)?;
     super::native_telegram::initialize(state, None, &mut definition)?;
@@ -270,6 +271,7 @@ pub async fn update(
     let mut definition = build_update(&request, &current.definition, state.write_flags())
         .map_err(ManagementError::Invalid)?;
     super::native_telegram::initialize(state, Some(&current.definition), &mut definition)?;
+    super::github_sources::validate(state, Some(&current.definition), &definition).await?;
     super::custom_execution::validate_providers(&state.providers, &definition)?;
     super::custom_execution::validate_media(state, Some(&current.definition), &definition)?;
     definition.version = current.record.version;

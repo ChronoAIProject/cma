@@ -22,6 +22,8 @@ import { retainTaskViewer } from '../create/taskIdentity';
 
 interface AuthContextValue {
   readonly state: AuthState;
+  readonly outage: Extract<AuthState, { status: 'error' }> | undefined;
+  readonly retry: () => void;
   readonly signIn: (returnTo?: string, options?: SignInOptions) => Promise<void>;
   readonly signOut: () => Promise<void>;
 }
@@ -36,13 +38,22 @@ interface AuthProviderProps {
 export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   const [state, setState] = useState<AuthState>({ status: 'checking' });
   const currentRead = useRef(0);
+  const [outage, setOutage] = useState<Extract<AuthState, { status: 'error' }>>();
+  const refreshRef = useRef<() => void>(() => {});
+  const retry = useCallback(() => refreshRef.current(), []);
 
   useEffect(() => {
     // Guards against a resolved promise landing after unmount, which React 19
     // StrictMode makes routine by running effects twice in development.
     let live = true;
+    let inFlight = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
 
     const refresh = () => {
+      if (!live || inFlight) return;
+      clearTimeout(timer);
+      inFlight = true;
       const version = ++currentRead.current;
       void provider
         .current()
@@ -50,7 +61,18 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
           if (live && version === currentRead.current) {
             if (next.status === 'authenticated') retainTaskViewer(next.user.id);
             if (next.status === 'anonymous') retainTaskViewer();
-            setState(next);
+            if (next.status === 'error' && next.reason !== undefined) {
+              setOutage(next);
+              // Retain mounted views and drafts. This is presentation only;
+              // every protected operation still requires server authorization.
+              setState((previous) => (previous.status === 'authenticated' ? previous : next));
+              const delay = Math.min(3000 * 2 ** Math.min(failures++, 4), 30000);
+              timer = setTimeout(refresh, delay + Math.floor(Math.random() * 501));
+            } else {
+              failures = 0;
+              setOutage(undefined);
+              setState(next);
+            }
           }
         })
         .catch((error: unknown) => {
@@ -63,8 +85,12 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
               message: error instanceof Error ? error.message : 'Could not verify your identity.',
             });
           }
+        })
+        .finally(() => {
+          inFlight = false;
         });
     };
+    refreshRef.current = refresh;
     const visible = () => {
       if (document.visibilityState !== 'hidden') refresh();
     };
@@ -75,6 +101,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
 
     return () => {
       live = false;
+      clearTimeout(timer);
+      refreshRef.current = () => {};
       window.removeEventListener('focus', refresh);
       window.removeEventListener('online', refresh);
       document.removeEventListener('visibilitychange', visible);
@@ -99,6 +127,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         if (version !== currentRead.current) return;
         if (next.status === 'authenticated') retainTaskViewer(next.user.id);
         if (next.status === 'anonymous') retainTaskViewer();
+        setOutage(undefined);
         setState(next);
       } catch (error: unknown) {
         if (version !== currentRead.current) return;
@@ -117,6 +146,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
       await provider.signOut();
       if (version !== currentRead.current) return;
       retainTaskViewer();
+      setOutage(undefined);
       setState({ status: 'anonymous' });
     } catch (error: unknown) {
       if (version !== currentRead.current) return;
@@ -128,8 +158,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   }, [provider]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ state, signIn, signOut }),
-    [state, signIn, signOut],
+    () => ({ state, outage, retry, signIn, signOut }),
+    [state, outage, retry, signIn, signOut],
   );
 
   return <AuthContext value={value}>{children}</AuthContext>;
