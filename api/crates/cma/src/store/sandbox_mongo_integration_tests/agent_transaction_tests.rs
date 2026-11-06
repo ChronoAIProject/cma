@@ -1,6 +1,8 @@
 use super::*;
 use layer2_core::sandbox::{AgentMessageAssembly, AgentUpdateRecorder, DurableAgentUpdateRecorder};
-use layer3_adapter::ConversationUpdate;
+use layer3_adapter::{
+    ConversationUpdate, RuntimeOutputReceipt, RuntimeOutputSource, TurnStopReason,
+};
 
 mod capacity_tests;
 
@@ -184,6 +186,75 @@ async fn agent_conversation_atomically_saves_and_reconciles_aggregate_and_logs()
     };
     assert!(reconcile_conversation(&store, &receipt).await.unwrap());
 
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn mongo_recorder_persists_identity_terminal_without_changing_receipt_shape() {
+    let (client, name) = database("identity_terminal_receipt").await;
+    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let ready = ready_conversation_fixture(&store, "identity_terminal_receipt").await;
+    let turn = begin_stored_conversation_turn(&store, ready).await;
+    let working = turn.agent.clone();
+    store.commit_agent_conversation(turn).await.unwrap();
+    let recorder = DurableAgentUpdateRecorder::new(store.clone());
+    let source = |cursor: u64, hash: &str| {
+        RuntimeOutputReceipt::new(
+            RuntimeOutputSource {
+                stream_id: "d99003d1-0c3c-46cd-aa47-9bbdbed50b12".into(),
+                cursor,
+                native_conversation_id: working.conversation.conversation_id.clone().unwrap(),
+                payload_sha256: hash.into(),
+            },
+            tokio::sync::mpsc::channel(1).0,
+        )
+    };
+    recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut AgentMessageAssembly::default(),
+            ConversationUpdate::RuntimeOutput {
+                receipt: source(1, &"a".repeat(64)),
+                update: None,
+            },
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let prompt_id = layer3_adapter::PromptIdentity::new(
+        working.conversation.conversation_id.as_deref().unwrap(),
+        working.conversation.runtime_generation.unwrap(),
+        working.conversation.active_turn.unwrap(),
+    );
+    let outcome = recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut AgentMessageAssembly::default(),
+            ConversationUpdate::RuntimeOutput {
+                receipt: source(2, &"b".repeat(64)),
+                update: Some(Box::new(ConversationUpdate::TurnEndedForPrompt {
+                    prompt_id,
+                    response: layer3_adapter::PromptResponse::new(TurnStopReason::EndTurn),
+                })),
+            },
+            MINUTE.into(),
+        )
+        .await
+        .unwrap();
+    assert!(outcome.turn_closed);
+    let checkpoint = store
+        .agent_message_checkpoint(&working.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(checkpoint.output.unwrap().cursor, 2);
+    assert_eq!(
+        store.get_agent(&working.id).await.unwrap().unwrap().status,
+        AgentStatus::Ready
+    );
     client.database(&name).drop().await.unwrap();
 }
 
