@@ -14,7 +14,11 @@ pub(super) struct PromptRecovery {
     /// responses are harmless replays and must not create another terminal.
     completed: Option<PromptIdentity>,
     verified: bool,
-    outcome: Option<Outcome>,
+    /// A terminal observed before handshake verification, paired with the
+    /// exact native identity carried by that response. `completed` tracks the
+    /// latest observed terminal for duplicate suppression, so it must never be
+    /// consulted to label this pending result.
+    outcome: Option<(PromptIdentity, Outcome)>,
 }
 
 impl PromptRecovery {
@@ -96,7 +100,7 @@ impl Bridge {
                 Some(prompt_id),
             ));
         } else {
-            recovery.outcome = Some(outcome);
+            recovery.outcome = Some((prompt_id, outcome));
         }
         true
     }
@@ -104,11 +108,11 @@ impl Bridge {
     pub(super) async fn release_recovered_prompt(&self, updates: &UpdateRelay) {
         let mut recovery = self.recovery.lock().await;
         recovery.verified = true;
-        if let Some(outcome) = recovery.outcome.take() {
+        if let Some((prompt_id, outcome)) = recovery.outcome.take() {
             updates.send(crate::hosted::acp_turn::scoped_turn_outcome(
                 outcome,
                 true,
-                recovery.completed.clone(),
+                Some(prompt_id),
             ));
         }
     }
