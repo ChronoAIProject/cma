@@ -5,6 +5,8 @@ export interface ConversationMessage {
   readonly order?: number;
   readonly sequence?: number;
   readonly id: string;
+  /** Stable DOM identity carried from an ephemeral live row to durable history. */
+  readonly renderKey?: string;
   readonly runId?: string;
   readonly role: 'user' | 'assistant';
   readonly content: string;
@@ -76,6 +78,8 @@ export interface RecoveryNotice {
 }
 
 export interface ConversationState {
+  /** Runs whose live tail is no longer contiguous after a reconnect. */
+  readonly liveGapRuns?: ReadonlySet<string>;
   readonly turnOutcomes?: Readonly<Record<string, 'completed' | 'failed' | 'interrupted'>>;
   readonly agentCursor?: string;
   readonly agentIncarnation?: string;

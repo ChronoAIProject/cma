@@ -5543,3 +5543,21 @@ remain hidden outside fences. Completed messages keep their existing bytes and
 marker handling.
 
 | 2026-11-06 | Render streaming replies through a safe Markdown prefix: CommonMark-flanking emphasis and code spans scoped to the paragraph still being written, UTF-16-exact masking, and partial deliverable markers hidden only on the final line. |
+
+
+
+#### Agent conversation streaming continuity — 2026-11-06
+
+A live stream gap preserves every visible message and reasoning row. The client
+freezes that run's live tail after the gap and waits for its durable message;
+it never appends a post-gap fragment to a buffer with a hole. Durable text
+replaces the live row in the same timeline position and keeps its DOM identity.
+Snapshot merges retain that identity on subsequent refreshes too. The durable
+successor replaces a frozen live row even when its text differs; an earlier
+durable message from the same run never consumes the second message's live row.
+The **Refreshing live updates…** status occupies one fixed slot at the end of
+the message stream and clears when the run is recorded or reaches a terminal
+outcome. Active thinking, composer busy state and other turn loading indicators
+also end at that terminal observation.
+
+| 2026-11-06 | Preserve streamed text across live gaps, replace frozen live rows in place with their durable successor and a stable DOM identity, and keep the live recovery status in one slot that clears at the run's terminal outcome. |
