@@ -6,7 +6,7 @@ use axum::{
 use layer2_core::{Authorization, Capability};
 use tower::ServiceExt;
 
-async fn request(
+pub(super) async fn request(
     store: &Arc<ReportingStore>,
     method: &str,
     path: &str,
