@@ -28,7 +28,9 @@ async fn retained(server: &mut ServerSocket, cursor: u64, value: serde_json::Val
 #[tokio::test]
 async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_handshake() {
     let prompt = crate::PromptIdentity::new("conversation-held", 19, 157);
-    let expected_id = prompt.as_str().to_owned();
+    let expected_id = crate::PromptIdentity::new("conversation-held", 19, 158)
+        .as_str()
+        .to_owned();
     let (client, mut server) = socket_pair().await;
     reliable_ready(&mut server).await;
     let (backlog_sent, backlog_received) = tokio::sync::oneshot::channel();
@@ -106,7 +108,7 @@ async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_h
         if cursor == 301 {
             assert!(matches!(
                 update.as_deref(),
-                Some(ConversationUpdate::TurnEnded(_))
+                Some(ConversationUpdate::TurnEndedForPrompt { .. })
             ));
         } else if cursor == 302 {
             assert!(update.is_none());

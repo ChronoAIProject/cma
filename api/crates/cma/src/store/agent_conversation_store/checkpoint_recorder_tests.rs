@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
+use layer2_core::sandbox::store::SandboxStore;
 use layer2_core::sandbox::{
     AgentOperationDelivery, AgentOperationIntent, AgentOperationRecord, AgentTurnUsage,
     AgentUpdateRecorder, AgentUsageCheckpoint, DurableAgentUpdateRecorder,
-    NativeCompletionEvidence,
+    NativeCompletionEvidence, SandboxStatus,
 };
 use layer3_adapter::{
     ContentBlock, ContentChunk, ConversationUpdate, MessageId, PromptResponse, SessionUpdate,
@@ -117,6 +118,7 @@ async fn mongo_reconciliation_commits_one_terminal_and_replays_idempotently() {
         ..Default::default()
     });
     let revision = current.revision;
+    current.revision += 1;
     store.save_agent(revision, current.clone()).await.unwrap();
     let recorder = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
     let mut assembly = AgentMessageAssembly::default();
@@ -143,6 +145,16 @@ async fn mongo_reconciliation_commits_one_terminal_and_replays_idempotently() {
         history_complete: true,
         history_prefix_unchanged: true,
         history_sha256: "a".repeat(64),
+        final_answer: "mongo answer".into(),
+        final_answer_durable: false,
+        operation_sequence: 1,
+        sandbox_revision: store
+            .get_sandbox(&current.sandbox_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .revision,
+        sandbox_status: SandboxStatus::Active,
     };
     let first = recorder
         .reconcile_completion(
@@ -177,6 +189,19 @@ async fn mongo_reconciliation_commits_one_terminal_and_replays_idempotently() {
             .filter(|entry| matches!(entry.kind, AgentLogKind::TurnCompleted { .. }))
             .count(),
         1
+    );
+    assert_eq!(
+        store
+            .agent_log(&current.id, 0, 100)
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|entry| match &entry.kind {
+                AgentLogKind::AgentMessage { content } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        ["mongo answer"]
     );
     client.database(&name).drop().await.unwrap();
 }

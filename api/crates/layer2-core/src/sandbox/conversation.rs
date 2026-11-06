@@ -40,6 +40,14 @@ pub struct NativeCompletionEvidence {
     pub history_complete: bool,
     pub history_prefix_unchanged: bool,
     pub history_sha256: String,
+    /// Exact final assistant text observed in the complete native history.
+    /// This is process-local evidence and is never logged or persisted.
+    pub final_answer: String,
+    /// The exact answer was already appended to the durable Agent log.
+    pub final_answer_durable: bool,
+    pub operation_sequence: u64,
+    pub sandbox_revision: u64,
+    pub sandbox_status: super::SandboxStatus,
 }
 
 impl NativeCompletionEvidence {
@@ -63,13 +71,16 @@ impl NativeCompletionEvidence {
             || !self.no_later_open_turn
             || !self.history_complete
             || !self.history_prefix_unchanged
+            || self.final_answer.is_empty()
+            || self.final_answer.len() > MAX_DURABLE_AGENT_MESSAGE_BYTES
+            || self.operation_sequence == 0
+            || self.sandbox_revision == 0
+            || self.sandbox_status != super::SandboxStatus::Active
             || admitted.is_none()
             || completed.is_none()
             || completed < admitted
-            || !matches!(
-                agent.status,
-                super::AgentStatus::Working | super::AgentStatus::WaitingApproval
-            )
+            || agent.status != super::AgentStatus::Working
+            || agent.requested_stop_reason.is_some()
             || agent.conversation.conversation_id.as_deref()
                 != Some(self.native_conversation_id.as_str())
             || agent.conversation.runtime_generation != Some(self.runtime_generation)
@@ -92,10 +103,12 @@ impl NativeCompletionEvidence {
         };
         if operation.runtime_generation != self.runtime_generation
             || operation.turn_sequence != self.turn_sequence
+            || operation.sequence != self.operation_sequence
             || !matches!(
                 operation.intent,
                 super::AgentOperationIntent::SendMessage { .. }
             )
+            || operation.state != super::AgentOperationDelivery::ExecutionObserved
             || matches!(
                 operation.state,
                 super::AgentOperationDelivery::PreWriteFailed

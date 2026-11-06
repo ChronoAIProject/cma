@@ -213,3 +213,84 @@ pub(super) async fn production_adapter(
         )?,
     })
 }
+
+/// Construct only the history-export adapter used by a dry-run repair. It
+/// does not open lifecycle workers, credentials, tool sources, or runtime
+/// routing migrations; every operation available through this value is a
+/// read-only history request.
+pub(super) async fn repair_history_adapter(
+    config: &Config,
+) -> Result<Arc<dyn layer3_adapter::SandboxAdapter>, String> {
+    use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
+    use layer3_adapter::hosted::{
+        HostedDeployment, ProviderHostedBackend, ProviderHostedControlTransport,
+    };
+    use layer3_adapter::provider::SandboxClient;
+
+    let client = mongodb::Client::with_uri_str(&config.mongodb_uri)
+        .await
+        .map_err(|_| "runtime routing database unavailable")?;
+    let database = client.database(&config.mongodb_database);
+    crate::store::isolation::verify_with_authority(&database, config.mongodb_authority)
+        .await
+        .map_err(|error| format!("runtime database authority is not usable: {error}"))?;
+    let routing = crate::store::runtime_routing::MongoRuntimeRouting::open_read_only(
+        &database,
+        &config.deployment_id,
+    );
+    let sandbox = SandboxClient::new(
+        config.runtime.sandbox_base_url.clone(),
+        config.runtime.sandbox_api_key.clone(),
+    );
+    let transport = ProviderHostedControlTransport::for_retained_opensandbox(sandbox.clone())
+        .map_err(|error| error.to_string())?;
+    let opensandbox =
+        ProviderHostedBackend::new(sandbox, Arc::new(transport), &config.deployment_id)
+            .map_err(|error| error.to_string())?;
+    let mut backends = layer3_adapter::hosted::RuntimeBackends {
+        routing,
+        agent_sandbox: None,
+        opensandbox: Some(Arc::new(opensandbox)),
+        allocate_agent_sandbox: false,
+        home_routes: None,
+    };
+    if let Some(settings) = &config.runtime.agent_sandbox {
+        let connection = layer3_adapter::agent_sandbox::resolve_kubernetes_connection(
+            config.runtime.agent_sandbox_connection.as_ref(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        let client = layer3_adapter::agent_sandbox::AgentSandboxClient::new(
+            connection.client,
+            settings.clone(),
+            &connection.authority,
+        )
+        .map_err(|error| error.to_string())?;
+        let transport = ProviderHostedControlTransport::for_agent_sandbox_with_transport(
+            client.clone(),
+            config.runtime.agent_sandbox_runtime_transport,
+        )
+        .map_err(|error| error.to_string())?;
+        backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(
+            client,
+            Arc::new(transport),
+        )));
+    }
+    let deployment = HostedDeployment {
+        image: crate::warm_pools::deployment_image(config.runtime.sandbox_image.clone()),
+        upstream_base_url: config.runtime.upstream_base_url.clone(),
+        upstream_wire_api: config.runtime.upstream_wire_api.clone(),
+        platform_base_url: config.runtime.platform_base_url.clone(),
+        ..HostedDeployment::default()
+    };
+    deployment
+        .contract()
+        .map_err(|error| format!("hosted runtime image is not usable: {error}"))?;
+    Ok(Arc::new(CodexAdapter::new(
+        Arc::new(backends),
+        CodexSandboxSpec {
+            deployment,
+            ..CodexSandboxSpec::default()
+        },
+    )))
+}

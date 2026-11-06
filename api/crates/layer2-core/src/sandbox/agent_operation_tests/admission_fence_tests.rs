@@ -308,6 +308,7 @@ async fn direct_store_admission_requires_exact_parent_even_when_agent_revision_i
         execution_fence: None,
         trigger_execution_fence: None,
         admission_guard: None,
+        reconciliation_fence: None,
         expected_agent_revision: ready.revision,
         expected_last_seq: 0,
         runtime_generation: 3,

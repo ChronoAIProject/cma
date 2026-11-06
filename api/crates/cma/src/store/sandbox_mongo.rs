@@ -152,17 +152,32 @@ impl MongoSandboxStore {
         self.managed_runtime_version = Some(version);
         self
     }
-
     pub(crate) fn with_machine_runtime_version(mut self, version: Option<String>) -> Self {
         self.managed_machine_runtime_version = version;
         self
     }
-
+    /// Open read ports for stale-turn inspection without schema/index writes.
+    pub(crate) async fn open_read_only(client: &Client, name: &str) -> Result<Self, StoreError> {
+        let database = client.database(name);
+        require_transaction_topology(&database).await?;
+        let checkpoint_objects = MongoCheckpointObjectStore::open_read_only(
+            client,
+            name,
+            std::sync::Arc::new(super::checkpoint_storage::RetiredCheckpointStorage),
+        );
+        Self::open_inner(
+            client,
+            name,
+            checkpoint_objects,
+            super::bindings::BindingCollections::open_read_only(&database),
+            false,
+        )
+        .await
+    }
     #[cfg(test)]
     pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
         Self::open_with_storage(client, name, super::checkpoint_storage::test_storage(name)).await
     }
-
     pub(super) async fn open_with_storage(
         client: &Client,
         name: &str,
@@ -173,9 +188,26 @@ impl MongoSandboxStore {
         initialize_collections(&database, SANDBOX_COLLECTIONS).await?;
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
+        Self::open_inner(
+            client,
+            name,
+            checkpoint_objects,
+            super::bindings::BindingCollections::open(&database).await?,
+            true,
+        )
+        .await
+    }
+    async fn open_inner(
+        client: &Client,
+        name: &str,
+        checkpoint_objects: MongoCheckpointObjectStore,
+        bindings: super::bindings::BindingCollections,
+        writable: bool,
+    ) -> Result<Self, StoreError> {
+        let database = client.database(name);
         let store = Self {
             writer_policy: Default::default(),
-            bindings: super::bindings::BindingCollections::open(&database).await?,
+            bindings,
             client: client.clone(),
             checkpoint_objects,
             sandboxes: majority_collection(&database, SANDBOXES),
@@ -235,6 +267,10 @@ impl MongoSandboxStore {
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
+        if !writable {
+            tracing::info!(database = name, "sandbox-model Mongo read-only store ready");
+            return Ok(store);
+        }
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;
         super::sandbox_usage::ensure_indexes(&store).await?;

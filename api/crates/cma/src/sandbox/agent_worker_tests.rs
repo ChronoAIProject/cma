@@ -944,6 +944,7 @@ async fn worker_does_not_resend_a_first_message_fenced_by_the_same_lease() {
             admission_guard: Some(layer2_core::sandbox::store::SandboxMutationGuard::capture(
                 &parent,
             )),
+            reconciliation_fence: None,
             expected_agent_revision: claimed.revision,
             expected_last_seq,
             runtime_generation: claimed.conversation.runtime_generation.unwrap(),

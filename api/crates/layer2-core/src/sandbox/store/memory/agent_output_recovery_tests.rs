@@ -1,5 +1,5 @@
 use super::*;
-use layer3_adapter::{RuntimeOutputReceipt, RuntimeOutputSource};
+use layer3_adapter::{PromptResponse, RuntimeOutputReceipt, RuntimeOutputSource, TurnStopReason};
 
 const STREAM: &str = "d99003d1-0c3c-46cd-aa47-9bbdbed50b12";
 
@@ -17,6 +17,96 @@ fn retained(cursor: u64, update: Option<ConversationUpdate>) -> ConversationUpda
         ),
         update: update.map(Box::new),
     }
+}
+
+#[tokio::test]
+async fn identity_terminal_replays_after_an_old_observer_saved_quiet_cursor() {
+    let (store, working, recorder) = working_agent().await;
+    let turn = working.conversation.active_turn.unwrap();
+    recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut AgentMessageAssembly::default(),
+            retained(1, None),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let conversation = working.conversation.conversation_id.as_deref().unwrap();
+    let prompt_id = layer3_adapter::PromptIdentity::new(conversation, 1, turn);
+    recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut AgentMessageAssembly::default(),
+            retained(
+                1,
+                Some(ConversationUpdate::TurnEndedForPrompt {
+                    prompt_id,
+                    response: PromptResponse::new(TurnStopReason::EndTurn),
+                }),
+            ),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let current = store.get_agent(&working.id).await.unwrap().unwrap();
+    assert_eq!(current.conversation.active_turn, None);
+    assert_eq!(current.status, AgentStatus::Ready);
+}
+
+#[tokio::test]
+async fn delayed_identity_terminal_cannot_close_the_next_turn() {
+    let (store, working, recorder) = working_agent().await;
+    let old_turn = working.conversation.active_turn.unwrap();
+    let conversation = working.conversation.conversation_id.as_deref().unwrap();
+    let old_prompt = layer3_adapter::PromptIdentity::new(conversation, 1, old_turn);
+    recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut AgentMessageAssembly::default(),
+            retained(
+                1,
+                Some(ConversationUpdate::TurnEndedForPrompt {
+                    prompt_id: old_prompt.clone(),
+                    response: PromptResponse::new(TurnStopReason::EndTurn),
+                }),
+            ),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let ready = store.get_agent(&working.id).await.unwrap().unwrap();
+    store
+        .commit_agent_conversation(begin_turn(&store, ready))
+        .await
+        .unwrap();
+    let next = store.get_agent(&working.id).await.unwrap().unwrap();
+    let replacement = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
+    replacement
+        .record_update(
+            &next.id,
+            1,
+            &mut AgentMessageAssembly::default(),
+            retained(
+                1,
+                Some(ConversationUpdate::TurnEndedForPrompt {
+                    prompt_id: old_prompt,
+                    response: PromptResponse::new(TurnStopReason::EndTurn),
+                }),
+            ),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let current = store.get_agent(&next.id).await.unwrap().unwrap();
+    assert_eq!(current.status, AgentStatus::Working);
+    assert_eq!(
+        current.conversation.active_turn,
+        next.conversation.active_turn
+    );
 }
 
 #[tokio::test]

@@ -353,6 +353,7 @@ impl AgentOperationService {
                 .and(self.trigger_authority.as_ref())
                 .map(|authority| authority.fence()),
             admission_guard,
+            reconciliation_fence: None,
             expected_agent_revision: current.revision,
             expected_last_seq: current.conversation.last_seq,
             runtime_generation: current.conversation.runtime_generation.ok_or_else(|| {

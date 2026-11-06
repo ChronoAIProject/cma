@@ -185,6 +185,7 @@ async fn runtime_update_mongo_fence_conflicts_with_a_turn_after_idle_snapshot() 
             admission_guard: Some(layer2_core::sandbox::store::SandboxMutationGuard::capture(
                 &sandbox,
             )),
+            reconciliation_fence: None,
             expected_agent_revision: ready.revision,
             expected_last_seq: ready.conversation.last_seq,
             runtime_generation: 1,

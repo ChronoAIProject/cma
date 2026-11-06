@@ -97,7 +97,8 @@ pub(crate) struct AgentWorker {
     dependencies: AgentWorkerDependencies,
     config: AgentWorkerConfig,
     maintenance: reconcile::MaintenanceChecks,
-    completion_history: std::sync::Mutex<HashMap<(AgentId, u64), String>>,
+    completion_history: std::sync::Mutex<HashMap<(AgentId, u64), (String, SystemTime)>>,
+    completion_checked_at: std::sync::Mutex<HashMap<AgentId, SystemTime>>,
 }
 
 impl AgentWorker {
@@ -110,6 +111,7 @@ impl AgentWorker {
             config,
             maintenance: reconcile::MaintenanceChecks::default(),
             completion_history: std::sync::Mutex::new(HashMap::new()),
+            completion_checked_at: std::sync::Mutex::new(HashMap::new()),
         })
     }
 

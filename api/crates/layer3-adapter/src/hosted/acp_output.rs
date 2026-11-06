@@ -1,6 +1,6 @@
 //! Hold domain frames through native identity verification, preserving wire order.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
 use futures_util::SinkExt as _;
 use serde::Deserialize;
@@ -48,7 +48,7 @@ pub(super) struct ReliableOutput {
     queued_bytes: usize,
     /// Cursor of an identity-bearing terminal that could not be committed.
     /// Cumulative ACKs must not cross this frame.
-    blocked_at: Option<u64>,
+    blocked_at: BTreeSet<u64>,
     acknowledgements: mpsc::Sender<RuntimeOutputSource>,
     durable_progress: tokio::sync::watch::Sender<u64>,
 }
@@ -64,7 +64,7 @@ impl ReliableOutput {
             session: None,
             queued: VecDeque::new(),
             queued_bytes: 0,
-            blocked_at: None,
+            blocked_at: BTreeSet::new(),
             acknowledgements,
             durable_progress: tokio::sync::watch::channel(0).0,
         }
@@ -129,7 +129,7 @@ impl Bridge {
             return Ok(());
         }
         if self.unmatched_terminal(&held.payload).await {
-            state.blocked_at = Some(cursor);
+            state.blocked_at.insert(cursor);
         }
         self.deliver_output(&state, held, updates).await
     }
@@ -201,7 +201,7 @@ impl Bridge {
         state.session = Some(session.to_owned());
         while let Some(held) = state.queued.pop_front() {
             if self.unmatched_terminal(&held.payload).await {
-                state.blocked_at = Some(held.cursor);
+                state.blocked_at.insert(held.cursor);
             }
             self.deliver_output(&state, held, updates).await?;
         }
@@ -260,16 +260,14 @@ impl Bridge {
             Some(state) => Some(state.await),
             None => None,
         };
-        if let Some(blocked) = state.as_ref().and_then(|state| state.blocked_at) {
+        if let Some(blocked) = state
+            .as_ref()
+            .and_then(|state| state.blocked_at.first().copied())
+        {
             if source.cursor > blocked {
                 return Err(AdapterError::Unavailable(format!(
                     "runtime output terminal at cursor {blocked} is not durably resolved"
                 )));
-            }
-            if source.cursor < blocked {
-                return Err(AdapterError::Unavailable(
-                    "runtime output acknowledgement is behind an unresolved terminal".into(),
-                ));
             }
         }
         let mut bytes = Vec::with_capacity(HEADER_BYTES + 1);
@@ -285,9 +283,7 @@ impl Bridge {
                 AdapterError::Unavailable(format!("runtime acknowledgement write failed: {error}"))
             })?;
         if let Some(state) = state.as_mut() {
-            if state.blocked_at == Some(source.cursor) {
-                state.blocked_at = None;
-            }
+            state.blocked_at.remove(&source.cursor);
             state.durable_progress.send_if_modified(|last| {
                 if source.cursor <= *last {
                     return false;

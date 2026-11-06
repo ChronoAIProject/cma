@@ -19,12 +19,22 @@ pub struct AgentConversationMutation {
         Option<std::sync::Arc<crate::sandbox::agent_io::TriggerExecutionFence>>,
     /// Exact parent authority for newly admitted input; absent for runtime evidence.
     pub admission_guard: Option<SandboxMutationGuard>,
+    /// Parent lifecycle snapshot required by native-completion reconciliation.
+    /// The concrete store must compare this snapshot inside the same transaction.
+    pub reconciliation_fence: Option<AgentReconciliationFence>,
     pub expected_agent_revision: u64,
     pub expected_last_seq: u64,
     pub runtime_generation: u64,
     pub agent: Agent,
     pub appended_at: String,
     pub agent_logs: Vec<AgentLogKind>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentReconciliationFence {
+    pub sandbox_id: crate::SandboxId,
+    pub sandbox_revision: u64,
+    pub sandbox_status: crate::sandbox::SandboxStatus,
 }
 
 impl AgentConversationMutation {
@@ -107,6 +117,22 @@ pub fn validate_agent_conversation_admission(
             return Err(SandboxStoreError::Conflict);
         }
         fence.validate_mutation(mutation)?;
+    }
+    if let Some(fence) = &mutation.reconciliation_fence {
+        let parent = parent.ok_or(SandboxStoreError::Conflict)?;
+        if parent.id != fence.sandbox_id
+            || parent.id != current.sandbox_id
+            || parent.revision != fence.sandbox_revision
+            || parent.status != fence.sandbox_status
+            || parent.status != SandboxStatus::Active
+            || parent.lifecycle.checkpoint_capture.is_some()
+            || mutation.admission_guard.is_some()
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        parent
+            .validate()
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
     }
     let Some(guard) = mutation.admission_guard.as_ref() else {
         return if admission {

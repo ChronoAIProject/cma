@@ -40,6 +40,22 @@ pub struct MongoCheckpointObjectStore {
 }
 
 impl MongoCheckpointObjectStore {
+    pub(crate) fn open_read_only(
+        client: &Client,
+        database_name: &str,
+        objects: Arc<dyn CheckpointBlobStore>,
+    ) -> Self {
+        let database = client.database(database_name);
+        Self {
+            manifests: majority_collection(&database, MANIFESTS),
+            gates: majority_collection(&database, GATES),
+            tombstones: majority_collection(&database, TOMBSTONES),
+            sandboxes: majority_collection(&database, super::sandbox_mongo::SANDBOXES),
+            objects,
+            client: client.clone(),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) async fn open(client: &Client, database_name: &str) -> Result<Self, StoreError> {
         Self::open_with_storage(

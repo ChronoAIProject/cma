@@ -293,6 +293,7 @@ async fn queued_message_and_pause_cancellation_commit_together() {
         execution_fence: None,
         trigger_execution_fence: None,
         admission_guard: Some(SandboxMutationGuard::capture(&parent)),
+        reconciliation_fence: None,
         expected_agent_revision: current.revision,
         expected_last_seq: 0,
         runtime_generation: 4,

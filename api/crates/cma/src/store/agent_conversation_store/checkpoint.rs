@@ -186,6 +186,27 @@ async fn apply(
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let actual_agent = read_agent(&row).map_err(ApplyError::Domain)?;
     let actual = read(&row).map_err(ApplyError::Domain)?;
+    if let Some(fence) = mutation
+        .as_ref()
+        .and_then(|mutation| mutation.reconciliation_fence.as_ref())
+    {
+        let parent = store
+            .sandboxes
+            .find_one(doc! { "_id": fence.sandbox_id.as_str() })
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
+        let parent = super::super::sandboxes::read_sandbox(&parent).map_err(ApplyError::Domain)?;
+        if parent.id != actual_agent.sandbox_id
+            || parent.revision != fence.sandbox_revision
+            || parent.status != fence.sandbox_status
+            || parent.status != layer2_core::sandbox::SandboxStatus::Active
+            || parent.lifecycle.checkpoint_capture.is_some()
+        {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+    }
     if let Some(guard) = guard {
         if actual_agent != *current {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));

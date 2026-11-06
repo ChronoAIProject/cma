@@ -13,6 +13,13 @@ pub(crate) struct MongoRuntimeRouting {
     deployment: String,
 }
 impl MongoRuntimeRouting {
+    pub(crate) fn open_read_only(db: &Database, deployment: &str) -> Arc<Self> {
+        Arc::new(Self {
+            rows: super::durability::majority_collection(db, COLLECTION),
+            deployment: deployment.into(),
+        })
+    }
+
     pub(crate) async fn open(
         db: &Database,
         deployment: &str,

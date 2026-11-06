@@ -132,6 +132,7 @@ async fn transaction_refuses_claimed_input_before_active_publication() {
             execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: Some(SandboxMutationGuard::capture(&parent)),
+            reconciliation_fence: None,
             expected_agent_revision: agent.revision,
             expected_last_seq: agent.conversation.last_seq,
             runtime_generation: agent.conversation.runtime_generation.unwrap(),

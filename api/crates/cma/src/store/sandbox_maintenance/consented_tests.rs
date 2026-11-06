@@ -189,6 +189,7 @@ async fn consented_pause_agent_fence_loses_to_a_new_turn_without_partial_pause()
             execution_fence: None,
             trigger_execution_fence: None,
             admission_guard: Some(SandboxMutationGuard::capture(&sandbox)),
+            reconciliation_fence: None,
             expected_agent_revision: ready.revision,
             expected_last_seq: ready.conversation.last_seq,
             runtime_generation: ready.conversation.runtime_generation.unwrap(),

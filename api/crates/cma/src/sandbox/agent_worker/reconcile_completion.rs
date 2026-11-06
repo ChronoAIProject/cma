@@ -4,18 +4,16 @@ use std::time::SystemTime;
 
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
-    Agent, AgentMessageAssembly, AgentStatus, NativeCompletionEvidence, SandboxStatus,
+    Agent, AgentLogKind, AgentMessageAssembly, AgentStatus, NativeCompletionEvidence, SandboxStatus,
 };
 use layer3_adapter::{AgentSlot, PromptResponse, TurnStopReason};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use layer2_core::{rfc3339_at, seconds_from_rfc3339, AgentId};
 
 use super::AgentWorker;
 
-const MAX_HISTORY_BYTES: usize = 64 * 1024 * 1024;
-const MAX_HISTORY_LINES: usize = 131_072;
+const MAX_RECONCILIATION_LOG_ENTRIES: u64 = 4_096;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct RepairReport {
@@ -25,12 +23,12 @@ pub(crate) struct RepairReport {
     pub held: usize,
 }
 
-#[derive(Debug)]
-struct NativeTerminal {
-    turn_id: String,
-    started_at: String,
-    completed_at: String,
-}
+#[path = "reconcile_history.rs"]
+mod reconcile_history;
+use reconcile_history::{parse_history, MAX_HISTORY_BYTES};
+#[path = "reconcile_repair.rs"]
+mod reconcile_repair;
+pub(crate) use reconcile_repair::inspect_stale_turns_read_only;
 
 impl AgentWorker {
     /// Rebuild native completion evidence at command time. The command is
@@ -115,11 +113,7 @@ impl AgentWorker {
         let Some(turn_sequence) = agent.conversation.active_turn else {
             return Ok(None);
         };
-        if !matches!(
-            agent.status,
-            AgentStatus::Working | AgentStatus::WaitingApproval
-        ) || agent.requested_stop_reason.is_some()
-        {
+        if agent.status != AgentStatus::Working || agent.requested_stop_reason.is_some() {
             return Ok(None);
         }
         let Some(generation) = agent.conversation.runtime_generation else {
@@ -169,12 +163,12 @@ impl AgentWorker {
             .filter(|usage| usage.conversation_id == conversation)
             .and_then(|usage| usage.current_turn)
             .filter(|turn| turn.turn_sequence == turn_sequence)
-            .and_then(|_| agent.conversation.observations.usage.as_ref())
+            .and(agent.conversation.observations.usage.as_ref())
             .map(|usage| usage.source_turn.as_str())
         else {
             return Ok(None);
         };
-        let Some(native) = parse_history(&first, expected) else {
+        let Some(native) = parse_history(&first, conversation, expected) else {
             return Ok(None);
         };
         let Some(start) = self
@@ -188,8 +182,14 @@ impl AgentWorker {
         if !matches!(start.kind, AgentLogKind::TurnStarted { .. }) {
             return Ok(None);
         }
+        let Some(final_answer_durable) = self
+            .durable_final_answer(agent, start.seq, &native.final_answer)
+            .await?
+        else {
+            return Ok(None);
+        };
         let evidence = NativeCompletionEvidence {
-            native_conversation_id: conversation.to_owned(),
+            native_conversation_id: native.conversation_id,
             runtime_generation: generation,
             turn_sequence,
             native_turn_id: native.turn_id,
@@ -201,11 +201,78 @@ impl AgentWorker {
             history_complete: true,
             history_prefix_unchanged: true,
             history_sha256: hash.clone(),
+            final_answer: native.final_answer,
+            final_answer_durable,
+            operation_sequence: agent
+                .conversation
+                .operation
+                .as_ref()
+                .map_or(0, |op| op.sequence),
+            sandbox_revision: sandbox.revision,
+            sandbox_status: sandbox.status,
         };
         if evidence.validate_against(agent).is_err() {
             return Ok(None);
         }
         Ok(Some((evidence, hash)))
+    }
+
+    async fn durable_final_answer(
+        &self,
+        agent: &Agent,
+        start_seq: u64,
+        answer: &str,
+    ) -> Result<Option<bool>, SandboxStoreError> {
+        if answer.len() > layer2_core::sandbox::MAX_DURABLE_AGENT_MESSAGE_BYTES
+            || start_seq > agent.conversation.last_seq
+        {
+            return Ok(None);
+        }
+        let count = agent.conversation.last_seq - start_seq;
+        if count > MAX_RECONCILIATION_LOG_ENTRIES {
+            return Ok(None);
+        }
+        let expected = format!("{:x}", Sha256::digest(answer.as_bytes()));
+        let mut after = start_seq;
+        let mut messages = Vec::new();
+        while after < agent.conversation.last_seq {
+            let limit = (agent.conversation.last_seq - after)
+                .min(u64::from(layer2_core::sandbox::store::MAX_PAGE_SIZE))
+                as u16;
+            let entries = self
+                .dependencies
+                .store
+                .agent_log(&agent.id, after, limit)
+                .await?;
+            if entries.len() != usize::from(limit) {
+                return Ok(None);
+            }
+            for entry in entries {
+                if let AgentLogKind::AgentMessage { content } = entry.kind {
+                    if format!("{:x}", Sha256::digest(content.as_bytes())) == expected {
+                        return Ok(Some(true));
+                    }
+                    messages.push(content);
+                }
+                after = entry.seq;
+            }
+        }
+        for start in 0..messages.len() {
+            let mut joined = String::new();
+            for message in messages.iter().skip(start) {
+                if joined.len() >= answer.len() {
+                    break;
+                }
+                joined.push_str(message);
+                if joined == answer {
+                    return Ok(Some(true));
+                }
+                if !answer.starts_with(&joined) {
+                    break;
+                }
+            }
+        }
+        Ok(Some(false))
     }
 
     /// Inspect one live Agent at most once per sweep and reconcile only after
@@ -215,22 +282,55 @@ impl AgentWorker {
         &self,
         agent: &Agent,
         now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<usize, SandboxStoreError> {
         let Some(turn_sequence) = agent.conversation.active_turn else {
-            return Ok(());
+            return Ok(0);
         };
-        if !matches!(
-            agent.status,
-            AgentStatus::Working | AgentStatus::WaitingApproval
-        ) || agent.requested_stop_reason.is_some()
+        if agent.status != AgentStatus::Working || agent.requested_stop_reason.is_some() {
+            return Ok(0);
+        }
+        let Some(operation) = agent.conversation.operation.as_ref().filter(|operation| {
+            operation.turn_sequence == turn_sequence
+                && operation.state
+                    == layer2_core::sandbox::AgentOperationDelivery::ExecutionObserved
+        }) else {
+            return Ok(0);
+        };
+        let Some(observed_at) =
+            seconds_from_rfc3339(&operation.execution_observed_at.clone().unwrap_or_default())
+        else {
+            return Ok(0);
+        };
+        let now_seconds = now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|duration| duration.as_secs() as i64)
+            .unwrap_or_default();
+        if now_seconds.saturating_sub(observed_at as i64) < MIN_RECONCILIATION_AGE_SECONDS {
+            return Ok(0);
+        }
         {
-            return Ok(());
+            let mut checked = self
+                .completion_checked_at
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if checked
+                .get(&agent.id)
+                .and_then(|at| now.duration_since(*at).ok())
+                .is_some_and(|elapsed| elapsed < COMPLETION_CHECK_COOLDOWN)
+            {
+                return Ok(0);
+            }
+            checked.insert(agent.id.clone(), now);
+            checked.retain(|_, at| {
+                now.duration_since(*at)
+                    .map_or(true, |elapsed| elapsed < COMPLETION_CHECK_CACHE_TTL)
+            });
         }
         let Some(generation) = agent.conversation.runtime_generation else {
-            return Ok(());
+            return Ok(0);
         };
         let Some(conversation) = agent.conversation.conversation_id.as_deref() else {
-            return Ok(());
+            return Ok(0);
         };
         let Some(sandbox) = self
             .dependencies
@@ -238,13 +338,13 @@ impl AgentWorker {
             .get_sandbox(&agent.sandbox_id)
             .await?
         else {
-            return Ok(());
+            return Ok(0);
         };
         if sandbox.status != SandboxStatus::Active {
-            return Ok(());
+            return Ok(0);
         }
         let Some(runtime) = sandbox.runtime.as_ref() else {
-            return Ok(());
+            return Ok(0);
         };
         let bytes = match self
             .dependencies
@@ -256,12 +356,13 @@ impl AgentWorker {
             .await
         {
             Ok(bytes) if bytes.len() <= MAX_HISTORY_BYTES => bytes,
-            Ok(_) => return Ok(()),
+            Ok(bytes) => return Ok(bytes.len()),
             Err(_) => {
                 tracing::debug!(agent_id = %agent.id, "native completion evidence unavailable");
-                return Ok(());
+                return Ok(0);
             }
         };
+        let bytes_read = bytes.len();
         let history_hash = format!("{:x}", Sha256::digest(&bytes));
         let key = (agent.id.clone(), generation);
         let unchanged = {
@@ -269,12 +370,23 @@ impl AgentWorker {
                 .completion_history
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            let unchanged = previous.get(&key) == Some(&history_hash);
-            previous.insert(key, history_hash.clone());
+            let unchanged = previous
+                .get(&key)
+                .is_some_and(|(hash, _)| hash == &history_hash);
+            previous.insert(key, (history_hash.clone(), now));
+            if previous.len() > MAX_COMPLETION_HISTORY {
+                if let Some(oldest) = previous
+                    .iter()
+                    .min_by_key(|(_, (_, checked_at))| *checked_at)
+                    .map(|(key, _)| key.clone())
+                {
+                    previous.remove(&oldest);
+                }
+            }
             unchanged
         };
         if !unchanged {
-            return Ok(());
+            return Ok(bytes_read);
         }
         let Some(expected) = agent
             .conversation
@@ -284,13 +396,13 @@ impl AgentWorker {
             .filter(|usage| usage.conversation_id == conversation)
             .and_then(|usage| usage.current_turn)
             .filter(|turn| turn.turn_sequence == turn_sequence)
-            .and_then(|_| agent.conversation.observations.usage.as_ref())
+            .and(agent.conversation.observations.usage.as_ref())
             .map(|usage| usage.source_turn.as_str())
         else {
-            return Ok(());
+            return Ok(bytes_read);
         };
-        let Some(native) = parse_history(&bytes, expected) else {
-            return Ok(());
+        let Some(native) = parse_history(&bytes, conversation, expected) else {
+            return Ok(bytes_read);
         };
         let Some(start) = self
             .dependencies
@@ -298,10 +410,16 @@ impl AgentWorker {
             .agent_log_entry(&agent.id, turn_sequence)
             .await?
         else {
-            return Ok(());
+            return Ok(bytes_read);
         };
         let AgentLogKind::TurnStarted { .. } = start.kind else {
-            return Ok(());
+            return Ok(bytes_read);
+        };
+        let Some(final_answer_durable) = self
+            .durable_final_answer(agent, start.seq, &native.final_answer)
+            .await?
+        else {
+            return Ok(bytes_read);
         };
         let mut assembly = AgentMessageAssembly::default();
         if self
@@ -311,10 +429,10 @@ impl AgentWorker {
             .await
             .is_err()
         {
-            return Ok(());
+            return Ok(bytes_read);
         }
         let evidence = NativeCompletionEvidence {
-            native_conversation_id: conversation.to_owned(),
+            native_conversation_id: native.conversation_id,
             runtime_generation: generation,
             turn_sequence,
             native_turn_id: native.turn_id,
@@ -326,6 +444,15 @@ impl AgentWorker {
             history_complete: true,
             history_prefix_unchanged: true,
             history_sha256: history_hash,
+            final_answer: native.final_answer,
+            final_answer_durable,
+            operation_sequence: agent
+                .conversation
+                .operation
+                .as_ref()
+                .map_or(0, |op| op.sequence),
+            sandbox_revision: sandbox.revision,
+            sandbox_status: sandbox.status,
         };
         let response = PromptResponse::new(TurnStopReason::EndTurn);
         match self
@@ -355,85 +482,11 @@ impl AgentWorker {
                 "native completion reconciliation held"
             ),
         }
-        Ok(())
+        Ok(bytes_read)
     }
 }
 
-fn parse_history(bytes: &[u8], expected: &str) -> Option<NativeTerminal> {
-    if bytes.is_empty() || bytes.len() > MAX_HISTORY_BYTES {
-        return None;
-    }
-    let mut open = std::collections::BTreeMap::<String, String>::new();
-    let mut completed = None;
-    let mut lines = 0;
-    for line in bytes.split(|byte| *byte == b'\n') {
-        if line.is_empty() {
-            continue;
-        }
-        lines += 1;
-        if lines > MAX_HISTORY_LINES {
-            return None;
-        }
-        let value: Value = serde_json::from_slice(line).ok()?;
-        let kind = value
-            .get("kind")
-            .or_else(|| value.get("event"))
-            .and_then(Value::as_str)?;
-        let turn = value
-            .get("turn_id")
-            .or_else(|| value.get("turnId"))
-            .or_else(|| value.get("turn_sha256"))
-            .or_else(|| value.get("turnSha256"))
-            .and_then(Value::as_str)?
-            .to_owned();
-        let at = value.get("at").and_then(Value::as_str)?.to_owned();
-        match kind {
-            "task_started" => {
-                open.insert(turn, at);
-            }
-            "task_complete" => {
-                let Some(started_at) = open.remove(&turn) else {
-                    continue;
-                };
-                if turn == expected {
-                    completed = Some(NativeTerminal {
-                        turn_id: turn,
-                        started_at,
-                        completed_at: at,
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-    let terminal = completed?;
-    let started = seconds_from_rfc3339(&terminal.started_at)?;
-    let finished = seconds_from_rfc3339(&terminal.completed_at)?;
-    (finished >= started && open.is_empty()).then_some(terminal)
-}
-
-use layer2_core::sandbox::AgentLogKind;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn history_requires_matching_complete_and_no_open_turn() {
-        assert!(parse_history(
-            br#"{"kind":"task_started","turn_id":"turn-a","at":"2026-01-01T00:00:00Z"}
-{"kind":"task_complete","turn_id":"turn-a","at":"2026-01-01T00:00:01Z"}
-"#,
-            "turn-a"
-        )
-        .is_some());
-        assert!(parse_history(
-            br#"{"kind":"task_started","turn_id":"turn-a","at":"2026-01-01T00:00:00Z"}
-{"kind":"task_complete","turn_id":"turn-a","at":"2026-01-01T00:00:01Z"}
-{"kind":"task_started","turn_id":"turn-b","at":"2026-01-01T00:00:02Z"}
-"#,
-            "turn-a"
-        )
-        .is_none());
-    }
-}
+const MIN_RECONCILIATION_AGE_SECONDS: i64 = 60;
+const COMPLETION_CHECK_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(30);
+const COMPLETION_CHECK_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+const MAX_COMPLETION_HISTORY: usize = 4_096;

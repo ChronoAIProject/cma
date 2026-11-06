@@ -55,6 +55,7 @@ fn update(current: &Agent, content: &str) -> AgentConversationMutation {
         execution_fence: None,
         trigger_execution_fence: None,
         admission_guard: None,
+        reconciliation_fence: None,
         expected_agent_revision: current.revision,
         expected_last_seq: current.conversation.last_seq,
         runtime_generation: current.conversation.runtime_generation.unwrap(),

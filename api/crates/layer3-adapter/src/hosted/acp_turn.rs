@@ -203,6 +203,7 @@ impl Bridge {
                                 capability: None,
                             },
                             false,
+                            None,
                         )),
                     };
                     if let Some(update) = update {
@@ -220,6 +221,7 @@ impl Bridge {
                         capability: None,
                     },
                     false,
+                    None,
                 ));
                 Err(error)
             }
@@ -242,12 +244,32 @@ impl Outcome {
     }
 }
 
-pub(super) fn scoped_turn_outcome(outcome: Outcome, prompt_evidence: bool) -> ConversationUpdate {
-    let update = outcome.into_update();
+pub(super) fn scoped_turn_outcome(
+    outcome: Outcome,
+    prompt_evidence: bool,
+    prompt_id: Option<crate::PromptIdentity>,
+) -> ConversationUpdate {
     if prompt_evidence {
-        update
+        match (prompt_id, outcome) {
+            (Some(prompt_id), Outcome::Ended(response)) => ConversationUpdate::TurnEndedForPrompt {
+                prompt_id,
+                response,
+            },
+            (
+                Some(prompt_id),
+                Outcome::Failed {
+                    message,
+                    capability,
+                },
+            ) => ConversationUpdate::FailedForPrompt {
+                prompt_id,
+                message,
+                capability,
+            },
+            (None, outcome) => outcome.into_update(),
+        }
     } else {
-        update.without_prompt_evidence()
+        outcome.into_update().without_prompt_evidence()
     }
 }
 
