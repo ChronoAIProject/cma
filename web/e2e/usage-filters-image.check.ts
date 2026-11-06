@@ -77,6 +77,10 @@ for (const theme of ['light', 'dark']) {
     ).toHaveAttribute('title', 'Alex Chen');
     await apply();
     expect(metrics.creates.at(-1)?.input.filters?.owner).toBe(filterOwners[0]!.value);
+    await page.screenshot({
+      path: info.outputPath(`owner-selected-${theme}.png`),
+      animations: 'disabled',
+    });
     await page.getByRole('button', { name: 'Sandbox: All Sandboxes' }).click();
     await expect(page.getByRole('menuitemradio')).toHaveCount(51);
     expect(options.reads.at(-1)?.searchParams.get('owner')).toBe(filterOwners[0]!.value);
@@ -102,6 +106,10 @@ for (const theme of ['light', 'dark']) {
       page.getByRole('button', { name: 'Sandbox: Research 19998', exact: true }),
     ).toHaveAttribute('title', 'Research 19998');
     await expect(page.getByText(/^1 Sandboxes · 1 running$/)).toBeVisible();
+    await page.screenshot({
+      path: info.outputPath(`sandbox-selected-${theme}.png`),
+      animations: 'disabled',
+    });
     await page.getByRole('button', { name: /^Sandbox: Research/ }).click();
     await page.getByRole('menuitemradio', { name: 'All Sandboxes' }).click();
     await apply();
