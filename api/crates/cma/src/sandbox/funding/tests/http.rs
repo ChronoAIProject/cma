@@ -104,6 +104,7 @@ impl Server {
                 .parse()
                 .unwrap(),
             credential_ref: "USER".into(),
+            client_credentials: None,
             producer_id: uuid::Uuid::new_v4().to_string(),
         })
         .unwrap();
@@ -310,6 +311,7 @@ async fn unavailable_credential_and_connection_failure_are_closed() {
     let provider = NyxIdFundingProvider::new(SandboxBillingConfig {
         base_url: "http://127.0.0.1:1/".parse().unwrap(),
         credential_ref: "CMA_TEST_UNSET".into(),
+        client_credentials: None,
         producer_id: uuid::Uuid::new_v4().to_string(),
     })
     .unwrap();
@@ -320,6 +322,7 @@ async fn unavailable_credential_and_connection_failure_are_closed() {
     let provider = NyxIdFundingProvider::new(SandboxBillingConfig {
         base_url: "http://127.0.0.1:1/".parse().unwrap(),
         credential_ref: "USER".into(),
+        client_credentials: None,
         producer_id: uuid::Uuid::new_v4().to_string(),
     })
     .unwrap();
