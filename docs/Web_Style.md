@@ -703,11 +703,14 @@ content or report an empty list. Errors and pending commands remain scoped to
 their resource. Boot reserves geometry and never disables sign-in while a
 decorative asset loads.
 
-When the service cannot be reached while checking identity, the page says so in words a person can
-act on: a 20px heading *CMA could not reach its service*, the line *It may be starting up. Reload
-to try again.*, a primary **Reload**, and the service's own sentence beneath as a 12px mono detail
-for whoever reads a report. Unreachable is never shown as signed out, and nothing on the page is
-coloured as an alarm.
+When NyxID is unavailable while checking identity, the initial error page uses the existing 20px
+heading *The identity service is temporarily unavailable*, the line *Retrying automatically. You
+can also try again now.*, and a primary **Retry now**. Other failures say *CMA could not verify your
+sign-in* without guessing that CMA is starting up. Retry checks identity without reloading the
+page. For an already authenticated view, keep the same mounted content and drafts and show the
+shared warning Alert at the top of the service shell with the outage message and **Retry now**.
+Automatic retries back off; explicit rejection returns to sign-in. The detail remains in the
+existing 12px mono style. Unreachable is never presented as signed out.
 
 ---
 
@@ -5834,3 +5837,5 @@ summary's last reported task status while requesting a navigation refresh.
 reported a task status.
 
 | 2026-11-06 | Keep the open Agent's last reported task status in the sidebar while its stale summary refreshes; show Status unavailable only when no status was ever reported. |
+
+| 2026-11-06 | Explain temporary identity outages explicitly, retry without reloading, and preserve mounted authenticated views and drafts with the shared warning Alert until verification recovers or rejects. |
