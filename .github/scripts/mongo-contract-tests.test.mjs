@@ -101,6 +101,13 @@ if (command === 'cargo') {
   if (!match) process.exit(8);
   const index = scale ? 0 : Number(match[1]);
   fs.writeFileSync(log+'.started-'+index, 'started');
+  if ((scenario === 'scale-empty' && scale) || (scenario === 'ordinary-empty' && index === 1)) {
+    console.log('Starting 0 tests');
+    const option = args.indexOf('--no-tests');
+    const policy = option >= 0 ? args[option+1] : process.env.NEXTEST_NO_TESTS;
+    fs.writeFileSync(log+'.empty-'+index, policy || 'auto');
+    process.exit(policy === 'pass' ? 0 : 4);
+  }
   if ((scenario === 'cancel' && !scale) || (scenario === 'cancel-scale' && scale)) { setInterval(() => {}, 1000); }
   else {
     const deadline = Date.now()+5000;
@@ -329,6 +336,31 @@ test('unavailable, malformed, empty or non-ignored selection fails before alloca
     try {
       assert.throws(() => execFileSync('bash', f.args, {env:f.env, timeout:5000, stdio:'pipe'}));
       assert.deepEqual(f.calls().map(row => [row.command,row.args[1]]), [['cargo','list']]);
+      assert.equal(f.containers().length, 0);
+      assert.equal(f.volumes().length, 0);
+      assert.ok(existsSync(f.foreignVolume));
+    } finally { f.close(); }
+  }
+});
+
+
+test('zero-test runs fail despite an environment that allows empty selections', () => {
+  for (const scenario of ['scale-empty', 'ordinary-empty']) {
+    const f = fixture(scenario);
+    try {
+      const env = {...f.env, NEXTEST_NO_TESTS: 'pass'};
+      assert.throws(() => execFileSync('bash', f.args, {env, timeout:15000, stdio:'pipe'}),
+        error => error.status === 1, 'an empty invocation must fail the complete gate');
+      const cargo = f.calls().filter(row => row.command === 'cargo' && row.args[1] === 'run');
+      assert.equal(cargo.length, 3, 'the remaining contracts still run after an empty invocation');
+      for (const row of cargo) {
+        assert.equal(row.args[row.args.indexOf('--no-tests')+1], 'fail');
+      }
+      const empty = scenario === 'scale-empty' ? 0 : 1;
+      assert.equal(readFileSync(`${f.log}.empty-${empty}`, 'utf8'), 'fail');
+      for (const index of [0,1,2].filter(index => index !== empty)) {
+        assert.ok(existsSync(`${f.log}.finished-${index}`));
+      }
       assert.equal(f.containers().length, 0);
       assert.equal(f.volumes().length, 0);
       assert.ok(existsSync(f.foreignVolume));
