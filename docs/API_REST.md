@@ -941,6 +941,13 @@ spaces starts by ten seconds. Budget failures authorize no model call and consum
 no per-Agent attempt. No new configuration, collection or deployment input is
 required.
 
+Suggested replies use the same explicit scoped platform model-service endpoint,
+with the current Sandbox service credential as Bearer authorization and no legacy
+provider-port authorization header. The worker rechecks owner/runtime/credential
+authority and its durable running suggestion claim before sending. It sends a
+strict JSON-schema Responses request with no tools, bounded goal/answer context,
+and authoritative confirmed-resource evidence. Title retry/backfill limits apply
+only to title jobs; suggestion admission retains its existing policy and bounds.
 
 Sandbox pause/revive and removal return recorded lifecycle state. Stopping an
 Agent preserves readable history; deleting it records cleanup of its Worktree
