@@ -85,6 +85,7 @@ async fn scenario(name: &str) -> Scenario {
                 | "auth_expired"
                 | "auth_missing_authority"
                 | "auth_store_unavailable"
+                | "auth_identity_unavailable"
                 | "auth_options_available"
                 | "auth_options_unavailable"
                 | "auth_options_malformed"
@@ -116,11 +117,12 @@ async fn scenario(name: &str) -> Scenario {
             }),
         ),
     };
-    let upstream_router = Router::new().route("/userinfo", get(|| async {
-        Json(json!({
+    let identity_unavailable = name == "auth_identity_unavailable";
+    let upstream_router = Router::new().route("/userinfo", get(move || async move {
+        (if identity_unavailable { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::OK }, Json(json!({
             "sub": "contract-visitor", "name": "Contract Visitor", "email": "visitor@example.test",
             "permissions": ["cma:sandbox:use", "cma:sandbox:delete", "cma:trigger:launch"],
-        }))
+        })))
     })).route(
         "/api/v1/public/config",
         get(move || {
@@ -139,7 +141,7 @@ async fn scenario(name: &str) -> Scenario {
     let store = Arc::new(MemoryAuthStore::default());
     if matches!(
         name,
-        "auth_visitor" | "auth_expired" | "auth_missing_authority"
+        "auth_visitor" | "auth_expired" | "auth_missing_authority" | "auth_identity_unavailable"
     ) {
         let subject = SubjectId::new("contract-visitor");
         store
@@ -220,7 +222,10 @@ async fn scenario(name: &str) -> Scenario {
         store,
         Some("https://identity.example.test".into()),
     );
-    if matches!(name, "auth_visitor" | "auth_store_unavailable") {
+    if matches!(
+        name,
+        "auth_visitor" | "auth_store_unavailable" | "auth_identity_unavailable"
+    ) {
         *auth.metadata.write().await = Some(super::ProviderMetadata {
             authorization_endpoint: format!("{base_url}/authorize"),
             token_endpoint: format!("{base_url}/token"),
