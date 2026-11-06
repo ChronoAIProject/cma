@@ -30,23 +30,40 @@ export const OperationOutput = memo(function OperationOutput({
     );
     const scrollport = root.current.closest('.agent-computer__page');
     if (!block || !(scrollport instanceof HTMLElement)) return;
-    root.current.style.paddingBottom = '0px';
-    const target =
-      scrollport.scrollTop +
-      block.getBoundingClientRect().top -
-      scrollport.getBoundingClientRect().top -
-      16;
-    const trailing = Math.max(0, target - (scrollport.scrollHeight - scrollport.clientHeight));
-    root.current.style.paddingBottom = `${Math.ceil(trailing)}px`;
-    scrollport.scrollTop = target;
+    const terminal = root.current;
+    const align = () => {
+      terminal.style.paddingBottom = '0px';
+      const portTop = scrollport.getBoundingClientRect().top;
+      const target = scrollport.scrollTop + block.getBoundingClientRect().top - portTop - 16;
+      const contentEnd = terminal.getBoundingClientRect().bottom - portTop + scrollport.scrollTop;
+      terminal.style.paddingBottom = `${Math.ceil(Math.max(0, target + scrollport.clientHeight - contentEnd))}px`;
+      scrollport.scrollTop = target;
+    };
+    align();
+    let width = scrollport.clientWidth,
+      height = scrollport.clientHeight;
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? undefined
+        : new ResizeObserver(() => {
+            if (width === scrollport.clientWidth && height === scrollport.clientHeight) return;
+            width = scrollport.clientWidth;
+            height = scrollport.clientHeight;
+            align();
+          });
+    observer?.observe(scrollport);
     block.focus({ preventScroll: true });
     applied.current = selected;
     for (const previous of root.current.querySelectorAll('[data-highlighted]'))
       previous.removeAttribute('data-highlighted');
     void block.offsetWidth;
     const frame = requestAnimationFrame(() => block.setAttribute('data-highlighted', 'true'));
-    const timer = window.setTimeout(() => block.removeAttribute('data-highlighted'), 1800);
+    const timer = window.setTimeout(() => {
+      block.removeAttribute('data-highlighted');
+      observer?.disconnect();
+    }, 1800);
     return () => {
+      observer?.disconnect();
       cancelAnimationFrame(frame);
       clearTimeout(timer);
       block.removeAttribute('data-highlighted');
