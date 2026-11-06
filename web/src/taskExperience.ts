@@ -22,8 +22,14 @@ export function useTaskExperience(client: CmaWebClient, accountId?: string) {
       request?.abort();
       const current = new AbortController();
       request = current;
-      setResult(undefined);
-      if (!accountId || !client.taskExperience) return;
+      if (!navigator.onLine) {
+        setResult(undefined);
+        return;
+      }
+      if (!accountId || !client.taskExperience) {
+        setResult({ scope, capabilities: disabled });
+        return;
+      }
       void client.taskExperience.read({ signal: current.signal }).then(
         (value) => {
           if (!current.signal.aborted)
@@ -57,5 +63,6 @@ export function useTaskExperience(client: CmaWebClient, accountId?: string) {
       document.removeEventListener('visibilitychange', visible);
     };
   }, [scope, client, accountId]);
-  return result?.scope === scope ? result.capabilities : disabled;
+  const current = result?.scope === scope ? result : undefined;
+  return { ...(current?.capabilities ?? disabled), settled: current !== undefined };
 }
