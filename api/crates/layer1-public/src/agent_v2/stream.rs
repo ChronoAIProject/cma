@@ -80,21 +80,24 @@ async fn open(
         live_timestamps: projection::live_timestamps(&headers),
         tool_output: projection::tool_output(&headers),
         pending: VecDeque::new(),
+        deferred_live: VecDeque::new(),
         watching,
         held: None,
         committed_message: after,
         initial_gap: follow,
         discarded_fragments: 0,
+        live_batch_needs_validation: false,
         ended: false,
     };
     open.fill().await?;
     Ok(open)
 }
 
+#[derive(Clone)]
 pub(super) struct Frame {
     pub event: Event,
     pub live: bool,
-    pub fragment: bool,
+    pub fragment: Option<AgentLiveFragment>,
 }
 pub(super) struct Following {
     pub state: AgentV2State,
@@ -108,11 +111,13 @@ pub(super) struct Following {
     pub live_timestamps: bool,
     tool_output: bool,
     pub pending: VecDeque<Frame>,
+    deferred_live: VecDeque<Frame>,
     pub watching: Option<AgentLiveSubscription>,
     pub held: Option<AgentLiveFragment>,
     pub committed_message: u64,
     initial_gap: bool,
     discarded_fragments: u64,
+    pub(super) live_batch_needs_validation: bool,
     ended: bool,
 }
 
@@ -156,7 +161,7 @@ impl Following {
             self.pending.push_back(Frame {
                 event: Event::default().event("cma.agent.event").id(id).data(body),
                 live: false,
-                fragment: false,
+                fragment: None,
             });
             self.after = sequence;
         }
@@ -169,17 +174,28 @@ impl Following {
                 self.initial_gap = false;
                 self.queue_gap(None, "reconnected");
             }
+            self.revalidate_deferred_live();
             if self.discarded_fragments > 0 {
                 let frames = std::mem::take(&mut self.discarded_fragments);
                 self.queue_gap(Some(frames), "lagged");
             }
-            self.queue_live();
+            if self.deferred_live.is_empty() {
+                self.queue_live();
+            } else {
+                self.pending.append(&mut self.deferred_live);
+                self.live_batch_needs_validation =
+                    self.pending.iter().any(|frame| frame.fragment.is_some());
+            }
         }
         Ok(())
     }
 
     async fn release(&mut self, frame: &Frame) -> bool {
-        if frame.fragment {
+        if frame.fragment.is_some() {
+            if !self.live_batch_needs_validation {
+                return true;
+            }
+            self.live_batch_needs_validation = false;
             let Ok(current) = self
                 .state
                 .reads
@@ -188,15 +204,16 @@ impl Following {
             else {
                 return false;
             };
-            if current.head != self.header.head
-                || current.runtime_generation != self.header.runtime_generation
+            if current.runtime_generation != self.header.runtime_generation
                 || current.active_turn != self.header.active_turn
+                || current.head != self.header.head
             {
-                // The buffered live batch is now stale. Refill durable history
-                // before deciding whether any newly observed fragment is safe.
-                self.discarded_fragments +=
-                    1 + self.pending.iter().filter(|frame| frame.fragment).count() as u64;
-                self.pending.clear();
+                // Durable events can race a live batch. Preserve the buffered
+                // source fragments, catch up durably, then recheck their validity.
+                let pending = std::mem::take(&mut self.pending);
+                self.header = current;
+                self.deferred_live.push_back(frame.clone());
+                self.deferred_live.extend(pending);
                 return false;
             }
             true
@@ -206,6 +223,24 @@ impl Following {
                 .validate_event_stream(&self.authorization)
                 .await
                 .is_ok()
+        }
+    }
+
+    fn revalidate_deferred_live(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred_live);
+        for frame in deferred {
+            if let Some(fragment) = &frame.fragment {
+                if fragment.agent_id == self.header.id
+                    && Some(fragment.turn_sequence) == self.header.active_turn
+                    && Some(fragment.runtime_generation) != self.header.runtime_generation
+                {
+                    self.discarded_fragments += 1;
+                }
+                if !self.current_live_fragment(fragment) || fragment.after_seq > self.header.head {
+                    continue;
+                }
+            }
+            self.deferred_live.push_back(frame);
         }
     }
 }
