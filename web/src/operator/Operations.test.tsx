@@ -23,7 +23,7 @@ describe('operator capabilities and record views', () => {
       ],
     });
     render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
-    expect(await screen.findByRole('cell', { name: 'Alex Chen' })).toBeInTheDocument();
+    expect(await screen.findByText('Alex Chen', { exact: true })).toBeInTheDocument();
     expect(screen.queryByText('owner-1')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Runtime details for Research Sandbox' }));
     const drawer = screen.getByRole('dialog');
@@ -238,7 +238,7 @@ describe('operator record tables', () => {
     });
     render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
     await screen.findByRole('cell', { name: /Second/ });
-    expect(headers('Sandboxes and allocated usage')).toContain('CPU allocated (cores)');
+    expect(headers('Sandboxes and allocated usage')).toContain('CPU (core-hours)');
     for (const button of screen.getAllByRole('button', { name: 'Retire' }))
       expect(button).toBeDisabled();
     expect(client.admin.listSandboxes).not.toHaveBeenCalled();
