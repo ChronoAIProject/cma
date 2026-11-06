@@ -174,41 +174,72 @@ describe('the identity adapter', () => {
 });
 
 describe('silent sign-in', () => {
-  function stubLocation(pathname: string) {
+  function stubLocation(pathname: string, search = '', hash = '') {
     const replace = vi.fn();
     const assign = vi.fn();
     vi.stubGlobal('location', {
       ...window.location,
       origin: 'https://cma.example',
+      protocol: 'https:',
       pathname,
+      search,
+      hash,
       replace,
       assign,
     });
     return { replace, assign };
   }
 
+  /** An adapter that has just been told the browser is signed out. */
+  async function anonymous(body: unknown = { authenticated: false, silent_sign_in: true }) {
+    stubFetch(() => jsonResponse(401, body));
+    const provider = createNyxidAuthProvider();
+    expect((await provider.current()).status).toBe('anonymous');
+    return provider;
+  }
+
   afterEach(() => {
+    vi.unstubAllGlobals();
     sessionStorage.clear();
-    localStorage.clear();
+    document.cookie = 'cma_signed_out=; Path=/; Max-Age=0';
   });
 
-  it('asks the provider without interaction and returns to the opened Agent', () => {
+  it('asks the provider without interaction and returns to the opened Agent', async () => {
     const { replace } = stubLocation('/agents/agt_88faf0ed');
-    expect(createNyxidAuthProvider().signInSilently?.()).toBe(true);
+    expect((await anonymous()).signInSilently?.()).toBe(true);
     expect(replace).toHaveBeenCalledWith(
       '/auth/login?return_to=%2Fagents%2Fagt_88faf0ed&prompt=none',
     );
   });
 
-  it('sends the home page to the Agent Manager', () => {
+  it('sends the home page to the Agent Manager', async () => {
     const { replace } = stubLocation('/');
-    expect(createNyxidAuthProvider().signInSilently?.()).toBe(true);
+    expect((await anonymous()).signInSilently?.()).toBe(true);
     expect(replace).toHaveBeenCalledWith('/auth/login?return_to=%2Fagent-manager&prompt=none');
   });
 
-  it('tries once per tab, so a declined attempt shows the landing', () => {
+  it('is not attempted against a control plane that does not offer it', async () => {
+    for (const body of [
+      { authenticated: false },
+      { authenticated: false, silent_sign_in: false },
+      { authenticated: false, silent_sign_in: 'true' },
+      'not json',
+    ]) {
+      const { replace } = stubLocation('/agents/agt_88faf0ed');
+      expect((await anonymous(body)).signInSilently?.(), JSON.stringify(body)).toBe(false);
+      expect(replace).not.toHaveBeenCalled();
+    }
+  });
+
+  it('is not attempted before the control plane has been asked', () => {
     const { replace } = stubLocation('/agents/agt_88faf0ed');
-    const provider = createNyxidAuthProvider();
+    expect(createNyxidAuthProvider().signInSilently?.()).toBe(false);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('tries once per tab, so a declined attempt shows the landing', async () => {
+    const { replace } = stubLocation('/agents/agt_88faf0ed');
+    const provider = await anonymous();
     expect(provider.signInSilently?.()).toBe(true);
     expect(provider.signInSilently?.()).toBe(false);
     expect(replace).toHaveBeenCalledTimes(1);
@@ -216,26 +247,21 @@ describe('silent sign-in', () => {
 
   it('tries again once this tab has been signed in', async () => {
     const { replace } = stubLocation('/agents/agt_88faf0ed');
-    const provider = createNyxidAuthProvider();
-    expect(provider.signInSilently?.()).toBe(true);
+    expect((await anonymous()).signInSilently?.()).toBe(true);
     stubFetch(() => jsonResponse(200, { authenticated: true, subject: '76fe9d91' }));
-    await provider.current();
-    expect(provider.signInSilently?.()).toBe(true);
-    expect(replace).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not sign back in after signing out of CMA, until sign-in is chosen', async () => {
-    const { replace } = stubLocation('/agents/agt_88faf0ed');
-    const provider = createNyxidAuthProvider();
-    await provider.signOut();
-    expect(provider.signInSilently?.()).toBe(false);
-    await provider.signIn('/agents/agt_88faf0ed');
-    sessionStorage.clear();
-    expect(provider.signInSilently?.()).toBe(true);
+    await createNyxidAuthProvider().current();
+    stubLocation('/agents/agt_88faf0ed');
+    expect((await anonymous()).signInSilently?.()).toBe(true);
     expect(replace).toHaveBeenCalledTimes(1);
   });
 
-  it('leaves visitor journeys, share links and unknown pages to their own sign-in', () => {
+  it('marks the browser signed out for the control plane to enforce', async () => {
+    stubLocation('/agent-manager');
+    await createNyxidAuthProvider().signOut();
+    expect(document.cookie).toContain('cma_signed_out=1');
+  });
+
+  it('leaves visitor journeys, share links and pages it cannot return to', async () => {
     for (const pathname of [
       '/t/pub_example',
       '/launches/lch_example',
@@ -244,24 +270,37 @@ describe('silent sign-in', () => {
       '/connection-return',
       '/agents',
       '/settings/general',
+      '/agents/a!',
+      '/agents/a%20b',
+      `/agents/${'a'.repeat(250)}`,
     ]) {
       const { replace } = stubLocation(pathname);
-      expect(createNyxidAuthProvider().signInSilently?.(), pathname).toBe(false);
+      expect((await anonymous()).signInSilently?.(), pathname).toBe(false);
       expect(replace, pathname).not.toHaveBeenCalled();
     }
   });
 
-  it('does not try when storage is unavailable, since it could not stop a loop', () => {
+  it('leaves an address with a query or fragment to the explicit sign-in', async () => {
+    for (const [search, hash] of [
+      ['?setup=draft', ''],
+      ['?tab=access', ''],
+      ['', '#turn'],
+    ]) {
+      const { replace } = stubLocation('/bots/new', search, hash);
+      expect((await anonymous()).signInSilently?.(), `${search}${hash}`).toBe(false);
+      expect(replace).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does not try when storage is unavailable, since it could not stop a loop', async () => {
     const { replace } = stubLocation('/agents/agt_88faf0ed');
-    const refused = {
+    const provider = await anonymous();
+    vi.stubGlobal('sessionStorage', {
       getItem: () => {
         throw new Error('denied');
       },
-    };
-    vi.stubGlobal('localStorage', refused);
-    vi.stubGlobal('sessionStorage', refused);
-    expect(createNyxidAuthProvider().signInSilently?.()).toBe(false);
+    });
+    expect(provider.signInSilently?.()).toBe(false);
     expect(replace).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
   });
 });

@@ -39,11 +39,20 @@ const LOGOUT_ENDPOINT = '/auth/logout';
 const SILENT_ATTEMPT_KEY = 'cma.auth.silent-attempt';
 
 /**
- * Set by signing out of CMA, which ends the CMA cookie but not the provider's
- * session. Without it the next page load would silently sign the person back
- * in. Cleared when they choose to sign in again.
+ * Set as this browser signs out of CMA, which ends the CMA cookie but not the
+ * provider's session. The control plane declines every silent sign-in while it
+ * is present, including one already in flight in another tab, and clears it
+ * when the person next signs in. A cookie rather than storage, so the control
+ * plane is the one enforcing it.
  */
-const SIGNED_OUT_KEY = 'cma.auth.signed-out';
+const SIGNED_OUT_COOKIE = 'cma_signed_out';
+const SIGNED_OUT_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
+
+/** The longest return target the control plane accepts. */
+const RETURN_TARGET_MAX_LENGTH = 256;
+
+/** A path segment the control plane accepts in a return target. */
+const RETURN_TARGET_SEGMENT = /^[A-Za-z0-9._~-]+$/;
 
 /** What the control plane reports for the current cookie. */
 interface IdentityResponse {
@@ -54,6 +63,7 @@ interface IdentityResponse {
   avatar_url?: unknown;
   capabilities?: unknown;
   visitor?: unknown;
+  silent_sign_in?: unknown;
 }
 
 /**
@@ -107,10 +117,27 @@ export function signInPath(returnTo?: string, options?: SignInOptions): string {
  *
  * Only addresses the control plane accepts as a sign-in return target qualify:
  * a refused target would strand the person on an error rather than the page
- * they opened. Visitor journeys and share links run their own sign-in, which
- * retains the link's authority across the round trip.
+ * they opened. A return target carries no query or fragment, so an address
+ * with either is left to the explicit sign-in, which retains what it needs.
+ * Visitor journeys and share links run their own sign-in, which retains the
+ * link's authority across the round trip.
  */
-export function silentReturnTarget(pathname: string): string | undefined {
+export function silentReturnTarget(location: {
+  readonly pathname: string;
+  readonly search: string;
+  readonly hash: string;
+}): string | undefined {
+  const { pathname } = location;
+  if (location.search !== '' || location.hash !== '') return undefined;
+  if (pathname.length > RETURN_TARGET_MAX_LENGTH) return undefined;
+  const segments = pathname.split('/').slice(1);
+  if (
+    pathname !== '/' &&
+    segments.some(
+      (segment) => segment === '.' || segment === '..' || !RETURN_TARGET_SEGMENT.test(segment),
+    )
+  )
+    return undefined;
   const route = parseRoute(pathname);
   if (routePath(route) !== pathname) return undefined;
   switch (route.kind) {
@@ -151,6 +178,9 @@ function optionalText(value: unknown): string | undefined {
 }
 
 export function createNyxidAuthProvider(): AuthProvider {
+  // Whether the control plane last said it implements silent sign-in. An older
+  // one would refuse the request, so the client never assumes it.
+  let silentSignInOffered = false;
   return {
     async current(): Promise<AuthState> {
       let response: Response;
@@ -173,6 +203,12 @@ export function createNyxidAuthProvider(): AuthProvider {
       }
 
       if (response.status === 401) {
+        try {
+          const anonymous = (await response.json()) as IdentityResponse;
+          silentSignInOffered = anonymous.silent_sign_in === true;
+        } catch {
+          silentSignInOffered = false;
+        }
         return { status: 'anonymous' };
       }
       if (!response.ok) {
@@ -215,30 +251,23 @@ export function createNyxidAuthProvider(): AuthProvider {
     async signIn(returnTo, options): Promise<void> {
       // A navigation, not a fetch: the provider needs to run its own redirects
       // and may show a login page, neither of which survives XHR.
-      const path = signInPath(returnTo, options);
-      remember(() => {
-        localStorage.removeItem(SIGNED_OUT_KEY);
-        return true;
-      });
-      window.location.assign(path);
+      window.location.assign(signInPath(returnTo, options));
     },
 
     async signOut(): Promise<void> {
       // Also a navigation. The control plane clears the cookie and redirects
       // back, so the app reloads already signed out rather than holding stale
       // state it would have to reconcile.
-      remember(() => {
-        localStorage.setItem(SIGNED_OUT_KEY, '1');
-        return true;
-      });
+      const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+      document.cookie = `${SIGNED_OUT_COOKIE}=1; Path=/; Max-Age=${SIGNED_OUT_MAX_AGE_SECONDS}; SameSite=Lax${secure}`;
       window.location.assign(LOGOUT_ENDPOINT);
     },
 
     signInSilently(): boolean {
-      const returnTo = silentReturnTarget(window.location.pathname);
+      if (!silentSignInOffered) return false;
+      const returnTo = silentReturnTarget(window.location);
       if (returnTo === undefined) return false;
       const started = remember(() => {
-        if (localStorage.getItem(SIGNED_OUT_KEY) !== null) return false;
         if (sessionStorage.getItem(SILENT_ATTEMPT_KEY) !== null) return false;
         sessionStorage.setItem(SILENT_ATTEMPT_KEY, '1');
         return true;
