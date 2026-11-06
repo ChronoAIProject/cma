@@ -5689,9 +5689,12 @@
   ],
   "ConversationInspection": [
     {
-      "binding_id": "binding-fixture", "generation": 1,
-      "conversation_id": "conversation-fixture", "agent_id": "agt_fixture",
-      "state": "ready", "agent_status": "deleted"
+      "binding_id": "binding-fixture",
+      "generation": 1,
+      "conversation_id": "conversation-fixture",
+      "agent_id": "agt_fixture",
+      "state": "ready",
+      "agent_status": "deleted"
     }
   ],
   "ConversationKind": [
@@ -6283,11 +6286,15 @@
   ],
   "PartitionInspection": [
     {
-      "consumer_id": "default", "transport_conversation_id": "conversation-fixture",
+      "consumer_id": "default",
+      "transport_conversation_id": "conversation-fixture",
       "mapping": {
-        "binding_id": "binding-fixture", "generation": 1,
-        "conversation_id": "conversation-fixture", "agent_id": "agt_fixture",
-        "state": "ready", "agent_status": null
+        "binding_id": "binding-fixture",
+        "generation": 1,
+        "conversation_id": "conversation-fixture",
+        "agent_id": "agt_fixture",
+        "state": "ready",
+        "agent_status": null
       }
     }
   ],
@@ -6358,7 +6365,10 @@
     "github_installation_forbidden",
     "github_resource_not_found",
     "github_delivery_conflict",
-    "github_source_unavailable"
+    "github_source_unavailable",
+    "github_dispatch_unavailable",
+    "github_integration_retired",
+    "github_proof_withdrawn"
   ],
   "ProfileMetadata": [
     {
@@ -10934,6 +10944,24 @@
         "verified_at": 1700000000,
         "evidence_ref": "verification-fixture"
       }
+    },
+    {
+      "app_ref": "app-fixture",
+      "host": "github.com",
+      "app_id": 42,
+      "display_name": "Fixture App",
+      "version": 1,
+      "status": "retired",
+      "webhook_url": "https://gateway.example/v1/github/apps/app-fixture/webhooks",
+      "webhook_credential": {
+        "present": false,
+        "version": null
+      },
+      "verification_credential": {
+        "present": false,
+        "version": null
+      },
+      "retired_at": 1793923200
     }
   ],
   "AppList": [
@@ -10993,6 +11021,14 @@
       "app_ref": "app-fixture",
       "installation_id": 99,
       "proof_ref": "proof-fixture"
+    },
+    {
+      "app_ref": "gha_fixture",
+      "installation_id": 99,
+      "account_id": 123,
+      "repository_ids": [
+        1001
+      ]
     }
   ],
   "Binding": [
@@ -11010,6 +11046,38 @@
       "repository_ids": [
         1001
       ]
+    },
+    {
+      "binding_id": "binding-fixture",
+      "app_ref": "app-fixture",
+      "app_id": 42,
+      "installation_id": 99,
+      "account_id": 123,
+      "status": "active",
+      "authority_revision": 1,
+      "verified_until": 0,
+      "verified_by": "admin-fixture",
+      "verification_ref": "verification-fixture",
+      "repository_ids": [
+        1001
+      ],
+      "version": 2,
+      "requested_repository_ids": [
+        1001
+      ],
+      "approved_repository_ids": [
+        1001
+      ],
+      "excluded_repository_ids": [],
+      "approval": {
+        "verified_by": "fixture-admin",
+        "evidence_ref": "review:installation",
+        "approved_at": 1793923200,
+        "authority_revision": 1,
+        "repository_ids": [
+          1001
+        ]
+      }
     }
   ],
   "CreateAppRequest": [
@@ -11050,6 +11118,16 @@
       "app_identity_verification": true,
       "ownership_verification": false,
       "automatic_reconciliation": false
+    },
+    {
+      "store_ready": true,
+      "dynamic_app_registration": true,
+      "native_app_webhook": true,
+      "webhook_secret_rotation": true,
+      "app_identity_verification": true,
+      "ownership_verification": true,
+      "automatic_reconciliation": false,
+      "durable_dispatch": false
     }
   ],
   "Receipt": [
@@ -11096,6 +11174,19 @@
       "action": "opened",
       "installation_id": 99,
       "repository_id": 1001
+    },
+    {
+      "receipt_id": "receipt-fixture",
+      "app_ref": "app-fixture",
+      "delivery_id": "delivery-fixture",
+      "event": "ping",
+      "status": "ignored",
+      "received_at": 1700000000,
+      "raw_body_expires_at": 1700086400,
+      "body_sha256": "fixture-body-digest",
+      "task_ids": [],
+      "authority_revision": 0,
+      "reason": "installation_unbound"
     }
   ],
   "Task": [
@@ -11208,6 +11299,31 @@
       "expected_version": 2,
       "webhook_secret": "fixture-webhook-secret",
       "overlap_seconds": 3600
+    }
+  ],
+  "BindingApproval": [
+    {
+      "verified_by": "fixture-admin",
+      "evidence_ref": "review:installation",
+      "approved_at": 1793923200,
+      "authority_revision": 1,
+      "repository_ids": [
+        1001
+      ]
+    }
+  ],
+  "VerifyBindingRequest": [
+    {
+      "expected_version": 1,
+      "evidence_ref": "review:installation",
+      "repository_ids": [
+        1001
+      ]
+    }
+  ],
+  "RetireAppRequest": [
+    {
+      "expected_version": 2
     }
   ]
 }

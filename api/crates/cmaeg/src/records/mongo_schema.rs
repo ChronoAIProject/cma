@@ -149,12 +149,12 @@ pub(crate) fn migration_validator() -> Document {
     doc! {
         "$jsonSchema":{"bsonType":"object","additionalProperties":false,
             "required":["_id","version"],"properties":{
-                "_id":{"bsonType":"string"},"version":{"enum":[1,2]}}},
+                "_id":{"bsonType":"string"},"version":{"enum":[1,2,3]}}},
         "$or":[{"_id":"schema","version":2},
             {"_id":"thread_fences","version":1},{"_id":"whatsapp_forms","version":1},
             {"_id":"media_continuations","version":1},{"_id":"worker_credentials","version":1},
             {"_id":"worker_tracking_cutover","version":1},
-            {"_id":"github_integrations","version":{"$in":[1,2]}}]
+            {"_id":"github_integrations","version":{"$in":[1,2,3]}}]
     }
 }
 pub async fn migrate(db: &Database) -> Result<(), RecordError> {

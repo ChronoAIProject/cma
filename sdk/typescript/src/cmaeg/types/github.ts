@@ -66,6 +66,7 @@ export const AppIntegrationSchema = object({
   webhook_credential: WebhookCredentialStatusSchema,
   verification_credential: CredentialStatusSchema,
   verification: optional(nullable(AppVerificationSchema)),
+  retired_at: optional(nullable(timestamp)),
 });
 export type AppIntegration = Output<typeof AppIntegrationSchema>;
 
@@ -103,15 +104,37 @@ export const GitHubCapabilitiesSchema = object({
   app_identity_verification: boolean,
   ownership_verification: boolean,
   automatic_reconciliation: boolean,
+  durable_dispatch: optional(boolean),
 });
 export type GitHubCapabilities = Output<typeof GitHubCapabilitiesSchema>;
 
 export const BindRequestSchema = object({
   app_ref: text,
   installation_id: integer,
-  proof_ref: text,
+  proof_ref: optional(text),
+  account_id: optional(integer),
+  repository_ids: optional(array(integer)),
 });
 export type BindRequest = Output<typeof BindRequestSchema>;
+
+export const BindingApprovalSchema = object({
+  verified_by: text,
+  evidence_ref: text,
+  approved_at: timestamp,
+  authority_revision: integer,
+  repository_ids: array(integer),
+});
+export type BindingApproval = Output<typeof BindingApprovalSchema>;
+
+export const VerifyBindingRequestSchema = object({
+  expected_version: integer,
+  evidence_ref: text,
+  repository_ids: array(integer),
+});
+export type VerifyBindingRequest = Output<typeof VerifyBindingRequestSchema>;
+
+export const RetireAppRequestSchema = object({ expected_version: integer });
+export type RetireAppRequest = Output<typeof RetireAppRequestSchema>;
 
 export const BindingSchema = object({
   binding_id: text,
@@ -125,6 +148,11 @@ export const BindingSchema = object({
   verified_by: text,
   verification_ref: text,
   repository_ids: array(integer),
+  version: optional(integer),
+  requested_repository_ids: optional(array(integer)),
+  approved_repository_ids: optional(array(integer)),
+  excluded_repository_ids: optional(array(integer)),
+  approval: optional(nullable(BindingApprovalSchema)),
 });
 export type Binding = Output<typeof BindingSchema>;
 
@@ -137,6 +165,7 @@ export const ReceiptSchema = object({
   event: text,
   action: optional(nullable(text)),
   status: text,
+  reason: optional(nullable(text)),
   received_at: timestamp,
   raw_body_expires_at: timestamp,
   body_sha256: text,
