@@ -809,6 +809,33 @@ one-day retention limits duration, not readership. Expired artifacts require a
 new successful CI run. SDK packages, release workflows, registry ACLs and tags
 are unaffected.
 
+### Web asset continuity
+
+The compatibility volume mounts over `/usr/share/nginx/html/assets`. Current
+images also carry their own assets at `/usr/share/nginx/current/assets`; nginx
+serves these first, falls back to retained assets for older tabs, and returns
+`Cache-Control: no-store` on a missing asset. Keep the original image asset path
+for the existing retention initializers.
+
+Before changing a web image, preserve every existing initializer and append a
+non-overwriting initializer for the incoming immutable image. When the serving
+Pods lack the incoming assets, first roll the **outgoing** web image with this
+expanded initializer set and wait for all predecessors to drain. Verify every
+incoming asset against the exact artifact's SHA-256 manifest through the public
+origin, including lazy chunks, workers, fonts and icons, before switching the
+entry document. Otherwise rolling overlap can serve a new index followed by an
+old Pod's asset 404, which an intermediary may cache. Check a fresh Chromium
+session as well as curl; compressed response variants can have different cached
+statuses. Clear any cached errors before proceeding.
+
+Use fresh Deployment UID/resourceVersion/outgoing-image tests, an exact server
+dry-run comparison, and a web-only patch for each phase. Recovery changes only
+image/provenance and retains both old and incoming assets. HTTP 200 for `/` alone
+does not prove the app mounts. CI runs `.github/scripts/web-image-smoke.py` on the
+exact native image before export, with an intentionally stale compatibility
+volume, and checks personal/Operations rendering, retained chunks and uncached
+404 responses. API data in that browser check is synthetic.
+
 ### Lifecycle Scheduling
 
 Sandbox lifecycle scheduling permits at most four concurrent sweeps, with
