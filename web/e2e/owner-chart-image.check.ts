@@ -37,12 +37,12 @@ for (const theme of ['light', 'dark']) {
     metrics.ownerOverrides.set(199, {
       label: 'Boundary Alex',
       disambiguator: 'Joined 2026-01-01',
-      allocated_hours: 19000,
+      allocated_hours: 19802,
     });
     metrics.ownerOverrides.set(200, {
       label: 'Boundary Alex',
       disambiguator: 'Joined 2026-02-01',
-      allocated_hours: 19000,
+      allocated_hours: 19802,
     });
     metrics.ownerOverrides.set(207, { label: longName });
     const errors: string[] = [];
