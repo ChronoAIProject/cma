@@ -65,18 +65,11 @@ fn option_inputs_are_bounded_and_cursor_domains_follow_search_and_owner() {
     );
 }
 #[test]
-fn labels_distinguish_duplicates_and_never_fall_back_to_identifiers() {
+fn labels_are_plain_and_never_fall_back_to_identifiers() {
     let id = "91892afa-5fa5-4f4f-9100-2b8d986d2f71";
-    let first = option_label(OptionKind::Owner, id, Some("Alex Chen"));
-    assert!(first.starts_with("Alex Chen · account "));
-    assert!(!first.contains(id));
-    assert_ne!(
-        first,
-        option_label(OptionKind::Owner, "another", Some("Alex Chen"))
-    );
     assert_eq!(
-        first,
-        option_label(OptionKind::Owner, id, Some("Alex Chen"))
+        option_label(OptionKind::Owner, id, Some("Alex Chen")),
+        "Alex Chen"
     );
     for name in [
         None,
@@ -84,10 +77,88 @@ fn labels_distinguish_duplicates_and_never_fall_back_to_identifiers() {
         Some(id),
         Some("User 91892afa-5fa5-4f4f-9100-2b8d986d2f71"),
     ] {
-        assert!(option_label(OptionKind::Owner, id, name).starts_with("Unnamed owner · account "));
+        assert_eq!(option_label(OptionKind::Owner, id, name), "Unnamed owner");
     }
     let sandbox = "sbx_00000000000000000000000000000001";
-    assert!(option_label(OptionKind::Sandbox, sandbox, Some(sandbox))
-        .starts_with("Unnamed Sandbox · Sandbox "));
-    assert!(!option_label(OptionKind::Sandbox, sandbox, None).contains(sandbox));
+    assert_eq!(
+        option_label(OptionKind::Sandbox, sandbox, Some(sandbox)),
+        "Unnamed Sandbox"
+    );
+}
+
+#[test]
+fn duplicate_context_prefers_humans_and_never_changes_primary_labels() {
+    let make = |id: &str, label: &str| FilterOption {
+        value: id.into(),
+        label: label.into(),
+        disambiguator: None,
+    };
+    let mut items = vec![
+        make("one", "Alex"),
+        make("two", "Alex"),
+        make("three", "Priya"),
+    ];
+    let hints = vec![
+        option_joined(Some("2026-11-01T12:30:00Z")),
+        option_joined(Some("2026-11-02T12:30:00Z")),
+        Some("unused".into()),
+    ];
+    disambiguate_options(&mut items, &hints);
+    assert_eq!(items[0].label, "Alex");
+    assert_eq!(items[0].disambiguator.as_deref(), Some("Joined 2026-11-01"));
+    assert_eq!(items[1].disambiguator.as_deref(), Some("Joined 2026-11-02"));
+    assert!(items[2].disambiguator.is_none());
+    disambiguate_options(
+        &mut items,
+        &[Some("same".into()), Some("same".into()), None],
+    );
+    assert_ne!(items[0].disambiguator, items[1].disambiguator);
+    assert!(items[0]
+        .disambiguator
+        .as_deref()
+        .unwrap()
+        .starts_with("same · reference "));
+    disambiguate_options(&mut items[..1], &hints[..1]);
+    assert!(items[0].disambiguator.is_none());
+    assert_eq!(items[0].label, "Alex");
+    for at in [
+        None,
+        Some(""),
+        Some("invalid"),
+        Some("2026-99-99T00:00:00Z"),
+    ] {
+        assert!(option_joined(at).is_none());
+    }
+}
+
+#[test]
+fn identifiers_attached_to_names_and_runtime_versions_are_never_labels() {
+    let uuid = "91892afa-5fa5-4f4f-9100-2b8d986d2f71";
+    let attached = format!("Research-{uuid}");
+    for name in [uuid, attached.as_str()] {
+        assert_eq!(
+            option_label(OptionKind::Owner, "owner", Some(name)),
+            "Unnamed owner"
+        );
+        assert_eq!(
+            option_label(OptionKind::Sandbox, "sandbox", Some(name)),
+            "Unnamed Sandbox"
+        );
+        assert_eq!(
+            option_label(OptionKind::Runtime, name, None),
+            "Unnamed runtime"
+        );
+    }
+    assert_eq!(
+        option_label(
+            OptionKind::Runtime,
+            "sbx_00000000000000000000000000000001",
+            None
+        ),
+        "Unnamed runtime"
+    );
+    assert_eq!(
+        option_label(OptionKind::Runtime, "runtime-stable", None),
+        "runtime-stable"
+    );
 }

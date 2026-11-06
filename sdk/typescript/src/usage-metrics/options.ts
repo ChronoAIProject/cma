@@ -2,7 +2,7 @@ import type { ResolvedConfig } from '../config.js';
 import { ValidationError } from '../errors.js';
 import type { OperationOptions } from '../http.js';
 import { read } from '../resources.js';
-import { array, nullable, object, text, type Output } from '../schema.js';
+import { array, nullable, object, optional, text, type Output } from '../schema.js';
 
 export interface UsageFilterOptionsQuery extends OperationOptions {
   readonly kind: 'owner' | 'sandbox' | 'runtime';
@@ -13,7 +13,7 @@ export interface UsageFilterOptionsQuery extends OperationOptions {
   readonly limit?: number;
 }
 const optionsPage = object({
-  items: array(object({ value: text, label: text })),
+  items: array(object({ value: text, label: text, disambiguator: optional(text) })),
   next: nullable(text),
 });
 export type UsageFilterOptions = Output<typeof optionsPage>;
