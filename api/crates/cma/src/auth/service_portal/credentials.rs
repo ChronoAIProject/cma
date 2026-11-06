@@ -75,9 +75,11 @@ pub(super) async fn resolve(auth: &AuthState, headers: &HeaderMap) -> Result<Cus
     refresh::refresh_if_needed(auth, &mut state)
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let resolved = cookie_authorization::request_for_cookie(auth, &login.subject, state.clone())
-        .await
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let resolved =
+        cookie_authorization::request_for_browser_cookie(auth, &login.subject, state.clone())
+            .await
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .ok_or(StatusCode::UNAUTHORIZED)?;
     if resolved.delegated_credential.is_none() {
         return Err(StatusCode::UNAUTHORIZED);
     }
