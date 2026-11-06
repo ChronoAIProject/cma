@@ -8,6 +8,16 @@ use layer2_core::sandbox_metrics::{
 
 #[async_trait]
 impl MetricsStore for ReportingStore {
+    fn check_read_budget(&self) -> Result<()> {
+        self.check_circuit(now())
+    }
+    async fn owner_allocations(
+        &self,
+        report: &Report,
+        query: layer2_core::sandbox_metrics::OwnerAllocationQuery,
+    ) -> Result<layer2_core::sandbox_metrics::OwnerAllocations> {
+        self.read_owner_allocations(report, query).await
+    }
     async fn options(
         &self,
         scope: &Scope,
