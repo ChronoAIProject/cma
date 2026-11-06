@@ -308,6 +308,27 @@ Even a circuit that opens and expires before completion fails the scale assertio
 The 60-second generation budget, 512 MiB process RSS budget, two-second ownership
 reauthorization budget and complete-cohort/index/pagination assertions remain.
 
+The separate options scale contract now uses the same diagnostic capture for
+its 400- and 20,001-Sandbox cases. It retains ordinary partition scheduling and
+all original assertions; only the report-generation scale contract is isolated.
+Options diagnostics identify the cohort, initialization/seed/read phase,
+one-based owner page, failure duration and circuit state. Each opening event
+retains the active test phase when observed, so a later fast `Busy` cannot be
+mistaken for evidence that the rejected option query was slow. Phase labels
+are fixed categories; no names, query text, credentials or cursor values are
+captured. Nextest process isolation lets the global test subscriber observe
+driver tasks without mixing unrelated tests.
+
+The reporting circuit is per client/store, not global across tests. Partitions
+have separate Mongo containers, ports and owned volumes, with serial tests per
+fixture, but share the hosted runner's CPU and disk. The options test seeds
+large batches through its monitored reporting client; connection-hold pressure
+can therefore originate before discovery. Run 42299398688 returned `Busy` during
+20,001-Sandbox owner pagination in 3.918 seconds overall, without the reason or
+page recorded. A setup hold or host contention is a hypothesis, not a diagnosed
+cause. No threshold, circuit reset, automatic retry, or extra isolation was
+introduced to turn that result green.
+
 A controlled repeat on 2026-11-07 passed all five fresh-fixture runs with zero
 circuit openings, 20,001 Sandboxes and 101 pages each. Generation took
 11,412–13,294 ms, full workload 21,801–25,178 ms, and post-generation RSS
