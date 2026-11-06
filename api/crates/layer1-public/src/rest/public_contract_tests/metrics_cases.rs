@@ -129,7 +129,12 @@ fn row() -> Row {
 }
 #[async_trait]
 impl MetricsStore for Store {
-    async fn options(&self, _: &Scope, query: OptionQuery) -> Result<FilterOptions> {
+    async fn options(
+        &self,
+        _: &Scope,
+        query: OptionQuery,
+        owner_context: OwnerContextAccess,
+    ) -> Result<FilterOptions> {
         self.check()?;
         if query.selected.as_deref() == Some("missing") {
             return Ok(FilterOptions {
@@ -142,19 +147,52 @@ impl MetricsStore for Store {
             OptionKind::Sandbox => (SANDBOX, "Research"),
             OptionKind::Runtime => ("v1", "v1"),
         };
-        let duplicate = query.search == "duplicate";
+        let duplicate = query.search.starts_with("duplicate");
         let mut items = vec![FilterOption {
             value: value.into(),
             label: label.into(),
-            disambiguator: duplicate.then(|| "Joined 2026-01-01".into()),
+            disambiguator: None,
         }];
         if duplicate {
             items.push(FilterOption {
                 value: "other-owner".into(),
                 label: label.into(),
-                disambiguator: Some("Joined 2026-02-01".into()),
+                disambiguator: None,
             });
         }
+        if query.search == "duplicate-created-collision" {
+            items.push(FilterOption {
+                value: "third-sandbox".into(),
+                label: label.into(),
+                disambiguator: None,
+            });
+            let contexts = [
+                OptionContext::sandbox("owner-a", Some("Alice"), Some(1793536200)),
+                OptionContext::sandbox("owner-b", Some("Alice"), Some(1793622600)),
+                OptionContext::sandbox(
+                    "owner-c",
+                    Some("Alice · Created 2026-11-01"),
+                    Some(1793709000),
+                ),
+            ];
+            disambiguate_options_with_context(&mut items, &contexts);
+            return Ok(FilterOptions { items, next: None });
+        }
+        let contexts = match query.search.as_str() {
+            "duplicate-created" => {
+                [1000, 86400].map(|at| OptionContext::sandbox("owner", Some("Alice"), Some(at)))
+            }
+            "duplicate-created-time" => {
+                [1000, 1001].map(|at| OptionContext::sandbox("owner", Some("Alice"), Some(at)))
+            }
+            "duplicate-joined-time" => ["2026-01-01T12:30:00.001Z", "2026-01-01T12:30:00.002Z"]
+                .map(|at| OptionContext::owner_with_access(Some(at), owner_context)),
+            "duplicate-identical" => ["2026-01-01T12:30:00Z"; 2]
+                .map(|at| OptionContext::owner_with_access(Some(at), owner_context)),
+            _ => ["2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z"]
+                .map(|at| OptionContext::owner_with_access(Some(at), owner_context)),
+        };
+        disambiguate_options_with_context(&mut items, &contexts);
         Ok(FilterOptions {
             items,
             next: (query.cursor.is_none() && query.selected.is_none() && !duplicate)
@@ -243,6 +281,10 @@ pub(super) fn scenario(name: &str) -> Option<Scenario> {
     };
     let capabilities = if mode == "forbidden" {
         vec![]
+    } else if mode == "directory_only" {
+        vec![Capability::ReadUserDirectory]
+    } else if mode == "directory" {
+        vec![Capability::ReadAllSandboxes, Capability::ReadUserDirectory]
     } else if admin {
         vec![Capability::ReadAllSandboxes]
     } else {

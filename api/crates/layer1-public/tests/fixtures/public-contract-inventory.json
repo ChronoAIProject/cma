@@ -3810,7 +3810,7 @@
     },
     "POST /api/v1/admin/usage/metrics/options": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Administrator option discovery reauthorizes every request, validates bounded queries and maps reporting pressure and availability failures.",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Administrator option discovery reauthorizes every request, validates bounded queries and maps reporting pressure and availability failures. Duplicate names use distinct final secondary text, exhausting safe human context before a reference. Precise owner observation times require current ReadUserDirectory authority; Sandbox-only callers retain dates. Primary labels stay plain.",
       "required_problems": [
         "not_authenticated",
         "forbidden",
