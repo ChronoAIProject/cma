@@ -21,6 +21,9 @@ impl MetricsWorkers {
                     )
                     .await
                     .unwrap_or(Err(MetricsError::Unavailable));
+                    if let Err(error) = &result {
+                        tracing::warn!(error=%error, "sandbox report generation failed");
+                    }
                     let success = result.is_ok();
                     let report = result.unwrap_or_else(|_| lease.report.clone());
                     if let Err(error) = self.store.finish_report(&lease, report, success).await {
@@ -42,7 +45,9 @@ impl MetricsWorkers {
     pub(super) async fn generate(&self, lease: &ReportLease) -> Result<Report> {
         let mut report = lease.report.clone();
         let mut snapshot = self.store.snapshot().await?;
-        report.mapping_revision = self.store.mapping_revision_at(&mut snapshot).await?;
+        if self.enabled {
+            report.mapping_revision = self.store.mapping_revision_at(&mut snapshot).await?;
+        }
         let mut summary = Summary {
             allocated_period: AllocatedPeriod {
                 complete: true,
@@ -80,14 +85,20 @@ impl MetricsWorkers {
             if ids.is_empty() {
                 continue;
             }
-            if let Some(first) = self.store.tracking_started_at(&ids, &mut snapshot).await? {
-                report.tracking_started_at = Some(
-                    report
-                        .tracking_started_at
-                        .map_or(first, |old| old.min(first)),
-                );
+            if self.enabled {
+                if let Some(first) = self.store.tracking_started_at(&ids, &mut snapshot).await? {
+                    report.tracking_started_at = Some(
+                        report
+                            .tracking_started_at
+                            .map_or(first, |old| old.min(first)),
+                    );
+                }
             }
-            let live = self.store.live_readings_at(&ids, &mut snapshot).await?;
+            let live = if self.enabled {
+                self.store.live_readings_at(&ids, &mut snapshot).await?
+            } else {
+                BTreeMap::new()
+            };
             let mut accum: BTreeMap<_, Accumulator> = ids
                 .iter()
                 .cloned()
@@ -109,79 +120,81 @@ impl MetricsWorkers {
                         a.expectations.extend(value.expectations);
                     }
                 }
-                let rollups = self
-                    .store
-                    .metric_rollups(&mut snapshot, &ids, range)
-                    .await?;
-                let mut minutes = BTreeMap::<String, Vec<Minute>>::new();
-                for rollup in rollups {
-                    if rollup.mapping_revision > report.mapping_revision {
-                        return Err(MetricsError::Unavailable);
-                    }
-                    let Some(state) = states.iter().find(|s| {
-                        s.sandbox_id.as_str() == rollup.sandbox_id
-                            && s.owner.as_str() == rollup.owner_subject
-                    }) else {
-                        continue;
-                    };
-                    source_complete &= rollup.source_complete;
-                    for minute in rollup.minutes {
-                        if minute.from >= range.from
-                            && minute.to <= range.to
-                            && minute.to <= rollup.cutoff
-                        {
-                            minutes
-                                .entry(state.sandbox_id.to_string())
-                                .or_default()
-                                .push(minute);
+                if self.enabled {
+                    let rollups = self
+                        .store
+                        .metric_rollups(&mut snapshot, &ids, range)
+                        .await?;
+                    let mut minutes = BTreeMap::<String, Vec<Minute>>::new();
+                    for rollup in rollups {
+                        if rollup.mapping_revision > report.mapping_revision {
+                            return Err(MetricsError::Unavailable);
+                        }
+                        let Some(state) = states.iter().find(|s| {
+                            s.sandbox_id.as_str() == rollup.sandbox_id
+                                && s.owner.as_str() == rollup.owner_subject
+                        }) else {
+                            continue;
+                        };
+                        source_complete &= rollup.source_complete;
+                        for minute in rollup.minutes {
+                            if minute.from >= range.from
+                                && minute.to <= range.to
+                                && minute.to <= rollup.cutoff
+                            {
+                                minutes
+                                    .entry(state.sandbox_id.to_string())
+                                    .or_default()
+                                    .push(minute);
+                            }
                         }
                     }
-                }
-                // Raw reads repair only the at-most-two partial minute edges.
-                // Interior history always uses reusable minute rollups.
-                let mut edges = Vec::new();
-                if !range.from.is_multiple_of(60) {
-                    edges.push(Range {
-                        from: range.from,
-                        to: (range.from / 60 * 60 + 60).min(range.to),
-                    });
-                }
-                if !range.to.is_multiple_of(60) {
-                    let edge = Range {
-                        from: (range.to / 60 * 60).max(range.from),
-                        to: range.to,
-                    };
-                    if !edges.contains(&edge) {
-                        edges.push(edge);
+                    // Raw reads repair only the at-most-two partial minute edges.
+                    // Interior history always uses reusable minute rollups.
+                    let mut edges = Vec::new();
+                    if !range.from.is_multiple_of(60) {
+                        edges.push(Range {
+                            from: range.from,
+                            to: (range.from / 60 * 60 + 60).min(range.to),
+                        });
                     }
-                }
-                for edge in edges {
-                    let bindings = self.store.bindings_at(&ids, edge, &mut snapshot).await?;
-                    let (samples, complete) = self
-                        .raw(
-                            &bindings,
-                            Range {
-                                from: edge.from.saturating_sub(120),
-                                to: (edge.to + 90).min(report.as_of),
-                            },
-                        )
-                        .await?;
-                    source_complete &= complete;
-                    for id in &ids {
-                        let own: Vec<_> = bindings
-                            .iter()
-                            .filter(|b| &b.sandbox_id == id)
-                            .cloned()
-                            .collect();
-                        minutes
-                            .entry(id.clone())
-                            .or_default()
-                            .extend(aggregate::aggregate(&own, &samples, edge)?);
+                    if !range.to.is_multiple_of(60) {
+                        let edge = Range {
+                            from: (range.to / 60 * 60).max(range.from),
+                            to: range.to,
+                        };
+                        if !edges.contains(&edge) {
+                            edges.push(edge);
+                        }
                     }
-                }
-                for (id, minutes) in minutes {
-                    if let Some(a) = accum.get_mut(&id) {
-                        a.add(&minutes, &report.query, range);
+                    for edge in edges {
+                        let bindings = self.store.bindings_at(&ids, edge, &mut snapshot).await?;
+                        let (samples, complete) = self
+                            .raw(
+                                &bindings,
+                                Range {
+                                    from: edge.from.saturating_sub(120),
+                                    to: (edge.to + 90).min(report.as_of),
+                                },
+                            )
+                            .await?;
+                        source_complete &= complete;
+                        for id in &ids {
+                            let own: Vec<_> = bindings
+                                .iter()
+                                .filter(|b| &b.sandbox_id == id)
+                                .cloned()
+                                .collect();
+                            minutes
+                                .entry(id.clone())
+                                .or_default()
+                                .extend(aggregate::aggregate(&own, &samples, edge)?);
+                        }
+                    }
+                    for (id, minutes) in minutes {
+                        if let Some(a) = accum.get_mut(&id) {
+                            a.add(&minutes, &report.query, range);
+                        }
                     }
                 }
                 from = range.to;
@@ -227,7 +240,7 @@ impl MetricsWorkers {
             }
         }
         summary.measured = Some(aggregate.measured(report.as_of, summary.running_count > 0));
-        if report.scope.admin {
+        if self.enabled && report.scope.admin {
             summary.infrastructure = Some(
                 self.store
                     .infrastructure_at(&mut snapshot, report.mapping_revision, report.as_of)

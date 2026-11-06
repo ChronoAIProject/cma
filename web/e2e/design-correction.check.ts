@@ -459,6 +459,31 @@ for (const theme of ['light', 'dark']) {
         theme === 'dark' ? 'rgb(19, 19, 21)' : 'rgb(250, 250, 250)',
       );
       await expect(page.locator('.task-home__panel')).toHaveCSS('border-radius', '20px');
+      await expect(page.locator('.task-home__composer')).toHaveCSS(
+        'border-color',
+        theme === 'dark' ? 'rgb(38, 38, 42)' : 'rgb(228, 228, 231)',
+      );
+      await expect(page.locator('.task-home__panel')).toHaveCSS(
+        'background-color',
+        theme === 'dark' ? 'rgb(25, 25, 28)' : 'rgb(255, 255, 255)',
+      );
+      await expect(page.locator('.task-home__panel')).toHaveCSS(
+        'border-color',
+        theme === 'dark' ? 'rgb(42, 42, 46)' : 'rgb(228, 228, 231)',
+      );
+      await expect(page.getByRole('button', { name: 'Start task' })).toHaveCSS(
+        'background-color',
+        theme === 'dark' ? 'rgb(38, 38, 42)' : 'rgb(228, 228, 231)',
+      );
+      expect(await input.evaluate((node) => getComputedStyle(node, '::placeholder').color)).toBe(
+        theme === 'dark' ? 'rgb(133, 133, 142)' : 'rgb(82, 82, 91)',
+      );
+      await input.focus();
+      await expect(page.locator('.task-home__composer')).toHaveCSS(
+        'border-color',
+        theme === 'dark' ? 'rgb(58, 58, 64)' : 'rgb(161, 161, 170)',
+      );
+
       await expect(input).toHaveCSS('min-height', '128px');
       await expect(
         page.getByRole('heading', { name: 'What should your Agent work on?' }),
@@ -474,7 +499,7 @@ for (const theme of ['light', 'dark']) {
       await expect(page.getByRole('button', { name: 'Start task' })).toBeEnabled();
       await expect(page.getByRole('button', { name: 'Start task' })).toHaveCSS(
         'background-color',
-        theme === 'dark' ? 'rgb(200, 245, 66)' : 'rgb(63, 98, 18)',
+        'rgb(200, 245, 66)',
       );
       const trigger = page.getByRole('button', { name: /^Cloud computer/ });
       await trigger.click();
@@ -505,7 +530,7 @@ for (const theme of ['light', 'dark']) {
       await expect(dialog.getByRole('button', { name: 'Add repo' })).toBeEnabled();
       await expect(dialog.getByRole('button', { name: 'Add repo' })).toHaveCSS(
         'background-color',
-        theme === 'dark' ? 'rgb(200, 245, 66)' : 'rgb(63, 98, 18)',
+        'rgb(200, 245, 66)',
       );
       await dialog.getByRole('button', { name: 'Close repository dialog' }).focus();
       await page.keyboard.press('Tab');

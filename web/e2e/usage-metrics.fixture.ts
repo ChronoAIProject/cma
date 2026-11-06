@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import type { UsageMetricQuery, UsageMetricReport } from '@chronoai/cma-sdk';
+import type { UsageMetricQuery, UsageMetricReport, UsageMetricRow } from '@chronoai/cma-sdk';
 import {
   asOf,
   metricRow,
@@ -12,6 +12,7 @@ export class LocalUsageMetrics {
   readonly reads: URL[] = [];
   readonly creates: { admin: boolean; input: UsageMetricQuery; id: string }[] = [];
   readonly reports = new Map<string, UsageMetricReport>();
+  presentationRows?: UsageMetricRow[];
   failure = 0;
   pending = false;
   /** Read-only session exposure; the test may change it after an admin save. */
@@ -51,7 +52,7 @@ export class LocalUsageMetrics {
         const id = `report-${this.creates.length + 1}`;
         this.creates.push({ admin, input, id });
         const base = reportFixture(admin, id);
-        const report: UsageMetricReport = {
+        let report: UsageMetricReport = {
           ...base,
           query: {
             from: input.from ?? asOf - 86400,
@@ -72,6 +73,39 @@ export class LocalUsageMetrics {
             running_count: input.filters?.search === 'empty' ? 0 : 18000,
           },
         };
+        if (this.presentationRows && report.summary) {
+          const selected = input.filters?.search === 'empty' ? [] : this.presentationRows;
+          const allocated = { ...report.summary.allocated_period };
+          const capacity = { ...report.summary.total_allocated_capacity };
+          for (const field of [
+            'cpu_core_hours',
+            'memory_gib_hours',
+            'disk_gib_hours',
+            'uptime_seconds',
+            'disk_retained_seconds',
+            'unknown_seconds',
+            'projected_tail_seconds',
+          ] as const)
+            allocated[field] = selected.reduce(
+              (sum, row) => sum + Number(row.allocated_period[field]),
+              0,
+            );
+          for (const field of ['cpu_cores', 'memory_bytes', 'disk_bytes'] as const)
+            capacity[field] = selected.reduce((sum, row) => sum + Number(row.allocation[field]), 0);
+          report = {
+            ...report,
+            summary: {
+              ...report.summary,
+              sandbox_count: selected.length,
+              running_count: selected.filter((row) => row.status === 'active').length,
+              allocated_period: {
+                ...allocated,
+                complete: selected.every((row) => row.allocated_period.complete),
+              },
+              total_allocated_capacity: capacity,
+            },
+          };
+        }
         this.reports.set(id, report);
         return route.fulfill({
           status: this.pending ? 202 : 200,
@@ -106,7 +140,13 @@ export class LocalUsageMetrics {
           },
         });
       if (member === 'sandboxes') {
-        if (resource) return route.fulfill({ json: { ...metricRow, sandbox_id: resource } });
+        if (resource)
+          return route.fulfill({
+            json: this.presentationRows?.find((row) => row.sandbox_id === resource) ?? {
+              ...metricRow,
+              sandbox_id: resource,
+            },
+          });
         const second = url.searchParams.has('cursor');
         return route.fulfill({
           json: {
@@ -115,13 +155,13 @@ export class LocalUsageMetrics {
             items:
               report.query.filters.search === 'empty'
                 ? []
-                : [
+                : (this.presentationRows ?? [
                     {
                       ...metricRow,
                       ...(second ? { sandbox_id: 'sbx-2', name: 'Second page Sandbox' } : {}),
                     },
-                  ],
-            next: second ? null : 'page-two',
+                  ]),
+            next: this.presentationRows || second ? null : 'page-two',
             total_count: report.summary?.sandbox_count,
           },
         });

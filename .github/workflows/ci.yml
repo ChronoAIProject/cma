@@ -565,6 +565,13 @@ jobs:
         env:
           CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
         run: npx playwright test --config e2e/desktop-conversation.config.ts
+      - name: Usage browser layouts and states
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
+        run: |
+          npx playwright test --config e2e/usage.config.ts
+          CMA_E2E_MEASURED_USAGE=true npx playwright test --config e2e/usage.config.ts account-usage.check.ts operations-usage.check.ts
       - name: Dependency audit
         run: npm audit --audit-level=high
 

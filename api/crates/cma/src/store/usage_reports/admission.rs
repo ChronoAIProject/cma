@@ -62,6 +62,15 @@ impl ReportingStore {
             || queued >= self.budgets.queue
         {
             session.abort_transaction().await.map_err(unavailable)?;
+            tracing::warn!(
+                global_bytes = global,
+                tenant_bytes = tenant,
+                queued_jobs = queued,
+                global_limit = self.budgets.global_bytes,
+                tenant_limit = self.budgets.tenant_bytes,
+                queue_limit = self.budgets.queue,
+                "sandbox report admission budget exhausted"
+            );
             return Err(MetricsError::Busy);
         }
         let id = format!("umr_{}", uuid::Uuid::new_v4().simple());
