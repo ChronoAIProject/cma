@@ -287,3 +287,15 @@ not zero use. Paused homes may have only `last_observed`. Large integer quantiti
 are `number | string`; preserve decimal strings or use `BigInt` when exact integer
 arithmetic is needed. Charts include the full selected cohort, even when the
 current table page contains only 50 rows.
+
+### Owner allocation rankings
+
+`client.adminUsageMetrics.ownerAllocations(reportId, { metric: 'cpu', limit: 200 })` reads a bounded owner allocation page from an existing administrator
+report. Results cover the full selected cohort, ordered by allocation descending,
+with `total_count` and a signed `next` cursor. Supply that cursor with the same
+report and resource to continue. It does not create another report.
+
+Display `label`, and show `disambiguator` only as secondary duplicate-name context.
+`subject` is an opaque key and must not appear in chart text or tooltips. Respect
+partial `complete` flags, retain loaded/total counts on failures, and handle
+429/503 retries and 410 report expiry explicitly.
