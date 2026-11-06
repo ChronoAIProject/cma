@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { UsageMetricRow, UsageMetricSort } from '@chronoai/cma-sdk';
 import { Button } from '../../ui/Button';
-import { StatusBadge } from '../../ui/Badge';
-import { Table, TableActions, TableCell, type TableColumn } from '../../ui/Table';
+import { Picker } from '../../ui/Picker';
+import { AllocationChart } from './AllocationChart';
+import { UsageInventoryRow } from './UsageInventoryRow';
+import { Table, type TableColumn } from '../../ui/Table';
 import { useUsageRead } from './useReport';
-import { displayQuantity, metricTime, metricValue, type Metric, type MetricsClient } from './model';
+import { displayQuantity, type Metric, type MetricsClient } from './model';
 import { MetricsNotice } from './MetricsNotice';
+import './UsageInventory.css';
 import type { MetricsFailure } from './failure';
 
 export function MetricTable({
@@ -16,7 +19,6 @@ export function MetricTable({
   admin,
   active,
   measured,
-  focusedMetric,
   onSort,
   onDetail,
   onFailure,
@@ -59,94 +61,71 @@ export function MetricTable({
         }
       : {}),
   });
-  const metrics: readonly Metric[] = focusedMetric ? [focusedMetric] : ['cpu', 'memory', 'disk'];
   const columns = [
     column('Sandbox', 'name'),
-    ...(admin ? [column('Owner', 'owner')] : []),
-    column('Status', 'status'),
-    column('Runtime'),
-    column('Agents'),
-    ...metrics.map((metric) =>
-      measured
-        ? column(
-            metric === 'cpu'
-              ? 'CPU mean / allocated (cores)'
-              : metric === 'memory'
-                ? 'Memory mean / allocated (GiB)'
-                : 'Disk used / allocated (GiB)',
-            metric === 'cpu'
-              ? 'cpu_mean_cores'
-              : metric === 'memory'
-                ? 'memory_mean_bytes'
-                : 'disk_latest_bytes',
-          )
-        : column(
-            metric === 'cpu'
-              ? 'CPU allocated (cores)'
-              : metric === 'memory'
-                ? 'Memory allocated (GiB)'
-                : 'Disk allocated (GiB)',
-          ),
-    ),
-    column('Allocated CPU (core-hours)', 'allocated_cpu_core_hours'),
-    column('Allocated memory (GiB-hours)', 'allocated_memory_gib_hours'),
-    column('Allocated disk (GiB-hours)', 'allocated_disk_gib_hours'),
-    column('Last activity (SGT)', 'last_activity_at'),
+    column('CPU (core-hours)', 'allocated_cpu_core_hours'),
+    column('Memory (GiB-hours)', 'allocated_memory_gib_hours'),
+    column('Disk (GiB-hours)', 'allocated_disk_gib_hours'),
+  ];
+  const sortOptions: { value: UsageMetricSort; label: string }[] = [
+    { value: 'name', label: 'Sandbox name' },
+    ...(admin ? [{ value: 'owner' as const, label: 'Owner' }] : []),
+    { value: 'status', label: 'Status' },
+    { value: 'last_activity_at', label: 'Last activity' },
+    { value: 'allocated_cpu_core_hours', label: 'Allocated CPU' },
+    { value: 'allocated_memory_gib_hours', label: 'Allocated memory' },
+    { value: 'allocated_disk_gib_hours', label: 'Allocated disk' },
+    ...(measured
+      ? [
+          { value: 'cpu_mean_cores' as const, label: 'Measured CPU' },
+          { value: 'memory_mean_bytes' as const, label: 'Measured memory' },
+          { value: 'disk_latest_bytes' as const, label: 'Measured disk' },
+        ]
+      : []),
   ];
   return (
-    <section aria-label="Usage inventory">
+    <section className="usage-inventory" aria-label="Usage inventory">
+      {records.data && <AllocationChart page={records.data} admin={admin} />}
+      <div className="usage-section-heading">
+        <div>
+          <h3>Sandboxes</h3>
+          <p>Allocated resource-hours for the selected period</p>
+        </div>
+        <div className="usage-metric-actions">
+          <Picker
+            label="Sort usage inventory"
+            value={sort}
+            options={sortOptions}
+            onChange={onSort}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            aria-label={`Sort ${order === 'asc' ? 'descending' : 'ascending'}`}
+            onClick={() => onSort(sort)}
+          >
+            {order === 'asc' ? 'Ascending ↑' : 'Descending ↓'}
+          </Button>
+        </div>
+      </div>
       <MetricsNotice failure={records.error} onRetry={records.retry} />
       <Table
         label={measured ? 'Sandboxes and measured usage' : 'Sandboxes and allocated usage'}
         columns={columns}
-        actions={actions ? 'Actions' : undefined}
+        placement="usage-inventory-table"
         loading={records.loading}
         loadingLabel="Loading usage page"
         empty={records.data ? 'No Sandboxes match this selection.' : undefined}
       >
         {records.data?.items.map((row) => (
-          <tr key={row.sandbox_id}>
-            <TableCell>
-              <Button size="sm" onClick={() => onDetail(row)}>
-                {row.name || row.sandbox_id}
-              </Button>
-              <code className="usage-metric-id">{row.sandbox_id}</code>
-            </TableCell>
-            {admin && <TableCell>{row.owner.display_name || row.owner.subject}</TableCell>}
-            <TableCell>
-              <StatusBadge status={row.status} />
-            </TableCell>
-            <TableCell>{row.runtime_version ?? 'Not bound'}</TableCell>
-            <TableCell>{displayQuantity(row.agent_count)}</TableCell>
-            {metrics.map((metric) => (
-              <TableCell key={metric}>
-                {measured ? (
-                  <CompactReading metric={metric} row={row} />
-                ) : (
-                  metricValue(
-                    row.allocation[
-                      metric === 'cpu'
-                        ? 'cpu_cores'
-                        : metric === 'memory'
-                          ? 'memory_bytes'
-                          : 'disk_bytes'
-                    ],
-                    metric,
-                  )
-                )}
-              </TableCell>
-            ))}
-            <TableCell>{displayQuantity(row.allocated_period.cpu_core_hours)}</TableCell>
-            <TableCell>{displayQuantity(row.allocated_period.memory_gib_hours)}</TableCell>
-            <TableCell>
-              {displayQuantity(row.allocated_period.disk_gib_hours)}
-              <span className="usage-metric-id">
-                Allocation history: {row.allocated_period.complete ? 'complete' : 'partial'}
-              </span>
-            </TableCell>
-            <TableCell>{metricTime(row.last_activity_at)}</TableCell>
-            {actions && <TableActions>{actions(row)}</TableActions>}
-          </tr>
+          <UsageInventoryRow
+            key={row.sandbox_id}
+            row={row}
+            admin={admin}
+            measured={measured}
+            onDetail={onDetail}
+            actions={actions}
+          />
         ))}
       </Table>
       <div className="usage-metric-actions">
@@ -156,6 +135,7 @@ export function MetricTable({
         </span>
         <Button
           size="sm"
+          variant="outline"
           disabled={records.loading || cursors.length === 1}
           onClick={() => setCursors((previous) => previous.slice(0, -1))}
         >
@@ -163,6 +143,7 @@ export function MetricTable({
         </Button>
         <Button
           size="sm"
+          variant="outline"
           disabled={records.loading || !records.data?.next}
           onClick={() => {
             const next = records.data?.next;
@@ -173,44 +154,5 @@ export function MetricTable({
         </Button>
       </div>
     </section>
-  );
-}
-
-function CompactReading({
-  row,
-  metric,
-}: {
-  readonly row: UsageMetricRow;
-  readonly metric: Metric;
-}) {
-  const reading = row.measured[metric];
-  const value =
-    metric === 'cpu'
-      ? row.measured.cpu.mean_cores
-      : metric === 'memory'
-        ? row.measured.memory.mean_bytes
-        : row.measured.disk.latest_bytes;
-  const capacity =
-    row.allocation[
-      metric === 'cpu' ? 'cpu_cores' : metric === 'memory' ? 'memory_bytes' : 'disk_bytes'
-    ];
-  return (
-    <>
-      <span>
-        {metricValue(value, metric)} / {metricValue(capacity, metric)}
-      </span>
-      <span className="usage-metric-id">
-        {reading.state.replaceAll('_', ' ')} · coverage{' '}
-        {reading.coverage_ratio == null
-          ? 'unavailable'
-          : `${displayQuantity(Number(reading.coverage_ratio) * 100)}%`}
-      </span>
-      <span className="usage-metric-id">Observed {metricTime(reading.observed_at)}</span>
-      {value === null && reading.last_observed !== null && (
-        <span className="usage-metric-id">
-          Last observed {metricValue(reading.last_observed, metric)}
-        </span>
-      )}
-    </>
   );
 }
