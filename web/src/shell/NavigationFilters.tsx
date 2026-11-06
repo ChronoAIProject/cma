@@ -22,6 +22,7 @@ export function NavigationFilters({
   status,
   onStatus,
   onClear,
+  onManageEnvironments,
 }: {
   readonly scope?: ReactNode;
   /** The chosen scope in words, for the summary line when it is not the default. */
@@ -32,6 +33,7 @@ export function NavigationFilters({
   readonly status: string;
   readonly onStatus: (status: string) => void;
   readonly onClear?: () => void;
+  readonly onManageEnvironments?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
@@ -103,6 +105,20 @@ export function NavigationFilters({
             Clear filters
           </button>
         )}
+        {view === 'agent' && onManageEnvironments ? (
+          <div className="navigation-filters__actions">
+            <button
+              type="button"
+              className="navigation-filters__manage"
+              onClick={() => {
+                setOpen(false);
+                onManageEnvironments();
+              }}
+            >
+              Manage environments
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

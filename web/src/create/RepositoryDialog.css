@@ -78,7 +78,7 @@
   border-radius: 12px;
 }
 .repository-dialog__save {
-  background: var(--dsw-specific-task-accent);
+  background: var(--dsw-specific-task-button-fill);
   color: var(--dsw-specific-task-on-accent);
 }
 .repository-dialog__save:hover:not(:disabled) {

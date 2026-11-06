@@ -1,0 +1,116 @@
+.usage-inventory-table table {
+  min-width: 0;
+  table-layout: fixed;
+}
+.usage-inventory-table th:first-child {
+  width: 34%;
+}
+.usage-inventory-table table th {
+  white-space: normal;
+  padding: 8px;
+}
+.usage-inventory-table th button {
+  max-width: 100%;
+  height: auto;
+  min-height: 32px;
+  white-space: normal;
+  text-align: start;
+}
+.usage-inventory-table table td {
+  padding: 12px;
+  vertical-align: top;
+}
+.usage-inventory-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+.usage-inventory-name__button {
+  min-width: 0;
+  max-width: calc(100% - 80px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-inventory-meta {
+  min-width: 0;
+  font: var(--dsw-font-xs-13);
+  color: var(--dsw-alias-label-secondary);
+}
+.usage-inventory-meta summary {
+  overflow-wrap: anywhere;
+}
+.usage-inventory-quantity {
+  display: block;
+  font: var(--dsw-font-base-strong-16);
+  margin-block: 4px 8px;
+  overflow-wrap: anywhere;
+}
+.usage-inventory-partial {
+  display: inline-block;
+  color: var(--dsw-alias-state-warn-label);
+  font: var(--dsw-font-xs-13);
+}
+.usage-inventory-measured {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  font: var(--dsw-font-xs-13);
+}
+.usage-inventory-mobile-label,
+.usage-inventory-mobile-unit {
+  display: none;
+}
+@container (max-width: 639px) {
+  .usage-inventory-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .usage-inventory-table table,
+  .usage-inventory-table tbody {
+    display: block;
+  }
+  .usage-inventory-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .usage-inventory-table table td {
+    min-width: 0;
+    height: auto;
+    text-align: start;
+    padding: 12px;
+  }
+  .usage-inventory-table td:first-child {
+    grid-column: 1 / -1;
+  }
+  .usage-inventory-table tbody tr + tr td:not(:first-child) {
+    border-top: 0;
+  }
+  .usage-inventory-mobile-label,
+  .usage-inventory-mobile-unit {
+    display: block;
+    font: var(--dsw-font-xxs-12);
+    color: var(--dsw-alias-label-secondary);
+  }
+  .usage-inventory-mobile-unit {
+    margin-bottom: 8px;
+  }
+}
+
+.usage-inventory-secondary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.usage-inventory-meta[open] {
+  flex-basis: 100%;
+}
+.usage-inventory-table {
+  scroll-margin-top: 16px;
+}

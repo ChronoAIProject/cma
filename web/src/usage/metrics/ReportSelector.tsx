@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Button } from '../../ui/Button';
+import { IconChevronDownOutline14 } from '../../ui/icons/IconChevronDownOutline14';
 import { Input } from '../../ui/Input';
 import { Picker } from '../../ui/Picker';
 import { useUsageRead, useUsageReport } from './useReport';
@@ -44,8 +45,19 @@ export function ReportSelector({
   const all = kind === 'owner' ? 'Everyone' : admin ? 'All Sandboxes' : 'All my Sandboxes';
   return (
     <div className="usage-metric-selector">
-      <Button size="sm" aria-expanded={open} onClick={() => setOpen((previous) => !previous)}>
-        {label}: {value || all}
+      <span className="usage-filter-label">{label}</span>
+      <Button
+        variant="outline"
+        placement="usage-discovery-control"
+        aria-label={`${label}: ${value || all}`}
+        size="md"
+        aria-expanded={open}
+        onClick={() => setOpen((previous) => !previous)}
+      >
+        <span className="usage-discovery-value" title={value || all}>
+          {value || all}
+        </span>
+        <IconChevronDownOutline14 />
       </Button>
       {open && (
         <div>
