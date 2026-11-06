@@ -4,7 +4,7 @@ import { render as renderView, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { ManagerNavigation } from './ManagerNavigation';
-import type { TreePermissions } from './Tree';
+import type { TreePermissions, TreeProps } from './Tree';
 import type { AgentStatus } from '../api/types';
 import { navigationFixture } from '../test/hierarchy';
 import { chooseOption, expandNavigationFilters } from '../test/select';
@@ -109,15 +109,18 @@ it('shows visible task states alongside characters and respects parent lifecycle
     ['active', 'stopped', 'paused', 'still', 'brand', 'Stopped', 'Stopped', undefined],
     ['paused', 'working', 'paused', 'still', 'brand', 'Paused', 'Paused', undefined],
   ] as const;
-  for (const [sandbox, agent, , , , , taskWord] of cases) {
+  for (const [sandbox, agent, pose, motion, tone, , taskWord] of cases) {
     view.rerender(draw(sandbox, agent));
     const name = new RegExp(`^Agent one,\\s*${taskWord}`);
     const row = screen.getByRole('treeitem', { name });
     expect(row).toHaveTextContent(taskWord);
     expect(screen.getByRole('link', { name })).toBe(row.querySelector('a'));
-    expect(row.querySelector('.task-mask svg')).not.toBeNull();
-    expect(row.querySelector('.task-mask')).toHaveAttribute('style');
-    expect(row.querySelector('.tree-row__signal')).toBeNull();
+    const character = row.querySelector('.character-avatar');
+    expect(character).toHaveAttribute('data-pose', pose);
+    expect(character).toHaveAttribute('data-motion', motion);
+    expect(character).toHaveAttribute('data-tone', tone);
+    expect(character).toHaveAttribute('aria-hidden', 'true');
+    expect(row.getAttribute('aria-label')).not.toMatch(/\d{4}-\d\d-\d\dT/);
     expect(row.querySelector('.task-running__dot') !== null).toBe(taskWord === 'Working');
     if (taskWord !== 'Working') expect(row.querySelector('time')).toHaveAttribute('dateTime');
   }
@@ -390,3 +393,25 @@ function render(view: ReactElement) {
   const result = renderView(wrap(view));
   return { ...result, rerender: (content: ReactElement) => result.rerender(wrap(content)) };
 }
+
+it('keeps the Sandbox character colour and uses a documented task fallback only when absent', () => {
+  const items = navigationFixture().map((item) => ({
+    ...item,
+    sandbox: { ...item.sandbox, color: '#62d079' },
+  }));
+  const draw = (records: TreeProps['items']) => (
+    <ManagerNavigation
+      {...props}
+      navigation={{ status: 'ready', items: records, refresh: vi.fn() }}
+    />
+  );
+  const view = render(draw(items));
+  const character = () =>
+    screen.getByRole('treeitem', { name: /^Agent one,/ }).querySelector('.character-avatar')!;
+  expect(character()).toHaveStyle({ color: '#62d079' });
+  expect(character().getAttribute('style')).not.toContain('hue-rotate');
+  view.rerender(
+    draw(items.map((item) => ({ ...item, sandbox: { ...item.sandbox, color: undefined } }))),
+  );
+  expect(character().getAttribute('style')).toContain('var(--dsw-alias-workspace-');
+});
