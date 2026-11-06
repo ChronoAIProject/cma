@@ -166,7 +166,9 @@ impl ReportingStore {
             .collection(JOBS)
             .update_one(
                 lease.fence(),
-                doc! {"$set":{"record":encode(&report)?,"state":state,"lease_until":0_i64,"logical_expires_at":report.expires_at as i64,"expires_at":expires(report.expires_at+86_400)}},
+                // A terminal report cannot grow: retain its actual cache bytes,
+                // not its maximum work reservation, throughout the cache TTL.
+                vec![doc! {"$set":{"record":{"$literal":encode(&report)?},"state":state,"lease_until":0_i64,"reserved_bytes":"$bytes","logical_expires_at":report.expires_at as i64,"expires_at":expires(report.expires_at+86_400)}}],
             )
             .await
             .map_err(unavailable)?;

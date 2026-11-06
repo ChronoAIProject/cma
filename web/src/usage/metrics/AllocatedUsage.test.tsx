@@ -55,9 +55,7 @@ it.each([false, true])(
     const period = screen.getByRole('region', { name: 'Allocated resource-hours' });
     for (const text of ['24', '48', '480'])
       expect(within(period).getByText(text)).toBeInTheDocument();
-    expect(
-      within(period).getByText(/Allocation history: partial; unknown 3,600 seconds/),
-    ).toBeInTheDocument();
+    expect(within(period).getByText(/Some allocation history is missing/)).toBeInTheDocument();
     expect(screen.getByText(/Allocation period:/)).toBeInTheDocument();
     expect(
       screen.queryByText(
@@ -75,7 +73,7 @@ it.each([false, true])(
     expect(screen.queryByText(/Infrastructure diagnostics/)).not.toBeInTheDocument();
     const table = screen.getByRole('table', { name: 'Sandboxes and allocated usage' });
     expect(
-      within(table).getByRole('columnheader', { name: 'CPU allocated (cores)' }),
+      within(table).getByRole('columnheader', { name: /CPU \(core-hours\)/ }),
     ).toBeInTheDocument();
     expect(api.series).not.toHaveBeenCalled();
     await actor.click(screen.getByRole('button', { name: 'Research Sandbox' }));
