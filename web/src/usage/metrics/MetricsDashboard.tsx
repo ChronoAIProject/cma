@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import type { Cma, UsageMetricRow } from '@chronoai/cma-sdk';
-import { Button } from '../../ui/Button';
+import { Skeleton } from '../../ui/Skeleton';
+import { UsageOverviewHeader } from './UsageOverviewHeader';
 import { Picker } from '../../ui/Picker';
 import { MetricCharts } from './MetricCharts';
 import { MetricDetail } from './MetricDetail';
@@ -81,20 +82,16 @@ export function MetricsDashboard({
                 return ownsSelection ? (
                   agentPicker(draft, update)
                 ) : (
-                  <p>Apply one of your Sandbox selections to optionally choose an Agent.</p>
+                  <p>Choose a Sandbox and apply filters to select an Agent.</p>
                 );
               }
             : undefined
         }
       />
-      <div className="usage-metric-actions">
-        <Button size="sm" disabled={state.busy} onClick={state.refresh}>
-          Refresh usage
-        </Button>
-        {state.busy && (
-          <p role="status">{state.pending ? 'Preparing usage report…' : 'Loading usage report…'}</p>
-        )}
-      </div>
+      <UsageOverviewHeader report={report} busy={state.busy} onRefresh={state.refresh} />
+      {state.busy && (
+        <p role="status">{state.pending ? 'Preparing usage report…' : 'Loading usage report…'}</p>
+      )}
       {state.stale && (
         <p role="status">Showing the previous selection. The selected report is not ready.</p>
       )}
@@ -105,8 +102,21 @@ export function MetricsDashboard({
           are shared with its other Agents.
         </p>
       )}
+      {state.busy && !report && (
+        <div className="usage-loading" aria-hidden="true">
+          <div className="usage-metric-cards">
+            {[0, 1, 2].map((item) => (
+              <div className="usage-metric-card" key={item}>
+                <Skeleton width="40%" />
+                <Skeleton height={32} width="70%" />
+              </div>
+            ))}
+          </div>
+          <Skeleton height={240} radius={12} />
+        </div>
+      )}
       {report && (
-        <section aria-busy={state.busy || undefined}>
+        <section className="usage-report" aria-busy={state.busy || undefined}>
           <MetricSummary
             report={report}
             measured={measured}
