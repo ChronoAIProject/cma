@@ -18,14 +18,17 @@ module OmarchyCIContract
       row["permissions"] == { "contents" => "read" }, "Omarchy requires bounded native amd64 read-only CI")
     expected = [
       { "uses" => "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" },
-      { "name" => "Omarchy desktop fixture regressions",
-        "run" => "python3 .github/scripts/omarchy-close-browser-tests.py" },
       { "name" => "Reserve space on the disposable Omarchy runner", "run" => <<~'SH' },
         test "$GITHUB_ACTIONS" = true
         sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
         df -h /
       SH
       { "uses" => "actions/setup-node@v6", "with" => { "node-version" => 26 } },
+      { "name" => "Omarchy desktop fixture regressions", "run" => <<~'SH' },
+        python3 .github/scripts/omarchy-close-browser-tests.py
+        python3 .github/scripts/omarchy-browser-input-tests.py
+        node --test .github/scripts/omarchy-browser-page.test.cjs
+      SH
       { "uses" => "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f" },
       { "name" => "Set immutable Omarchy image version", "id" => "identity",
         "run" => 'echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"' },

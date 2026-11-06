@@ -7,6 +7,7 @@ const { execFileSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
 const { processRpc } = require('/opt/codex-fixtures/native_tools_fixture.cjs');
+const browserPage = require('./omarchy-browser-page.cjs');
 
 const directory = mkdtempSync('/tmp/cma-desktop-proof-');
 const home = directory + '/home';
@@ -53,7 +54,7 @@ const server = createServer(async (request, response) => {
         return;
       }
       response.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' });
-      response.end('<!doctype html><title>cma-desktop-ready</title><body style="margin:0;background:#234"><input id="field" style="position:absolute;left:80px;top:100px;width:300px;height:40px"><button style="position:absolute;left:80px;top:200px;width:250px;height:40px" onclick="localStorage.setItem(\'cma-desktop-proof\',document.getElementById(\'field\').value);document.title=\'cma-ui:\'+document.getElementById(\'field\').value">Verify input</button><script>fetch(\'/profile?value=\'+encodeURIComponent(localStorage.getItem(\'cma-desktop-proof\')||\'\'))</script>');
+      response.end(browserPage(new URL(request.url, 'http://127.0.0.1').pathname));
       return;
     }
     assert.equal(request.url, '/v1/responses');
@@ -144,15 +145,7 @@ const server = createServer(async (request, response) => {
     'python3 /opt/probes/omarchy-close-browser.py --normal-window',
     '/usr/local/bin/cma-desktop-session --browser ' + origin + '/desktop-test',
     '/usr/local/bin/cma-desktop-session --browser',
-    'xdotool key --clearmodifiers ctrl+l',
-    "xdotool type --clearmodifiers '" + origin + "/desktop-test'",
-    'xdotool key Return',
-    "for i in $(seq 1 30); do python3 /opt/probes/omarchy-active-title.py | grep -q cma-desktop-ready && break; sleep 0.1; done",
-    // Chromium's own full-screen command hides its browser chrome. Merely
-    // changing the window-manager state leaves the page origin offset by it.
-    'xdotool key --clearmodifiers F11', 'sleep 0.5',
-    'xdotool mousemove 120 120 click 1', 'xdotool type --clearmodifiers cma-codex',
-    'xdotool mousemove 120 220 click 1', 'sleep 0.1',
+    'python3 /opt/probes/omarchy-browser-input.py ' + origin,
     'scrot ' + screenshot,
     'python3 /opt/probes/omarchy-active-title.py',
   ].join('\n');
