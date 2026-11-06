@@ -1,5 +1,5 @@
 import type { SandboxResourceAvailability } from './sandboxInput';
-import { screenOperation } from './screenOperations';
+import { screenApplication } from './screenOperations';
 import { changedFiles, homeFilePath } from './fileChanges';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentDetail } from '../api/types';
@@ -42,8 +42,10 @@ export function AgentSidePanel({
   onSelect,
   observation,
   viewerId,
+  onStopForControl,
   resourceAvailability,
 }: {
+  readonly onStopForControl?: () => Promise<void>;
   readonly resourceAvailability?: SandboxResourceAvailability;
   readonly agentId: string;
   readonly shared: boolean;
@@ -70,7 +72,10 @@ export function AgentSidePanel({
   const [fullScreen, setFullScreen] = useState(false);
   const [screenError, setScreenError] = useState<string>();
   useEffect(() => {
-    const changed = () => setFullScreen(document.fullscreenElement === computerRef.current);
+    const changed = () => {
+      setFullScreen(document.fullscreenElement === computerRef.current);
+      setScreenError(undefined);
+    };
     document.addEventListener('fullscreenchange', changed);
     return () => document.removeEventListener('fullscreenchange', changed);
   }, []);
@@ -97,20 +102,31 @@ export function AgentSidePanel({
     observedReadiness.current = readiness;
     reloadEnvironment();
   }, [readiness, reloadEnvironment]);
+  const [errorPanel, setErrorPanel] = useState(panel);
+  if (errorPanel !== panel) {
+    setErrorPanel(panel);
+    setScreenError(undefined);
+  }
   const select = (tab: AgentPanel) => onSelect?.(tab);
   const observed = useComputerObservation(observation);
   const operations = shared ? observed : (conversation ?? observed);
   const terminalAvailable = operations?.toolCalls.some((tool) => tool.kind === 'execute') === true;
+  const historyLoaded =
+    !historyLoading && (conversation !== undefined || observed?.historyLoaded === true);
   useEffect(() => {
-    if (panel === 'activity' && !terminalAvailable) onSelect?.('browser');
-  }, [panel, terminalAvailable, onSelect]);
+    if (historyLoaded && panel === 'activity' && !terminalAvailable) onSelect?.('browser');
+  }, [historyLoaded, panel, terminalAvailable, onSelect]);
   const lastScreen = [...(operations?.toolCalls ?? [])]
     .reverse()
-    .map(screenOperation)
+    .map(screenApplication)
     .find(Boolean);
   const running =
-    detail?.status !== 'waiting_approval' &&
-    (operations ? operations.activeRunId !== undefined : detail?.status === 'working');
+    operations?.activeRunId !== undefined || (!historyLoaded && detail?.status === 'working');
+  const agentBrowserActive =
+    lastScreen === 'Browser' &&
+    features?.browser.state === 'available' &&
+    !!features.runtime_incarnation &&
+    !!client.browser;
   // Shared file access is independently renewed and never inferred from a visible toolbar.
   const access = useAgentAccess(
     client.resourceViews,
@@ -182,7 +198,13 @@ export function AgentSidePanel({
           <h2 className="sr-only">Agent computer</h2>
           <div className="agent-computer__tabs" role="tablist" aria-label="Agent computer views">
             {(
-              ['browser', ...(terminalAvailable ? (['activity'] as const) : []), 'files'] as const
+              [
+                'browser',
+                ...(terminalAvailable || (panel === 'activity' && !historyLoaded)
+                  ? (['activity'] as const)
+                  : []),
+                'files',
+              ] as const
             ).map((tab, index, tabs) => (
               <button
                 key={tab}
@@ -220,6 +242,7 @@ export function AgentSidePanel({
                   aria-label="Reconnect"
                   title="Reconnect"
                   onClick={() => {
+                    setScreenError(undefined);
                     reconnect((revision) => revision + 1);
                     environment.reload();
                   }}
@@ -356,7 +379,7 @@ export function AgentSidePanel({
             </>
           ) : (
             <OperationOutput
-              toolCalls={operations?.toolCalls}
+              toolCalls={historyLoaded || terminalAvailable ? operations?.toolCalls : undefined}
               activeRunId={running ? operations?.activeRunId : undefined}
               active={panel === 'activity'}
               observation={observation}
@@ -376,14 +399,17 @@ export function AgentSidePanel({
           hidden={panel !== 'browser'}
         >
           <>
-            {machineAvailable ? (
+            {machineAvailable && !agentBrowserActive ? (
               panel === 'browser' ? (
                 <DesktopPanel
                   key={`${agentId}:${connectionRevision}`}
                   agentId={agentId}
-                  application={lastScreen?.application ?? 'Desktop'}
+                  application="Desktop"
                   runtimeReady={desktopRuntimeReady(detail)}
                   running={running}
+                  runId={operations?.activeRunId}
+                  onStop={onStopForControl}
+                  controlUnavailable={!historyLoaded}
                   preparation={{ context: client, owner: subject }}
                   onClose={onClose}
                   embedded

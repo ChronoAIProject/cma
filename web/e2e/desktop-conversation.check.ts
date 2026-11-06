@@ -3,6 +3,16 @@ import { binding, cursor, LocalAgentV2 } from './agent-v2.fixture';
 
 import { desktopBoundary } from './desktop-rfb.fixture';
 
+// Exercise the same assertions under slower CI scheduling without changing timeouts.
+const cpuRate = Number(process.env.CMA_E2E_CPU_RATE ?? '1');
+if (!Number.isFinite(cpuRate) || cpuRate < 1 || cpuRate > 6)
+  throw new Error('CMA_E2E_CPU_RATE must be between 1 and 6.');
+test.beforeEach(async ({ context, page }) => {
+  if (cpuRate === 1) return;
+  const session = await context.newCDPSession(page);
+  await session.send('Emulation.setCPUThrottlingRate', { rate: cpuRate });
+});
+
 test('LOCAL a starting Machine connects when ready without a page reload', async ({
   page,
   baseURL,
@@ -416,3 +426,151 @@ test('LOCAL Workspace tabs and the 1180px sidebar threshold respect keyboard and
     await fixture.close(page);
   }
 });
+
+test('LOCAL running desktop takeover confirms and waits for the public cancelled-turn event before input', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalAgentV2();
+  fixture.boundary.agent = { ...fixture.boundary.agent, desktop: true };
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await fixture.route(page, baseURL!);
+    const stream = await desktopBoundary(page);
+    await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
+      route.fulfill({
+        json: {
+          object: 'cma.agent.event_head',
+          schema_version: 1,
+          agent_id: 'agt_contract',
+          incarnation: 'a'.repeat(64),
+          through_cursor: cursor(fixture.items.length),
+          active_turn: null,
+        },
+      }),
+    );
+    await page.goto('/agents/agt_contract');
+    const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
+    await expect(desktop.getByRole('button', { name: 'Take control' })).toBeEnabled();
+    await expect.poll(() => fixture.streams.size).toBeGreaterThan(0);
+    fixture.append({ type: 'turn_started', turn_sequence: 1 }, binding);
+    await expect(desktop.getByRole('status')).toContainText('Agent is in control');
+    await desktop.getByRole('button', { name: 'Take control' }).click();
+    await expect(
+      page.getByText("Taking control stops the Agent's current turn", { exact: true }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    expect(fixture.writes).toEqual([]);
+    await desktop.getByRole('button', { name: 'Take control' }).click();
+    await page.getByRole('button', { name: 'Stop Agent and take control', exact: true }).click();
+    await expect
+      .poll(() => fixture.writes.filter((write) => write.path.endsWith('/controls')).length)
+      .toBe(1);
+    expect(fixture.writes[0]!.body.command).toEqual({ type: 'cancel' });
+    await expect(page.getByText('Waiting for the Agent to stop…', { exact: true })).toBeVisible();
+    await desktop.locator('canvas').click();
+    await page.keyboard.press('a');
+    expect(stream.inputs.some((input) => input.kind === 'key' && input.down)).toBe(false);
+    fixture.append({ type: 'turn_cancelled', turn_sequence: 1 });
+    await expect(desktop.getByRole('button', { name: 'Return to Agent' })).toBeVisible();
+    await expect(desktop.locator('canvas')).toBeFocused();
+    await page.keyboard.press('b');
+    await expect
+      .poll(() => stream.inputs.some((input) => input.kind === 'key' && input.down))
+      .toBe(true);
+    expect(fixture.writes.filter((write) => write.path.endsWith('/controls'))).toHaveLength(1);
+  } finally {
+    await fixture.close(page);
+  }
+});
+
+for (const completion of ['before End', 'after End'] as const) {
+  test(`LOCAL late conversation readiness preserves computer keyboard focus ${completion}`, async ({
+    page,
+    baseURL,
+  }) => {
+    const fixture = new LocalAgentV2();
+    fixture.boundary.agent = { ...fixture.boundary.agent, desktop: true };
+    let resume!: () => void;
+    const hierarchy = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    let waiting = false;
+    try {
+      await page.setViewportSize({ width: 1180, height: 900 });
+      await fixture.route(page, baseURL!);
+      await desktopBoundary(page);
+      await page.route('**/api/v2/ui/task-experience', (route) =>
+        route.fulfill({
+          json: {
+            object: 'cma.ui.task_experience',
+            schema_version: 1,
+            account_id: 'local-owner',
+            capabilities: {
+              task_home_admission: false,
+              suggested_followup_admission: false,
+              desktop_enable: false,
+              browser_takeover: false,
+              replay_presentation: false,
+            },
+          },
+        }),
+      );
+      await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
+        route.fulfill({
+          json: {
+            object: 'cma.agent.event_head',
+            schema_version: 1,
+            agent_id: 'agt_contract',
+            incarnation: 'a'.repeat(64),
+            through_cursor: cursor(fixture.items.length),
+            active_turn: null,
+          },
+        }),
+      );
+      await page.route(
+        `**/api/v1/workspaces/${fixture.boundary.agent.workspace.id}`,
+        async (route) => {
+          waiting = true;
+          await hierarchy;
+          await route.fallback();
+        },
+      );
+      await page.goto('/agents/agt_contract');
+      const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
+      const screen = computer.getByRole('tab', { name: 'Screen', exact: true });
+      const files = computer.getByRole('tab', { name: 'Files', exact: true });
+      await expect.poll(() => waiting).toBe(true);
+      await expect(screen).toHaveAttribute('aria-selected', 'true');
+      await screen.focus();
+      if (completion === 'after End') {
+        await page.keyboard.press('End');
+        await expect(files).toBeFocused();
+        await expect(files).toHaveAttribute('aria-selected', 'true');
+      }
+      resume();
+      await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
+      await expect(completion === 'before End' ? screen : files).toBeFocused();
+      if (completion === 'before End') await page.keyboard.press('End');
+      await expect(files).toBeFocused();
+      await expect(files).toHaveAttribute('aria-selected', 'true');
+      await expect(files).toHaveAttribute('tabindex', '0');
+      for (const [key, selected, other] of [
+        ['Home', screen, files],
+        ['ArrowRight', files, screen],
+        ['ArrowLeft', screen, files],
+      ] as const) {
+        await page.keyboard.press(key);
+        await expect(selected).toBeFocused();
+        await expect(selected).toHaveAttribute('aria-selected', 'true');
+        await expect(selected).toHaveAttribute('tabindex', '0');
+        await expect(other).toHaveAttribute('tabindex', '-1');
+      }
+      expect(fixture.writes).toEqual([]);
+      expect(fixture.errors).toEqual([]);
+    } finally {
+      resume();
+      await fixture.close(page);
+    }
+  });
+}
