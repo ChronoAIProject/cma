@@ -2427,6 +2427,20 @@ the centre column of the collapsed portal frame and scrolls as one page:
   alert with Try again.
 - Copy never names the agent provider; CMA is the brand.
 
+A browser without a CMA sign-in may still be signed in to NyxID. Before the
+first paint of this surface, the identity check asks NyxID once, without any
+NyxID screen, and keeps the existing **Signing you in** loading state while the
+page leaves. A NyxID session returns the person, signed in, to the address they
+opened; one that needs CMA approved continues to NyxID's own consent screen.
+Otherwise the browser returns to the same address and this surface is shown,
+with no error and no second attempt in that tab. A page that has not left after
+10 seconds shows this surface rather than holding the loading state. The check
+runs only on addresses the control plane accepts as a sign-in return, without a
+query or fragment, and never on a public Trigger, Launch, share link or
+document; later identity refreshes on focus or reconnection never leave the
+page. After an explicit Sign out it is not made again until the person signs
+in, because CMA sign-out does not end the NyxID session.
+
 A public Trigger URL has its own complete read-only landing (§13b), not this
 generic gate. Sign in and Create account preserve the canonical local return
 route and the visitor's bounded intent. No page accepts credentials, and no
@@ -5694,3 +5708,5 @@ and status chips share a line, secondary metadata wraps together, and permission
 hints stay beside the action they explain.
 
 | 2026-11-06 | Apply lead review to Usage toolbar alignment, overview spacing, refresh placement, history disclosure, chart labels and compact inventory rows. |
+
+| 2026-11-06 | Check for a live NyxID session once, silently, before showing the signed-out surface (§20), keeping the existing Signing you in state for at most 10 seconds and never repeating after an explicit Sign out. |

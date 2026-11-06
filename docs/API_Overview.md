@@ -52,13 +52,25 @@ authenticated subject and capabilities, and `GET /auth/logout` ends browser
 sign-in. Do not put a bearer credential in URLs, local storage or embed markup.
 
 `GET /auth/login?prompt=none` asks NyxID to reuse an existing provider session
-without showing anything. NyxID returns a code when the browser is signed in;
-otherwise the callback redirects to the validated `return_to` without a cookie,
-instead of reporting a failed sign-in. `prompt=none` cannot be combined with
-`screen=register`, and no other `prompt` value is accepted. The web client tries
-this once per tab before showing the signed-out landing, only on pages that are
-valid return targets, and not after the person has signed out of CMA until they
-choose to sign in again: CMA logout ends the CMA cookie, not the NyxID session.
+without showing anything. A signed-in browser that has already approved CMA
+returns with a code and is signed in. `consent_required` continues to an
+ordinary interactive authorization, which shows NyxID's consent screen and
+starts no work. Any other provider refusal, including `login_required`, redirects
+to the validated `return_to` without a cookie instead of reporting a failed
+sign-in; the provider's `error_description` is accepted and ignored. `prompt=none`
+cannot be combined with `screen=register`, and no other `prompt` value is
+accepted. An anonymous `GET /auth/session` reports `"silent_sign_in": true`, and a
+client attempts the silent form only when it is reported, so a web client never
+sends it to a control plane that would refuse it.
+
+CMA logout ends the CMA cookie, not the NyxID session. The web client therefore
+sets a `cma_signed_out` cookie as it signs out. While a browser presents it, CMA
+declines a silent sign-in at entry and on its callback, so an attempt already in
+flight in another tab issues no CMA login; the next completed interactive
+sign-in clears it. The cookie can only decline a silent sign-in, so it carries no
+authority. The web client tries the silent form once per tab before showing the
+signed-out landing, only on pages that are valid return targets without a query
+or fragment, and only on its first identity read.
 
 `GET /auth/signup-options` is anonymous and returns exactly
 `email_signup`, `social_providers`, `invite_code_required` and

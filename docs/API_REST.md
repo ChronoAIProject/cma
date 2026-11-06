@@ -245,7 +245,7 @@ The composed identity/discovery/static routes also include:
 | `GET /openapi.json` | Anonymous machine-readable contract |
 | `GET /auth/login` | Begin NyxID OAuth; return destination is validated; `prompt=none` reuses a NyxID session without interaction |
 | `GET /auth/callback` | Complete identity exchange; never starts Agent work |
-| `GET /auth/session` | Browser identity, capabilities, visitor flag and effective usage presentation policy; 401 when signed out |
+| `GET /auth/session` | Browser identity, capabilities, visitor flag and effective usage presentation policy; 401 when signed out, reporting `silent_sign_in` |
 | `POST /auth/logout` | Revoke browser login and expire cookie; redirect to `/` |
 | `GET /embed/v1.js` | Fixed versioned-by-integrity embed script; no credential access |
 | `POST /api/v1/mcp` | Typed 501 `interface_not_available` |
