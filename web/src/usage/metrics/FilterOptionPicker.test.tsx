@@ -44,7 +44,7 @@ for (const count of [400, 20001]) {
     expect(api.options).toHaveBeenLastCalledWith(
       expect.objectContaining({ search: `Research ${count - 1}`, cursor: undefined, limit: 50 }),
     );
-    await actor.keyboard('{ArrowDown}{ArrowDown}{Enter}');
+    await actor.keyboard(count === 400 ? '{ArrowUp}{Enter}' : '{ArrowDown}{ArrowDown}{Enter}');
     const value = `sbx_${String(count - 1).padStart(32, '0')}`;
     expect(change).toHaveBeenLastCalledWith(value);
     view.rerender(
