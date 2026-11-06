@@ -89,6 +89,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Omarchy desktop fixture regressions
+        run: python3 .github/scripts/omarchy-close-browser-tests.py
       - name: Reserve space on the disposable Omarchy runner
         run: |
           test "$GITHUB_ACTIONS" = true

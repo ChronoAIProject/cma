@@ -18,6 +18,8 @@ module OmarchyCIContract
       row["permissions"] == { "contents" => "read" }, "Omarchy requires bounded native amd64 read-only CI")
     expected = [
       { "uses" => "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" },
+      { "name" => "Omarchy desktop fixture regressions",
+        "run" => "python3 .github/scripts/omarchy-close-browser-tests.py" },
       { "name" => "Reserve space on the disposable Omarchy runner", "run" => <<~'SH' },
         test "$GITHUB_ACTIONS" = true
         sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
