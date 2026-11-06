@@ -9,6 +9,7 @@ use tokio::sync::{Mutex, OnceCell};
 
 use super::{
     identity,
+    identity_fallback::CredentialPurpose,
     permissions::PermissionEvidence,
     persistence::{DurableSubjectTokens, SecretDigest, SubjectAuthState},
     verification_error::ProviderVerificationError,
@@ -134,7 +135,10 @@ async fn verify_with_timeout(
     };
     let key = VerificationKey::new(&state, tokens);
     let flight = auth.cookie_verifications.acquire(&key).await;
-    let token_hash = auth.identity_store.key(tokens.access_token.expose());
+    let token_hash = auth.identity_store.key(
+        CredentialPurpose::BrowserCookie,
+        tokens.access_token.expose(),
+    );
     let epoch = auth.identity_store.epoch();
     // The whole retry sequence and its deadline belong to the shared flight.
     // Completed verification is never used to skip the next provider check.
@@ -145,6 +149,7 @@ async fn verify_with_timeout(
                 auth,
                 None,
                 tokens.access_token.expose(),
+                CredentialPurpose::BrowserCookie,
                 Some(tokens.expires_at),
                 Some(owner.as_str()),
                 timeout,
@@ -154,7 +159,13 @@ async fn verify_with_timeout(
     .await
     {
         Ok(result) => result.clone(),
-        Err(_) => Err(ProviderVerificationError::Transient("deadline")),
+        Err(_) => {
+            auth.identity_store
+                .invalidate_token(tokens.access_token.expose());
+            Err(ProviderVerificationError::Unavailable(
+                "identity caller deadline elapsed".into(),
+            ))
+        }
     };
     if flight.initialized() {
         auth.cookie_verifications.release(&key, &flight).await;

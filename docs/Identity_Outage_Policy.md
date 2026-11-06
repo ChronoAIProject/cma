@@ -25,6 +25,15 @@ invalid/expired lifetime evidence invalidate the token's record. In particular,
 introspection's 401/403 now rejects the identity boundary even when it may mean
 CMA client configuration is wrong. No rejection is converted into offline access.
 
+Provider evidence requires exact HTTP 200 without Content-Range, multipart or
+pagination indicators. Error-bearing bodies are rejected before claims are read;
+explicit invalid/revoked-token errors invalidate evidence even when claims look
+valid. Bodies are capped at 64 KiB before JSON deserialization. Once response
+headers arrive, an incomplete, stalled, oversized or malformed body fails closed
+and cannot trigger retry or fallback. Only a timeout before response headers is
+fallback-eligible; outer caller/sequence cancellations fail closed because their
+response phase is unknown. Discovery uses the same bounded reader.
+
 Malformed evidence, 429, other HTTP errors and local overload also fail closed.
 They cannot trigger fallback. A 429 is neither retried nor accepted using stale
 evidence: CMA cannot safely infer whether it represents a user, client, quota or
@@ -39,7 +48,7 @@ web; only typed identity outages and transport/gateway failures auto-retry.
 - Up to three attempts; each attempt has a 750 ms deadline covering discovery
   if needed plus concurrent userinfo/introspection. Total sequence and caller
   wait are capped at 2,500 ms. Delays are 40 ms then 80 ms plus 0–30 ms jitter.
-- Retry only HTTP 502/503, request/connection transport failures and timeouts.
+- Retry only HTTP 502/503, connection/setup failures and pre-response timeouts.
   A transient result waits for the other concurrent endpoint so its rejection
   cannot be hidden. An explicit refusal cancels outstanding provider work.
 - At most 64 verification sequences per process, acquired without queuing.
@@ -48,7 +57,10 @@ web; only typed identity outages and transport/gateway failures auto-retry.
   evidence/collection budget per record; oversized live evidence is not cached
   and removes any older record. Expire records on access/write and evict the
   oldest real verification when full. A read never changes order.
-- Index records by HMAC-SHA-256 of the token with a random process-local key.
+- Index records by HMAC-SHA-256 with a random process-local key and an explicit
+  version/purpose prefix before token bytes. Browser-cookie, independent-bearer,
+  agent-key and resource-request namespaces cannot share records; a rejection
+  invalidates that token across namespaces.
   Retain only verified evidence, verification time and expiry. Never store raw
   tokens in this fallback store, persist it, or share it between pods.
 - CMA logout clears the entire local fallback store, even when durable logout

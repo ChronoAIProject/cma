@@ -17,6 +17,25 @@ pub(super) type TokenHash = [u8; 32];
 // A fresh allocation fences in-flight work without a wrapping generation counter.
 pub(super) type Epoch = Arc<()>;
 
+#[derive(Clone, Copy)]
+pub(super) enum CredentialPurpose {
+    BrowserCookie,
+    IndependentBearer,
+    AgentKey,
+    ResourceRequest,
+}
+
+impl CredentialPurpose {
+    fn label(self) -> &'static [u8] {
+        match self {
+            Self::BrowserCookie => b"browser-cookie",
+            Self::IndependentBearer => b"independent-bearer",
+            Self::AgentKey => b"agent-key",
+            Self::ResourceRequest => b"resource-request",
+        }
+    }
+}
+
 pub(super) trait FallbackPolicy: Send + Sync {
     fn permits(&self, method: &Method, path: &str) -> bool;
 }
@@ -29,7 +48,7 @@ impl FallbackPolicy for SessionReadOnly {
 }
 
 pub(super) trait IdentityStore: Send + Sync {
-    fn key(&self, token: &str) -> TokenHash;
+    fn key(&self, purpose: CredentialPurpose, token: &str) -> TokenHash;
     fn epoch(&self) -> Epoch;
     fn remember(
         &self,
@@ -40,6 +59,18 @@ pub(super) trait IdentityStore: Send + Sync {
     );
     fn get(&self, key: &TokenHash, epoch: &Epoch) -> Option<Arc<VerifiedSubject>>;
     fn invalidate(&self, key: &TokenHash);
+    fn invalidate_token(&self, token: &str) {
+        // Refusal of the same token invalidates all purpose-specific evidence;
+        // successful verification can only populate its own namespace.
+        for purpose in [
+            CredentialPurpose::BrowserCookie,
+            CredentialPurpose::IndependentBearer,
+            CredentialPurpose::AgentKey,
+            CredentialPurpose::ResourceRequest,
+        ] {
+            self.invalidate(&self.key(purpose, token));
+        }
+    }
     fn clear(&self);
 }
 
@@ -82,11 +113,13 @@ impl MemoryIdentityStore {
 }
 
 impl IdentityStore for MemoryIdentityStore {
-    fn key(&self, token: &str) -> TokenHash {
-        hmac::sign(&self.key, token.as_bytes())
-            .as_ref()
-            .try_into()
-            .expect("SHA-256 length")
+    fn key(&self, purpose: CredentialPurpose, token: &str) -> TokenHash {
+        let mut context = hmac::Context::with_key(&self.key);
+        context.update(b"cma-identity-fallback-v1\0");
+        context.update(purpose.label());
+        context.update(b"\0");
+        context.update(token.as_bytes());
+        context.sign().as_ref().try_into().expect("SHA-256 length")
     }
 
     fn epoch(&self) -> Epoch {

@@ -13,7 +13,7 @@ fn evidence() -> Arc<VerifiedSubject> {
 }
 
 fn seed(store: &MemoryIdentityStore, token: &str) -> TokenHash {
-    let key = store.key(token);
+    let key = store.key(CredentialPurpose::BrowserCookie, token);
     store.remember(
         key,
         &store.epoch(),
@@ -97,11 +97,23 @@ fn token_hashes_are_keyed_isolated_and_restart_empty() {
     let second = MemoryIdentityStore::default();
     let key = seed(&first, "fixture-token");
     assert_eq!(key.len(), 32);
-    assert_eq!(key, first.key("fixture-token"));
-    assert_ne!(key, first.key("other-token"));
-    assert_ne!(key, second.key("fixture-token"));
+    assert_eq!(
+        key,
+        first.key(CredentialPurpose::BrowserCookie, "fixture-token")
+    );
+    assert_ne!(
+        key,
+        first.key(CredentialPurpose::BrowserCookie, "other-token")
+    );
+    assert_ne!(
+        key,
+        second.key(CredentialPurpose::BrowserCookie, "fixture-token")
+    );
     assert!(first
-        .get(&first.key("other-token"), &first.epoch())
+        .get(
+            &first.key(CredentialPurpose::BrowserCookie, "other-token"),
+            &first.epoch()
+        )
         .is_none());
     assert!(second.get(&key, &second.epoch()).is_none());
 }
@@ -193,7 +205,7 @@ fn every_fallback_log_is_countable_and_contains_only_safe_hash_and_reason() {
 #[tokio::test(start_paused = true)]
 async fn monotonic_token_expiry_prevents_wall_clock_changes_from_extending_access() {
     let store = MemoryIdentityStore::default();
-    let key = store.key("short-lived");
+    let key = store.key(CredentialPurpose::BrowserCookie, "short-lived");
     store.remember(
         key,
         &store.epoch(),
@@ -227,4 +239,37 @@ fn oversized_evidence_cannot_fill_memory_or_leave_older_grants_available() {
         SystemTime::now() + Duration::from_secs(3600),
     );
     assert!(store.get(&key, &store.epoch()).is_none());
+}
+
+#[test]
+fn identical_token_bytes_cannot_cross_credential_purpose_namespaces() {
+    let store = MemoryIdentityStore::default();
+    let purposes = [
+        CredentialPurpose::BrowserCookie,
+        CredentialPurpose::IndependentBearer,
+        CredentialPurpose::AgentKey,
+        CredentialPurpose::ResourceRequest,
+    ];
+    let token = "same-credential-bytes";
+    for purpose in purposes {
+        store.clear();
+        let key = store.key(purpose, token);
+        store.remember(
+            key,
+            &store.epoch(),
+            evidence(),
+            SystemTime::now() + Duration::from_secs(3600),
+        );
+        let keys: std::collections::HashSet<_> =
+            purposes.into_iter().map(|p| store.key(p, token)).collect();
+        assert_eq!(keys.len(), 4);
+        for candidate in keys {
+            assert_eq!(
+                store.get(&candidate, &store.epoch()).is_some(),
+                candidate == key
+            );
+        }
+        store.invalidate_token(token);
+        assert!(store.get(&key, &store.epoch()).is_none());
+    }
 }
