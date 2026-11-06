@@ -32,7 +32,7 @@ impl PromptRecovery {
         self.active = Some(prompt_id);
     }
 
-    pub(super) fn active_matches(&self, id: &str) -> bool {
+    fn active_matches(&self, id: &str) -> bool {
         self.active
             .as_ref()
             .is_some_and(|prompt_id| prompt_id.as_str() == id)
@@ -61,10 +61,6 @@ impl PromptRecovery {
 impl Bridge {
     pub(in super::super) async fn remember_prompt(&self, prompt_id: PromptIdentity) {
         self.recovery.lock().await.remember(prompt_id);
-    }
-
-    pub(in super::super) async fn active_prompt_matches(&self, id: &str) -> bool {
-        self.recovery.lock().await.active_matches(id)
     }
 
     pub(in super::super) async fn clear_active_prompt_if(&self, id: &str) {
