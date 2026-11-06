@@ -631,6 +631,11 @@ with `event_ref_expired`. The original Custom stream may receive only a content-
 terminal control after expiry. Never-started gateway work keeps its existing
 expiry refusal, and other source behavior is unchanged.
 
+See the [routed binding deadline audit](CMAEG_Binding_Queue_Deadlines.md) for the
+submission, recovery, lease, retention and observer deadlines, and the
+clock-advanced existing-Agent regression covering a near-day queue wait plus a
+thirty-minute run.
+
 An optional `Idempotency-Key` header of 1–256 ASCII bytes replays an identical
 create for the same creator on the same replica for ten minutes. Different
 content under the same key returns 409. It is not durable or cross-replica.
