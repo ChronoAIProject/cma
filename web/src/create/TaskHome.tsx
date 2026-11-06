@@ -70,7 +70,6 @@ function TaskHomeContent({
   const draft = useTaskDraft(viewerId, workspaceId, sandboxId);
   const input = useRef<HTMLTextAreaElement>(null);
   const [validation, setValidation] = useState<string>();
-  const [desktopAvailable, setDesktopAvailable] = useState(false);
   const [repositorySupported, setRepositorySupported] = useState<boolean | undefined>(() =>
     client.readTaskRepositorySupport ? undefined : false,
   );
@@ -214,22 +213,20 @@ function TaskHomeContent({
           const invalid =
             draft.machineIncluded && !machineIncludedAvailable
               ? 'A shared desktop requires a new Sandbox. Keep the task and clear Shared desktop in the Cloud computer menu.'
-              : draft.desktop && (!desktopAvailable || !policy.desktop_enable)
-                ? 'Agent browser is unavailable. Keep the task and clear Agent browser in the Cloud computer menu, or try again later.'
-                : !draft.text.trim()
-                  ? 'Describe a task before starting.'
-                  : new TextEncoder().encode(draft.text).length > 262144
-                    ? 'Your task exceeds the 262144-byte limit.'
-                    : draft.repositoryUrl && repositorySupported === undefined
-                      ? 'Checking repository support. Wait for the check to finish before starting.'
-                      : draft.repositoryUrl && repositorySupported === false
-                        ? 'Repository tasks are unavailable on this service. Clear the repository to start an empty workspace.'
-                        : !validRepository(draft.repositoryUrl)
-                          ? 'Enter an HTTPS GitHub repository URL.'
-                          : draft.repositoryRef &&
-                              (!draft.repositoryUrl || !validRepositoryRef(draft.repositoryRef))
-                            ? 'Enter a valid repository ref with a repository URL.'
-                            : undefined;
+              : !draft.text.trim()
+                ? 'Describe a task before starting.'
+                : new TextEncoder().encode(draft.text).length > 262144
+                  ? 'Your task exceeds the 262144-byte limit.'
+                  : draft.repositoryUrl && repositorySupported === undefined
+                    ? 'Checking repository support. Wait for the check to finish before starting.'
+                    : draft.repositoryUrl && repositorySupported === false
+                      ? 'Repository tasks are unavailable on this service. Clear the repository to start an empty workspace.'
+                      : !validRepository(draft.repositoryUrl)
+                        ? 'Enter an HTTPS GitHub repository URL.'
+                        : draft.repositoryRef &&
+                            (!draft.repositoryUrl || !validRepositoryRef(draft.repositoryRef))
+                          ? 'Enter a valid repository ref with a repository URL.'
+                          : undefined;
           setValidation(invalid);
           if (invalid) return;
           if (!draft.persist()) return;
@@ -237,7 +234,6 @@ function TaskHomeContent({
           void lifecycle.submit({
             name: 'New task',
             initial_message: draft.text,
-            ...(draft.desktop ? { desktop: true } : {}),
             ...(draft.machineIncluded ? { machine_included: true } : {}),
             ...(!workspaceId && !sandboxId && draft.repositoryUrl
               ? {
@@ -270,17 +266,13 @@ function TaskHomeContent({
           }}
         >
           <RunTargetMenu
-            client={client}
             workspaceId={workspaceId}
             sandboxId={sandboxId}
-            desktop={intent ? intent.body.desktop === true : draft.desktop}
+            recordedDesktop={intent?.body.desktop === true}
             machineIncluded={intent ? intent.body.machine_included === true : draft.machineIncluded}
             machineIncludedAvailable={machineIncludedAvailable}
             frozen={Boolean(intent)}
-            policyAllowed={policy.desktop_enable}
-            onDesktopChange={draft.changeDesktop}
             onMachineChange={draft.changeMachineIncluded}
-            onAvailable={setDesktopAvailable}
           />
           <span className="task-home__divider" aria-hidden="true" />
           <div

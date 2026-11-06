@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 
 for (const width of [1440, 320]) {
-  test(`LOCAL ${width}px Home preserves independent desktop choices and original recovery`, async ({
+  test(`LOCAL ${width}px Home preserves shared desktop choice and original recovery`, async ({
     page,
     baseURL,
   }, info) => {
@@ -35,7 +35,6 @@ for (const width of [1440, 320]) {
               AgentLifecycleCreateRequest: {
                 properties: {
                   initial_message: { type: 'string' },
-                  desktop: { type: 'boolean' },
                   machine_included: { type: 'boolean' },
                 },
               },
@@ -44,17 +43,10 @@ for (const width of [1440, 320]) {
         },
       }),
     );
-    await page.route('**/desktop-capability', (route) =>
-      route.fulfill({
-        json: {
-          state: 'available',
-          reason: 'verified_runtime',
-          runtime_contract: 3,
-          min_memory_mib: 2048,
-          min_cpu_millis: 1000,
-        },
-      }),
-    );
+    const capabilityReads: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/desktop-capability')) capabilityReads.push(request.url());
+    });
     const writes: { body: unknown; key?: string }[] = [];
     await page.route('**/api/agent-manager/v1/agents', async (route) => {
       const request = route.request();
@@ -67,15 +59,15 @@ for (const width of [1440, 320]) {
     const machine = page.getByRole('menuitemcheckbox', { name: 'Shared desktop' });
     const browser = page.getByRole('menuitemcheckbox', { name: 'Agent browser' });
     await expect(machine).toBeEnabled();
-    await expect(browser).toBeEnabled();
+    await expect(browser).toHaveCount(0);
     await expect(machine).not.toBeChecked();
-    await expect(browser).not.toBeChecked();
+
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    const task = '  Keep the original task\nand both desktop choices  ';
+    const task = '  Keep the original task\nand shared desktop choice  ';
     await machine.click();
-    await browser.click();
+
     expect(writes).toHaveLength(0);
-    for (const checkbox of [machine, browser]) {
+    for (const checkbox of [machine]) {
       const bounds = await checkbox.boundingBox();
       expect(bounds!.height).toBeGreaterThanOrEqual(44);
       expect(bounds!.x).toBeGreaterThanOrEqual(0);
@@ -87,9 +79,9 @@ for (const width of [1440, 320]) {
     await page.reload();
     await page.getByRole('button', { name: /^Cloud computer/ }).click();
     await expect(machine).toBeChecked();
-    await expect(browser).toBeChecked();
+    await expect(browser).toHaveCount(0);
     await expect(page.getByLabel('Your task')).toHaveValue(task);
-    await expect(browser).toBeEnabled();
+    await expect(browser).toHaveCount(0);
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Start task', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Recover original task' })).toBeEnabled();
@@ -97,8 +89,8 @@ for (const width of [1440, 320]) {
     await page.getByRole('button', { name: /^Cloud computer/ }).click();
     await expect(machine).toBeChecked();
     await expect(machine).toBeDisabled();
-    await expect(browser).toBeChecked();
-    await expect(browser).toBeDisabled();
+    await expect(browser).toHaveCount(0);
+
     expect(writes).toHaveLength(1);
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Recover original task' }).click();
@@ -109,12 +101,12 @@ for (const width of [1440, 320]) {
         name: 'New task',
         initial_message: task,
         machine_included: true,
-        desktop: true,
       },
       key: expect.any(String),
     });
     await page.screenshot({ path: info.outputPath('home-recovery-frozen.png'), fullPage: true });
     expect(boundary.writes).toEqual([]);
+    expect(capabilityReads).toEqual([]);
   });
 }
 
