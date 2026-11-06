@@ -1,5 +1,5 @@
 //! Paged allocation totals for a frozen administrator report.
-use super::{Quantity, UsageMetrics};
+use super::{Quantity, UsageMetrics, numeric};
 use crate::{Error, Result, resources::identity};
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,7 @@ pub struct OwnerAllocationQuery {
     pub cursor: Option<String>,
 }
 /// One owner, ordered by allocation descending then opaque identity.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct OwnerAllocation {
     /// Opaque identity for keys only; never use as display text.
     pub subject: String,
@@ -26,12 +26,13 @@ pub struct OwnerAllocation {
     /// Recorded allocation in the response's unit.
     pub allocated_hours: Quantity,
     /// Number of report Sandboxes attributed to this owner.
-    pub sandbox_count: Quantity,
+    #[serde(deserialize_with = "numeric::integer")]
+    pub sandbox_count: u64,
     /// Whether all contributing allocation histories are complete.
     pub complete: bool,
 }
 /// Bounded page across all owners in the immutable report.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct OwnerAllocations {
     /// Frozen report identity.
     pub report_id: String,
@@ -44,7 +45,8 @@ pub struct OwnerAllocations {
     /// Signed continuation; absent at the end of the cohort.
     pub next: Option<String>,
     /// Whole report owner count, not just this page.
-    pub total_count: Quantity,
+    #[serde(deserialize_with = "numeric::integer")]
+    pub total_count: u64,
 }
 impl UsageMetrics<'_> {
     /// Read ranked allocations without creating or changing a report.
