@@ -24,7 +24,7 @@ export function MetricsNotice({
   return (
     <Alert tone="error" title={failure.title}>
       <p>{failure.message}</p>
-      <Button size="sm" disabled={waiting} onClick={onRetry}>
+      <Button variant="outline" size="sm" disabled={waiting} onClick={onRetry}>
         {waiting ? 'Waiting to retry' : failure.expired ? 'Refresh usage report' : 'Retry usage'}
       </Button>
     </Alert>
