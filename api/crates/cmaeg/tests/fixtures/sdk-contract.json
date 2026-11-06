@@ -6368,7 +6368,8 @@
     "github_source_unavailable",
     "github_dispatch_unavailable",
     "github_integration_retired",
-    "github_proof_withdrawn"
+    "github_proof_withdrawn",
+    "github_delivery_expired"
   ],
   "ProfileMetadata": [
     {
@@ -11186,7 +11187,8 @@
       "body_sha256": "fixture-body-digest",
       "task_ids": [],
       "authority_revision": 0,
-      "reason": "installation_unbound"
+      "reason": "installation_unbound",
+      "retained_until": 1700604800
     }
   ],
   "Task": [

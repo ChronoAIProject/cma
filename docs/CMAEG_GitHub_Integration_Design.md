@@ -25,7 +25,14 @@ Registration creates an unverified App draft with a separately sealed, write-onl
 webhook credential. Signed ping proves connectivity only. App verification
 reserves `(github.com, app_id)` uniquely; it does not approve an installation.
 The owner requests a binding for the verified App, installation ID, account ID
-and requested repository IDs. The request creates no execution authority.
+and requested repository IDs. This requested set is advisory. The administrator
+independently selects the authoritative approved set, which may differ from the
+request. The request creates no execution authority.
+
+Both App verification and binding approval require `cma-eg:admin`. For an
+organization-owned resource the caller must also select that owning organization
+using `X-CMAEG-Owner` and prove current organization-admin authority. Global gateway
+admin permission alone does not permit cross-tenant approval.
 
 Administrator verification supplies `expected_version`, `evidence_ref` and an
 explicit repository set. The approval records the verifier, approval time,
@@ -56,15 +63,14 @@ refused. Approval uses an authenticated decision, never a reference string alone
 | A repository owner ID differs from the bound account | Exclude that repository |
 | `created`, `unsuspend`, `new_permissions_accepted`, `added` | Preserve authority; never activate or re-include repositories |
 
-Every negative repository observation advances `authority_revision`, including
-one outside the current scope, so it fences an older re-approval intent. Exclusion
-lists retain only requested/approved IDs; outside-scope IDs already have no authority.
-Approval sets are bounded to 256 repositories so metadata and replay records fit
-the existing sealed-record limit. Re-approval prunes exclusions outside the new
-approved and original requested scopes without granting any omitted ID. Exact
-redelivery does not apply it twice. Positive events cannot undo a negative event, regardless of
-arrival order. Re-approval advances the revision and cannot restore old pending
-work fenced by a prior revision.
+`authority_revision` advances only when binding status or effective approved
+repository eligibility changes. An unrelated repository notification or a new
+GitHub delivery repeating an existing exclusion does not revoke other authority.
+Management `version` may still advance to reject a stale request to expand scope.
+Re-approving unchanged eligibility records a new audit/version without advancing
+the eligibility revision. Exclusion lists retain only requested/approved IDs;
+outside-scope IDs already have no authority. Approval sets remain bounded to 256.
+Positive events never widen authority, regardless of arrival order.
 
 Lifecycle deliveries remain receivable for pending, suspended and uninstalled
 bindings. Unbound installations get compact `ignored` receipts with reason
@@ -85,11 +91,18 @@ access remain separate permissions.
 
 The existing sealed `eg_automation_records` collection holds integrations,
 bindings, approval audits, operation replay records and compact receipts.
-Raw retained payloads use separately sealed interaction chunks with seven-day
-expiry. Compact ignored outcomes without retained bodies report an immediate
-raw-body expiry. No raw issue text or credential appears in management responses.
-Compact receipt and approval records are retained; this release adds no destructive
-cleanup migration.
+Receipt roots use the gateway's expiring-record pattern: an `expires_at` field,
+Mongo TTL index and logical expiry checks before reads/replay. `retained_until`
+reports a fixed seven-day receipt/deduplication horizon. Ignored business/ping raw
+bodies expire within 24 hours; unbound/ineligible receipts retain no body, and
+lifecycle evidence expires after seven days. Duplicate reads never renew expiry.
+An expired retained row returns 410; the TTL monitor eventually removes it, after
+which lookup is 404. Expiry does not enqueue or retry work. Recovery and duplicate
+suppression are defined within this horizon; older IDs are not a recovery path.
+GitHub.com supports redelivery for three days ([official contract](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks)).
+The dispatch PR must pin admission/task retention no later than the receipt's
+horizon and refuse expired pending work instead of reconstructing it.
+Configuration, binding approvals and operation audits do not receive TTLs.
 
 Create and mutation keys are scoped to authenticated owner and operation/resource.
 The binding request and its replay record commit together. Approval commits the
@@ -98,21 +111,30 @@ the same key is 409. Exact replay returns the original result without rewriting
 current authority; GET is the current state. Retired integrations refuse earlier
 verification/credential/binding mutations even if their old operation exists.
 
-Binding and receipt transactions include a **real integration guard write**
-conditioned on the observed integration version. Lifecycle transactions include
-the binding version update and receipt. The guard counter is internal and does
-not advance public metadata versions. A snapshot read alone would permit a
-retirement transaction and a stale approval/receipt transaction to both commit;
-writing the shared integration document forces a conflict or version refusal.
-Raw chunks can be orphaned by a failed commit and expire normally. They never
-constitute an acknowledged receipt.
+Inert receipt inserts take no integration/binding write guard: they grant no
+execution authority. Current integration reads refuse retired endpoints; already
+authenticated in-flight inert requests can finish without affecting authority.
+Binding creation/approval, lifecycle mutations and owner-mismatch exclusions keep
+transactional integration guards because they change durable authority or fence a
+pending management decision. Their binding/receipt/audit writes commit together.
+Snapshot reads alone cannot fence retirement against an authoritative mutation.
+Transient conflicts retry with jitter (up to 132 ms between attempts) within a
+3.5-second budget, inside the webhook's five-second total budget. Management
+retries retain the original body/key/CAS; a changed version reports the current
+version as 409. No retry silently updates the caller's expected version.
 
-The `github_integrations` migration advances versions 1/2 to 3, retains old record
-kinds, adds binding operation/audit records and optional guard metadata, and
-commits its marker last. Startup runs it only with `CMAEG_GITHUB_ENABLED=true`
-and existing effective migration permissions. It is repeatable; unknown versions
-fail closed. Disabled or failed initialization leaves other sources available.
-There are no new deployment keys, App config files, services or database grants.
+Retiring a verified integration atomically marks its App identity reservation
+released. Another owner's pending integration can then be independently verified;
+concurrent claims still have one winner. Replaying old retirement/verification
+cannot release or reclaim the new reservation. Existing bindings/receipts remain
+with their original owner; retirement does not transfer those resources.
+
+The feature-gated migration advances versions 1–3 to version 4, adds receipt TTL
+metadata/indexes, and stamps legacy receipts with one fixed seven-day migration
+deadline without rewriting their sealed bodies. Restarts never extend that stamp.
+Only delivery rows can carry expiry. The marker commits last; unknown versions
+fail closed. No new service, deployment key, App config file or database grant is
+required. Disabling GitHub preserves configuration; existing receipt TTLs continue.
 
 Legacy bindings are not inferred to be approved. The new version/audit shape is
 required; unreadable records fail closed. Execution-group records remain an
@@ -136,8 +158,10 @@ new routes or change input. `receipt.task_ids` contains admission IDs only.
 The guarded admission-root commit is an **opt-in GitHub-only parameter**. It must
 commit the root with actual integration/binding guard writes and the channel
 version fence, using the existing gateway collections. All other admission paths
-retain their behavior. Tightening that wins before root commitment terminates the
-pending dispatch. `dispatched` means durably admitted, not Agent started.
+retain their behavior. At commit, recheck this delivery’s repository: binding
+active, repository approved and not excluded, integration not retired. A global
+`authority_revision` mismatch is not a refusal: unrelated tightening retries the
+current version fence and leaves eligible pending work admissible. `dispatched` means durably admitted, not Agent started.
 
 The Activity uses actor kind System and a compact CloudEvent: delivery/event/action,
 installation, repository ID/full name, issue/PR number, HTML URL, sender login/type,

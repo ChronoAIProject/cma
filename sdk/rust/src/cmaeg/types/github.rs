@@ -215,6 +215,13 @@ pub struct Receipt {
     pub installation_id: Option<Option<u64>>,
     /// Wire field `raw_body_expires_at`.
     pub raw_body_expires_at: i64,
+    /// Bounded receipt and duplicate-detection deadline; absent on older gateways.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    pub retained_until: Option<Option<i64>>,
     /// Wire field `receipt_id`.
     pub receipt_id: String,
     /// Wire field `received_at`.

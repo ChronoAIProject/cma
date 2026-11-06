@@ -120,10 +120,39 @@ an explicit administrator action. There is no periodic GitHub API reconciliation
 
 ## 4. Prove the actual organization Agent and execution access
 
-Use a supported **organization-aware provider-binding creation path**. Ordinary
+Use a supported **organization-aware provider-binding creation path** with an
+**empty/custom-directory Workspace**. chrono-goals is an internal repository; do
+not submit its URL to public-repository clone admission. Ordinary
 Agent creation does not expose an organization-owner field; supplying a header
 or a personal Agent ID is insufficient. Preserve any historical personal pilot
 resource and do not reuse it merely because its display name matches.
+
+After the chrono-goals PR is merged, run its pinned standalone bootstrap inside
+that Agent's real worktree (Node, npm, local git and managed gh must be available):
+
+```sh
+set -eu
+source_sha="$(gh api repos/ChronoAIProject/chrono-goals/commits/main --jq '.sha')"
+bootstrap_dir="$(mktemp -d)"
+gh api --method GET --header 'Accept: application/vnd.github.raw+json' \
+  "repos/ChronoAIProject/chrono-goals/contents/scripts/bootstrap-workspace.mjs?ref=$source_sha" \
+  > "$bootstrap_dir/bootstrap-workspace.mjs"
+node "$bootstrap_dir/bootstrap-workspace.mjs" \
+  --ref "$source_sha" --destination "$PWD/chrono-goals"
+cd chrono-goals
+export SYNC_GITHUB_TRANSPORT=gh
+npm run preflight:github
+```
+
+The bootstrap needs only Node built-ins and managed gh before dependency setup.
+It downloads the pinned tree/blobs, uses Git only for local init/add/commit, runs
+`npm ci`, and records `.cache/source-snapshot.json`. Existing destinations are
+refused. Refresh uses the same materializer on fresh main. Verify the recorded
+commit/repository, current directory and readable sync skill; make the Agent's
+instructions explicitly point to that skill in the downloaded working copy.
+Npm registry HTTPS is a separate runtime network prerequisite. A successful local
+bootstrap is not proof of runtime egress; if `npm ci` is blocked, repair authorized
+runtime networking rather than providing Git/npm credentials.
 
 After lifecycle completion, read back and retain evidence proving:
 

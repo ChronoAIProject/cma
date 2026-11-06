@@ -168,6 +168,7 @@ export const ReceiptSchema = object({
   reason: optional(nullable(text)),
   received_at: timestamp,
   raw_body_expires_at: timestamp,
+  retained_until: optional(nullable(timestamp)),
   body_sha256: text,
   task_ids: array(text),
   authority_revision: integer,

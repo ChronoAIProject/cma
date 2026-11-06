@@ -9,16 +9,7 @@ impl Gateway {
         signature: &str,
         body: &[u8],
     ) -> Result<(Receipt, bool), Error> {
-        for _ in 0..8 {
-            match self
-                .receive_once(app_ref, delivery_id, event, signature, body)
-                .await
-            {
-                Err(Error::Retry) => tokio::task::yield_now().await,
-                result => return result,
-            }
-        }
-        Err(Error::Unavailable)
+        retry::run(|| self.receive_once(app_ref, delivery_id, event, signature, body)).await
     }
 
     async fn receive_once(
@@ -61,6 +52,7 @@ impl Gateway {
         }
         let payload: serde_json::Value =
             serde_json::from_slice(body).map_err(|_| Error::Invalid)?;
+        let received_at = self.store.current_time();
         if event == "ping" {
             if !payload.get("zen").is_some_and(serde_json::Value::is_string)
                 || payload
@@ -84,8 +76,9 @@ impl Gateway {
                 action: None,
                 status: "ignored".into(),
                 reason: None,
-                received_at: now(),
-                raw_body_expires_at: now() + 7 * 24 * 60 * 60,
+                received_at,
+                raw_body_expires_at: received_at + 86400,
+                retained_until: Some(received_at + 7 * 86400),
                 body_sha256: fingerprint,
                 task_ids: Vec::new(),
                 authority_revision: 0,
@@ -114,8 +107,9 @@ impl Gateway {
                 .map(str::to_owned),
             status: "ignored".into(),
             reason: Some(reason.into()),
-            received_at: now(),
-            raw_body_expires_at: now(),
+            received_at,
+            raw_body_expires_at: received_at,
+            retained_until: Some(received_at + 7 * 86400),
             body_sha256: fingerprint.clone(),
             task_ids: Vec::new(),
             authority_revision,
@@ -149,6 +143,7 @@ impl Gateway {
                     binding,
                     LifecycleDelivery {
                         integration: &app,
+                        received_at,
                         receipt_id,
                         delivery_id,
                         fingerprint: &fingerprint,
@@ -178,12 +173,16 @@ impl Gateway {
             .ok_or(Error::Invalid)?;
         if repository_owner != binding.account_id {
             let expected = binding.version;
+            let eligible =
+                binding.status == "active" && binding.repository_ids.contains(&repository_id);
             binding.exclude_repository(repository_id);
             binding.version = binding.version.checked_add(1).ok_or(Error::Unavailable)?;
-            binding.authority_revision = binding
-                .authority_revision
-                .checked_add(1)
-                .ok_or(Error::Unavailable)?;
+            if eligible {
+                binding.authority_revision = binding
+                    .authority_revision
+                    .checked_add(1)
+                    .ok_or(Error::Unavailable)?;
+            }
             return self
                 .persist(
                     &owner,
@@ -207,7 +206,7 @@ impl Gateway {
                     &app,
                     ignored(reason, binding.authority_revision),
                     &[],
-                    Some((&binding, binding.version)),
+                    None,
                 )
                 .await;
         }
@@ -220,7 +219,7 @@ impl Gateway {
                     &app,
                     ignored("repository_not_approved", binding.authority_revision),
                     &[],
-                    Some((&binding, binding.version)),
+                    None,
                 )
                 .await;
         }
@@ -309,20 +308,14 @@ impl Gateway {
             action: action.map(str::to_owned),
             status: status.into(),
             reason: Some("event_not_supported".into()),
-            received_at: now(),
-            raw_body_expires_at: now() + 7 * 24 * 60 * 60,
+            received_at,
+            raw_body_expires_at: received_at + 86400,
+            retained_until: Some(received_at + 7 * 86400),
             body_sha256: fingerprint.clone(),
             task_ids,
             authority_revision: binding.authority_revision,
         };
-        self.persist(
-            &owner,
-            &app,
-            receipt,
-            body,
-            Some((&binding, binding.version)),
-        )
-        .await
+        self.persist(&owner, &app, receipt, body, None).await
     }
 
     pub(super) async fn persist(
@@ -344,16 +337,13 @@ impl Gateway {
                     .await
             }
             None => {
+                // This receipt cannot authorize work. A read observes retirement;
+                // it must not serialize unrelated inert events on authority rows.
+                if self.read_app(owner, &integration.app_ref).await?.status == "retired" {
+                    return Err(Error::Retired);
+                }
                 self.store
-                    .create_many_guarded(
-                        owner,
-                        vec![store::NewRecord::new(
-                            &receipt.receipt_id,
-                            "delivery",
-                            &delivery,
-                        )?],
-                        Some(integration),
-                    )
+                    .create(&receipt.receipt_id, owner, "delivery", &delivery)
                     .await
             }
         };

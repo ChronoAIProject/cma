@@ -2,6 +2,8 @@
 mod authority;
 #[path = "github_integrations/bindings.rs"]
 mod bindings;
+#[path = "github_integrations/contention.rs"]
+mod contention;
 #[path = "github_integrations/legacy.rs"]
 mod legacy;
 #[path = "github_integrations/lifecycle.rs"]

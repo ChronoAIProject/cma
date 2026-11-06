@@ -321,6 +321,9 @@ pub enum ProblemCode {
     /// Wire value `github_proof_withdrawn`.
     #[serde(rename = "github_proof_withdrawn")]
     GithubProofWithdrawn,
+    /// Wire value `github_delivery_expired`.
+    #[serde(rename = "github_delivery_expired")]
+    GithubDeliveryExpired,
     /// Wire value `attachment_not_found`.
     #[serde(rename = "attachment_not_found")]
     AttachmentNotFound,

@@ -38,8 +38,8 @@ pub(super) async fn migration_required(database: &Database) -> Result<bool, Erro
             .get("version")
             .and_then(|value| value.as_i32().map(i64::from).or_else(|| value.as_i64()))
         {
-            Some(1 | 2) => Ok(true),
-            Some(3) => Ok(false),
+            Some(1..=3) => Ok(true),
+            Some(4) => Ok(false),
             _ => Err(Error::Unavailable),
         },
     }
@@ -49,7 +49,14 @@ pub async fn migrate(database: &Database) -> Result<(), Error> {
     if !migration_required(database).await? {
         return Ok(());
     }
-    let validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","kind","version","schema_version","blob"],"properties":{"_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"kind":{"enum":["binding","binding_operation","binding_approval","delivery","execution_group","app_integration","app_registration","webhook_credential","app_operation","app_identity"]},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0},"blob":{"bsonType":"binData"}}}};
+    let mut validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","kind","version","schema_version","blob"],"properties":{"_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"kind":{"enum":["binding","binding_operation","binding_approval","delivery","execution_group","app_integration","app_registration","webhook_credential","app_operation","app_identity"]},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0},"expires_at":{"bsonType":"date"},"blob":{"bsonType":"binData"}}}};
+    validator.insert(
+        "$or",
+        mongodb::bson::bson!([
+            {"kind":"delivery","expires_at":{"$type":"date"}},
+            {"kind":{"$ne":"delivery"},"expires_at":{"$exists":false}}
+        ]),
+    );
     match database.run_command(doc! {"create":COLLECTION,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await {
         Ok(_) => (),
         Err(error) if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command) if command.code == 48) => { database.run_command(doc! {"collMod":COLLECTION,"validator":validator,"validationLevel":"strict","validationAction":"error"}).await.map_err(|_| Error::Unavailable)?; },
@@ -64,12 +71,36 @@ pub async fn migrate(database: &Database) -> Result<(), Error> {
         )
         .await
         .map_err(|error| migration_failure("create_index", error))?;
+    database
+        .collection::<Document>(COLLECTION)
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"expires_at":1})
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .expire_after(std::time::Duration::ZERO)
+                        .build(),
+                )
+                .build(),
+        )
+        .await
+        .map_err(|error| migration_failure("receipt_expiry_index", error))?;
+    let legacy_until = mongodb::bson::DateTime::from_millis((super::now() + 7 * 86400) * 1000);
+    database
+        .collection::<Document>(COLLECTION)
+        .update_many(
+            doc! {"kind":"delivery","expires_at":{"$exists":false}},
+            doc! {"$set":{"expires_at":legacy_until}},
+        )
+        .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+        .await
+        .map_err(|error| migration_failure("legacy_receipt_expiry", error))?;
     database.run_command(doc! {"collMod":crate::records::mongo::MIGRATIONS,"validator":crate::records::mongo::migration_validator(),"validationLevel":"strict","validationAction":"error"}).await.map_err(|_| Error::Unavailable)?;
     let committed = database
         .collection::<Document>(crate::records::mongo::MIGRATIONS)
         .update_one(
-            doc! {"_id":"github_integrations","version":{"$in":[1,2,3]}},
-            doc! {"$set":{"version":3}},
+            doc! {"_id":"github_integrations","version":{"$in":[1,2,3,4]}},
+            doc! {"$set":{"version":4}},
         )
         .upsert(true)
         .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())

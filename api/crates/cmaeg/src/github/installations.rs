@@ -11,6 +11,7 @@ impl Gateway {
         let mut repository_tightening = false;
         let LifecycleDelivery {
             integration,
+            received_at,
             receipt_id,
             delivery_id,
             fingerprint,
@@ -116,11 +117,15 @@ impl Gateway {
             }
             .into();
         }
-        if repository_tightening || binding != previous {
+        let eligibility_changed = binding.status != previous.status
+            || (binding.status == "active" && binding.repository_ids != previous.repository_ids);
+        if eligibility_changed {
             binding.authority_revision = binding
                 .authority_revision
                 .checked_add(1)
                 .ok_or(Error::Unavailable)?;
+        }
+        if repository_tightening || binding != previous {
             binding.version = binding.version.checked_add(1).ok_or(Error::Unavailable)?;
         }
         let receipt = Receipt {
@@ -133,12 +138,16 @@ impl Gateway {
             action: Some(action.into()),
             status: "ignored".into(),
             reason: None,
-            received_at: now(),
-            raw_body_expires_at: now() + 7 * 24 * 60 * 60,
+            received_at,
+            raw_body_expires_at: received_at + 7 * 86400,
+            retained_until: Some(received_at + 7 * 86400),
             body_sha256: fingerprint.into(),
             task_ids: Vec::new(),
             authority_revision: binding.authority_revision,
         };
+        if binding.version == previous.version {
+            return self.persist(owner, integration, receipt, body, None).await;
+        }
         let delivery = Delivery {
             receipt: receipt.clone(),
             raw_body_records: self.store.source(owner, &receipt, body).await?,
