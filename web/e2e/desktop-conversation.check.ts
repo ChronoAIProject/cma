@@ -56,6 +56,10 @@ test('LOCAL restores a cleared desktop without losing the conversation or granti
   const fixture = new LocalAgentV2();
   fixture.boundary.agent = { ...fixture.boundary.agent, desktop: true };
   try {
+    // Pause before navigation so every application timer is controlled.
+    const clockStart = Date.now();
+    await page.clock.install({ time: clockStart - 60_000 });
+    await page.clock.pauseAt(clockStart);
     await page.setViewportSize({ width: 1600, height: 1000 });
     await fixture.route(page, baseURL!);
     const stream = await desktopBoundary(page);
@@ -74,6 +78,13 @@ test('LOCAL restores a cleared desktop without losing the conversation or granti
     await page.goto('/agents/agt_contract');
     const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
     const message = page.getByRole('textbox', { name: 'Message', exact: true });
+    // Drive the first-frame timer while the browser clock remains paused.
+    await expect
+      .poll(async () => {
+        await page.clock.runFor(50);
+        return desktop.getByRole('status').textContent();
+      })
+      .toContain('Connected');
     await expect(desktop.getByRole('status')).toContainText('Connected');
     await message.fill('Keep this unsent draft while restoring the display.');
     const originalComposer = await message.elementHandle();
@@ -84,8 +95,14 @@ test('LOCAL restores a cleared desktop without losing the conversation or granti
     await desktop.locator('canvas').evaluate((canvas: HTMLCanvasElement) => {
       canvas.getContext('2d')?.reset();
     });
+    // Each jump fires the 2s display watchdog once. The second detects loss;
+    // its 750ms reconnect timer stays paused while we assert input is revoked.
+    await page.clock.fastForward(2_000);
+    await page.clock.fastForward(2_000);
     await expect(desktop.getByRole('status')).toContainText('Restoring', { timeout: 6_000 });
     await expect(desktop.getByRole('button', { name: 'Take control', exact: true })).toBeDisabled();
+    expect(stream.connections).toHaveLength(1);
+    await page.clock.resume();
     await expect.poll(() => stream.connections.length).toBe(2);
     await expect(desktop.getByRole('status')).toContainText('Connected');
     await expect(desktop.getByRole('status')).toContainText('Ask the Agent');
