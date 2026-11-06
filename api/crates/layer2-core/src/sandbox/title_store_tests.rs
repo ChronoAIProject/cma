@@ -297,7 +297,7 @@ async fn claim_expiry_is_45_seconds_and_takeover_retries_generation() {
     let successor = store
         .acquire_agent_title_claim(
             &AgentTitleClaimRequest::new(id.clone(), "holder-b"),
-            base_time() + Duration::from_secs(45),
+            base_time() + Duration::from_secs(60),
         )
         .await
         .unwrap()

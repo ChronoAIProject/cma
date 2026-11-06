@@ -123,19 +123,27 @@ async fn apply_claim(
         return Ok(ClaimApply::Settled(None));
     }
     if let Some(lease) = state.lease.as_ref().filter(|lease| lease.expires_at > now) {
-        return Ok(ClaimApply::Settled(
-            lease
-                .matches_request(request)
-                .then(|| lease.to_claim(request)),
-        ));
+        return Ok(ClaimApply::Settled(lease.matches_request(request).then(
+            || lease.to_claim(request).with_attempts(state.retry.attempts),
+        )));
     }
-    let mode = AgentTitleClaimMode::Generate;
+    if !state.retry.eligible(now) {
+        return Ok(ClaimApply::Settled(None));
+    }
+    let exhausted = state.retry.attempts >= layer2_core::sandbox::AGENT_TITLE_MAX_ATTEMPTS;
+    let attempts = state.retry.attempts + u32::from(!exhausted);
+    let mode = if exhausted {
+        AgentTitleClaimMode::FallbackOnly
+    } else {
+        AgentTitleClaimMode::Generate
+    };
     let claim = AgentTitleClaim::acquired(
         request.clone(),
         mode,
         now.to_system_time(),
         expires_at.to_system_time(),
-    );
+    )
+    .with_attempts(attempts);
     let mut filter = current_agent_filter(&agent);
     filter.insert(
         TITLE,
@@ -147,7 +155,10 @@ async fn apply_claim(
     );
     let result = store
         .agents
-        .update_one(filter, doc! { "$set": claim_fields(&claim) })
+        .update_one(
+            filter,
+            doc! { "$set": claim_fields(&claim, state.stored.is_some()) },
+        )
         .session(session)
         .await
         .map_err(ApplyError::Driver)?;

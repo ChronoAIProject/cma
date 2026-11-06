@@ -154,8 +154,19 @@ impl HttpAgentTitleGenerator {
             .send()
             .await
             .map_err(|_| AgentTitleGenerationError::unavailable())?;
-        if response.status() != StatusCode::OK
-            || response.headers().get_all(CONTENT_TYPE).iter().count() != 1
+        if response.status() != StatusCode::OK {
+            let status = response.status();
+            let mut body = Vec::new();
+            let mut stream = response.bytes_stream();
+            while let Some(Ok(chunk)) = stream.next().await {
+                if body.len() + chunk.len() > self.maximum_response_body {
+                    break;
+                }
+                body.extend_from_slice(&chunk);
+            }
+            return Err(generation_failure(status, &body));
+        }
+        if response.headers().get_all(CONTENT_TYPE).iter().count() != 1
             || response
                 .headers()
                 .get(CONTENT_TYPE)
@@ -311,3 +322,29 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 #[cfg(test)]
 #[path = "titles_tests.rs"]
 mod tests;
+
+fn generation_failure(status: StatusCode, body: &[u8]) -> AgentTitleGenerationError {
+    let denied_quota = serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .is_some_and(|body| {
+            ["code", "type"].iter().any(|key| {
+                matches!(
+                    body.get("error")
+                        .and_then(|e| e.get(key))
+                        .and_then(|v| v.as_str()),
+                    Some(
+                        "insufficient_quota" | "billing_hard_limit_reached" | "billing_not_active"
+                    )
+                )
+            })
+        });
+    if denied_quota
+        || (status.is_client_error()
+            && status != StatusCode::REQUEST_TIMEOUT
+            && status != StatusCode::TOO_MANY_REQUESTS)
+    {
+        AgentTitleGenerationError::permanent()
+    } else {
+        AgentTitleGenerationError::unavailable()
+    }
+}
