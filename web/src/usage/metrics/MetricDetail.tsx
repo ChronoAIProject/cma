@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { Cma, UsageMetricRow } from '@chronoai/cma-sdk';
 import { Button } from '../../ui/Button';
+import { UsageIdentity } from './UsageIdentity';
+import { StatusBadge } from '../../ui/Badge';
 import { UsageHistory } from '../UsageHistory';
 import { MetricChart } from './MetricChart';
 import { AllocatedCapacity, AllocatedPeriod, MetricReading } from './MetricSummary';
@@ -54,18 +56,20 @@ export function MetricDetail({
   return (
     <section className="usage-metric-detail" aria-label="Sandbox usage details">
       <h2>{detail.data?.row.name ?? sandboxId}</h2>
-      <Button size="sm" onClick={onClose}>
+      <Button variant="outline" size="sm" onClick={onClose}>
         Close usage details
       </Button>
       <MetricsNotice failure={detail.error} onRetry={detail.retry} />
       {detail.loading && <p role="status">Loading Sandbox usage details…</p>}
       {detail.data && (
         <>
-          <p>
-            <code>{detail.data.row.sandbox_id}</code> ·{' '}
-            {detail.data.row.status.replaceAll('_', ' ')} · Runtime{' '}
-            {detail.data.row.runtime_version ?? 'not bound'}
-          </p>
+          <div className="usage-detail-identity">
+            <StatusBadge status={detail.data.row.status} />
+            <UsageIdentity value={detail.data.row.sandbox_id} label="Sandbox ID" />
+            {detail.data.row.runtime_version && (
+              <UsageIdentity value={detail.data.row.runtime_version} label="runtime image" />
+            )}
+          </div>
           {detail.data.row.shared_sandbox_usage && (
             <p>Shared Sandbox usage: multiple Agents share these CPU, memory and disk resources.</p>
           )}

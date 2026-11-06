@@ -14,6 +14,7 @@ use std::{
 struct Pressure {
     circuit: Arc<AtomicU64>,
     checked_out: Mutex<HashMap<u64, Instant>>,
+    slow_checkouts: Mutex<(u8, Option<Instant>)>,
 }
 impl Pressure {
     fn checkout(&self, key: u64, duration: Duration, failed: bool, at: Instant) {
@@ -25,7 +26,29 @@ impl Pressure {
                 pending.insert(key, at);
             }
         }
-        if failed || duration > Duration::from_millis(250) {
+        // A successful checkout just above the soft threshold is not an
+        // outage. Require a short consecutive streak before rejecting work
+        // and cached pages for 30 seconds; failures/hard stalls remain immediate.
+        let sustained = {
+            let mut streak = self
+                .slow_checkouts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if duration > Duration::from_millis(250) {
+                if streak
+                    .1
+                    .is_none_or(|last| at.saturating_duration_since(last) > Duration::from_secs(1))
+                {
+                    streak.0 = 0;
+                }
+                streak.0 = streak.0.saturating_add(1);
+                streak.1 = Some(at);
+            } else {
+                *streak = (0, None);
+            }
+            streak.0 >= 3
+        };
+        if failed || duration > DB_DEADLINE || sustained {
             self.open("checkout", duration, failed);
         }
     }
@@ -56,6 +79,7 @@ pub(super) fn observe(options: &mut ClientOptions, circuit: Arc<AtomicU64>) {
     let pressure = Pressure {
         circuit,
         checked_out: Mutex::new(HashMap::new()),
+        slow_checkouts: Mutex::new((0, None)),
     };
     use super::super::mongo_latency::connection_key;
     options.cmap_event_handler = Some(EventHandler::callback(move |event| match event {
@@ -107,6 +131,7 @@ mod tests {
         Pressure {
             circuit: Arc::default(),
             checked_out: Mutex::new(HashMap::new()),
+            slow_checkouts: Mutex::new((0, None)),
         }
     }
     #[test]
@@ -122,13 +147,55 @@ mod tests {
         assert!(pressure.checked_out.lock().unwrap().is_empty());
     }
     #[test]
+    fn soft_checkout_spikes_recover_but_sustained_pressure_still_opens_circuit() {
+        let pressure = pressure();
+        let start = Instant::now();
+        for n in 0..4 {
+            let at = start + Duration::from_millis(n * 500);
+            pressure.checkout(1, Duration::from_millis(252), false, at);
+            pressure.checkout(1, Duration::from_millis(10), false, at);
+        }
+        assert_eq!(pressure.circuit.load(Ordering::Relaxed), 0);
+        for n in 0..2 {
+            pressure.checkout(
+                1,
+                Duration::from_millis(252),
+                false,
+                start + Duration::from_secs(10 + n),
+            );
+        }
+        assert_eq!(pressure.circuit.load(Ordering::Relaxed), 0);
+        // An expired streak cannot accumulate across unrelated traffic bursts.
+        pressure.checkout(
+            1,
+            Duration::from_millis(252),
+            false,
+            start + Duration::from_secs(20),
+        );
+        assert_eq!(pressure.circuit.load(Ordering::Relaxed), 0);
+        pressure.checkout(
+            1,
+            Duration::from_millis(252),
+            false,
+            start + Duration::from_secs(20),
+        );
+        assert_eq!(pressure.circuit.load(Ordering::Relaxed), 0);
+        pressure.checkout(
+            1,
+            Duration::from_millis(252),
+            false,
+            start + Duration::from_secs(20),
+        );
+        assert!(pressure.circuit.load(Ordering::Relaxed) > now());
+    }
+    #[test]
     fn slow_individual_read_or_checkout_and_failed_checkout_still_open_circuit() {
         let pressure = pressure();
         let start = Instant::now();
         pressure.checkout(1, Duration::ZERO, false, start);
         pressure.returned(1, start + DB_DEADLINE + Duration::from_millis(1));
         assert!(pressure.circuit.swap(0, Ordering::Relaxed) > now());
-        pressure.checkout(2, Duration::from_millis(251), false, start);
+        pressure.checkout(2, DB_DEADLINE + Duration::from_millis(1), false, start);
         assert!(pressure.circuit.swap(0, Ordering::Relaxed) > now());
         pressure.checkout(0, Duration::ZERO, true, start);
         assert!(pressure.circuit.load(Ordering::Relaxed) > now());

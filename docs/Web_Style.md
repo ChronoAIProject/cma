@@ -5638,3 +5638,59 @@ accent RGB values.
 
 
 | 2026-11-06 | Align theme palette roles and lime primary buttons, maintain accessible account choices and canonical Usage surfaces, and move environment management into the existing Tasks filter disclosure. |
+
+### 2026-11-06 — Readable allocated usage
+
+The personal Usage popup and Operations inventory share the native zinc/lime
+palette, type scale, 12px panel radius and 8/12/16/24px spacing. Apply filters uses
+the primary button; refresh, retry and paging use outline buttons. Filters
+align at the control edge and wrap as a toolbar; optional Agent guidance stays
+on a separate line. Existing modal bounds and focus behavior remain authoritative.
+
+Three resource cards lead with period resource-hours in 24px tabular values and
+label current allocated capacity separately beneath, followed by an expandable
+history explanation. Missing history is stated
+plainly, durations use days/hours/minutes, and the explanation distinguishes
+missing intervals from extension of the last known allocation. Missing time is
+excluded, never described as zero. Retained disk accrues while paused.
+
+Recharts renders nonanimated 240px horizontal bars for resource-hours by Sandbox,
+or by owner in Operations, using only the currently displayed server page. Chart
+scope states the page's Sandbox count against the report count; the largest eight
+page groups are drawn, with all page groups in a keyboard-readable data table.
+CPU core-hours and memory/disk GiB-hours have separate resource selections and
+labelled units. No allocation timeline or whole-cohort owner/status aggregation
+is inferred from missing API fields. Existing measured visibility gates hold.
+
+Inventory rows group name, status, optional owner and expandable runtime/identity
+metadata. Resource-hours align in three sortable numeric columns, with current
+capacity beneath. Sort selection also exposes server-supported owner, status and
+last-activity sorts. Full identifiers/image references are available on hover,
+keyboard focus and copy, with selectable fallback on clipboard failure. Below
+640px of content width, rows stack identity above three labelled resource cells;
+the table retains its native headers and semantics without horizontal overflow.
+Loading reserves card/chart geometry with the shared skeleton. Errors retain
+visible retry actions, and empty inventories never draw invented bars.
+
+| 2026-11-06 | Redesign allocated Usage hierarchy, filters, scoped charts, compact responsive inventory and plain-language history using existing CMA primitives; reviewed in the single usage redesign milestone PR. |
+
+#### Usage review refinements — 2026-11-06
+
+Label every toolbar control, including owner and Sandbox discovery. The usage
+scope uses equal 44px control heights, matching the shared input; its picker and
+Apply placements take the same height. A seven-column Operations row becomes a
+three-column grid below 1000px of content width, then two columns below 720px and
+one below 320px. Personal filters use three inputs and Apply, then the same
+narrow grid. Discovery values stay on one line with full values on hover.
+
+Refresh belongs beside the update time in the allocation overview header. The
+count and concise SGT period share a compact metadata row with 8px separation
+from the heading. Neither header nor chart adds a sticky overlay. Sections keep
+16px scroll clearance, and chart/table captures align their headings inside the
+scrolling content area. History uses a labelled What's missing?/Details
+disclosure. Chart names have a 136px label column, up to two lines and a full SVG
+title; plots reserve at least 40px per row, with a 240px minimum. Inventory names
+and status chips share a line, secondary metadata wraps together, and permission
+hints stay beside the action they explain.
+
+| 2026-11-06 | Apply lead review to Usage toolbar alignment, overview spacing, refresh placement, history disclosure, chart labels and compact inventory rows. |
