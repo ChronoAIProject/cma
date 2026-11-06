@@ -262,3 +262,55 @@ async fn logs_contain_categories_and_expiry_but_no_credentials_or_response_body(
         assert!(output.contains(value), "missing {value}");
     }
 }
+
+#[tokio::test]
+async fn expiry_failure_never_reuses_stale_credentials_and_recovers_after_cooldown() {
+    let server = Server::new(vec![
+        issued("old", 3600),
+        (503, String::new()),
+        (503, String::new()),
+        (503, String::new()),
+        issued("new", 3600),
+    ])
+    .await;
+    let provider = server.provider();
+    provider.token().await.unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(3601)).await;
+    tokio::time::resume();
+    assert!(matches!(
+        provider.token().await,
+        Err(FundingError::Retryable(_))
+    ));
+    assert!(provider.token().await.is_err());
+    assert_eq!(server.calls.lock().unwrap().len(), 4);
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::time::resume();
+    assert_eq!(provider.token().await.unwrap().bearer(), "new");
+    assert_eq!(server.calls.lock().unwrap().len(), 5);
+}
+
+#[tokio::test]
+async fn replicas_have_independent_caches_and_connection_refusal_is_bounded() {
+    let server = Server::new(vec![
+        issued("replica-one", 3600),
+        issued("replica-two", 3600),
+    ])
+    .await;
+    let first = server.provider();
+    let second = server.provider();
+    assert_eq!(first.token().await.unwrap().bearer(), "replica-one");
+    assert_eq!(second.token().await.unwrap().bearer(), "replica-two");
+    assert_eq!(server.calls.lock().unwrap().len(), 2);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap())
+        .parse()
+        .unwrap();
+    drop(listener);
+    let unavailable = ClientCredentialsProvider::new(&url, "id".into(), "secret".into()).unwrap();
+    assert!(matches!(
+        unavailable.token().await,
+        Err(FundingError::Retryable(_))
+    ));
+}
