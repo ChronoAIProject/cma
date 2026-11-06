@@ -17,6 +17,16 @@ Both paths wait for the window and the desktop profile process to exit. The
 fixture regressions run before the image build, and the image gate still requires
 native tools and the turn to finish while the reopened page stays visible.
 
+The image pins package `hyprland 0.56.2-4` and rebuilds the compositor from
+[Hyprland v0.56.2](https://github.com/hyprwm/Hyprland/tree/v0.56.2) with CMA's
+rendering patch. With its Lua config, `hyprctl dispatch` evaluates a Lua
+dispatcher expression: both the fixture and the shared launcher's reuse path
+use `hl.dsp.focus({window = "address:0x..."})`. The legacy `focuswindow address:...`
+form is rejected. The fixture verifies the active window before sending close.
+The other audited calls are `instances -j`, `-j monitors`, `-j clients` and
+`-j activewindow`, including the launcher's explicit `-i` instance selection;
+these query forms do not use the Lua dispatch parser.
+
 Production preparation on 2026-10-31 exposed a filesystem difference from the
 isolated microVM: Arch already owns `/tmp/.X11-unix` as root with mode 1777.
 Unconditionally running `chmod` as the runtime user stopped the launcher before

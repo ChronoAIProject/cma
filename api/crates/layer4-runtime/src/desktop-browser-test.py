@@ -51,6 +51,10 @@ if 'clients' in sys.argv:
 elif 'search' in sys.argv:
     assert str(pid) == sys.argv[sys.argv.index('--pid') + 1]
     print('123')
+elif 'dispatch' in sys.argv:
+    assert sys.argv[-1] == 'hl.dsp.focus({window = "address:0x123"})'
+    assert 'focuswindow' not in sys.argv
+    (root / 'focused').touch()
 else: (root / 'focused').touch()
 '''
 
@@ -157,6 +161,15 @@ class Launcher(unittest.TestCase):
         self.assertEqual(self.launch(args=['https://example.invalid/next']).returncode, 0)
         self.assertEqual(self.pid(), pid)
         self.assertIn('https://example.invalid/next', json.loads((self.root / 'forwarded').read_text()))
+
+    def test_wayland_reuse_focuses_original_browser_with_lua_dispatch(self):
+        self.start(wayland=True)
+        self.assertEqual(self.launch(wayland=True).returncode, 0)
+        pid = self.pid()
+        self.assertEqual(self.launch(wayland=True).returncode, 0)
+        self.assertTrue((self.root / 'focused').exists())
+        self.assertEqual(self.pid(), pid)
+        self.assertFalse((self.root / 'forwarded').exists())
 
     def test_concurrent_requests_reuse_one_browser(self):
         self.start()

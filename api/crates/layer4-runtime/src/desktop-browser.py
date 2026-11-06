@@ -72,8 +72,10 @@ class Manager:
                 windows = [w for w in json.loads(result.stdout)
                            if w.get('pid') == pid and 'chrom' in w.get('class', '').lower()]
                 if windows and focus:
-                    run(command + ['dispatch', 'focuswindow',
-                                   'address:' + windows[0]['address']], deadline, self.env)
+                    # Omarchy's pinned Hyprland uses Lua dispatcher expressions.
+                    selector = json.dumps('address:' + windows[0]['address'])
+                    run(command + ['dispatch', 'hl.dsp.focus({window = ' + selector + '})'],
+                        deadline, self.env)
             else:
                 result = run(['xdotool', 'search', '--all', '--onlyvisible', '--pid', str(pid),
                               '--class', 'chromium'], deadline, self.env)
