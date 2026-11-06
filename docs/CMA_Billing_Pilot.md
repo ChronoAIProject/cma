@@ -23,7 +23,8 @@ Keep the repository's default-off configuration until the activation step.
 
 For renewable mode, inject both referenced values through the deployment's
 existing Secret `envFrom`. The SA must have `billing:sandbox:write`. Startup
-rejects a partial pair, invalid references, or missing/empty referenced values.
+rejects a partial pair, invalid references, or missing/empty referenced values
+when billing is enabled. Disabled billing does not load credential references.
 With both new refs absent or empty, static mode remains unchanged and resolves
 its JWT at request time. Both refs set selects renewable mode even if the old
 static ref remains present. Retain existing native agent-sandbox
