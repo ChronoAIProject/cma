@@ -1,5 +1,7 @@
 //! Bind durable title claims to the current Sandbox runtime and scoped credential.
 
+use super::title_budget::TitleBudget;
+
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -71,6 +73,7 @@ pub(crate) struct AgentTitleWorker {
     credentials: Arc<dyn SandboxCredentialController>,
     runtime: Arc<dyn TitleRuntimeEndpoint>,
     deployment_model: String,
+    budget: Arc<dyn TitleBudget>,
 }
 
 impl AgentTitleWorker {
@@ -80,6 +83,7 @@ impl AgentTitleWorker {
         credentials: Arc<dyn SandboxCredentialController>,
         runtime: Arc<dyn TitleRuntimeEndpoint>,
         deployment_model: String,
+        budget: Arc<dyn TitleBudget>,
     ) -> Arc<Self> {
         Arc::new(Self {
             service,
@@ -87,6 +91,7 @@ impl AgentTitleWorker {
             credentials,
             runtime,
             deployment_model,
+            budget,
         })
     }
 
@@ -120,6 +125,9 @@ impl AgentTitleWorker {
         else {
             return Ok(AgentTitleOutcome::Skipped);
         };
+        if !self.budget.admit().await? {
+            return Ok(AgentTitleOutcome::Skipped);
+        }
         let generator = FencedTitleGenerator {
             worker: Arc::clone(self),
             authority,
@@ -248,7 +256,7 @@ impl AgentTitleGenerator for FencedTitleGenerator {
             .runtime
             .endpoint(&self.authority.sandbox)
             .await
-            .ok_or_else(refused)?;
+            .ok_or_else(AgentTitleGenerationError::permanent)?;
         if !self
             .worker
             .is_current(&self.authority, request.bearer())
@@ -258,7 +266,7 @@ impl AgentTitleGenerator for FencedTitleGenerator {
         }
         let mut generator =
             HttpAgentTitleGenerator::new(&endpoint.endpoint, &self.worker.deployment_model)
-                .ok_or_else(refused)?;
+                .ok_or_else(AgentTitleGenerationError::permanent)?;
         if let Some(authorization) = endpoint.authorization {
             generator = generator
                 .with_proxy_authorization(authorization.expose())
