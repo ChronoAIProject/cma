@@ -5403,7 +5403,8 @@ and overlay behavior; the sidebar never restacks above the content.
 #### Review refinements — 2026-11-05
 
 Repository capability is tri-state. While checking, the disabled Add git repo control
-says **Checking repository support…**, and submitting a retained repository says
+has the screen-reader-only description **Checking repository support…**, and
+submitting a retained repository says
 **Checking repository support. Wait for the check to finish before starting.** Only a
 confirmed unsupported result or absent capability reader says unavailable.
 
@@ -5519,3 +5520,33 @@ identity/storage messages remain unchanged. Copy classification never changes
 request retention, key reuse, polling cadence, or recovery actions.
 
 | 2026-11-05 | Match lifecycle failure guidance to each surface's visible action and distinguish explicit HTTP refusals from uncertain submission. |
+
+
+#### Settled landing capability checks — 2026-11-06
+
+Task-experience capability is explicitly unknown until settled. Only a settled
+non-admitted result (including a failed read, mismatched account or missing reader)
+may show **Task creation is unavailable. You can create an Agent and start a
+conversation.** and its **New agent** button. Unknown capability never shows that
+fallback. Focus, visible-document and online refreshes preserve the same scope's
+last settled capabilities until the new read succeeds or fails. Client or account
+changes immediately hide the previous scope's capabilities; late responses cannot
+restore them. Suggestions and Agent computer controls use the same behavior.
+
+Going offline aborts the read and invalidates capabilities to unknown, disabling
+new admission without showing misleading unavailable copy. Focus while offline
+does not read or restore capabilities; reconnecting starts a fresh check. All
+capability consumers remain fail-closed until that check settles. Same-scope
+refreshes otherwise keep the last confirmed admission; the server still enforces
+current authority on every submission.
+
+Initial and refresh checks must not insert transient visible content or shift the
+landing. **Checking task creation…** is a screen-reader-only status; **Checking
+repository support…** is a screen-reader-only description of the disabled repo
+control. Settled unsupported/error reasons remain visible, as do meaningful
+submission and preparation statuses. Repository support retains its existing
+tri-state validation and contextual inheritance. Start task stays disabled until
+creation support and task admission are confirmed; pending repository support
+still prevents submitting a retained repository.
+
+| 2026-11-06 | Keep landing capability checks visually stable and scope-safe: no unavailable fallback before a settled result, same-scope refreshes keep the last settled capabilities, offline invalidates admission, and checking statuses are screen-reader-only. |

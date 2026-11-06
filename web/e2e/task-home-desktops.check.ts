@@ -117,3 +117,101 @@ for (const width of [1440, 320]) {
     expect(boundary.writes).toEqual([]);
   });
 }
+
+for (const width of [1440, 390]) {
+  test(`LOCAL ${width}px pending checks and refocus do not flash or move the composer`, async ({
+    page,
+    baseURL,
+  }) => {
+    const boundary = new LocalStartup();
+    await boundary.route(page, baseURL!);
+    const policyReads: ((admitted: boolean) => Promise<void>)[] = [];
+    await page.route('**/api/v2/ui/task-experience', (route) => {
+      policyReads.push((admitted) =>
+        route.fulfill({
+          json: {
+            object: 'cma.ui.task_experience',
+            schema_version: 1,
+            account_id: 'local-owner',
+            capabilities: {
+              task_home_admission: admitted,
+              desktop_enable: false,
+              suggested_followup_admission: false,
+              browser_takeover: false,
+              replay_presentation: false,
+            },
+          },
+        }),
+      );
+    });
+    const supportReads: (() => Promise<void>)[] = [];
+    await page.route('**/openapi.json', (route) => {
+      supportReads.push(() =>
+        route.fulfill({
+          json: {
+            openapi: '3.1.0',
+            info: { title: 'CMA', version: '1' },
+            paths: {},
+            'x-cma-task-repository': true,
+            components: {
+              schemas: {
+                AgentLifecycleCreateRequest: {
+                  properties: { initial_message: { type: 'string' } },
+                },
+              },
+            },
+          },
+        }),
+      );
+    });
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto('/');
+    const home = page.locator('[data-task-home]');
+    const fallback = home.getByText('Task creation is unavailable.', { exact: false });
+    const manual = home.getByRole('button', { name: 'New agent', exact: true });
+    await expect(home.getByLabel('Your task')).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    await expect
+      .poll(() =>
+        page.locator('.frame__center').evaluate((node) => node.getBoundingClientRect().right),
+      )
+      .toBe(width);
+    await expect.poll(() => policyReads.length).toBeGreaterThan(0);
+    await expect.poll(() => supportReads.length).toBeGreaterThan(0);
+    await home.getByLabel('Your task').fill('A stable landing');
+    await expect(fallback).toHaveCount(0);
+    await expect(manual).toHaveCount(0);
+    await expect(home.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    for (const text of ['Checking task creation…', 'Checking repository support…']) {
+      const status = home.getByText(text, { exact: true });
+      await expect(status).toHaveClass('sr-only');
+      expect((await status.boundingBox())!.height).toBeLessThanOrEqual(1);
+    }
+    const composer = home.locator('.task-home__composer');
+    const before = await composer.boundingBox();
+    await Promise.all(policyReads.map((resolve) => resolve(true)));
+    await expect(home.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    await Promise.all(supportReads.map((resolve) => resolve()));
+    await expect(home.getByRole('button', { name: 'Start task' })).toBeEnabled();
+    await expect(fallback).toHaveCount(0);
+    await expect(manual).toHaveCount(0);
+    expect(await composer.boundingBox()).toEqual(before);
+    for (const event of ['focus', 'visibilitychange']) {
+      const count = policyReads.length;
+      await page.evaluate((name) => {
+        (name === 'focus' ? window : document).dispatchEvent(new Event(name));
+      }, event);
+      await expect.poll(() => policyReads.length).toBeGreaterThan(count);
+      await expect(fallback).toHaveCount(0);
+      await expect(manual).toHaveCount(0);
+      await expect(home.getByRole('button', { name: 'Start task' })).toBeEnabled();
+      expect(await composer.boundingBox()).toEqual(before);
+      await policyReads.at(-1)!(event === 'focus');
+    }
+    await expect(fallback).toBeVisible();
+    await expect(manual).toBeVisible();
+    await expect(home.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(boundary.writes).toEqual([]);
+  });
+}
