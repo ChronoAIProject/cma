@@ -49,6 +49,7 @@ export function OwnerAllocationChart({
     value: Number(row.allocated_hours),
   }));
   const max = Math.max(1, Number(data.items[0]?.allocated_hours ?? 0));
+  const ticks = [0, max / 4, max / 2, (max * 3) / 4, max];
   const unit = metric === 'cpu' ? 'core-hours' : 'GiB-hours';
   const partial = data.items.slice(0, size).some((item) => !item.complete);
   useEffect(() => {
@@ -123,7 +124,7 @@ export function OwnerAllocationChart({
                         stroke="var(--dsw-alias-border-l2)"
                         strokeDasharray="3 3"
                       />
-                      <XAxis type="number" domain={[0, max]} hide />
+                      <XAxis type="number" domain={[0, max]} ticks={ticks} hide />
                       <YAxis type="category" dataKey="position" hide />
                       <Tooltip
                         labelFormatter={(position) =>
@@ -190,7 +191,7 @@ export function OwnerAllocationChart({
                 <XAxis
                   type="number"
                   domain={[0, max]}
-                  ticks={[0, max / 4, max / 2, (max * 3) / 4, max]}
+                  ticks={ticks}
                   tick={{ fill: 'var(--dsw-alias-label-secondary)', fontSize: 12 }}
                   tickLine={false}
                   axisLine={false}
