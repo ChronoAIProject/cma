@@ -1877,6 +1877,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v1/admin/usage/metrics/reports/{report}/series` | - | metric*, group_by, series_id, top | 200 UsageMetricSeries |
 | `GET /api/v1/admin/usage/metrics/reports/{report}/sandboxes/{sandbox}` | - | - | 200 UsageMetricRow |
 | `GET /api/v1/admin/usage/metrics/reports/{report}/owners` | - | search, cursor, limit | 200 UsageMetricOwners |
+| `GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations` | - | metric, cursor, limit | 200 UsageOwnerAllocations |
 
 ### Agent usage
 
@@ -2410,3 +2411,24 @@ See [Measured Sandbox resource reports](CMA_Sandbox_Metrics.md) for the new
 owner/admin report APIs, CPU/working-set/PVC semantics, coverage, retention,
 read-model migration, monitoring permissions and production verification.
 The existing allocated usage ledger and billing quantities keep their meanings.
+
+### Owner allocation rankings
+
+`GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations` reads the
+complete frozen report cohort, independently of its Sandbox table page. It
+requires `ReadAllSandboxes` on every request and rechecks report ownership,
+expiry and current Sandbox attribution. It never creates a report. `metric` is
+`cpu`, `memory` or `disk`; `limit` is 1–200 (default 50). Results sort by recorded
+allocation descending with an opaque owner tie-breaker. `next` is a signed cursor
+bound to the administrator, report and metric; `total_count` counts all owners.
+
+Each item includes `subject` (keys only), `label`, optional duplicate-name
+`disambiguator`, `allocated_hours`, `sandbox_count` and `complete`. Names and
+fallbacks follow administrator filter options. Units are `core-hours` for CPU
+and `GiB-hours` for memory/disk. Partial histories retain their recorded totals
+and explicitly set `complete: false`. Never display `subject` as a label.
+
+Reads use the reporting pool/circuit, a two-second Mongo deadline and a five-second
+HTTP deadline. Open circuits return 429 before database access; source failures
+return 503. Responses are `private, no-store`. An unavailable page is not zero
+allocation; consumers should retain the loaded count and offer a bounded retry.
