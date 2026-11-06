@@ -13,12 +13,29 @@ use tower::ServiceExt;
 const REPORT: &str = "umr_00000000000000000000000000000001";
 const SANDBOX: &str = "sbx_00000000000000000000000000000001";
 #[derive(Default)]
-struct Store {
+pub(super) struct Store {
     saved: Mutex<Option<Report>>,
-    revoked: AtomicBool,
+    pub(super) revoked: AtomicBool,
 }
 #[async_trait]
 impl MetricsStore for Store {
+    async fn options(&self, scope: &Scope, query: OptionQuery) -> Result<FilterOptions> {
+        assert!(scope.admin);
+        assert!(
+            self.saved.lock().unwrap().is_none(),
+            "discovery must not create a report"
+        );
+        if self.revoked.load(Ordering::SeqCst) {
+            return Err(MetricsError::Unavailable);
+        }
+        Ok(FilterOptions {
+            items: vec![FilterOption {
+                value: "owner-a".into(),
+                label: option_label(query.kind, "owner-a", Some("Alex")),
+            }],
+            next: Some("next-page".into()),
+        })
+    }
     async fn resolve_agent(&self, scope: &Scope, _: &str) -> Result<String> {
         self.authorize_sandbox(scope, SANDBOX).await?;
         Ok(SANDBOX.into())
@@ -101,7 +118,7 @@ impl MetricsStore for Store {
 pub(crate) fn router() -> Router {
     sandbox_metrics_router(MetricsService::new(Arc::new(Store::default())))
 }
-async fn call(
+pub(super) async fn call(
     store: &Arc<Store>,
     method: &str,
     path: &str,
