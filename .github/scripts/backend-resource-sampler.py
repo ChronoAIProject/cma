@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Best-effort Linux CI samples. Never read process arguments or environment."""
 
+import ctypes
 import json
 import os
 from pathlib import Path
 import sys
+import signal
+import stat
 import time
 from datetime import datetime, timezone
 
@@ -90,6 +93,54 @@ def sample(proc=Path("/proc"), cgroup=Path("/sys/fs/cgroup")):
 
 
 def run(parent_pid):
+    # The kernel kills us even while a probe or output is blocked. Refuse to
+    # sample if this Linux guarantee cannot be installed. Check after prctl
+    # to close the race where the shell died before registration.
+    if not arm_parent_death(parent_pid):
+        return
+    descriptor = output_pipe()
+    if descriptor is None:
+        return
+    try:
+        collect(parent_pid, descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def arm_parent_death(parent_pid):
+    if sys.platform != "linux":
+        return False
+    libc = ctypes.CDLL(None, use_errno=True)
+    # PR_SET_PDEATHSIG = 1. SIGKILL cannot be deferred by Python handlers, a
+    # blocked probe, the GIL, or a full log pipe.
+    if libc.prctl(1, signal.SIGKILL, 0, 0, 0) != 0:
+        return False
+    return os.getppid() == parent_pid
+
+
+def output_pipe():
+    if not stat.S_ISFIFO(os.fstat(1).st_mode):
+        return None
+    # Opening /proc/self/fd creates a NEW open file description on Linux.
+    # dup() / set_blocking(1, False) would change the gate's shared pipe flags.
+    descriptor = os.open("/proc/self/fd/1", os.O_WRONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    os.close(1)  # Only the independent, discardable output descriptor remains.
+    return descriptor
+
+
+def emit_record(descriptor, record):
+    data = ("[backend-resource] " + json.dumps(record, sort_keys=True) + "\n").encode()
+    # One <= PIPE_BUF write is atomic: backpressure drops the whole record,
+    # never a truncated JSON fragment. No polling, queue or flush can block.
+    if len(data) > os.fpathconf(descriptor, "PC_PIPE_BUF"):
+        return
+    try:
+        os.write(descriptor, data)
+    except OSError:
+        pass
+
+
+def collect(parent_pid, descriptor):
     started = time.monotonic()
     next_sample = started
     while os.getppid() == parent_pid:
@@ -97,10 +148,9 @@ def run(parent_pid):
         if now >= next_sample:
             record = sample()
             record["step_elapsed_seconds"] = round(now - started, 3)
-            print("[backend-resource] " + json.dumps(record, sort_keys=True), flush=True)
+            emit_record(descriptor, record)
             next_sample = now + INTERVAL_SECONDS
-        # Exit promptly on reparenting; never hold a finished step's log pipe
-        # open for the ten-second sampling interval. No PID-reuse race.
+        # The kernel parent-death signal is independent of this cadence loop.
         time.sleep(PARENT_CHECK_SECONDS)
 
 
