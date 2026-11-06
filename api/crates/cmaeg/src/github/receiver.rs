@@ -9,6 +9,26 @@ impl Gateway {
         signature: &str,
         body: &[u8],
     ) -> Result<(Receipt, bool), Error> {
+        for _ in 0..8 {
+            match self
+                .receive_once(app_ref, delivery_id, event, signature, body)
+                .await
+            {
+                Err(Error::Retry) => tokio::task::yield_now().await,
+                result => return result,
+            }
+        }
+        Err(Error::Unavailable)
+    }
+
+    async fn receive_once(
+        &self,
+        app_ref: &str,
+        delivery_id: &str,
+        event: &str,
+        signature: &str,
+        body: &[u8],
+    ) -> Result<(Receipt, bool), Error> {
         let (integration_owner, app, webhook_secrets) = self.webhook_credentials(app_ref).await?;
         let hex = signature
             .strip_prefix("sha256=")
@@ -63,21 +83,60 @@ impl Gateway {
                 event: event.into(),
                 action: None,
                 status: "ignored".into(),
+                reason: None,
                 received_at: now(),
                 raw_body_expires_at: now() + 7 * 24 * 60 * 60,
                 body_sha256: fingerprint,
                 task_ids: Vec::new(),
                 authority_revision: 0,
             };
-            return self.persist(&integration_owner, receipt, body, None).await;
+            return self
+                .persist(&integration_owner, &app, receipt, body, None)
+                .await;
         }
         let installation_id = payload
             .pointer("/installation/id")
             .and_then(serde_json::Value::as_u64)
             .ok_or(Error::Invalid)?;
         let binding_id = identity("binding", &(app.app_id, installation_id));
-        let (owner, binding): (String, Binding) = self.store.read(&binding_id, "binding").await?;
-        if binding.app_ref != app_ref {
+        let ignored = |reason: &str, authority_revision: u64| Receipt {
+            receipt_id: receipt_id.clone(),
+            app_ref: app_ref.into(),
+            installation_id: Some(installation_id),
+            delivery_id: delivery_id.into(),
+            repository_id: payload
+                .pointer("/repository/id")
+                .and_then(serde_json::Value::as_u64),
+            event: event.into(),
+            action: payload
+                .get("action")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            status: "ignored".into(),
+            reason: Some(reason.into()),
+            received_at: now(),
+            raw_body_expires_at: now(),
+            body_sha256: fingerprint.clone(),
+            task_ids: Vec::new(),
+            authority_revision,
+        };
+        let (owner, mut binding): (String, Binding) =
+            match self.store.read(&binding_id, "binding").await {
+                Ok(value) => value,
+                Err(Error::NotFound) => {
+                    return self
+                        .persist(
+                            &integration_owner,
+                            &app,
+                            ignored("installation_unbound", 0),
+                            &[],
+                            None,
+                        )
+                        .await
+                }
+                Err(error) => return Err(error),
+            };
+        if binding.app_ref != app_ref || owner != integration_owner {
             return Err(Error::NotFound);
         }
         if matches!(
@@ -89,6 +148,7 @@ impl Gateway {
                     &owner,
                     binding,
                     LifecycleDelivery {
+                        integration: &app,
                         receipt_id,
                         delivery_id,
                         fingerprint: &fingerprint,
@@ -106,20 +166,63 @@ impl Gateway {
                 )
                 .await;
         }
-        if binding.status != "active" || binding.verified_until <= now() {
-            return Err(Error::Forbidden);
-        }
         let repository_id = payload
             .pointer("/repository/id")
             .and_then(serde_json::Value::as_u64)
+            .filter(|id| *id > 0)
             .ok_or(Error::Invalid)?;
+        let repository_owner = payload
+            .pointer("/repository/owner/id")
+            .and_then(serde_json::Value::as_u64)
+            .filter(|id| *id > 0)
+            .ok_or(Error::Invalid)?;
+        if repository_owner != binding.account_id {
+            let expected = binding.version;
+            binding.exclude_repository(repository_id);
+            binding.version = binding.version.checked_add(1).ok_or(Error::Unavailable)?;
+            binding.authority_revision = binding
+                .authority_revision
+                .checked_add(1)
+                .ok_or(Error::Unavailable)?;
+            return self
+                .persist(
+                    &owner,
+                    &app,
+                    ignored("repository_owner_changed", binding.authority_revision),
+                    &[],
+                    Some((&binding, expected)),
+                )
+                .await;
+        }
+        if binding.status != "active" {
+            let reason = match binding.status.as_str() {
+                "pending_verification" => "installation_pending_verification",
+                "suspended" => "installation_suspended",
+                "uninstalled" => "installation_uninstalled",
+                _ => return Err(Error::Unavailable),
+            };
+            return self
+                .persist(
+                    &owner,
+                    &app,
+                    ignored(reason, binding.authority_revision),
+                    &[],
+                    Some((&binding, binding.version)),
+                )
+                .await;
+        }
         if !binding.repository_ids.contains(&repository_id)
-            || payload
-                .pointer("/repository/owner/id")
-                .and_then(serde_json::Value::as_u64)
-                != Some(binding.account_id)
+            || binding.excluded_repository_ids.contains(&repository_id)
         {
-            return Err(Error::Forbidden);
+            return self
+                .persist(
+                    &owner,
+                    &app,
+                    ignored("repository_not_approved", binding.authority_revision),
+                    &[],
+                    Some((&binding, binding.version)),
+                )
+                .await;
         }
         let action = payload.get("action").and_then(serde_json::Value::as_str);
         if (payload.get("issue").is_some() && payload.get("comment").is_none() && event != "issues")
@@ -134,7 +237,7 @@ impl Gateway {
         let mut supported = false;
         if matches!(event, "issues" | "pull_request") {
             let action = action
-                .filter(|action| config::valid_ref(action))
+                .filter(|action| valid_ref(action))
                 .ok_or(Error::Invalid)?;
             if payload.get("comment").is_some()
                 || payload.get("review").is_some()
@@ -192,27 +295,10 @@ impl Gateway {
                             | "dequeued"
                     ));
         }
-        let (status, task_ids) = if supported {
-            match self
-                .dispatch(DispatchInput {
-                    owner: &owner,
-                    app_ref,
-                    binding: &binding,
-                    receipt_id: &receipt_id,
-                    delivery_id,
-                    event,
-                    action,
-                    payload: &payload,
-                })
-                .await?
-            {
-                None => ("accepted", Vec::new()),
-                Some(task_ids) if task_ids.is_empty() => ("ignored", task_ids),
-                Some(task_ids) => ("accepted", task_ids),
-            }
-        } else {
-            ("ignored", Vec::new())
-        };
+        if supported {
+            return Err(Error::DispatchUnavailable);
+        }
+        let (status, task_ids) = ("ignored", Vec::new());
         let receipt = Receipt {
             receipt_id,
             app_ref: app_ref.into(),
@@ -222,35 +308,52 @@ impl Gateway {
             event: event.into(),
             action: action.map(str::to_owned),
             status: status.into(),
+            reason: Some("event_not_supported".into()),
             received_at: now(),
             raw_body_expires_at: now() + 7 * 24 * 60 * 60,
             body_sha256: fingerprint.clone(),
             task_ids,
             authority_revision: binding.authority_revision,
         };
-        self.persist(&owner, receipt, body, Some(&binding)).await
+        self.persist(
+            &owner,
+            &app,
+            receipt,
+            body,
+            Some((&binding, binding.version)),
+        )
+        .await
     }
 
     pub(super) async fn persist(
         &self,
         owner: &str,
+        integration: &AppIntegration,
         receipt: Receipt,
         body: &[u8],
-        authority: Option<&Binding>,
+        authority: Option<(&Binding, u64)>,
     ) -> Result<(Receipt, bool), Error> {
         let delivery = Delivery {
             receipt: receipt.clone(),
             raw_body_records: self.store.source(owner, &receipt, body).await?,
         };
         let committed = match authority {
-            Some(binding) => {
+            Some((binding, expected_version)) => {
                 self.store
-                    .commit_with_authority(owner, binding, binding.authority_revision, &delivery)
+                    .commit_with_authority(owner, binding, integration, expected_version, &delivery)
                     .await
             }
             None => {
                 self.store
-                    .create(&receipt.receipt_id, owner, "delivery", &delivery)
+                    .create_many_guarded(
+                        owner,
+                        vec![store::NewRecord::new(
+                            &receipt.receipt_id,
+                            "delivery",
+                            &delivery,
+                        )?],
+                        Some(integration),
+                    )
                     .await
             }
         };
@@ -261,7 +364,7 @@ impl Gateway {
                 .await
             {
                 Ok((_, committed)) => duplicate(committed, &receipt.event, &receipt.body_sha256),
-                Err(Error::NotFound) if matches!(error, Error::Forbidden) => Err(Error::Forbidden),
+                Err(Error::NotFound) if matches!(error, Error::Retry) => Err(Error::Retry),
                 Err(_) => Err(Error::Unavailable),
             };
         }
@@ -269,9 +372,9 @@ impl Gateway {
     }
 
     pub(super) async fn receipt(&self, owner: &str, id: &str) -> Result<Receipt, Error> {
-        let (stored_owner, delivery): (String, Delivery) = self.store.read(id, "delivery").await?;
-        if stored_owner != owner {
-            return Err(Error::NotFound);
+        let (_, delivery): (u64, Delivery) = self.store.read_owned(owner, id, "delivery").await?;
+        if delivery.receipt.receipt_id != id {
+            return Err(Error::Unavailable);
         }
         Ok(delivery.receipt)
     }
