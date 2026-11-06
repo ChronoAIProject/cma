@@ -157,7 +157,7 @@ export function OwnerAllocationChart({
                     <li
                       key={row.subject}
                       aria-posinset={row.position}
-                      aria-setsize={data.total}
+                      aria-setsize={count === 'all' ? data.total : size}
                       style={{ height: ROW }}
                     >
                       <span className="usage-owner-allocation__name" tabIndex={0} title={row.label}>
@@ -183,13 +183,14 @@ export function OwnerAllocationChart({
             <ResponsiveContainer width="100%" height={36} minWidth={0}>
               <BarChart
                 data={[{ value: max }]}
+                layout="vertical"
                 margin={{ left: 136, right: 24, top: 0, bottom: 0 }}
                 accessibilityLayer={false}
               >
                 <XAxis
                   type="number"
                   domain={[0, max]}
-                  tickCount={5}
+                  ticks={[0, max / 4, max / 2, (max * 3) / 4, max]}
                   tick={{ fill: 'var(--dsw-alias-label-secondary)', fontSize: 12 }}
                   tickLine={false}
                   axisLine={false}
@@ -197,6 +198,8 @@ export function OwnerAllocationChart({
                     Intl.NumberFormat('en-SG', { notation: 'compact' }).format(value)
                   }
                 />
+                <YAxis type="category" hide />
+                <Bar dataKey="value" fill="transparent" isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           </div>
