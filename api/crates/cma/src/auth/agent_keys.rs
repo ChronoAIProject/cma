@@ -57,9 +57,9 @@ pub(super) async fn verify(
         ])
         .send()
         .await
-        .map_err(|_| Unavailable("agent key introspection unavailable".into()))?;
+        .map_err(ProviderVerificationError::transport)?;
     if !response.status().is_success() {
-        return Err(Unavailable("agent key introspection unavailable".into()));
+        return Err(ProviderVerificationError::status(response.status()));
     }
     let body = response
         .json::<serde_json::Value>()
@@ -108,6 +108,7 @@ pub(super) async fn verify(
         ),
         profile: Profile::default(),
         api_expires_at: expires_at,
+        token_expires_at: expires_at,
         independent_commands: true,
     })
 }
