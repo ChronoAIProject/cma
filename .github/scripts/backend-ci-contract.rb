@@ -55,6 +55,7 @@ module CIContract
             "with" => { "tool" => "cargo-deny@0.20.2", "fallback" => "none" } },
           backend_step("Dependency audit", "cargo deny --locked --all-features check advisories licenses bans sources"), cache,
           backend_step("Format", "cargo fmt --all --check"),
+          backend_step("Desktop browser launch and ownership regressions", "python3 crates/layer4-runtime/src/desktop-browser-test.py"),
           backend_step("Native recovery persistence and process fences", "python3 crates/layer3-adapter/src/codex/recovery_test.py"),
           backend_step("Retained transport native goal read-only proof", "python3 crates/layer3-adapter/src/hosted/managed_context/transport_goal_test.py"),
           backend_step("Lint", "cargo clippy --all-targets --all-features --locked -- -D warnings"),
