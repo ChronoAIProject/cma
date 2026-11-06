@@ -125,8 +125,7 @@ impl OptionContext {
 
     fn timestamp(hint: Option<&str>, event: &str, at: Option<time::OffsetDateTime>) -> Self {
         let mut hints: Vec<_> = hint.map(str::to_owned).into_iter().collect();
-        if let Some(at) = at {
-            let at = at.to_offset(time::UtcOffset::UTC);
+        if let Some(at) = at.and_then(|at| at.checked_to_offset(time::UtcOffset::UTC)) {
             let prefix = hint.map(|hint| format!("{hint} · ")).unwrap_or_default();
             let date = format!("{prefix}{event} {}", at.date());
             let minute = format!("{date} {:02}:{:02}", at.hour(), at.minute());
