@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "yaml"
+require_relative "backend-ci-contract"
 
 module CIContract
   ROOT = File.expand_path("../..", __dir__)
@@ -183,25 +184,14 @@ module CIContract
       "Provider workflow authority contract" => "ruby .github/scripts/ci-contract.rb provider",
       "Provider contract mutation regressions" => "ruby .github/scripts/ci-contract-tests.rb provider",
       "Staging authority and evidence regressions" => "node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs",
-      "Authenticated Mongo startup regressions" => "node --test .github/scripts/authenticated-mongo-readiness.test.mjs",
+      "Authenticated Mongo startup regressions" => "node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/image-manager-mongo-contract.test.mjs",
       "Typecheck every harness entry point" => "npm run e2e:typecheck",
       "Exact remote campaign inventory remains mandatory" => "node .github/scripts/staging-authority.mjs inventory",
       "Fail-closed fixtures and cleanup mechanics" => "npm run test -- e2e/environment.test.ts e2e/owner-mechanics.test.ts",
       "Install pinned local browser" => "npx --no-install playwright install --with-deps chromium",
       "Local browser guard mechanics" => "npm run e2e:mechanics",
     }.each { |name, command| step(gate, name, command) }
-    backend = job(ci, "backend", "Backend")
-    step(backend, "Image normalization budgets", "cargo nextest run --workspace --locked -E 'binary(=media_image_peak)' --test-threads 1 --success-output final")
-    step(backend, "Tests", "cargo nextest run --workspace --locked --no-fail-fast -E 'not (binary(=media_image_peak) or binary(=turn_metrics))'")
-    step(backend, "Gateway socket latency budget", "cargo nextest run --workspace --locked -E 'binary(=turn_metrics)' --test-threads 1 --success-output final")
-    order(backend, ["Image normalization budgets", "Tests", "Gateway socket latency budget"])
-    mongo = step(backend, "Disposable real Mongo persistence contracts", "bash ../.github/scripts/mongo-contract-tests.sh")
-    require!(mongo["timeout-minutes"] == 75, "Mongo proof must retain its 75-minute bound")
-    step(backend, "Prepare compiled gateway browser contract", "npm ci --prefix web\nnpm ci --prefix sdk/typescript --omit=dev --ignore-scripts\nnpm run build --prefix web\n")
-    step(backend, "Install gateway contract browser", "npx --no-install playwright install --with-deps chromium")
-    order(backend, ["Prepare compiled gateway browser contract", "Install gateway contract browser", "Image Manager authenticated Mongo isolation"])
-    sandbox_mongo = step(backend, "Image Manager authenticated Mongo isolation", "bash ../.github/scripts/image-manager-mongo-contract.sh")
-    require!(sandbox_mongo["timeout-minutes"] == 10, "Sandbox Manager isolation proof must remain bounded")
+    backend_jobs(ci)
     require!(workflow["permissions"] == { "contents" => "read" }, "remote workflow permissions broadened")
     require!(workflow.dig("concurrency", "cancel-in-progress") == false, "remote writers cannot be cancelled by a newer run")
     triggers = workflow["on"] || workflow[true]

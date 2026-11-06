@@ -6,6 +6,10 @@ nextest_repo_root=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." &&
 nextest_build_args=(--workspace --locked)
 case "${CMA_NEXTEST_REUSE+x}:${CMA_NEXTEST_REUSE-}" in
   :)
+    if [[ "${CI:-false}" == true ]]; then
+      echo 'CI must use the extracted Backend test archive' >&2
+      exit 1
+    fi
     ;;
   x:1)
     nextest_metadata="$nextest_repo_root/api/target/nextest"
