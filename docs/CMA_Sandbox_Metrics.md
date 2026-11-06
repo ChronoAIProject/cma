@@ -239,7 +239,12 @@ until normal expiry cleanup; no durable schema or reader floor changes.
 Reporting keeps its four-connection pool, 250 ms checkout pressure threshold,
 two-second per-command server deadline and 60-second report deadline. The
 30-second pressure circuit observes individual connection holds above two seconds
-and slow/failed checkouts. A multi-query projection's cumulative wall time is
+and failed checkouts immediately. Successful checkouts above 250 ms require
+three consecutive samples with no more than one second between them; a healthy
+checkout resets that soft-pressure streak. A successful checkout exceeding the
+two-second hard deadline still opens the circuit immediately. This avoids turning
+one completed, slightly delayed checkout into a 30-second reporting outage.
+A multi-query projection's cumulative wall time is
 only diagnostic: several bounded reads must not poison the next report read.
 Command monitoring remains disabled; pressure logs contain durations and fixed
 categories, never command/reply bodies or customer identifiers.

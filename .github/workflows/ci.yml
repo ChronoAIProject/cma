@@ -314,6 +314,8 @@ jobs:
           workspaces: api
       - name: Format
         run: cargo fmt --all --check
+      - name: Desktop browser launch and ownership regressions
+        run: python3 crates/layer4-runtime/src/desktop-browser-test.py
       - name: Native recovery persistence and process fences
         run: python3 crates/layer3-adapter/src/codex/recovery_test.py
       - name: Retained transport native goal read-only proof
@@ -765,6 +767,28 @@ jobs:
       - name: Verify web bundle identity against image metadata
         if: matrix.component == 'web'
         run: python3 .github/scripts/web-build-identity.py cma-web:ci "$GITHUB_SHA" "git-${GITHUB_SHA:0:12}"
+      - uses: actions/setup-node@v6
+        if: matrix.component == 'web'
+        with:
+          node-version: 26
+      - name: Install web image browser harness
+        if: matrix.component == 'web'
+        run: npm ci --prefix web
+      - name: Render exact web image with stale retained assets
+        if: matrix.component == 'web'
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
+          CMA_WEB_IMAGE_EVIDENCE_DIR: ${{ runner.temp }}/web-image-evidence
+        run: python3 .github/scripts/web-image-smoke.py cma-web:ci
+      - name: Retain web image browser evidence
+        if: always() && matrix.component == 'web'
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-image-browser-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/web-image-evidence/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Export tested native image
         if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
         timeout-minutes: 10
