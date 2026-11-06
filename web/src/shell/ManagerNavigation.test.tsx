@@ -5,7 +5,7 @@ import { ManagerNavigation } from './ManagerNavigation';
 import type { TreePermissions } from './Tree';
 import type { AgentStatus } from '../api/types';
 import { navigationFixture } from '../test/hierarchy';
-import { chooseOption } from '../test/select';
+import { chooseOption, expandNavigationFilters } from '../test/select';
 import { AGENT_DETAIL } from '../test/agent';
 
 const permissions: TreePermissions = {
@@ -58,8 +58,12 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   expect(filter).toHaveAccessibleDescription('Working');
   expect(filter.querySelector('.navigation-filters__dot')).not.toBeNull();
   expect(screen.getByText('Working', summary)).toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Settings' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
+  await expandNavigationFilters(user);
+  await user.click(screen.getByRole('button', { name: 'Manage environments' }));
+  expect(filter).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByRole('group', { name: 'Navigation filters' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Back to tasks' })).toHaveFocus();
+  await expandNavigationFilters(user);
   expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
     'All statuses',
   );
@@ -70,8 +74,8 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   await user.click(screen.getByRole('button', { name: 'Collapse Atlas' }));
   await user.click(screen.getByRole('button', { name: 'Back to tasks' }));
   expect(screen.getByRole('button', { name: 'Agent status filter' })).toHaveTextContent('Working');
-  await user.click(screen.getByRole('button', { name: 'Settings' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
+  await expandNavigationFilters(user);
+  await user.click(screen.getByRole('button', { name: 'Manage environments' }));
   expect(screen.getByRole('button', { name: 'Expand Atlas' })).toBeInTheDocument();
   expect(screen.queryByRole('link', { name: /Agent one/ })).not.toBeInTheDocument();
 });
@@ -120,7 +124,7 @@ it('shows visible task states alongside characters and respects parent lifecycle
     else expect(dot).toHaveAttribute('data-state', state);
   }
   const user = userEvent.setup();
-  await user.click(screen.getByRole('button', { name: 'Filter' }));
+  await expandNavigationFilters(user);
   await chooseOption(user, 'Agent status filter', 'Paused');
   expect(screen.getByRole('link', { name: /Agent one/ })).toHaveTextContent('Paused');
   await chooseOption(user, 'Agent status filter', 'Working');
@@ -131,8 +135,8 @@ it('shows visible task states alongside characters and respects parent lifecycle
       navigation={{ status: 'ready', items: navigationFixture(), refresh }}
     />,
   );
-  await user.click(screen.getByRole('button', { name: 'Settings' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
+  await expandNavigationFilters(user);
+  await user.click(screen.getByRole('button', { name: 'Manage environments' }));
   const live = screen.getByRole('tree', { name: 'Live sandboxes' });
   expect(live.querySelector('.tree-row__state .statedot')).toHaveAttribute('data-state', 'neutral');
   expect(live.querySelectorAll('.statedot[data-state="done"]')).toHaveLength(0);
@@ -308,4 +312,54 @@ it('keeps task rows and their action menus operable by keyboard', async () => {
   await user.keyboard('{Enter}');
   await user.click(await screen.findByRole('menuitem', { name: 'Stop' }));
   expect(onAction).toHaveBeenCalledWith({ kind: 'stop_agent', agentId: 'agt_1' });
+});
+
+it('keeps filters open for status choices and closes them when managing environments', async () => {
+  render(
+    <ManagerNavigation
+      {...props}
+      route={{ kind: 'agent', agentId: 'agt_1' }}
+      navigation={{ status: 'ready', items: navigationFixture(), refresh: vi.fn() }}
+    />,
+  );
+  const user = userEvent.setup();
+  const task = screen.getByRole('treeitem', { name: /Agent one/ });
+  task.focus();
+  const filter = screen.getByRole('button', { name: 'Filter' });
+  filter.focus();
+  await user.keyboard('{Enter}');
+  const panel = screen.getByRole('group', { name: 'Navigation filters' });
+  expect(panel).toBeVisible();
+  expect(screen.queryByRole('menu', { name: 'Navigation filters' })).not.toBeInTheDocument();
+  expect(filter).not.toHaveAttribute('aria-haspopup');
+  const picker = screen.getByRole('button', { name: 'Agent status filter' });
+  await user.tab();
+  expect(picker).toHaveFocus();
+  await chooseOption(user, 'Agent status filter', 'Working');
+  expect(panel).toBeVisible();
+  expect(filter).toHaveAttribute('aria-expanded', 'true');
+  expect(screen.getByRole('button', { name: 'Clear filters' })).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Clear filters' }));
+  expect(panel).toBeVisible();
+  expect(picker).toHaveTextContent('All statuses');
+  picker.focus();
+  await user.tab();
+  const manage = screen.getByRole('button', { name: 'Manage environments' });
+  expect(manage).toHaveFocus();
+  expect(manage.parentElement).toHaveClass('navigation-filters__actions');
+  await user.keyboard('{Enter}');
+  const back = screen.getByRole('button', { name: 'Back to tasks' });
+  expect(back).toHaveFocus();
+  expect(screen.queryByRole('button', { name: 'Manage environments' })).not.toBeInTheDocument();
+  expect(filter).toHaveAttribute('aria-expanded', 'false');
+  expect(panel).not.toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Sandbox status filter' })).not.toBeInTheDocument();
+  await user.keyboard('{Enter}');
+  expect(screen.getByRole('treeitem', { name: /Agent one/ })).toHaveFocus();
+  expect(filter).toHaveAttribute('aria-expanded', 'false');
+  await expandNavigationFilters(user);
+  expect(screen.getByRole('button', { name: 'Agent status filter' })).toHaveTextContent(
+    'All statuses',
+  );
+  expect(screen.getByRole('button', { name: 'Manage environments' })).toBeVisible();
 });

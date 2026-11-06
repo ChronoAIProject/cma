@@ -184,7 +184,14 @@ Presentation conversion is explicit. No monetary estimate is produced.
 
 ## Deployment prerequisites and rollout
 
-`CHRONO_USAGE_METRICS_ENABLED` defaults to `false`.
+`CHRONO_USAGE_METRICS_ENABLED` defaults to `false`. Allocated reports and their
+workers remain available in this mode for both owner and administrator routes.
+They read allocation history without reading measured bindings, rollups, live
+samples or infrastructure diagnostics. Measured quantities remain null with
+existing unavailable/no-runtime states and `source_health: source_unavailable`;
+this source-health value does not fail an otherwise complete allocated report.
+Existing retained measurements are not exposed by collection-off reports.
+Collection-enabled reports retain the same measured aggregation and source path.
 `CHRONO_USAGE_METRICS_CLUSTER` must match the observed monitoring label, not a
 node or zone name. `CHRONO_USAGE_METRICS_URL`, when supplied, is the approved
 internal tenant-0 base ending in `/select/0/prometheus/`. Redirects, credentials
@@ -221,8 +228,26 @@ verify indexes before enabling background work. No migration rewrites
 Each report persists its admitted byte reservation. Admission counts those
 reservations before adding new work, including when quotas are not exact
 multiples of a report budget. A worker cannot grow a cache beyond its original
-reservation after a configuration change. Reservations are released only after
-the expired row and chart projections have been removed.
+reservation after a configuration change. On successful or failed finalization,
+the same lease-fenced update reduces the reservation to actual cached row/chart
+bytes. Those bytes remain charged until the expired projections have been removed.
+This lets the one-minute owner/admin refresh coexist with the ten-minute cache
+lifetime without charging every small terminal report its maximum work budget.
+Already terminal reports from an older writer keep their conservative reservation
+until normal expiry cleanup; no durable schema or reader floor changes.
+
+Reporting keeps its four-connection pool, 250 ms checkout pressure threshold,
+two-second per-command server deadline and 60-second report deadline. The
+30-second pressure circuit observes individual connection holds above two seconds
+and failed checkouts immediately. Successful checkouts above 250 ms require
+three consecutive samples with no more than one second between them; a healthy
+checkout resets that soft-pressure streak. A successful checkout exceeding the
+two-second hard deadline still opens the circuit immediately. This avoids turning
+one completed, slightly delayed checkout into a 30-second reporting outage.
+A multi-query projection's cumulative wall time is
+only diagnostic: several bounded reads must not poison the next report read.
+Command monitoring remains disabled; pressure logs contain durations and fixed
+categories, never command/reply bodies or customer identifiers.
 
 Roll out the reader and collections with collection disabled, prove source and
 identity permissions, then enable collection for the supported deployment.

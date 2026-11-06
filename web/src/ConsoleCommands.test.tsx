@@ -1,3 +1,4 @@
+import { expandNavigationFilters } from './test/select';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
@@ -124,8 +125,8 @@ it('keeps global New agent unscoped and existing-Sandbox creation in its row men
     ),
   );
   expect(onCreate).toHaveBeenLastCalledWith({ kind: 'new_agent' });
-  await actor.click(screen.getByRole('button', { name: 'Settings' }));
-  await actor.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
+  await expandNavigationFilters(actor);
+  await actor.click(screen.getByRole('button', { name: 'Manage environments' }));
   await actor.click(await screen.findByRole('button', { name: 'Options for Atlas' }));
   await actor.click(screen.getByRole('menuitem', { name: 'New agent' }));
   expect(onCreate).toHaveBeenLastCalledWith({ kind: 'new_agent', sandboxId: 'sbx_1' });
