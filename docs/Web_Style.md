@@ -5561,3 +5561,14 @@ outcome. Active thinking, composer busy state and other turn loading indicators
 also end at that terminal observation.
 
 | 2026-11-06 | Preserve streamed text across live gaps, replace frozen live rows in place with their durable successor and a stable DOM identity, and keep the live recovery status in one slot that clears at the run's terminal outcome. |
+
+
+
+#### Task list status for the open Agent — 2026-11-06
+
+When the open Agent is newer than its sidebar summary, the task list keeps the
+summary's last reported task status while requesting a navigation refresh.
+**Status unavailable** is shown only when the Agent's summary has never
+reported a task status.
+
+| 2026-11-06 | Keep the open Agent's last reported task status in the sidebar while its stale summary refreshes; show Status unavailable only when no status was ever reported. |
