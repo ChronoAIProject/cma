@@ -159,6 +159,12 @@ impl ProviderBinding {
                 .is_some_and(|guard| !guard.valid(self.generation))
             || !(1..=BINDING_CONFORMANCE_LEVEL).contains(&self.level)
             || self.honoured != self.profile.honoured
+            || !super::profile::valid_queue_lifetime(self.profile.queue_lifetime_seconds)
+            || self
+                .profile
+                .configuration_digest
+                .as_deref()
+                .is_some_and(|digest| !digest.strip_prefix("sha256:").is_some_and(valid_sha256))
             || self.refused != self.profile.refused
             || self.sandbox_id.as_str().is_empty()
             || self.workspace_id.as_str().is_empty()
@@ -260,7 +266,9 @@ impl ProviderBinding {
         key_sha256: String,
         at: String,
     ) -> Result<Self, String> {
-        if self.existing_agent.is_some()
+        if (self.existing_agent.is_some()
+            && (self.profile.configuration_digest() != profile.configuration_digest()
+                || self.profile.queue_lifetime_seconds == profile.queue_lifetime_seconds))
             || self.state != BindingState::Ready
             || self.work != BindingWork::Idle
             || self.previous.is_some()

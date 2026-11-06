@@ -127,6 +127,10 @@ pub struct ContextConfig {
 #[serde(deny_unknown_fields)]
 pub struct EventWorkerProfile {
     pub schema_version: u16,
+    /// Binding message queue lifetime; omitted uses 300 seconds, maximum 86400.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = u32, required = false, minimum = 1, maximum = 86400)]
+    pub queue_lifetime_seconds: Option<u32>,
     pub metadata: ProfileMetadata,
     pub model: ModelConfig,
     pub permission: PermissionConfig,
@@ -148,6 +152,15 @@ pub struct ProfileMetadata {
 impl EventWorkerProfile {
     /// Validate the snapshot before it is bound to a channel.
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if self
+            .queue_lifetime_seconds
+            .is_some_and(|seconds| !(1..=86400).contains(&seconds))
+        {
+            return Err(ValidationError::new(
+                "/queue_lifetime_seconds",
+                "must be between 1 and 86400",
+            ));
+        }
         if self.schema_version != PROFILE_SCHEMA_VERSION {
             return Err(ValidationError::new(
                 "/schema_version",

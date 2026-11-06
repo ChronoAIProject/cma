@@ -107,6 +107,8 @@ mod delivery_tests;
 #[cfg(test)]
 mod destination_tests;
 #[cfg(test)]
+mod long_queue_tests;
+#[cfg(test)]
 mod readiness_tests;
 #[cfg(test)]
 mod recovery_tests;
