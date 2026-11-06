@@ -24,8 +24,9 @@ impl MetricsStore for ReportingStore {
         &self,
         scope: &Scope,
         query: layer2_core::sandbox_metrics::OptionQuery,
+        owner_context: layer2_core::sandbox_metrics::OwnerContextAccess,
     ) -> Result<layer2_core::sandbox_metrics::FilterOptions> {
-        self.read_options(scope, query).await
+        self.read_options(scope, query, owner_context).await
     }
     async fn resolve_agent(&self, scope: &Scope, id: &str) -> Result<String> {
         let mut filter = doc! {"_id":id};

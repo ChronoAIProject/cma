@@ -42,7 +42,9 @@ async fn metrics_options_honor_circuit_without_commands_and_recover_with_polling
     store.circuit.store(now() + 30, Ordering::SeqCst);
     for kind in [OptionKind::Owner, OptionKind::Sandbox, OptionKind::Runtime] {
         assert!(matches!(
-            store.options(&operator, query(kind)).await,
+            store
+                .options(&operator, query(kind), OwnerContextAccess::DirectoryRead)
+                .await,
             Err(MetricsError::Busy)
         ));
     }
@@ -93,9 +95,21 @@ async fn metrics_options_honor_circuit_without_commands_and_recover_with_polling
         let (owners, sandboxes, runtimes, polled) =
             tokio::time::timeout(Duration::from_secs(5), async {
                 tokio::try_join!(
-                    store.options(&operator, query(OptionKind::Owner)),
-                    store.options(&operator, query(OptionKind::Sandbox)),
-                    store.options(&operator, query(OptionKind::Runtime)),
+                    store.options(
+                        &operator,
+                        query(OptionKind::Owner),
+                        OwnerContextAccess::DirectoryRead
+                    ),
+                    store.options(
+                        &operator,
+                        query(OptionKind::Sandbox),
+                        OwnerContextAccess::DirectoryRead
+                    ),
+                    store.options(
+                        &operator,
+                        query(OptionKind::Runtime),
+                        OwnerContextAccess::DirectoryRead
+                    ),
                     store.report(&operator, &report.report_id, now())
                 )
             })
