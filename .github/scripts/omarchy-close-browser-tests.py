@@ -13,7 +13,7 @@ PROFILE = b'--user-data-dir=/home/cma/.cma/chrome'
 
 
 class CloseBrowser(unittest.TestCase):
-    def execute(self, args=(), windows=None, processes=()):
+    def execute(self, args=(), windows=None, processes=(), focused=True):
         windows = iter(windows if windows is not None else [[WINDOW], []])
         self.commands = []
 
@@ -23,6 +23,8 @@ class CloseBrowser(unittest.TestCase):
             self.commands.append(command)
             if command == ['hyprctl', '-j', 'clients']:
                 return json.dumps(next(windows, []))
+            if command == ['hyprctl', '-j', 'activewindow']:
+                return json.dumps(WINDOW if focused else {'address': '0x456'})
             if command == ['pgrep', '-x', 'vncviewer']:
                 return '123\n'
             if command == ['xdotool', 'search', '--onlyvisible', '--pid', '123']:
@@ -46,10 +48,15 @@ class CloseBrowser(unittest.TestCase):
 
     def test_startup_close_uses_wayland_window_without_toggling_fullscreen(self):
         self.execute(['--normal-window'])
-        focus = ['hyprctl', 'dispatch', 'focuswindow', 'address:0x123']
+        focus = ['hyprctl', 'dispatch', 'hl.dsp.focus({window = "address:0x123"})']
         close = ['xdotool', 'key', '--clearmodifiers', 'super+w']
         self.assertLess(self.commands.index(focus), self.commands.index(close))
         self.assertNotIn(['xdotool', 'key', '--clearmodifiers', 'F11'], self.commands)
+
+    def test_focus_must_reach_the_browser_before_sending_close_key(self):
+        with self.assertRaisesRegex(AssertionError, 'did not gain focus'):
+            self.execute(['--normal-window'], focused=False)
+        self.assertNotIn(['xdotool', 'key', '--clearmodifiers', 'super+w'], self.commands)
 
     def test_post_input_close_restores_fullscreen_before_closing(self):
         self.execute()
