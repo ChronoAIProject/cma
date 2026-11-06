@@ -162,3 +162,167 @@ fn identifiers_attached_to_names_and_runtime_versions_are_never_labels() {
         "runtime-stable"
     );
 }
+
+fn contextual_pair(contexts: [OptionContext; 2]) -> Vec<FilterOption> {
+    let mut items: Vec<_> = ["first", "second"]
+        .into_iter()
+        .map(|value| FilterOption {
+            value: value.into(),
+            label: "Research".into(),
+            disambiguator: None,
+        })
+        .collect();
+    disambiguate_options_with_context(&mut items, &contexts);
+    assert!(items.iter().all(|item| item.label == "Research"));
+    items
+}
+
+fn unix(at: &str) -> u64 {
+    time::OffsetDateTime::parse(at, &time::format_description::well_known::Rfc3339)
+        .unwrap()
+        .unix_timestamp() as u64
+}
+
+#[test]
+fn same_owner_sandboxes_use_creation_date_then_minute_then_second() {
+    for (other, expected) in [
+        ("2026-11-02T12:30:00Z", ["2026-11-01", "2026-11-02"]),
+        (
+            "2026-11-01T12:31:00Z",
+            ["2026-11-01 12:30 UTC", "2026-11-01 12:31 UTC"],
+        ),
+        (
+            "2026-11-01T12:30:01Z",
+            ["2026-11-01 12:30:00 UTC", "2026-11-01 12:30:01 UTC"],
+        ),
+    ] {
+        let items = contextual_pair(
+            ["2026-11-01T12:30:00Z", other]
+                .map(|at| OptionContext::sandbox("alice-subject", Some("Alice"), Some(unix(at)))),
+        );
+        for (item, at) in items.iter().zip(expected) {
+            assert_eq!(item.disambiguator, Some(format!("Alice · Created {at}")));
+        }
+    }
+    let items = contextual_pair([
+        OptionContext::sandbox("one", Some("Alice"), Some(unix("2026-11-01T12:30:00Z"))),
+        OptionContext::sandbox("two", Some("Bob"), Some(unix("2026-11-02T12:30:00Z"))),
+    ]);
+    assert_eq!(items[0].disambiguator.as_deref(), Some("Alice"));
+    assert_eq!(items[1].disambiguator.as_deref(), Some("Bob"));
+}
+
+#[test]
+fn same_join_date_owners_use_utc_time_and_available_fractional_precision() {
+    for (other, expected) in [
+        ("2026-11-02T12:30:00Z", ["2026-11-01", "2026-11-02"]),
+        (
+            "2026-11-01T12:31:00Z",
+            ["2026-11-01 12:30 UTC", "2026-11-01 12:31 UTC"],
+        ),
+        (
+            "2026-11-01T12:30:01Z",
+            ["2026-11-01 12:30:00 UTC", "2026-11-01 12:30:01 UTC"],
+        ),
+        (
+            "2026-11-01T12:30:00.000000001Z",
+            [
+                "2026-11-01 12:30:00 UTC",
+                "2026-11-01 12:30:00.000000001 UTC",
+            ],
+        ),
+    ] {
+        let items = contextual_pair(
+            ["2026-11-01T20:30:00+08:00", other].map(|at| OptionContext::owner(Some(at))),
+        );
+        for (item, at) in items.iter().zip(expected) {
+            assert_eq!(item.disambiguator, Some(format!("Joined {at}")));
+        }
+    }
+}
+
+#[test]
+fn creation_context_survives_missing_or_unsafe_owner_names() {
+    let unsafe_name = "Alice-91892afa-5fa5-4f4f-9100-2b8d986d2f71";
+    let items = contextual_pair([
+        OptionContext::sandbox("one", Some(unsafe_name), Some(unix("2026-11-01T00:00:00Z"))),
+        OptionContext::sandbox("two", None, Some(unix("2026-11-02T00:00:00Z"))),
+    ]);
+    assert_eq!(
+        items[0].disambiguator.as_deref(),
+        Some("Created 2026-11-01")
+    );
+    assert_eq!(
+        items[1].disambiguator.as_deref(),
+        Some("Created 2026-11-02")
+    );
+}
+
+#[test]
+fn references_are_last_resort_for_missing_invalid_or_identical_human_context() {
+    for contexts in [
+        [
+            OptionContext::owner(None),
+            OptionContext::owner(Some("invalid")),
+        ],
+        [
+            OptionContext::sandbox("one", None, None),
+            OptionContext::sandbox("two", None, Some(u64::MAX)),
+        ],
+        [
+            OptionContext::owner(Some("2026-11-01T12:30:00.123Z")),
+            OptionContext::owner(Some("2026-11-01T20:30:00.123+08:00")),
+        ],
+        [
+            OptionContext::sandbox("one", Some("Alice"), Some(1000)),
+            OptionContext::sandbox("one", Some("Alice"), Some(1000)),
+        ],
+    ] {
+        let mut items = contextual_pair(contexts.clone());
+        assert_ne!(items[0].disambiguator, items[1].disambiguator);
+        for item in &items {
+            assert!(item
+                .disambiguator
+                .as_deref()
+                .unwrap()
+                .contains("reference "));
+            assert!(!item.disambiguator.as_deref().unwrap().contains(&item.value));
+        }
+        let expected = items[0].disambiguator.clone();
+        disambiguate_options_with_context(&mut items, &contexts);
+        assert_eq!(items[0].disambiguator, expected);
+        disambiguate_options_with_context(&mut items[..1], &contexts[..1]);
+        assert!(items[0].disambiguator.is_none());
+    }
+}
+
+#[test]
+fn mixed_duplicate_group_only_escalates_context_for_remaining_ties() {
+    let mut items: Vec<_> = (0..4)
+        .map(|i| FilterOption {
+            value: format!("item-{i}"),
+            label: "Research".into(),
+            disambiguator: None,
+        })
+        .collect();
+    let contexts = [
+        OptionContext::sandbox("alice", Some("Alice"), Some(1000)),
+        OptionContext::sandbox("alice", Some("Alice"), Some(1001)),
+        OptionContext::sandbox("bob", Some("Bob"), Some(1000)),
+        OptionContext::sandbox("alice", Some("Alice"), Some(86400)),
+    ];
+    disambiguate_options_with_context(&mut items, &contexts);
+    assert_eq!(
+        items[0].disambiguator.as_deref(),
+        Some("Alice · Created 1970-01-01 00:16:40 UTC")
+    );
+    assert_eq!(
+        items[1].disambiguator.as_deref(),
+        Some("Alice · Created 1970-01-01 00:16:41 UTC")
+    );
+    assert_eq!(items[2].disambiguator.as_deref(), Some("Bob"));
+    assert_eq!(
+        items[3].disambiguator.as_deref(),
+        Some("Alice · Created 1970-01-02")
+    );
+}

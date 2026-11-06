@@ -142,19 +142,35 @@ impl MetricsStore for Store {
             OptionKind::Sandbox => (SANDBOX, "Research"),
             OptionKind::Runtime => ("v1", "v1"),
         };
-        let duplicate = query.search == "duplicate";
+        let duplicate = query.search.starts_with("duplicate");
         let mut items = vec![FilterOption {
             value: value.into(),
             label: label.into(),
-            disambiguator: duplicate.then(|| "Joined 2026-01-01".into()),
+            disambiguator: None,
         }];
         if duplicate {
             items.push(FilterOption {
                 value: "other-owner".into(),
                 label: label.into(),
-                disambiguator: Some("Joined 2026-02-01".into()),
+                disambiguator: None,
             });
         }
+        let contexts = match query.search.as_str() {
+            "duplicate-created" => {
+                [1000, 86400].map(|at| OptionContext::sandbox("owner", Some("Alice"), Some(at)))
+            }
+            "duplicate-created-time" => {
+                [1000, 1001].map(|at| OptionContext::sandbox("owner", Some("Alice"), Some(at)))
+            }
+            "duplicate-joined-time" => ["2026-01-01T12:30:00.001Z", "2026-01-01T12:30:00.002Z"]
+                .map(|at| OptionContext::owner(Some(at))),
+            "duplicate-identical" => {
+                ["2026-01-01T12:30:00Z"; 2].map(|at| OptionContext::owner(Some(at)))
+            }
+            _ => ["2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z"]
+                .map(|at| OptionContext::owner(Some(at))),
+        };
+        disambiguate_options_with_context(&mut items, &contexts);
         Ok(FilterOptions {
             items,
             next: (query.cursor.is_none() && query.selected.is_none() && !duplicate)

@@ -99,14 +99,76 @@ pub fn public_option_name<'a>(value: &str, name: Option<&'a str>) -> Option<&'a 
 }
 
 pub fn option_joined(at: Option<&str>) -> Option<String> {
-    let at =
-        time::OffsetDateTime::parse(at?, &time::format_description::well_known::Rfc3339).ok()?;
-    Some(format!("Joined {}", at.date()))
+    OptionContext::owner(at).hints.into_iter().next()
 }
 
-/// Only duplicates on the returned page need a secondary label. Prefer human
-/// context; a derived reference is a last resort when that context still ties.
+/// Human context in increasing detail, shared by discovery and owner rankings.
+#[derive(Clone, Debug, Default)]
+pub struct OptionContext {
+    hints: Vec<String>,
+}
+
+impl OptionContext {
+    pub fn owner(joined_at: Option<&str>) -> Self {
+        let at = joined_at.and_then(|at| {
+            time::OffsetDateTime::parse(at, &time::format_description::well_known::Rfc3339).ok()
+        });
+        Self::timestamp(None, "Joined", at)
+    }
+
+    pub fn sandbox(owner: &str, owner_name: Option<&str>, created_at: Option<u64>) -> Self {
+        let at = created_at
+            .and_then(|at| i64::try_from(at).ok())
+            .and_then(|at| time::OffsetDateTime::from_unix_timestamp(at).ok());
+        Self::timestamp(public_option_name(owner, owner_name), "Created", at)
+    }
+
+    fn timestamp(hint: Option<&str>, event: &str, at: Option<time::OffsetDateTime>) -> Self {
+        let mut hints: Vec<_> = hint.map(str::to_owned).into_iter().collect();
+        if let Some(at) = at {
+            let at = at.to_offset(time::UtcOffset::UTC);
+            let prefix = hint.map(|hint| format!("{hint} · ")).unwrap_or_default();
+            let date = format!("{prefix}{event} {}", at.date());
+            let minute = format!("{date} {:02}:{:02}", at.hour(), at.minute());
+            let second = format!("{minute}:{:02}", at.second());
+            hints.extend([date, format!("{minute} UTC"), format!("{second} UTC")]);
+            if at.nanosecond() != 0 {
+                let fraction = format!("{:09}", at.nanosecond());
+                hints.push(format!("{second}.{} UTC", fraction.trim_end_matches('0')));
+            }
+        }
+        Self { hints }
+    }
+
+    fn hint(&self, level: usize) -> Option<&str> {
+        self.hints
+            .get(level)
+            .or(self.hints.last())
+            .map(String::as_str)
+    }
+}
+
+/// Compatibility for callers with only one human hint. Timestamp-aware callers
+/// should use `disambiguate_options_with_context` to exhaust human distinctions.
 pub fn disambiguate_options(items: &mut [FilterOption], hints: &[Option<String>]) {
+    let contexts: Vec<_> = hints
+        .iter()
+        .map(|hint| OptionContext {
+            hints: hint.iter().cloned().collect(),
+        })
+        .collect();
+    disambiguate_options_with_context(items, &contexts);
+}
+
+/// Only duplicates on the returned page need secondary text. Use the shortest
+/// distinguishing human context, then a reference only for indistinguishable ties.
+pub fn disambiguate_options_with_context(items: &mut [FilterOption], contexts: &[OptionContext]) {
+    let levels = contexts
+        .iter()
+        .map(|context| context.hints.len())
+        .max()
+        .unwrap_or(0);
+    let hint = |index: usize, level| contexts.get(index).and_then(|context| context.hint(level));
     let details: Vec<_> = items
         .iter()
         .enumerate()
@@ -119,19 +181,20 @@ pub fn disambiguate_options(items: &mut [FilterOption], hints: &[Option<String>]
             if duplicates.len() < 2 {
                 return None;
             }
-            let hint = hints.get(index).and_then(Option::as_deref);
-            if let Some(hint) = hint {
-                if duplicates
-                    .iter()
-                    .filter(|(i, _)| hints.get(*i).and_then(Option::as_deref) == Some(hint))
-                    .count()
-                    == 1
-                {
-                    return Some(hint.to_owned());
+            for level in 0..levels {
+                if let Some(detail) = hint(index, level) {
+                    if duplicates
+                        .iter()
+                        .filter(|(i, _)| hint(*i, level) == Some(detail))
+                        .count()
+                        == 1
+                    {
+                        return Some(detail.to_owned());
+                    }
                 }
             }
             let reference = format!("{:x}", Sha256::digest(item.value.as_bytes()));
-            Some(match hint {
+            Some(match hint(index, levels) {
                 Some(hint) => format!("{hint} · reference {}", &reference[..12]),
                 None => format!("reference {}", &reference[..12]),
             })
