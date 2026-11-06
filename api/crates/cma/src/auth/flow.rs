@@ -137,10 +137,6 @@ async fn login(
         None => None,
     };
     let silent = matches!(params.prompt, Some(LoginPrompt::Silent));
-    if silent && request_cookie(&headers, SIGNED_OUT_COOKIE).is_some() {
-        // Signed out of CMA: decline without asking the provider.
-        return Redirect::to(return_to.as_deref().unwrap_or("/")).into_response();
-    }
     if silent && params.screen.is_some() {
         return (
             StatusCode::BAD_REQUEST,
@@ -150,6 +146,10 @@ async fn login(
             })),
         )
             .into_response();
+    }
+    if silent && request_cookie(&headers, SIGNED_OUT_COOKIE).is_some() {
+        // Signed out of CMA: decline without asking the provider.
+        return Redirect::to(return_to.as_deref().unwrap_or("/")).into_response();
     }
     begin_login(auth, return_to, params.screen, silent).await
 }
@@ -308,7 +308,9 @@ async fn callback(
             // No provider session, or the browser signed out of CMA after this
             // attempt began. Nobody asked to sign in, so return them to the
             // page they were on, still signed out.
-            Some(_) => Some(Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response()),
+            Some(_) => {
+                Some(Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response())
+            }
             None if signed_out => {
                 Some(Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response())
             }
