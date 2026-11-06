@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AuthContextProvider, useAuth } from './context';
-import type { AuthProvider } from './types';
+import type { AuthProvider, AuthState } from './types';
 
 function Status() {
   return <p>{useAuth().state.status}</p>;
@@ -94,5 +94,26 @@ describe('the identity check', () => {
     });
     expect(screen.getByText('anonymous')).toBeInTheDocument();
     expect(signInSilently).toHaveBeenCalledTimes(1);
+  });
+
+  it('still checks when focus arrives before the opening read resolves', async () => {
+    const reads: ((state: AuthState) => void)[] = [];
+    const current = vi.fn(() => new Promise<AuthState>((resolve) => reads.push(resolve)));
+    const signInSilently = vi.fn(() => true);
+    render(
+      <AuthContextProvider provider={{ ...provider(signInSilently), current }}>
+        <Status />
+      </AuthContextProvider>,
+    );
+    await vi.waitFor(() => expect(current).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(current).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      for (const resolve of reads) resolve({ status: 'anonymous' });
+    });
+    expect(signInSilently).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('checking')).toBeInTheDocument();
   });
 });

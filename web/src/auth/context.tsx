@@ -50,19 +50,20 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     // StrictMode makes routine by running effects twice in development.
     let live = true;
 
-    // Only the read that opens the page may leave it for a silent sign-in.
-    // Later refreshes on focus or reconnection never navigate away from work.
+    // Only the first identity result this page acts on may leave it for a
+    // silent sign-in; a focus during that read supersedes it without using up
+    // the chance. Later refreshes never navigate away from work.
     let opening = true;
     let leaving: ReturnType<typeof setTimeout> | undefined;
     const refresh = () => {
       if (leaving !== undefined) return;
       const version = ++currentRead.current;
-      const first = opening;
-      opening = false;
       void provider
         .current()
         .then((next) => {
           if (!live || version !== currentRead.current) return;
+          const first = opening;
+          opening = false;
           // A browser still signed in to the identity provider is taken
           // straight through, rather than shown a landing it would click past.
           // The state stays 'checking' while the page navigates away; if the
@@ -85,6 +86,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
           // injected and may misbehave. Surface it rather than hanging on
           // 'checking' forever, which would render an empty page with no reason.
           if (live && version === currentRead.current) {
+            opening = false;
             setState({
               status: 'error',
               message: error instanceof Error ? error.message : 'Could not verify your identity.',
