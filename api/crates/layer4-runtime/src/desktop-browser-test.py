@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 SOURCE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('browser', SOURCE / 'desktop-browser.py')
@@ -17,7 +18,7 @@ browser = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(browser)
 
 FAKE = '''#!/usr/bin/env python3
-import json, os, signal, subprocess, sys, time
+import ctypes, json, os, signal, subprocess, sys, time
 from pathlib import Path
 root = Path(os.environ['FIXTURE'])
 if (root / 'fail').exists(): sys.exit(7)
@@ -34,6 +35,15 @@ if (root / 'pid').exists():
 if (root / 'helper').exists():
     child = subprocess.Popen(['sleep', '120'], start_new_session=True)
     (root / 'helper-pid').write_text(str(child.pid))
+if (root / 'process-title').exists():
+    # Chromium's SetProcessTitleFromCommandLine joins argv with spaces and
+    # overwrites its original argv storage. Exercise the real /proc view.
+    original = Path('/proc/self/cmdline').read_bytes()
+    title = original.rstrip(b'\\0').replace(b'\\0', b' ') + b'\\0'
+    address = ctypes.c_void_p.in_dll(ctypes.CDLL(None), 'program_invocation_name').value
+    ctypes.memmove(address, title, len(title))
+    assert Path('/proc/self/cmdline').read_bytes() == title
+    (root / 'title-ready').touch()
 while True: time.sleep(.1)
 '''
 PROBE = '''#!/usr/bin/env python3
@@ -42,6 +52,9 @@ from pathlib import Path
 root = Path(os.environ['FIXTURE'])
 if (root / 'hang').exists(): time.sleep(120)
 if (root / 'timeout').exists(): sys.exit(1)
+if (root / 'process-title').exists() and not (root / 'title-ready').exists():
+    print('[]' if 'clients' in sys.argv else '')
+    sys.exit(1)
 if (root / 'wrong-pid').exists():
     print(json.dumps([{'pid': 999999, 'class': 'chromium', 'address': '0x123'}]))
     sys.exit(0)
@@ -57,6 +70,23 @@ elif 'dispatch' in sys.argv:
     (root / 'focused').touch()
 else: (root / 'focused').touch()
 '''
+
+
+class ProfileIdentity(unittest.TestCase):
+    def test_original_arguments_and_chromium_process_titles(self):
+        profile = Path('/home/cma/profile with spaces')
+        argument = os.fsencode('--user-data-dir=' + str(profile))
+        for separator in (b'\0', b' '):
+            with self.subTest(separator=separator), patch.object(browser, 'PROFILE', profile):
+                def command(*args):
+                    return separator.join(args) + b'\0'
+                self.assertTrue(browser.profile_browser(command(b'/usr/lib/chromium/chromium', argument)))
+                self.assertFalse(browser.profile_browser(command(b'/usr/lib/chromium/chromium', argument + b'-other')))
+                self.assertFalse(browser.profile_browser(command(b'/usr/lib/chromium/chromium', b'--url=' + argument)))
+                self.assertFalse(browser.profile_browser(command(b'/usr/bin/python3', argument)))
+                for kind in (b'renderer', b'zygote', b'gpu-process'):
+                    self.assertFalse(browser.profile_browser(command(b'/usr/lib/chromium/chromium', argument, b'--type=' + kind)))
+        self.assertFalse(browser.profile_browser(b''))
 
 
 @unittest.skipUnless(sys.platform == 'linux', 'requires Linux desktop process ownership')
@@ -151,6 +181,19 @@ class Launcher(unittest.TestCase):
         result = self.launch(wayland=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('--ozone-platform=wayland', json.loads((self.root / 'arguments').read_text()))
+
+    def test_wayland_process_title_rewrite_preserves_readiness_and_reuse(self):
+        (self.root / 'process-title').touch()
+        self.start(wayland=True)
+        result = self.launch(wayland=True, args=['https://example.invalid/fixture'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / 'title-ready').exists())
+        pid = self.pid()
+        self.assertEqual(self.launch(wayland=True).returncode, 0)
+        self.assertTrue((self.root / 'focused').exists())
+        self.assertEqual(self.launch(wayland=True, args=['https://example.invalid/next']).returncode, 0)
+        self.assertEqual(self.pid(), pid)
+        self.assertIn('https://example.invalid/next', json.loads((self.root / 'forwarded').read_text()))
 
     def test_already_running_focus_and_url_reuse(self):
         self.start()

@@ -78,6 +78,25 @@ class CloseBrowser(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'finish closing its profile'):
             self.execute(['--normal-window'], processes=[process])
 
+    def test_flattened_process_title_still_waits_for_profile_exit(self):
+        process = Mock()
+        process.read_bytes.side_effect = [b'chromium ' + PROFILE + b' --no-first-run\0', b'']
+        sleep = self.execute(['--normal-window'], processes=[process])
+        self.assertEqual(process.read_bytes.call_count, 2)
+        sleep.assert_called_once_with(0.1)
+
+    def test_lingering_flattened_profile_owner_fails(self):
+        process = Mock()
+        process.read_bytes.return_value = b'chromium ' + PROFILE + b'\0'
+        with self.assertRaisesRegex(AssertionError, 'finish closing its profile'):
+            self.execute(['--normal-window'], processes=[process])
+
+    def test_flattened_renderer_and_other_profile_do_not_block_exit(self):
+        renderer, other = Mock(), Mock()
+        renderer.read_bytes.return_value = b'chromium ' + PROFILE + b' --type=renderer\0'
+        other.read_bytes.return_value = b'chromium ' + PROFILE + b'-other\0'
+        self.execute(['--normal-window'], processes=[renderer, other])
+
     def test_renderer_or_unrelated_profile_cannot_block_profile_flush(self):
         renderer, other = Mock(), Mock()
         renderer.read_bytes.return_value = b'chromium\0' + PROFILE + b'\0--type=renderer\0'
