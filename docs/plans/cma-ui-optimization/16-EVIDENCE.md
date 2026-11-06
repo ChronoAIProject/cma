@@ -11,6 +11,12 @@ Final exact commit, changed paths, source SHA-256 and artifact manifest are in
 external `ticket16-proof/manifest.json` and `ticket16-proof/HANDOFF.md`.
 Original acceptance text is unchanged.
 
+Current UI refinement (2026-11-06): `docs/Web_Style.md` supersedes the landing
+choice described below. New drafts offer only Shared desktop, make no desktop
+capability read and omit `desktop`; recorded browser intents still recover
+unchanged. The native Web proof now seeds such a recorded intent. The evidence
+below records the earlier UI and runtime behavior, not a new verification run.
+
 ## Behavior and ownership
 
 Home offers **Enable desktop**, default off, with preparation/time/memory copy.
