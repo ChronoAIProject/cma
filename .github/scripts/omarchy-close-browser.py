@@ -52,9 +52,13 @@ while True:
     live = False
     for path in Path('/proc').glob('[0-9]*/cmdline'):
         try:
-            args = path.read_bytes().split(b'\0')
+            args = path.read_bytes().rstrip(b'\0').split(b'\0')
         except (FileNotFoundError, ProcessLookupError):
             continue
+        # Chromium flattens argv into a process title on native Linux. This
+        # fixture's fixed profile has no spaces, so its flags remain separable.
+        if len(args) == 1:
+            args = args[0].split(b' ')
         if argument in args and not any(arg.startswith(b'--type=') for arg in args):
             live = True
     if not live:
