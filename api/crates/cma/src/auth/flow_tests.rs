@@ -44,7 +44,7 @@ mod silent {
         ProviderMetadata,
     };
 
-    async fn provider(store: Arc<MemoryAuthStore>) -> Arc<AuthState> {
+    pub(super) async fn provider(store: Arc<MemoryAuthStore>) -> Arc<AuthState> {
         let auth = AuthState::with_store_and_nyxid_public_url(
             AuthMode::Provider {
                 base_url: "http://provider.invalid".into(),
@@ -65,7 +65,7 @@ mod silent {
         auth
     }
 
-    fn get(path: &str, cookie: Option<&str>) -> Request<Body> {
+    pub(super) fn browser_get(path: &str, cookie: Option<&str>) -> Request<Body> {
         let mut request = Request::get(path).header(header::HOST, "cma.example");
         if let Some(cookie) = cookie {
             request = request.header(header::COOKIE, cookie);
@@ -73,7 +73,7 @@ mod silent {
         request.body(Body::empty()).unwrap()
     }
 
-    fn binding_cookie(response: &Response) -> String {
+    pub(super) fn binding_cookie(response: &Response) -> String {
         response
             .headers()
             .get_all(header::SET_COOKIE)
@@ -85,7 +85,36 @@ mod silent {
             .to_owned()
     }
 
-    fn authorize_query(response: &Response) -> HashMap<String, String> {
+    /// The callback NyxID's `build_callback_error_url` redirects to.
+    pub(super) fn nyxid_refusal(error: &str, description: &str, state: &str) -> String {
+        format!(
+            "/auth/callback?error={error}&error_description={}&state={state}",
+            urlencode(description)
+        )
+    }
+
+    pub(super) async fn silent_attempt(app: &Router, cookie: Option<&str>) -> (String, String) {
+        let login = app
+            .clone()
+            .oneshot(browser_get(
+                "/auth/login?prompt=none&return_to=%2Fagents%2Fagt_123",
+                cookie,
+            ))
+            .await
+            .unwrap();
+        (authorize_query(&login)["state"].clone(), binding_cookie(&login))
+    }
+
+    pub(super) fn set_cookies(response: &Response) -> Vec<String> {
+        response
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().unwrap().to_owned())
+            .collect()
+    }
+
+    pub(super) fn authorize_query(response: &Response) -> HashMap<String, String> {
         reqwest::Url::parse(response.headers()[header::LOCATION].to_str().unwrap())
             .unwrap()
             .query_pairs()
@@ -98,7 +127,7 @@ mod silent {
         let store = Arc::new(MemoryAuthStore::default());
         let app = router(provider(store.clone()).await);
         let response = app
-            .oneshot(get(
+            .oneshot(browser_get(
                 "/auth/login?prompt=none&return_to=%2Fagents%2Fagt_123",
                 None,
             ))
@@ -125,7 +154,7 @@ mod silent {
     #[tokio::test]
     async fn interactive_login_does_not_send_a_prompt() {
         let app = router(provider(Arc::new(MemoryAuthStore::default())).await);
-        let response = app.oneshot(get("/auth/login", None)).await.unwrap();
+        let response = app.oneshot(browser_get("/auth/login", None)).await.unwrap();
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert!(!authorize_query(&response).contains_key("prompt"));
     }
@@ -135,7 +164,7 @@ mod silent {
         let app = router(provider(Arc::new(MemoryAuthStore::default())).await);
         let login = app
             .clone()
-            .oneshot(get(
+            .oneshot(browser_get(
                 "/auth/login?prompt=none&return_to=%2Fagents%2Fagt_123",
                 None,
             ))
@@ -145,8 +174,8 @@ mod silent {
         let cookie = binding_cookie(&login);
 
         let callback = app
-            .oneshot(get(
-                &format!("/auth/callback?state={state}&error=login_required"),
+            .oneshot(browser_get(
+                &nyxid_refusal("login_required", "User is not authenticated", &state),
                 Some(&cookie),
             ))
             .await
@@ -170,13 +199,13 @@ mod silent {
     #[tokio::test]
     async fn a_declined_interactive_login_is_still_reported() {
         let app = router(provider(Arc::new(MemoryAuthStore::default())).await);
-        let login = app.clone().oneshot(get("/auth/login", None)).await.unwrap();
+        let login = app.clone().oneshot(browser_get("/auth/login", None)).await.unwrap();
         let state = authorize_query(&login)["state"].clone();
         let cookie = binding_cookie(&login);
 
         let callback = app
-            .oneshot(get(
-                &format!("/auth/callback?state={state}&error=access_denied"),
+            .oneshot(browser_get(
+                &nyxid_refusal("access_denied", "The user denied access", &state),
                 Some(&cookie),
             ))
             .await
@@ -195,10 +224,94 @@ mod silent {
         ] {
             let app = router(provider(Arc::new(MemoryAuthStore::default())).await);
             let response = app
-                .oneshot(get(&format!("/auth/login?{query}"), None))
+                .oneshot(browser_get(&format!("/auth/login?{query}"), None))
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
         }
+    }
+}
+
+mod silent_outcomes {
+    use std::sync::Arc;
+
+    use super::silent::*;
+    use super::*;
+    use crate::auth::persistence::MemoryAuthStore;
+
+    #[tokio::test]
+    async fn consent_continues_to_an_interactive_authorization() {
+        let app = router(provider(Arc::new(MemoryAuthStore::default())).await);
+        let (state, cookie) = silent_attempt(&app, None).await;
+
+        let callback = app
+            .oneshot(browser_get(
+                &nyxid_refusal("consent_required", "User consent is required", &state),
+                Some(&cookie),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(callback.status(), StatusCode::SEE_OTHER);
+        let query = authorize_query(&callback);
+        assert!(!query.contains_key("prompt"));
+        assert_ne!(query["state"], state);
+        let cookies = set_cookies(&callback);
+        let (name, _) = cookie.split_once('=').unwrap();
+        assert!(cookies
+            .iter()
+            .any(|value| value.starts_with(&format!("{name}=;")) && value.contains("Max-Age=0")));
+        assert!(cookies.iter().any(|value| value.starts_with(BINDING_COOKIE_PREFIX)
+            && !value.starts_with(&format!("{name}="))));
+        assert!(!cookies.iter().any(|value| value.starts_with(AUTH_COOKIE)));
+    }
+
+    #[tokio::test]
+    async fn a_signed_out_browser_is_declined_without_asking_the_provider() {
+        let app = router(provider(Arc::new(MemoryAuthStore::default())).await);
+        let response = app
+            .oneshot(browser_get(
+                "/auth/login?prompt=none&return_to=%2Fagents%2Fagt_123",
+                Some("cma_signed_out=1"),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(response.headers()[header::LOCATION], "/agents/agt_123");
+        assert!(set_cookies(&response).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_signed_out_browser_still_signs_in_interactively() {
+        let app = router(provider(Arc::new(MemoryAuthStore::default())).await);
+        let response = app
+            .oneshot(browser_get("/auth/login", Some("cma_signed_out=1")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert!(authorize_query(&response).contains_key("state"));
+    }
+
+    #[tokio::test]
+    async fn signing_out_fences_a_silent_attempt_still_in_flight() {
+        let app = router(provider(Arc::new(MemoryAuthStore::default())).await);
+        let (state, cookie) = silent_attempt(&app, None).await;
+
+        // Another tab signed out while the provider was answering. The code is
+        // never exchanged, so no CMA login is issued.
+        let callback = app
+            .oneshot(browser_get(
+                &format!("/auth/callback?code=provider-code&state={state}"),
+                Some(&format!("{cookie}; cma_signed_out=1")),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(callback.status(), StatusCode::SEE_OTHER);
+        assert_eq!(callback.headers()[header::LOCATION], "/agents/agt_123");
+        assert!(!set_cookies(&callback)
+            .iter()
+            .any(|value| value.starts_with(AUTH_COOKIE)));
     }
 }
