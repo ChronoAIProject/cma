@@ -104,11 +104,7 @@ impl ReportingStore {
         self.db.collection(name)
     }
     pub(crate) fn check_circuit(&self, now: u64) -> Result<()> {
-        if self.circuit.load(std::sync::atomic::Ordering::Relaxed) > now {
-            Err(MetricsError::Busy)
-        } else {
-            Ok(())
-        }
+        budget::check(&self.circuit, now)
     }
     pub(crate) async fn lease(&self, key: &str, holder: &str, seconds: u64) -> Result<bool> {
         let now = now();
