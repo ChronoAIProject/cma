@@ -5,6 +5,9 @@ use std::sync::Arc;
 
 #[async_trait]
 pub trait MetricsStore: Send + Sync {
+    async fn options(&self, _scope: &Scope, _query: OptionQuery) -> Result<FilterOptions> {
+        Err(MetricsError::Unavailable)
+    }
     async fn resolve_agent(&self, scope: &Scope, id: &str) -> Result<String>;
     async fn authorize_sandbox(&self, scope: &Scope, id: &str) -> Result<()>;
     async fn submit(&self, scope: Scope, query: ReportQuery, now: u64) -> Result<Report>;
@@ -24,6 +27,11 @@ pub struct MetricsService {
     store: Arc<dyn MetricsStore>,
 }
 impl MetricsService {
+    pub async fn options(&self, caller: &Caller, query: OptionQuery) -> Result<FilterOptions> {
+        let scope = authorize(caller, true)?;
+        query.validate()?;
+        self.store.options(&scope, query).await
+    }
     pub fn new(store: Arc<dyn MetricsStore>) -> Arc<Self> {
         Arc::new(Self { store })
     }

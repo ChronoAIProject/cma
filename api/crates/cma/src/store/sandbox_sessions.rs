@@ -2,7 +2,7 @@
 
 use layer2_core::sandbox::store::{SandboxSessionStore, SandboxStoreError};
 use layer2_core::{seconds_from_rfc3339, SandboxId};
-use mongodb::bson::doc;
+use mongodb::bson::{doc, Document};
 use mongodb::options::IndexOptions;
 use mongodb::IndexModel;
 
@@ -23,6 +23,7 @@ impl SandboxSessionStore for MongoSandboxStore {
         self.sandbox_sessions
             .insert_one(doc! {
                 "_id": session_id,
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "sandbox_id": sandbox_id.as_str(),
                 "lease_expires_at": lease_expires_at,
             })
@@ -47,8 +48,20 @@ impl SandboxSessionStore for MongoSandboxStore {
         let changed = self
             .sandbox_sessions
             .update_one(
-                doc! { "_id": session_id, "sandbox_id": sandbox_id.as_str() },
-                doc! { "$set": { "lease_expires_at": lease_expires_at } },
+                doc! {
+                    "_id": session_id, "sandbox_id": sandbox_id.as_str(),
+                    "$or": [
+                        { "document_schema_version": {
+                            "$eq": DOCUMENT_SCHEMA_VERSION, "$type": ["int", "long"],
+                            "$not": { "$type": "array" },
+                        } },
+                        { "document_schema_version": { "$exists": false } },
+                    ],
+                },
+                doc! { "$set": {
+                    "lease_expires_at": lease_expires_at,
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                } },
             )
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
@@ -101,6 +114,21 @@ impl SandboxSessionStore for MongoSandboxStore {
             .map(|row| row.is_some())
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))
     }
+}
+
+/// Only the exact unversioned shape written by #1341 is a known v1 lease.
+pub(super) fn is_legacy_v1(document: &Document) -> bool {
+    if document.len() != 3 {
+        return false;
+    }
+    let (Ok(id), Ok(sandbox_id), Ok(expiry)) = (
+        document.get_str("_id"),
+        document.get_str("sandbox_id"),
+        document.get_str("lease_expires_at"),
+    ) else {
+        return false;
+    };
+    validate(&SandboxId(sandbox_id.to_owned()), id, expiry).is_ok()
 }
 
 pub(super) async fn ensure_indexes(
@@ -160,4 +188,34 @@ fn validate(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_shape_requires_exact_fields_and_original_writer_validation() {
+        let row = doc! {
+            "_id": "desktop-lease",
+            "sandbox_id": "sbx_legacy",
+            "lease_expires_at": "2026-11-06T00:01:30Z",
+        };
+        assert!(is_legacy_v1(&row));
+        for (key, value) in [
+            ("_id", " ".into()),
+            ("_id", "x".repeat(MAX_SESSION_ID_BYTES + 1)),
+            ("sandbox_id", " ".into()),
+            ("lease_expires_at", "invalid".into()),
+        ] {
+            let mut invalid = row.clone();
+            invalid.insert(key, value);
+            assert!(!is_legacy_v1(&invalid));
+        }
+        for key in ["document_schema_version", "unknown_field"] {
+            let mut invalid = row.clone();
+            invalid.insert(key, 1_i64);
+            assert!(!is_legacy_v1(&invalid));
+        }
+    }
 }

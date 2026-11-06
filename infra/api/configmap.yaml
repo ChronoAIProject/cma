@@ -34,6 +34,9 @@ data:
   CHRONO_NYXID_SANDBOX_BILLING_PRODUCER_ID: ""
   # Names an out-of-band Secret/env key; the credential value is never checked in.
   CHRONO_NYXID_SANDBOX_BILLING_CREDENTIAL_REF: ""
+  # Set both refs to select renewable OAuth credentials; values live in the Secret.
+  CHRONO_NYXID_SANDBOX_BILLING_CLIENT_ID_REF: ""
+  CHRONO_NYXID_SANDBOX_BILLING_CLIENT_SECRET_REF: ""
   CHRONO_SANDBOX_PROVIDER: "agent-sandbox"
   CHRONO_RETAIN_OPENSANDBOX: "true"
   CHRONO_AGENT_SANDBOX_ENABLED: "true"

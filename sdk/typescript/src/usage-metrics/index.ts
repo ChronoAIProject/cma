@@ -3,6 +3,8 @@ import { ProtocolError, ValidationError } from '../errors.js';
 import type { OperationOptions } from '../http.js';
 import { query, read, segment } from '../resources.js';
 import * as schema from './schema.js';
+import { filterOptions, type UsageFilterOptionsQuery } from './options.js';
+export type { UsageFilterOptionsQuery, UsageFilterOptions } from './options.js';
 export type {
   UsageMetricQuantity,
   UsageMetricOwners,
@@ -51,6 +53,10 @@ export interface UsageMetricSeriesOptions extends OperationOptions {
 }
 /** Measured CPU/working-set/PVC history. Estimates never change allocated billing. */
 export class SandboxMetrics {
+  /** Bounded administrator discovery independent of report readiness. */
+  options(query: UsageFilterOptionsQuery) {
+    return filterOptions(this.config, this.admin, query);
+  }
   constructor(
     readonly config: ResolvedConfig,
     readonly admin = false,

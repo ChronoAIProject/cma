@@ -1,53 +1,27 @@
 import { useState } from 'react';
-import type { CmaWebClient } from '../api/client';
 import { Button } from '../ui/Button';
 import { Menu } from '../ui/Menu';
 import { IconChevronDownOutline14, IconCloudOutline16 } from '../ui/icons';
-import { useDesktopOption } from './useDesktopOption';
 
 export function RunTargetMenu({
-  client,
   workspaceId,
   sandboxId,
-  desktop,
+  recordedDesktop,
   machineIncluded,
   machineIncludedAvailable,
   frozen,
-  policyAllowed,
-  onDesktopChange,
   onMachineChange,
-  onAvailable,
 }: {
-  readonly client: CmaWebClient;
   readonly workspaceId?: string;
   readonly sandboxId?: string;
-  readonly desktop: boolean;
+  readonly recordedDesktop: boolean;
   readonly machineIncluded: boolean;
   readonly machineIncludedAvailable: boolean;
   readonly frozen: boolean;
-  readonly policyAllowed: boolean;
-  readonly onDesktopChange: (value: boolean) => void;
   readonly onMachineChange: (value: boolean) => void;
-  readonly onAvailable: (value: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const browser = useDesktopOption({
-    client,
-    workspaceId,
-    sandboxId,
-    enabled: desktop,
-    frozen,
-    policyAllowed,
-    onAvailable,
-  });
-  const suffix =
-    desktop && machineIncluded
-      ? 'Browser + desktop'
-      : desktop
-        ? 'Browser'
-        : machineIncluded
-          ? 'Shared desktop'
-          : undefined;
+  const showRecordedDesktop = frozen && recordedDesktop;
   return (
     <Menu
       open={open}
@@ -56,7 +30,7 @@ export function RunTargetMenu({
       onClose={() => setOpen(false)}
       selectedIds={[
         'cloud',
-        ...(desktop ? ['browser'] : []),
+        ...(showRecordedDesktop ? ['browser'] : []),
         ...(machineIncluded ? ['shared'] : []),
       ]}
       anchor={
@@ -67,7 +41,7 @@ export function RunTargetMenu({
           aria-expanded={open}
           onClick={() => setOpen(!open)}
         >
-          Cloud computer{suffix ? ` · ${suffix}` : ''}
+          Cloud computer{machineIncluded ? ' · Shared desktop' : ''}
           <IconChevronDownOutline14 />
         </Button>
       }
@@ -85,7 +59,17 @@ export function RunTargetMenu({
         },
         { type: 'separator', id: 'divider' },
         { type: 'label', id: 'options', text: 'Computer options' },
-        browser,
+        ...(showRecordedDesktop
+          ? [
+              {
+                id: 'browser',
+                role: 'menuitemcheckbox' as const,
+                label: 'Agent browser',
+                disabled: true,
+                reason: 'Agent browser choice is saved with the submitted task.',
+              },
+            ]
+          : []),
         {
           id: 'shared',
           role: 'menuitemcheckbox',
@@ -99,7 +83,6 @@ export function RunTargetMenu({
         },
       ]}
       onSelect={(id) => {
-        if (id === 'browser') onDesktopChange(!desktop);
         if (id === 'shared') onMachineChange(!machineIncluded);
         if (id === 'cloud') setOpen(false);
       }}

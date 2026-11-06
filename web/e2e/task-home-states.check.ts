@@ -37,17 +37,6 @@ for (const theme of ['light', 'dark']) {
           },
         }),
       );
-      await page.route('**/desktop-capability', (route) =>
-        route.fulfill({
-          json: {
-            state: 'available',
-            reason: 'Verified browser',
-            runtime_contract: 3,
-            min_memory_mib: 2048,
-            min_cpu_millis: 1000,
-          },
-        }),
-      );
       let outcome: 'running' | 'failed' | 'uncertain' = 'running';
       let writes = 0;
       await page.route('**/api/agent-manager/v1/agents', (route) => {

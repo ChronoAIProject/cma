@@ -6,6 +6,7 @@ import type { TreePermissions } from './Tree';
 import type { AgentStatus } from '../api/types';
 import { navigationFixture } from '../test/hierarchy';
 import { chooseOption, expandNavigationFilters } from '../test/select';
+import { AGENT_DETAIL } from '../test/agent';
 
 const permissions: TreePermissions = {
   createWorkspace: false,
@@ -139,6 +140,58 @@ it('shows visible task states alongside characters and respects parent lifecycle
   const live = screen.getByRole('tree', { name: 'Live sandboxes' });
   expect(live.querySelector('.tree-row__state .statedot')).toHaveAttribute('data-state', 'neutral');
   expect(live.querySelectorAll('.statedot[data-state="done"]')).toHaveLength(0);
+});
+
+it('keeps the summary status while refreshing, then shows the refreshed completion', () => {
+  const refresh = vi.fn();
+  const base = navigationFixture()[0]!;
+  const known = {
+    ...base,
+    workspaces: base.workspaces.map((workspace) => ({
+      ...workspace,
+      agents: workspace.agents.map((agent) => ({ ...agent, taskStatus: 'working' as const })),
+    })),
+  };
+  const view = render(
+    <ManagerNavigation
+      {...props}
+      currentAgent={AGENT_DETAIL}
+      navigation={{ status: 'ready', items: [known], refresh }}
+    />,
+  );
+  expect(screen.getByRole('treeitem', { name: /Agent one.*Working/ })).toBeInTheDocument();
+  view.rerender(
+    <ManagerNavigation
+      {...props}
+      currentAgent={{ ...AGENT_DETAIL, updatedAt: '2026-11-06T00:00:00Z' }}
+      navigation={{ status: 'ready', items: [known], refresh }}
+    />,
+  );
+  expect(screen.getByRole('treeitem', { name: /Agent one.*Working/ })).toBeInTheDocument();
+  expect(refresh).toHaveBeenCalled();
+  view.rerender(
+    <ManagerNavigation
+      {...props}
+      currentAgent={{ ...AGENT_DETAIL, updatedAt: '2026-11-06T00:00:00Z' }}
+      navigation={{
+        status: 'ready',
+        items: [
+          {
+            ...known,
+            workspaces: known.workspaces.map((workspace) => ({
+              ...workspace,
+              agents: workspace.agents.map((agent) => ({
+                ...agent,
+                taskStatus: 'completed' as const,
+              })),
+            })),
+          },
+        ],
+        refresh,
+      }}
+    />,
+  );
+  expect(screen.getByRole('treeitem', { name: /Agent one.*Completed/ })).toBeInTheDocument();
 });
 
 it('lists Agents without Sandbox or Workspace groups, most recently active first', () => {

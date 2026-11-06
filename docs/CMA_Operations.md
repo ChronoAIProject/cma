@@ -963,6 +963,9 @@ The lifecycle flags `machine_included` and `desktop` retain independent meanings
 to task-experience admission and `CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE` proof.
 A request enabling both must verify the selected machine image against that exact
 desktop image reference. Accepted operations retain both original flags on replay.
+The Web landing offers only Shared desktop (`machine_included`); it does not
+request `desktop` for new tasks. Recorded intents still replay their original
+flags, and owners can enable the Agent browser after creation.
 Both runtime build targets install the current browser command alongside the
 supervisor; the Omarchy toolchain donor does not determine that command version.
 
@@ -1060,10 +1063,28 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_NYXID_SANDBOX_BILLING_ENABLED` | Default false. Enables NyxID prepaid Sandbox quotes, finite windows, renewal and retained evidence admission. Keep false until the NyxID producer contract and all readers are deployed. |
 | `CHRONO_NYXID_SANDBOX_BILLING_BASE_URL` | HTTPS NyxID producer API base ending `/api/v1/billing/sandboxes`; credentials and query strings are rejected. |
 | `CHRONO_NYXID_SANDBOX_BILLING_PRODUCER_ID` | Canonical UUID v4 of the General-purpose producer service account, used for diagnostics. NyxID verifies producer identity from its JWT; this setting grants no authority. |
-| `CHRONO_NYXID_SANDBOX_BILLING_CREDENTIAL_REF` | Environment variable name populated through secret injection with a General-purpose service-account JWT scoped to `billing:sandbox:write`. CMA resolves it at request time; no credential value is stored in config or receipts. |
+| `CHRONO_NYXID_SANDBOX_BILLING_CREDENTIAL_REF` | Static mode only: environment variable name containing a General-purpose service-account JWT scoped to `billing:sandbox:write`. Resolved at request time. Used when both client-credentials refs are absent/empty; ignored when both are set. Static tokens retain their existing expiry and require operator replacement/restart. |
+| `CHRONO_NYXID_SANDBOX_BILLING_CLIENT_ID_REF` | Empty by default. Set to `NYXID_CMA_BILLING_PRODUCER_CLIENT_ID` for renewable producer tokens; names an environment key in the existing `chrono-bot/cma-agent-manager` Secret. Must be paired with the secret ref and resolve to a nonempty value at startup. |
+| `CHRONO_NYXID_SANDBOX_BILLING_CLIENT_SECRET_REF` | Empty by default. Set to `NYXID_CMA_BILLING_PRODUCER_CLIENT_SECRET`; names the Secret-backed environment key containing the SA client secret. Required with the client ID ref. Never put credential values in the ConfigMap. |
 | `CHRONO_SERVER_TRUSTED_PROXY_CIDRS` | Exact trusted load-balancer peers; empty by default, production explicit |
 | `CHRONO_SERVER_TRUSTED_PROXY_HOPS` | Trusted rightmost forwarded hops, 1-16; default 1 |
 | `CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS` | Empty or the complete build-pinned set; must not overlap trusted peer ranges |
+
+Renewable Sandbox producer authentication posts form-encoded client credentials
+with scope `billing:sandbox:write` to `/oauth/token` on the billing base URL's
+HTTPS origin. Each process owns an independent memory-only cache. Before each
+funding request, it refreshes at the earlier of 80% of `expires_in` or five
+minutes before expiry (20% margin when lifetime is at most five minutes).
+An idle process refreshes on its next funding call, before using a stale token.
+Concurrent callers share an exchange. A funding 401 refreshes once and replays
+the identical request once; a second 401 retains the existing funding error.
+Transient token failures get three attempts, each bounded to two seconds,
+with 100/200 ms backoff plus 0–49 ms jitter; failures are shared for one second.
+Malformed responses and credential rejection fail immediately. Redirects are
+refused and responses are bounded to 32 KiB. Failed refresh remains fail-closed.
+Logs report `Sandbox producer token refresh`, a fixed category, outcome and
+Unix expiry when available; no credentials, token fingerprints or response text.
+See [billing credentials rollout and rotation](CMA_Billing_Pilot.md#producer-token-lifecycle-and-secret-rotation).
 
 New Agent Manager Sandbox operations capture their CPU, memory and Always on
 inactivity policy at admission. Their private Sandbox configuration starts with
