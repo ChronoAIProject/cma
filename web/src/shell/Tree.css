@@ -370,13 +370,6 @@
 .agent-navigation .tree-row:focus-within .tree-row__menu {
   opacity: 1;
 }
-.task-mask,
-.task-mask svg {
-  display: block;
-  width: 24px;
-  height: 24px;
-  color: var(--dsw-alias-workspace-accent);
-}
 .task-ready {
   padding: 0 8px;
   border-radius: 8px;
