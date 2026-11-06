@@ -71,6 +71,8 @@ struct LoginAttemptDoc {
     return_to: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     actor_link_intent: Option<CipherEnvelope>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    silent: bool,
     expires_at: DateTime,
 }
 
