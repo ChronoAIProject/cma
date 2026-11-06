@@ -161,9 +161,11 @@ pub fn verify(c: &Context<'_>) {
                 (200, Some(true)) => {
                     let _: Identity = serde_json::from_value(c.case.response.body.clone()).unwrap();
                 }
+                // `silent_sign_in` serves the web client's own browser flow;
+                // the SDK's signed-out session deliberately does not carry it.
                 (401, Some(false)) => assert_eq!(
                     c.case.response.body,
-                    serde_json::json!({"authenticated":false})
+                    serde_json::json!({"authenticated":false,"silent_sign_in":true})
                 ),
                 (503, None) => {}
                 _ => panic!("invalid browser identity document {}", c.case.id),
