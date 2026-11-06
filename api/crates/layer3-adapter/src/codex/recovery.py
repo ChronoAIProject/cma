@@ -25,9 +25,15 @@ LAUNCHER_NATIVES = {
 }
 BRIDGE_PATH = "/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js"
 RELAY_SOURCE = "e595835b6314ff0770fdf97817d6920295ea384a5ac3bfdd0476b90c81b79a4f"
-DESKTOP_SOURCE = "c03e804c28de395c7501001f390346f2c2ad29349eab2e17cf9929e7902bcf99"
-# Retained Openbox homes coexist with newly admitted XFCE Machines.
-DESKTOP_SOURCES = {DESKTOP_SOURCE, "3127c5d454316efaf7e147665f871825aae2eda00cea250d2f89fd18f351263d"}
+DESKTOP_SOURCE = "6910bdac6a24cc971f95bc0d2d10f19635a225e6a9f04b333d3555b4cec7ed7e"
+# Retained Openbox/XFCE/Omarchy homes coexist with newly admitted desktop Machines.
+OMARCHY_DESKTOP_SOURCE = "7b290d8bcf9d95de46c43d069d8b1e73def32f55cfc2ede3e04b7720bc6e439e"
+DESKTOP_SOURCES = {
+    DESKTOP_SOURCE, OMARCHY_DESKTOP_SOURCE,
+    "c03e804c28de395c7501001f390346f2c2ad29349eab2e17cf9929e7902bcf99",
+    "b2b88eaf39c2bf6e6018e2a6185d5461cbaabe1f66fa76562c898c24914af609",
+    "3127c5d454316efaf7e147665f871825aae2eda00cea250d2f89fd18f351263d",
+}
 DESKTOP_PATH = "/usr/local/bin/cma-desktop-session"
 
 
