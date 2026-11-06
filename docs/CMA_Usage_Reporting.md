@@ -18,7 +18,7 @@ Recommended toggle write: `PATCH /api/v1/admin/settings` with `{ "expected_revis
 
 ## Read-only exposure for every authenticated user
 
-The existing `GET /auth/session` success body gains `"usage_reporting": { "measured_visible": false }` alongside `authenticated`, `subject`, `capabilities`, `visitor` and profile fields. Owner, admin and visitor identities all receive the effective saved value. A fresh session read sees current persisted settings (no process-lifetime cache). Anonymous responses stay 401 `{ "authenticated": false }`.
+The existing `GET /auth/session` success body gains `"usage_reporting": { "measured_visible": false }` alongside `authenticated`, `subject`, `capabilities`, `visitor` and profile fields. Owner, admin and visitor identities all receive the effective saved value. A fresh session read sees current persisted settings (no process-lifetime cache). Anonymous responses stay 401 `{ "authenticated": false }` plus the `"silent_sign_in": true` capability described in [API_Overview.md](API_Overview.md); they carry no usage policy.
 
 If configured settings storage cannot be read, the endpoint returns 503 `settings_unavailable`; the UI must keep measured usage hidden when the session/setting is missing or fails. Older servers omit usage_reporting, so consumers must treat absence as false. Refresh the session after a successful admin toggle; other browsers observe changes on their next session refresh.
 

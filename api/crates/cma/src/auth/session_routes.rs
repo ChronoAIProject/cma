@@ -82,7 +82,6 @@ pub(super) async fn logout(State(auth): State<Arc<AuthState>>, headers: HeaderMa
         header::SET_COOKIE,
         expired_cookie(AUTH_COOKIE, auth.secure_cookies()),
     );
-
     response
         .headers_mut()
         .insert(header::LOCATION, HeaderValue::from_static("/"));
