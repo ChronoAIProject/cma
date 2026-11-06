@@ -418,6 +418,7 @@ export function AgentSurface({
             settings={
               readOnly ? undefined : (
                 <SessionSettings
+                  usage={conversation?.usage}
                   key={`settings:${viewerId}:${agentId}`}
                   agentId={agentId}
                   active={!accessUncertain}
@@ -426,8 +427,6 @@ export function AgentSurface({
                 />
               )
             }
-            showUsage
-            usage={conversation.usage}
             steeringMode={steeringMode}
             onSteeringModeChange={state.v2 === undefined ? undefined : setSteeringMode}
             draft={draft}
