@@ -13,8 +13,12 @@ fn query(kind: OptionKind) -> OptionQuery {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
+    let mut window = super::circuit_capture::ScaleWindow::start_for("options", 0);
     for count in [400, 20_001] {
+        window.cohort(count);
         let store = fixture().await;
+        window.attach(&store);
+        window.phase("seed_states", 0);
         let states: Vec<_> = (0..count)
             .map(|n| {
                 let mut row = state(n, now() - 60);
@@ -27,6 +31,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             let name = match n { 0 | 1 => "Alex Chen".into(), 2 => "Priya [Research]".into(), _ => format!("Operator {n}") };
             doc! {"_id":format!("owner-{n}"),"display_name":name,"first_seen_at":format!("2026-11-{:02}T12:30:00Z",n%28+1)}
         }).collect();
+        window.phase("seed_users", 0);
         store.collection("users").insert_many(users).await.unwrap();
         let inventory: Vec<_> = states.iter().enumerate().map(|(n, row)| {
             if n % 2 == 0 {
@@ -35,6 +40,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                 doc! {"_id":row.sandbox_id.as_str(),"record":{"lifecycle":{"suspended_runtime":{"runtime_version":"runtime-previous"}}}}
             }
         }).collect();
+        window.phase("seed_inventory", 0);
         store
             .collection("sandboxes")
             .insert_many(inventory)
@@ -46,6 +52,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
         let mut owner_query = query(OptionKind::Owner);
         let mut owner_pages = 0;
         loop {
+            window.phase("owner_page", owner_pages + 1);
             let page = tokio::time::timeout(
                 Duration::from_secs(5),
                 store.options(
@@ -71,6 +78,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
         assert_eq!(owner_ids.len(), 120);
         assert_eq!(owner_pages, 3);
         let owner_elapsed = owner_started.elapsed();
+        window.phase("sandbox_page", 1);
         let first = store
             .options(
                 &operator,
@@ -89,6 +97,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             cursor: first.next.clone(),
             ..query(OptionKind::Sandbox)
         };
+        window.phase("sandbox_page", 2);
         let second = store
             .options(
                 &operator,
@@ -144,6 +153,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             Err(MetricsError::Forbidden)
         ));
         let target = count - 1;
+        window.phase("sandbox_search", 0);
         let found = store
             .options(
                 &operator,
@@ -157,6 +167,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             .unwrap();
         assert_eq!(found.items.len(), 1);
         assert_eq!(found.items[0].value, states[target].sandbox_id.as_str());
+        window.phase("sandbox_owner_filter", 0);
         let narrowed = store
             .options(
                 &operator,
@@ -171,6 +182,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
         assert!(narrowed.items.iter().all(|item| states
             .iter()
             .any(|s| s.sandbox_id.as_str() == item.value && s.owner.as_str() == "owner-0")));
+        window.phase("owner_search", 0);
         let owners = store
             .options(
                 &operator,
@@ -193,6 +205,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             Some("Joined 2026-11-02")
         );
         assert!(owners.items.iter().all(|item| item.label == "Alex Chen"));
+        window.phase("owner_literal_search", 0);
         let literal = store
             .options(
                 &operator,
@@ -205,6 +218,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             .await
             .unwrap();
         assert_eq!(literal.items.len(), 1);
+        window.phase("owner_resolve", 0);
         let unnamed = store
             .options(
                 &operator,
@@ -218,6 +232,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             .unwrap();
         assert_eq!(unnamed.items[0].label, "Unnamed owner");
         assert!(unnamed.items[0].disambiguator.is_none());
+        window.phase("seed_duplicate_labels", 0);
         for (n, owner) in [(0, "owner-0"), (1, "owner-2")] {
             store
                 .collection(super::super::super::sandbox_usage::STATES)
@@ -228,6 +243,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                 .await
                 .unwrap();
         }
+        window.phase("sandbox_duplicate_search", 0);
         let duplicates = store
             .options(
                 &operator,
@@ -249,6 +265,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             duplicates.items[1].disambiguator.as_deref(),
             Some("Priya [Research]")
         );
+        window.phase("sandbox_resolve", 0);
         let only = store
             .options(
                 &operator,
@@ -262,6 +279,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             .unwrap();
         assert_eq!(only.items[0].label, "Shared research");
         assert!(only.items[0].disambiguator.is_none());
+        window.phase("runtime_discovery", 0);
         let runtime_started = std::time::Instant::now();
         let runtimes = tokio::time::timeout(
             Duration::from_secs(5),
@@ -283,6 +301,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                 .collect::<Vec<_>>(),
             vec!["runtime-previous", "runtime-stable"]
         );
+        window.phase("seed_identifier_labels", 0);
         let identifier_name = "Research-91892afa-5fa5-4f4f-9100-2b8d986d2f71";
         store
             .collection(super::super::super::sandbox_usage::STATES)
@@ -293,6 +312,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             .await
             .unwrap();
         store.collection("sandboxes").insert_one(doc! {"_id":"uuid-runtime", "record":{"runtime":{"runtime_version":identifier_name}}}).await.unwrap();
+        window.phase("identifier_label_resolution", 0);
         for (kind, value, label) in [
             (
                 OptionKind::Sandbox,
@@ -336,6 +356,8 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                 .unwrap(),
             0
         );
+        window.phase("cleanup", 0);
         store.db.drop().await.unwrap();
+        window.phase("done", 0);
     }
 }
