@@ -72,10 +72,11 @@
   display: block;
 }
 .usage-owner-allocation__axis {
+  --cma-scrollbar-thumb: transparent;
+  --cma-scrollbar-thumb-hover: transparent;
   height: 36px;
   overflow-y: scroll;
   scrollbar-gutter: stable;
-  scrollbar-color: transparent transparent;
   pointer-events: none;
 }
 .usage-owner-allocation__sr {
