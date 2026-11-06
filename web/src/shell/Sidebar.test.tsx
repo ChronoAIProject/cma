@@ -219,3 +219,23 @@ it('marks the current New agent page and renders the platform search shortcut as
   view.rerender(<Sidebar collapsed={false} account="Account" newAgent={{ onCreate: vi.fn() }} />);
   expect(screen.getByRole('button', { name: 'New agent' })).not.toHaveAttribute('aria-current');
 });
+
+it('keeps current page links highlighted without adding a Settings destination', async () => {
+  const { consoleLinks } = await import('../ConsoleLinks');
+  const onNavigate = vi.fn();
+  render(
+    <Sidebar
+      collapsed={false}
+      account="Account"
+      onNavigate={onNavigate}
+      links={consoleLinks({ kind: 'artifacts' }, true, true)}
+    />,
+  );
+  const artifacts = screen.getByRole('link', { name: 'Artifacts' });
+  expect(artifacts).toHaveAttribute('aria-current', 'page');
+  expect(artifacts).toHaveClass('sidebar__link');
+  expect(artifacts.querySelector('svg')).not.toBeNull();
+  expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+  await userEvent.click(artifacts);
+  expect(onNavigate).toHaveBeenCalledWith({ kind: 'artifacts' });
+});
