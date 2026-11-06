@@ -380,6 +380,7 @@ function ConsoleContent({
               viewerId={user.id}
               shared={shared !== undefined}
               detail={ready?.detail}
+              onStopForControl={agent.interruptForControl}
               resourceAvailability={agent.resourceAvailability}
               panel={panel}
               onSelect={setPanel}
@@ -388,7 +389,7 @@ function ConsoleContent({
               onClose={() => setPanel(undefined)}
               onAccessChanged={agentAccess.reload}
               publicationScope={artifactPublicationScope}
-              historyLoading={ready?.historyLoading}
+              historyLoading={ready?.historyLoading || !!ready?.historyUnavailable}
               pending={agent.pending}
               onOpenSandbox={
                 ready === undefined

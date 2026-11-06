@@ -144,8 +144,9 @@ it('requires explicit control and returns input to the running Agent on request'
   view.rerender(<DesktopPanel runtimeReady agentId="agt_demo" running onClose={onClose} />);
   expect(connection.viewOnly).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: 'Control desktop' }));
-  expect(connection.viewOnly).toBe(false);
-  fireEvent.click(screen.getByRole('button', { name: 'Return to Agent' }));
+  expect(connection.viewOnly).toBe(true);
+  expect(screen.getByRole('button', { name: 'Stop Agent and take control' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   expect(connection.viewOnly).toBe(true);
   expect(screen.getByRole('button', { name: 'Control desktop' })).toBeEnabled();
   expect(screen.getByRole('status')).toHaveTextContent('Agent is working');
@@ -321,4 +322,96 @@ it('restores a lost display with input revoked and bounds automatic recovery', a
   await act(async () => vi.advanceTimersByTime(30_000));
   expect(connections).toHaveLength(4);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it('confirms running takeover and keeps input disabled until the stopped turn is observed', async () => {
+  let finish!: () => void;
+  const onStop = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const draw = (running: boolean, runId?: string) => (
+    <DesktopPanel
+      runtimeReady
+      embedded
+      agentId="agt_demo"
+      running={running}
+      runId={runId}
+      onStop={onStop}
+      onClose={vi.fn()}
+    />
+  );
+  const view = render(draw(true, 'run-1'));
+  await waitFor(() => expect(connections).toHaveLength(1));
+  const connection = connectionAt(0);
+  act(() => connection.dispatchEvent(new Event('connect')));
+  fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
+  expect(screen.getByText("Taking control stops the Agent's current turn")).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(onStop).not.toHaveBeenCalled();
+  expect(connection.viewOnly).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Stop Agent and take control' }));
+  expect(onStop).toHaveBeenCalledOnce();
+  expect(connection.viewOnly).toBe(true);
+  await act(async () => finish());
+  expect(connection.viewOnly).toBe(true);
+  expect(screen.getByText('Waiting for the Agent to stop…')).toBeVisible();
+  view.rerender(draw(false));
+  expect(connection.viewOnly).toBe(false);
+  view.rerender(draw(true, 'run-2'));
+  expect(connection.viewOnly).toBe(true);
+});
+
+it('reports stop failure without granting desktop input', async () => {
+  const onStop = vi.fn().mockRejectedValue(new Error('Stop denied'));
+  render(
+    <DesktopPanel
+      runtimeReady
+      embedded
+      agentId="agt_demo"
+      running
+      runId="one"
+      onStop={onStop}
+      onClose={vi.fn()}
+    />,
+  );
+  await waitFor(() => expect(connections).toHaveLength(1));
+  act(() => connectionAt(0).dispatchEvent(new Event('connect')));
+  fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Stop Agent and take control' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Stop denied');
+  expect(connectionAt(0).viewOnly).toBe(true);
+});
+
+it('never grants a stale takeover after a different turn starts', async () => {
+  let finish!: () => void;
+  const onStop = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const draw = (runId: string) => (
+    <DesktopPanel
+      runtimeReady
+      embedded
+      agentId="agt_demo"
+      running
+      runId={runId}
+      onStop={onStop}
+      onClose={vi.fn()}
+    />
+  );
+  const view = render(draw('one'));
+  await waitFor(() => expect(connections).toHaveLength(1));
+  act(() => connectionAt(0).dispatchEvent(new Event('connect')));
+  fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Stop Agent and take control' }));
+  view.rerender(draw('two'));
+  await act(async () => finish());
+  expect(connectionAt(0).viewOnly).toBe(true);
+  expect(screen.getByRole('alert')).toHaveTextContent('A new Agent turn started');
 });

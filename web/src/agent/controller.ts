@@ -482,6 +482,12 @@ export function useAgentController(
         : (content, onAccepted, onReceiptObserved, onRefused, onOrdinaryInput) =>
             run(content, onAccepted, onReceiptObserved, onRefused, 'interrupt', onOrdinaryInput),
     approve: (approvalId, decision) => run({ id: approvalId, decision }),
+    interruptForControl: () =>
+      command(
+        'interrupt',
+        (id, key, signal) => client.interruptAgent(id, { idempotencyKey: key, signal }),
+        true,
+      ),
     interrupt: () =>
       command('interrupt', (id, key, signal) =>
         client.interruptAgent(id, { idempotencyKey: key, signal }),
