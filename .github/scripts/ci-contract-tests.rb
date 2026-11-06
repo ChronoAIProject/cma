@@ -38,9 +38,11 @@ guarded = mode == "release" ? [
   ["publish", "runtime-image-gate", "Execute published runtime image contract"],
 ] : [
   ["ci", "trigger-provider-smoke-contract", "Staging authority and evidence regressions"],
+  ["ci", "trigger-provider-smoke-contract", "Backend capacity preparation regressions"],
   ["ci", "trigger-provider-smoke-contract", "Typecheck every harness entry point"],
   ["ci", "trigger-provider-smoke-contract", "Local browser guard mechanics"],
   ["ci", "backend", "Image normalization budgets"],
+  ["ci", "backend", "Prepare Backend capacity"],
   ["ci", "backend", "Tests"],
   ["ci", "backend", "Gateway socket latency budget"],
   ["ci", "backend", "Disposable real Mongo persistence contracts"],
@@ -62,6 +64,22 @@ guarded.each do |workflow, id, name|
       when "fake-success" then entry["run"] = "true"
       end
     end
+  end
+end
+
+if mode == "provider"
+  reject.call("capacity runs after compilation") do |value|
+    rows = value["ci"]["jobs"]["backend"]["steps"]
+    rows << rows.delete_at(1)
+  end
+  reject.call("capacity uses a different runner size") do |value|
+    value["ci"]["jobs"]["backend"]["runs-on"] = "ubuntu-latest-4-cores"
+  end
+  reject.call("capacity uses a caller-controlled environment") do |value|
+    value["ci"]["jobs"]["backend"]["steps"][1]["env"] = { "RUNNER_ENVIRONMENT" => "github-hosted" }
+  end
+  reject.call("capacity helper has the wrong working directory") do |value|
+    value["ci"]["jobs"]["backend"]["steps"][1]["working-directory"] = "api"
   end
 end
 

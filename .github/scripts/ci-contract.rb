@@ -182,6 +182,7 @@ module CIContract
     {
       "Provider workflow authority contract" => "ruby .github/scripts/ci-contract.rb provider",
       "Provider contract mutation regressions" => "ruby .github/scripts/ci-contract-tests.rb provider",
+      "Backend capacity preparation regressions" => "python3 .github/scripts/backend-capacity-tests.py",
       "Staging authority and evidence regressions" => "node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs",
       "Authenticated Mongo startup regressions" => "node --test .github/scripts/authenticated-mongo-readiness.test.mjs",
       "Typecheck every harness entry point" => "npm run e2e:typecheck",
@@ -191,6 +192,10 @@ module CIContract
       "Local browser guard mechanics" => "npm run e2e:mechanics",
     }.each { |name, command| step(gate, name, command) }
     backend = job(ci, "backend", "Backend")
+    capacity = step(backend, "Prepare Backend capacity", 'sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS python3 .github/scripts/backend-capacity.py || echo "::warning::Backend capacity preparation unavailable"')
+    require!(backend["runs-on"] == "ubuntu-latest", "Backend capacity must retain the hosted runner size")
+    require!(backend["steps"][0] == { "uses" => "actions/checkout@v5" } && backend["steps"][1] == capacity, "Backend capacity must run immediately after checkout")
+    require!(capacity["working-directory"] == "." && !capacity.key?("env"), "Backend capacity must use the checked-in helper and runner environment")
     step(backend, "Image normalization budgets", "cargo nextest run --workspace --locked -E 'binary(=media_image_peak)' --test-threads 1 --success-output final")
     step(backend, "Tests", "cargo nextest run --workspace --locked --no-fail-fast -E 'not (binary(=media_image_peak) or binary(=turn_metrics))'")
     step(backend, "Gateway socket latency budget", "cargo nextest run --workspace --locked -E 'binary(=turn_metrics)' --test-threads 1 --success-output final")
