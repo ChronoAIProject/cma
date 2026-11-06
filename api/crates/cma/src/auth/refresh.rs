@@ -142,7 +142,7 @@ async fn exchange(
         {
             if let Some(tokens) = &state.tokens {
                 auth.identity_store
-                    .invalidate(&auth.identity_store.key(tokens.access_token.expose()));
+                    .invalidate_token(tokens.access_token.expose());
             }
             return Ok(None);
         }

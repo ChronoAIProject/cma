@@ -1,7 +1,7 @@
 //! Provider discovery shared by authentication paths.
 
 use super::{
-    identity, rebase, verification_error::ProviderVerificationError as Error, AuthMode, AuthState,
+    rebase, verification_error::ProviderVerificationError as Error, AuthMode, AuthState,
     ProviderMetadata,
 };
 
@@ -13,6 +13,16 @@ impl AuthState {
     }
 
     pub(super) async fn verification_metadata(&self) -> Result<ProviderMetadata, Error> {
+        self.verification_metadata_until(
+            tokio::time::Instant::now() + super::identity_http::DIRECT_TIMEOUT,
+        )
+        .await
+    }
+
+    pub(super) async fn verification_metadata_until(
+        &self,
+        deadline: tokio::time::Instant,
+    ) -> Result<ProviderMetadata, Error> {
         if let Some(metadata) = self.metadata.read().await.clone() {
             return Ok(metadata);
         }
@@ -25,27 +35,9 @@ impl AuthState {
             "{}/.well-known/openid-configuration",
             base_url.trim_end_matches('/')
         );
-        let response = self
-            .http
-            .get(&discovery_url)
-            .send()
-            .await
-            .map_err(|error| {
-                identity::verification_failure("discovery", "transport", None);
-                Error::transport(error)
-            })?;
-        if !response.status().is_success() {
-            identity::verification_failure(
-                "discovery",
-                "http_status",
-                Some(response.status().as_u16()),
-            );
-            return Err(Error::status(response.status()));
-        }
-        let mut metadata = response
-            .json::<ProviderMetadata>()
-            .await
-            .map_err(Error::transport)?;
+        let body = super::identity_http::json(self.http.get(&discovery_url), deadline).await?;
+        let mut metadata: ProviderMetadata = serde_json::from_value(body)
+            .map_err(|_| Error::Unavailable("invalid identity provider metadata".into()))?;
         metadata.token_endpoint =
             rebase(&metadata.token_endpoint, base_url).map_err(Error::Unavailable)?;
         metadata.userinfo_endpoint = metadata

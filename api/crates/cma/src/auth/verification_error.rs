@@ -23,7 +23,7 @@ impl ProviderVerificationError {
     pub(super) fn transport(error: reqwest::Error) -> Self {
         if error.is_timeout() {
             Self::Transient("timeout")
-        } else if error.is_connect() || error.is_request() || error.is_body() {
+        } else if error.is_connect() || connection_io_failure(&error) {
             Self::Transient("connection")
         } else {
             Self::Unavailable("identity provider transport failed".into())
@@ -50,4 +50,27 @@ impl ProviderVerificationError {
             Self::Unavailable(_) | Self::Transient(_) => CommandAuthorizationError::Unavailable,
         }
     }
+}
+
+fn connection_io_failure(error: &reqwest::Error) -> bool {
+    use std::error::Error;
+    use std::io::ErrorKind;
+    // is_request() also includes malformed HTTP responses. Only recognized
+    // connection IO failures before headers can enter the transient class.
+    let mut source = error.source();
+    while let Some(cause) = source {
+        if cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
+            matches!(
+                error.kind(),
+                ErrorKind::ConnectionReset
+                    | ErrorKind::ConnectionAborted
+                    | ErrorKind::NotConnected
+                    | ErrorKind::BrokenPipe
+            )
+        }) {
+            return true;
+        }
+        source = cause.source();
+    }
+    false
 }
