@@ -159,7 +159,7 @@ const server = createServer(async (request, response) => {
   }, frame => {
     const update = frame.params?.update;
     if (update?.toolCallId && update.status) toolStates.set(update.toolCallId, update.status);
-  });
+  }, 60000);
   try {
     await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
     const { sessionId } = await bridge.call('session/new', { cwd: directory, mcpServers: [] });
