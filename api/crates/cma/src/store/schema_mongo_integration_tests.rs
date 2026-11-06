@@ -15,6 +15,7 @@ use super::settings::{MongoPlatformSettingsStore, SETTINGS};
 use super::MongoStores;
 
 mod auto_pause_compatibility;
+mod session_versions;
 
 async fn database() -> (Client, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
