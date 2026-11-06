@@ -380,6 +380,7 @@ function ConsoleContent({
               viewerId={user.id}
               shared={shared !== undefined}
               detail={ready?.detail}
+              resourceAvailability={agent.resourceAvailability}
               panel={panel}
               onSelect={setPanel}
               conversation={ready?.conversation}
