@@ -48,7 +48,11 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
         loop {
             let page = tokio::time::timeout(
                 Duration::from_secs(5),
-                store.options(&operator, owner_query.clone()),
+                store.options(
+                    &operator,
+                    owner_query.clone(),
+                    OwnerContextAccess::DirectoryRead,
+                ),
             )
             .await
             .unwrap()
@@ -68,7 +72,11 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
         assert_eq!(owner_pages, 3);
         let owner_elapsed = owner_started.elapsed();
         let first = store
-            .options(&operator, query(OptionKind::Sandbox))
+            .options(
+                &operator,
+                query(OptionKind::Sandbox),
+                OwnerContextAccess::DirectoryRead,
+            )
             .await
             .unwrap();
         assert_eq!(first.items.len(), 50);
@@ -82,7 +90,11 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             ..query(OptionKind::Sandbox)
         };
         let second = store
-            .options(&operator, second_query.clone())
+            .options(
+                &operator,
+                second_query.clone(),
+                OwnerContextAccess::DirectoryRead,
+            )
             .await
             .unwrap();
         assert_eq!(second.items.len(), 50);
@@ -92,7 +104,11 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
             .iter()
             .all(|item| second.items.iter().all(|other| item.value != other.value)));
         assert!(store
-            .options(&scope("other-operator", true), second_query.clone())
+            .options(
+                &scope("other-operator", true),
+                second_query.clone(),
+                OwnerContextAccess::DirectoryRead
+            )
             .await
             .is_err());
         assert!(store
@@ -101,7 +117,8 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                 OptionQuery {
                     search: "Research".into(),
                     ..second_query.clone()
-                }
+                },
+                OwnerContextAccess::DirectoryRead
             )
             .await
             .is_err());
@@ -111,13 +128,18 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                 OptionQuery {
                     owner: Some("owner-0".into()),
                     ..second_query
-                }
+                },
+                OwnerContextAccess::DirectoryRead
             )
             .await
             .is_err());
         assert!(matches!(
             store
-                .options(&scope("owner-0", false), query(OptionKind::Owner))
+                .options(
+                    &scope("owner-0", false),
+                    query(OptionKind::Owner),
+                    OwnerContextAccess::DirectoryRead
+                )
                 .await,
             Err(MetricsError::Forbidden)
         ));
@@ -129,6 +151,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                     search: format!("Sandbox {target:06}"),
                     ..query(OptionKind::Sandbox)
                 },
+                OwnerContextAccess::DirectoryRead,
             )
             .await
             .unwrap();
@@ -141,6 +164,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                     owner: Some("owner-0".into()),
                     ..query(OptionKind::Sandbox)
                 },
+                OwnerContextAccess::DirectoryRead,
             )
             .await
             .unwrap();
@@ -154,6 +178,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                     search: "alex".into(),
                     ..query(OptionKind::Owner)
                 },
+                OwnerContextAccess::DirectoryRead,
             )
             .await
             .unwrap();
@@ -175,6 +200,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                     search: "[Research]".into(),
                     ..query(OptionKind::Owner)
                 },
+                OwnerContextAccess::DirectoryRead,
             )
             .await
             .unwrap();
@@ -186,6 +212,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                     selected: Some("owner-3".into()),
                     ..query(OptionKind::Owner)
                 },
+                OwnerContextAccess::DirectoryRead,
             )
             .await
             .unwrap();
@@ -208,6 +235,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                     search: "Shared research".into(),
                     ..query(OptionKind::Sandbox)
                 },
+                OwnerContextAccess::DirectoryRead,
             )
             .await
             .unwrap();
@@ -228,6 +256,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                     selected: Some(duplicates.items[0].value.clone()),
                     ..query(OptionKind::Sandbox)
                 },
+                OwnerContextAccess::DirectoryRead,
             )
             .await
             .unwrap();
@@ -236,7 +265,11 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
         let runtime_started = std::time::Instant::now();
         let runtimes = tokio::time::timeout(
             Duration::from_secs(5),
-            store.options(&operator, query(OptionKind::Runtime)),
+            store.options(
+                &operator,
+                query(OptionKind::Runtime),
+                OwnerContextAccess::DirectoryRead,
+            ),
         )
         .await
         .unwrap()
@@ -275,6 +308,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                         selected: Some(value.into()),
                         ..query(kind)
                     },
+                    OwnerContextAccess::DirectoryRead,
                 )
                 .await
                 .unwrap();
@@ -289,6 +323,7 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                     search: "absent".into(),
                     ..query(OptionKind::Sandbox)
                 },
+                OwnerContextAccess::DirectoryRead,
             )
             .await
             .unwrap();
