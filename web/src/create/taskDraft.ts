@@ -26,11 +26,11 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
         (value.machineIncluded !== undefined && typeof value.machineIncluded !== 'boolean')
       )
         throw new Error();
+      // The retired `desktop` choice is accepted for old drafts and dropped on the next persist.
       return {
         text: value.text,
         repositoryUrl: value.repositoryUrl,
         repositoryRef: value.repositoryRef,
-        desktop: value.desktop,
         machineIncluded: value.machineIncluded,
       };
     } catch {
@@ -45,13 +45,11 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
   const [repositoryUrl, setRepositoryUrl] = useState(initial.repositoryUrl ?? '');
   const [repositoryRef, setRepositoryRef] = useState(initial.repositoryRef ?? '');
   const [error, setError] = useState(initial.error);
-  const [desktop, setDesktop] = useState(initial.desktop ?? false);
   const [machineIncluded, setMachineIncluded] = useState(initial.machineIncluded ?? false);
   const persist = (
     value: string,
     url = repositoryUrl,
     reference = repositoryRef,
-    enabled = desktop,
     machine = machineIncluded,
   ) => {
     try {
@@ -64,7 +62,6 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
           text: value,
           repositoryUrl: url,
           repositoryRef: reference,
-          desktop: enabled,
           machineIncluded: machine,
         }),
       );
@@ -81,14 +78,9 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
     text,
     repositoryUrl,
     repositoryRef,
-    desktop,
     machineIncluded,
     changeMachineIncluded: (enabled: boolean) => {
       setMachineIncluded(enabled);
-      persist(text, repositoryUrl, repositoryRef, desktop, enabled);
-    },
-    changeDesktop: (enabled: boolean) => {
-      setDesktop(enabled);
       persist(text, repositoryUrl, repositoryRef, enabled);
     },
     changeRepository: (url: string, reference: string) => {

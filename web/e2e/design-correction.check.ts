@@ -483,9 +483,9 @@ for (const theme of ['light', 'dark']) {
       await expect(menu).toHaveCSS('border-radius', '18px');
       await expect(menu).toHaveCSS('width', width < 352 ? `${width - 32}px` : '320px');
       await expect(menu.getByRole('menuitemradio', { name: 'Cloud computer' })).toBeChecked();
-      await expect(menu.getByRole('menuitemcheckbox', { name: 'Agent browser' })).toBeDisabled();
+      await expect(menu.getByRole('menuitemcheckbox', { name: 'Agent browser' })).toHaveCount(0);
       await page.keyboard.press('ArrowDown');
-      await expect(menu.getByRole('menuitemcheckbox', { name: 'Agent browser' })).toBeFocused();
+      await expect(menu.getByRole('menuitemcheckbox', { name: 'Shared desktop' })).toBeFocused();
       await page.screenshot({ path: info.outputPath(`menu-${theme}-${width}.png`) });
       await page.keyboard.press('Escape');
       await expect(trigger).toBeFocused();
