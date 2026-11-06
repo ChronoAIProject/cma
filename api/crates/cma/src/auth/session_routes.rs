@@ -57,7 +57,9 @@ pub(super) async fn read(
         }
         None => (
             StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "authenticated": false })),
+            // Advertised so a client only attempts `/auth/login?prompt=none`
+            // against a control plane that implements it.
+            Json(serde_json::json!({ "authenticated": false, "silent_sign_in": true })),
         )
             .into_response(),
     }
@@ -80,6 +82,7 @@ pub(super) async fn logout(State(auth): State<Arc<AuthState>>, headers: HeaderMa
         header::SET_COOKIE,
         expired_cookie(AUTH_COOKIE, auth.secure_cookies()),
     );
+
     response
         .headers_mut()
         .insert(header::LOCATION, HeaderValue::from_static("/"));

@@ -23,7 +23,7 @@ use super::{
     session_routes::{issued_cookie, logout, read, request_cookie, urlencode},
     signup_options::signup_options,
     token::random_token,
-    AuthMode, AuthState, AUTH_COOKIE, AUTH_COOKIE_LIFETIME,
+    AuthMode, AuthState, AUTH_COOKIE, AUTH_COOKIE_LIFETIME, SIGNED_OUT_COOKIE,
 };
 
 const ATTEMPT_DOMAIN: &str = "oidc-login-attempt";
@@ -39,6 +39,12 @@ struct CallbackParams {
     code: Option<String>,
     state: Option<String>,
     error: Option<String>,
+    /// Sent with every provider error; accepted so the error can be handled,
+    /// never shown or trusted.
+    #[serde(default, rename = "error_description")]
+    _error_description: Option<String>,
+    #[serde(default, rename = "error_uri")]
+    _error_uri: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -131,6 +137,10 @@ async fn login(
         None => None,
     };
     let silent = matches!(params.prompt, Some(LoginPrompt::Silent));
+    if silent && request_cookie(&headers, SIGNED_OUT_COOKIE).is_some() {
+        // Signed out of CMA: decline without asking the provider.
+        return Redirect::to(return_to.as_deref().unwrap_or("/")).into_response();
+    }
     if silent && params.screen.is_some() {
         return (
             StatusCode::BAD_REQUEST,
@@ -287,16 +297,30 @@ async fn callback(
             Some((&cookie_name, auth.secure_cookies())),
         );
     }
-    if params.error.is_some() && attempt.silent {
-        // The provider has no session to reuse, or needs the person to act.
-        // Nobody asked to sign in, so return them to the page they were on.
-        let mut response =
-            Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response();
-        response.headers_mut().append(
-            header::SET_COOKIE,
-            issued_cookie(&cookie_name, "", auth.secure_cookies(), 0),
-        );
-        return response;
+    if attempt.silent {
+        let signed_out = request_cookie(&headers, SIGNED_OUT_COOKIE).is_some();
+        let declined = match params.error.as_deref() {
+            // Signed in to the provider, which only needs this person to
+            // approve CMA: continue to its consent screen. Nothing starts work.
+            Some("consent_required") if !signed_out => {
+                Some(begin_login(auth.clone(), attempt.return_to.clone(), None, false).await)
+            }
+            // No provider session, or the browser signed out of CMA after this
+            // attempt began. Nobody asked to sign in, so return them to the
+            // page they were on, still signed out.
+            Some(_) => Some(Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response()),
+            None if signed_out => {
+                Some(Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response())
+            }
+            None => None,
+        };
+        if let Some(mut response) = declined {
+            response.headers_mut().append(
+                header::SET_COOKIE,
+                issued_cookie(&cookie_name, "", auth.secure_cookies(), 0),
+            );
+            return response;
+        }
     }
     if params.error.is_some() {
         return login_failure(
@@ -412,6 +436,14 @@ async fn callback(
             AUTH_COOKIE_LIFETIME.as_secs(),
         ),
     );
+    // Only an interactive sign-in reaches here while the marker is set; it
+    // is the person choosing to be signed in again.
+    if request_cookie(&headers, SIGNED_OUT_COOKIE).is_some() {
+        response.headers_mut().append(
+            header::SET_COOKIE,
+            issued_cookie(SIGNED_OUT_COOKIE, "", auth.secure_cookies(), 0),
+        );
+    }
     response
 }
 

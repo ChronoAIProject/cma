@@ -152,7 +152,8 @@
           "content-type": "application/json"
         },
         "body": {
-          "authenticated": false
+          "authenticated": false,
+          "silent_sign_in": true
         },
         "bodyKind": "json"
       },
@@ -175,7 +176,8 @@
           "content-type": "application/json"
         },
         "body": {
-          "authenticated": false
+          "authenticated": false,
+          "silent_sign_in": true
         },
         "bodyKind": "json"
       },
@@ -255,7 +257,8 @@
           "content-type": "application/json"
         },
         "body": {
-          "authenticated": false
+          "authenticated": false,
+          "silent_sign_in": true
         },
         "bodyKind": "json"
       },
