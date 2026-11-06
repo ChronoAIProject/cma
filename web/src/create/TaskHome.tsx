@@ -169,7 +169,7 @@ function TaskHomeContent({
           New task in {workspaceId ? `Workspace ${workspaceId}` : `Sandbox ${sandboxId}`}
         </h2>
       )}
-      {!policy.task_home_admission && !intent ? (
+      {policy.settled && !policy.task_home_admission && !intent ? (
         <>
           <p className="task-home__status" role="status">
             Task creation is unavailable. You can create an Agent and start a conversation.
@@ -291,6 +291,7 @@ function TaskHomeContent({
               url={draft.repositoryUrl}
               reference={draft.repositoryRef}
               onChange={draft.changeRepository}
+              checking={!contextual && repositorySupported === undefined}
               unavailableReason={
                 workspaceId || sandboxId
                   ? 'Repository context is inherited. Start from Home to choose another repository.'
@@ -330,7 +331,7 @@ function TaskHomeContent({
         GPT-6 · High reasoning · Autonomous
       </p>
       {supported === undefined ? (
-        <p className="task-home__status" role="status">
+        <p className="sr-only" role="status">
           Checking task creation…
         </p>
       ) : null}
