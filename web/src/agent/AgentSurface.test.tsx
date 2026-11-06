@@ -391,14 +391,17 @@ it('offers Stop, Export and Delete from the header, with the reason Delete is un
       name: 'Delete task Stop this Agent before deleting it and its Worktree.',
     }),
   ).toHaveAttribute('aria-disabled', 'true');
-  expect(screen.queryByRole('menuitem', { name: 'Export history' })).not.toBeInTheDocument();
-  expect(
-    screen.getAllByRole('menuitem').map((row) => row.textContent?.split('Only')[0]?.trim()),
-  ).toEqual([
+  expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeEnabled();
+  const rows = screen.getAllByRole('menuitem');
+  for (const [index, label] of [
     'Rename',
-    'View deletion status No deletion is in progress.',
-    'Delete task Stop this Agent before deleting it and its Worktree.',
-  ]);
+    'Update system prompt',
+    'Update skills',
+    'Export history',
+    'View deletion status',
+    'Delete task',
+  ].entries())
+    expect(rows[index]).toHaveAccessibleName(expect.stringContaining(label));
   expect(screen.getByRole('menu').querySelectorAll('[role="separator"]')).toHaveLength(1);
   expect(screen.queryByRole('menuitem', { name: 'Stop agent' })).not.toBeInTheDocument();
   expect(onAgentAction).not.toHaveBeenCalled();
@@ -452,7 +455,7 @@ it('offers only the Details toggle and creation origin to a reader without actio
     />,
   );
   await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
-  expect(screen.getAllByRole('menuitem')).toHaveLength(3);
+  expect(screen.getAllByRole('menuitem')).toHaveLength(6);
   for (const item of screen.getAllByRole('menuitem'))
     expect(item).toHaveAttribute('aria-disabled', 'true');
   expect(screen.getByRole('button', { name: 'Show Agent details' })).toBeEnabled();
