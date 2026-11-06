@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "acp_orphan_terminal_tests.rs"]
+mod orphan_terminal_tests;
+
 #[tokio::test]
 async fn retired_prompt_is_proven_unwritten_at_both_writer_guards() {
     for during_admission in [false, true] {
@@ -349,7 +352,7 @@ async fn recovered_terminal_waits_for_handshake_and_routes_exact_failure_once() 
 }
 
 #[tokio::test]
-async fn recovery_ignores_other_turns_generations_sessions_and_legacy_numbers() {
+async fn recovery_publishes_foreign_identity_terminals_without_recovering() {
     let expected = crate::PromptIdentity::new("conversation-held", 17, 8);
     let (client, mut server) = socket_pair().await;
     send_ready(&mut server, "agent-1").await;
@@ -386,6 +389,21 @@ async fn recovery_ignores_other_turns_generations_sessions_and_legacy_numbers() 
     )
     .await
     .expect("unrelated results cannot satisfy initialize");
+    for prompt_id in [
+        crate::PromptIdentity::new("conversation-other", 17, 8),
+        crate::PromptIdentity::new("conversation-held", 16, 8),
+        crate::PromptIdentity::new("conversation-held", 17, 7),
+    ] {
+        let update = tokio::time::timeout(Duration::from_secs(1), recovered.recv())
+            .await
+            .expect("foreign terminal arrives")
+            .expect("update relay remains open");
+        assert!(matches!(
+            update,
+            ConversationUpdate::TurnEndedForPrompt { prompt_id: received, .. }
+                if received == prompt_id
+        ));
+    }
     assert!(
         tokio::time::timeout(Duration::from_millis(40), recovered.recv())
             .await

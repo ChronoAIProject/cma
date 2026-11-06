@@ -428,6 +428,7 @@ impl DurableAgentUpdateRecorder {
                 output: output_source_for_checkpoint(
                     source.as_ref(),
                     previous.as_ref(),
+                    runtime_generation,
                     identity_terminal,
                 ),
             };
