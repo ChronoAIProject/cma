@@ -125,7 +125,7 @@
   width: 100%;
   padding: 0 10px;
   border-radius: 8px;
-  color: var(--dsw-alias-label-primary-foreground);
+  color: var(--dsw-alias-button-primary-foreground);
   background: var(--dsw-alias-button-primary-fill);
   font-size: 0.875rem;
   line-height: 1.25rem;
