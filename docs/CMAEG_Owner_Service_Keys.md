@@ -130,6 +130,8 @@ cross-owner refusal and live-stream revocation. The ignored Mongo integration
 test runs in CI against the existing authenticated disposable replica set via
 `CMA_IM_TEST_MONGODB_URI`, selected exactly by
 `.github/scripts/image-manager-mongo-contract.sh` (and its local Python fallback).
+The shell runner retains a local source-build mode; CI uses its extracted-archive
+mode described in [Backend CI archive](Backend_CI_Archive.md).
 It checks separate-client visibility, exact runtime grants, retained markers and
 the startup barrier. Manager current/retired classification tests are selected by
 the existing `test(store::bindings::)` group in `mongo-contract-tests.sh`. These are acceptance tests,

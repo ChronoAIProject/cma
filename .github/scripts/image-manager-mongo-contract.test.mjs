@@ -56,7 +56,7 @@ else if (args[0] === 'inspect') console.log(scenario === 'foreign-container' ? '
 else if (args[0] === 'rm' && scenario === 'cleanup-error') process.exit(10);
 `;
   for (const command of ['cargo', 'docker', 'openssl']) writeFileSync(join(directory, command), cli, {mode: 0o755});
-  const env = {...process.env, CI: 'true', PATH: `${directory}:${process.env.PATH}`,
+  const env = {...process.env, CI: reuse ? 'true' : 'false', PATH: `${directory}:${process.env.PATH}`,
     CMA_TEST_LOG: log, CMA_TEST_SCENARIO: scenario, CMA_IM_TEST_MONGODB_URI: 'caller-uri',
     CHRONO_TEST_MONGODB_URI: 'caller-uri', CHRONO_TEST_MONGODB_FAILPOINT_URI: 'caller-uri'};
   if (reuse) env.CMA_NEXTEST_REUSE = '1'; else delete env.CMA_NEXTEST_REUSE;
@@ -107,9 +107,10 @@ for (const reuse of [false, true]) {
   });
 }
 
-for (const scenario of ['empty-mode', 'bad-mode', 'sentinel-mode', 'missing-cargo', 'missing-binaries', 'malformed', 'moved-workspace', 'moved-target', 'moved-build']) test(`reject ${scenario} before fixture allocation`, () => {
+for (const scenario of ['ci-source', 'empty-mode', 'bad-mode', 'sentinel-mode', 'missing-cargo', 'missing-binaries', 'malformed', 'moved-workspace', 'moved-target', 'moved-build']) test(`reject ${scenario} before fixture allocation`, () => {
   const f = fixture(true);
   try {
+    if (scenario === 'ci-source') delete f.env.CMA_NEXTEST_REUSE;
     if (scenario === 'empty-mode') f.env.CMA_NEXTEST_REUSE = '';
     if (scenario === 'sentinel-mode') f.env.CMA_NEXTEST_REUSE = 'unset';
     if (scenario === 'bad-mode') f.env.CMA_NEXTEST_REUSE = 'true';
