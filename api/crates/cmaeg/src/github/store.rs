@@ -1,3 +1,5 @@
+#[path = "binding_store.rs"]
+mod bindings;
 use std::sync::Arc;
 
 use base64::Engine;
@@ -31,6 +33,8 @@ struct Row {
     kind: String,
     version: i64,
     schema_version: i32,
+    #[serde(default)]
+    guard_revision: i64,
     blob: Binary,
 }
 
@@ -70,7 +74,7 @@ impl Store {
         }
         let marker = database
             .collection::<Document>(crate::records::mongo::MIGRATIONS)
-            .find_one(doc! {"_id":"github_integrations","version":2})
+            .find_one(doc! {"_id":"github_integrations","version":3})
             .read_concern(ReadConcern::majority())
             .await
             .map_err(|_| Error::Unavailable)?;
@@ -144,6 +148,15 @@ impl Store {
     }
 
     pub async fn create_many(&self, owner: &str, records: Vec<NewRecord>) -> Result<(), Error> {
+        self.create_many_guarded(owner, records, None).await
+    }
+
+    pub async fn create_many_guarded(
+        &self,
+        owner: &str,
+        records: Vec<NewRecord>,
+        integration: Option<&super::AppIntegration>,
+    ) -> Result<(), Error> {
         let rows = records
             .iter()
             .map(|record| self.row(&record.id, owner, record.kind, 1, &record.value))
@@ -165,41 +178,15 @@ impl Store {
             .session(&mut session)
             .await
             .map_err(|_| Error::Unavailable)?;
+        if let Some(integration) = integration {
+            self.guard_integration(owner, integration, &mut session)
+                .await?;
+        }
         session
             .commit_transaction()
             .await
             .map_err(|_| Error::Unavailable)?;
         Ok(())
-    }
-
-    pub async fn update<T: Serialize>(
-        &self,
-        id: &str,
-        owner: &str,
-        kind: &str,
-        expected_version: u64,
-        value: &T,
-    ) -> Result<u64, Error> {
-        let expected_version = i64::try_from(expected_version).map_err(|_| Error::Conflict)?;
-        let next_version = expected_version.checked_add(1).ok_or(Error::Conflict)?;
-        let row = self.row(id, owner, kind, next_version, value)?;
-        let result = self
-            .records
-            .replace_one(
-                doc! {
-                    "_id": id,
-                    "owner": owner,
-                    "kind": kind,
-                    "version": expected_version,
-                },
-                row,
-            )
-            .await
-            .map_err(|_| Error::Unavailable)?;
-        if result.matched_count != 1 {
-            return Err(Error::Conflict);
-        }
-        u64::try_from(next_version).map_err(|_| Error::Unavailable)
     }
 
     pub async fn update_integration(
@@ -303,6 +290,7 @@ impl Store {
             kind: kind.into(),
             version,
             schema_version: 1,
+            guard_revision: 0,
             blob: Binary {
                 subtype: BinarySubtype::Generic,
                 bytes: blob,
@@ -314,10 +302,11 @@ impl Store {
         &self,
         owner: &str,
         binding: &super::Binding,
+        integration: &super::AppIntegration,
         expected_revision: u64,
         delivery: &super::Delivery,
     ) -> Result<(), Error> {
-        let revision = i64::try_from(binding.authority_revision).map_err(|_| Error::Unavailable)?;
+        let revision = i64::try_from(binding.version).map_err(|_| Error::Unavailable)?;
         let expected_revision = i64::try_from(expected_revision).map_err(|_| Error::Unavailable)?;
         let binding_row = self.row(&binding.binding_id, owner, "binding", revision, binding)?;
         let delivery_row =
@@ -327,34 +316,36 @@ impl Store {
             .client()
             .start_session()
             .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
         session
             .start_transaction()
             .read_concern(ReadConcern::snapshot())
             .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
             .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
         let updated = self
             .records
-            .replace_one(
-                doc! {"_id":&binding.binding_id,"owner":owner,"version":expected_revision},
-                binding_row,
+            .update_one(
+                doc! {"_id":&binding.binding_id,"owner":owner,"kind":"binding","version":expected_revision},
+                guarded_update(binding_row),
             )
             .session(&mut session)
             .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
         if updated.matched_count != 1 {
-            return Err(Error::Forbidden);
+            return Err(Error::Retry);
         }
         self.records
             .insert_one(delivery_row)
             .session(&mut session)
             .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
+        self.guard_integration(owner, integration, &mut session)
+            .await?;
         session
             .commit_transaction()
             .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
         Ok(())
     }
 
@@ -365,6 +356,22 @@ impl Store {
     ) -> Result<(String, T), Error> {
         let (owner, _, value) = self.read_versioned(id, kind).await?;
         Ok((owner, value))
+    }
+
+    pub async fn read_owned<T: DeserializeOwned>(
+        &self,
+        owner: &str,
+        id: &str,
+        kind: &str,
+    ) -> Result<(u64, T), Error> {
+        let row = self
+            .records
+            .find_one(doc! {"_id":id,"kind":kind,"owner":owner})
+            .await
+            .map_err(|_| Error::Unavailable)?
+            .ok_or(Error::NotFound)?;
+        let (_, version, value) = self.open_row(row)?;
+        Ok((version, value))
     }
 
     pub async fn read_versioned<T: DeserializeOwned>(
@@ -426,36 +433,16 @@ impl Store {
         }
         Ok(values)
     }
+}
 
-    pub async fn list_kind<T: DeserializeOwned>(
-        &self,
-        kind: &str,
-    ) -> Result<Vec<(String, String, u64, T)>, Error> {
-        let mut cursor = self
-            .records
-            .find(doc! {"kind":kind})
-            .await
-            .map_err(|_| Error::Unavailable)?;
-        let mut values = Vec::new();
-        while let Some(row) = cursor.try_next().await.map_err(|_| Error::Unavailable)? {
-            let opened = open_blob(&self.keys, &row.blob.bytes).map_err(|_| Error::Unavailable)?;
-            let sealed: Sealed =
-                serde_json::from_slice(&opened.payload).map_err(|_| Error::Unavailable)?;
-            if sealed.id != row.id
-                || sealed.owner != row.owner
-                || sealed.kind != kind
-                || row.schema_version != 1
-                || row.version < 1
-            {
-                return Err(Error::Unavailable);
-            }
-            values.push((
-                sealed.id,
-                sealed.owner,
-                u64::try_from(row.version).map_err(|_| Error::Unavailable)?,
-                serde_json::from_value(sealed.value).map_err(|_| Error::Unavailable)?,
-            ));
-        }
-        Ok(values)
+fn guarded_update(row: Row) -> Document {
+    doc! {"$set":{"owner":row.owner,"kind":row.kind,"version":row.version,"schema_version":row.schema_version,"blob":row.blob},"$inc":{"guard_revision":1_i64}}
+}
+
+fn transaction_error(error: mongodb::error::Error) -> Error {
+    if error.contains_label("TransientTransactionError") {
+        Error::Retry
+    } else {
+        Error::Unavailable
     }
 }

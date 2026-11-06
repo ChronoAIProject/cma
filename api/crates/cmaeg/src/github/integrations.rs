@@ -55,6 +55,8 @@ pub struct AppIntegration {
     pub verification_credential: CredentialStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification: Option<AppVerification>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retired_at: Option<i64>,
 }
 
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
@@ -74,6 +76,8 @@ pub struct GitHubCapabilities {
     pub app_identity_verification: bool,
     pub ownership_verification: bool,
     pub automatic_reconciliation: bool,
+    #[schema(required = false)]
+    pub durable_dispatch: bool,
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -186,7 +190,7 @@ impl Gateway {
             || query
                 .after
                 .as_deref()
-                .is_some_and(|after| !super::config::valid_ref(after))
+                .is_some_and(|after| !super::valid_ref(after))
         {
             return Err(Error::Invalid);
         }
@@ -253,6 +257,7 @@ impl Gateway {
                 version: None,
             },
             verification: None,
+            retired_at: None,
         };
         let registration = AppOperation::new(integration.clone(), &input)?;
         let mut records = vec![
@@ -299,14 +304,17 @@ impl Gateway {
         registration.replay(input)
     }
 
-    pub(super) async fn read_app(
+    pub(crate) async fn read_app(
         &self,
         owner: &str,
         app_ref: &str,
     ) -> Result<AppIntegration, Error> {
-        let (stored_owner, integration) = self.app_record(app_ref).await?;
-        if stored_owner != owner {
-            return Err(Error::NotFound);
+        let (version, integration): (u64, AppIntegration) = self
+            .store
+            .read_owned(owner, app_ref, "app_integration")
+            .await?;
+        if integration.app_ref != app_ref || integration.version != version {
+            return Err(Error::Unavailable);
         }
         Ok(integration)
     }
@@ -327,6 +335,9 @@ impl Gateway {
         app_ref: &str,
     ) -> Result<(String, AppIntegration, Vec<Secret>), Error> {
         let (owner, integration) = self.app_record(app_ref).await?;
+        if integration.status == "retired" {
+            return Err(Error::Retired);
+        }
         if !integration.webhook_credential.present {
             return Err(Error::Signature);
         }

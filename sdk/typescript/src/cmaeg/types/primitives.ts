@@ -170,6 +170,9 @@ export const ProblemCodeSchema = enumeration(
   'github_resource_not_found',
   'github_delivery_conflict',
   'github_source_unavailable',
+  'github_dispatch_unavailable',
+  'github_integration_retired',
+  'github_proof_withdrawn',
   'attachment_not_found',
   'media_unavailable',
 );

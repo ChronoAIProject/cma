@@ -33,10 +33,10 @@ it does not permit a rollback to an image below that floor.
 When enabled, initialization runs in the background after the HTTP listener binds,
 using the existing gateway Mongo connection and keyring. GitHub operations return
 503 until initialization succeeds; ordinary channel traffic can proceed meanwhile.
-Missing or version-1 `github_integrations` storage is prepared in service code:
+Missing or version-1/version-2 `github_integrations` storage is prepared in service code:
 the record validator, owner/kind index and migration-marker validator are updated,
-then the version-2 marker is committed with majority acknowledgement. No stored
-App or receipt is rewritten or deleted by this migration. Version 2 skips DDL
+then the version-3 marker is committed with majority acknowledgement. No stored
+App or receipt is rewritten or deleted by this migration. Version 3 skips DDL
 and is checked for runtime authority and required non-TTL indexes; unknown
 versions are refused without downgrading them.
 
@@ -51,8 +51,11 @@ The retained CLI and role-printing commands remain explicit operator tools.
 Background initialization has a 30-second bound. A failure keeps GitHub unavailable while
 ordinary channels remain available, with a sanitized reason in startup logs.
 Database delays that clear within the bound allow GitHub to become ready without
-restarting the process. Startup work is cancelled on shutdown. No execution-group
-polling runs without configured execution routes; onboarding alone starts no scan.
+restarting the process. Startup work is cancelled on shutdown. The GitHub execution-group worker and
+static routes have been removed. This intermediate release reports
+`durable_dispatch: false`; eligible business deliveries return typed 503 without
+consuming their delivery IDs. Installation approval and lifecycle tightening are
+available, while `automatic_reconciliation` remains false.
 After correcting the cause, a subsequent startup resumes incomplete preparation.
 Concurrent startup reconciles a duplicate marker write against the majority-read
 current version before proceeding. GitHub `store_ready` becomes true only after

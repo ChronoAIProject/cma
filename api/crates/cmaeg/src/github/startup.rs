@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use cmaeg_core::seal::MasterKeyRing;
 use mongodb::{bson::doc, Database};
 
-use super::{schema, Config, Gateway};
+use super::{schema, Gateway};
 
 pub(super) async fn initialize(database: Database, keys: Arc<MasterKeyRing>) -> Option<Gateway> {
     let initialization = async {
@@ -25,7 +25,7 @@ pub(super) async fn initialize(database: Database, keys: Arc<MasterKeyRing>) -> 
                 .await
                 .map_err(|_| "startup_migration_failed")?;
         }
-        Gateway::open(database, keys, Config::default())
+        Gateway::open(database, keys)
             .await
             .map_err(|_| "storage_verification_failed")
     };
@@ -42,5 +42,41 @@ pub(super) async fn initialize(database: Database, keys: Arc<MasterKeyRing>) -> 
             tracing::warn!(reason, "GitHub initialization did not complete; integration disabled, retry on next startup");
             None
         }
+    }
+}
+
+/// Bounded optional storage initialization, independent of ordinary HTTP readiness.
+pub(crate) struct Initialization(tokio::task::JoinHandle<()>);
+impl Initialization {
+    pub(crate) fn start(
+        state: crate::http::ManagementState,
+        ingress: crate::ingress::IngressState,
+    ) -> Self {
+        Self(tokio::spawn(async move {
+            let Some(mut gateway) =
+                Gateway::from_records(&state.records, state.master_keys.clone()).await
+            else {
+                return;
+            };
+            gateway.attach_ingress(Arc::new(ingress));
+            gateway.attach_activity(state.activity.clone());
+            let _ = state.github.set(Arc::new(gateway));
+        }))
+    }
+    pub(crate) fn stop(&self) {
+        self.0.abort();
+    }
+    pub(crate) async fn drain(&mut self, deadline: std::time::Instant) -> bool {
+        self.stop();
+        match tokio::time::timeout_at(deadline.into(), &mut self.0).await {
+            Ok(Ok(())) => true,
+            Ok(Err(error)) => error.is_cancelled(),
+            Err(_) => false,
+        }
+    }
+}
+impl Drop for Initialization {
+    fn drop(&mut self) {
+        self.stop();
     }
 }

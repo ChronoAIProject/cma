@@ -24,6 +24,12 @@ pub struct VerifyAppRequest {
     pub evidence_ref: String,
 }
 
+#[derive(Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RetireAppRequest {
+    pub expected_version: u64,
+}
+
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WebhookSecretRequest {
@@ -49,6 +55,7 @@ struct AppIdentity {
 
 pub(super) enum AppMutation {
     Metadata(UpdateAppRequest),
+    Retirement(RetireAppRequest),
     Verification {
         request: VerifyAppRequest,
         verifier: String,
@@ -60,6 +67,7 @@ impl AppMutation {
     fn kind(&self) -> &'static str {
         match self {
             Self::Metadata(_) => "metadata",
+            Self::Retirement(_) => "retirement",
             Self::Verification { .. } => "verification",
             Self::WebhookSecret(_) => "webhook-secret",
         }
@@ -68,6 +76,7 @@ impl AppMutation {
     fn expected_version(&self) -> u64 {
         match self {
             Self::Metadata(request) => request.expected_version,
+            Self::Retirement(request) => request.expected_version,
             Self::Verification { request, .. } => request.expected_version,
             Self::WebhookSecret(request) => request.expected_version,
         }
@@ -75,6 +84,12 @@ impl AppMutation {
 
     fn input(&self) -> Result<Vec<u8>, Error> {
         match self {
+            Self::Retirement(request) => {
+                if request.expected_version == 0 {
+                    return Err(Error::Invalid);
+                }
+                serde_json::to_vec(request).map_err(|_| Error::Unavailable)
+            }
             Self::Metadata(request) => {
                 if request.expected_version == 0
                     || request.display_name.trim().is_empty()
@@ -124,12 +139,18 @@ impl Gateway {
         validate_key(key)?;
         let input = mutation.input()?;
         let mut app = self.read_app(owner, app_ref).await?;
+        if app.status == "retired" && !matches!(mutation, AppMutation::Retirement(_)) {
+            return Err(Error::Retired);
+        }
         let operation_id =
             super::identity("app-operation", &(owner, app_ref, mutation.kind(), key));
         match self.app_operation(owner, &operation_id, &input).await {
             Ok(app) => return Ok(app),
             Err(Error::NotFound) => (),
             Err(error) => return Err(error),
+        }
+        if app.status == "retired" {
+            return Err(Error::Retired);
         }
         let expected_version = mutation.expected_version();
         if app.version != expected_version {
@@ -140,6 +161,10 @@ impl Gateway {
         let verifying = matches!(mutation, AppMutation::Verification { .. });
         match mutation {
             AppMutation::Metadata(request) => app.display_name = request.display_name,
+            AppMutation::Retirement(_) => {
+                app.status = "retired".into();
+                app.retired_at = Some(super::now());
+            }
             AppMutation::Verification { request, verifier } => {
                 if !self.check_app_identity(&app).await? {
                     records.push(NewRecord::new(
