@@ -12,7 +12,7 @@ body {
   --dsw-shadow-lv3: 0 18px 44px -14px rgba(9, 9, 11, 0.18);
   --dsw-shadow-accent-hover: var(--dsw-shadow-lv2);
   --dsw-glow-accent: none;
-  --dsw-ring-accent-soft: 0 0 0 3px rgba(63, 98, 18, 0.08);
+  --dsw-ring-accent-soft: 0 0 0 3px rgba(77, 124, 15, 0.08);
   --dsw-mask-blur: blur(2px);
 }
 
@@ -23,9 +23,9 @@ body[data-ds-dark-theme] {
   --dsw-shadow-lv1-blur: 0 8px 20px -8px #000;
   --dsw-shadow-lv2: 0 20px 44px -14px #000;
   --dsw-shadow-lv3: 0 40px 90px -30px #000;
-  --dsw-shadow-accent-hover: 0 6px 26px -8px rgba(195, 253, 67, 0.35);
-  --dsw-glow-accent: 0 0 14px rgba(195, 253, 67, 0.35);
-  --dsw-ring-accent-soft: 0 0 0 3px rgba(195, 253, 67, 0.1);
+  --dsw-shadow-accent-hover: 0 6px 26px -8px rgba(200, 245, 66, 0.35);
+  --dsw-glow-accent: 0 0 14px rgba(200, 245, 66, 0.35);
+  --dsw-ring-accent-soft: 0 0 0 3px rgba(200, 245, 66, 0.1);
 }
 
 /* Section 4's composite type ramp and display convention. */
