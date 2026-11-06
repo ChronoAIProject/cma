@@ -156,7 +156,7 @@ export function MetricsDashboard({
             />
           )}
           <MetricTable
-            key={`${report.report_id}:${effectiveSelection.sort}:${effectiveSelection.order}`}
+            key={report.report_id}
             api={api}
             reportId={report.report_id}
             sort={effectiveSelection.sort}
