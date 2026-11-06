@@ -5,7 +5,7 @@ import { transport } from './resource-fixtures.js';
 it('loads administrator options without creating a report and preserves opaque values', async () => {
   const test = transport();
   const page = {
-    items: [{ value: 'owner-a', label: 'Alex Chen · account a12bc34de567' }],
+    items: [{ value: 'owner-a', label: 'Alex Chen', disambiguator: 'Joined 2026-11-01' }],
     next: 'next-page',
   };
   test.answer(page);
@@ -44,6 +44,17 @@ it('rejects malformed options and forbids owner-scope discovery', async () => {
     );
   expect(test.calls).toHaveLength(0);
   test.answer({ items: [{ value: 'owner-a' }], next: null });
+  await expect(test.client.adminUsageMetrics.options({ kind: 'owner' })).rejects.toBeInstanceOf(
+    ProtocolError,
+  );
+});
+
+it('accepts plain labels without duplicate context and rejects malformed context', async () => {
+  const test = transport();
+  const page = { items: [{ value: 'owner-a', label: 'Alex Chen' }], next: null };
+  test.answer(page);
+  expect(await test.client.adminUsageMetrics.options({ kind: 'owner' })).toEqual(page);
+  test.answer({ items: [{ value: 'owner-a', label: 'Alex Chen', disambiguator: 42 }], next: null });
   await expect(test.client.adminUsageMetrics.options({ kind: 'owner' })).rejects.toBeInstanceOf(
     ProtocolError,
   );

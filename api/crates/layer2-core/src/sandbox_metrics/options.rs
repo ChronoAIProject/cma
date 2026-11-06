@@ -59,6 +59,8 @@ impl OptionQuery {
 pub struct FilterOption {
     pub value: String,
     pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disambiguator: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FilterOptions {
@@ -66,26 +68,91 @@ pub struct FilterOptions {
     pub next: Option<String>,
 }
 
-/// Stable references distinguish equal or missing names across pages and searches.
-/// References are hashes, never fragments of the underlying identifier.
+/// The primary label is always the person's or Sandbox's plain display name.
 pub fn option_label(kind: OptionKind, value: &str, name: Option<&str>) -> String {
     if kind == OptionKind::Runtime {
-        return value.to_owned();
+        return if value.trim().is_empty()
+            || contains_identifier(value)
+            || value.chars().any(char::is_control)
+        {
+            "Unnamed runtime".into()
+        } else {
+            value.to_owned()
+        };
     }
-    let (fallback, noun) = match kind {
-        OptionKind::Owner => ("Unnamed owner", "account"),
-        _ => ("Unnamed Sandbox", "Sandbox"),
-    };
-    let name = name
-        .map(str::trim)
-        .filter(|name| !name.is_empty() && !name.contains(value) && !contains_identifier(name))
-        .unwrap_or(fallback);
-    let reference = format!("{:x}", Sha256::digest(value.as_bytes()));
-    format!("{name} · {noun} {}", &reference[..12])
+    public_option_name(value, name)
+        .unwrap_or(if kind == OptionKind::Owner {
+            "Unnamed owner"
+        } else {
+            "Unnamed Sandbox"
+        })
+        .to_owned()
+}
+
+pub fn public_option_name<'a>(value: &str, name: Option<&'a str>) -> Option<&'a str> {
+    name.map(str::trim).filter(|name| {
+        !name.is_empty()
+            && !name.contains(value)
+            && !contains_identifier(name)
+            && !name.chars().any(char::is_control)
+    })
+}
+
+pub fn option_joined(at: Option<&str>) -> Option<String> {
+    let at =
+        time::OffsetDateTime::parse(at?, &time::format_description::well_known::Rfc3339).ok()?;
+    Some(format!("Joined {}", at.date()))
+}
+
+/// Only duplicates on the returned page need a secondary label. Prefer human
+/// context; a derived reference is a last resort when that context still ties.
+pub fn disambiguate_options(items: &mut [FilterOption], hints: &[Option<String>]) {
+    let details: Vec<_> = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let duplicates: Vec<_> = items
+                .iter()
+                .enumerate()
+                .filter(|(_, other)| other.label == item.label)
+                .collect();
+            if duplicates.len() < 2 {
+                return None;
+            }
+            let hint = hints.get(index).and_then(Option::as_deref);
+            if let Some(hint) = hint {
+                if duplicates
+                    .iter()
+                    .filter(|(i, _)| hints.get(*i).and_then(Option::as_deref) == Some(hint))
+                    .count()
+                    == 1
+                {
+                    return Some(hint.to_owned());
+                }
+            }
+            let reference = format!("{:x}", Sha256::digest(item.value.as_bytes()));
+            Some(match hint {
+                Some(hint) => format!("{hint} · reference {}", &reference[..12]),
+                None => format!("reference {}", &reference[..12]),
+            })
+        })
+        .collect();
+    for (item, detail) in items.iter_mut().zip(details) {
+        item.disambiguator = detail;
+    }
 }
 
 fn contains_identifier(name: &str) -> bool {
     name.contains("sbx_")
+        || name.as_bytes().windows(36).any(|part| {
+            part.iter().enumerate().all(|(i, c)| {
+                if [8, 13, 18, 23].contains(&i) {
+                    *c == b'-'
+                } else {
+                    c.is_ascii_hexdigit()
+                }
+            })
+        })
         || name
             .split(|c: char| !c.is_ascii_hexdigit() && c != '-')
             .any(|part| {

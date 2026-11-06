@@ -1,8 +1,8 @@
 use super::*;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::{
-    cursor::Cursor, option_label, FilterOption, FilterOptions, OptionKind, OptionQuery, Order,
-    Scope, Sort,
+    cursor::Cursor, disambiguate_options, option_joined, option_label, public_option_name,
+    FilterOption, FilterOptions, OptionKind, OptionQuery, Order, Scope, Sort,
 };
 
 const DOMAIN: &str = "usage-options-v1";
@@ -46,15 +46,26 @@ impl ReportingStore {
             .await
             .map_err(|_| MetricsError::Unavailable)?;
         let mut items = Vec::new();
+        let mut hints = Vec::new();
         while let Some(row) = cursor
             .try_next()
             .await
             .map_err(|_| MetricsError::Unavailable)?
         {
             let value = row.get_str("_id").map_err(|_| MetricsError::Unavailable)?;
+            hints.push(match query.kind {
+                OptionKind::Owner => option_joined(row.get_str("first_seen_at").ok()),
+                OptionKind::Sandbox => public_option_name(
+                    row.get_str("owner").unwrap_or(""),
+                    row.get_str("owner_name").ok(),
+                )
+                .map(str::to_owned),
+                OptionKind::Runtime => None,
+            });
             items.push(FilterOption {
                 value: value.into(),
                 label: option_label(query.kind, value, row.get_str("name").ok()),
+                disambiguator: None,
             });
         }
         let next = if items.len() > usize::from(limit) {
@@ -80,6 +91,7 @@ impl ReportingStore {
         } else {
             None
         };
+        disambiguate_options(&mut items, &hints);
         Ok(FilterOptions { items, next })
     }
 }
@@ -109,7 +121,7 @@ fn option_pipeline(
                 doc! {"$match":filter},
                 doc! {"$group":{"_id":"$owner"}},
                 doc! {"$lookup":{"from":"users","localField":"_id","foreignField":"_id","as":"identity"}},
-                doc! {"$project":{"name":{"$arrayElemAt":["$identity.display_name",0]}}},
+                doc! {"$project":{"name":{"$arrayElemAt":["$identity.display_name",0]},"first_seen_at":{"$arrayElemAt":["$identity.first_seen_at",0]}}},
             ]);
         }
         OptionKind::Sandbox => {
@@ -124,7 +136,7 @@ fn option_pipeline(
             }
             pipeline.extend([
                 doc! {"$match":filter},
-                doc! {"$project":{"name":"$record.name"}},
+                doc! {"$project":{"name":"$record.name","owner":1}},
             ]);
         }
         OptionKind::Runtime => {
@@ -157,5 +169,12 @@ fn option_pipeline(
         pipeline.push(doc! {"$match":{"name":{"$regex":escaped,"$options":"i"}}});
     }
     pipeline.extend([doc! {"$sort":{"_id":1}}, doc! {"$limit":i64::from(limit)+1}]);
+    if query.kind == OptionKind::Sandbox {
+        // Join owner display context only after reducing to the bounded page.
+        pipeline.extend([
+            doc! {"$lookup":{"from":"users","localField":"owner","foreignField":"_id","as":"identity"}},
+            doc! {"$project":{"name":1,"owner":1,"owner_name":{"$arrayElemAt":["$identity.display_name",0]}}},
+        ]);
+    }
     (collection, pipeline)
 }

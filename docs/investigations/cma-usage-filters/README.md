@@ -43,11 +43,11 @@ creates or polls a report. The dashboard still owns the single report lifecycle,
 including #1398's filter-change cancellation and pending-report behavior.
 
 Owner labels use retained directory display names. Missing, blank or ID-shaped
-names use `Unnamed owner` / `Unnamed Sandbox`. Every identity has a stable
-12-hex-character SHA-256-derived reference, prefixed `account` / `Sandbox`, to
-distinguish duplicate names across pages and searches. The reference is not a
-substring of the original ID. Selected triggers, tooltips and missing-selection
-states never fall back to IDs. Filter values and URL state keep opaque IDs.
+names use `Unnamed owner` / `Unnamed Sandbox`. Primary labels and selected triggers stay plain names. Only duplicate labels on the
+current page receive secondary context: join date for owners, the owner's name
+for Sandboxes. A 12-hex derived reference is used only when a true duplicate has
+no distinguishing human context. Selected triggers, tooltips and missing-selection
+states never show that context or fall back to IDs. Filter values and URL state keep opaque IDs.
 
 Similar behavior remains outside scope: the personal Usage popup still uses
 `ReportSelector` and free-text Sandbox search; its Agent picker falls back to

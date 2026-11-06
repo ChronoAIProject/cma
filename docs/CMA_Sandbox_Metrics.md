@@ -360,10 +360,13 @@ request, including pagination and selected-value resolution. The read-only JSON
 body keeps search names out of proxy request URLs. It does not create
 or require a report. `kind=owner|sandbox|runtime`, optional literal name `search`
 (up to 128 bytes), `owner` (Sandbox choices only), `limit` (1–50), and an opaque
-principal/query-bound `cursor` return `{items:[{value,label}],next}`. `selected`
+principal/query-bound `cursor` return `{items:[{value,label,disambiguator?}],next}`. `selected`
 resolves one value for URL restoration and cannot accompany search or cursor.
-Owner names come from the retained public directory; duplicate and unnamed
-identities get stable derived references rather than raw IDs. Sandbox names come
+Owner names come from the retained public directory. Primary labels stay plain.
+Only duplicates on the returned page receive a disambiguator: join date for
+owners, owner name for Sandboxes, and a derived reference only as a last resort
+when human context is missing or also duplicates. Selected labels remain plain.
+Sandbox names come
 from the retained usage inventory; runtime choices include suspended runtimes.
 Results are private/no-store, bounded by database and request deadlines, and
 errors never log search text or display names. The Ops web filter requires this

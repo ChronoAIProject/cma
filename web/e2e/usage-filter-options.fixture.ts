@@ -1,15 +1,11 @@
-import { createHash } from 'node:crypto';
 import type { Page } from '@playwright/test';
 import type { UsageMetricQuery } from '@chronoai/cma-sdk';
 
 export const filterOwners = [
-  { value: '91892afa-5fa5-4f4f-9100-2b8d986d2f71', name: 'Alex Chen' },
-  { value: '4ef54d11-f781-44ad-a301-1b5f574ca012', name: 'Alex Chen' },
-  { value: 'a9013ad5-2702-4a35-8fef-f001e5b10a31', name: 'Unnamed owner' },
+  { value: '91892afa-5fa5-4f4f-9100-2b8d986d2f71', name: 'Alex Chen', hint: 'Joined 2026-11-01' },
+  { value: '4ef54d11-f781-44ad-a301-1b5f574ca012', name: 'Alex Chen', hint: 'Joined 2026-11-02' },
+  { value: 'a9013ad5-2702-4a35-8fef-f001e5b10a31', name: 'Unnamed owner', hint: '' },
 ];
-function label(name: string, value: string, kind: string) {
-  return `${name} · ${kind} ${createHash('sha256').update(value).digest('hex').slice(0, 12)}`;
-}
 export class LocalUsageFilterOptions {
   readonly reads: URL[] = [];
   failure = 0;
@@ -51,17 +47,22 @@ export class LocalUsageFilterOptions {
         kind === 'owner'
           ? filterOwners.map((owner) => ({
               ...owner,
-              label: label(owner.name, owner.value, 'account'),
+              label: owner.name,
             }))
           : kind === 'runtime'
             ? ['runtime-stable', 'runtime-previous'].map((value) => ({
                 value,
                 name: value,
                 label: value,
+                hint: '',
               }))
             : this.rows
                 .filter((row) => !q.get('owner') || row.owner === q.get('owner'))
-                .map((row) => ({ ...row, label: label(row.name, row.value, 'Sandbox') }));
+                .map((row) => ({
+                  ...row,
+                  label: row.name,
+                  hint: filterOwners.find((owner) => owner.value === row.owner)?.name ?? '',
+                }));
       const selected = q.get('selected');
       const search = q.get('search')?.toLowerCase() ?? '';
       const filtered = choices.filter((row) =>
@@ -69,11 +70,16 @@ export class LocalUsageFilterOptions {
       );
       const offset = Number(q.get('cursor') ?? 0);
       const limit = Math.min(50, Number(q.get('limit') ?? 50));
+      const visible = filtered.slice(offset, offset + limit);
       return route.fulfill({
         json: {
-          items: filtered
-            .slice(offset, offset + limit)
-            .map(({ value, label }) => ({ value, label })),
+          items: visible.map(({ value, label, hint }) => ({
+            value,
+            label,
+            ...(visible.filter((other) => other.label === label).length > 1
+              ? { disambiguator: hint }
+              : {}),
+          })),
           next: filtered.length > offset + limit ? String(offset + limit) : null,
         },
       });
