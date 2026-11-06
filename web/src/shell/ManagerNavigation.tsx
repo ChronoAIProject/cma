@@ -50,8 +50,24 @@ export function ManagerNavigation({
   const taskFocus = useRef<HTMLElement | null>(null);
   const [taskReturn, setTaskReturn] = useState({ route, scope, scrollTop: 0 });
   const modeChanged = useRef(false);
+  const refreshRequestedFor = useRef<string | undefined>(undefined);
   const [statuses, setStatuses] = useState({ agent: 'all', sandbox: 'all' });
   const status = statuses[view];
+  useLayoutEffect(() => {
+    if (currentAgent === undefined || navigation.status !== 'ready') return;
+    const summary = navigation.items
+      .flatMap((item) => item.workspaces)
+      .flatMap((workspace) => workspace.agents)
+      .find((agent) => agent.id === currentAgent.id);
+    if (summary === undefined || summary.updatedAt === currentAgent.updatedAt) {
+      refreshRequestedFor.current = undefined;
+      return;
+    }
+    const request = `${currentAgent.id}:${currentAgent.updatedAt}`;
+    if (refreshRequestedFor.current === request) return;
+    refreshRequestedFor.current = request;
+    navigation.refresh();
+  }, [currentAgent, navigation]);
   useLayoutEffect(() => {
     if (!modeChanged.current) return;
     if (view === 'sandbox')
@@ -92,19 +108,22 @@ export function ManagerNavigation({
                 workspaces: item.workspaces.map((workspace) => ({
                   ...workspace,
                   agents: workspace.agents.map((summary) =>
-                    currentAgent && sameAgent(currentAgent, summary)
-                      ? {
-                          ...summary,
-                          status: currentAgent.status,
-                          title: currentAgent.title,
-                          ownerTitle: currentAgent.ownerTitle,
-                          runtimeMetadata: currentAgent.runtimeMetadata,
-                          taskStatus:
-                            currentAgent.updatedAt === summary.updatedAt
-                              ? summary.taskStatus
-                              : undefined,
-                        }
-                      : summary,
+                    (() => {
+                      const current =
+                        currentAgent !== undefined && sameAgent(currentAgent, summary)
+                          ? currentAgent
+                          : undefined;
+                      return current
+                        ? {
+                            ...summary,
+                            status: current.status,
+                            title: current.title,
+                            ownerTitle: current.ownerTitle,
+                            runtimeMetadata: current.runtimeMetadata,
+                            taskStatus: summary.taskStatus,
+                          }
+                        : summary;
+                    })(),
                   ),
                 })),
               }))}

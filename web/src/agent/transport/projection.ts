@@ -66,6 +66,7 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
   if (item.kind?.type === 'stopped' || item.kind?.type === 'deleted')
     next = {
       ...next,
+      liveGapRuns: undefined,
       activeRunId: undefined,
       activeRunStartedAt: undefined,
       responseBinding: undefined,
@@ -110,10 +111,13 @@ function gap(
   detail: string,
   live = false,
 ): ConversationState {
+  const liveGapRuns =
+    live && state.activeRunId !== undefined
+      ? new Set([...(state.liveGapRuns ?? []), state.activeRunId])
+      : state.liveGapRuns;
   return {
     ...state,
-    messages: state.messages.filter((message) => !message.liveOnly),
-    reasoning: [],
+    liveGapRuns,
     recovery: [
       ...state.recovery.filter(
         (notice) =>
@@ -169,6 +173,7 @@ export function foldV2Frame(
   const event = frame.data;
   if (String(event.turn_sequence) !== state.activeRunId || event.after_sequence > state.cursor)
     throw new Error('A live update did not match the observed Agent turn.');
+  if (state.liveGapRuns?.has(String(event.turn_sequence))) return state;
   if (
     event.kind === 'text_delta' &&
     state.messages.some(
