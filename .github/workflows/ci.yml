@@ -314,6 +314,8 @@ jobs:
           workspaces: api
       - name: Format
         run: cargo fmt --all --check
+      - name: Desktop browser launch and ownership regressions
+        run: python3 crates/layer4-runtime/src/desktop-browser-test.py
       - name: Native recovery persistence and process fences
         run: python3 crates/layer3-adapter/src/codex/recovery_test.py
       - name: Retained transport native goal read-only proof
