@@ -890,6 +890,13 @@ Their text begins with `File changes: <count> +<added> −<removed>`, followed b
 `File: <JSON-quoted path> +<added> −<removed>` lines and unified diffs. Totals
 come from the reported before/after contents. Summaries precede diff bodies so
 the existing 16 KiB output limit preserves totals; `truncated` remains explicit.
+Each file receives its own 50ms diff-calculation budget. If that budget expires,
+its header becomes `File: <JSON-quoted path> counts unavailable` and the aggregate
+becomes `File changes: <count> counts unavailable`; no exact totals are claimed
+from a degraded replace-all diff. Other files keep their independently calculated
+counts. Clients display “Counts unavailable” and must not reconstruct those totals
+from the fallback diff body. The existing output-byte limit and truncation flag
+remain unchanged.
 Tool status still determines whether an edit completed. A proposed or failed
 edit does not prove that a file was modified. Ordinary text output is unchanged.
 
