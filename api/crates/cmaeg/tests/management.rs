@@ -277,3 +277,6 @@ mod native_lark;
 
 #[path = "management/custom_execution.rs"]
 mod custom_execution;
+
+#[path = "management/organization_channels.rs"]
+mod organization_channels;
