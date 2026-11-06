@@ -42,6 +42,7 @@ pub(super) async fn read(
     let document = store.agent_log.find_one(doc! {
         "agent_id": agent.id.as_str(),
         "record.kind.type": { "$in": ["created", "turn_started", "turn_completed", "turn_failed", "turn_interrupted", "conversation_gap"] },
+        "seq": { "$lte": signed(agent.conversation.last_seq, "agent log sequence").map_err(SandboxStoreError::Corrupt)? },
     })
         .sort(doc! { "seq": -1 })
         .max_time(std::time::Duration::from_secs(10))
@@ -49,10 +50,7 @@ pub(super) async fn read(
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
     let latest = document.as_ref().map(read_entry).transpose()?;
-    let gap = if let Some(entry) = latest
-        .as_ref()
-        .filter(|entry| entry.seq <= agent.conversation.last_seq)
-    {
+    let gap = if let Some(entry) = latest.as_ref() {
         if let AgentLogKind::TurnCompleted { turn_sequence } = entry.kind {
             store.agent_log.find_one(doc! {
                 "agent_id": agent.id.as_str(),
