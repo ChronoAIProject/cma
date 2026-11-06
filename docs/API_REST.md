@@ -896,7 +896,10 @@ edit does not prove that a file was modified. Ordinary text output is unchanged.
 Workspace hierarchy Agent summaries include optional `task_started_at` only when
 the current active turn has a matching recorded start. Clients use that timestamp
 for a running task's elapsed clock; `updated_at` remains activity metadata and
-must not reset an elapsed clock. Idle tasks omit the start timestamp.
+must not reset an elapsed clock. Idle tasks omit the start timestamp. Hierarchy
+reads use one reverse, single-result lookup per active Agent, bounded by the
+confirmed log head and matching turn id, with the existing
+`agent_log_task_status` index (`agent_id`, `record.kind.type`, descending `seq`).
 
 Automatic title generation excludes a recorded setup/unknown first turn and
 uses the first subsequent task; names and sources remain durable across reads.
