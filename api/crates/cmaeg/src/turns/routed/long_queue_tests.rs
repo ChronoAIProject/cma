@@ -69,14 +69,12 @@ async fn routed_existing_agent_queued_nearly_a_day_then_runs_thirty_minutes_comp
         },
         fixture::custom(None),
     );
+    let consumer = request.channel.definition.consumer(None).unwrap();
     assert!(matches!(
-        request.channel.definition.provider.target,
+        consumer.provider.target,
         ProviderTarget::ExistingAgent { .. }
     ));
-    assert_eq!(
-        request.channel.definition.profile.queue_lifetime_seconds,
-        Some(QUEUE_POLICY)
-    );
+    assert_eq!(consumer.profile.queue_lifetime_seconds, Some(QUEUE_POLICY));
     let setup = Setup::with_request(supported(), request).await;
     assert!(!setup.plan.prepares_binding(setup.target()));
     let provider = HttpServer::start().await;
