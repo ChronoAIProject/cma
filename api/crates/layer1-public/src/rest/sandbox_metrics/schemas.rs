@@ -117,6 +117,7 @@ pub(super) fn schemas() -> Value {
             "owner":{"type":"string","maxLength":255},"selected":{"type":"string","maxLength":255},
             "cursor":{"type":"string","maxLength":4096},"limit":{"type":"integer","minimum":1,"maximum":50,"default":50}}},
         "UsageFilterOptions":object(json!({"items":array(json!({"type":"object","additionalProperties":false,"required":["value","label"],"properties":{"value":text,"label":text,"disambiguator":text}})),"next":nullable(text.clone())})),
+        "UsageOwnerAllocations":object(json!({"report_id":text,"metric":{"type":"string","enum":["cpu","memory","disk"]},"unit":{"type":"string","enum":["core-hours","GiB-hours"]},"total_count":integer,"next":nullable(text.clone()),"items":array(json!({"type":"object","additionalProperties":false,"required":["subject","label","allocated_hours","sandbox_count","complete"],"properties":{"subject":text,"label":text,"disambiguator":text,"allocated_hours":quantity,"sandbox_count":integer,"complete":boolean}}))})),
         "UsageMetricOwners":object(json!({"items":array(owner),"next":nullable(text.clone()),"report_id":text})),
         "UsageMetricPage":object(json!({"items":array(reference("UsageMetricRow")),"next":nullable(text.clone()),"report_id":text,"as_of":integer,"total_count":integer}))})
 }
