@@ -56,7 +56,7 @@ for (const theme of ['light', 'dark', 'system']) {
       await expect(page.getByRole('table', { name: 'CPU chart data' })).toBeVisible();
       await expect(page.getByRole('cell', { name: /no measurement/ })).toBeVisible();
     }
-    const sortedColumn = measured ? 'CPU mean / allocated (cores)' : 'Allocated CPU (core-hours)';
+    const sortedColumn = 'CPU (core-hours)';
     await page.getByRole('button', { name: `Sort by ${sortedColumn} ascending` }).click();
     await expect(page.getByRole('columnheader', { name: sortedColumn })).toHaveAttribute(
       'aria-sort',
