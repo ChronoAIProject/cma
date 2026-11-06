@@ -40,7 +40,11 @@ async fn metrics_options_use_retained_creation_and_precise_directory_join_times(
             .await
             .unwrap();
         let page = store
-            .options(&operator, query(OptionKind::Sandbox))
+            .options(
+                &operator,
+                query(OptionKind::Sandbox),
+                OwnerContextAccess::DirectoryRead,
+            )
             .await
             .unwrap();
         assert_eq!(page.items.len(), 2);
@@ -59,7 +63,11 @@ async fn metrics_options_use_retained_creation_and_precise_directory_join_times(
         .await
         .unwrap();
     let owners = store
-        .options(&operator, query(OptionKind::Owner))
+        .options(
+            &operator,
+            query(OptionKind::Owner),
+            OwnerContextAccess::DirectoryRead,
+        )
         .await
         .unwrap();
     for (item, fraction) in owners.items.iter().zip(["001", "002"]) {
@@ -71,7 +79,11 @@ async fn metrics_options_use_retained_creation_and_precise_directory_join_times(
     }
     // Distinct subjects with equal display names use the same Sandbox policy.
     let sandboxes = store
-        .options(&operator, query(OptionKind::Sandbox))
+        .options(
+            &operator,
+            query(OptionKind::Sandbox),
+            OwnerContextAccess::DirectoryRead,
+        )
         .await
         .unwrap();
     assert!(sandboxes.items.iter().all(|item| !item
@@ -86,6 +98,7 @@ async fn metrics_options_use_retained_creation_and_precise_directory_join_times(
                 selected: Some(rows[0].sandbox_id.as_str().into()),
                 ..query(OptionKind::Sandbox)
             },
+            OwnerContextAccess::DirectoryRead,
         )
         .await
         .unwrap();
@@ -101,7 +114,11 @@ async fn metrics_options_use_retained_creation_and_precise_directory_join_times(
         .await
         .unwrap();
     let tied = store
-        .options(&operator, query(OptionKind::Sandbox))
+        .options(
+            &operator,
+            query(OptionKind::Sandbox),
+            OwnerContextAccess::DirectoryRead,
+        )
         .await
         .unwrap();
     for item in &tied.items {

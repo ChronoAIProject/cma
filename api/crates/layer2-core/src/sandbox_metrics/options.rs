@@ -102,6 +102,23 @@ pub fn option_joined(at: Option<&str>) -> Option<String> {
     OptionContext::owner(at).hints.into_iter().next()
 }
 
+/// Current-call authority for directory observation precision; never query input.
+#[derive(Clone, Copy, Debug, Default)]
+pub enum OwnerContextAccess {
+    #[default]
+    DateOnly,
+    DirectoryRead,
+}
+impl OwnerContextAccess {
+    pub fn from_authorization(authorization: &crate::Authorization) -> Self {
+        if authorization.allows(crate::Capability::ReadUserDirectory) {
+            Self::DirectoryRead
+        } else {
+            Self::DateOnly
+        }
+    }
+}
+
 /// Human context in increasing detail, shared by discovery and owner rankings.
 #[derive(Clone, Debug, Default)]
 pub struct OptionContext {
@@ -109,11 +126,20 @@ pub struct OptionContext {
 }
 
 impl OptionContext {
+    /// Safe default for callers without independently verified directory access.
     pub fn owner(joined_at: Option<&str>) -> Self {
+        Self::owner_with_access(joined_at, OwnerContextAccess::DateOnly)
+    }
+
+    pub fn owner_with_access(joined_at: Option<&str>, access: OwnerContextAccess) -> Self {
         let at = joined_at.and_then(|at| {
             time::OffsetDateTime::parse(at, &time::format_description::well_known::Rfc3339).ok()
         });
-        Self::timestamp(None, "Joined", at)
+        let mut context = Self::timestamp(None, "Joined", at);
+        if matches!(access, OwnerContextAccess::DateOnly) {
+            context.hints.truncate(1);
+        }
+        context
     }
 
     pub fn sandbox(owner: &str, owner_name: Option<&str>, created_at: Option<u64>) -> Self {
@@ -162,45 +188,87 @@ pub fn disambiguate_options(items: &mut [FilterOption], hints: &[Option<String>]
 /// Only duplicates on the returned page need secondary text. Use the shortest
 /// distinguishing human context, then a reference only for indistinguishable ties.
 pub fn disambiguate_options_with_context(items: &mut [FilterOption], contexts: &[OptionContext]) {
-    let levels = contexts
+    let duplicate: Vec<_> = items
         .iter()
-        .map(|context| context.hints.len())
-        .max()
-        .unwrap_or(0);
-    let hint = |index: usize, level| contexts.get(index).and_then(|context| context.hint(level));
-    let details: Vec<_> = items
-        .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            let duplicates: Vec<_> = items
+        .map(|item| {
+            items
                 .iter()
-                .enumerate()
-                .filter(|(_, other)| other.label == item.label)
-                .collect();
-            if duplicates.len() < 2 {
-                return None;
-            }
-            for level in 0..levels {
-                if let Some(detail) = hint(index, level) {
-                    if duplicates
-                        .iter()
-                        .filter(|(i, _)| hint(*i, level) == Some(detail))
-                        .count()
-                        == 1
-                    {
-                        return Some(detail.to_owned());
-                    }
-                }
-            }
-            let reference = format!("{:x}", Sha256::digest(item.value.as_bytes()));
-            Some(match hint(index, levels) {
-                Some(hint) => format!("{hint} · reference {}", &reference[..12]),
-                None => format!("reference {}", &reference[..12]),
-            })
+                .filter(|other| other.label == item.label)
+                .count()
+                > 1
         })
         .collect();
-    for (item, detail) in items.iter_mut().zip(details) {
-        item.disambiguator = detail;
+    let mut levels = vec![0; items.len()];
+    let mut references = vec![0; items.len()];
+    loop {
+        let details: Vec<_> = items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                if !duplicate[i] {
+                    return None;
+                }
+                let hint = contexts.get(i).and_then(|context| context.hint(levels[i]));
+                if references[i] == 0 {
+                    return hint.map(str::to_owned);
+                }
+                let digest = format!("{:x}", Sha256::digest(item.value.as_bytes()));
+                let reference = match references[i] {
+                    1 => format!("reference {}", &digest[..12]),
+                    2 => format!("reference {digest}"),
+                    _ => format!("reference {digest} · choice {}", i + 1),
+                };
+                Some(
+                    hint.map(|hint| format!("{hint} · {reference}"))
+                        .unwrap_or(reference),
+                )
+            })
+            .collect();
+        // Compare the strings actually chosen for display, even when different
+        // rows have reached different precision levels or contain generated-looking names.
+        let collisions: Vec<_> = (0..items.len())
+            .filter(|&i| {
+                duplicate[i]
+                    && (0..items.len()).any(|j| {
+                        i != j && items[i].label == items[j].label && details[i] == details[j]
+                    })
+            })
+            .collect();
+        if collisions.is_empty() {
+            for (item, detail) in items.iter_mut().zip(details) {
+                item.disambiguator = detail;
+            }
+            return;
+        }
+        let mut advanced = false;
+        for &i in &collisions {
+            if references[i] == 0
+                && contexts
+                    .get(i)
+                    .is_some_and(|context| levels[i] + 1 < context.hints.len())
+            {
+                levels[i] += 1;
+                advanced = true;
+            }
+        }
+        if advanced {
+            continue;
+        }
+        // Exhausted rows can keep their shorter hint while peers gain human
+        // detail. Add references only when no colliding row has human detail left.
+        for &i in &collisions {
+            if (1..3).contains(&references[i]) {
+                references[i] += 1;
+                advanced = true;
+            }
+        }
+        if !advanced {
+            for i in collisions {
+                if references[i] == 0 {
+                    references[i] = 1;
+                }
+            }
+        }
     }
 }
 
