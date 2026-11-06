@@ -282,6 +282,39 @@ that 20,001 dense 30-day histories fit the same budget. Broader reports can retu
 an explicit retryable error with a narrower-range suggestion. Reports never
 truncate their matched cohort to fit a page or silently treat absent data as zero.
 
+### Scale gate isolation and failure evidence
+
+The Mongo contract coordinator runs the 20,001-Sandbox scale contract alone,
+against a fresh bounded replica set, before starting any ordinary contract
+partitions. The scale container uses the same pinned Mongo image, two CPU limit,
+2 GiB memory limit, 0.25 GiB WiredTiger cache and owned disk volume as the other
+fixtures. Its cleanup completes before the ordinary partitions start. Ordinary
+contracts continue to run even if the scale assertion fails; the overall gate
+preserves every failure. The scale contract is excluded from those partitions,
+so it runs exactly once per gate, without retry-to-green.
+
+For a controlled local reproduction, run
+`bash .github/scripts/mongo-contract-tests.sh --scale` from the repository with
+`CARGO_BUILD_JOBS=2` or less, holding the team's shared heavy-work lock for the
+entire fixture lifecycle. Repeat that command as separate recorded experiments,
+each with fresh data. Shared-runner success does not establish production capacity.
+
+Failure output includes phase, page number (one-based within pagination), phase
+and total duration, circuit-open count, last circuit reason/duration, and remaining
+circuit time. Reasons distinguish failed checkout, hard checkout deadline,
+sustained slow checkouts, and connection-hold deadline. Only fixed categories and
+numbers are captured; names, query bodies, cursor tokens and credentials are not.
+Even a circuit that opens and expires before completion fails the scale assertion.
+The 60-second generation budget, 512 MiB process RSS budget, two-second ownership
+reauthorization budget and complete-cohort/index/pagination assertions remain.
+
+A controlled repeat on 2026-11-07 passed all five fresh-fixture runs with zero
+circuit openings, 20,001 Sandboxes and 101 pages each. Generation took
+11,412–13,294 ms, full workload 21,801–25,178 ms, and post-generation RSS
+46,240–56,672 KiB. The client was macOS/ARM64 with the pinned Mongo fixture
+limits above and no concurrent heavy test/build. These results do not identify
+the original Linux/x64 CI pressure event or establish production capacity.
+
 ## Local validation outcome (2026-11-05)
 
 The implementation includes the `develop` merge at `ecfb557b6` (#1316).
