@@ -58,9 +58,17 @@ it('jumps with a 16px inset and ends its highlight after 1.8s even as output arr
   port.scrollTop = 40;
   vi.spyOn(port, 'getBoundingClientRect').mockReturnValue({ top: 20 } as DOMRect);
   vi.spyOn(block, 'getBoundingClientRect').mockReturnValue({ top: 230 } as DOMRect);
+  vi.spyOn(
+    container.querySelector('.workspace-terminal')!,
+    'getBoundingClientRect',
+  ).mockReturnValue({ bottom: 320 } as DOMRect);
+  Object.defineProperty(port, 'clientHeight', { configurable: true, value: 600 });
   act(() => observation.selectTerminal(command.id));
   await act(() => vi.advanceTimersByTimeAsync(20));
   expect(port.scrollTop).toBe(234);
+  expect(container.querySelector<HTMLElement>('.workspace-terminal')!.style.paddingBottom).toBe(
+    '494px',
+  );
   expect(block).toHaveFocus();
   expect(block).toHaveAttribute('data-highlighted', 'true');
   await act(() => vi.advanceTimersByTimeAsync(980));
