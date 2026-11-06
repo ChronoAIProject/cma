@@ -36,7 +36,8 @@ The CI-target `linux/amd64` desktop image compiled and passed its 42 native
 provider tests under Docker Desktop emulation, but its existing Linux recovery
 prerequisite failed: `os.pidfd_open` returned `ENOSYS`. The identical prerequisite
 passes on native arm64. The amd64 image gate therefore has **not** passed locally;
-it needs a native amd64 runner.
+it needs a native amd64 runner. The tech lead approved leaving that gate to CI
+after the other local gates passed and will monitor the amd64 Images job.
 
 Both arm64 images used the repository Dockerfile, with only a temporary
 `CARGO_BUILD_JOBS=4` build argument added to bound the compiler workers. No image
