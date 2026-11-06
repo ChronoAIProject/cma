@@ -243,7 +243,7 @@ The composed identity/discovery/static routes also include:
 | Operation | Meaning |
 |---|---|
 | `GET /openapi.json` | Anonymous machine-readable contract |
-| `GET /auth/login` | Begin NyxID OAuth; return destination is validated |
+| `GET /auth/login` | Begin NyxID OAuth; return destination is validated; `prompt=none` reuses a NyxID session without interaction |
 | `GET /auth/callback` | Complete identity exchange; never starts Agent work |
 | `GET /auth/session` | Browser identity, capabilities, visitor flag and effective usage presentation policy; 401 when signed out |
 | `POST /auth/logout` | Revoke browser login and expire cookie; redirect to `/` |
