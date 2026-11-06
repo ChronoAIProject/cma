@@ -439,6 +439,12 @@ export function useAgentController(
     `${state.status === 'ready' ? state.conversation.cursor : 0}:${requestRevision}`,
     onIdentityChange,
   );
+  const interruptTurn = (strict: boolean) =>
+    command(
+      'interrupt',
+      (id, key, signal) => client.interruptAgent(id, { idempotencyKey: key, signal }),
+      strict,
+    );
   return {
     ...presentRetainedInputs(v2, legacy),
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
@@ -482,16 +488,8 @@ export function useAgentController(
         : (content, onAccepted, onReceiptObserved, onRefused, onOrdinaryInput) =>
             run(content, onAccepted, onReceiptObserved, onRefused, 'interrupt', onOrdinaryInput),
     approve: (approvalId, decision) => run({ id: approvalId, decision }),
-    interruptForControl: () =>
-      command(
-        'interrupt',
-        (id, key, signal) => client.interruptAgent(id, { idempotencyKey: key, signal }),
-        true,
-      ),
-    interrupt: () =>
-      command('interrupt', (id, key, signal) =>
-        client.interruptAgent(id, { idempotencyKey: key, signal }),
-      ),
+    interruptForControl: () => interruptTurn(true),
+    interrupt: () => interruptTurn(false),
     stop: () =>
       command('stop', (id, key, signal) => client.stopAgent(id, { idempotencyKey: key, signal })),
     delete: () =>
