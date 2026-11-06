@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ApiError, ProtocolError } from '@chronoai/cma-sdk';
 import { AgentLifecycleCreateError } from '../api/client';
 import { requireTaskStorage } from './taskIdentity';
+import { discardSubmittedTaskDraft } from './taskDraft';
 import { lifecycleFailure, type LifecycleFailure } from './lifecycleFailure';
 import type {
   AgentLifecycleCreateInput,
@@ -250,7 +251,20 @@ export function useLifecycleIntent(
     setConnection,
     submit,
     retryStatus: () => setPollVersion((value) => value + 1),
-    clear: () => retain(),
+    clear: () => {
+      const intent = current.current;
+      if (!retain()) return false;
+      if (
+        owner &&
+        intent &&
+        operation?.status === 'succeeded' &&
+        operation.id === intent.receipt?.id &&
+        operation.agent_id &&
+        (intent.agentId === undefined || intent.agentId === operation.agent_id)
+      )
+        discardSubmittedTaskDraft(owner, intent.body);
+      return true;
+    },
     bindAgent: (agentId: string) => {
       const intent = current.current;
       if (

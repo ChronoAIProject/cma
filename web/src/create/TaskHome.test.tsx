@@ -495,7 +495,7 @@ it('verifies the Agent even when the first status read already reports preparati
   );
 });
 
-it('resumes both desktop choices and repository only on explicit connection action with frozen options, body and key after cancel and refresh', async () => {
+it('resumes shared desktop and repository only on explicit connection action with frozen options, body and key after cancel and refresh', async () => {
   const writes: { body: unknown; key: string | null }[] = [];
   let checks = 0;
   let authorized = false;
@@ -538,24 +538,12 @@ it('resumes both desktop choices and repository only on explicit connection acti
       });
     throw new Error('Unexpected read');
   };
-  const client = {
-    ...taskClient(transport),
-    readDesktopCapability: async () => ({
-      state: 'available' as const,
-      reason: 'Verified desktop runtime',
-      runtime_contract: 3,
-      min_memory_mib: 2048,
-      min_cpu_millis: 1000,
-    }),
-  };
+  const client = taskClient(transport);
   const props = { client, viewerId: 'owner', canCreateSandbox: true, onCreated: vi.fn() };
   const first = render(<TaskHome {...props} />);
   await waitFor(() =>
     expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
   );
-  const desktop = computerOption('Agent browser');
-  await waitFor(() => expect(desktop).toHaveAttribute('aria-disabled', 'false'));
-  fireEvent.click(desktop);
   const machine = computerOption('Shared desktop');
   fireEvent.click(machine);
   fireEvent.change(screen.getByLabelText('Your task'), {
@@ -578,8 +566,6 @@ it('resumes both desktop choices and repository only on explicit connection acti
   await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus());
   fireEvent.keyDown(document, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-  expect(computerOption('Agent browser')).toBeChecked();
-  expect(computerOption('Agent browser')).toHaveAttribute('aria-disabled', 'true');
   expect(computerOption('Shared desktop')).toBeChecked();
   expect(computerOption('Shared desktop')).toHaveAttribute('aria-disabled', 'true');
   expect(writes).toHaveLength(1);
@@ -588,8 +574,6 @@ it('resumes both desktop choices and repository only on explicit connection acti
   authorized = true;
   render(<TaskHome {...props} />);
   await screen.findByRole('button', { name: 'Continue original task' });
-  expect(computerOption('Agent browser')).toBeChecked();
-  expect(computerOption('Agent browser')).toHaveAttribute('aria-disabled', 'true');
   expect(computerOption('Shared desktop')).toBeChecked();
   expect(computerOption('Shared desktop')).toHaveAttribute('aria-disabled', 'true');
   expect(writes).toHaveLength(1);
@@ -601,7 +585,6 @@ it('resumes both desktop choices and repository only on explicit connection acti
   expect(writes[0]?.body).toMatchObject({
     initial_message: '  Original task\nwith whitespace  ',
     repository: { url: 'https://github.com/example/project', ref: 'proof/fixed' },
-    desktop: true,
     machine_included: true,
   });
   expect(checks).toBe(checksBeforeRefresh + 1);
