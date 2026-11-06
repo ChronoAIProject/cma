@@ -34,6 +34,7 @@ impl ReportingStore {
                     .ok_or_else(|| MetricsError::Invalid("Invalid option cursor.".into()))
             })
             .transpose()?;
+        let _timer = self.time_read("filter_options")?;
         let (collection, pipeline) = option_pipeline(&query, after, limit);
         // Discovery does not submit, poll, or require a report, and does not use
         // report admission. Only a bounded public projection leaves the store.
