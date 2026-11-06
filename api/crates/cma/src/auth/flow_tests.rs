@@ -102,7 +102,10 @@ mod silent {
             ))
             .await
             .unwrap();
-        (authorize_query(&login)["state"].clone(), binding_cookie(&login))
+        (
+            authorize_query(&login)["state"].clone(),
+            binding_cookie(&login),
+        )
     }
 
     pub(super) fn set_cookies(response: &Response) -> Vec<String> {
@@ -199,7 +202,11 @@ mod silent {
     #[tokio::test]
     async fn a_declined_interactive_login_is_still_reported() {
         let app = router(provider(Arc::new(MemoryAuthStore::default())).await);
-        let login = app.clone().oneshot(browser_get("/auth/login", None)).await.unwrap();
+        let login = app
+            .clone()
+            .oneshot(browser_get("/auth/login", None))
+            .await
+            .unwrap();
         let state = authorize_query(&login)["state"].clone();
         let cookie = binding_cookie(&login);
 
@@ -222,12 +229,18 @@ mod silent {
             "prompt=",
             "prompt=none&screen=register",
         ] {
-            let app = router(provider(Arc::new(MemoryAuthStore::default())).await);
-            let response = app
-                .oneshot(browser_get(&format!("/auth/login?{query}"), None))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
+            for cookie in [None, Some("cma_signed_out=1")] {
+                let app = router(provider(Arc::new(MemoryAuthStore::default())).await);
+                let response = app
+                    .oneshot(browser_get(&format!("/auth/login?{query}"), cookie))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::BAD_REQUEST,
+                    "{query} {cookie:?}"
+                );
+            }
         }
     }
 }
@@ -261,8 +274,10 @@ mod silent_outcomes {
         assert!(cookies
             .iter()
             .any(|value| value.starts_with(&format!("{name}=;")) && value.contains("Max-Age=0")));
-        assert!(cookies.iter().any(|value| value.starts_with(BINDING_COOKIE_PREFIX)
-            && !value.starts_with(&format!("{name}="))));
+        assert!(cookies
+            .iter()
+            .any(|value| value.starts_with(BINDING_COOKIE_PREFIX)
+                && !value.starts_with(&format!("{name}="))));
         assert!(!cookies.iter().any(|value| value.starts_with(AUTH_COOKIE)));
     }
 
