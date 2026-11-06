@@ -60,6 +60,11 @@ use profile::Profile;
 pub const AUTH_COOKIE: &str = "cma_session";
 const AUTH_COOKIE_DOMAIN: &str = "browser-login";
 const AUTH_COOKIE_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+/// Set by the web client as it signs out of CMA. Logout ends the CMA cookie
+/// but not the provider's session, so a silent sign-in would otherwise undo
+/// it. It can only decline a silent sign-in, so it need not be authenticated.
+/// A completed interactive sign-in clears it.
+const SIGNED_OUT_COOKIE: &str = "cma_signed_out";
 
 /// How CMA establishes the caller attached to an HTTP request.
 #[derive(Clone)]

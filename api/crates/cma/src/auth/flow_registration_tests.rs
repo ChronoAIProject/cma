@@ -335,9 +335,17 @@ async fn unseen_identity_callback_records_sign_in_without_aggregate_bootstrap() 
             "/auth/callback?code=contract-code&state={}",
             urlencode(&query["state"])
         );
+        // One browser returns having signed out of CMA earlier; choosing to
+        // sign in again clears that.
+        let signed_out = return_to == Some("/");
+        let callback_cookie = if signed_out {
+            format!("{binding}; cma_signed_out=1")
+        } else {
+            binding.to_owned()
+        };
         let callback_request = || {
             Request::get(&callback_path)
-                .header(header::COOKIE, binding)
+                .header(header::COOKIE, &callback_cookie)
                 .body(Body::empty())
                 .unwrap()
         };
@@ -381,7 +389,11 @@ async fn unseen_identity_callback_records_sign_in_without_aggregate_bootstrap() 
             .iter()
             .map(|value| value.to_str().unwrap())
             .collect();
-        assert_eq!(cookies.len(), 2);
+        assert_eq!(cookies.len(), if signed_out { 3 } else { 2 });
+        if signed_out {
+            assert!(cookies[2].starts_with("cma_signed_out=;"));
+            assert!(cookies[2].contains("Max-Age=0"));
+        }
         assert!(cookies[0].starts_with(&format!("{}=;", binding_cookie_name(&query["state"]))));
         assert!(cookies[0].contains("Max-Age=0"));
         let browser_cookie = cookies[1].split(';').next().unwrap();
