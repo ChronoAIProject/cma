@@ -1,0 +1,31 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { defineConfig } from '@playwright/test';
+
+const baseURL = process.env.CMA_WEB_IMAGE_URL;
+if (!baseURL || !['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname))
+  throw new Error('Image smoke checks require a loopback Docker server.');
+
+export default defineConfig({
+  testDir: '.',
+  testMatch: 'image-smoke.check.ts',
+  workers: 1,
+  retries: 0,
+  forbidOnly: true,
+  timeout: 30_000,
+  reporter: 'list',
+  outputDir:
+    process.env.CMA_WEB_IMAGE_EVIDENCE_DIR ?? mkdtempSync(join(tmpdir(), 'cma-web-image-')),
+  use: {
+    baseURL,
+    viewport: { width: 1440, height: 1000 },
+    serviceWorkers: 'block',
+    trace: 'off',
+    video: 'off',
+    launchOptions: {
+      executablePath: process.env.CMA_E2E_BROWSER_PATH,
+      args: ['--enable-unsafe-swiftshader'],
+    },
+  },
+});
