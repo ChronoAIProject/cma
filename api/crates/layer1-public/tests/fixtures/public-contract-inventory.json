@@ -3821,7 +3821,7 @@
     },
     "GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped owner allocations reauthorize every page, resolve cohort-wide labels with current directory precision authority, and map typed reporting problems.",
       "required_problems": [
         "not_authenticated",
         "forbidden",

@@ -4,6 +4,55 @@ use layer2_core::Capability;
 use std::sync::atomic::Ordering;
 
 #[tokio::test]
+async fn owner_allocation_context_rechecks_directory_permission_on_each_page() {
+    let store = Arc::new(Store::default());
+    let base = "/api/v1/admin/usage/metrics/reports";
+    let caps = &[Capability::ReadAllSandboxes, Capability::ReadUserDirectory][..];
+    call(&store, "POST", base, Some(("operator", caps)), "{}").await;
+    let path = format!("{base}/umr_00000000000000000000000000000001/owner-allocations?metric=cpu");
+    assert_eq!(
+        call(&store, "GET", &path, Some(("operator", caps)), "")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let continuation = format!("{path}&cursor=retained-page");
+    assert_eq!(
+        call(
+            &store,
+            "GET",
+            &continuation,
+            Some(("operator", &[Capability::ReadAllSandboxes])),
+            ""
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert!(matches!(
+        store.owner_context.lock().unwrap().as_slice(),
+        [
+            OwnerContextAccess::DirectoryRead,
+            OwnerContextAccess::DateOnly
+        ]
+    ));
+    for suffix in ["&directory_read=true", "&owner_context=DirectoryRead"] {
+        assert_eq!(
+            call(
+                &store,
+                "GET",
+                &format!("{path}{suffix}"),
+                Some(("operator", caps)),
+                ""
+            )
+            .await
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+}
+
+#[tokio::test]
 async fn owner_allocations_authorize_every_page_validate_and_revoke_cached_reports() {
     let store = Arc::new(Store::default());
     let admin = Some(("operator", &[Capability::ReadAllSandboxes][..]));
