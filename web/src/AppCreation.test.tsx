@@ -1,3 +1,4 @@
+import { expandNavigationFilters } from './test/select';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -96,8 +97,8 @@ it('creates the Agent in the Workspace whose row opened New agent', async () => 
     </AuthContextProvider>,
   );
   const actor = userEvent.setup();
-  await actor.click(await screen.findByRole('button', { name: 'Settings' }));
-  await actor.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
+  await expandNavigationFilters(actor);
+  await actor.click(screen.getByRole('button', { name: 'Manage environments' }));
   await actor.click(
     await screen.findByRole('button', { name: 'Options for /workspaces/chrono-bot' }),
   );

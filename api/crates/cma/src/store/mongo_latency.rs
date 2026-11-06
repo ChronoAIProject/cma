@@ -158,7 +158,7 @@ fn attach(options: &mut ClientOptions, observer: Observer) {
 
 // Driver IDs are only unique within a server's pool. Keep a bounded, ephemeral
 // fingerprint for pairing; neither the address nor the fingerprint is logged.
-fn connection_key(address: &mongodb::options::ServerAddress, id: u32) -> u64 {
+pub(super) fn connection_key(address: &mongodb::options::ServerAddress, id: u32) -> u64 {
     let mut hash = DefaultHasher::new();
     (address, id).hash(&mut hash);
     hash.finish()
