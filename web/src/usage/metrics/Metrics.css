@@ -304,3 +304,25 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+.usage-metric-filters[data-dropdowns='true'] {
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto auto;
+}
+.usage-option-footer {
+  padding: 8px;
+  font: var(--dsw-font-xs-13);
+}
+.usage-option-pages {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+@container (max-width: 959px) {
+  .usage-metric-filters[data-dropdowns='true'] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container (max-width: 479px) {
+  .usage-metric-filters[data-dropdowns='true'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
