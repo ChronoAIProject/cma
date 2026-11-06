@@ -2614,7 +2614,11 @@ This replaces the older preview-first ordering, which masked generated names.
 
 The following alias tokens are defined on `body`, with dark overrides on
 `body[data-ds-dark-theme]`. Components read the aliases, never literal colors.
-The `workspace` role scopes this palette to Agent Manager; other services keep §2.
+The `workspace` role scopes this palette to the Agent conversation and task
+details. The shared sidebar, navigation selections, account menu and New agent
+landing keep the theme palette and task surfaces defined in §2 and the
+2026-11-06 theme contract. Workspace control actions retain their explicit
+contrast fill; other primary buttons retain the shared lime palette.
 
 | Alias suffix (`--dsw-alias-workspace-`) | Light | Dark |
 | --- | --- | --- |
@@ -2663,7 +2667,11 @@ Tasks heading has 8px before its list. The row menu is revealed by hover or
 focus-within, and always visible for coarse pointers; it retains its target and
 accessible name when visually hidden. This replaces stacked task statuses and
 always-visible menus to keep the task list compact. Settings moves to the right
-of the bottom account row (avatar, name, email, Settings icon).
+of the bottom account row (avatar, name, email, Settings icon). The bottom gear
+opens its environment shortcut; the Tasks filter disclosure also retains its
+Manage environments button. Both enter the same environment view and preserve
+task route, scope, scroll and focus on return. No Settings heading returns to
+the main navigation. Appearance remains in the account menu.
 
 The toolbar is a normal grid row above the message scrollport; it never overlays
 messages. The title has a 96px minimum and ellipsizes only after its available
@@ -2691,7 +2699,11 @@ matching command to 16px below its scrollport top and fades a highlight over
 16px below the scrollport top. Tool duration is never guessed from render time.
 
 One bottom conversation status reads [logo] Thinking <elapsed> · View activity,
-updating its recorded-start clock once a second. Thinking may shimmer: this is
+updating its recorded-start clock once a second. Elapsed labels use seconds below
+one minute and minutes/seconds below one hour; at one hour they use hours/minutes
+(`1h 5m`), and at one day days/hours (`2d 3h`), retaining a zero lower unit.
+Thinking, stopped duration and the running task badge share this format; the
+sidebar keeps `<1m` and whole-minute labels for shorter runs. Thinking may shimmer: this is
 an explicit exception to the old status-text motion rule, not animation of an
 Agent's words. Stopped turns read ■ Stopped after <duration>. Neither status contains token usage, including its expanded details.
 The composer has no spinner. With input it shows Send (↑) when queueing is supported; when queueing is
@@ -2704,9 +2716,26 @@ above the composer as Queued · <content> with an independently named × removal
 button. Queue is offered only while running. The compact model/effort reads
 Astra · High; its tooltip retains the full model, reasoning, permission, context
 usage and token figures. The tooltip also describes the settings chip for screen
-readers. There is no context ring in the composer.
+readers. An unavailable settings chip remains focusable and exposes usage
+read-only with its reason. There is no context ring in the composer. Account
+Usage separately retains the owner-scoped Your usage popup for allocated and
+measured CPU, memory and disk; it keeps the current conversation and draft mounted.
+Context/token figures belong only to the settings tooltip, not that resource report.
+
+The allocated-usage redesign applies to that popup and Operations: period
+resource-hours lead each card, current capacity is separately labelled, allocation
+charts describe only the displayed server page, and responsive inventory and
+missing-history disclosures remain available. Measured-resource visibility keeps
+its existing independent gate. These Sandbox resource reports preserve the
+mounted conversation and its draft; opening or closing them keeps the settings
+chip's context/token description available and never adds a composer ring.
+
 
 Computer tabs are Screen, Terminal, Files with roving tabindex and arrow keys.
+Home/End/Arrow selection leaves focus on the selected tab. Initial composer focus
+is allowed only when no other control already owns focus; late conversation
+readiness must preserve an owner's existing focus in the computer or elsewhere.
+
 The tab well uses `workspace-selected`; its selected tab uses `bg-layer-1`,
 with primary ink on the selection and secondary ink on the other tabs.
 Terminal exists only after a recorded terminal operation. Opening Computer
@@ -2778,6 +2807,17 @@ transitions, not timer ticks. Reduced motion removes breathing, shimmer and the
 Terminal highlight fade; the selected command retains its highlight for 1.8s
 without a fade. The shared focus ring and 44px coarse-pointer targets remain.
 
+
+Workspace streaming recovery preserves visible text and reasoning across a gap.
+A durable successor keeps the live row's DOM identity and timeline position;
+recovery occupies the fixed stream status slot until the run settles. Grouped
+tools, relative answer footers and live Screen/Terminal/Files remain unchanged.
+The open Agent keeps its last reported sidebar task status while navigation
+refreshes; completed tasks still use the Workspace timestamp presentation.
+Identity retries preserve the mounted workspace and its draft. Resource usage
+filters and complete-cohort owner charts keep their own authorized identity
+policy. Channel Queue wait limits new channel admissions independently of
+composer follow-up queueing.
 
 ## Changelog
 
@@ -6026,3 +6066,13 @@ saving. Use existing form spacing, labels and validation; introduce no new token
 | 2026-11-06 | Match the reference tab treatment with a selected white/light-layer tab on the neutral Workspace tab well in both appearances. |
 
 | 2026-11-06 | Review round 1: require confirmed interruption before desktop takeover; restore authorized header actions and machine details, Sandbox-coloured characters, minute-boundary clocks, changed-file discovery, truthful degraded-diff counts, concise tool errors, search/list summaries, composer stop access and usage tooltip, live source following, loaded-history tab fallback, and whole-answer timestamp reveal. |
+
+| 2026-11-06 | Review round 1 addendum: format long elapsed times as hours/minutes or days/hours consistently in Thinking, stopped duration and task badges; preserve usage access through an unavailable settings chip. |
+
+| 2026-11-06 | Integrate Workspace v3 with the shared theme and New agent landing; preserve both environment entry points and keep conversation context/token disclosure distinct from the retained account resource-usage popup. |
+
+| 2026-11-06 | Preserve the redesigned period-first resource Usage popup and Operations dashboard alongside Workspace context/token settings disclosure, retained drafts and streams, and the composer without a context ring. |
+
+| 2026-11-06 | Preserve the owner’s existing keyboard focus when the conversation becomes ready; computer Home/End/Arrow navigation keeps focus on its selected tab while initial composer focus remains available on an otherwise unfocused page. |
+
+| 2026-11-07 | Integrate Workspace v3 with stable streaming recovery, retained sidebar status, deterministic desktop reconnection, mounted identity retries and complete-cohort resource usage; preserve channel queue policy independently of composer follow-ups. |
