@@ -201,6 +201,28 @@ channel definitions and provider associations to prove that they bind to the
 **same exact Agent ID**, not two similarly named Agents or two profile-created
 conversations. Check integration/webhook/binding/source diagnostics dynamically.
 
+Measure one full run from sync start through check, build, status-PR creation,
+exact-head CI success and merge. Retain start/end times and the PR/merge identity;
+report this elapsed duration separately from time spent waiting in the Agent queue.
+Use that measurement and the expected backlog to choose a queue wait greater than
+300 seconds and no more than 86,400 seconds.
+
+Set that explicit `profile.queue_lifetime_seconds` on **both** automation channel
+profiles. Read back both saved profiles and each CMA provider binding: the effective
+`queue_lifetime_seconds` must match the chosen value, and `honoured` must include
+`queue_lifetime_seconds`. Sharing an Agent does not make this setting global; each
+binding needs its own opt-in. Capacity remains 64 queued commands for that Agent.
+Deploy compatible CMA and gateway readers before writing the new profile field;
+retain compatible readers during rollback of opt-in bindings.
+
+A later queue-policy update changes only newly admitted message deadlines. If even
+the selected long wait expires, the CMA response fails with
+`agent_command_queue_timeout` before any Agent turn starts. The gateway settles
+that failure and does not resubmit it. The owner inspects the failed activity and
+response, addresses the backlog, and may explicitly trigger a fresh Custom event.
+An accepted turn that finishes after its reply reference expires still settles;
+expired answer/webhook capabilities remain refused rather than renewed.
+
 Human action: in chrono-goals → Settings → Secrets and variables → Actions, set
 repository variables `CMAEG_SYNC_ENDPOINT` (the Custom channel event URL) and
 `CMAEG_SYNC_KEY_ID` (its configured HMAC key ID), plus repository secret
@@ -230,8 +252,9 @@ Repeat these acceptance cases:
 
 - Redeliver the identical GitHub delivery: same receipt/task, no second turn.
 - Send a filtered action: ignored with no task.
-- Make two quick changes while a sync is busy: two separate admissions and serial
-  turns on the same Agent; both complete within the configured queue bound.
+- While a sync is busy, send a GitHub delivery and a distinct Custom event: two
+  separate admissions and serial turns on the same Agent; both complete within the
+  explicit queue bound configured on their respective bindings.
 - Dispatch the schedule workflow: authenticated Custom admission and a run on that
   same Agent. Record the workflow run and Custom event identity.
 - Verify a no-change run creates no PR; an existing managed PR is reused on retry;
