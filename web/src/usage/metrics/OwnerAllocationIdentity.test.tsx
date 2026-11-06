@@ -37,7 +37,7 @@ it('retains cohort disambiguators across the 200/201 page boundary in labels, to
   );
   await screen.findByText(/10 of 201 owners/);
   await userEvent.click(screen.getByRole('button', { name: 'Owners shown' }));
-  await userEvent.click(screen.getByRole('menuitemradio', { name: 'All', exact: true }));
+  await userEvent.click(screen.getByRole('menuitemradio', { name: /^All$/ }));
   await userEvent.click(screen.getByRole('button', { name: 'Load more owners' }));
   await screen.findByText(/201 of 201 owners loaded/);
   const scroll = screen.getByRole('region', { name: 'Scrollable owner allocations' });
