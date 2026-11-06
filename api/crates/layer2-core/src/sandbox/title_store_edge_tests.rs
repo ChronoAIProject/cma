@@ -161,15 +161,13 @@ async fn malformed_claims_sources_and_timestamps_are_rejected() {
 
 #[tokio::test]
 async fn retained_fallback_stays_visible_until_one_fenced_generated_title_replaces_it() {
+    let now = SystemTime::now() - Duration::from_secs(60);
     let store = InMemoryAgentTitleStore::default();
     let id = id("fallback_upgrade");
     store.register_agent(id.clone()).unwrap();
     make_eligible(&store, &id);
     let claim = store
-        .acquire_agent_title_claim(
-            &AgentTitleClaimRequest::new(id.clone(), "original"),
-            base_time(),
-        )
+        .acquire_agent_title_claim(&AgentTitleClaimRequest::new(id.clone(), "original"), now)
         .await
         .unwrap()
         .unwrap();
@@ -189,7 +187,7 @@ async fn retained_fallback_stays_visible_until_one_fenced_generated_title_replac
     let retry = store
         .acquire_agent_title_claim(
             &AgentTitleClaimRequest::new(id.clone(), "retry"),
-            base_time() + Duration::from_secs(60),
+            now + Duration::from_secs(60),
         )
         .await
         .unwrap()
@@ -202,7 +200,7 @@ async fn retained_fallback_stays_visible_until_one_fenced_generated_title_replac
     assert!(store
         .acquire_agent_title_claim(
             &AgentTitleClaimRequest::new(id.clone(), "other"),
-            base_time() + Duration::from_secs(61)
+            now + Duration::from_secs(61)
         )
         .await
         .unwrap()

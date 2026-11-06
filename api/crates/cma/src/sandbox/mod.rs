@@ -26,6 +26,7 @@ mod runtime_mapping;
 mod scheduler;
 mod suggestion_worker;
 pub(crate) mod suggestions;
+mod title_budget;
 mod title_scheduler;
 mod title_worker;
 mod titles;

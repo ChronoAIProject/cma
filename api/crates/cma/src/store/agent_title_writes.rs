@@ -259,7 +259,7 @@ async fn apply_title(
             .unwrap_or(Bson::Null),
     );
     if let TitleMutation::Automatic { claim, .. } = mutation {
-        filter.extend(lease_filter(claim));
+        filter.extend(lease_filter(claim, state.stored.is_some()));
     }
     let updated = store
         .agents

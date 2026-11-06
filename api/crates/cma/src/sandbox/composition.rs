@@ -39,6 +39,7 @@ pub(crate) struct SandboxLifecycleDependencies {
     pub policy: Arc<dyn SandboxPolicySource>,
     pub skills: Arc<dyn AgentSkillResolver>,
     pub title_runtime: Arc<dyn TitleRuntimeEndpoint>,
+    pub title_budget: Arc<dyn super::title_budget::TitleBudget>,
     pub funding: Arc<dyn SandboxFundingAdapter>,
 }
 
@@ -117,6 +118,7 @@ impl SandboxLifecycleComposition {
             Arc::clone(&dependencies.credentials),
             dependencies.title_runtime,
             config.title_model,
+            dependencies.title_budget,
         ));
         let workspace_worker = WorkspaceWorker::new(
             WorkspaceWorkerDependencies {

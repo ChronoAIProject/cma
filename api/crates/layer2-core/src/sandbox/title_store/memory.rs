@@ -33,6 +33,9 @@ struct MemoryAgent {
 #[derive(Default)]
 struct TitleWork {
     attempted: bool,
+    attempts: u32,
+    next_attempt_at: Option<SystemTime>,
+    settled: bool,
     lease: Option<AgentTitleClaim>,
     completed: Option<CompletedClaim>,
 }
@@ -128,6 +131,11 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
                     .title
                     .as_ref()
                     .is_none_or(|title| title.source == AgentTitleSource::Fallback)
+                    && !agent.work.settled
+                    && agent
+                        .work
+                        .next_attempt_at
+                        .is_none_or(|at| at <= SystemTime::now())
                     && AgentTitleTranscript::from_complete_log(&agent.logs).is_some()
             })
             .map(|(id, _)| id.clone())
@@ -174,9 +182,19 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
             }
         }
 
-        let mode = AgentTitleClaimMode::Generate;
+        if agent.work.settled || agent.work.next_attempt_at.is_some_and(|at| at > now) {
+            return Ok(None);
+        }
+        let mode = if agent.work.attempts >= super::super::AGENT_TITLE_MAX_ATTEMPTS {
+            AgentTitleClaimMode::FallbackOnly
+        } else {
+            agent.work.attempts += 1;
+            AgentTitleClaimMode::Generate
+        };
         agent.work.attempted = true;
-        let claim = AgentTitleClaim::acquired(request.clone(), mode, now, expires_at);
+        let claim = AgentTitleClaim::acquired(request.clone(), mode, now, expires_at)
+            .with_attempts(agent.work.attempts);
+        agent.work.next_attempt_at = Some(claim.next_attempt_at());
         agent.work.lease = Some(claim.clone());
         Ok(Some(claim))
     }
@@ -238,6 +256,7 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
             set_at: set_at.clone(),
         });
         agent.work.lease = None;
+        agent.work.settled = claim.terminal_fallback() || source != AgentTitleSource::Fallback;
         agent.work.completed = Some(CompletedClaim {
             holder: claim.holder().to_owned(),
             token: claim.token().to_owned(),

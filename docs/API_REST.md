@@ -906,11 +906,40 @@ The persisted `title` takes precedence over a prompt preview or runtime label;
 delta. Title generation uses the owner's scoped model service directly, so it
 does not depend on a legacy hosting-provider port route. Its inputs are the
 first task's owner message and final recorded assistant message. It never opens
-another Agent turn. Each 45-second durable lease admits at most two model calls,
-each bounded to ten seconds. A failed attempt is deferred to a later lease;
-previous fallback titles remain visible and eligible for replacement. Generated
-and user titles are terminal for automatic generation. A user rename during
-generation remains authoritative. No new deployment configuration is required.
+another Agent turn. Each 45-second durable lease admits one model call bounded to ten seconds.
+Per-Agent `title_attempt_count`, `title_next_attempt_at` and `title_settled`
+metadata survive worker restarts. The first two transient failures defer for
+60 and 120 seconds; at most three model calls are admitted. An expired third
+claim settles the fallback without another model call. Permanent 4xx denials
+(except request timeout/rate limiting), quota/billing denials and missing model
+scope settle immediately. Network errors, 408, rate-limited 429 and 5xx retry
+within that bound. Generated and user titles remain terminal.
+
+Old documents without retry metadata start at zero attempts and remain readable;
+historical fallback titles can be regenerated, including in own-credential
+Sandboxes with the required scoped model access. New retry metadata lives outside
+the Agent record schema and is preserved by normal Agent updates, so old readers
+continue to read the retained title and new readers retain the retry budget.
+Owner renames always take precedence over pending generation.
+
+Rollback readers remain compatible throughout title regeneration. Titleless
+Agents use the retained `title_lease_*` fields. Regeneration of a stored fallback
+uses a separate top-level `title_regeneration_lease` envelope, which older API
+binaries ignore; the original lease fields remain null whenever a title is
+stored. This holds during claims, transient-failure backoff, crashes and pauses
+that defer recovery indefinitely. Completion and user-title writes clear both
+lease locations atomically. Exact holder/token/mode/deadline fencing, bounded
+attempt counts and retry times remain durable in the new reader. A terminal
+user/generated title also fences any regeneration envelope left by an older
+writer; owner presentation renames remain authoritative across rollback.
+
+
+The existing Mongo `request_rate_limits` budget `background:agent-titles` admits
+six title jobs per minute deployment-wide (maximum burst six), using the database
+clock and surviving process restarts and rolling overlap. The scheduler further
+spaces starts by ten seconds. Budget failures authorize no model call and consume
+no per-Agent attempt. No new configuration, collection or deployment input is
+required.
 
 
 Sandbox pause/revive and removal return recorded lifecycle state. Stopping an
