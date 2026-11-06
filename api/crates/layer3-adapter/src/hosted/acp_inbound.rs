@@ -27,9 +27,14 @@ impl Bridge {
                 };
                 if let Some(waiting) = waiting {
                     if waiting.prompt {
+                        let prompt_id = id.as_str().and_then(crate::PromptIdentity::parse);
+                        if let Some(id) = id.as_str() {
+                            self.mark_prompt_completed(id).await;
+                        }
                         updates.send(super::acp_turn::scoped_turn_outcome(
                             super::acp_turn::turn_outcome(frame.clone()),
                             true,
+                            prompt_id,
                         ));
                     }
                     let _ = waiting.answer.send(frame);
@@ -41,6 +46,21 @@ impl Bridge {
                             .store(false, std::sync::atomic::Ordering::SeqCst);
                         self.answered.lock().await.clear();
                         return;
+                    }
+                    let active_prompt = self.active_prompt_matches(id).await;
+                    let already_completed = self.prompt_was_completed(id).await;
+                    if !already_completed && active_prompt {
+                        if let Some(prompt_id) = crate::PromptIdentity::parse(id) {
+                            if let Some(outcome) = prompt_outcome(&frame) {
+                                self.mark_prompt_completed(id).await;
+                                updates.send(super::acp_turn::scoped_turn_outcome(
+                                    outcome,
+                                    true,
+                                    Some(prompt_id),
+                                ));
+                                return;
+                            }
+                        }
                     }
                 }
                 if id.as_i64().is_some()
@@ -382,6 +402,15 @@ pub(crate) fn outcome_for(
         }
     }
     serde_json::json!({ "outcome": "cancelled" })
+}
+
+fn prompt_outcome(frame: &serde_json::Value) -> Option<super::acp::Outcome> {
+    let terminal = frame.get("error").is_some()
+        || frame
+            .get("result")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|result| result.contains_key("stopReason"));
+    terminal.then(|| super::acp_turn::turn_outcome(frame.clone()))
 }
 
 fn valid_call(call: &serde_json::Value) -> bool {

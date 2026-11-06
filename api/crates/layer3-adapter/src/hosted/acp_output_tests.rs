@@ -78,7 +78,7 @@ async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_h
         "/workspace".into(),
         (settings(None, false), None),
         Some("conversation-held".into()),
-        Some(prompt),
+        Some(prompt.clone()),
         updates,
     ));
     backlog_received.await.unwrap();
@@ -106,7 +106,8 @@ async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_h
         if cursor == 301 {
             assert!(matches!(
                 update.as_deref(),
-                Some(ConversationUpdate::TurnEnded(_))
+                Some(ConversationUpdate::TurnEndedForPrompt { prompt_id, .. })
+                    if prompt_id == &prompt
             ));
         } else if cursor == 302 {
             assert!(update.is_none());

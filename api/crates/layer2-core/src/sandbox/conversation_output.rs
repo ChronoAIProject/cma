@@ -75,3 +75,45 @@ pub(super) fn output_replayed(
         _ => Err(invalid()),
     }
 }
+
+pub(super) fn is_identity_terminal_for_current(
+    current: &Agent,
+    update: Option<&layer3_adapter::ConversationUpdate>,
+) -> bool {
+    let Some(update) = update else { return false };
+    let update = match update {
+        layer3_adapter::ConversationUpdate::WithoutPromptEvidence(update) => update.as_ref(),
+        update => update,
+    };
+    let prompt_id = match update {
+        layer3_adapter::ConversationUpdate::TurnEndedForPrompt { prompt_id, .. }
+        | layer3_adapter::ConversationUpdate::FailedForPrompt { prompt_id, .. } => prompt_id,
+        _ => return false,
+    };
+    let (Some(conversation), Some(generation), Some(turn)) = (
+        current.conversation.conversation_id.as_deref(),
+        current.conversation.runtime_generation,
+        current.conversation.active_turn,
+    ) else {
+        return false;
+    };
+    layer3_adapter::PromptIdentity::new(conversation, generation, turn) == *prompt_id
+}
+
+pub(super) fn output_source_for_checkpoint(
+    source: Option<&layer3_adapter::RuntimeOutputSource>,
+    previous: Option<&AgentMessageCheckpoint>,
+    identity_terminal: bool,
+) -> Option<layer3_adapter::RuntimeOutputSource> {
+    match (
+        source,
+        previous.and_then(|checkpoint| checkpoint.output.as_ref()),
+    ) {
+        (Some(source), Some(previous)) if identity_terminal && source.cursor < previous.cursor => {
+            Some(previous.clone())
+        }
+        (Some(source), _) => Some(source.clone()),
+        (None, Some(previous)) => Some(previous.clone()),
+        (None, None) => None,
+    }
+}

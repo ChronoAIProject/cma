@@ -197,9 +197,91 @@ async fn replacement_bridge_recovers_plain_prompt_result_without_resending() {
     replacement_server.await.expect("replacement socket served");
     stop(replacement).await;
     assert!(
-        matches!(outcome, Ok(Some(ConversationUpdate::TurnEnded(_)))),
-        "retained prompt result must close the original turn, received {outcome:?}"
+        matches!(
+            outcome,
+            Ok(Some(ConversationUpdate::TurnEndedForPrompt { ref prompt_id, .. }))
+                if prompt_id == &crate::PromptIdentity::new("conversation-held", 17, 8)
+        ),
+        "retained prompt result must close the original turn with its identity, received {outcome:?}"
     );
+}
+
+#[tokio::test]
+async fn waiterless_prompt_response_keeps_exact_identity_and_is_idempotent() {
+    let prompt_id = crate::PromptIdentity::new("conversation-waiterless", 3, 11);
+    let response_id = prompt_id.as_str().to_owned();
+    let (client, mut server) = socket_pair().await;
+    send_ready(&mut server, "agent-1").await;
+    let (prompt_seen_tx, prompt_seen_rx) = tokio::sync::oneshot::channel();
+    let (prompt_ready_tx, prompt_ready_rx) = tokio::sync::oneshot::channel();
+    let server_task = tokio::spawn(async move {
+        let initialize = receive_json(&mut server).await;
+        respond(&mut server, &initialize, serde_json::json!({})).await;
+        let open = receive_json(&mut server).await;
+        respond(
+            &mut server,
+            &open,
+            serde_json::json!({"sessionId":"conversation-waiterless"}),
+        )
+        .await;
+        let prompt = receive_json(&mut server).await;
+        assert_eq!(prompt["id"], response_id);
+        prompt_seen_tx.send(()).unwrap();
+        prompt_ready_rx.await.unwrap();
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": prompt["id"].clone(),
+            "result": {"stopReason": "end_turn"},
+        });
+        send_json(&mut server, response.clone()).await;
+        send_json(&mut server, response).await;
+    });
+    let (updates, mut received) = mpsc::channel(4);
+    let opened = Bridge::open(
+        client,
+        "agent-1",
+        "/workspace".into(),
+        settings(None, false),
+        None,
+        updates,
+    )
+    .await
+    .expect("bridge opens");
+    opened
+        .channel
+        .input
+        .send(ConversationInput::RecoverablePrompt {
+            content: vec![ContentBlock::from("waiterless")],
+            prompt_id: prompt_id.clone(),
+        })
+        .await
+        .expect("prompt sends");
+    prompt_seen_rx.await.unwrap();
+    // Simulate the request waiter being lost while the attachment remains
+    // alive. The bridge keeps the admitted identity for the response path.
+    opened
+        .bridge
+        .pending
+        .lock()
+        .await
+        .remove(prompt_id.as_str());
+    prompt_ready_tx.send(()).unwrap();
+    let terminal = tokio::time::timeout(Duration::from_secs(1), received.recv())
+        .await
+        .expect("waiterless terminal arrives")
+        .expect("update relay remains open");
+    assert!(matches!(
+        terminal,
+        ConversationUpdate::TurnEndedForPrompt { prompt_id: received_id, .. }
+            if received_id == prompt_id
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(80), received.recv())
+            .await
+            .is_err()
+    );
+    server_task.await.unwrap();
+    stop(opened).await;
 }
 
 #[tokio::test]
@@ -250,8 +332,12 @@ async fn recovered_terminal_waits_for_handshake_and_routes_exact_failure_once() 
         .await
         .expect("exact recovered failure arrives")
         .expect("update relay remains open");
-    assert!(matches!(outcome, ConversationUpdate::Failed { message, .. }
-        if message == "provider failed after restart"));
+    assert!(matches!(
+        outcome,
+        ConversationUpdate::FailedForPrompt { prompt_id, message, .. }
+            if prompt_id == crate::PromptIdentity::new("conversation-held", 17, 8)
+                && message == "provider failed after restart"
+    ));
     assert!(
         tokio::time::timeout(Duration::from_millis(40), recovered.recv())
             .await

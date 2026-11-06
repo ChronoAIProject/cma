@@ -186,6 +186,8 @@ fn ready_declaration_requires_exact_version_agent_and_lanes() {
 
 #[tokio::test]
 async fn fresh_bridge_routes_startup_prompt_permission_cancel_and_gap_frames() {
+    let prompt_id = crate::PromptIdentity::new("conversation-1", 1, 1);
+    let expected_prompt_id = prompt_id.clone();
     let (client, mut server) = socket_pair().await;
     send_ready(&mut server, "agent-1").await;
     let server = tokio::spawn(async move {
@@ -231,6 +233,7 @@ async fn fresh_bridge_routes_startup_prompt_permission_cancel_and_gap_frames() {
         let prompt = receive_json(&mut server).await;
         assert_eq!(prompt["method"], "session/prompt");
         assert_eq!(prompt["params"]["sessionId"], "conversation-1");
+        assert_eq!(prompt["id"], expected_prompt_id.as_str());
 
         let options = vec![
             PermissionOption::new("allow", "Allow", PermissionOptionKind::AllowOnce),
@@ -316,7 +319,10 @@ async fn fresh_bridge_routes_startup_prompt_permission_cancel_and_gap_frames() {
     opened
         .channel
         .input
-        .send(ConversationInput::Prompt(vec![ContentBlock::from("hello")]))
+        .send(ConversationInput::RecoverablePrompt {
+            content: vec![ContentBlock::from("hello")],
+            prompt_id,
+        })
         .await
         .expect("prompt writes");
     let asked = updates.recv().await.expect("permission update");
@@ -343,7 +349,7 @@ async fn fresh_bridge_routes_startup_prompt_permission_cancel_and_gap_frames() {
         .expect("repeated permission answer writes");
     assert!(matches!(
         updates.recv().await.expect("turn result"),
-        ConversationUpdate::TurnEnded(_)
+        ConversationUpdate::TurnEndedForPrompt { .. }
     ));
     assert!(matches!(
         updates.recv().await.expect("gap update"),
