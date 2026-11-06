@@ -387,5 +387,6 @@ async fn metrics_all_sorts_are_indexed_stable_null_last_and_cursor_bound() {
     store.db.drop().await.unwrap();
 }
 
+mod allocated;
 mod read_models;
 mod scale;
