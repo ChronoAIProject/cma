@@ -223,6 +223,34 @@ pub(super) fn plain_text(content: &ContentBlock) -> Option<String> {
     }
 }
 
+pub(super) fn validate_prompt_identity(
+    current: &Agent,
+    prompt_id: &layer3_adapter::PromptIdentity,
+) -> Result<(), AgentConversationError> {
+    let conversation = current.conversation.conversation_id.as_deref().ok_or(
+        AgentConversationError::InvalidState("terminal prompt identity has no conversation"),
+    )?;
+    let generation =
+        current
+            .conversation
+            .runtime_generation
+            .ok_or(AgentConversationError::InvalidState(
+                "terminal prompt identity has no generation",
+            ))?;
+    let turn = current
+        .conversation
+        .active_turn
+        .ok_or(AgentConversationError::InvalidState(
+            "terminal prompt identity has no active turn",
+        ))?;
+    if layer3_adapter::PromptIdentity::new(conversation, generation, turn) != *prompt_id {
+        return Err(AgentConversationError::InvalidState(
+            "terminal prompt identity does not match the active turn",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn wire_name<T: serde::Serialize>(value: &T) -> String {
     match serde_json::to_value(value) {
         Ok(serde_json::Value::String(name)) => name,
