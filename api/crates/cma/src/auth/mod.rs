@@ -22,6 +22,7 @@ pub mod entitlements;
 pub mod flow;
 mod identity;
 mod identity_fallback;
+mod identity_http;
 mod identity_retry;
 #[allow(dead_code, reason = "the aggregate-neutral issuer is consumed by #809")]
 pub mod keys;

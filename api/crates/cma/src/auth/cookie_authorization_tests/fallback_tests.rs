@@ -3,7 +3,7 @@ use axum::body::{to_bytes, Body};
 use axum::http::Request;
 use tower::ServiceExt;
 
-async fn browser(fixture: &Fixture) -> (Router, String) {
+pub(super) async fn browser(fixture: &Fixture) -> (Router, String) {
     let login = fixture
         .auth
         .issue_browser_login(SubjectId::new("owner"))
@@ -19,7 +19,7 @@ async fn browser(fixture: &Fixture) -> (Router, String) {
     (app, login)
 }
 
-async fn call(app: &Router, login: &str, path: &str) -> (StatusCode, Value) {
+pub(super) async fn call(app: &Router, login: &str, path: &str) -> (StatusCode, Value) {
     let response = app
         .clone()
         .oneshot(
@@ -362,10 +362,10 @@ async fn rejected_refresh_grant_erases_fallback_and_signs_out_immediately() {
     let mut state = fixture.seed().await;
     let (app, login) = browser(&fixture).await;
     assert_eq!(call(&app, &login, "/auth/session").await.0, StatusCode::OK);
-    let key = fixture
-        .auth
-        .identity_store
-        .key(state.tokens.as_ref().unwrap().access_token.expose());
+    let key = fixture.auth.identity_store.key(
+        CredentialPurpose::BrowserCookie,
+        state.tokens.as_ref().unwrap().access_token.expose(),
+    );
     assert!(fixture
         .auth
         .identity_store

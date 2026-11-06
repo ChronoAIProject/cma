@@ -72,6 +72,7 @@ pub(super) async fn fetch_introspection(
     auth: &AuthState,
     meta: &ProviderMetadata,
     access_token: &str,
+    deadline: tokio::time::Instant,
 ) -> Result<Option<IntrospectionResponse>, ProviderVerificationError> {
     use ProviderVerificationError::Unavailable;
     let Some(endpoint) = meta.introspection_endpoint.as_ref() else {
@@ -94,31 +95,8 @@ pub(super) async fn fetch_introspection(
         ("client_id", client_id.as_str()),
         ("client_secret", client_secret.as_str()),
     ];
-    let resp = auth
-        .http
-        .post(endpoint)
-        .form(&form)
-        // The form carries the secret, so nothing here logs it.
-        .send()
-        .await
-        .map_err(|e| {
-            super::identity::verification_failure("introspection", "transport", None);
-            ProviderVerificationError::transport(e)
-        })?;
-    if !resp.status().is_success() {
-        super::identity::verification_failure(
-            "introspection",
-            "http_status",
-            Some(resp.status().as_u16()),
-        );
-        // A client refusal also closes this identity boundary; it never
-        // permits using previously successful evidence.
-        return Err(ProviderVerificationError::status(resp.status()));
-    }
-    let body: serde_json::Value = resp.json().await.map_err(|e| {
-        super::identity::verification_failure("introspection", "invalid_json", None);
-        ProviderVerificationError::transport(e)
-    })?;
+    // The form carries the secret, so nothing here logs it.
+    let body = super::identity_http::json(auth.http.post(endpoint).form(&form), deadline).await?;
     if body.get("active").and_then(serde_json::Value::as_bool) == Some(false) {
         return Err(ProviderVerificationError::Rejected(
             "provider reports an inactive token".into(),
