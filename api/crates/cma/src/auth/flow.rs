@@ -23,8 +23,14 @@ use super::{
     session_routes::{issued_cookie, logout, read, request_cookie, urlencode},
     signup_options::signup_options,
     token::random_token,
-    AuthMode, AuthState, AUTH_COOKIE, AUTH_COOKIE_LIFETIME, SIGNED_OUT_COOKIE,
+    AuthMode, AuthState, AUTH_COOKIE, AUTH_COOKIE_LIFETIME,
 };
+
+mod return_target;
+mod silent;
+
+use return_target::{app_return_target, opaque_path_segment};
+use silent::LoginPrompt;
 
 const ATTEMPT_DOMAIN: &str = "oidc-login-attempt";
 const BINDING_DOMAIN: &str = "oidc-browser-binding";
@@ -62,14 +68,6 @@ struct LoginParams {
 #[serde(rename_all = "snake_case")]
 enum LoginScreen {
     Register,
-}
-
-/// OIDC `prompt`. Only `none` is accepted: it asks whether the browser already
-/// holds a provider session, so a signed-in visitor is not shown the landing.
-#[derive(Debug, Clone, Copy, Deserialize)]
-enum LoginPrompt {
-    #[serde(rename = "none")]
-    Silent,
 }
 
 #[derive(Deserialize)]
@@ -137,19 +135,12 @@ async fn login(
         None => None,
     };
     let silent = matches!(params.prompt, Some(LoginPrompt::Silent));
-    if silent && params.screen.is_some() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "title": "Invalid sign-in request",
-                "detail": "A silent sign-in cannot show a provider screen."
-            })),
-        )
-            .into_response();
-    }
-    if silent && request_cookie(&headers, SIGNED_OUT_COOKIE).is_some() {
-        // Signed out of CMA: decline without asking the provider.
-        return Redirect::to(return_to.as_deref().unwrap_or("/")).into_response();
+    if silent {
+        if let Some(refusal) =
+            silent::refuse_entry(params.screen.is_some(), &headers, return_to.as_deref())
+        {
+            return refusal;
+        }
     }
     begin_login(auth, return_to, params.screen, silent).await
 }
@@ -298,29 +289,15 @@ async fn callback(
         );
     }
     if attempt.silent {
-        let signed_out = request_cookie(&headers, SIGNED_OUT_COOKIE).is_some();
-        let declined = match params.error.as_deref() {
-            // Signed in to the provider, which only needs this person to
-            // approve CMA: continue to its consent screen. Nothing starts work.
-            Some("consent_required") if !signed_out => {
-                Some(begin_login(auth.clone(), attempt.return_to.clone(), None, false).await)
-            }
-            // No provider session, or the browser signed out of CMA after this
-            // attempt began. Nobody asked to sign in, so return them to the
-            // page they were on, still signed out.
-            Some(_) => {
-                Some(Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response())
-            }
-            None if signed_out => {
-                Some(Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response())
-            }
-            None => None,
-        };
-        if let Some(mut response) = declined {
-            response.headers_mut().append(
-                header::SET_COOKIE,
-                issued_cookie(&cookie_name, "", auth.secure_cookies(), 0),
-            );
+        if let Some(response) = silent::declined_callback(
+            &auth,
+            &attempt,
+            params.error.as_deref(),
+            &headers,
+            &cookie_name,
+        )
+        .await
+        {
             return response;
         }
     }
@@ -438,66 +415,13 @@ async fn callback(
             AUTH_COOKIE_LIFETIME.as_secs(),
         ),
     );
-    // Only an interactive sign-in reaches here while the marker is set; it
-    // is the person choosing to be signed in again.
-    if request_cookie(&headers, SIGNED_OUT_COOKIE).is_some() {
-        response.headers_mut().append(
-            header::SET_COOKIE,
-            issued_cookie(SIGNED_OUT_COOKIE, "", auth.secure_cookies(), 0),
-        );
-    }
+    silent::clear_signed_out(&mut response, &headers, auth.secure_cookies());
     response
 }
 
 fn binding_cookie_name(state: &str) -> String {
     let suffix = state.get(..16).unwrap_or(state);
     format!("{BINDING_COOKIE_PREFIX}{suffix}")
-}
-
-fn app_return_target(value: &str) -> Result<String, ()> {
-    if value == "/" {
-        return Ok(value.to_owned());
-    }
-    if value.len() > 256 || value.contains(['?', '#', '\\', '%']) {
-        return Err(());
-    }
-    let segments = value
-        .strip_prefix('/')
-        .ok_or(())?
-        .split('/')
-        .collect::<Vec<_>>();
-    if segments.iter().any(|segment| !opaque_path_segment(segment)) {
-        return Err(());
-    }
-    match segments.as_slice() {
-        ["agent-manager" | "event-gateway" | "image-manager"] => {}
-        ["t", public_id] if opaque_path_segment(public_id) => {}
-        ["t", public_id, placement_id]
-            if opaque_path_segment(public_id) && opaque_path_segment(placement_id) => {}
-        ["triggers", "manage"] => {}
-        ["triggers", "manage", trigger_id] if opaque_path_segment(trigger_id) => {}
-        ["triggers", "manage", trigger_id, "embed"] if opaque_path_segment(trigger_id) => {}
-        ["agents", agent_id] if opaque_path_segment(agent_id) => {}
-        ["sandboxes", sandbox_id] if opaque_path_segment(sandbox_id) => {}
-        ["bots"] => {}
-        ["bots", bot_id] if opaque_path_segment(bot_id) => {}
-        ["auth", "bot-father", "link", intent, "complete"] if opaque_path_segment(intent) => {}
-        ["profiles"] | ["marketplace"] => {}
-        ["profiles" | "marketplace", kind, profile_id]
-            if matches!(*kind, "agent" | "workspace" | "sandbox")
-                && opaque_path_segment(profile_id) => {}
-        _ => return Err(()),
-    }
-    Ok(value.to_owned())
-}
-
-fn opaque_path_segment(value: &str) -> bool {
-    !value.is_empty()
-        && value != "."
-        && value != ".."
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~'))
 }
 
 fn code_challenge(verifier: &str) -> String {
