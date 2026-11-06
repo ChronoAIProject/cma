@@ -2,8 +2,6 @@
 ARG OMARCHY_CMA_BASE=runtime
 # CMA_MODEL_PROXY_PLACEHOLDER is supplied only in managed Agent launch plans,
 # not in the Sandbox environment, so existing runtime identities stay stable.
-# Bot-pod image for a contract-3 CMA Sandbox.
-#
 # The sandbox provider schedules this image and starts the kernel-neutral Layer
 # 4 supervisor. The image supplies the one supported agent provider, the tools
 # needed to prepare git workspaces, and the NyxID CLI used through the local
@@ -340,10 +338,10 @@ COPY --chmod=755 api/crates/layer4-runtime/src/browser/command.cjs /usr/local/bi
 # A Machine Included Sandbox starts this rootless desktop session from the
 # supervisor.  noVNC is bound to loopback; CMA must relay it through the
 # authenticated control plane before a browser can reach the screen.
+COPY api/crates/layer4-runtime/src/desktop-browser.py /usr/local/bin/cma-desktop-browser
 COPY --chmod=0755 api/crates/layer4-runtime/src/desktop-session.sh /usr/local/bin/cma-desktop-session
 COPY api/crates/layer4-runtime/src/desktop/ /usr/share/cma-desktop/
-# Keep the original asset available to retained homes whose XFCE preferences
-# still reference it; new homes select the bundled owner-provided PNG.
+# Retained XFCE homes may still reference the original wallpaper asset.
 RUN test -s /usr/share/cma-desktop/wallpaper.png
 COPY api/crates/layer4-runtime/src/desktop/chromium.desktop /usr/share/applications/chromium.desktop
 
@@ -463,6 +461,7 @@ COPY --from=omarchy-cma /usr/local/lib/ /usr/local/lib/
 COPY --from=omarchy-cma /etc/codex/ /etc/codex/
 COPY --from=omarchy-cma /usr/share/cma-runtime-home/ /usr/share/cma-runtime-home/
 COPY --from=omarchy-cma /usr/share/cma-desktop/ /usr/share/cma-desktop/
+COPY api/crates/layer4-runtime/src/desktop-browser.py /usr/local/bin/cma-desktop-browser
 COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/session.sh /usr/local/bin/cma-desktop-session
 COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/inner-session.sh /usr/local/bin/cma-omarchy-inner-session
 COPY api/crates/layer4-runtime/src/omarchy/hyprland.lua /usr/share/cma-omarchy/hyprland.lua
