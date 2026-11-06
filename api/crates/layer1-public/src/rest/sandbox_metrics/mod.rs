@@ -2,6 +2,8 @@
 mod openapi;
 #[cfg(test)]
 mod options_tests;
+#[cfg(test)]
+mod owner_allocation_tests;
 mod schemas;
 mod wire;
 use crate::AuthenticatedCaller;
@@ -43,6 +45,10 @@ pub fn sandbox_metrics_router(service: Arc<MetricsService>) -> Router {
             routes
                 .route("/options", post(options))
                 .route("/reports/{report}/owners", get(owners))
+                .route(
+                    "/reports/{report}/owner-allocations",
+                    get(owner_allocations),
+                )
                 .layer(Extension(Admin(true))),
         )
         .layer(axum::middleware::from_fn(private_headers))
@@ -151,6 +157,21 @@ async fn owners(
         Err(_) => return invalid(),
     };
     respond(bounded(service.owners(&caller, &id, query, now())).await)
+}
+async fn owner_allocations(
+    State(service): Service,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    query: std::result::Result<Query<OwnerAllocationQuery>, QueryRejection>,
+) -> Response {
+    if let Err(error) = authorize(&caller, true) {
+        return problem(error);
+    }
+    let query = match query {
+        Ok(Query(value)) => value,
+        Err(_) => return invalid(),
+    };
+    respond(bounded(service.owner_allocations(&caller, &id, query, now())).await)
 }
 async fn bounded<T>(future: impl std::future::Future<Output = Result<T>>) -> Result<T> {
     tokio::time::timeout(std::time::Duration::from_secs(5), future)
