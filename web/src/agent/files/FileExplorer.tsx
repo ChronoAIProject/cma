@@ -1,3 +1,4 @@
+import { ChangedFiles } from './ChangedFiles';
 import type { FileChange } from '../fileChanges';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -11,7 +12,7 @@ import {
 } from '../../api/agentFiles';
 import { Alert } from '../../ui/Alert';
 import { Button } from '../../ui/Button';
-import { Input } from '../../ui/Input';
+import { FileCreateForm } from './FileCreateForm';
 import { FileExplorerFrame, FileLocation } from './FileExplorerFrame';
 import { IconFolderOpen16 } from '../../ui/icons';
 import { FileToolbar } from './FileToolbar';
@@ -323,6 +324,16 @@ export function FileExplorer({
       busy={busy}
       onClose={() => guardDraft(onClose)}
     >
+      <ChangedFiles
+        changes={changes}
+        directory={initialDirectory}
+        client={client}
+        agentId={agentId}
+        active={active && !denied}
+        busy={busy}
+        onError={failure}
+        onSelect={(file) => guardDraft(() => void openFile(file))}
+      />
       <FileToolbar
         hidden={hidden}
         onHidden={setHidden}
@@ -391,29 +402,14 @@ export function FileExplorer({
         </Alert>
       ) : null}
       {create ? (
-        <form
-          className="agent-files__create"
-          onSubmit={(event) => {
-            event.preventDefault();
-            createFile();
-          }}
-        >
-          <label>
-            {create === 'directory' ? 'Folder name' : 'File name'}
-            <Input
-              aria-label={create === 'directory' ? 'Folder name' : 'File name'}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              maxLength={255}
-            />
-          </label>
-          <Button size="sm" disabled={busy} onClick={() => setCreate(undefined)}>
-            Cancel
-          </Button>
-          <Button size="sm" variant="primary" type="submit" disabled={busy || !name.trim()}>
-            Create
-          </Button>
-        </form>
+        <FileCreateForm
+          kind={create}
+          name={name}
+          busy={busy}
+          onName={setName}
+          onCancel={() => setCreate(undefined)}
+          onCreate={createFile}
+        />
       ) : null}
       <div
         className="agent-files__layout"

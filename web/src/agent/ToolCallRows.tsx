@@ -10,7 +10,7 @@ import type { ToolGroup } from './timeline';
 import { toolOutcome, toolOutcomeWord } from './toolStatus';
 import { ComputerContext } from './environment/context';
 import { durationLabel, toolDuration } from './workspaceTime';
-import { toolCategory, summarizeTools } from './toolSummary';
+import { toolCategory, summarizeTools, conciseToolError } from './toolSummary';
 import { ToolIcon } from './ToolIcon';
 import './ToolCallRows.css';
 
@@ -101,11 +101,7 @@ function ToolCallLine({
           ) : null}
         </div>
       )}
-      {outcome === 'failed' ? (
-        <p className="tool-call__error">
-          {tool.output?.text || tool.detail || 'The operation failed.'}
-        </p>
-      ) : null}
+      {outcome === 'failed' ? <p className="tool-call__error">{conciseToolError(tool)}</p> : null}
       {open ? (
         <div id={detailsId} className="tool-call__details">
           <pre>{tool.detail ?? tool.title}</pre>
@@ -183,6 +179,7 @@ export const ToolCallGroup = memo(function ToolCallGroup({
           {open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
         </span>
         <span className="tool-calls__count">{summary.label}</span>
+        {summary.countsUnavailable ? <span>· Counts unavailable</span> : null}
         {summary.added === undefined ? null : (
           <>
             {' '}
