@@ -8,6 +8,13 @@ use layer2_core::sandbox_metrics::{
 
 #[async_trait]
 impl MetricsStore for ReportingStore {
+    async fn options(
+        &self,
+        scope: &Scope,
+        query: layer2_core::sandbox_metrics::OptionQuery,
+    ) -> Result<layer2_core::sandbox_metrics::FilterOptions> {
+        self.read_options(scope, query).await
+    }
     async fn resolve_agent(&self, scope: &Scope, id: &str) -> Result<String> {
         let mut filter = doc! {"_id":id};
         if !scope.admin {

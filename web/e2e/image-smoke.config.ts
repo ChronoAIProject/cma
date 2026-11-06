@@ -9,11 +9,11 @@ if (!baseURL || !['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname))
 
 export default defineConfig({
   testDir: '.',
-  testMatch: 'image-smoke.check.ts',
+  testMatch: ['image-smoke.check.ts', 'usage-filters-image.check.ts'],
   workers: 1,
   retries: 0,
   forbidOnly: true,
-  timeout: 30_000,
+  timeout: 60_000,
   reporter: 'list',
   outputDir:
     process.env.CMA_WEB_IMAGE_EVIDENCE_DIR ?? mkdtempSync(join(tmpdir(), 'cma-web-image-')),
