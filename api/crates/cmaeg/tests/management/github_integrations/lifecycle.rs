@@ -301,9 +301,50 @@ async fn outside_scope_removal_fences_an_older_request_to_expand_approval() {
     let binding = binding_read(&f, &pending).await;
     assert_eq!(binding["repository_ids"], json!([1001, 1002]));
     assert_eq!(binding["excluded_repository_ids"], json!([]));
-    assert_eq!(binding["authority_revision"], 2);
+    assert_eq!(binding["authority_revision"], 1);
+    assert_eq!(binding["version"], 3);
     let response=f.client.post(format!("{}/v1/github/installation-bindings/{}/verification",f.base,binding["binding_id"].as_str().unwrap()))
         .bearer_auth("token-alice").header("Idempotency-Key","stale-expansion")
         .json(&json!({"expected_version":approved["version"],"evidence_ref":"review:older-expansion","repository_ids":[1001,1002,9999]})).send().await.unwrap();
     assert_eq!(response.status(), 409);
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn an_exclusion_repeated_under_a_new_delivery_id_does_not_revoke_authority_again() {
+    let f = Fixture::new(true).await;
+    let (app, pending) = pending(&f).await;
+    assert_eq!(
+        verification(&f, &pending, "token-alice", "approve")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    let mut body = installation("removed");
+    body["repositories_removed"] = json!([{"id":1001}]);
+    body["repositories_added"] = json!([]);
+    lifecycle(
+        &f,
+        &app,
+        "first-removal",
+        "installation_repositories",
+        body.clone(),
+    )
+    .await;
+    let first = binding_read(&f, &pending).await;
+    lifecycle(
+        &f,
+        &app,
+        "second-removal",
+        "installation_repositories",
+        body,
+    )
+    .await;
+    let second = binding_read(&f, &pending).await;
+    assert_eq!(first["authority_revision"], 2);
+    assert_eq!(second["authority_revision"], 2);
+    assert_eq!(second["repository_ids"], json!([1002]));
+    assert_eq!(second["excluded_repository_ids"], json!([1001]));
 }

@@ -3,7 +3,7 @@ use utoipa::ToSchema;
 
 use crate::activity::{ActivityConsumer, ConsumerState};
 
-#[derive(Deserialize, Serialize, ToSchema)]
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BindRequest {
     pub app_ref: String,
@@ -67,7 +67,7 @@ pub struct BindingApproval {
     pub repository_ids: Vec<u64>,
 }
 
-#[derive(Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VerifyBindingRequest {
     pub expected_version: u64,
@@ -91,6 +91,9 @@ pub struct Receipt {
     pub reason: Option<String>,
     pub received_at: i64,
     pub raw_body_expires_at: i64,
+    /// End of the bounded receipt and duplicate-detection window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_until: Option<i64>,
     pub body_sha256: String,
     pub task_ids: Vec<String>,
     pub authority_revision: u64,

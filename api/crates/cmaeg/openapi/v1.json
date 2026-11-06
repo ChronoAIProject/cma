@@ -5975,6 +5975,7 @@
           "github_dispatch_unavailable",
           "github_integration_retired",
           "github_proof_withdrawn",
+          "github_delivery_expired",
           "attachment_not_found",
           "media_unavailable"
         ],
@@ -6456,6 +6457,14 @@
           "repository_id": {
             "format": "int64",
             "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "retained_until": {
+            "description": "End of the bounded receipt and duplicate-detection window.",
+            "format": "int64",
             "type": [
               "integer",
               "null"

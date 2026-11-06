@@ -26,13 +26,13 @@ impl Store {
             .client()
             .start_session()
             .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
         session
             .start_transaction()
             .read_concern(ReadConcern::snapshot())
             .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
             .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
         let updated = self
             .records
             .update_one(
@@ -41,21 +41,21 @@ impl Store {
             )
             .session(&mut session)
             .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
         if updated.matched_count != 1 {
-            return Err(Error::ManagementConflict);
+            return Err(Error::Retry);
         }
         self.records
             .insert_many(rows)
             .session(&mut session)
             .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
         self.guard_integration(owner, integration, &mut session)
             .await?;
         session
             .commit_transaction()
             .await
-            .map_err(|_| Error::Unavailable)?;
+            .map_err(transaction_error)?;
         Ok(())
     }
 

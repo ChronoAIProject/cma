@@ -35,6 +35,7 @@ pub enum ProblemCode {
     GithubDispatchUnavailable,
     GithubIntegrationRetired,
     GithubProofWithdrawn,
+    GithubDeliveryExpired,
     /// The event exists but has no attachment at the requested index.
     AttachmentNotFound,
     /// Inbound media is disabled, or a media read's event_ref sealed no

@@ -41,7 +41,9 @@ cannot increment authority twice.
 
 ## Persistence and query
 
-Raw retained bodies are encrypted interaction chunks with seven-day expiry.
+Ignored business/ping bodies are encrypted interaction chunks retained at most
+24 hours; lifecycle bodies are retained at most seven days. Receipt roots expire
+after seven days through the existing `expires_at`/TTL pattern.
 Chunks precede the receipt root. A failed commit may leave expiring orphan chunks,
 never a successful partial receipt. Compact ignored receipts may retain no body.
 The public response never contains raw chunks or credentials.
@@ -52,15 +54,18 @@ including after retirement. Other owners receive 404. Delivery ID conflicts
 never overwrite the original receipt. A 404 during an uncertain request is not
 proof that an in-flight transaction cannot later commit.
 
-Binding changes and lifecycle receipts commit together. Receipt/binding writes
-also perform an integration-version-conditioned guard write, fencing concurrent
-retirement and credential rotation. Approval commits its audit and idempotency
-result atomically. Management CAS version and authority revision are separate.
+Binding changes and lifecycle receipts commit together. Authority mutations keep
+integration-version-conditioned write guards, fencing retirement and credential
+rotation; inert ignored/ping receipts take no such guards. Conflicts use bounded
+jittered backoff within 3.5 seconds. Approval commits audit/idempotency atomically.
+Management CAS version and effective eligibility revision are separate: unrelated
+repository events and already-applied exclusions do not advance authority revision.
 
-Version 3 storage is prepared through the existing flag-gated startup migration.
+Version 4 storage is prepared through the existing flag-gated startup migration.
 Unknown versions and unreadable legacy records fail closed; no static config
-loader or legacy execution worker remains. Compact records are retained without
-a new TTL/deletion policy. The current release does not reconcile missed lifecycle
+loader or legacy execution worker remains. Receipt reads/replay return 410 after the recorded deadline while the row remains,
+then 404 after TTL removal. Duplicate recovery is bounded to seven days and never
+renews the deadline. Legacy receipts receive one fixed seven-day migration stamp. The current release does not reconcile missed lifecycle
 events through the GitHub API.
 
 ## Execution boundary

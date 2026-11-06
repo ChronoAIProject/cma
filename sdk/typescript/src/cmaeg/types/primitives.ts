@@ -173,6 +173,7 @@ export const ProblemCodeSchema = enumeration(
   'github_dispatch_unavailable',
   'github_integration_retired',
   'github_proof_withdrawn',
+  'github_delivery_expired',
   'attachment_not_found',
   'media_unavailable',
 );
