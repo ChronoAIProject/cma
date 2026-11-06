@@ -129,6 +129,35 @@ fn row() -> Row {
 }
 #[async_trait]
 impl MetricsStore for Store {
+    fn check_read_budget(&self) -> Result<()> {
+        self.check()
+    }
+    async fn owner_allocations(
+        &self,
+        report: &Report,
+        query: OwnerAllocationQuery,
+    ) -> Result<OwnerAllocations> {
+        self.check()?;
+        Ok(OwnerAllocations {
+            report_id: report.report_id.clone(),
+            metric: query.metric,
+            unit: query.unit().into(),
+            items: if self.mode == "empty" {
+                vec![]
+            } else {
+                vec![OwnerAllocation {
+                    subject: "owner".into(),
+                    label: "Alex Chen".into(),
+                    disambiguator: None,
+                    allocated_hours: 24.0,
+                    sandbox_count: 2,
+                    complete: false,
+                }]
+            },
+            next: None,
+            total_count: if self.mode == "empty" { 0 } else { 1 },
+        })
+    }
     async fn options(&self, _: &Scope, query: OptionQuery) -> Result<FilterOptions> {
         self.check()?;
         if query.selected.as_deref() == Some("missing") {

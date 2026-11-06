@@ -58,6 +58,9 @@ async fn metrics_options_honor_circuit_without_commands_and_recover_with_polling
     .await;
     assert_eq!(status, 429);
     assert_eq!(body["code"], "reporting_budget_exceeded");
+    let (status, body) = request(&store, "GET", "/api/v1/admin/usage/metrics/reports/umr_00000000000000000000000000000001/owner-allocations?metric=cpu", "operator", true, serde_json::Value::Null).await;
+    assert_eq!(status, 429);
+    assert_eq!(body["code"], "reporting_budget_exceeded");
     assert_eq!(
         commands.load(Ordering::SeqCst),
         0,

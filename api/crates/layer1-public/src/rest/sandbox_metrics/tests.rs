@@ -14,11 +14,25 @@ const REPORT: &str = "umr_00000000000000000000000000000001";
 const SANDBOX: &str = "sbx_00000000000000000000000000000001";
 #[derive(Default)]
 pub(super) struct Store {
-    saved: Mutex<Option<Report>>,
+    pub(super) saved: Mutex<Option<Report>>,
     pub(super) revoked: AtomicBool,
 }
 #[async_trait]
 impl MetricsStore for Store {
+    async fn owner_allocations(
+        &self,
+        r: &Report,
+        q: OwnerAllocationQuery,
+    ) -> Result<OwnerAllocations> {
+        Ok(OwnerAllocations {
+            report_id: r.report_id.clone(),
+            metric: q.metric,
+            unit: q.unit().into(),
+            items: vec![],
+            next: None,
+            total_count: 0,
+        })
+    }
     async fn options(&self, scope: &Scope, query: OptionQuery) -> Result<FilterOptions> {
         assert!(scope.admin);
         assert!(
