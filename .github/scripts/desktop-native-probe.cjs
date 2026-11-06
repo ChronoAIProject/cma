@@ -60,7 +60,7 @@ const server = createServer(async (request, response) => {
     calls.push(value);
     const index = calls.length;
     let item;
-    if (index === 1) item = call(value, index, 'exec_command', { cmd: command, yield_time_ms: 10000, max_output_tokens: 2000 });
+    if (index === 1) item = call(value, index, 'exec_command', { cmd: command, yield_time_ms: 30000, max_output_tokens: 2000 });
     else if (index === 2) {
       // The command fits within one native tool wait; prove its screen interaction
       // before asking the model to view the resulting image.
@@ -132,7 +132,7 @@ const server = createServer(async (request, response) => {
   }, frame => {
     const update = frame.params?.update;
     if (update?.toolCallId && update.status) toolStates.set(update.toolCallId, update.status);
-  });
+  }, 60000);
   try {
     await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
     const { sessionId } = await bridge.call('session/new', { cwd: directory, mcpServers: [] });
