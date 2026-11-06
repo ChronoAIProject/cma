@@ -88,7 +88,7 @@ it('keeps 20,001 loaded owners bounded, scrolls aligned rows, exposes names and 
   const scroll = screen.getByRole('region', { name: 'Scrollable owner allocations' });
   expect(scroll).toHaveAttribute('tabindex', '0');
   expect(screen.getAllByRole('listitem').length).toBeLessThanOrEqual(12);
-  expect(screen.getAllByTitle('Alex Chen')).toHaveLength(2);
+  expect(screen.getAllByTitle(/^Alex Chen · Joined/)).toHaveLength(2);
   expect(screen.getByText('Joined 2026-01-01')).toBeVisible();
   expect(container.innerHTML).not.toContain('91892afa');
   fireEvent.scroll(scroll, { target: { scrollTop: 48 * 10000 } });

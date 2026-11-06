@@ -3,6 +3,7 @@ import type { UsageOwnerAllocation } from '@chronoai/cma-sdk';
 import { Button } from '../../ui/Button';
 import { Table, TableCell } from '../../ui/Table';
 import { displayQuantity } from './model';
+import { ownerAllocationText } from './OwnerAllocationName';
 
 /** Keyboard-readable values use bounded pages even when All has thousands of owners. */
 export function OwnerAllocationTable({
@@ -36,7 +37,7 @@ export function OwnerAllocationTable({
             {rows.map((row) => (
               <tr key={row.subject}>
                 <TableCell>
-                  <span title={row.label}>{row.label}</span>
+                  <span title={ownerAllocationText(row)}>{row.label}</span>
                   {row.disambiguator && <small> · {row.disambiguator}</small>}
                 </TableCell>
                 <TableCell align="end">{displayQuantity(row.allocated_hours)}</TableCell>
