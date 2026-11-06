@@ -184,3 +184,50 @@ async fn retirement_fences_an_approval_delayed_by_external_storage() {
     assert_eq!(read.status(), 200);
     assert_eq!(read.json::<serde_json::Value>().await.unwrap(), binding);
 }
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn retiring_a_verified_app_releases_its_identity_for_another_owners_verification() {
+    let f = Fixture::new(true).await;
+    let (app, _binding) = super::bindings::pending(&f).await;
+    let other = f.register("token-bob", "replacement-app", None).await;
+    let other_ref = other["app_ref"].as_str().unwrap();
+    let verify = || {
+        f.client
+            .post(format!(
+                "{}/v1/github/apps/{other_ref}/verification",
+                f.base
+            ))
+            .bearer_auth("token-bob")
+            .header("Idempotency-Key", "verify-replacement")
+            .json(&json!({"expected_version":1,"evidence_ref":"review:new-owner"}))
+    };
+    assert_eq!(verify().send().await.unwrap().status(), 409);
+    let old_ref = app["app_ref"].as_str().unwrap();
+    let retire = || {
+        f.client
+            .post(format!("{}/v1/github/apps/{old_ref}/retirement", f.base))
+            .bearer_auth("token-alice")
+            .header("Idempotency-Key", "retire-verified")
+            .json(&json!({"expected_version":app["version"]}))
+    };
+    assert_eq!(retire().send().await.unwrap().status(), 200);
+    let response = verify().send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap()["status"],
+        "verified"
+    );
+    assert_eq!(retire().send().await.unwrap().status(), 200);
+    let replay = f
+        .client
+        .post(format!("{}/v1/github/apps/{old_ref}/verification", f.base))
+        .bearer_auth("token-alice")
+        .header("Idempotency-Key", "verify-app")
+        .json(&json!({"expected_version":1,"evidence_ref":"review:app"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), 410);
+    assert_eq!(verify().send().await.unwrap().status(), 200);
+}
