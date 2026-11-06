@@ -1,5 +1,5 @@
 //! NyxID #2204 producer transport; no NyxID wire details in lifecycle callers.
-use super::token::{ProducerTokenProvider, StaticTokenProvider};
+use super::token::{oauth::ClientCredentialsProvider, ProducerTokenProvider, StaticTokenProvider};
 use super::*;
 use futures_util::StreamExt;
 
@@ -16,7 +16,20 @@ impl NyxIdFundingProvider {
             .user_agent("CMA-Sandbox-Funding/1")
             .build()
             .map_err(|_| "cannot construct funding HTTP client".to_string())?;
-        let tokens = Arc::new(StaticTokenProvider(config.credential_ref.clone()));
+        let tokens: Arc<dyn ProducerTokenProvider> = match &config.client_credentials {
+            Some((id, secret)) => {
+                let read = |key| {
+                    std::env::var(key)
+                        .ok()
+                        .filter(|value| !value.trim().is_empty())
+                        .ok_or_else(|| {
+                            "producer client credentials reference is unavailable".to_string()
+                        })
+                };
+                ClientCredentialsProvider::new(&config.base_url, read(id)?, read(secret)?)?
+            }
+            None => Arc::new(StaticTokenProvider(config.credential_ref.clone())),
+        };
         Ok(Arc::new(Self {
             config,
             http,
@@ -252,3 +265,6 @@ impl FundingProvider for NyxIdFundingProvider {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod token_tests;

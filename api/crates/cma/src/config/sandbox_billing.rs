@@ -6,6 +6,8 @@ pub(crate) struct SandboxBillingConfig {
     /// The environment variable name containing the credential. The secret is
     /// resolved only at request time and is never retained in configuration.
     pub credential_ref: String,
+    /// Environment reference names only; credential values never enter Config.
+    pub client_credentials: Option<(String, String)>,
     pub producer_id: String,
 }
 
@@ -37,15 +39,36 @@ impl SandboxBillingConfig {
         {
             return Err("CHRONO_NYXID_SANDBOX_BILLING_BASE_URL must be an HTTPS URL without credentials or query parameters".into());
         }
-        let credential_ref =
-            super::required(lookup, "CHRONO_NYXID_SANDBOX_BILLING_CREDENTIAL_REF")?;
-        if credential_ref.len() > 128
-            || !credential_ref
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        {
-            return Err("CHRONO_NYXID_SANDBOX_BILLING_CREDENTIAL_REF must name an environment or secret reference".into());
-        }
+        let id_key = "CHRONO_NYXID_SANDBOX_BILLING_CLIENT_ID_REF";
+        let secret_key = "CHRONO_NYXID_SANDBOX_BILLING_CLIENT_SECRET_REF";
+        let id = lookup(id_key)?.filter(|value| !value.is_empty());
+        let secret = lookup(secret_key)?.filter(|value| !value.is_empty());
+        let client_credentials = match (id, secret) {
+            (None, None) => None,
+            (Some(id), Some(secret)) => {
+                for (key, reference) in [(id_key, &id), (secret_key, &secret)] {
+                    validate_reference(key, reference)?;
+                    let value = lookup(reference).map_err(|_| {
+                        format!("{key} references an unavailable environment value")
+                    })?;
+                    if !value.is_some_and(|value| !value.trim().is_empty()) {
+                        return Err(format!(
+                            "{key} must reference a present, nonempty environment value"
+                        ));
+                    }
+                }
+                Some((id, secret))
+            }
+            _ => return Err(format!("{id_key} and {secret_key} must both be set")),
+        };
+        let credential_ref = if client_credentials.is_none() {
+            let key = "CHRONO_NYXID_SANDBOX_BILLING_CREDENTIAL_REF";
+            let reference = super::required(lookup, key)?;
+            validate_reference(key, &reference)?;
+            reference
+        } else {
+            String::new()
+        };
         let producer_id = super::required(lookup, "CHRONO_NYXID_SANDBOX_BILLING_PRODUCER_ID")?;
         if !uuid::Uuid::parse_str(&producer_id)
             .is_ok_and(|id| id.get_version_num() == 4 && id.to_string() == producer_id)
@@ -55,9 +78,24 @@ impl SandboxBillingConfig {
         Ok(Some(Self {
             base_url,
             credential_ref,
+            client_credentials,
             producer_id,
         }))
     }
+}
+
+fn validate_reference(key: &str, value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(format!(
+            "{key} must name an environment or secret reference"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -172,5 +210,86 @@ mod validation_tests {
         })
         .unwrap()
         .is_none());
+    }
+}
+
+#[cfg(test)]
+mod credentials_tests {
+    use super::*;
+    const ID: &str = "CHRONO_NYXID_SANDBOX_BILLING_CLIENT_ID_REF";
+    const SECRET: &str = "CHRONO_NYXID_SANDBOX_BILLING_CLIENT_SECRET_REF";
+    fn configured(key: &str) -> Option<String> {
+        Some(
+            match key {
+                "CHRONO_NYXID_SANDBOX_BILLING_ENABLED" => "true",
+                "CHRONO_NYXID_SANDBOX_BILLING_BASE_URL" => {
+                    "https://nyx.example/api/v1/billing/sandboxes/"
+                }
+                "CHRONO_NYXID_SANDBOX_BILLING_PRODUCER_ID" => {
+                    "6e660487-dba4-4be9-ae06-4593b41c4a30"
+                }
+                ID => "NYXID_CMA_BILLING_PRODUCER_CLIENT_ID",
+                SECRET => "NYXID_CMA_BILLING_PRODUCER_CLIENT_SECRET",
+                "NYXID_CMA_BILLING_PRODUCER_CLIENT_ID" => "test id",
+                "NYXID_CMA_BILLING_PRODUCER_CLIENT_SECRET" => "test secret",
+                _ => return None,
+            }
+            .into(),
+        )
+    }
+    #[test]
+    fn paired_refs_select_oauth_without_requiring_static_credentials() {
+        let config = SandboxBillingConfig::from_lookup(&mut |key| Ok(configured(key)))
+            .unwrap()
+            .unwrap();
+        assert!(config.credential_ref.is_empty());
+        assert_eq!(
+            config.client_credentials,
+            Some((
+                "NYXID_CMA_BILLING_PRODUCER_CLIENT_ID".into(),
+                "NYXID_CMA_BILLING_PRODUCER_CLIENT_SECRET".into()
+            ))
+        );
+        assert!(!format!("{config:?}").contains("test secret"));
+    }
+    #[test]
+    fn partial_empty_invalid_and_missing_environment_values_are_rejected() {
+        for (changed, replacement) in [
+            (ID, None),
+            (SECRET, None),
+            (ID, Some("")),
+            (SECRET, Some("")),
+            (ID, Some("invalid ref")),
+            (SECRET, Some(" ")),
+            ("NYXID_CMA_BILLING_PRODUCER_CLIENT_ID", None),
+            ("NYXID_CMA_BILLING_PRODUCER_CLIENT_SECRET", None),
+            ("NYXID_CMA_BILLING_PRODUCER_CLIENT_SECRET", Some("  ")),
+        ] {
+            let error = SandboxBillingConfig::from_lookup(&mut |key| {
+                Ok(if key == changed {
+                    replacement.map(str::to_owned)
+                } else {
+                    configured(key)
+                })
+            })
+            .unwrap_err();
+            assert!(error.contains("CLIENT_ID_REF") || error.contains("CLIENT_SECRET_REF"));
+            assert!(!error.contains("test secret"));
+        }
+    }
+    #[test]
+    fn empty_new_refs_preserve_static_mode_and_do_not_read_its_secret() {
+        let config = SandboxBillingConfig::from_lookup(&mut |key| {
+            Ok(match key {
+                ID | SECRET => Some(String::new()),
+                "CHRONO_NYXID_SANDBOX_BILLING_CREDENTIAL_REF" => Some("STATIC_TOKEN".into()),
+                "STATIC_TOKEN" => panic!("static token remains resolved at request time"),
+                _ => configured(key),
+            })
+        })
+        .unwrap()
+        .unwrap();
+        assert!(config.client_credentials.is_none());
+        assert_eq!(config.credential_ref, "STATIC_TOKEN");
     }
 }
