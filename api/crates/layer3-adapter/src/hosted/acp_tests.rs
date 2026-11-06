@@ -25,6 +25,8 @@ mod provider_tool_tests;
 #[path = "acp_startup_failure_tests.rs"]
 mod startup_failure_tests;
 
+#[path = "acp_buffered_recovery_tests.rs"]
+mod buffered_recovery_tests;
 #[path = "acp_fresh_bridge_tests.rs"]
 mod fresh_bridge_tests;
 #[path = "acp_reconnect_turn_tests.rs"]
