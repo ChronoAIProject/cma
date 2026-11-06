@@ -1175,6 +1175,8 @@ spec:
               mountPath: /tmp
             - name: web-assets-compat
               mountPath: /usr/share/nginx/html/assets
+              # nginx serves the current image from /usr/share/nginx/current
+              # first; this mount supplies only retained chunks for older tabs.
               subPath: assets
               readOnly: true
       volumes:
