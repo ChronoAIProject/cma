@@ -48,12 +48,22 @@ struct LoginParams {
     return_to: Option<String>,
     #[serde(default)]
     screen: Option<LoginScreen>,
+    #[serde(default)]
+    prompt: Option<LoginPrompt>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum LoginScreen {
     Register,
+}
+
+/// OIDC `prompt`. Only `none` is accepted: it asks whether the browser already
+/// holds a provider session, so a signed-in visitor is not shown the landing.
+#[derive(Debug, Clone, Copy, Deserialize)]
+enum LoginPrompt {
+    #[serde(rename = "none")]
+    Silent,
 }
 
 #[derive(Deserialize)]
@@ -90,6 +100,7 @@ pub(super) async fn actor_login(auth: Arc<AuthState>, link_id: &str) -> Response
         Some(format!("/auth/bot-father/link/{link_id}/complete")),
         None,
         intent,
+        false,
     )
     .await
 }
@@ -119,15 +130,27 @@ async fn login(
         },
         None => None,
     };
-    begin_login(auth, return_to, params.screen).await
+    let silent = matches!(params.prompt, Some(LoginPrompt::Silent));
+    if silent && params.screen.is_some() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "title": "Invalid sign-in request",
+                "detail": "A silent sign-in cannot show a provider screen."
+            })),
+        )
+            .into_response();
+    }
+    begin_login(auth, return_to, params.screen, silent).await
 }
 
 async fn begin_login(
     auth: Arc<AuthState>,
     return_to: Option<String>,
     screen: Option<LoginScreen>,
+    silent: bool,
 ) -> Response {
-    begin_login_with_intent(auth, return_to, screen, None).await
+    begin_login_with_intent(auth, return_to, screen, None, silent).await
 }
 
 async fn begin_login_with_intent(
@@ -135,6 +158,7 @@ async fn begin_login_with_intent(
     return_to: Option<String>,
     screen: Option<LoginScreen>,
     actor_link_intent: Option<super::actor_links::ActorLoginIntent>,
+    silent: bool,
 ) -> Response {
     let AuthMode::Provider {
         client_id,
@@ -158,6 +182,7 @@ async fn begin_login_with_intent(
         verifier: SecretValue::new(verifier.clone()),
         return_to,
         actor_link_intent,
+        silent,
         expires_at: SystemTime::now() + ATTEMPT_LIFETIME,
     };
     if let Err(error) = auth.store.put_login_attempt(attempt).await {
@@ -183,6 +208,11 @@ async fn begin_login_with_intent(
         ("code_challenge", &code_challenge(&verifier)),
         ("code_challenge_method", "S256"),
     ]);
+    if silent {
+        authorization_url
+            .query_pairs_mut()
+            .append_pair("prompt", "none");
+    }
     let destination = match screen {
         Some(LoginScreen::Register) => format!(
             "{}/register?return_to={}",
@@ -256,6 +286,17 @@ async fn callback(
             "login_state_expired",
             Some((&cookie_name, auth.secure_cookies())),
         );
+    }
+    if params.error.is_some() && attempt.silent {
+        // The provider has no session to reuse, or needs the person to act.
+        // Nobody asked to sign in, so return them to the page they were on.
+        let mut response =
+            Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response();
+        response.headers_mut().append(
+            header::SET_COOKIE,
+            issued_cookie(&cookie_name, "", auth.secure_cookies(), 0),
+        );
+        return response;
     }
     if params.error.is_some() {
         return login_failure(
