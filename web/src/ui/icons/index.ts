@@ -89,3 +89,5 @@ export { IconCodeBracketsOutline16 } from './IconCodeBracketsOutline16';
 export { IconArrowUpOutline16 } from './IconArrowUpOutline16';
 export { IconGithub16 } from './IconGithub16';
 export { IconGlobeOutline16 } from './IconGlobeOutline16';
+
+export { IconComputerOutline16 } from './IconComputerOutline16';

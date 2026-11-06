@@ -104,3 +104,44 @@ it('retains a reason while access is uncertain and omits unavailable capabilitie
   expect(screen.queryByRole('menuitem', { name: 'Stop agent' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Share' })).not.toBeInTheDocument();
 });
+
+it('orders all reviewed actions and dispatches configuration separately from history export', async () => {
+  const onMenuSelect = vi.fn(),
+    onMoreAction = vi.fn(),
+    onViewDeletionStatus = vi.fn();
+  render(
+    draw({
+      onMenuSelect,
+      onMoreAction,
+      onViewDeletionStatus,
+      menu: [
+        { id: 'rename-agent', label: 'Rename' },
+        { id: 'update-prompt', label: 'Update system prompt' },
+        { id: 'update-skills', label: 'Update skills' },
+      ],
+      moreActions: [
+        { id: 'export_history', label: 'Export history' },
+        { id: 'delete_agent', label: 'Delete task', danger: true },
+      ],
+    }),
+  );
+  const user = userEvent.setup();
+  for (const [label, id] of [
+    ['Update system prompt', 'update-prompt'],
+    ['Update skills', 'update-skills'],
+    ['Export history', 'export_history'],
+  ] as const) {
+    await user.click(screen.getByRole('button', { name: 'More Agent actions' }));
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Rename',
+      'Update system prompt',
+      'Update skills',
+      'Export history',
+      'View deletion status',
+      'Delete task',
+    ]);
+    expect(screen.getByRole('menu').querySelectorAll('[role="separator"]')).toHaveLength(1);
+    await user.click(screen.getByRole('menuitem', { name: label }));
+    expect(id === 'export_history' ? onMoreAction : onMenuSelect).toHaveBeenCalledWith(id);
+  }
+});
