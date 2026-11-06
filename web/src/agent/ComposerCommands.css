@@ -50,3 +50,8 @@
   margin: 0;
   padding: 8px 10px;
 }
+
+.composer-commands__item:hover .composer-commands__name,
+.composer-commands__item[aria-selected='true'] .composer-commands__name {
+  color: var(--dsw-alias-label-primary);
+}
