@@ -50,6 +50,7 @@ export function TaskComposer({
           <span className="task-home__shortcut">{modifier} ↵ to run</span>
           <Button
             type="submit"
+            variant="primary"
             placement="task-home__send"
             aria-label="Start task"
             icon={<IconArrowUpOutline16 />}

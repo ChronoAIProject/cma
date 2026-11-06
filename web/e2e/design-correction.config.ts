@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: '.',
-  testMatch: ['design-correction.check.ts', 'task-home-states.check.ts'],
+  testMatch: ['design-correction.check.ts', 'task-home-states.check.ts', 'theme-palette.check.ts'],
   workers: 1,
   retries: 0,
   forbidOnly: true,
