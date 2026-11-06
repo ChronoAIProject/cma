@@ -34,6 +34,59 @@ writer-capture authority; failpoint cases run serially against the same
 disposable replica set. The test runner fails on an empty selection, and
 cleanup removes only containers carrying the generated exact run label.
 
+## Backend Capacity Preparation
+
+`Prepare Backend capacity` runs immediately after checkout, before toolchain
+installation, cache restore, or compilation. This isolated CI policy change
+addresses measured capacity: #1425/#1426 observed about 263 MiB available disk
+late in Backend and 117 MiB free of 3 GiB swap during test compilation; #1424
+separately failed with ENOSPC. It is **not a fix for the unexplained runner
+shutdowns**. Runner size, Cargo concurrency, existing gate commands, assertions,
+thresholds, relative order and timeouts are unchanged.
+
+The helper accepts no input paths and runs only as root on an ephemeral Linux
+GitHub-hosted runner whose workspace shares the root filesystem. Its exact
+allowlist was audited against the Backend workflow, API manifests/native build
+requirements and process launches, Mongo harnesses, and web/SDK package scripts:
+
+| Removed path | Why it is unused in Backend |
+| --- | --- |
+| `/usr/local/lib/android` | Android SDK/NDKs/emulator. Backend builds and tests native Linux Rust; no Android target, Gradle, adb or Android SDK command runs. Android-only Cargo lockfile entries do not require this SDK on Linux. |
+| `/usr/share/dotnet` | .NET SDKs/runtimes. No managed .NET build, test, or dotnet-based tool is invoked. Native system libraries are retained. |
+| `/opt/hostedtoolcache/CodeQL` | Cached CodeQL CLI bundle. Backend does not run CodeQL analysis or use the bundle. Other hosted toolcache entries are retained for Python and Node setup. |
+
+Installation locations are confirmed by the upstream
+[runner-image installers](https://github.com/actions/runner-images/tree/fad015e47059f40cf0786dcb4593384f6a0720d3/images/ubuntu/scripts/build)
+(`install-android-sdk.sh`, `install-dotnetcore-sdk.sh`, `install-codeql-bundle.sh`).
+Rust/Cargo caches, C/C++ compilers/linkers, system libraries, Python, Git, Node/npm,
+Docker/Mongo, FFmpeg, OpenSSL, curl, Chromium and Playwright are retained. No
+package purge, Docker prune, or blanket toolcache deletion runs. Missing paths
+are no-ops; symlinked paths/ancestors and mounted SDK paths are skipped. Removal
+does not cross filesystem boundaries.
+
+Each removal logs root-filesystem available bytes before/after, the signed
+difference, status and elapsed time. Allocation uses the total measured gain,
+not SDK apparent sizes: additional swap is the minimum of 8 GiB, half the gain,
+and the gain minus 4 GiB, rounded down to whole GiB (zero if insufficient).
+This preserves at least half the reclaimed space and at least 4 GiB of net disk
+gain whenever swap is allocated. The root-only `/cma-backend.swap` is created
+exclusively with mode 0600, fully allocated, formatted and activated; original
+swap stays active. Existing files/symlinks are never overwritten. Failed
+allocation/format/activation removes only the new, confirmed-inactive file;
+uncertain or active swap is retained. No fstab, sysctl or concurrency setting
+changes. Final disk/memory/swap totals and complete preparation duration are
+streamed to the step log.
+
+Preparation is best effort and cannot turn a later gate failure into success.
+The helper logs failures; the startup fallback applies only to this step.
+Provider contracts pin placement, command, runner and regression execution.
+Regressions cover absent/unsafe paths, measured accounting, budget bounds,
+exclusive allocation, activation failures and non-gating failures. Compare
+per-step telemetry minima and whole-job elapsed time including preparation;
+different cache/source/runner conditions limit causal timing comparisons.
+Draft #1394 can rehome this single step/helper to its compilation jobs without
+duplicating its job restructuring. No public API contract changes here.
+
 ## Historical Guarantee Mapping
 
 | Historical guarantee | Current disposition and evidence |
