@@ -1,6 +1,6 @@
 import { Presence } from '../ui/Presence';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { AgentStatus, AgentUsage } from '../api/types';
+import type { AgentStatus } from '../api/types';
 import { Button } from '../ui/Button';
 import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
 import type { SandboxInputAvailability } from './sandboxInput';
@@ -18,7 +18,6 @@ import { ComposerAttachmentPicker, ComposerAttachments } from './ComposerAttachm
 import { useComposerCommands } from './ComposerCommands';
 import { commandRefusal, type SessionCommand } from './slashCommands';
 import { SteeringModePicker, type SteeringMode } from './SteeringMode';
-import { ContextRing } from './ContextRing';
 import './Composer.css';
 import {
   ComposerSuggestionEditor,
@@ -30,8 +29,6 @@ interface ComposerProps {
   readonly suggestionScope?: string;
   readonly draft?: AgentDraft;
   readonly availableCommands?: readonly SessionCommand[];
-  readonly usage?: AgentUsage;
-  readonly showUsage?: boolean;
   readonly settings?: ReactNode;
   readonly steeringMode?: SteeringMode;
   readonly onSteeringModeChange?: (mode: SteeringMode) => void;
@@ -81,8 +78,6 @@ export function Composer({
   suggestionScope,
   draft,
   availableCommands,
-  usage,
-  showUsage = false,
   settings,
   steeringMode = 'queue',
   onSteeringModeChange,
@@ -429,13 +424,8 @@ export function Composer({
             {steering && onSteeringModeChange !== undefined ? (
               <SteeringModePicker value={steeringMode} onChange={onSteeringModeChange} />
             ) : null}
-            {showUsage ? (
-              <span className="agent-composer__ring">
-                <ContextRing usage={usage} />
-              </span>
-            ) : null}
             <div className="agent-composer__actions">
-              {messageContent !== '' || !running ? (
+              {!running || (messageContent !== '' && queueWhileRunning) ? (
                 <Button
                   placement="agent-composer__submit"
                   variant="primary"
@@ -470,7 +460,7 @@ export function Composer({
                   aria-describedby={hasNotice ? noticeId : undefined}
                 />
               ) : null}
-              {running && messageContent === '' ? (
+              {running && (messageContent === '' || !queueWhileRunning) ? (
                 <>
                   <span className="agent-composer__stop-hint">Esc to stop</span>
                   <Button

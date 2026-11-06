@@ -320,7 +320,6 @@ it('keeps every control inside the box and offers steering only while a turn run
       status={running ? 'working' : 'ready'}
       running={running}
       queueWhileRunning
-      showUsage
       steeringMode="queue"
       onSteeringModeChange={onSteeringModeChange}
       busy={false}
@@ -333,7 +332,7 @@ it('keeps every control inside the box and offers steering only while a turn run
   const { rerender } = render(draw(false));
   const box = screen.getByRole('textbox', { name: 'Message' }).parentElement!;
   expect(box).toHaveClass('agent-composer__box');
-  for (const name of ['Attach files', 'Context usage', 'Send message'])
+  for (const name of ['Attach files', 'Send message'])
     expect(box).toContainElement(screen.getByRole('button', { name }));
   expect(screen.queryByRole('button', { name: /Steering mode/ })).not.toBeInTheDocument();
   rerender(draw(true));
@@ -396,4 +395,27 @@ it('uses one primary action and handles follow-up and stop keys without losing t
   expect(field).toHaveValue('Keep my follow-up');
   await act(async () => fireEvent.keyDown(field, { key: 'Enter' }));
   expect(onSend).toHaveBeenCalledWith('Keep my follow-up', expect.any(Function));
+});
+
+it('keeps Stop clickable with a draft when running input cannot be queued', async () => {
+  const stop = vi.fn();
+  const send = vi.fn();
+  render(
+    <Composer
+      status="working"
+      running
+      queueWhileRunning={false}
+      busy={false}
+      inputAvailability={{ allowed: true }}
+      onSend={send}
+      onStop={stop}
+    />,
+  );
+  const field = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(field, { target: { value: 'Keep my next message' } });
+  expect(screen.queryByRole('button', { name: 'Queue message' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Stop response' }));
+  expect(stop).toHaveBeenCalledOnce();
+  expect(send).not.toHaveBeenCalled();
+  expect(field).toHaveValue('Keep my next message');
 });

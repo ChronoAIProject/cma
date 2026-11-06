@@ -56,7 +56,7 @@ describe('conversation geometry with readable labels', () => {
         .getPropertyValue('grid-template-areas')
         .replace(/\s+/g, ' '),
     ).toBe(
-      "'attach steering settings ring send' 'settings-panel settings-panel settings-panel settings-panel settings-panel' 'status status status status status'",
+      "'attach steering settings send' 'settings-panel settings-panel settings-panel settings-panel' 'status status status status'",
     );
   });
 
