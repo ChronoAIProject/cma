@@ -8,6 +8,7 @@ use tokio::time::{timeout, Instant};
 
 use super::{
     identity::{self, VerifiedSubject},
+    identity_fallback::CredentialPurpose,
     permissions::PermissionEvidence,
     verification_error::ProviderVerificationError as Error,
     AuthState, ProviderMetadata,
@@ -21,6 +22,7 @@ pub(super) async fn verify(
     auth: &AuthState,
     metadata: Option<&ProviderMetadata>,
     token: &str,
+    purpose: CredentialPurpose,
     expiry: Option<SystemTime>,
     expected_subject: Option<&str>,
     budget: Duration,
@@ -31,7 +33,7 @@ pub(super) async fn verify(
         .verification_slots
         .try_acquire()
         .map_err(|_| Error::Unavailable("identity verification capacity exhausted".into()))?;
-    let key = auth.identity_store.key(token);
+    let key = auth.identity_store.key(purpose, token);
     let epoch = auth.identity_store.epoch();
     let result = timeout(budget.min(DEADLINE), async {
         let mut last = Error::Transient("deadline");
@@ -41,19 +43,20 @@ pub(super) async fn verify(
                 tokio::time::sleep(Duration::from_millis(40 * (1 << (attempt - 1)) + jitter)).await;
             }
             let started = Instant::now();
-            let result = timeout(ATTEMPT, async {
+            let deadline = started + ATTEMPT;
+            let result = async {
                 let discovered;
                 let metadata = match metadata {
                     Some(metadata) => metadata,
                     None => {
-                        discovered = auth.verification_metadata().await?;
+                        discovered = auth.verification_metadata_until(deadline).await?;
                         &discovered
                     }
                 };
-                identity::verify_subject_expected(auth, metadata, token, expected_subject).await
-            })
-            .await
-            .unwrap_or(Err(Error::Transient("timeout")));
+                identity::verify_subject_expected(auth, metadata, token, expected_subject, deadline)
+                    .await
+            }
+            .await;
             match result {
                 Err(error @ Error::Transient(_)) => {
                     tracing::warn!(
@@ -71,7 +74,11 @@ pub(super) async fn verify(
         Err(last)
     })
     .await
-    .unwrap_or(Err(Error::Transient("deadline")))
+    // An outer cancellation has no trustworthy endpoint phase. Only the
+    // provider reader can classify a pre-response timeout as transient.
+    .unwrap_or(Err(Error::Unavailable(
+        "identity verification deadline elapsed".into(),
+    )))
     .map(Arc::new);
     match &result {
         Ok(evidence) if matches!(evidence.permissions, PermissionEvidence::Active(_)) => {
@@ -87,7 +94,7 @@ pub(super) async fn verify(
             }
         }
         Err(Error::Transient(_)) => {}
-        _ => auth.identity_store.invalidate(&key),
+        _ => auth.identity_store.invalidate_token(token),
     }
     result
 }

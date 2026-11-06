@@ -47,6 +47,8 @@ struct Reply {
     body: String,
     delay: Duration,
     gate: Option<Arc<Gate>>,
+    headers: HeaderMap,
+    stream_tail: Option<(Duration, Result<String, &'static str>)>,
 }
 
 impl Reply {
@@ -56,6 +58,8 @@ impl Reply {
             body: body.to_string(),
             delay: Duration::ZERO,
             gate: None,
+            headers: HeaderMap::new(),
+            stream_tail: None,
         }
     }
 }
@@ -81,12 +85,27 @@ async fn respond(control: &ProviderControl, reply: &RwLock<Reply>) -> Response {
         gate.release.notified().await;
     }
     tokio::time::sleep(reply.delay).await;
-    (
+    use axum::body::Body;
+    use futures_util::StreamExt;
+    let body = match reply.stream_tail {
+        Some((delay, tail)) => Body::from_stream(
+            futures_util::stream::once(async move { Ok::<_, std::io::Error>(reply.body) }).chain(
+                futures_util::stream::once(async move {
+                    tokio::time::sleep(delay).await;
+                    tail.map_err(std::io::Error::other)
+                }),
+            ),
+        ),
+        None => Body::from(reply.body),
+    };
+    let mut response = (
         reply.status,
         [(header::CONTENT_TYPE, "application/json")],
-        reply.body,
+        body,
     )
-        .into_response()
+        .into_response();
+    response.headers_mut().extend(reply.headers);
+    response
 }
 
 async fn discovery(State(control): State<Arc<ProviderControl>>) -> Response {
@@ -281,3 +300,6 @@ fn assert_unavailable(result: Result<RequestAuth, StoreError>) {
 mod fallback_tests;
 #[path = "cookie_authorization_tests/verification_tests.rs"]
 mod verification_tests;
+
+#[path = "cookie_authorization_tests/provider_boundary_tests.rs"]
+mod provider_boundary_tests;

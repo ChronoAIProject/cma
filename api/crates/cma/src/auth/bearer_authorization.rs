@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::sync::{Mutex, OnceCell};
 
 use super::{
-    identity::VerifiedSubject, persistence::SecretDigest,
+    identity::VerifiedSubject, identity_fallback::CredentialPurpose, persistence::SecretDigest,
     verification_error::ProviderVerificationError, AuthState, ProviderMetadata,
 };
 
@@ -82,13 +82,23 @@ async fn verify_optional_metadata(
     let verified = match tokio::time::timeout(
         timeout,
         flight.get_or_init(|| {
-            super::identity_retry::verify(auth, metadata, credential, None, None, timeout)
+            let purpose = if super::agent_keys::is_agent_key(credential) {
+                CredentialPurpose::AgentKey
+            } else {
+                CredentialPurpose::IndependentBearer
+            };
+            super::identity_retry::verify(auth, metadata, credential, purpose, None, None, timeout)
         }),
     )
     .await
     {
         Ok(result) => result.clone(),
-        Err(_) => Err(ProviderVerificationError::Transient("deadline")),
+        Err(_) => {
+            auth.identity_store.invalidate_token(credential);
+            Err(ProviderVerificationError::Unavailable(
+                "identity caller deadline elapsed".into(),
+            ))
+        }
     };
     if flight.initialized() {
         auth.bearer_verifications.release(&key, &flight).await;

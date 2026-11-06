@@ -77,7 +77,14 @@ pub(super) async fn verify_subject(
     metadata: &ProviderMetadata,
     access_token: &str,
 ) -> Result<VerifiedSubject, ProviderVerificationError> {
-    verify_subject_expected(auth, metadata, access_token, None).await
+    verify_subject_expected(
+        auth,
+        metadata,
+        access_token,
+        None,
+        tokio::time::Instant::now() + super::identity_http::DIRECT_TIMEOUT,
+    )
+    .await
 }
 
 pub(super) async fn verify_subject_expected(
@@ -85,14 +92,15 @@ pub(super) async fn verify_subject_expected(
     metadata: &ProviderMetadata,
     access_token: &str,
     expected_subject: Option<&str>,
+    deadline: tokio::time::Instant,
 ) -> Result<VerifiedSubject, ProviderVerificationError> {
-    let result = verify_subject_once(auth, metadata, access_token, expected_subject).await;
+    let result =
+        verify_subject_once(auth, metadata, access_token, expected_subject, deadline).await;
     if matches!(
         &result,
         Err(ProviderVerificationError::Rejected(_) | ProviderVerificationError::Unavailable(_))
     ) {
-        auth.identity_store
-            .invalidate(&auth.identity_store.key(access_token));
+        auth.identity_store.invalidate_token(access_token);
     }
     result
 }
@@ -102,9 +110,10 @@ async fn verify_subject_once(
     metadata: &ProviderMetadata,
     access_token: &str,
     expected_subject: Option<&str>,
+    deadline: tokio::time::Instant,
 ) -> Result<VerifiedSubject, ProviderVerificationError> {
     if super::agent_keys::is_agent_key(access_token) {
-        return super::agent_keys::verify(auth, metadata, access_token).await;
+        return super::agent_keys::verify(auth, metadata, access_token, deadline).await;
     }
     use ProviderVerificationError::{Rejected, Unavailable};
     if !super::bearer::permits_ambient_auth(access_token) {
@@ -119,17 +128,16 @@ async fn verify_subject_once(
     let (userinfo, introspection) = tokio::try_join!(
         async {
             let started = std::time::Instant::now();
-            let result =
-                userinfo(auth, metadata, access_token)
-                    .await
-                    .and_then(|(body, subject)| {
-                        if expected_subject.is_some_and(|expected| expected != subject) {
-                            return Err(Rejected(
-                                "userinfo subject does not match retained owner".into(),
-                            ));
-                        }
-                        Ok((body, subject))
-                    });
+            let result = userinfo(auth, metadata, access_token, deadline)
+                .await
+                .and_then(|(body, subject)| {
+                    if expected_subject.is_some_and(|expected| expected != subject) {
+                        return Err(Rejected(
+                            "userinfo subject does not match retained owner".into(),
+                        ));
+                    }
+                    Ok((body, subject))
+                });
             tracing::info!(
                 phase = "userinfo",
                 elapsed_ms = started.elapsed().as_millis() as u64,
@@ -145,7 +153,7 @@ async fn verify_subject_once(
         },
         async {
             let started = std::time::Instant::now();
-            let result = permissions::fetch_introspection(auth, metadata, access_token)
+            let result = permissions::fetch_introspection(auth, metadata, access_token, deadline)
                 .await
                 .and_then(|response| {
                     if let (Some(expected), Some(response)) = (expected_subject, response.as_ref())
@@ -201,33 +209,16 @@ async fn userinfo(
     auth: &AuthState,
     metadata: &ProviderMetadata,
     access_token: &str,
+    deadline: tokio::time::Instant,
 ) -> Result<(serde_json::Value, String), ProviderVerificationError> {
     use ProviderVerificationError::Unavailable;
     let endpoint = metadata
         .userinfo_endpoint
         .as_ref()
         .ok_or_else(|| Unavailable("identity provider advertises no userinfo endpoint".into()))?;
-    let response = auth
-        .http
-        .get(endpoint)
-        .bearer_auth(access_token)
-        .send()
-        .await
-        .map_err(|error| {
-            verification_failure("userinfo", "transport", None);
-            ProviderVerificationError::transport(error)
-        })?;
-    if !response.status().is_success() {
-        verification_failure("userinfo", "http_status", Some(response.status().as_u16()));
-        return Err(ProviderVerificationError::status(response.status()));
-    }
-    let body = response
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|error| {
-            verification_failure("userinfo", "invalid_json", None);
-            ProviderVerificationError::transport(error)
-        })?;
+    let body =
+        super::identity_http::json(auth.http.get(endpoint).bearer_auth(access_token), deadline)
+            .await?;
     permissions::token_expiry(&body)?;
     let subject = body
         .get("sub")
