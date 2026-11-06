@@ -1,13 +1,12 @@
-import { useEffect, useState } from 'react';
-import markMarkup from '../assets/brand/cma-mark.svg?raw';
-import { TASK_GROUPS, taskGroup, taskTime, taskHue } from './taskGroups';
-const markHtml = { __html: markMarkup };
+import { useMemo } from 'react';
+import { TASK_GROUPS, taskGroup, taskTime, taskColor, runningTaskTime } from './taskGroups';
+import { useTaskClock } from './useTaskClock';
 import type { TreeProps } from './Tree';
 import { TreeRow } from './TreeRow';
 import { agentActions } from './treeActions';
-import { keyboardNavigation } from './treePresentation';
+import { keyboardNavigation, agentSignal } from './treePresentation';
 import { taskWords, taskStatus } from './taskStatus';
-import { sandboxChildrenAvailable } from '../sandbox/lifecycle';
+import { sandboxChildrenAvailable, sandboxChildStatus } from '../sandbox/lifecycle';
 import { taskTitle } from './taskTitle';
 import type { AgentSummary, SandboxDetail } from '../api/types';
 
@@ -61,12 +60,12 @@ export function PersonalAgentTree({
   | 'onNavigate'
   | 'onAction'
 >) {
-  const cards = agentCards(items, statusFilter ?? 'all');
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+  const cards = useMemo(() => agentCards(items, statusFilter ?? 'all'), [items, statusFilter]);
+  const now = useTaskClock(
+    cards
+      .filter(({ agent, sandbox }) => taskStatus(agent, sandbox) === 'working')
+      .flatMap(({ agent }) => (agent.taskStartedAt ? [agent.taskStartedAt] : [])),
+  );
   return (
     <div
       className="agent-navigation"
@@ -85,21 +84,26 @@ export function PersonalAgentTree({
             <h3 className="task-group__heading">{heading}</h3>
             {rows.map(({ sandbox, agent }) => {
               const status = taskStatus(agent, sandbox);
+              const displayedTime =
+                status === 'not_started'
+                  ? ''
+                  : status === 'working'
+                    ? runningTaskTime(agent.taskStartedAt, now)
+                    : taskTime(agent.updatedAt, now);
               return (
                 <TreeRow
                   key={agent.id}
                   nodeId={`agent:${agent.id}`}
                   level={1}
                   label={taskTitle(agent)}
-                  accessibleLabel={`${taskTitle(agent)}, ${taskWords[status]}, ${agent.updatedAt}${refreshError ? ', status may be stale' : ''}`}
+                  accessibleLabel={`${taskTitle(agent)}, ${taskWords[status]}${displayedTime ? `, ${displayedTime}` : ''}${refreshError ? ', status may be stale' : ''}`}
                   layout="line"
-                  icon={
-                    <span
-                      className="task-mask"
-                      style={{ filter: `hue-rotate(${taskHue(agent.id)}deg)` }}
-                      dangerouslySetInnerHTML={markHtml}
-                    />
-                  }
+                  icon={agentSignal(
+                    sandboxChildStatus(sandbox, agent.status),
+                    agent.id,
+                    24,
+                    sandbox.color ?? taskColor(agent.id),
+                  )}
                   route={{ kind: 'agent', agentId: agent.id }}
                   selected={route.kind === 'agent' && route.agentId === agent.id}
                   dimmed={sandbox.status === 'paused'}
@@ -114,9 +118,7 @@ export function PersonalAgentTree({
                       ) : status === 'working' ? (
                         <span className="task-running">
                           <span aria-hidden="true" className="task-running__dot" />
-                          {agent.taskStartedAt && Number.isFinite(Date.parse(agent.taskStartedAt))
-                            ? `${Math.floor(Math.max(0, now.getTime() - Date.parse(agent.taskStartedAt)) / 60000)}m`
-                            : null}
+                          {runningTaskTime(agent.taskStartedAt, now)}
                         </span>
                       ) : (
                         <time dateTime={agent.updatedAt}>{taskTime(agent.updatedAt, now)}</time>

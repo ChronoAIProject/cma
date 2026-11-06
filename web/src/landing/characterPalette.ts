@@ -45,7 +45,10 @@ export function readCharacterPalette(
   };
 
   return {
-    body: bodyColor === undefined ? read(bodyProperty) : new THREE.Color(bodyColor),
+    body:
+      bodyColor === undefined
+        ? read(bodyProperty)
+        : new THREE.Color(bodyColor.startsWith('var(') ? styles.color : bodyColor),
     lens: read('--dsw-static-zinc-950'),
     sky: read('--dsw-static-zinc-50'),
     ground: read('--dsw-static-zinc-800'),

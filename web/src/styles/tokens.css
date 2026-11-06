@@ -281,6 +281,8 @@ body {
   --dsw-alias-workspace-sidebar: #f7f7f5;
   --dsw-alias-workspace-selected: #efefec;
   --dsw-alias-workspace-accent: #4f8a35;
+  --dsw-alias-workspace-task-blue: #245b98;
+  --dsw-alias-workspace-task-purple: #7b3f93;
   --dsw-alias-workspace-link: #456f2e;
   --dsw-alias-workspace-success: #8fb07a;
   --dsw-alias-workspace-danger: #c4493b;
@@ -309,6 +311,8 @@ body[data-ds-dark-theme] {
   --dsw-alias-workspace-sidebar: #111113;
   --dsw-alias-workspace-selected: #27272a;
   --dsw-alias-workspace-accent: #a9cf90;
+  --dsw-alias-workspace-task-blue: #9acbff;
+  --dsw-alias-workspace-task-purple: #d9abee;
   --dsw-alias-workspace-link: #b9dca4;
   --dsw-alias-workspace-success: #a4c38e;
   --dsw-alias-workspace-danger: #ff9689;
