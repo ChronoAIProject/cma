@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 pub(super) struct PermissionObservation {
     pub permissions: PermissionEvidence,
     pub api_expires_at: Option<SystemTime>,
+    pub token_expires_at: Option<SystemTime>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -71,6 +72,7 @@ pub(super) async fn fetch_introspection(
     auth: &AuthState,
     meta: &ProviderMetadata,
     access_token: &str,
+    deadline: tokio::time::Instant,
 ) -> Result<Option<IntrospectionResponse>, ProviderVerificationError> {
     use ProviderVerificationError::Unavailable;
     let Some(endpoint) = meta.introspection_endpoint.as_ref() else {
@@ -93,43 +95,44 @@ pub(super) async fn fetch_introspection(
         ("client_id", client_id.as_str()),
         ("client_secret", client_secret.as_str()),
     ];
-    let resp = auth
-        .http
-        .post(endpoint)
-        .form(&form)
-        // The form carries the secret, so nothing here logs it.
-        .send()
-        .await
-        .map_err(|e| {
-            super::identity::verification_failure("introspection", "transport", None);
-            Unavailable(format!("introspection request failed: {e}"))
-        })?;
-    if !resp.status().is_success() {
-        super::identity::verification_failure(
-            "introspection",
-            "http_status",
-            Some(resp.status().as_u16()),
-        );
-        // This endpoint authenticates CMA's client, not the inspected token.
-        // Only successful inactive evidence establishes token revocation.
-        return Err(Unavailable(format!(
-            "introspection returned {}",
-            resp.status()
-        )));
+    // The form carries the secret, so nothing here logs it.
+    let body = super::identity_http::json(auth.http.post(endpoint).form(&form), deadline).await?;
+    if body.get("active").and_then(serde_json::Value::as_bool) == Some(false) {
+        return Err(ProviderVerificationError::Rejected(
+            "provider reports an inactive token".into(),
+        ));
     }
-    let body: serde_json::Value = resp.json().await.map_err(|e| {
-        super::identity::verification_failure("introspection", "invalid_json", None);
-        Unavailable(format!("introspection body not usable: {e}"))
-    })?;
+    // Partial/malformed success cannot be masked by the other endpoint's outage.
+    if body.get("active").and_then(serde_json::Value::as_bool) != Some(true) {
+        return Err(Unavailable(
+            "introspection response has no boolean active disposition".into(),
+        ));
+    }
+    permissions_claim(&body).map_err(Unavailable)?;
+    token_expiry(&body)?;
     Ok(Some(IntrospectionResponse(body)))
 }
 
 impl IntrospectionResponse {
+    pub(super) fn require_subject(&self, expected: &str) -> Result<(), ProviderVerificationError> {
+        if self
+            .0
+            .get("sub")
+            .is_some_and(|value| value.as_str() != Some(expected))
+        {
+            return Err(ProviderVerificationError::Rejected(
+                "introspection subject does not match retained owner".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn verify(
         self,
         expected_subject: &str,
     ) -> Result<PermissionObservation, ProviderVerificationError> {
         let body = self.0;
+        let token_expires_at = token_expiry(&body)?;
         introspection_claim(&body, expected_subject)
             .map(|permissions| {
                 let api_expires_at = (body.get("active").and_then(serde_json::Value::as_bool)
@@ -150,12 +153,31 @@ impl IntrospectionResponse {
                 PermissionObservation {
                     permissions,
                     api_expires_at,
+                    token_expires_at,
                 }
             })
             .inspect_err(|_| {
                 super::identity::verification_failure("introspection", "invalid_evidence", None);
             })
     }
+}
+
+pub(super) fn token_expiry(
+    body: &serde_json::Value,
+) -> Result<Option<SystemTime>, ProviderVerificationError> {
+    body.get("exp")
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|seconds| {
+                    SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds))
+                })
+                .filter(|expiry| *expiry > SystemTime::now())
+                .ok_or_else(|| {
+                    ProviderVerificationError::Rejected("invalid or expired token lifetime".into())
+                })
+        })
+        .transpose()
 }
 
 #[cfg(test)]

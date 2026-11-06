@@ -23,4 +23,9 @@ operations['GET /api/v1/admin/usage/metrics/reports/{report}/owners'] = ({
   param,
   options,
 }) => client.adminUsageMetrics.owners(param('report'), options);
+operations['GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations'] = ({
+  client,
+  param,
+  options,
+}) => client.adminUsageMetrics.ownerAllocations(param('report'), options);
 export const metricsDispatch = operations;

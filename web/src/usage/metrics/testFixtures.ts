@@ -4,6 +4,24 @@ export { asOf, metricRow, reportFixture, seriesFixture } from './fixtures.test-s
 
 export function metricsClient(admin = false) {
   return {
+    ownerAllocations: vi.fn().mockImplementation((id: string, options: { metric: string }) =>
+      Promise.resolve({
+        report_id: id,
+        metric: options.metric,
+        unit: options.metric === 'cpu' ? 'core-hours' : 'GiB-hours',
+        items: [
+          {
+            subject: 'owner-1',
+            label: 'Alex Chen',
+            allocated_hours: 24,
+            sandbox_count: 1,
+            complete: true,
+          },
+        ],
+        next: null,
+        total_count: 1,
+      }),
+    ),
     options: vi.fn().mockResolvedValue({ items: [], next: null }),
     create: vi.fn().mockResolvedValue(reportFixture(admin)),
     report: vi.fn().mockResolvedValue(reportFixture(admin)),
