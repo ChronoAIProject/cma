@@ -4,6 +4,7 @@ mod budget;
 mod charts;
 mod diagnostics;
 pub(crate) mod inventory;
+mod options;
 mod owners;
 mod progress;
 pub(crate) use progress::Progress;
