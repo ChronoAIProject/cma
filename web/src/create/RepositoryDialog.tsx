@@ -113,7 +113,12 @@ export function RepositoryDialog({
           <Button variant="outline" placement="repository-dialog__action" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" placement="repository-dialog__save" disabled={!valid}>
+          <Button
+            type="submit"
+            variant="primary"
+            placement="repository-dialog__save"
+            disabled={!valid}
+          >
             Add repo
           </Button>
         </div>
