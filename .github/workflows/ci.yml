@@ -313,7 +313,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: api
-          shared-key: backend-lint
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
       - name: Format
         run: cargo fmt --all --check
@@ -345,7 +344,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: api
-          shared-key: backend
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
       - name: Install pinned nextest
         uses: taiki-e/install-action@v2
