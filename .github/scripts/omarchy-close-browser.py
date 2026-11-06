@@ -24,9 +24,12 @@ def browser_windows():
 windows = browser_windows()
 assert len(windows) == 1, 'Expected one fixture browser window to close'
 # The terminal probe may have owned focus. Select the actual Wayland browser,
-# independently of the native tool shell's HOME or Chromium's argv[0].
-subprocess.run(['hyprctl', 'dispatch', 'focuswindow',
-                'address:' + windows[0]['address']], check=True)
+# independently of the native tool shell's HOME or Chromium's argv[0]. Hyprland
+# 0.56.2 with our Lua config wraps dispatch arguments in hl.dispatch(...).
+focus = 'hl.dsp.focus({window = ' + json.dumps('address:' + windows[0]['address']) + '})'
+subprocess.run(['hyprctl', 'dispatch', focus], check=True)
+active = json.loads(subprocess.check_output(['hyprctl', '-j', 'activewindow']))
+assert active.get('address') == windows[0]['address'], 'Fixture browser did not gain focus'
 viewer = subprocess.check_output(['pgrep', '-x', 'vncviewer'], text=True).strip()
 window = subprocess.check_output(
     ['xdotool', 'search', '--onlyvisible', '--pid', viewer], text=True).splitlines()[0]
