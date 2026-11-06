@@ -23,7 +23,7 @@ mod terminal;
 use terminal::{fold_turn_ended, fold_turn_failed};
 
 pub(super) enum FoldedConversationUpdate {
-    Quiet(AgentMessageAssembly),
+    Quiet(Box<AgentMessageAssembly>),
     Changed(Box<ConversationChange>),
 }
 
@@ -48,7 +48,7 @@ pub(super) fn fold_update(
         // Persist the runtime receipt without duplicating that history or
         // inventing a turn. Recovered active turns still consume their output,
         // and conversation metadata remains valid while the Agent is idle.
-        return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
+        return Ok(FoldedConversationUpdate::Quiet(Box::new(assembly.clone())));
     }
     match update {
         ConversationUpdate::Metadata(metadata) => {
@@ -80,7 +80,7 @@ pub(super) fn fold_update(
         }
         ConversationUpdate::Said(SessionUpdate::AgentThoughtChunk(_))
         | ConversationUpdate::Said(SessionUpdate::UserMessageChunk(_)) => {
-            Ok(FoldedConversationUpdate::Quiet(assembly.clone()))
+            Ok(FoldedConversationUpdate::Quiet(Box::new(assembly.clone())))
         }
         ConversationUpdate::Said(update) => fold_semantic_update(
             current,
@@ -221,7 +221,7 @@ fn fold_message_chunk(
 ) -> Result<FoldedConversationUpdate, AgentConversationError> {
     active_turn(current)?;
     let Some(text) = plain_text(&chunk.content) else {
-        return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
+        return Ok(FoldedConversationUpdate::Quiet(Box::new(assembly.clone())));
     };
     let message_id = chunk.message_id.map(|id| id.0.to_string());
     let mut agent = current.clone();
@@ -242,7 +242,7 @@ fn fold_message_chunk(
     observe_first_message(&mut agent, prompt_evidence, appended_at, &mut logs)?;
     observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
     if logs.is_empty() {
-        return Ok(FoldedConversationUpdate::Quiet(next_assembly));
+        return Ok(FoldedConversationUpdate::Quiet(Box::new(next_assembly)));
     }
     changed(
         agent,
@@ -297,7 +297,7 @@ fn fold_semantic_update(
                 .flatten()
             else {
                 return if logs.is_empty() {
-                    Ok(FoldedConversationUpdate::Quiet(assembly.clone()))
+                    Ok(FoldedConversationUpdate::Quiet(Box::new(assembly.clone())))
                 } else {
                     changed(
                         agent,
@@ -357,7 +357,7 @@ fn fold_semantic_update(
         },
         _ => {
             return if logs.is_empty() {
-                Ok(FoldedConversationUpdate::Quiet(assembly.clone()))
+                Ok(FoldedConversationUpdate::Quiet(Box::new(assembly.clone())))
             } else {
                 changed(
                     agent,

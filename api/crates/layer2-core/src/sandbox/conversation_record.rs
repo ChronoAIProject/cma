@@ -214,10 +214,12 @@ impl DurableAgentUpdateRecorder {
                         crate::sandbox::task_experience::TaskExperienceWriter::ToolOutput,
                     ),
                 )?,
-                None => FoldedConversationUpdate::Quiet(recovered.clone()),
+                None => FoldedConversationUpdate::Quiet(Box::new(recovered.clone())),
             };
             let (next_agent, mut next_assembly, logs, turn_closed) = match folded {
-                FoldedConversationUpdate::Quiet(next) => (current.clone(), next, Vec::new(), false),
+                FoldedConversationUpdate::Quiet(next) => {
+                    (current.clone(), *next, Vec::new(), false)
+                }
                 FoldedConversationUpdate::Changed(change) => (
                     change.agent,
                     change.assembly,
