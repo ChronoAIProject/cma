@@ -2,7 +2,10 @@ use super::*;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages() {
+    let mut window = super::circuit_capture::ScaleWindow::start();
     let store = fixture().await;
+    window.attach(&store);
+    window.phase("seed", 0);
     let at = now();
     let from = (at - 3600) / 60 * 60;
     const COUNT: usize = 20_001;
@@ -58,15 +61,18 @@ async fn metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed
     }
     .validate(at)
     .unwrap();
+    window.phase("submit", 0);
     let report = store
         .submit(scope("operator", true), query, at)
         .await
         .unwrap();
+    window.phase("claim", 0);
     let lease = store
         .claim_report("report:0", "large-fixture")
         .await
         .unwrap()
         .unwrap();
+    window.phase("explain", 0);
     let rss_before = resident_kib();
     let explain = store.db.run_command(doc!{"explain":{"find":super::super::super::sandbox_metric_rollups::COLLECTION,
         "filter":{"sandbox_id":{"$in":["sbx_00000000000000000000000000000001"]},"day":{"$gte":(from/86400*86400) as i64,"$lte":(from/86400*86400) as i64}}},"verbosity":"executionStats"}).await.unwrap();
@@ -84,13 +90,17 @@ async fn metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed
             .unwrap()
             <= 1
     );
+    window.phase("generate", 0);
     let start = std::time::Instant::now();
     let generated = crate::sandbox_metrics::generate_fixture(store.clone(), &lease)
         .await
         .unwrap();
     let elapsed = start.elapsed();
     let rss_after = resident_kib();
-    eprintln!("metrics_scale rss_before_kib={rss_before} rss_after_kib={rss_after}");
+    eprintln!(
+        "metrics_scale generation_ms={} rss_before_kib={rss_before} rss_after_kib={rss_after}",
+        elapsed.as_millis()
+    );
     assert!(
         rss_after < 512 * 1024,
         "report process exceeds 512 MiB RSS fixture budget"
@@ -102,10 +112,12 @@ async fn metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed
     assert_eq!(summary.allocated_period.uptime_seconds, COUNT as f64 * 60.);
     let expected = (COUNT * (COUNT + 1) / 2) as f64;
     assert_eq!(summary.measured.as_ref().unwrap().cpu.mean, Some(expected));
+    window.phase("finish", 0);
     store
         .finish_report(&lease, generated.clone(), true)
         .await
         .unwrap();
+    window.phase("reauthorize", 0);
     let authorization_start = std::time::Instant::now();
     store.reauthorize(&generated).await.unwrap();
     eprintln!(
@@ -113,6 +125,7 @@ async fn metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed
         authorization_start.elapsed().as_millis()
     );
     assert!(authorization_start.elapsed() < Duration::from_secs(2));
+    window.phase("first_page", 1);
     let first = store
         .page(
             &generated,
@@ -128,7 +141,10 @@ async fn metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed
     assert_eq!(first.items[0].sandbox_id, format!("sbx_{:032x}", COUNT - 1));
     let mut cursor = None;
     let mut count = 0;
+    let mut page_number = 0;
     loop {
+        page_number += 1;
+        window.phase("paginate", page_number);
         let page = store
             .page(
                 &generated,
@@ -148,6 +164,7 @@ async fn metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed
         }
     }
     assert_eq!(count, COUNT);
+    window.phase("series", 0);
     let chart_start = std::time::Instant::now();
     let series = store
         .series(
@@ -171,6 +188,7 @@ async fn metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed
             .sum::<f64>(),
         expected
     );
+    window.phase("owners", 1);
     let owners = store
         .owners(
             &generated,
@@ -195,6 +213,7 @@ async fn metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed
             .await,
         Err(MetricsError::Invalid(_))
     ));
+    window.phase("owners", 2);
     let next = store
         .owners(
             &generated,
@@ -207,6 +226,7 @@ async fn metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed
         .await
         .unwrap();
     assert_eq!(next.items.len(), 7);
+    window.phase("verify_persistence", 0);
     let saved = store
         .collection(JOBS)
         .find_one(doc! {"_id":&report.report_id})
@@ -237,7 +257,10 @@ async fn metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed
         super::super::super::sandbox_usage::read_state(&unchanged).unwrap(),
         state(COUNT - 1, from)
     );
+    window.phase("cleanup", 0);
     store.db.drop().await.unwrap();
+    window.assert_no_pressure();
+    window.phase("complete", page_number);
 }
 
 fn resident_kib() -> u64 {
