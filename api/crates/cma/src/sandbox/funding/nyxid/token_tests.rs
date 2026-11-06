@@ -48,6 +48,7 @@ async fn unauthorized_funding_refreshes_and_replays_identical_idempotent_bytes_o
         assert_eq!(calls[1].2, calls[3].2);
         assert_eq!(calls[1].1["authorization"], "Bearer first");
         assert_eq!(calls[3].1["authorization"], "Bearer second");
+        assert_eq!(calls[3].1.get_all("authorization").iter().count(), 1);
     }
 }
 
@@ -105,4 +106,26 @@ async fn refresh_failure_does_not_replay_funding_or_change_static_mode() {
         Err(FundingError::Invalid("producer HTTP 401".into()))
     );
     assert_eq!(server.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn configuration_selects_oauth_and_resolves_the_referenced_environment() {
+    let server = Server::new(vec![issued("configured", 3600), (404, "{}".into())]).await;
+    let provider = NyxIdFundingProvider::new(SandboxBillingConfig {
+        base_url: server.url.clone(),
+        credential_ref: "MISSING_STATIC_REFERENCE".into(),
+        client_credentials: Some(("USER".into(), "USER".into())),
+        producer_id: uuid::Uuid::new_v4().to_string(),
+    })
+    .unwrap();
+    assert_eq!(provider.recover("r").await.unwrap(), None);
+    let calls = server.calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].0, "/oauth/token");
+    assert_eq!(calls[1].1["authorization"], "Bearer configured");
+    let form: std::collections::HashMap<_, _> = url::form_urlencoded::parse(calls[0].2.as_bytes())
+        .into_owned()
+        .collect();
+    assert_eq!(form["client_id"], std::env::var("USER").unwrap());
+    assert_eq!(form["client_secret"], std::env::var("USER").unwrap());
 }
