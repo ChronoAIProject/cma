@@ -3,7 +3,17 @@ export function ToolIcon({
   kind,
 }: {
   readonly kind:
-    'command' | 'read' | 'edit' | 'other' | 'navigate' | 'click' | 'drag' | 'type' | 'key';
+    | 'command'
+    | 'read'
+    | 'edit'
+    | 'other'
+    | 'navigate'
+    | 'click'
+    | 'drag'
+    | 'type'
+    | 'key'
+    | 'search'
+    | 'list';
 }) {
   return (
     <svg
@@ -17,7 +27,14 @@ export function ToolIcon({
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      {kind === 'command' ? (
+      {kind === 'search' ? (
+        <>
+          <circle cx="7" cy="7" r="4" />
+          <path d="m10 10 4 4" />
+        </>
+      ) : kind === 'list' ? (
+        <path d="M1 4V2h5l2 2h7v10H1V4Z" />
+      ) : kind === 'command' ? (
         <path d="m2 4 4 4-4 4m6 0h6" />
       ) : kind === 'edit' ? (
         <path d="m3 10 8-8 3 3-8 8-4 1 1-4Zm6-6 3 3" />
