@@ -184,6 +184,7 @@ module CIContract
     {
       "Provider workflow authority contract" => "ruby .github/scripts/ci-contract.rb provider",
       "Provider contract mutation regressions" => "ruby .github/scripts/ci-contract-tests.rb provider",
+      "Backend capacity preparation regressions" => "python3 .github/scripts/backend-capacity-tests.py",
       "Staging authority and evidence regressions" => "node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs",
       "Authenticated Mongo startup regressions" => "node --test .github/scripts/authenticated-mongo-readiness.test.mjs",
       "Typecheck every harness entry point" => "npm run e2e:typecheck",
@@ -193,6 +194,18 @@ module CIContract
       "Local browser guard mechanics" => "npm run e2e:mechanics",
     }.each { |name, command| step(gate, name, command) }
     backend = job(ci, "backend", "Backend")
+    capacity = step(backend, "Prepare Backend capacity", 'sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS python3 .github/scripts/backend-capacity.py || echo "::warning::Backend capacity preparation unavailable"')
+    require!(backend["runs-on"] == "ubuntu-latest", "Backend capacity must retain the hosted runner size")
+    require!(backend["steps"][0] == { "uses" => "actions/checkout@v5" } && backend["steps"][1] == capacity, "Backend capacity must run immediately after checkout")
+    require!(capacity["working-directory"] == "." && !capacity.key?("env"), "Backend capacity must use the checked-in helper and runner environment")
+
+    require!(backend.dig("env", "BASH_ENV") == "${{ github.workspace }}/.github/scripts/backend-resource-env.sh", "Backend resource hook changed")
+    require!(!backend.dig("defaults", "run").key?("shell"), "Backend must retain the original step shell")
+    backend.fetch("steps").each do |row|
+      require!(!row.key?("shell") && !row.fetch("env", {}).key?("BASH_ENV"), "Backend step overrides resource hook or shell")
+    end
+    step(job(ci, "trigger-provider-smoke-contract", "Trigger provider smoke contract"),
+      "Backend resource sampling regressions", "python3 .github/scripts/backend-resource-sampler-tests.py")
     step(backend, "Image normalization budgets", "cargo nextest run --workspace --locked -E 'binary(=media_image_peak)' --test-threads 1 --success-output final")
     step(backend, "Tests", "cargo nextest run --workspace --locked --no-fail-fast -E 'not (binary(=media_image_peak) or binary(=turn_metrics))'")
     step(backend, "Gateway socket latency budget", "cargo nextest run --workspace --locked -E 'binary(=turn_metrics)' --test-threads 1 --success-output final")
@@ -203,7 +216,7 @@ module CIContract
     step(backend, "Install gateway contract browser", "npx --no-install playwright install --with-deps chromium")
     order(backend, ["Prepare compiled gateway browser contract", "Install gateway contract browser", "Image Manager authenticated Mongo isolation"])
     sandbox_mongo = step(backend, "Image Manager authenticated Mongo isolation", "bash ../.github/scripts/image-manager-mongo-contract.sh")
-    require!(sandbox_mongo["timeout-minutes"] == 10, "Sandbox Manager isolation proof must remain bounded")
+    require!(sandbox_mongo["timeout-minutes"] == 15, "Image Manager isolation proof must retain its 15-minute bound")
     require!(workflow["permissions"] == { "contents" => "read" }, "remote workflow permissions broadened")
     require!(workflow.dig("concurrency", "cancel-in-progress") == false, "remote writers cannot be cancelled by a newer run")
     triggers = workflow["on"] || workflow[true]

@@ -19,4 +19,29 @@ impl PromptIdentity {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Parse only identities emitted by this adapter. JSON-RPC response IDs
+    /// are otherwise opaque and must never be interpreted as prompt results.
+    pub fn parse(value: &str) -> Option<Self> {
+        let digest = value.strip_prefix("cma-prompt-v1-")?;
+        (digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then(|| Self(value.to_owned()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PromptIdentity;
+
+    #[test]
+    fn parser_accepts_only_adapter_prompt_namespace() {
+        let identity = PromptIdentity::new("conversation", 4, 9);
+        assert_eq!(
+            PromptIdentity::parse(identity.as_str()),
+            Some(identity.clone())
+        );
+        assert!(PromptIdentity::parse("initialize").is_none());
+        assert!(PromptIdentity::parse("cma-prompt-v1-abc").is_none());
+        assert!(PromptIdentity::parse(&format!("{}x", identity.as_str())).is_none());
+    }
 }
