@@ -388,6 +388,7 @@ async fn metrics_all_sorts_are_indexed_stable_null_last_and_cursor_bound() {
 }
 
 mod allocated;
+pub(super) mod circuit_capture;
 mod options;
 mod options_authority;
 mod options_context;
