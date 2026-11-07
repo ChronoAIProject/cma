@@ -14,12 +14,12 @@ echo '97a53dc52dd667bb6124051fe0e44bfe29740f1c9423eae40a326e17ba794ddd  gum.tar.
 mkdir gum
 tar xzf gum.tar.gz -C gum --strip-components=1
 cd gum
-go mod edit -require=golang.org/x/net@v0.60.0 -require=golang.org/x/text@v0.42.0
+go mod edit -require=golang.org/x/net@v0.62.0 -require=golang.org/x/text@v0.43.0
 go mod tidy
 go mod download all
 go mod verify
-test "$(go list -m -f '{{.Version}}' golang.org/x/net)" = v0.60.0
-test "$(go list -m -f '{{.Version}}' golang.org/x/text)" = v0.42.0
+test "$(go list -m -f '{{.Version}}' golang.org/x/net)" = v0.62.0
+test "$(go list -m -f '{{.Version}}' golang.org/x/text)" = v0.43.0
 go build -mod=readonly -trimpath -ldflags='-s -w -X main.Version=2.0.2' -o /usr/bin/gum .
 gum format 'CMA runtime utility check' >/dev/null
 cd "$build_dir"
