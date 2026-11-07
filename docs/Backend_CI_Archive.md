@@ -121,19 +121,20 @@ it neither extracts nor compiles on its own.
 
 Both modes discard caller Mongo URIs, create their own pinned disposable
 fixtures, and retain their ownership checks and cleanup scope. Mongo runs the
-20,001-Sandbox report-generation scale contract once in its own fresh fixture,
-then waits for cleanup before starting ordinary partitions. Those partitions
-exclude the exact scale name and run at most two independent fixtures, with at
-most 40 tests per fixture and one test process per fixture. Scale failure stays
-a failure while ordinary partitions are still attempted; cancellation stops the
-active process groups and cleans only their owned fixtures.
+20,001-Sandbox report-generation scale contract, then the 400/20,001-owner
+allocation contract, each once in its own exclusive fresh fixture. Cleanup
+finishes before the next phase starts. Ordinary partitions exclude both exact
+names and run at most two independent fixtures, with at most 40 tests per
+fixture and one test process per fixture. Test failure stays a failure while
+later contracts are still attempted; uncertain cleanup stops further allocation.
+Cancellation stops active process groups and cleans only their owned fixtures.
 
-Scale mode uses `package(=cma) and test(=full_test_name)` inside the common
+`--scale` and `--owner-allocation` use `package(=cma) and test(=full_test_name)` inside the common
 ignored-only selection. This is equivalent to develop's `-p cma` and exact name
 filter, while working with extracted metadata. Ordinary mode keeps the whole
-workspace corpus minus that exact name. Together the selections are disjoint
+workspace corpus minus those exact names. Together the selections are disjoint
 and cover the original corpus; the coordinator rejects missing or duplicate
-scale entries and an empty ordinary set. The wrapper alone supplies
+exclusive entries and an empty ordinary set. The wrapper alone supplies
 `--no-tests fail`, once per run.
 
 Image Manager uses one authenticated replica set with
@@ -207,7 +208,7 @@ CMA_NEXTEST_REUSE=1 python3 ../.github/scripts/backend-selection-proof.py BASELI
 ```
 
 The proof compares the old main selection to the disjoint union of three
-partitions, both isolated budgets, the exact Linux case, Mongo's all/scale/ordinary
+partitions, both isolated budgets, the exact Linux case, Mongo's all/scale/owner/ordinary
 selections and disjoint union, all 14 Image Manager invocations, and CMAEG
 latency. It enumerates original `cargo test` filters through the archived binaries' own libtest `--list` interface, then
 compares them to nextest lists. It emits sorted `(binary, test)` inventories and
