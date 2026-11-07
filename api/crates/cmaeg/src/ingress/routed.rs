@@ -284,11 +284,26 @@ impl RoutedIngress {
                     )
                 }
                 .map_err(admission_problem)?;
-                let committed = self
-                    .plans
-                    .admit(&candidate)
-                    .await
-                    .map_err(admission_problem)?;
+                let committed = if matches!(
+                    request.activity.source,
+                    cmaeg_core::activity::SourceKind::Github { .. }
+                ) && request
+                    .channel
+                    .pointer
+                    .record_url
+                    .contains("/api/v1/gateway/channel-records/")
+                {
+                    self.plans
+                        .admit_github(
+                            &candidate,
+                            request.channel.pointer.record_id.as_str(),
+                            request.channel.version,
+                        )
+                        .await
+                } else {
+                    self.plans.admit(&candidate).await
+                }
+                .map_err(admission_problem)?;
                 // Only a durable winning snapshot is reported or scheduled.
                 // Concurrent configuration changes can select a different
                 // winner, so do not report this candidate's trace as its trace.

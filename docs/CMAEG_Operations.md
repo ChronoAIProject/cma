@@ -35,7 +35,7 @@ using the existing gateway Mongo connection and keyring. GitHub operations retur
 503 until initialization succeeds; ordinary channel traffic can proceed meanwhile.
 Missing or version-1/version-2/version-3 `github_integrations` storage is prepared in service code:
 the record validator, owner/kind index and migration-marker validator are updated,
-then the version-4 marker is committed with majority acknowledgement. The expiry
+then the version-5 marker is committed with majority acknowledgement. The expiry
 field/TTL index apply only to delivery rows. Legacy receipts receive one fixed
 seven-day cleanup deadline; their sealed bodies and configuration are not rewritten.
 Version 4 skips DDL and verifies runtime authority plus both permanent and receipt
@@ -53,10 +53,9 @@ The retained CLI and role-printing commands remain explicit operator tools.
 Background initialization has a 30-second bound. A failure keeps GitHub unavailable while
 ordinary channels remain available, with a sanitized reason in startup logs.
 Database delays that clear within the bound allow GitHub to become ready without
-restarting the process. Startup work is cancelled on shutdown. The GitHub execution-group worker and
-static routes have been removed. This intermediate release reports
-`durable_dispatch: false`; eligible business deliveries return typed 503 without
-consuming their delivery IDs. Installation approval and lifecycle tightening are
+restarting the process. Startup work is cancelled on shutdown. The GitHub execution-group worker and static routes have been removed. Receipt-first
+ordinary routed dispatch reports `durable_dispatch: true`; eligible business
+deliveries commit a pending receipt before bounded dispatch. Installation approval and lifecycle tightening are
 available, while `automatic_reconciliation` remains false.
 After correcting the cause, a subsequent startup resumes incomplete preparation.
 Concurrent startup reconciles a duplicate marker write against the majority-read

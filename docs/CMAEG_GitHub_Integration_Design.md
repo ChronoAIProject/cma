@@ -8,10 +8,8 @@ and interpretation of Agent replies are not part of this design.
 
 [The protocol](CMAEG_Protocol.md) is normative. App management, installation
 approval, lifecycle receipts and retirement are implemented in the first PR.
-**Business dispatch is unavailable in that PR:** eligible business deliveries
-return 503 `github_dispatch_unavailable` without retaining their delivery ID.
-The following ordinary-dispatch section describes the second PR, not a capability
-of this intermediate release. Neither merge nor local tests prove deployment.
+PR2 enables receipt-first ordinary routed dispatch; live deployment still requires
+the online acceptance in the runbook.
 
 ## Ownership and authority
 
@@ -92,13 +90,14 @@ access remain separate permissions.
 The existing sealed `eg_automation_records` collection holds integrations,
 bindings, approval audits, operation replay records and compact receipts.
 Receipt roots use the gateway's expiring-record pattern: an `expires_at` field,
-Mongo TTL index and logical expiry checks before reads/replay. `retained_until`
-reports a fixed seven-day receipt/deduplication horizon. Ignored business/ping raw
-bodies expire within 24 hours; unbound/ineligible receipts retain no body, and
-lifecycle evidence expires after seven days. Duplicate reads never renew expiry.
-An expired retained row returns 410; the TTL monitor eventually removes it, after
-which lookup is 404. Expiry does not enqueue or retry work. Recovery and duplicate
-suppression are defined within this horizon; older IDs are not a recovery path.
+Mongo TTL index and logical expiry checks before reads/replay. `retained_until` reports a seven-day horizon for ignored receipts and a fourteen-day
+horizon for a pending business receipt. The longer business horizon covers an
+admission committed on the final recovery day plus that admission's seven-day
+execution retention. Ignored business/ping raw bodies expire within 24 hours;
+pending and accepted dispatch receipts retain raw chunks only for that same 24-hour
+raw-body window. An expired retained row returns 410; the TTL monitor eventually
+removes it, after which lookup is 404. Expiry does not enqueue work after the
+bounded recovery horizon.
 GitHub.com supports redelivery for three days ([official contract](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks)).
 The dispatch PR must pin admission/task retention no later than the receipt's
 horizon and refuse expired pending work instead of reconstructing it.
@@ -136,7 +135,7 @@ retired parent prevents any authority use or reactivation. Lookup also supports
 existing `(app_id, installation_id)` IDs, but only when their owner and integration
 match. It never reuses a retired integration's approval for its replacement.
 
-The feature-gated migration advances versions 1–3 to version 4, adds receipt TTL
+The feature-gated migration advances versions 1–4 to version 5, adds receipt TTL
 metadata/indexes, and stamps legacy receipts with one fixed seven-day migration
 deadline without rewriting their sealed bodies. Restarts never extend that stamp.
 Only delivery rows can carry expiry. The marker commits last; unknown versions
@@ -162,19 +161,27 @@ for `(integration, delivery, channel)` replay the same routed admission. Pin the
 compact projection, timestamps and candidate identities so retries cannot add
 new routes or change input. `receipt.task_ids` contains admission IDs only.
 
-The guarded admission-root commit is an **opt-in GitHub-only parameter**. It must
-commit the root with actual integration/binding guard writes and the channel
-version fence, using the existing gateway collections. All other admission paths
-retain their behavior. At commit, recheck this delivery’s repository: binding
-active, repository approved and not excluded, integration not retired. A global
-`authority_revision` mismatch is not a refusal: unrelated tightening retries the
-current version fence and leaves eligible pending work admissible. `dispatched` means durably admitted, not Agent started.
+The guarded admission root is an **opt-in GitHub-only parameter**. Before the
+ordinary root is committed, the dispatcher re-resolves the exact channel pointer
+and compares its current record version and saved definition/source snapshot. A
+removed or disabled route therefore cannot be admitted from the frozen receipt;
+the pending channel is terminally refused. The same fence rechecks integration,
+binding status, repository approval and exclusions. A global `authority_revision`
+mismatch is not a refusal: unrelated tightening retries the current version fence
+and leaves eligible pending work admissible. Other source paths retain their
+existing behavior. `dispatched` means durably admitted, not Agent started.
 
 The Activity uses actor kind System and a compact CloudEvent: delivery/event/action,
 installation, repository ID/full name, issue/PR number, HTML URL, sender login/type,
 state and PR merged/draft flags. No title, body, comment or arbitrary payload field
 enters the Activity or rendered prompt. Instructions come from the owner's source
 `prompt_template`. The gateway knows no board-sync workflow.
+
+GitHub conversation and partition identity are derived from the stable channel
+pointer and channel partition generation with the fixed key `github-channel`.
+Repository and issue numbers remain projection data, so every GitHub turn on one
+channel reaches that channel's existing Agent conversation and the CMA command
+lane serializes it with the schedule's Custom turns.
 
 Task query projects routed admission and execution/activity state. `Task.result`
 and its schemas/enums remain available for v1 compatibility but are never populated.

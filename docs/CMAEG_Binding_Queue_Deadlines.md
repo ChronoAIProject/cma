@@ -28,9 +28,9 @@ path. See [production composition](../api/crates/cmaeg/src/serve_routed.rs#L135)
 and [GET recovery](../api/crates/cmaeg/src/turns/routed/adapter.rs#L105).
 
 Durable Custom routing and provider replay must be enabled; this evidence does
-not authorize legacy fallback. GitHub business dispatch is still staged behind
-`durable_dispatch: false` until the dispatch PR. That PR must use this ordinary
-routed path; this audit does not claim a live GitHub end-to-end run.
+not authorize legacy fallback. GitHub business dispatch now uses this ordinary routed path with
+`durable_dispatch: true`; this audit still does not claim a live GitHub end-to-end
+run.
 
 ## Timer inventory
 
@@ -41,7 +41,8 @@ from the live deployment before online acceptance.
 | --- | --- | --- |
 | Ingress body/receipt handling: [Custom](../api/crates/cmaeg/src/http/events.rs#L261), [GitHub](../api/crates/cmaeg/src/github/http.rs#L299) | 5 s per incoming operation | Applies before durable acceptance, not over the Agent run. A caller may need an exact retry/readback after an uncertain receipt response; it does not authorize another accepted CMA submission. |
 | Incoming Custom signature freshness: [HTTP contract](../api/crates/cmaeg/src/http/events.rs#L70), [verification](../api/crates/cmaeg/src/auth/webhook.rs) | Signed timestamp within 300 s | Checked only on ingress. The persisted accepted response is not reauthenticated against the old webhook timestamp during queue recovery. A later exact ingress retry needs a fresh valid signature; it restores the same admission. |
-| Admission/reference eligibility: [candidate](../api/crates/cmaeg/src/ingress/routing_store/candidate.rs#L315), [dispatcher](../api/crates/cmaeg/src/turns/routed/dispatcher.rs#L267), [pending expiry](../api/crates/cmaeg/src/turns/routed/expiry.rs#L16) | Event references normally last at most 30 min | Can refuse gateway work which has not yet reached CMA acceptance. `Accepted` dispatch takes the GET-replay branch before the event-expiry check. It does not expire a command already queued in CMA. A lost/ambiguous POST is not treated as definitely unaccepted. |
+| GitHub receipt recovery lease: [receiver](../api/crates/cmaeg/src/github/receiver.rs) | 30 s lease, 5 s tick, 64 records per owner page, 16 attempts per tick | Recovery is owner-scoped through the `(owner, kind, _id)` index; expired leases are reclaimable and a fenced worker cannot overwrite a newer update. |
+| Admission/reference eligibility: [candidate](../api/crates/cmaeg/src/ingress/routing_store/candidate.rs#L315), [dispatcher](../api/crates/cmaeg/src/turns/routed/dispatcher.rs#L267), [pending expiry](../api/crates/cmaeg/src/turns/routed/expiry.rs#L16) | Event references are pinned to the seven-day admission retention for GitHub pending dispatch; ordinary sources retain their existing 30-minute reference. | Can refuse gateway work which has not yet reached CMA acceptance. `Accepted` dispatch takes the GET-replay branch before the event-expiry check. It does not expire a command already queued in CMA. A lost/ambiguous POST is not treated as definitely unaccepted. |
 | Provider connection: [configuration](../api/crates/cmaeg/src/config.rs#L259), [connect](../api/crates/cmaeg/src/providers/transport/connect.rs#L29) | 2 s per new connection | Connection failure is an operation error, not an elapsed-turn cap. Accepted-response GETs can reconnect later. |
 | Provider concurrency acquisition: [constant](../api/crates/cmaeg/src/providers/client_types.rs#L135), [acquire](../api/crates/cmaeg/src/providers/client.rs#L401) | 50 ms | Before POST, failure proves no request was submitted and permits a bounded retry. During recovery it delays a GET; it does not resubmit or fail an accepted command. |
 | Provider connection pooling: [HTTP pool](../api/crates/cmaeg/src/providers/client.rs#L52), [socket pool](../api/crates/cmaeg/src/providers/transport/mod.rs#L99), [body drain](../api/crates/cmaeg/src/providers/transport/body.rs#L73) | 90 s idle; 100 ms optional body drain | Discards/replaces idle transport connections. Neither the response ID nor the execution journal expires with a socket. |

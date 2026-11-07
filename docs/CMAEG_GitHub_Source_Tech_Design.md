@@ -12,9 +12,9 @@ prerequisite or fallback. The owner's current release decisions govern.
 | App control plane | `github/integrations.rs`, `mutations.rs`, `http.rs`: owner-scoped registration, credential custody, independent App verification and terminal retirement |
 | Installation authority | `github/bindings.rs`, `model.rs`: pending requests, admin approval/re-approval, exact approved repository sets, CAS and replay |
 | Lifecycle | `github/installations.rs`, `receiver.rs`: immediate tightening, durable exclusions, no positive-event widening, compact ignored outcomes |
-| Storage | `github/store.rs`, `binding_store.rs`, `schema.rs`, `startup.rs`: sealed records, transactional guards, version-4 feature-gated initialization and bounded receipt TTL |
+| Storage | `github/store.rs`, `binding_store.rs`, `schema.rs`, `startup.rs`: sealed records, transactional guards, version-5 feature-gated initialization and bounded receipt TTL |
 | Channel selection | Saved `Source::Github` identities/allowlists; dynamic owner/binding checks and current source diagnostics |
-| Ordinary execution | Second PR: receipt-first recovery into existing routed admission, compact System Event, explicit non-human consent, task ID equals admission ID |
+| Ordinary execution | `github/receiver.rs` plus existing routed admission: receipt-first recovery, compact System Event, explicit non-human consent, task ID equals admission ID |
 | Serialization | CMA's existing per-Agent durable command lane, capacity 64; both bindings explicitly opt into the deployed bounded queue-lifetime policy |
 | Board publication | chrono-goals scripts and sync skill using managed `gh api`; check/build, exact-head CI and merge recovery |
 | Daily trigger | chrono-goals Actions cron/dispatch → authenticated durable Custom channel → the same Agent |
@@ -24,10 +24,9 @@ PR schema or business outcomes. It does not parse issue text for instructions or
 select an Agent from webhook payload fields. The Agent fetches current business
 data through separately authorized NyxID GitHub access.
 
-The installation-authority PR reports `ownership_verification: true`,
-`automatic_reconciliation: false`, `durable_dispatch: false`. Eligible business
-webhooks receive 503 without consuming the delivery ID. The second PR must prove
-receipt recovery and guarded admission before enabling business dispatch.
+The GitHub capability reports `ownership_verification: true`,
+`automatic_reconciliation: false`, `durable_dispatch: true`. Eligible business
+webhooks commit a pending receipt before attempting ordinary routed admission.
 
 The former claim that all channel messages have durable unlimited waiting was
 incorrect: existing-Agent binding turns currently use the common five-minute
