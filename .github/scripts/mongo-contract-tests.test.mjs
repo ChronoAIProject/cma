@@ -106,6 +106,10 @@ if (command === 'cargo') {
     console.log(JSON.stringify({'rust-suites':suites}));
     process.exit(0);
   }
+  if (args[args.indexOf('-E')+1].startsWith('package(=cma) and test(::cpu_profile::)')) {
+    if (args.includes('--partition')) process.exit(8);
+    process.exit(scenario === 'cpu-error' ? 7 : scenario === 'cpu-empty' ? 4 : 0);
+  }
   const scale = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${scaleTest})');
   const partition = scale ? 'count:1/1' : args[args.indexOf('--partition') + 1];
   const match = /^count:([1-9][0-9]*)\\/([1-9][0-9]*)$/.exec(partition);
@@ -204,6 +208,26 @@ if (command === 'cargo') {
 
 for (const reuse of [false, true]) {
   const mode = reuse ? 'archive' : 'source';
+  test(`${mode}: CPU profiles retain the shared runner, selection and failure policy`, () => {
+    for (const scenario of ['success', 'cpu-error', 'cpu-empty']) {
+      const f = fixture(scenario, reuse);
+      try {
+        const run = () => execFileSync('bash', [...f.args, '--cpu-profile'], {env: f.env, timeout: 15000, stdio: 'pipe'});
+        if (scenario === 'success') run(); else assert.throws(run, error => error.status === (scenario === 'cpu-error' ? 7 : 4));
+        const cargo = f.calls().filter(row => row.command === 'cargo');
+        assert.equal(cargo.length, 1);
+        const build = reuse ? ['--binaries-metadata', join(f.metadata, 'binaries-metadata.json'), '--cargo-metadata', join(f.metadata, 'cargo-metadata.json')] : ['--workspace', '--locked'];
+        const selection = `package(=cma) and test(::cpu_profile::) & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`;
+        assert.deepEqual(cargo[0].args, ['nextest', 'run', ...build, '--no-tests', 'fail', '--test-threads', '1', '--no-fail-fast', '--success-output', 'final', '--run-ignored', 'only', '-E', selection]);
+        assert.match(cargo[0].uri, /^mongodb:\/\/127\.0\.0\.1:[0-9]+\/\?directConnection=true&replicaSet=cma_ci$/);
+        assert.equal(f.calls().filter(row => row.command === 'docker' && row.args[0] === 'run').length, 1);
+        assert.equal(f.containers().length, 0);
+        assert.equal(f.volumes().length, 0);
+        assert.ok(existsSync(f.foreignVolume));
+      } finally { f.close(); }
+    }
+  });
+
   test(`${mode}: scale runs alone before concurrent Mongo partitions, preserves failures and removes only owned fixtures`, () => {
     for (const scenario of ['entropy-error', 'entropy-malformed', 'success', 'scale-error', 'test-error', 'cleanup-error', 'volume-cleanup-error']) {
       const f = fixture(scenario, reuse);
