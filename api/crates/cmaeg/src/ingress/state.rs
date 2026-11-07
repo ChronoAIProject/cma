@@ -97,7 +97,7 @@ impl IngressState {
             ));
         };
         routed
-            .launch_github_verified(request, body, hold, self.activity.as_ref())
+            .launch_github_verified(request, body, hold, self.activity.as_ref(), &self.resolver)
             .await
     }
     pub fn with_media_enabled(mut self, enabled: bool) -> Self {

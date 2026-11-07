@@ -38,8 +38,8 @@ pub(super) async fn migration_required(database: &Database) -> Result<bool, Erro
             .get("version")
             .and_then(|value| value.as_i32().map(i64::from).or_else(|| value.as_i64()))
         {
-            Some(1..=3) => Ok(true),
-            Some(4) => Ok(false),
+            Some(1..=4) => Ok(true),
+            Some(5) => Ok(false),
             _ => Err(Error::Unavailable),
         },
     }
@@ -49,7 +49,7 @@ pub async fn migrate(database: &Database) -> Result<(), Error> {
     if !migration_required(database).await? {
         return Ok(());
     }
-    let mut validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","kind","version","schema_version","blob"],"properties":{"_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"kind":{"enum":["binding","binding_operation","binding_approval","delivery","execution_group","app_integration","app_registration","webhook_credential","app_operation","app_identity"]},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0},"expires_at":{"bsonType":"date"},"blob":{"bsonType":"binData"}}}};
+    let mut validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","kind","version","schema_version","blob"],"properties":{"_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"kind":{"enum":["binding","binding_operation","binding_approval","delivery","execution_group","app_integration","app_registration","webhook_credential","app_operation","app_identity"]},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0},"lease_owner":{"bsonType":"string"},"lease_until":{"bsonType":"long"},"expires_at":{"bsonType":"date"},"blob":{"bsonType":"binData"}}}};
     validator.insert(
         "$or",
         mongodb::bson::bson!([
@@ -100,7 +100,7 @@ pub async fn migrate(database: &Database) -> Result<(), Error> {
         .collection::<Document>(crate::records::mongo::MIGRATIONS)
         .update_one(
             doc! {"_id":"github_integrations","version":{"$in":[1,2,3,4]}},
-            doc! {"$set":{"version":4}},
+            doc! {"$set":{"version":5}},
         )
         .upsert(true)
         .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
