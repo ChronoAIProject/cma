@@ -38,9 +38,12 @@ guarded = mode == "release" ? [
   ["publish", "runtime-image-gate", "Execute published runtime image contract"],
 ] : [
   ["ci", "trigger-provider-smoke-contract", "Staging authority and evidence regressions"],
+  ["ci", "trigger-provider-smoke-contract", "Backend capacity preparation regressions"],
   ["ci", "trigger-provider-smoke-contract", "Typecheck every harness entry point"],
   ["ci", "trigger-provider-smoke-contract", "Local browser guard mechanics"],
+  ["ci", "trigger-provider-smoke-contract", "Backend resource sampling regressions"],
   ["ci", "backend", "Image normalization budgets"],
+  ["ci", "backend", "Prepare Backend capacity"],
   ["ci", "backend", "Tests"],
   ["ci", "backend", "Gateway socket latency budget"],
   ["ci", "backend", "Disposable real Mongo persistence contracts"],
@@ -62,6 +65,28 @@ guarded.each do |workflow, id, name|
       when "fake-success" then entry["run"] = "true"
       end
     end
+  end
+end
+
+if mode == "provider"
+  [nil, 10, 30].each do |timeout|
+    reject.call("Image Manager loses its measured finite margin: #{timeout.inspect}") do |value|
+      row = value["ci"]["jobs"]["backend"]["steps"].find { |step| step["name"] == "Image Manager authenticated Mongo isolation" }
+      timeout.nil? ? row.delete("timeout-minutes") : row["timeout-minutes"] = timeout
+    end
+  end
+  reject.call("capacity runs after compilation") do |value|
+    rows = value["ci"]["jobs"]["backend"]["steps"]
+    rows << rows.delete_at(1)
+  end
+  reject.call("capacity uses a different runner size") do |value|
+    value["ci"]["jobs"]["backend"]["runs-on"] = "ubuntu-latest-4-cores"
+  end
+  reject.call("capacity uses a caller-controlled environment") do |value|
+    value["ci"]["jobs"]["backend"]["steps"][1]["env"] = { "RUNNER_ENVIRONMENT" => "github-hosted" }
+  end
+  reject.call("capacity helper has the wrong working directory") do |value|
+    value["ci"]["jobs"]["backend"]["steps"][1]["working-directory"] = "api"
   end
 end
 
@@ -258,6 +283,10 @@ if mode == "release"
     raise "Gateway contract accepted incompatible CMA provider origin: #{origin}"
   end
 else
+  reject.call("remove resource hook") { |v| v["ci"]["jobs"]["backend"]["env"].delete("BASH_ENV") }
+  reject.call("wrap Backend shell") { |v| v["ci"]["jobs"]["backend"]["defaults"]["run"]["shell"] = "true {0}" }
+  reject.call("override step shell") { |v| v["ci"]["jobs"]["backend"]["steps"][1]["shell"] = "true {0}" }
+  reject.call("override step hook") { |v| v["ci"]["jobs"]["backend"]["steps"][1]["env"] = { "BASH_ENV" => "/dev/null" } }
   %w[smoke journeys].each do |id|
     reject.call("#{id}: runner context at job scope") do |value|
       value["nightly-staging"]["jobs"][id]["env"]["CMA_E2E_OUTPUT_DIR"] = "${{ runner.temp }}/evidence"
