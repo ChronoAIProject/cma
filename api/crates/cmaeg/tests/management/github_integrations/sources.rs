@@ -36,6 +36,8 @@ async fn approved_delivery_creates_one_task_per_matching_channel_and_redelivery_
             .await
             .unwrap();
         assert_eq!(response.status(), 201);
+        let saved: serde_json::Value = response.json().await.unwrap();
+        enable_routing(&f, saved["channel_id"].as_str().unwrap(), &saved["version"]).await;
     }
     let body = json!({
         "action":"opened",
@@ -116,6 +118,8 @@ async fn filtered_action_is_ignored_without_a_task_and_free_text_never_reaches_p
         .await
         .unwrap();
     assert_eq!(response.status(), 201);
+    let saved: serde_json::Value = response.json().await.unwrap();
+    enable_routing(&f, saved["channel_id"].as_str().unwrap(), &saved["version"]).await;
     let mut payload = json!({
         "action":"closed",
         "installation":{"id":99},
@@ -273,7 +277,7 @@ async fn route_removed_before_dispatch_cannot_create_an_admission() {
     assert_eq!(receipt["reason"], "no_matching_channel");
 }
 
-fn channel(app: &serde_json::Value) -> serde_json::Value {
+pub(super) fn channel(app: &serde_json::Value) -> serde_json::Value {
     let mut body = create_body();
     body["sources"] = json!([{"type":"github","app_ref":app["app_ref"],"installation_ids":[99],"repository_ids":[1001],"events":["issues"],"actions":["opened"]}]);
     body["partition"] = json!({"version":1,"key":"fixed"});
@@ -282,7 +286,40 @@ fn channel(app: &serde_json::Value) -> serde_json::Value {
     body
 }
 
-async fn ready_dispatch_fixture() -> (Fixture, serde_json::Value, String) {
+pub(super) async fn enable_routing(
+    f: &Fixture,
+    channel_id: &str,
+    version: &serde_json::Value,
+) -> serde_json::Value {
+    let response = f
+        .client
+        .put(format!("{}/v1/channels/{channel_id}/routing", f.base))
+        .bearer_auth("token-alice")
+        .json(&json!({
+            "expected_version": version,
+            "routing": {
+                "version": 1,
+                "default_consumer": {"name":"default","mentionable":false,"non_human":true,"reply":{"auto_final":true}},
+                "default_targets": ["default"],
+                "max_targets": 1,
+                "reply_label": "never",
+                "addressing": {"mentions":false,"command":false,"event_field":false,"unknown_target_notice":false}
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let saved: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, 200, "routing update={saved}");
+    assert_eq!(
+        saved["definition"]["routing"]["default_targets"],
+        json!(["default"])
+    );
+    saved
+}
+
+pub(super) async fn ready_dispatch_fixture() -> (Fixture, serde_json::Value, String) {
     let mut f = Fixture::new(true).await;
     let (app, binding) = pending(&f).await;
     verification(&f, &binding, "token-alice", "approve-race-fixture")
@@ -302,10 +339,22 @@ async fn ready_dispatch_fixture() -> (Fixture, serde_json::Value, String) {
         .unwrap();
     assert_eq!(created.status(), 201);
     let channel = created.json::<serde_json::Value>().await.unwrap();
+    let channel = enable_routing(
+        &f,
+        channel["channel_id"].as_str().unwrap(),
+        &channel["version"],
+    )
+    .await;
+    f.routed_records
+        .push(channel["record_id"].as_str().unwrap().to_owned());
+    for child in &mut f.children {
+        child.kill().await.unwrap();
+    }
+    f.base = f.replica().await;
     (f, app, channel["channel_id"].as_str().unwrap().to_owned())
 }
 
-fn issue_event() -> String {
+pub(super) fn issue_event() -> String {
     json!({
         "action":"opened","installation":{"id":99},
         "repository":{"id":1001,"full_name":"fixture/source","owner":{"id":123}},

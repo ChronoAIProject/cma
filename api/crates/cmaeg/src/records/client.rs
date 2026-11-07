@@ -179,17 +179,21 @@ impl RecordClient {
             .await
             .is_ok_and(|response| response.status().is_success())
     }
-
     pub fn connections(mut self) -> Self {
         self.record_path = "/api/v1/gateway/connection-records";
         self.record_kind = super::RecordKind::Connection;
+        if let Some(database) = self.database.take() {
+            self.database = Some(database.for_kind(super::RecordKind::Connection));
+        }
         self
     }
-
     pub fn interactions(mut self) -> Self {
         self.record_path = "/api/v1/gateway/interaction-records";
         self.record_kind = super::RecordKind::Interaction;
         self.retention = Default::default();
+        if let Some(database) = self.database.take() {
+            self.database = Some(database.for_kind(super::RecordKind::Interaction));
+        }
         self
     }
 
