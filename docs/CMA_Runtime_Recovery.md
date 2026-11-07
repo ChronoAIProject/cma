@@ -230,8 +230,10 @@ it is not marked Ready and does not admit an Agent as a usable workspace.
 
 The API distinguishes a reachable runtime's full mutation ledger from runtime
 loss, owner quota and native HTTP concurrency pressure. Both runtime transports
-recognize `mutation_ledger_capacity` before generic retryability. For retained
-runtimes, only these exact legacy code/detail pairs have the same meaning:
+recognize only the exact pair `mutation_ledger_capacity` /
+`runtime mutation ledger capacity is exhausted` before generic retryability.
+Details are never trimmed or matched by prefix/suffix. For retained runtimes,
+only these exact legacy code/detail pairs have the same meaning:
 
 | Code | Detail |
 | --- | --- |
@@ -275,7 +277,7 @@ JSON remains unchanged; observation does not scan or mutate runtime ledgers.
 | --- | --- | --- |
 | Old | Old | Legacy nonretryable rejection; startup may fail and cleanup follows the old retry path. |
 | New | Old | Exact legacy capacity pairs retain pending work with sparse retries. |
-| New | New | The explicit capacity code retains pending work with sparse retries. |
+| New | New | The exact capacity code/detail pair retains pending work with sparse retries. |
 | Old | New | Requires `mutation_ledger_capacity` with `retryable=false`; the old API treats it as nonretryable rejection, not runtime loss or quota. Startup can still fail. |
 
 This is API containment only. Existing runtimes keep their image and ledgers;

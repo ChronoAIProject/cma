@@ -73,11 +73,13 @@ pub(super) fn failure_error(failure: WireFailure) -> AdapterError {
     }
 }
 
-// Legacy codes also describe malformed/conflicting records: only the exact
-// count branches are a hold. Do not normalize, trim or search their details.
+// Only exact code/detail pairs prove capacity, including the explicit new code.
+// Do not normalize, trim or search details, or mask other corruption as a hold.
 pub(super) fn ledger_capacity(failure: &WireFailure) -> bool {
     match failure.code.as_str() {
-        "mutation_ledger_capacity" => true,
+        "mutation_ledger_capacity" => {
+            failure.detail == "runtime mutation ledger capacity is exhausted"
+        }
         "mutation_authority_corrupt" => matches!(
             failure.detail.as_str(),
             "runtime mutation authority contains too many records"

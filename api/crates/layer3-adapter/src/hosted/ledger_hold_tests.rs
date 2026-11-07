@@ -2,7 +2,7 @@ use super::{provider_http::runtime_failure, reply::failure_error};
 use crate::wire::{WireFailure, WireOperation};
 use crate::AdapterError;
 
-const LEGACY: [(&str, &str); 3] = [
+const CAPACITY_PAIRS: [(&str, &str); 4] = [
     (
         "mutation_authority_corrupt",
         "runtime mutation authority contains too many records",
@@ -14,6 +14,10 @@ const LEGACY: [(&str, &str); 3] = [
     (
         "mutation_journal_corrupt",
         "runtime mutation journal contains too many entries",
+    ),
+    (
+        "mutation_ledger_capacity",
+        "runtime mutation ledger capacity is exhausted",
     ),
 ];
 
@@ -28,10 +32,7 @@ fn fixture(code: &str, detail: &str, retryable: bool) -> WireFailure {
 
 #[test]
 fn ledger_holds_precede_retryability_in_both_transports_and_keep_context() {
-    for (code, detail) in LEGACY.into_iter().chain([(
-        "mutation_ledger_capacity",
-        "runtime mutation ledger capacity is exhausted",
-    )]) {
+    for (code, detail) in CAPACITY_PAIRS {
         for retryable in [false, true] {
             for map in [failure_error, runtime_failure] {
                 let error = map(fixture(code, detail, retryable)).context("cleanup");
@@ -46,9 +47,10 @@ fn ledger_holds_precede_retryability_in_both_transports_and_keep_context() {
 }
 
 #[test]
-fn only_exact_legacy_pairs_are_ledger_holds() {
-    for (code, detail) in LEGACY {
+fn only_exact_capacity_pairs_are_ledger_holds() {
+    for (code, detail) in CAPACITY_PAIRS {
         let cases = [
+            (code.into(), String::new()),
             (format!("{code}_suffix"), detail.into()),
             (format!("prefix_{code}"), detail.into()),
             (code.into(), format!("{detail} suffix")),
@@ -80,11 +82,19 @@ fn only_exact_legacy_pairs_are_ledger_holds() {
             AdapterError::AtCapacity(_)
         ));
         assert!(!matches!(
-            map(fixture("mutation_authority_conflict", LEGACY[0].1, false)),
+            map(fixture(
+                "mutation_authority_conflict",
+                CAPACITY_PAIRS[0].1,
+                false
+            )),
             AdapterError::RuntimeLedgerHold(_)
         ));
         assert!(matches!(
-            map(fixture("mutation_authority_corrupt", LEGACY[2].1, false)),
+            map(fixture(
+                "mutation_authority_corrupt",
+                CAPACITY_PAIRS[2].1,
+                false
+            )),
             AdapterError::Rejected(_)
         ));
     }
@@ -104,10 +114,7 @@ fn api_runtime_compatibility_keeps_old_nonretryable_fallback() {
             AdapterError::Rejected(failure.detail)
         }
     }
-    for (code, detail) in LEGACY.into_iter().chain([(
-        "mutation_ledger_capacity",
-        "runtime mutation ledger capacity is exhausted",
-    )]) {
+    for (code, detail) in CAPACITY_PAIRS {
         let wire = fixture(code, detail, false);
         assert_eq!(wire.operation, WireOperation::RemoveWorktree);
         let old = old_api(wire.clone());
