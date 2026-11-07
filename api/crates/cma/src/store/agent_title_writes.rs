@@ -1,4 +1,4 @@
-//! Snapshot transactions for agent-title claims and write-once completion.
+//! Snapshot transactions for agent-title claims and durable completion.
 
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::SandboxStoreError;
@@ -16,6 +16,7 @@ use super::agent_log::{
 use super::agent_log_integrity::{
     ensure_append_capacity, AppendCapacity, LogSummary, TransactionLogError,
 };
+use super::agent_title_claims::current_agent_filter;
 use super::agent_title_state::{
     automatic_completion_fields, lease_filter, read_title_state, user_completion_fields,
     TitleState, TITLE,
@@ -24,8 +25,7 @@ use super::agent_titles::{map_store_error, snapshot_session};
 use super::agents::{agent_replacement_fields, read_agent};
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
-    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
-    TRANSACTION_ATTEMPTS,
+    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, TRANSACTION_ATTEMPTS,
 };
 
 enum ApplyError {
@@ -199,7 +199,13 @@ async fn apply_title(
             TitleMutation::User { .. } => Err(ApplyError::Domain(AgentTitleStoreError::NotFound)),
         };
     };
-    if state.stored.is_some() {
+    if state
+        .stored
+        .as_ref()
+        .is_some_and(|title| title.source != AgentTitleSource::Fallback)
+        || matches!(mutation, TitleMutation::User { .. }) && state.stored.is_some()
+        || matches!(mutation, TitleMutation::Automatic { claim, .. } if state.completed_by(claim))
+    {
         return Ok(TitleApply::Settled(match mutation {
             TitleMutation::Automatic { claim, .. } => {
                 TitleOutcome::Automatic(state.completed_by(claim))
@@ -236,10 +242,24 @@ async fn apply_title(
     );
     fields.extend(mutation.completion_fields());
     let mut filter = current_agent_filter(&current);
-    filter.insert(TITLE, Bson::Null);
-    filter.insert("record.title", Bson::Null);
+    filter.insert(
+        TITLE,
+        current
+            .title
+            .clone()
+            .map(Bson::String)
+            .unwrap_or(Bson::Null),
+    );
+    filter.insert(
+        "record.title",
+        current
+            .title
+            .clone()
+            .map(Bson::String)
+            .unwrap_or(Bson::Null),
+    );
     if let TitleMutation::Automatic { claim, .. } = mutation {
-        filter.extend(lease_filter(claim));
+        filter.extend(lease_filter(claim, state.stored.is_some()));
     }
     let updated = store
         .agents
@@ -456,21 +476,6 @@ impl CompletionProof {
             Self::Automatic(claim) => state.completed_by(claim),
             Self::User(token) => state.user_commit_token.as_ref() == Some(token),
         }
-    }
-}
-
-fn current_agent_filter(agent: &Agent) -> Document {
-    doc! {
-        "channel_reuse_cleanup_execution": { "$exists": false },
-        "_id": agent.id.as_str(),
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-        "revision": signed(agent.revision, "agent revision").unwrap_or(i64::MIN),
-        "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
-            .unwrap_or(i64::MIN),
-        "record.conversation.last_seq": signed(
-            agent.conversation.last_seq,
-            "agent log sequence",
-        ).unwrap_or(i64::MIN),
     }
 }
 

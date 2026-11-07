@@ -22,6 +22,7 @@ mod capabilities;
 mod checkpoint;
 mod conversation;
 mod conversation_observation;
+mod tool_diff;
 pub use conversation_observation::{
     ConversationDescriptionInput, ConversationDescriptionSource, ConversationMetadata,
     ConversationUsage,
@@ -91,14 +92,14 @@ pub use checkpoint::{
     RestoreBootstrapRequest, RestoreRequest, WriterState,
 };
 pub use conversation::{
-    reported_tool_text, AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk,
-    ConversationChannel, ConversationId, ConversationInput, ConversationInputGuard,
-    ConversationInputSender, ConversationSendOutcome, ConversationSettingsSupport,
-    ConversationUpdate, MessageId, PermissionDecision, PermissionLocator, PermissionOption,
-    PermissionOptionId, PermissionOptionKind, PermissionRequest, PromptResponse,
-    RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallContent, ToolCallId, ToolCallStatus,
-    ToolCallUpdate, ToolCallUpdateFields, ToolKind, TurnEvidence, TurnScopedEvidence,
-    TurnStopReason, TurnUsage, UsageUpdate,
+    has_reported_file_changes, reported_tool_text, AvailableCommand, AvailableCommandsUpdate,
+    ContentBlock, ContentChunk, ConversationChannel, ConversationId, ConversationInput,
+    ConversationInputGuard, ConversationInputSender, ConversationSendOutcome,
+    ConversationSettingsSupport, ConversationUpdate, MessageId, PermissionDecision,
+    PermissionLocator, PermissionOption, PermissionOptionId, PermissionOptionKind,
+    PermissionRequest, PromptResponse, RequestPermissionRequest, SessionUpdate, ToolCall,
+    ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    TurnEvidence, TurnScopedEvidence, TurnStopReason, TurnUsage, UsageUpdate,
 };
 pub use error::{AdapterError, Result, RuntimeContractMismatch};
 pub use home_finality::{

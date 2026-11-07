@@ -112,20 +112,27 @@ async fn apply_claim(
     let Some((agent, state)) = load_agent(store, request.agent_id(), session).await? else {
         return Ok(ClaimApply::Settled(None));
     };
-    if state.stored.is_some() {
+    if state
+        .stored
+        .as_ref()
+        .is_some_and(|title| title.source != layer2_core::sandbox::AgentTitleSource::Fallback)
+    {
         return Ok(ClaimApply::Settled(None));
     }
     if title_transcript(store, &agent, session).await?.is_none() {
         return Ok(ClaimApply::Settled(None));
     }
     if let Some(lease) = state.lease.as_ref().filter(|lease| lease.expires_at > now) {
-        return Ok(ClaimApply::Settled(
-            lease
-                .matches_request(request)
-                .then(|| lease.to_claim(request)),
-        ));
+        return Ok(ClaimApply::Settled(lease.matches_request(request).then(
+            || lease.to_claim(request).with_attempts(state.retry.attempts),
+        )));
     }
-    let mode = if state.attempted {
+    if !state.retry.eligible(now) {
+        return Ok(ClaimApply::Settled(None));
+    }
+    let exhausted = state.retry.attempts >= layer2_core::sandbox::AGENT_TITLE_MAX_ATTEMPTS;
+    let attempts = state.retry.attempts + u32::from(!exhausted);
+    let mode = if exhausted {
         AgentTitleClaimMode::FallbackOnly
     } else {
         AgentTitleClaimMode::Generate
@@ -135,13 +142,23 @@ async fn apply_claim(
         mode,
         now.to_system_time(),
         expires_at.to_system_time(),
-    );
+    )
+    .with_attempts(attempts);
     let mut filter = current_agent_filter(&agent);
-    filter.insert(TITLE, Bson::Null);
-    filter.insert("record.title", Bson::Null);
+    filter.insert(
+        TITLE,
+        agent.title.clone().map(Bson::String).unwrap_or(Bson::Null),
+    );
+    filter.insert(
+        "record.title",
+        agent.title.clone().map(Bson::String).unwrap_or(Bson::Null),
+    );
     let result = store
         .agents
-        .update_one(filter, doc! { "$set": claim_fields(&claim) })
+        .update_one(
+            filter,
+            doc! { "$set": claim_fields(&claim, state.stored.is_some()) },
+        )
         .session(session)
         .await
         .map_err(ApplyError::Driver)?;
@@ -232,7 +249,7 @@ async fn reconcile_claim(
     Ok(AgentTitleTranscript::from_agent_log(&agent, &logs).is_some())
 }
 
-fn current_agent_filter(agent: &Agent) -> Document {
+pub(super) fn current_agent_filter(agent: &Agent) -> Document {
     doc! {
         "channel_reuse_cleanup_execution": { "$exists": false },
         "_id": agent.id.as_str(),

@@ -48,7 +48,7 @@ afterEach(() => {
 });
 
 it.each(['responses', 'agui'] as const)(
-  '%s usage events display real turn counts, keep cumulative totals, and reset only the next turn',
+  '%s usage events retain real counts outside Thinking and reset only the next turn',
   async (transport) => {
     vi.useFakeTimers();
     const started = start(empty(), 24);
@@ -85,24 +85,20 @@ it.each(['responses', 'agui'] as const)(
           );
     const view = render(draw(observed));
     expect(screen.queryByLabelText('Turn input tokens: 13,963')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /^Thinking/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'View activity' }));
     expect(screen.getByRole('button', { name: 'Context usage' })).toHaveAccessibleDescription(
       /27,801 input · 107 output/,
     );
-    const input = screen.getByLabelText('Turn input tokens: 13,963');
-    await act(() => vi.advanceTimersByTimeAsync(200));
-    const midway = Number(input.textContent?.replaceAll(',', '').split(' ')[0]);
-    expect(midway).toBeGreaterThan(0);
-    expect(midway).toBeLessThan(13963);
-    await act(() => vi.advanceTimersByTimeAsync(500));
-    expect(input).toHaveTextContent('13,963 input');
-    expect(screen.getByLabelText('Turn output tokens: 20')).toHaveTextContent('20 output');
+    expect(observed.turnUsage?.['24']).toMatchObject({ inputTokens: 13963, outputTokens: 20 });
+    await act(() => vi.advanceTimersByTimeAsync(700));
+    expect(screen.queryByLabelText('Turn input tokens: 13,963')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Turn output tokens: 20')).not.toBeInTheDocument();
     view.rerender(draw(start(observed, 32)));
-    fireEvent.click(screen.getByRole('button', { name: /^Thinking/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'View activity' }));
     expect(screen.queryByLabelText('Turn input tokens: 13,963')).not.toBeInTheDocument();
     expect(
       screen.getByRole('region', { name: 'What the agent is working through' }),
-    ).toHaveTextContent('Turn input unavailable · output unavailable');
+    ).not.toHaveTextContent(/input|output|tokens/);
     expect(screen.getByRole('button', { name: 'Context usage' })).toHaveAccessibleDescription(
       /27,801 input · 107 output/,
     );
@@ -119,10 +115,10 @@ it('keeps legacy context-only reports distinct from real token counts and report
   });
   const view = render(draw(legacy));
   expect(screen.queryByText('Turn input unavailable · output unavailable')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: /^Thinking/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'View activity' }));
   expect(
     screen.getByRole('region', { name: 'What the agent is working through' }),
-  ).toHaveTextContent('Turn input unavailable · output unavailable');
+  ).not.toHaveTextContent(/input|output|tokens/);
   const observed = foldAgentEvent(legacy, {
     seq: 26,
     appendedAt: at,

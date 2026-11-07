@@ -29,10 +29,28 @@ impl SuggestionWorker {
         runtime: Arc<dyn TitleRuntimeEndpoint>,
         model: String,
     ) -> Arc<Self> {
+        Self::with_dependencies(
+            store.clone(),
+            store.clone(),
+            credentials,
+            runtime,
+            model,
+            store.writer_policy.clone(),
+        )
+    }
+
+    pub(super) fn with_dependencies(
+        store: Arc<dyn AgentLifecycleStore>,
+        suggestions: Arc<dyn SuggestionStore>,
+        credentials: Arc<dyn SandboxCredentialController>,
+        runtime: Arc<dyn TitleRuntimeEndpoint>,
+        model: String,
+        writer_policy: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            service: SuggestionGenerationService::new(store.clone()),
-            suggestions: store.clone(),
-            writer_policy: store.writer_policy.clone(),
+            service: SuggestionGenerationService::new(suggestions.clone()),
+            suggestions,
+            writer_policy,
             store,
             credentials,
             runtime,

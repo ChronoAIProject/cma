@@ -89,3 +89,72 @@ pub(super) async fn read(
         pending.is_some(),
     ))
 }
+
+pub(super) async fn active_starts(
+    store: &MongoSandboxStore,
+    agents: &[Agent],
+    session: &mut ClientSession,
+) -> Result<std::collections::HashMap<layer2_core::AgentId, String>, SandboxStoreError> {
+    let mut starts = std::collections::HashMap::new();
+    for agent in agents {
+        let Some(turn) = agent.conversation.active_turn else {
+            continue;
+        };
+        // agent_log_task_status: equality on Agent/type, then reverse seq scan.
+        // find_one limits the matching result to one row within the snapshot head.
+        let document = store
+            .agent_log
+            .find_one(active_start_filter(
+                &agent.id,
+                turn,
+                agent.conversation.last_seq,
+            )?)
+            .sort(doc! { "seq": -1 })
+            .hint(mongodb::options::Hint::Name("agent_log_task_status".into()))
+            .max_time(std::time::Duration::from_secs(10))
+            .session(&mut *session)
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        if let Some(document) = document {
+            let entry = read_entry(&document)?;
+            if entry.agent_id == agent.id
+                && entry.seq <= agent.conversation.last_seq
+                && matches!(entry.kind, AgentLogKind::TurnStarted { turn_sequence, .. } if turn_sequence == turn)
+            {
+                starts.insert(entry.agent_id, entry.appended_at);
+            }
+        }
+    }
+    Ok(starts)
+}
+
+fn active_start_filter(
+    id: &layer2_core::AgentId,
+    turn: u64,
+    head: u64,
+) -> Result<mongodb::bson::Document, SandboxStoreError> {
+    Ok(
+        doc! { "agent_id": id.as_str(), "record.kind.type": "turn_started",
+        "record.kind.turn_sequence": signed(turn, "turn sequence").map_err(SandboxStoreError::Corrupt)?,
+        "seq": { "$lte": signed(head, "last sequence").map_err(SandboxStoreError::Corrupt)? } },
+    )
+}
+
+#[cfg(test)]
+mod start_tests {
+    use super::*;
+    #[test]
+    fn current_turn_lookup_cannot_cross_agent_or_confirmed_history_boundaries() {
+        let query = active_start_filter(&layer2_core::AgentId("agent-a".into()), 7, 23).unwrap();
+        assert_eq!(query.get_str("agent_id").unwrap(), "agent-a");
+        assert_eq!(query.get_str("record.kind.type").unwrap(), "turn_started");
+        assert_eq!(query.get_i64("record.kind.turn_sequence").unwrap(), 7);
+        assert_eq!(
+            query.get_document("seq").unwrap().get_i64("$lte").unwrap(),
+            23
+        );
+        assert!(
+            active_start_filter(&layer2_core::AgentId("agent-a".into()), u64::MAX, 23).is_err()
+        );
+    }
+}

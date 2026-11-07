@@ -1,6 +1,6 @@
 import { Presence } from '../ui/Presence';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import type { AgentStatus, AgentUsage } from '../api/types';
+import type { AgentStatus } from '../api/types';
 import { Button } from '../ui/Button';
 import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
 import type { SandboxInputAvailability } from './sandboxInput';
@@ -18,7 +18,6 @@ import { ComposerAttachmentPicker, ComposerAttachments } from './ComposerAttachm
 import { useComposerCommands } from './ComposerCommands';
 import { commandRefusal, type SessionCommand } from './slashCommands';
 import { SteeringModePicker, type SteeringMode } from './SteeringMode';
-import { ContextRing } from './ContextRing';
 import './Composer.css';
 import {
   ComposerSuggestionEditor,
@@ -30,8 +29,6 @@ interface ComposerProps {
   readonly suggestionScope?: string;
   readonly draft?: AgentDraft;
   readonly availableCommands?: readonly SessionCommand[];
-  readonly usage?: AgentUsage;
-  readonly showUsage?: boolean;
   readonly settings?: ReactNode;
   readonly steeringMode?: SteeringMode;
   readonly onSteeringModeChange?: (mode: SteeringMode) => void;
@@ -59,7 +56,7 @@ function canMessage(status: AgentStatus): boolean {
 }
 
 function placeholder(status: AgentStatus): string {
-  if (status === 'paused') return 'Send a message to continue.';
+  if (status === 'paused') return 'Reply to Chrono Agent…';
   // Startup is represented by the lifecycle progress surface and the
   // disabled/queued controls. Keep the composer quiet so it never adds a
   // second visible "starting" notification to the conversation area.
@@ -68,7 +65,7 @@ function placeholder(status: AgentStatus): string {
   if (status === 'stopped') return 'This Agent has stopped.';
   if (status === 'deleted') return 'This Agent was deleted.';
   if (status === 'failed') return 'This Agent is unavailable.';
-  return 'Message Agent';
+  return 'Reply to Chrono Agent…';
 }
 
 function fit(field: HTMLTextAreaElement): void {
@@ -81,8 +78,6 @@ export function Composer({
   suggestionScope,
   draft,
   availableCommands,
-  usage,
-  showUsage = false,
   settings,
   steeringMode = 'queue',
   onSteeringModeChange,
@@ -190,7 +185,10 @@ export function Composer({
   ]);
 
   useEffect(() => {
-    if (usable) inputRef.current?.focus({ preventScroll: true });
+    // History can finish after the owner has already focused a computer tab.
+    // Initial readiness must not take keyboard input away from that control.
+    if (usable && (!document.activeElement || document.activeElement === document.body))
+      inputRef.current?.focus({ preventScroll: true });
   }, [usable]);
 
   useLayoutEffect(() => {
@@ -366,7 +364,7 @@ export function Composer({
               preparing
                 ? 'Message Agent'
                 : running && queueWhileRunning
-                  ? 'Add a follow-up while the Agent works.'
+                  ? "Add a follow-up — it'll be queued while the agent works"
                   : placeholder(status)
             }
             onChange={(event) => {
@@ -397,6 +395,11 @@ export function Composer({
               )
                 return;
               if (commands.onKeyDown(event)) return;
+              if (event.key === 'Escape' && running && !busy && !controlsUnavailable) {
+                event.preventDefault();
+                void onStop();
+                return;
+              }
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 submit();
@@ -421,13 +424,8 @@ export function Composer({
             {steering && onSteeringModeChange !== undefined ? (
               <SteeringModePicker value={steeringMode} onChange={onSteeringModeChange} />
             ) : null}
-            {showUsage ? (
-              <span className="agent-composer__ring">
-                <ContextRing usage={usage} />
-              </span>
-            ) : null}
             <div className="agent-composer__actions">
-              {!running || queueWhileRunning ? (
+              {!running || (messageContent !== '' && queueWhileRunning) ? (
                 <Button
                   placement="agent-composer__submit"
                   variant="primary"
@@ -449,6 +447,7 @@ export function Composer({
                   }
                   disabled={
                     !usable ||
+                    (running && !queueWhileRunning) ||
                     busy ||
                     submitting ||
                     starting ||
@@ -461,22 +460,23 @@ export function Composer({
                   aria-describedby={hasNotice ? noticeId : undefined}
                 />
               ) : null}
-              {running ? (
-                <Button
-                  placement="agent-composer__submit agent-composer__submit--stop"
-                  variant="outline"
-                  icon={<IconStopFill16 />}
-                  aria-label="Stop response"
-                  title={
-                    controlsUnavailable
-                      ? 'This turn does not support response controls.'
-                      : 'Stop response'
-                  }
-                  disabled={busy || controlsUnavailable}
-                  onClick={() => void onStop()}
-                >
-                  Stop
-                </Button>
+              {running && (messageContent === '' || !queueWhileRunning) ? (
+                <>
+                  <span className="agent-composer__stop-hint">Esc to stop</span>
+                  <Button
+                    placement="agent-composer__submit agent-composer__submit--stop"
+                    variant="primary"
+                    icon={<IconStopFill16 />}
+                    aria-label="Stop response"
+                    title={
+                      controlsUnavailable
+                        ? 'This turn does not support response controls.'
+                        : 'Stop response (Esc)'
+                    }
+                    disabled={busy || controlsUnavailable}
+                    onClick={() => void onStop()}
+                  ></Button>
+                </>
               ) : null}
             </div>
           </div>

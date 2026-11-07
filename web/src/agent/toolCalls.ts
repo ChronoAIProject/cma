@@ -16,7 +16,9 @@ export function updateTool(
   const current = state.toolCalls.find((tool) => tool.id === item.id);
   const tool =
     start && current !== undefined
-      ? current
+      ? current.startedAt || !item.startedAt
+        ? current
+        : { ...current, startedAt: item.startedAt }
       : {
           ...current,
           ...item,
@@ -48,6 +50,7 @@ export function liveTool(state: ConversationState, event: AgentLiveEvent): Conve
         title: text(event.toolCallName) ?? 'Tool call',
         kind: text(event['cma:toolKind']),
         status: text(event['cma:status']) ?? 'running',
+        startedAt: event.timestamp,
       },
       true,
     );
@@ -67,6 +70,8 @@ export function liveTool(state: ConversationState, event: AgentLiveEvent): Conve
       text(event['cma:status']) ??
       (event.type === 'TOOL_CALL_END' ? 'completed' : (current?.status ?? 'running')),
     detail,
+    finishedAt:
+      current?.finishedAt ?? (event.type === 'TOOL_CALL_END' ? event.timestamp : undefined),
     output:
       typeof output?.text === 'string' && typeof output.truncated === 'boolean'
         ? { text: output.text, truncated: output.truncated }

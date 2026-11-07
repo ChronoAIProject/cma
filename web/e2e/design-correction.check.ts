@@ -3,6 +3,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { desktopBoundary } from './desktop-rfb.fixture';
 import { binding, cursor, LocalAgentV2 } from './agent-v2.fixture';
+import { captureSingleBrowserFrame } from './screen-preview';
 
 const steps = [
   'Find tools that suit a team of 8',
@@ -47,20 +48,25 @@ async function policy(page: Page, replay = false, followups = false) {
 }
 
 async function browser(page: Page, replay = false) {
-  const viewport = page.viewportSize()!;
-  await page.setViewportSize({ width: 1280, height: 720 });
-  await page.setContent(
-    '<main style="font:24px system-ui;padding:48px;background:#f4f4f5;height:600px"><p>Local browser fixture</p><h1>Compare project tools</h1><p>Researching setup effort and reporting</p><div style="display:flex;gap:24px">' +
-      ['Asana', 'Linear', 'Trello']
-        .map(
-          (name) =>
-            `<section style="background:white;border:1px solid #ccc;border-radius:12px;padding:32px;flex:1"><h2>${name}</h2><p>Features</p><p>Setup</p><p>Reporting</p></section>`,
-        )
-        .join('') +
-      '</div></main>',
-  );
-  const image = (await page.screenshot({ type: 'jpeg', quality: 70 })).toString('base64');
-  await page.setViewportSize(viewport);
+  const capture = await page.context().newPage();
+  let image: string;
+  try {
+    await capture.setViewportSize({ width: 1280, height: 720 });
+    await capture.setContent(
+      '<main style="font:24px system-ui;padding:48px;background:#f4f4f5;height:600px"><p>Local browser fixture</p><h1>Compare project tools</h1><p>Researching setup effort and reporting</p><div style="display:flex;gap:24px">' +
+        ['Asana', 'Linear', 'Trello']
+          .map(
+            (name) =>
+              `<section style="background:white;border:1px solid #ccc;border-radius:12px;padding:32px;flex:1"><h2>${name}</h2><p>Features</p><p>Setup</p><p>Reporting</p></section>`,
+          )
+          .join('') +
+        '</div></main>',
+    );
+    await capture.evaluate(() => document.fonts.ready);
+    image = (await capture.screenshot({ type: 'jpeg', quality: 70 })).toString('base64');
+  } finally {
+    await capture.close();
+  }
   const feature = (state: string) => ({
     state,
     reason: 'local_visual_fixture',
@@ -111,220 +117,231 @@ async function browser(page: Page, replay = false) {
   );
 }
 
-for (const width of [1440, 390]) {
-  for (const state of ['home', 'working', 'completed'] as const) {
-    test(`LOCAL design ${state} at ${width}px preserves task context`, async ({
-      page,
-      baseURL,
-    }, info) => {
-      await page.setViewportSize({ width, height: 900 });
-      await page.addInitScript(() => localStorage.setItem('cma:appearance', 'dark'));
-      const fixture = new LocalAgentV2();
-      const boundary = fixture.boundary;
-      try {
-        boundary.agent = {
-          ...boundary.agent,
-          title: 'Compare project tools',
-          owner_title: 'Compare project tools',
-        };
-        const events: LocalStartup['events'] = [
-          { type: 'turn_started', turn_sequence: 1 },
-          {
-            type: 'owner_message',
-            content:
-              'Compare three project management tools for a small team of 8 and write a one-page recommendation.',
-          },
-          {
-            type: 'agent_message',
-            content:
-              'I’ll look at price, setup effort and reporting, then write the recommendation as a document you can download.',
-          },
-          {
-            type: 'plan_set',
-            entries: steps.map((title, index) => ({
-              title,
-              status:
-                state === 'completed' || index < 2
-                  ? 'completed'
-                  : index === 2
-                    ? 'in_progress'
-                    : 'pending',
-            })),
-          },
-          ...(state === 'completed'
-            ? [
-                {
-                  type: 'agent_message',
-                  content: `I compared the three tools. The recommendation and comparison table are ready.\n<!--cma-deliverable:v1:${Buffer.from(JSON.stringify(delivery.reference)).toString('base64url')}-->`,
-                },
-                { type: 'turn_completed', turn_sequence: 1 },
-              ]
-            : []),
-        ].map((kind, index) => ({
-          seq: index + 1,
-          appended_at: new Date(Date.parse('2026-11-04T01:00:00Z') + index * 30_000).toISOString(),
-          kind,
-        }));
-        if (state === 'completed') {
-          for (const entry of events) {
-            const kind = ['owner_message', 'agent_message'].includes(String(entry.kind.type))
-              ? {
-                  type: 'message',
-                  role: entry.kind.type === 'owner_message' ? 'user' : 'assistant',
-                  content: entry.kind.content,
-                }
-              : entry.kind;
-            fixture.append(kind);
-            fixture.items.at(-1)!.appended_at = entry.appended_at;
-          }
-        }
-        await fixture.route(page, baseURL!);
-        await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
-          route.fulfill({
-            json: {
-              object: 'cma.agent.event_head',
-              schema_version: 1,
-              agent_id: 'agt_contract',
-              incarnation: 'a'.repeat(64),
-              through_cursor: cursor(fixture.items.length),
-              active_turn: state === 'working' ? (fixture.items[0] ?? null) : null,
+for (const theme of ['light', 'dark']) {
+  for (const width of [1440, 390]) {
+    for (const state of ['home', 'working', 'completed'] as const) {
+      test(`LOCAL design ${state} ${theme} at ${width}px preserves task context`, async ({
+        page,
+        baseURL,
+      }, info) => {
+        await page.setViewportSize({ width, height: 900 });
+        await page.addInitScript((value) => localStorage.setItem('cma:appearance', value), theme);
+        const fixture = new LocalAgentV2();
+        const boundary = fixture.boundary;
+        try {
+          boundary.agent = {
+            ...boundary.agent,
+            title: 'Compare project tools',
+            owner_title: 'Compare project tools',
+          };
+          const events: LocalStartup['events'] = [
+            { type: 'turn_started', turn_sequence: 1 },
+            {
+              type: 'owner_message',
+              content:
+                'Compare three project management tools for a small team of 8 and write a one-page recommendation.',
             },
-          }),
-        );
-        await policy(page, false, state === 'completed');
-        if (state === 'working') await browser(page);
-        if (state === 'completed')
-          await page.route('**/api/v1/agents/agt_contract/suggestions?*', (route) =>
+            {
+              type: 'agent_message',
+              content:
+                'I’ll look at price, setup effort and reporting, then write the recommendation as a document you can download.',
+            },
+            {
+              type: 'plan_set',
+              entries: steps.map((title, index) => ({
+                title,
+                status:
+                  state === 'completed' || index < 2
+                    ? 'completed'
+                    : index === 2
+                      ? 'in_progress'
+                      : 'pending',
+              })),
+            },
+            ...(state === 'completed'
+              ? [
+                  {
+                    type: 'agent_message',
+                    content: `I compared the three tools. The recommendation and comparison table are ready.\n<!--cma-deliverable:v1:${Buffer.from(JSON.stringify(delivery.reference)).toString('base64url')}-->`,
+                  },
+                  { type: 'turn_completed', turn_sequence: 1 },
+                ]
+              : []),
+          ].map((kind, index) => ({
+            seq: index + 1,
+            appended_at: new Date(
+              Date.parse('2026-11-04T01:00:00Z') + index * 30_000,
+            ).toISOString(),
+            kind,
+          }));
+          if (state === 'completed') {
+            for (const entry of events) {
+              const kind = ['owner_message', 'agent_message'].includes(String(entry.kind.type))
+                ? {
+                    type: 'message',
+                    role: entry.kind.type === 'owner_message' ? 'user' : 'assistant',
+                    content: entry.kind.content,
+                  }
+                : entry.kind;
+              fixture.append(kind);
+              fixture.items.at(-1)!.appended_at = entry.appended_at;
+            }
+          }
+          await fixture.route(page, baseURL!);
+          await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
             route.fulfill({
               json: {
-                status: 'ready',
-                set: {
-                  id: 'local-design-followups',
-                  viewerId: 'local-owner',
-                  agentId: 'agt_contract',
-                  answerId: 'event:5',
-                  scope: { turn_sequence: 1, answer_sequence: 5 },
-                  source: { kind: 'generated', version: 'local-design-example' },
-                  items: [
-                    'Make this into slides',
-                    'Add two more tools',
-                    'Draft an email to the team',
-                  ].map((text, rank) => ({ id: `local-followup-${rank}`, text, rank })),
-                },
-                observation: null,
+                object: 'cma.agent.event_head',
+                schema_version: 1,
+                agent_id: 'agt_contract',
+                incarnation: 'a'.repeat(64),
+                through_cursor: cursor(fixture.items.length),
+                active_turn: state === 'working' ? (fixture.items[0] ?? null) : null,
               },
             }),
           );
-        if (state === 'completed')
-          await page.route('**/api/v1/agents/agt_contract/answers/**', (route) => {
-            const path = new URL(route.request().url()).pathname;
-            const identity = { agent_id: 'agt_contract', answer_id: 'event:5', turn_sequence: 1 };
-            if (path.endsWith('/download'))
-              return route.fulfill({ contentType: 'application/octet-stream', body: report });
-            return route.fulfill({
-              json: path.endsWith('/deliverables')
-                ? { ...identity, items: [delivery] }
-                : { ...identity, item: delivery },
+          await policy(page, false, state === 'completed');
+          if (state === 'working') await browser(page);
+          if (state === 'completed')
+            await page.route('**/api/v1/agents/agt_contract/suggestions?*', (route) =>
+              route.fulfill({
+                json: {
+                  status: 'ready',
+                  set: {
+                    id: 'local-design-followups',
+                    viewerId: 'local-owner',
+                    agentId: 'agt_contract',
+                    answerId: 'event:5',
+                    scope: { turn_sequence: 1, answer_sequence: 5 },
+                    source: { kind: 'generated', version: 'local-design-example' },
+                    items: [
+                      'Make this into slides',
+                      'Add two more tools',
+                      'Draft an email to the team',
+                    ].map((text, rank) => ({ id: `local-followup-${rank}`, text, rank })),
+                  },
+                  observation: null,
+                },
+              }),
+            );
+          if (state === 'completed')
+            await page.route('**/api/v1/agents/agt_contract/answers/**', (route) => {
+              const path = new URL(route.request().url()).pathname;
+              const identity = { agent_id: 'agt_contract', answer_id: 'event:5', turn_sequence: 1 };
+              if (path.endsWith('/download'))
+                return route.fulfill({ contentType: 'application/octet-stream', body: report });
+              return route.fulfill({
+                json: path.endsWith('/deliverables')
+                  ? { ...identity, items: [delivery] }
+                  : { ...identity, item: delivery },
+              });
             });
-          });
-        await page.goto(state === 'home' ? '/' : '/agents/agt_contract');
-        if (state === 'working') {
-          await expect.poll(() => fixture.streams.size).toBeGreaterThan(0);
-          for (const entry of events) {
-            const kind = ['owner_message', 'agent_message'].includes(String(entry.kind.type))
-              ? {
-                  type: 'message',
-                  role: entry.kind.type === 'owner_message' ? 'user' : 'assistant',
-                  content: entry.kind.content,
-                }
-              : entry.kind;
-            fixture.append(kind, kind.type === 'turn_started' ? binding : null);
-          }
-        }
-        if (state === 'home') {
-          await expect(
-            page.getByRole('heading', { name: 'What should your Agent work on?' }),
-          ).toBeVisible();
-          await expect(page.getByLabel('GitHub repository')).not.toBeVisible();
-          await page.getByLabel('Your task').fill('Compare three project management tools');
-          await expect(page.getByRole('button', { name: 'Start task' })).toBeEnabled();
-          await expect
-            .poll(() =>
-              page
-                .locator('.frame__center')
-                .evaluate((element) => element.getBoundingClientRect().right),
-            )
-            .toBe(width);
-          await page.evaluate(() => document.fonts.ready);
-          await page.screenshot({ path: info.outputPath(`home-${width}.png`) });
-          await page.getByRole('button', { name: 'Add git repo', exact: true }).click();
-          await expect(page.getByRole('dialog', { name: 'Add git repo' })).toBeVisible();
-          await expect(page.getByLabel('GitHub repository')).toBeFocused();
-          await expect(page.getByLabel('Your task')).toHaveValue(
-            'Compare three project management tools',
-          );
-        } else {
-          const composer = page.getByRole('textbox', { name: 'Message', exact: true });
-          await expect(composer).toBeVisible();
-          await composer.fill('Keep my unsent follow-up');
-          const original = await composer.elementHandle();
-          const plan = page.getByRole('region', { name: 'Plan', exact: true });
+          await page.goto(state === 'home' ? '/' : '/agents/agt_contract');
           if (state === 'working') {
-            await expect(plan.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '2');
-            await expect(
-              page.getByRole('link', { name: 'Current plan: Working · step 3 of 5' }),
-            ).toBeVisible();
-            await page.screenshot({ path: info.outputPath(`working-${width}.png`) });
-            if (width < 1024)
-              await page.getByRole('button', { name: 'Show Agent computer' }).click();
-            await expect(page.getByAltText('Agent browser page')).toBeVisible();
-            await page.getByRole('tab', { name: 'Terminal' }).click();
-            await page.getByRole('tab', { name: 'Browser', exact: true }).click();
-            await page.screenshot({ path: info.outputPath(`computer-${width}.png`) });
-            await page.getByRole('button', { name: 'Back to conversation' }).click();
-          } else {
-            await expect(
-              page.getByRole('button', { name: 'Make this into slides', exact: true }),
-            ).toBeVisible();
-            await expect(
-              plan.getByRole('button', { name: 'View plan and operations' }),
-            ).toHaveAttribute('aria-expanded', 'false');
-            await page.getByRole('button', { name: 'Preview Tool comparison.md' }).click();
-            const preview = page.getByRole('complementary', { name: 'Deliverable preview' });
-            await expect(
-              preview.getByRole('heading', { name: 'Project management tools' }),
-            ).toBeVisible();
-            const bounds = (await preview.boundingBox())!;
-            expect(bounds.width).toBeGreaterThanOrEqual(width >= 1024 ? 500 : width - 1);
-            await page.screenshot({ path: info.outputPath(`completed-${width}.png`) });
-            await preview.getByRole('button', { name: 'Close preview' }).click();
+            await expect.poll(() => fixture.streams.size).toBeGreaterThan(0);
+            for (const entry of events) {
+              const kind = ['owner_message', 'agent_message'].includes(String(entry.kind.type))
+                ? {
+                    type: 'message',
+                    role: entry.kind.type === 'owner_message' ? 'user' : 'assistant',
+                    content: entry.kind.content,
+                  }
+                : entry.kind;
+              fixture.append(kind, kind.type === 'turn_started' ? binding : null);
+            }
           }
-          await expect(composer).toHaveValue('Keep my unsent follow-up');
+          if (state === 'home') {
+            await expect(
+              page.getByRole('heading', { name: 'What should your Agent work on?' }),
+            ).toBeVisible();
+            await expect(page.getByLabel('GitHub repository')).not.toBeVisible();
+            await page.getByLabel('Your task').fill('Compare three project management tools');
+            await expect(page.getByRole('button', { name: 'Start task' })).toBeEnabled();
+            await expect
+              .poll(() =>
+                page
+                  .locator('.frame__center')
+                  .evaluate((element) => element.getBoundingClientRect().right),
+              )
+              .toBe(width);
+            await page.evaluate(() => document.fonts.ready);
+            await page.screenshot({ path: info.outputPath(`home-${width}.png`) });
+            await page.getByRole('button', { name: 'Add git repo', exact: true }).click();
+            await expect(page.getByRole('dialog', { name: 'Add git repo' })).toBeVisible();
+            await expect(page.getByLabel('GitHub repository')).toBeFocused();
+            await expect(page.getByLabel('Your task')).toHaveValue(
+              'Compare three project management tools',
+            );
+          } else {
+            const composer = page.getByRole('textbox', { name: 'Message', exact: true });
+            await expect(composer).toBeVisible();
+            await expect(
+              page.getByRole('button', { name: 'Context usage', exact: true }),
+            ).toHaveCount(0);
+            await expect(page.getByRole('button', { name: /^Agent settings:/ })).toHaveAttribute(
+              'title',
+              /Context:/,
+            );
+            await composer.fill('Keep my unsent follow-up');
+            const original = await composer.elementHandle();
+            const plan = page.getByRole('region', { name: 'Plan', exact: true });
+            if (state === 'working') {
+              await expect(plan.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '2');
+              await expect(plan.getByText(/^Current step 3:/)).toBeVisible();
+              await page.screenshot({ path: info.outputPath(`working-${width}.png`) });
+              if (width < 1024)
+                await page.getByRole('button', { name: 'Show Agent computer' }).click();
+              await expect(page.getByAltText('Agent browser page')).toBeVisible();
+              await expect(page.getByRole('tab', { name: 'Terminal' })).toHaveCount(0);
+              await page.getByRole('tab', { name: 'Files' }).click();
+              await page.getByRole('tab', { name: 'Screen', exact: true }).click();
+              await captureSingleBrowserFrame(page, info.outputPath(`computer-${width}.png`));
+              await page.getByRole('button', { name: 'Close computer' }).click();
+            } else {
+              await expect(
+                page.getByRole('button', { name: 'Make this into slides', exact: true }),
+              ).toBeVisible();
+              await expect(plan.getByRole('button', { name: 'View plan' })).toHaveAttribute(
+                'aria-expanded',
+                'false',
+              );
+              await page.getByRole('button', { name: 'Preview Tool comparison.md' }).click();
+              const preview = page.getByRole('complementary', { name: 'Deliverable preview' });
+              await expect(
+                preview.getByRole('heading', { name: 'Project management tools' }),
+              ).toBeVisible();
+              const bounds = (await preview.boundingBox())!;
+              expect(bounds.width).toBeGreaterThanOrEqual(width >= 1024 ? 500 : width - 1);
+              await page.screenshot({ path: info.outputPath(`completed-${width}.png`) });
+              await preview.getByRole('button', { name: 'Close preview' }).click();
+            }
+            await expect(composer).toHaveValue('Keep my unsent follow-up');
+            expect(
+              await composer.evaluate((element, previous) => element === previous, original),
+            ).toBe(true);
+          }
           expect(
-            await composer.evaluate((element, previous) => element === previous, original),
+            await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
           ).toBe(true);
+          expect(boundary.writes).toEqual([]);
+          expect(boundary.errors).toEqual([]);
+        } catch (error) {
+          console.error({
+            reads: fixture.reads,
+            errors: fixture.errors,
+            unexpected: boundary.unexpected,
+            pageErrors: boundary.errors,
+          });
+          if (!page.isClosed())
+            await page
+              .screenshot({ path: info.outputPath(`failure-${state}-${width}.png`) })
+              .catch(() => {});
+          throw error;
+        } finally {
+          await fixture.close(page);
         }
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
-          true,
-        );
-        expect(boundary.writes).toEqual([]);
-        expect(boundary.errors).toEqual([]);
-      } catch (error) {
-        console.error({
-          reads: fixture.reads,
-          errors: fixture.errors,
-          unexpected: boundary.unexpected,
-          pageErrors: boundary.errors,
-        });
-        if (!page.isClosed())
-          await page
-            .screenshot({ path: info.outputPath(`failure-${state}-${width}.png`) })
-            .catch(() => {});
-        throw error;
-      } finally {
-        await fixture.close(page);
-      }
-    });
+      });
+    }
   }
 }
 
@@ -372,24 +389,12 @@ for (const width of [1440, 390]) {
     try {
       await page.goto('/agents/agt_contract');
       if (width < 1024) await page.getByRole('button', { name: 'Show Agent computer' }).click();
-      await page.getByRole('button', { name: 'View operation history' }).click();
-      await expect(page.getByRole('tab', { name: 'Terminal' })).toBeFocused();
-      const replay = page.getByRole('region', { name: 'Operation record replay' });
-      await expect(replay.getByText('Recorded output 3', { exact: true })).not.toBeVisible();
-      const position = replay.getByRole('slider');
-      await expect(position).toHaveValue('3');
+      await page.getByRole('tab', { name: 'Terminal' }).click();
+      const output = page.locator('#computer-page-activity');
+      for (const number of [1, 2, 3])
+        await expect(output.getByText(`Recorded output ${number}`, { exact: true })).toBeVisible();
+      await expect(output.getByRole('slider')).toHaveCount(0);
       await page.screenshot({ path: info.outputPath(`terminal-${width}.png`) });
-      await replay.locator('summary').press('Enter');
-      await expect(replay.getByText('Recorded output 3', { exact: true })).toBeVisible();
-      await position.press('Home');
-      await expect(position).toHaveValue('1');
-      await expect(replay.getByText('Recorded output 1', { exact: true })).not.toBeVisible();
-      await replay.locator('summary').press('Enter');
-      await expect(replay.getByText('Recorded output 1', { exact: true })).toBeVisible();
-      await page.screenshot({ path: info.outputPath(`terminal-expanded-${width}.png`) });
-      await replay.getByRole('button', { name: 'Return Live' }).click();
-      await expect(position).toHaveValue('3');
-      await expect(replay.getByText('Recorded output 3', { exact: true })).not.toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
         true,
       );
@@ -413,14 +418,14 @@ test('LOCAL shared desktop uses the same computer panel and releases control on 
   await page.goto('/agents/agt_contract');
   const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
   const desktop = computer.getByRole('region', { name: 'Machine desktop' });
-  await expect(desktop.getByRole('status')).toContainText('Connected');
+  await expect(desktop.getByRole('status')).toContainText('Agent paused · Desktop is idle');
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Retain this draft');
   await desktop.getByRole('button', { name: 'Take control' }).click();
-  await expect(desktop.getByRole('button', { name: 'Stop controlling' })).toBeVisible();
-  await computer.getByRole('tab', { name: 'Terminal' }).click();
+  await expect(desktop.getByRole('button', { name: 'Return to Agent' })).toBeVisible();
+  await computer.getByRole('tab', { name: 'Files' }).click();
   await expect(page.getByRole('region', { name: 'Machine desktop' })).toHaveCount(0);
-  await computer.getByRole('tab', { name: 'Browser', exact: true }).click();
-  await expect(desktop.getByRole('status')).toContainText('Connected');
+  await computer.getByRole('tab', { name: 'Screen', exact: true }).click();
+  await expect(desktop.getByRole('status')).toContainText('Agent paused · Desktop is idle');
   await expect(desktop.getByRole('button', { name: 'Take control' })).toBeVisible();
   expect(stream.connections).toHaveLength(2);
   await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveValue(
@@ -557,3 +562,111 @@ for (const theme of ['light', 'dark']) {
     });
   }
 }
+
+for (const theme of ['light', 'dark']) {
+  test(`LOCAL Screen follows browser and desktop operations in ${theme}, and answer timestamps reveal over answer prose`, async ({
+    page,
+    baseURL,
+  }) => {
+    const fixture = new LocalAgentV2();
+    fixture.boundary.agent = { ...fixture.boundary.agent, desktop: true };
+    fixture.append({ type: 'turn_started', turn_sequence: 1 }, binding);
+    fixture.append({
+      type: 'message',
+      role: 'assistant',
+      content: 'A retained answer for hover verification.',
+    });
+    fixture.append({ type: 'turn_completed', turn_sequence: 1 });
+    try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.addInitScript((value) => localStorage.setItem('cma:appearance', value), theme);
+      await fixture.route(page, baseURL!);
+      await desktopBoundary(page);
+      await browser(page);
+      await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
+        route.fulfill({
+          json: {
+            object: 'cma.agent.event_head',
+            schema_version: 1,
+            agent_id: 'agt_contract',
+            incarnation: 'a'.repeat(64),
+            through_cursor: cursor(fixture.items.length),
+            active_turn: null,
+          },
+        }),
+      );
+      await page.goto('/agents/agt_contract');
+      const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
+      await expect(computer.getByRole('region', { name: 'Machine desktop' })).toBeVisible();
+      const answer = page.getByRole('article', { name: 'Chrono Agent' });
+      const time = answer.locator('.message__timestamp');
+      await page.mouse.move(1400, 800);
+      await expect.poll(() => time.evaluate((node) => getComputedStyle(node).opacity)).toBe('0');
+      await answer.locator('.agent-content').hover();
+      await expect.poll(() => time.evaluate((node) => getComputedStyle(node).opacity)).toBe('1');
+      await page.mouse.move(1400, 800);
+      await answer.getByRole('button', { name: 'Copy content' }).focus();
+      await expect.poll(() => time.evaluate((node) => getComputedStyle(node).opacity)).toBe('1');
+      await expect.poll(() => fixture.streams.size).toBeGreaterThan(0);
+      fixture.append({
+        type: 'tool_started',
+        call_id: 'browser-step',
+        kind: 'execute',
+        title: 'cma-browser navigate https://example.com',
+        status: 'completed',
+      });
+      await captureSingleBrowserFrame(page);
+      await expect(computer.getByRole('region', { name: 'Machine desktop' })).toHaveCount(0);
+      fixture.append({
+        type: 'tool_started',
+        call_id: 'desktop-step',
+        kind: 'execute',
+        title: 'xdotool click 1',
+        status: 'completed',
+      });
+      await expect(computer.getByRole('region', { name: 'Machine desktop' })).toBeVisible();
+      await expect(computer.locator('canvas:visible')).toHaveCount(1);
+      await expect(page.getByAltText('Agent browser page')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: /Shared desktop|Agent browser/ })).toHaveCount(
+        0,
+      );
+      expect(fixture.writes).toEqual([]);
+    } finally {
+      await fixture.close(page);
+    }
+  });
+}
+
+test.describe('LOCAL coarse-pointer answer footer', () => {
+  test.use({ hasTouch: true });
+  test('keeps the relative time visible without hovering', async ({ page, baseURL }) => {
+    const fixture = new LocalAgentV2();
+    fixture.append({ type: 'turn_started', turn_sequence: 1 }, binding);
+    fixture.append({ type: 'message', role: 'assistant', content: 'A retained touch answer.' });
+    fixture.append({ type: 'turn_completed', turn_sequence: 1 });
+    try {
+      await fixture.route(page, baseURL!);
+      await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
+        route.fulfill({
+          json: {
+            object: 'cma.agent.event_head',
+            schema_version: 1,
+            agent_id: 'agt_contract',
+            incarnation: 'a'.repeat(64),
+            through_cursor: cursor(fixture.items.length),
+            active_turn: null,
+          },
+        }),
+      );
+      await page.goto('/agents/agt_contract');
+      expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+      const time = page
+        .getByRole('article', { name: 'Chrono Agent' })
+        .locator('.message__timestamp');
+      await expect(time).toHaveAttribute('datetime', fixture.items[1]!.appended_at);
+      await expect.poll(() => time.evaluate((node) => getComputedStyle(node).opacity)).toBe('1');
+    } finally {
+      await fixture.close(page);
+    }
+  });
+});

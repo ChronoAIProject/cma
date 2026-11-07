@@ -71,7 +71,6 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
   };
   return {
     usageViews: createUsageClient(sdk),
-    operationReplay: sdk.agentEventsV2,
     deliverables: sdk.agents,
     documents: documentsClient(),
     browser: sdk.agentBrowser,

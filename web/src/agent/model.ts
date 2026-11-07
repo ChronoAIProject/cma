@@ -19,6 +19,8 @@ export interface ConversationMessage {
 }
 
 export interface ToolCall {
+  readonly startedAt?: string;
+  readonly finishedAt?: string;
   readonly output?: { readonly text: string; readonly truncated: boolean };
   readonly order?: number;
   readonly sequence?: number;
@@ -108,6 +110,7 @@ export interface ConversationState {
   };
   readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly ownerTitle?: string;
+  readonly title?: string;
   readonly availableCommands?: readonly SessionCommand[];
   readonly activeRunId?: string;
   readonly latestTurnId?: string;

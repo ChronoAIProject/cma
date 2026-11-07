@@ -5,45 +5,77 @@ import { AgentShareLinksDialog } from '../resources/AgentShareLinks';
 import { Modal } from '../ui/Modal';
 import { SkillsSettings } from './SkillsSettings';
 import { AgentHeader } from './AgentHeader';
-import { SandboxPopover } from './SandboxPopover';
 import { AgentPreferencesDialog } from './AgentPreferencesDialog';
-import type { SandboxResourceAvailability } from './sandboxInput';
 
 /** Owner-only tools reuse the same public authorization as their Details controls. */
 export function OwnerAgentHeader({
   detail,
-  availability,
   readOnly,
   busy,
+  actionsBusy = false,
   onTitleUpdated,
   ...header
 }: Omit<ComponentProps<typeof AgentHeader>, 'sandbox' | 'onShare'> & {
   readonly detail: AgentDetail;
-  readonly availability: SandboxResourceAvailability;
   readonly readOnly: boolean;
   readonly busy: boolean;
+  readonly actionsBusy?: boolean;
   readonly onTitleUpdated?: (title: string) => void;
 }) {
   const client = useCmaClient();
+  const configBusy = busy || actionsBusy;
   const [dialog, setDialog] = useState<'share' | 'skills' | 'rename' | 'prompt'>();
   return (
     <>
       <AgentHeader
         {...header}
-        sandbox={
-          readOnly ? undefined : <SandboxPopover detail={detail} availability={availability} />
-        }
         onShare={readOnly || !client.resourceViews ? undefined : () => setDialog('share')}
         menu={[
-          ...(readOnly || !client.readAgentPreferences || !client.updateAgentPreferences
-            ? []
-            : [
-                { id: 'rename-agent', label: 'Rename Agent' },
-                { id: 'update-prompt', label: 'Update system prompt' },
-              ]),
-          ...(readOnly || !client.readAgentSkills
-            ? []
-            : [{ id: 'update-skills', label: 'Update skills installed' }]),
+          {
+            id: 'rename-agent',
+            label: 'Rename',
+            disabled:
+              readOnly ||
+              !client.readAgentPreferences ||
+              !client.updateAgentPreferences ||
+              actionsBusy,
+            reason: readOnly
+              ? 'Only the task owner can rename it.'
+              : !client.readAgentPreferences || !client.updateAgentPreferences
+                ? 'Task preferences are unsupported by this client.'
+                : actionsBusy
+                  ? 'Another action is still being confirmed.'
+                  : undefined,
+          },
+          {
+            id: 'update-prompt',
+            label: 'Update system prompt',
+            disabled:
+              readOnly ||
+              !client.readAgentPreferences ||
+              !client.updateAgentPreferences ||
+              configBusy,
+            reason: readOnly
+              ? 'Only the task owner can update its system prompt.'
+              : !client.readAgentPreferences || !client.updateAgentPreferences
+                ? 'Task preferences are unsupported by this client.'
+                : configBusy
+                  ? 'Wait until the Agent and its pending actions are idle.'
+                  : undefined,
+          },
+          {
+            id: 'update-skills',
+            label: 'Update skills',
+            disabled:
+              readOnly || !client.readAgentSkills || !client.installAgentSkill || configBusy,
+            reason: readOnly
+              ? 'Only the task owner can update its skills.'
+              : !client.readAgentSkills || !client.installAgentSkill
+                ? 'Agent skills are unsupported by this client.'
+                : configBusy
+                  ? 'Wait until the Agent and its pending actions are idle.'
+                  : undefined,
+          },
           ...(header.menu ?? []),
         ]}
         onMenuSelect={(id) => {
@@ -60,7 +92,7 @@ export function OwnerAgentHeader({
               agentId={detail.id}
               mode={dialog}
               currentTitle={header.title}
-              active={busy}
+              active={dialog === 'prompt' && configBusy}
               onTitleUpdated={onTitleUpdated}
               onClose={() => setDialog(undefined)}
             />
@@ -78,7 +110,9 @@ export function OwnerAgentHeader({
             title="Update skills installed"
             onClose={() => setDialog(undefined)}
           >
-            {dialog === 'skills' ? <SkillsSettings agentId={detail.id} active busy={busy} /> : null}
+            {dialog === 'skills' ? (
+              <SkillsSettings agentId={detail.id} active busy={configBusy} />
+            ) : null}
           </Modal>
         </>
       )}
