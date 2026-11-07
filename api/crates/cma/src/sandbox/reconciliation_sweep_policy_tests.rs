@@ -150,7 +150,9 @@ async fn resumed_idle_phase_reads_new_threshold_and_retries_unavailable_policy()
     enable(&settings, at, 1_800);
     let resumed_at = at + Duration::from_secs(1_800);
     assert!(reconciler.run_due(resumed_at).await.unwrap());
-    assert_eq!(store.keys("authority"), ["start", "sbx_001"]);
+    // Each retained pause attempt refreshes bindings first, including the one
+    // whose policy is unavailable. Neither refresh repeats a pause admission.
+    assert_eq!(store.keys("authority"), ["start", "sbx_001"].repeat(3));
     assert_eq!(
         store.keys("pause"),
         ["sbx_000", "sbx_001", "sbx_001", "sbx_002"]
