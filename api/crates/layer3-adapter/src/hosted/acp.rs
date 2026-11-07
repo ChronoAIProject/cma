@@ -381,6 +381,7 @@ impl Bridge {
         if self.retired.load(Ordering::SeqCst) {
             return Err(retired_before_write(prompt));
         }
+        let remembered_prompt = prompt_id.clone();
         let id = prompt_id.map_or_else(
             || {
                 format!(
@@ -402,8 +403,18 @@ impl Bridge {
             .lock()
             .await
             .insert(id.clone(), PendingCall { answer, prompt });
+        if prompt {
+            if let Some(prompt_id) = remembered_prompt.clone() {
+                self.remember_prompt(prompt_id).await;
+            }
+        }
         if let Err(error) = self.send_frame(&frame, prompt).await {
             self.pending.lock().await.remove(&id);
+            if prompt {
+                if let Some(prompt_id) = remembered_prompt {
+                    self.clear_active_prompt_if(prompt_id.as_str()).await;
+                }
+            }
             return Err(error);
         }
         Ok(waiting)

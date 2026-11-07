@@ -520,7 +520,8 @@
           "fixture"
         ]
       },
-      "schema_version": 1
+      "schema_version": 1,
+      "queue_lifetime_seconds": 86400
     }
   ],
   "ApiType": [
@@ -1662,7 +1663,8 @@
             "fixture"
           ]
         },
-        "schema_version": 1
+        "schema_version": 1,
+        "queue_lifetime_seconds": 86400
       },
       "provider": {
         "slug": "fixture",
@@ -2001,7 +2003,8 @@
               "fixture"
             ]
           },
-          "schema_version": 1
+          "schema_version": 1,
+          "queue_lifetime_seconds": 86400
         },
         "profile_digest": "fixture",
         "provider": {
@@ -2133,7 +2136,8 @@
                     "fixture"
                   ]
                 },
-                "schema_version": 1
+                "schema_version": 1,
+                "queue_lifetime_seconds": 86400
               },
               "profile_digest": "fixture",
               "provider": {
@@ -2306,7 +2310,8 @@
               "fixture"
             ]
           },
-          "schema_version": 1
+          "schema_version": 1,
+          "queue_lifetime_seconds": 86400
         },
         "profile_digest": "fixture",
         "provider": {
@@ -2438,7 +2443,8 @@
                     "fixture"
                   ]
                 },
-                "schema_version": 1
+                "schema_version": 1,
+                "queue_lifetime_seconds": 86400
               },
               "profile_digest": "fixture",
               "provider": {
@@ -2612,7 +2618,8 @@
                   "fixture"
                 ]
               },
-              "schema_version": 1
+              "schema_version": 1,
+              "queue_lifetime_seconds": 86400
             },
             "profile_digest": "fixture",
             "provider": {
@@ -2744,7 +2751,8 @@
                         "fixture"
                       ]
                     },
-                    "schema_version": 1
+                    "schema_version": 1,
+                    "queue_lifetime_seconds": 86400
                   },
                   "profile_digest": "fixture",
                   "provider": {
@@ -2917,7 +2925,8 @@
                   "fixture"
                 ]
               },
-              "schema_version": 1
+              "schema_version": 1,
+              "queue_lifetime_seconds": 86400
             },
             "profile_digest": "fixture",
             "provider": {
@@ -3049,7 +3058,8 @@
                         "fixture"
                       ]
                     },
-                    "schema_version": 1
+                    "schema_version": 1,
+                    "queue_lifetime_seconds": 86400
                   },
                   "profile_digest": "fixture",
                   "provider": {
@@ -3224,7 +3234,8 @@
               "fixture"
             ]
           },
-          "schema_version": 1
+          "schema_version": 1,
+          "queue_lifetime_seconds": 86400
         },
         "profile_digest": "fixture",
         "provider": {
@@ -3356,7 +3367,8 @@
                     "fixture"
                   ]
                 },
-                "schema_version": 1
+                "schema_version": 1,
+                "queue_lifetime_seconds": 86400
               },
               "profile_digest": "fixture",
               "provider": {
@@ -3532,7 +3544,8 @@
               "fixture"
             ]
           },
-          "schema_version": 1
+          "schema_version": 1,
+          "queue_lifetime_seconds": 86400
         },
         "profile_digest": "fixture",
         "provider": {
@@ -3664,7 +3677,8 @@
                     "fixture"
                   ]
                 },
-                "schema_version": 1
+                "schema_version": 1,
+                "queue_lifetime_seconds": 86400
               },
               "profile_digest": "fixture",
               "provider": {
@@ -3851,7 +3865,8 @@
             "fixture"
           ]
         },
-        "schema_version": 1
+        "schema_version": 1,
+        "queue_lifetime_seconds": 86400
       },
       "provider": {
         "slug": "fixture",
@@ -6617,7 +6632,8 @@
             "fixture"
           ]
         },
-        "schema_version": 1
+        "schema_version": 1,
+        "queue_lifetime_seconds": 86400
       },
       "profile_digest": "fixture",
       "provider": {
@@ -6749,7 +6765,8 @@
                   "fixture"
                 ]
               },
-              "schema_version": 1
+              "schema_version": 1,
+              "queue_lifetime_seconds": 86400
             },
             "profile_digest": "fixture",
             "provider": {
@@ -7594,7 +7611,8 @@
           "fixture"
         ]
       },
-      "schema_version": 1
+      "schema_version": 1,
+      "queue_lifetime_seconds": 86400
     }
   ],
   "ProviderTarget": [
@@ -7959,7 +7977,8 @@
             "fixture"
           ]
         },
-        "schema_version": 1
+        "schema_version": 1,
+        "queue_lifetime_seconds": 86400
       },
       "profile_digest": "fixture",
       "provider": {
@@ -8132,7 +8151,8 @@
                 "fixture"
               ]
             },
-            "schema_version": 1
+            "schema_version": 1,
+            "queue_lifetime_seconds": 86400
           },
           "profile_digest": "fixture",
           "provider": {
@@ -8278,7 +8298,8 @@
                 "fixture"
               ]
             },
-            "schema_version": 1
+            "schema_version": 1,
+            "queue_lifetime_seconds": 86400
           },
           "profile_digest": "fixture",
           "provider": {
@@ -8423,7 +8444,8 @@
                 "fixture"
               ]
             },
-            "schema_version": 1
+            "schema_version": 1,
+            "queue_lifetime_seconds": 86400
           },
           "profile_digest": "fixture",
           "provider": {
