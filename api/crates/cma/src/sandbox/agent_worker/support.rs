@@ -16,6 +16,7 @@ use super::AgentWorker;
 mod context;
 mod effects;
 mod mapping;
+mod retry_delay;
 pub(super) use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
 pub(super) use effects::{settle_cleanup_debt, settle_compensated_cleanup_debt};
 pub(super) use mapping::{validate_runtime_skills, validate_skills};
@@ -137,8 +138,8 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        self.retry_at(agent, failure, now, now + self.config.retry_delay)
-            .await
+        let delay = self.failure_retry_delay(&agent);
+        self.retry_at(agent, failure, now, now + delay).await
     }
 
     pub(super) async fn retry_at(
