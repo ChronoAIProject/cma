@@ -36,20 +36,24 @@ pub(super) fn prune(files: Vec<io::AuthorityFile>) -> Result<Vec<io::AuthorityFi
         for &index in &keep {
             io::sync_record(&files[index].path)?;
         }
-        let mut changed_directories = BTreeSet::new();
         for (index, file) in files.iter().enumerate() {
             if !keep.contains(&index) {
                 std::fs::remove_file(&file.path)
                     .map_err(|error| io_error("prune redundant mutation authority", error))?;
-                changed_directories.insert(file.path.parent().expect("validated authority path"));
             }
         }
-        // A crash during deletion leaves only redundant valid predecessors.
-        // Commit all deletions before another append can spend physical space.
-        for directory in changed_directories {
-            crate::fs_durability::sync_directory(directory)
-                .map_err(|error| io_error("sync pruned mutation authority directory", error))?;
-        }
+    }
+    // Each populated root retains a survivor. Always sync its directory before
+    // returning capacity, even on a no-op fold: a prior prune may have unlinked
+    // predecessors but failed its final barrier, including before a restart.
+    let directories = files
+        .iter()
+        .map(|file| file.path.parent().expect("validated authority path"))
+        .collect::<BTreeSet<_>>();
+    for directory in directories {
+        sync_directory(directory).map_err(|error| {
+            io_error("sync mutation authority directory before admission", error)
+        })?;
     }
     Ok(files
         .into_iter()
@@ -57,3 +61,18 @@ pub(super) fn prune(files: Vec<io::AuthorityFile>) -> Result<Vec<io::AuthorityFi
         .filter_map(|(index, file)| keep.contains(&index).then_some(file))
         .collect())
 }
+
+// The fault seam is local to folding; unrelated filesystem operations retain
+// their real durability path in tests as well as production.
+fn sync_directory(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    fault::before_sync(path)?;
+    crate::fs_durability::sync_directory(path)?;
+    #[cfg(test)]
+    fault::after_sync();
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "mutation_authority_fold_fault.rs"]
+pub(super) mod fault;
