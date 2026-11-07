@@ -20,6 +20,8 @@ mod home;
 #[cfg(test)]
 mod home_tests;
 mod inspection_timing;
+#[cfg(test)]
+mod ledger_hold_tests;
 mod managed_context;
 mod memory;
 mod nonexecuting;
