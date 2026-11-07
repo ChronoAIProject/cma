@@ -595,6 +595,17 @@ remain `503 binding_unavailable`; they are not classified as deleted resources.
 The gateway presents this specific refusal as an actionable 409 instead of a
 generic provider 502.
 
+CMA accepts optional `profile.queue_lifetime_seconds` on binding PUT: a whole
+number from 1 through 86,400, defaulting to 300 when omitted. Binding GET/PUT
+returns the effective `queue_lifetime_seconds`; explicit supported values appear
+in `honoured`. The verified binding's retained policy sets the deadline only for
+new message admissions. Existing-Agent policy updates preserve the Agent,
+configuration, credentials and conversation, and reject unrelated profile changes.
+Already admitted messages and exact retries retain their original deadline.
+Capacity remains 64. Expiry before dispatch produces the definite failure
+`agent_command_queue_timeout` without starting an Agent turn. Ordinary chat/UI and
+Trigger messages retain their existing 300-second wait.
+
 CMA's optional profile extension `environment.session_affinity:"source_user"`
 changes provider selection without changing gateway partitioning. CMA verifies
 the original human Activity with the gateway, then maps binding generation,

@@ -152,10 +152,21 @@ pub enum ConversationUpdate {
     Usage(crate::ConversationUsage),
     Asked(PermissionRequest),
     TurnEnded(PromptResponse),
+    /// A terminal response correlated to one already admitted prompt.
+    TurnEndedForPrompt {
+        prompt_id: crate::PromptIdentity,
+        response: PromptResponse,
+    },
     Lost {
         frames: u64,
     },
     Failed {
+        message: String,
+        capability: Option<String>,
+    },
+    /// A terminal failure correlated to one already admitted prompt.
+    FailedForPrompt {
+        prompt_id: crate::PromptIdentity,
         message: String,
         capability: Option<String>,
     },
@@ -191,7 +202,9 @@ impl ConversationUpdate {
                 TurnScopedEvidence::ApprovalRequested,
             )),
             Self::TurnEnded(_) => Some(TurnEvidence::TerminalResult),
+            Self::TurnEndedForPrompt { .. } => Some(TurnEvidence::TerminalResult),
             Self::Failed { .. } => Some(TurnEvidence::TerminalFailure),
+            Self::FailedForPrompt { .. } => Some(TurnEvidence::TerminalFailure),
             Self::Said(_)
             | Self::Metadata(_)
             | Self::Usage(_)

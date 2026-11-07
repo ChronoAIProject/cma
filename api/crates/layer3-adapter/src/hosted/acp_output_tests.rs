@@ -25,6 +25,26 @@ async fn retained(server: &mut ServerSocket, cursor: u64, value: serde_json::Val
     server.send(Message::Binary(bytes)).await.unwrap();
 }
 
+async fn next_conversation(server: &mut ServerSocket) -> serde_json::Value {
+    loop {
+        let message = tokio::time::timeout(Duration::from_secs(2), server.next())
+            .await
+            .expect("client frame arrives")
+            .expect("client socket remains open")
+            .expect("client frame is readable");
+        let Message::Binary(frame) = message else {
+            panic!("expected binary client frame")
+        };
+        match frame.first() {
+            Some(&LANE_OUTPUT_ACK) => continue,
+            Some(&LANE_CONVERSATION) => {
+                return serde_json::from_slice(&frame[1..]).expect("conversation frame is JSON");
+            }
+            lane => panic!("unexpected client lane: {lane:?}"),
+        }
+    }
+}
+
 #[tokio::test]
 async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_handshake() {
     let prompt = crate::PromptIdentity::new("conversation-held", 19, 157);
@@ -78,7 +98,7 @@ async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_h
         "/workspace".into(),
         (settings(None, false), None),
         Some("conversation-held".into()),
-        Some(prompt),
+        Some(prompt.clone()),
         updates,
     ));
     backlog_received.await.unwrap();
@@ -106,7 +126,8 @@ async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_h
         if cursor == 301 {
             assert!(matches!(
                 update.as_deref(),
-                Some(ConversationUpdate::TurnEnded(_))
+                Some(ConversationUpdate::TurnEndedForPrompt { prompt_id, .. })
+                    if prompt_id == &prompt
             ));
         } else if cursor == 302 {
             assert!(update.is_none());
@@ -132,6 +153,112 @@ async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_h
     assert_eq!(*progress.borrow(), 1);
     server_task.await.unwrap();
     stop(opened).await;
+}
+
+#[tokio::test]
+async fn terminal_identity_survives_passive_and_owner_first_output_scheduling() {
+    for owner_first in [false, true] {
+        let prompt = crate::PromptIdentity::new("conversation-scheduled", 1, 1);
+        let (client, mut server) = socket_pair().await;
+        reliable_ready(&mut server).await;
+        let expected_id = prompt.as_str().to_owned();
+        let server_task = tokio::spawn(async move {
+            let initialize = receive_json(&mut server).await;
+            retained(
+                &mut server,
+                1,
+                serde_json::json!({
+                    "jsonrpc":"2.0", "id":initialize["id"], "result":{}
+                }),
+            )
+            .await;
+            let open = next_conversation(&mut server).await;
+            assert_eq!(open["method"], "session/new");
+            retained(
+                &mut server,
+                2,
+                serde_json::json!({
+                    "jsonrpc":"2.0", "id":open["id"],
+                    "result":{"sessionId":"conversation-scheduled"}
+                }),
+            )
+            .await;
+            if owner_first {
+                let request = next_conversation(&mut server).await;
+                assert_eq!(request["method"], "session/prompt");
+                assert_eq!(request["id"], expected_id);
+            }
+            retained(
+                &mut server,
+                3,
+                serde_json::json!({
+                    "jsonrpc":"2.0", "id":expected_id,
+                    "result":{"stopReason":"end_turn"},
+                }),
+            )
+            .await;
+            loop {
+                let message = tokio::time::timeout(Duration::from_secs(2), server.next())
+                    .await
+                    .expect("terminal acknowledgement arrives")
+                    .expect("client socket remains open")
+                    .expect("terminal acknowledgement is readable");
+                let Message::Binary(ack) = message else {
+                    panic!("expected terminal acknowledgement")
+                };
+                if ack[0] == LANE_OUTPUT_ACK {
+                    let cursor = u64::from_be_bytes(ack[17..25].try_into().unwrap());
+                    if cursor == 3 {
+                        break;
+                    }
+                }
+            }
+        });
+        let (updates, mut received) = mpsc::channel(8);
+        let opened = Bridge::open(
+            client,
+            "agent-1",
+            "/workspace".into(),
+            settings(None, false),
+            None,
+            updates,
+        )
+        .await
+        .expect("bridge opens");
+        if owner_first {
+            opened
+                .channel
+                .input
+                .send(ConversationInput::RecoverablePrompt {
+                    content: vec![ContentBlock::from("already admitted")],
+                    prompt_id: prompt.clone(),
+                })
+                .await
+                .expect("owner prompt writes");
+        }
+        let mut terminal = false;
+        for _ in 0..3 {
+            let update = tokio::time::timeout(Duration::from_secs(2), received.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let ConversationUpdate::RuntimeOutput { receipt, update } = update else {
+                panic!("terminal must retain its output receipt")
+            };
+            terminal |= matches!(
+                update.as_deref(),
+                Some(ConversationUpdate::TurnEndedForPrompt { prompt_id, .. })
+                    if prompt_id == &prompt
+            );
+            receipt.acknowledge().await.unwrap();
+            if terminal {
+                break;
+            }
+        }
+        assert!(terminal, "identified terminal was not delivered");
+        server_task.await.unwrap();
+        stop(opened).await;
+    }
 }
 
 #[test]

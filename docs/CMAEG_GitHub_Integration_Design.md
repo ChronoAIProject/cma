@@ -189,19 +189,21 @@ requires a Ready Agent with no active turn. See `agent_io/lane.rs` and the Mongo
 command-lane implementation. Existing-Agent channel turns use Responses v2 with
 verified binding authority; their stored actor/source can be Api.
 
-Ordinary channel management also needs the generic organization-owner selection
-fix: its current service-auth creator path ignores `X-CMAEG-Owner`, while the
-GitHub management extractors honor it. This blocks organization channel setup and
-must be fixed before the pilot; do not substitute personal resources.
+Ordinary channel management resolves `X-CMAEG-Owner` through current organization
+administrator evidence, including activity-stream refresh. Verify that this owner
+selection is deployed before configuring the pilot; do not substitute personal
+resources.
 
-The current five-minute queue deadline is insufficient for this automation.
-A separate CMA queue-policy fix must ship with ordinary GitHub dispatch. Queue
-expiry is a definite pre-dispatch failure (`agent_command_queue_timeout`), and
-CMAEG currently settles it as failed rather than resubmitting. Custom events also
-have a thirty-minute reference lifetime, and their terminal delivery currently
-opens that reference even without a reply. Queue policy and safe terminal
-settlement must be addressed together. Do not enable this
-pilot until the approved longer bounded policy and two-event online proof exist.
+The default queue wait remains five minutes. Both automation bindings explicitly
+opt into a longer `profile.queue_lifetime_seconds`, bounded at 86,400 seconds and
+sized from a measured full run and expected backlog. The shared Agent capacity
+remains 64. Policy changes and retries preserve already admitted deadlines.
+Queue expiry is a definite pre-dispatch failure (`agent_command_queue_timeout`);
+CMAEG settles it as failed without resubmitting. Already provider-accepted Custom
+and GitHub turns verify retained event identity and settle terminally after the
+reply reference expires. Reply and tool authority still expire on their original
+schedule. Do not enable this pilot until the policy's effective readback on both
+bindings and the mixed GitHub/Custom two-event online proof exist.
 
 The first consumer runs the complete chrono-goals sync through managed `gh api`,
 checks/builds, publishes its managed status PR and merges only after CI succeeds

@@ -81,6 +81,9 @@ impl BindingService {
         plan.session_affinity = SessionAffinity::Conversation;
         plan.agent = agent.profile.content.clone();
         plan.honoured = vec!["metadata.owner".into(), "target.existing_agent".into()];
+        if plan.queue_lifetime_seconds.is_some() {
+            plan.honoured.push("queue_lifetime_seconds".into());
+        }
         plan.refused = vec![
             BindingFieldRefusal { field: "profile".into(), reason: "existing Agent configuration is retained".into() },
             BindingFieldRefusal { field: "tools.native_mcp_url".into(), reason: "existing Agent credentials are retained; this channel supports automatic final replies".into() },
@@ -99,11 +102,35 @@ impl BindingService {
                     || value.existing_agent.as_ref() != Some(&borrowed)
                     || value.owner != plan.owner
                     || value.resource_owner() != owner
-                    || value.profile_digest != digest
                     || value.sandbox_id != lineage.sandbox.id
                     || value.workspace_id != workspace.id
                 {
                     return Err(BindingError::Conflict);
+                }
+                if value.profile_digest != digest {
+                    if value.profile.configuration_digest() != plan.configuration_digest()
+                        || value.key_sha256 != credential.sha256()
+                    {
+                        return Err(BindingError::Conflict);
+                    }
+                    // A queue-policy update never refreshes or applies Agent settings.
+                    let mut updated = value.profile.clone();
+                    updated.queue_lifetime_seconds = plan.queue_lifetime_seconds;
+                    updated.configuration_digest = plan.configuration_digest.clone();
+                    updated.profile_digest = plan.profile_digest.clone();
+                    updated.honoured = plan.honoured.clone();
+                    let next = value
+                        .reconfigure(updated, value.key_sha256.clone(), now_rfc3339())
+                        .map_err(|_| BindingError::Conflict)?;
+                    match self
+                        .store
+                        .save_binding(Some(value.revision), next.clone())
+                        .await
+                    {
+                        Ok(()) => return Ok(next),
+                        Err(crate::sandbox::store::SandboxStoreError::Conflict) => continue,
+                        Err(error) => return Err(error.into()),
+                    }
                 }
                 if value.key_sha256 == credential.sha256() {
                     return Ok(value.clone());
