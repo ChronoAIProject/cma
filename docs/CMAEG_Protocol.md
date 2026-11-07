@@ -2982,8 +2982,8 @@ support preserves records and performs no GitHub schema writes. New or changed
 GitHub sources remain subject to `github_writes_disabled`; retaining unchanged
 sources or removing them remains allowed.
 
-Startup prepares missing/version-1/version-2/version-3 storage with the existing database
-credential and commits the `github_integrations` version-4 marker last. It verifies
+Startup prepares missing/version-1/version-2/version-3/version-4 storage with the existing database
+credential and commits the `github_integrations` version-5 marker last. It verifies
 runtime authority and indexes before publishing readiness. Unknown versions fail
 closed; the 30-second initialization deadline or an error leaves GitHub unavailable
 until a later successful startup. No manual migration is required for a normal
@@ -2993,7 +2993,7 @@ kinds without executing legacy groups. There is no static App/proof/route loader
 Capabilities report `dynamic_app_registration`, `native_app_webhook`,
 `webhook_secret_rotation`, `app_identity_verification` and
 `ownership_verification` as implemented. **`automatic_reconciliation: false` and
-`durable_dispatch: false` are explicit absences in this intermediate release.**
+`durable_dispatch: true` is available after the receipt-first ordinary-dispatch migration.**
 No App private key, JWT signer, installation-token issuance or automatic GitHub
 inventory reconciliation is implemented. A signed lifecycle event is the automatic
 tightening signal; a missed event is not independently discovered by this service.
@@ -3113,17 +3113,17 @@ business deliveries are terminal ignored with a reason; future approval never
 routes them retroactively. Retired integrations instead refuse every webhook,
 including ping and exact redelivery, without creating a receipt.
 
-**An approved eligible business delivery currently returns 503
-`github_dispatch_unavailable` without consuming the delivery ID.** A later
-redelivery may be admitted after the dispatch release. Unsupported actions/events
-and lifecycle deliveries return ignored receipts. A 200 ignored receipt does not
-promise any turn. `receipt.task_ids` is empty in this release; future ordinary
-routing supplies admission IDs, never group IDs. `Task.result`, `TaskResult` and
+**An approved eligible business delivery commits a pending receipt and returns 202.**
+Bounded ordinary routed admission updates per-channel dispatch progress; a retry or
+recovery restores the same admission root. Unsupported actions/events and lifecycle
+deliveries return ignored receipts. A 200 ignored receipt does not promise any turn.
+`receipt.task_ids` contains only durably committed routed admission IDs, never group IDs. `Task.result`, `TaskResult` and
 its enum values are retained compatibility shapes but no Agent reply is parsed
 or used to populate them.
 
-Receipt roots have a fixed seven-day `retained_until`, mirrored by an authenticated
-expiry field in storage and a TTL index. Reads/replay reject expired retained rows
+Ignored receipt roots have a seven-day `retained_until`; pending business receipts
+use fourteen days so a late admission retains its full seven-day execution horizon.
+The authenticated expiry field and TTL index mirror that choice. Reads/replay reject expired retained rows
 with 410 `github_delivery_expired` before any dispatch; physical TTL deletion later
 makes lookup 404. Duplicates never extend retention. Ignored business/ping raw
 bodies last at most 24 hours; lifecycle bodies last seven days; compact ineligible

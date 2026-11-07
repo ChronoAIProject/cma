@@ -10,7 +10,7 @@ use cmaeg_core::seal::{open_blob, seal_blob, MasterKeyRing};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
-    options::{Acknowledgment, CollectionOptions, ReadConcern, WriteConcern},
+    options::{Acknowledgment, CollectionOptions, ReadConcern, ReturnDocument, WriteConcern},
     Collection, Database, IndexModel,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -19,6 +19,8 @@ use super::{
     schema::{runtime_role, COLLECTION},
     Error,
 };
+
+const PENDING_RECEIPT_RETENTION: i64 = 14 * 86400;
 
 pub(super) struct Store {
     database: Database,
@@ -39,6 +41,10 @@ struct Row {
     schema_version: i32,
     #[serde(default)]
     guard_revision: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lease_owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lease_until: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_at: Option<DateTime>,
     blob: Binary,
@@ -80,7 +86,7 @@ impl Store {
         }
         let marker = database
             .collection::<Document>(crate::records::mongo::MIGRATIONS)
-            .find_one(doc! {"_id":"github_integrations","version":4})
+            .find_one(doc! {"_id":"github_integrations","version":5})
             .read_concern(ReadConcern::majority())
             .await
             .map_err(|_| Error::Unavailable)?;
@@ -237,6 +243,101 @@ impl Store {
         Ok(ids)
     }
 
+    pub async fn create_delivery(
+        &self,
+        owner: &str,
+        delivery: &super::Delivery,
+    ) -> Result<(), Error> {
+        let row = self.row(&delivery.receipt.receipt_id, owner, "delivery", 1, delivery)?;
+        self.records
+            .insert_one(row)
+            .await
+            .map_err(|error| match error.kind.as_ref() {
+                mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(
+                    write,
+                )) if write.code == 11000 => Error::Conflict,
+                _ => Error::Unavailable,
+            })?;
+        Ok(())
+    }
+
+    pub async fn claim_delivery(
+        &self,
+        owner: &str,
+        id: &str,
+        now: i64,
+    ) -> Result<Option<(i64, super::Delivery)>, Error> {
+        let row = self
+            .records
+            .find_one_and_update(
+                doc! {
+                    "_id": id,
+                    "owner": owner,
+                    "kind": "delivery",
+                    "$or": [
+                        {"lease_until": {"$exists": false}},
+                        {"lease_until": {"$lte": now}},
+                    ],
+                },
+                doc! {
+                    "$set": {"lease_owner": format!("cmaeg-{}", uuid::Uuid::new_v4()), "lease_until": now.saturating_add(30)},
+                    "$inc": {"guard_revision": 1_i64},
+                },
+            )
+            .return_document(ReturnDocument::After)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let guard = row.guard_revision;
+        let (_, _, value) = self.open_row(row)?;
+        Ok(Some((guard, value)))
+    }
+
+    pub async fn update_delivery(
+        &self,
+        owner: &str,
+        id: &str,
+        guard: i64,
+        delivery: &super::Delivery,
+    ) -> Result<i64, Error> {
+        let row = self.row(id, owner, "delivery", 1, delivery)?;
+        let changed = self
+            .records
+            .update_one(
+                doc! {"_id":id,"owner":owner,"kind":"delivery","guard_revision":guard},
+                doc! {
+                    "$set": {"blob": row.blob, "expires_at": row.expires_at},
+                    "$inc": {"guard_revision": 1_i64},
+                },
+            )
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        if changed.matched_count != 1 {
+            return Err(Error::Retry);
+        }
+        Ok(guard.saturating_add(1))
+    }
+
+    pub async fn release_delivery(&self, owner: &str, id: &str, guard: i64) -> Result<(), Error> {
+        let changed = self
+            .records
+            .update_one(
+                doc! {"_id":id,"owner":owner,"kind":"delivery","guard_revision":guard},
+                doc! {
+                    "$unset": {"lease_owner": "", "lease_until": ""},
+                    "$inc": {"guard_revision": 1_i64},
+                },
+            )
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        if changed.matched_count != 1 {
+            return Err(Error::Retry);
+        }
+        Ok(())
+    }
+
     fn row(
         &self,
         id: &str,
@@ -255,9 +356,14 @@ impl Store {
                 .pointer("/receipt/retained_until")
                 .and_then(serde_json::Value::as_i64)
                 .ok_or(Error::Unavailable)?;
+            let max_retention = receipt_retention_limit(
+                value
+                    .pointer("/receipt/status")
+                    .and_then(serde_json::Value::as_str),
+            );
             if until <= self.current_time()
                 || until <= received
-                || until.saturating_sub(received) > 7 * 86400
+                || until.saturating_sub(received) > max_retention
             {
                 return Err(Error::DeliveryExpired);
             }
@@ -282,6 +388,8 @@ impl Store {
             version,
             schema_version: 1,
             guard_revision: 0,
+            lease_owner: None,
+            lease_until: None,
             expires_at,
             blob: Binary {
                 subtype: BinarySubtype::Generic,
@@ -445,6 +553,31 @@ impl Store {
         }
         Ok(values)
     }
+
+    pub async fn integration_owners(&self, limit: i64) -> Result<Vec<String>, Error> {
+        let mut cursor = self
+            .records
+            .find(doc! {"kind": "app_integration"})
+            .sort(doc! {"owner": 1})
+            .limit(limit)
+            .await
+            .map_err(|_| Error::Unavailable)?;
+        let mut owners = Vec::new();
+        while let Some(row) = cursor.try_next().await.map_err(|_| Error::Unavailable)? {
+            if owners.last() != Some(&row.owner) {
+                owners.push(row.owner);
+            }
+        }
+        Ok(owners)
+    }
+}
+
+fn receipt_retention_limit(status: Option<&str>) -> i64 {
+    if status == Some("ignored") {
+        7 * 86400
+    } else {
+        PENDING_RECEIPT_RETENTION
+    }
 }
 
 fn guarded_update(row: Row) -> Document {
@@ -459,5 +592,17 @@ fn transaction_error(error: mongodb::error::Error) -> Error {
         Error::Retry
     } else {
         Error::Unavailable
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::receipt_retention_limit;
+
+    #[test]
+    fn pending_receipts_cover_late_admission_execution() {
+        assert_eq!(receipt_retention_limit(Some("ignored")), 7 * 86400);
+        assert_eq!(receipt_retention_limit(Some("pending")), 14 * 86400);
+        assert_eq!(receipt_retention_limit(Some("accepted")), 14 * 86400);
     }
 }

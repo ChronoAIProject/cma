@@ -29,7 +29,7 @@ with the claimed event. Fork PRs use the top-level installed repository.
 | Repository owner mismatch | Persist exclusion and authority revision with ignored receipt |
 | Lifecycle delivery | 200 after authority/receipt transaction; no business task |
 | Unsupported business event/action | 200, ignored receipt |
-| Approved eligible business delivery in the first PR | 503 `github_dispatch_unavailable`; delivery ID is not consumed |
+| Approved eligible business delivery | 202 with a committed pending receipt; bounded dispatch reports per-channel progress |
 | Invalid signature/body/media | 401/400/415; no trusted receipt |
 | Oversized body | 413; no truncation into success |
 | Unavailable or uncertain storage | 503; recover using the original identity |
@@ -42,8 +42,10 @@ cannot increment authority twice.
 ## Persistence and query
 
 Ignored business/ping bodies are encrypted interaction chunks retained at most
-24 hours; lifecycle bodies are retained at most seven days. Receipt roots expire
-after seven days through the existing `expires_at`/TTL pattern.
+24 hours; lifecycle bodies are retained at most seven days. Ignored receipt roots
+retain seven days. Business receipts with pending dispatch retain fourteen days so
+an admission committed during recovery has its full seven-day execution horizon.
+Receipt roots use the existing `expires_at`/TTL pattern.
 Chunks precede the receipt root. A failed commit may leave expiring orphan chunks,
 never a successful partial receipt. Compact ignored receipts may retain no body.
 The public response never contains raw chunks or credentials.
@@ -64,21 +66,25 @@ jittered backoff within 3.5 seconds. Approval commits audit/idempotency atomical
 Management CAS version and effective eligibility revision are separate: unrelated
 repository events and already-applied exclusions do not advance authority revision.
 
-Version 4 storage is prepared through the existing flag-gated startup migration.
+Version 5 storage is prepared through the existing flag-gated startup migration.
 Unknown versions and unreadable legacy records fail closed; no static config
 loader or legacy execution worker remains. Receipt reads/replay return 410 after the recorded deadline while the row remains,
-then 404 after TTL removal. Duplicate recovery is bounded to seven days and never
+then 404 after TTL removal. Ignored duplicate recovery is bounded to seven days;
+pending business recovery is bounded to fourteen days and never
 renews the deadline. Legacy receipts receive one fixed seven-day migration stamp. The current release does not reconcile missed lifecycle
 events through the GitHub API.
 
 ## Execution boundary
 
-The first PR intentionally has no business dispatch. The follow-up uses
-`launch_github` and ordinary durable routed admission, one Event per delivery and
+`launch_github` uses ordinary durable routed admission, one Event per delivery and
 matching channel. Receipt progress, admission identity and execution outcome are
 separate facts. `Task.result` remains a v1 compatibility field and is never filled
 from Agent replies. Gateway task completion is not proof of a PR merge or Pages
-deployment. No execution groups, batching window or special board command exists.
+deployment. No execution groups, batching window or special board command exists. Recovery is
+owner-scoped and bounded to 64 records per owner page, 16 dispatch attempts per
+five-second tick, exponential backoff capped at 1,280 seconds, and a 30-second
+Mongo lease fence. The existing `(owner, kind, _id)` index supplies the recovery
+page; no other owner's delivery rows are scanned for an owner.
 
 Run receiver regressions with `cargo test --locked -p cmaeg --test github_source
 -- --ignored --test-threads=1` and process tests with `cargo test --locked -p cmaeg

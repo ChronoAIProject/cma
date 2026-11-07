@@ -60,7 +60,12 @@ impl Initialization {
             };
             gateway.attach_ingress(Arc::new(ingress));
             gateway.attach_activity(state.activity.clone());
-            let _ = state.github.set(Arc::new(gateway));
+            let gateway = Arc::new(gateway);
+            let _ = state.github.set(gateway.clone());
+            loop {
+                gateway.recover_tick().await;
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
         }))
     }
     pub(crate) fn stop(&self) {

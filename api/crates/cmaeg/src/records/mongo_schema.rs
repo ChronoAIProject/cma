@@ -162,7 +162,7 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
         .await
         .map_err(failure)?;
     let record_validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","blob","version","schema_version"],"properties":{
-    "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]}}}};
+    "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0}}}};
     let mut interaction_validator = record_validator.clone();
     let interaction_schema = interaction_validator
         .get_document_mut("$jsonSchema")
