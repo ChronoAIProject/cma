@@ -1,7 +1,5 @@
 //! Validated Mongo projection for durable agent-title coordination.
 
-use std::time::SystemTime;
-
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
     Agent, AgentTitle, AgentTitleClaim, AgentTitleClaimMode, AgentTitleClaimRequest,
@@ -9,6 +7,10 @@ use layer2_core::sandbox::{
 };
 use layer2_core::seconds_from_rfc3339;
 use mongodb::bson::{doc, Bson, DateTime, Document};
+
+#[path = "agent_title_claim_data.rs"]
+mod claim_data;
+pub(super) use claim_data::checked_claim_times;
 
 pub(super) const TITLE: &str = "title";
 const SOURCE: &str = "title_source";
@@ -27,6 +29,10 @@ const COMMIT_EXPIRES_AT: &str = "title_commit_expires_at";
 
 const TITLE_FIELDS: &[&str] = &[
     TITLE,
+    "title_attempt_count",
+    "title_next_attempt_at",
+    "title_settled",
+    claim_data::REGENERATION_LEASE,
     SOURCE,
     SET_AT,
     ATTEMPTED,
@@ -75,7 +81,7 @@ impl StoredClaim {
 }
 
 pub(super) struct TitleState {
-    pub(super) attempted: bool,
+    pub(super) retry: super::agent_title_retry::TitleRetry,
     pub(super) lease: Option<StoredClaim>,
     pub(super) stored: Option<StoredAgentTitle>,
     pub(super) completed_claim: Option<StoredClaim>,
@@ -107,6 +113,7 @@ pub(super) fn initial_title_fields(agent: &Agent) -> Result<Document, SandboxSto
         SOURCE: optional_string(title.as_ref().map(|_| AgentTitleSource::User.as_str())),
         SET_AT: optional_string(title.as_ref().map(|_| agent.created_at.as_str())),
         ATTEMPTED: false,
+        claim_data::REGENERATION_LEASE: Bson::Null,
         LEASE_HOLDER: Bson::Null,
         LEASE_TOKEN: Bson::Null,
         LEASE_MODE: Bson::Null,
@@ -149,10 +156,6 @@ pub(super) fn read_title_state(
         Some(_) => return corrupt(),
     };
     let lease = read_claim(document, ClaimFields::lease())?;
-    if lease.is_some() && !attempted {
-        return corrupt();
-    }
-
     let (completed_claim, user_commit_token) = read_commit(document)?;
     let source = optional_stored_string(document, SOURCE)?;
     let set_at = optional_stored_string(document, SET_AT)?;
@@ -208,8 +211,12 @@ pub(super) fn read_title_state(
         Some(_) if user_commit_token.is_some() => return corrupt(),
         _ => None,
     };
+    let lease = lease.or(claim_data::regeneration_lease(document, stored.as_ref())?);
+    if lease.is_some() && !attempted {
+        return corrupt();
+    }
     Ok(TitleState {
-        attempted,
+        retry: super::agent_title_retry::read(document)?,
         lease,
         stored,
         completed_claim,
@@ -217,16 +224,17 @@ pub(super) fn read_title_state(
     })
 }
 
-pub(super) fn claim_fields(claim: &AgentTitleClaim) -> Document {
-    let mut fields = doc! { ATTEMPTED: true };
-    insert_claim(&mut fields, ClaimFields::lease(), claim);
+pub(super) fn claim_fields(claim: &AgentTitleClaim, regenerating: bool) -> Document {
+    let mut fields = super::agent_title_retry::claim_fields(claim);
+    fields.insert(ATTEMPTED, true);
+    claim_data::write_lease(&mut fields, claim, regenerating);
     fields
 }
 
-pub(super) fn lease_filter(claim: &AgentTitleClaim) -> Document {
+pub(super) fn lease_filter(claim: &AgentTitleClaim, regenerating: bool) -> Document {
     let mut filter = Document::new();
     insert_claim(&mut filter, ClaimFields::lease(), claim);
-    filter
+    claim_data::lease_filter(filter, regenerating)
 }
 
 pub(super) fn automatic_completion_fields(
@@ -236,7 +244,12 @@ pub(super) fn automatic_completion_fields(
     set_at: &str,
 ) -> Document {
     let mut fields = completed_fields(title, source, set_at, claim.token());
+    fields.insert(
+        "title_settled",
+        claim.terminal_fallback() || source != AgentTitleSource::Fallback,
+    );
     clear_claim(&mut fields, ClaimFields::lease());
+    fields.insert(claim_data::REGENERATION_LEASE, Bson::Null);
     insert_claim(&mut fields, ClaimFields::commit(), claim);
     fields
 }
@@ -248,6 +261,7 @@ pub(super) fn user_completion_fields(
 ) -> Document {
     let mut fields = completed_fields(title, AgentTitleSource::User, set_at, operation_token);
     clear_claim(&mut fields, ClaimFields::lease());
+    fields.insert(claim_data::REGENERATION_LEASE, Bson::Null);
     clear_claim(&mut fields, ClaimFields::commit());
     fields.insert(COMMIT_TOKEN, operation_token);
     fields
@@ -463,20 +477,6 @@ fn corrupt<T>() -> Result<T, AgentTitleStoreError> {
     Err(AgentTitleStoreError::Corrupt)
 }
 
-pub(super) fn checked_claim_times(
-    now: SystemTime,
-    expires_at: SystemTime,
-) -> Result<(DateTime, DateTime), AgentTitleStoreError> {
-    let now = checked_datetime(now)?;
-    let expires_at = checked_datetime(expires_at)?;
-    Ok((now, expires_at))
-}
-
-fn checked_datetime(time: SystemTime) -> Result<DateTime, AgentTitleStoreError> {
-    let millis = time
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|_| AgentTitleStoreError::InvalidClaim)?
-        .as_millis();
-    let millis = i64::try_from(millis).map_err(|_| AgentTitleStoreError::InvalidClaim)?;
-    Ok(DateTime::from_millis(millis))
-}
+#[cfg(test)]
+#[path = "agent_title_rollback_tests.rs"]
+mod rollback_tests;

@@ -23,6 +23,7 @@ interface TreeRowProps {
   readonly parentId?: string;
   readonly level: 1 | 2 | 3;
   readonly label: string;
+  readonly accessibleLabel?: string;
   readonly icon: ReactNode;
   readonly meta?: ReactNode;
   readonly route?: AppRoute;
@@ -48,6 +49,7 @@ export function TreeRow({
   parentId,
   level,
   label,
+  accessibleLabel,
   icon,
   meta,
   route,
@@ -91,6 +93,7 @@ export function TreeRow({
     <div
       className="tree-row"
       role="treeitem"
+      aria-label={accessibleLabel}
       tabIndex={0}
       aria-level={level}
       aria-expanded={expanded}
@@ -130,6 +133,7 @@ export function TreeRow({
         </button>
       ) : (
         <a
+          aria-label={accessibleLabel}
           className="tree-row__label"
           href={disabled ? undefined : routePath(route)}
           role={disabled ? 'link' : undefined}

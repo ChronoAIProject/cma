@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { LocalAgentV2 } from './agent-v2.fixture';
 
-test('native operations survive real public history, keyboard replay and authorized UI reload without extra execution', async ({
+test('native operations survive real public history, complete scrollback and authorized UI reload without extra execution', async ({
   page,
   baseURL,
 }, info) => {
@@ -12,7 +12,7 @@ test('native operations survive real public history, keyboard replay and authori
     throw new Error('The running pinned native/public proof is required');
   const origin = readFileSync(addressFile, 'utf8');
   const fixture = new LocalAgentV2();
-  fixture.enabled = false;
+  fixture.enabled = true;
   const writes: string[] = [];
   page.on('request', (request) => {
     if (new URL(request.url()).pathname.startsWith('/api/') && request.method() !== 'GET')
@@ -21,6 +21,22 @@ test('native operations survive real public history, keyboard replay and authori
   try {
     await page.setViewportSize({ width: 1600, height: 1000 });
     await fixture.route(page, baseURL!);
+    await page.route('**/api/v2/ui/task-experience', (route) =>
+      route.fulfill({
+        json: {
+          object: 'cma.ui.task_experience',
+          schema_version: 1,
+          account_id: 'local-owner',
+          capabilities: {
+            task_home_admission: false,
+            suggested_followup_admission: false,
+            desktop_enable: false,
+            browser_takeover: false,
+            replay_presentation: true,
+          },
+        },
+      }),
+    );
     await page.route(
       /\/api\/v2\/agents\/agt_contract\/events\/(snapshot|head)(\?|$)/,
       async (route) => {
@@ -60,35 +76,38 @@ test('native operations survive real public history, keyboard replay and authori
     await page.goto('/agents/agt_contract');
     const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
     await computer.getByRole('tab', { name: 'Terminal' }).click();
-    const replay = computer.getByRole('region', { name: 'Operation record replay' });
-    const revealOutput = async (text: string) => {
-      const output = replay.getByLabel('Recorded output', { exact: true });
-      await expect(output).toHaveText(text);
-      await expect(output).not.toBeVisible();
-      await replay.locator('summary').click();
-      await expect(output).toBeVisible();
-    };
-    await revealOutput('native-replay-4\n');
-    await replay.getByRole('button', { name: 'Previous operation' }).click();
-    await revealOutput('native-replay-3\n');
-    await replay.getByRole('button', { name: 'Previous operation' }).press('ArrowLeft');
-    await revealOutput('native-replay-2\n');
-    const cursor = await replay.getByText(/^Cursor /).innerText();
-    await page.screenshot({ path: info.outputPath('native-operation-2-desktop.png') });
+    const output = computer.locator('#computer-page-activity');
+    for (const number of [1, 2, 3, 4])
+      await expect(output.getByText(`native-replay-${number}`, { exact: true })).toBeVisible();
+    await expect(output.getByRole('slider')).toHaveCount(0);
+    await expect(
+      output.getByRole('button', { name: /Previous operation|Return Live/ }),
+    ).toHaveCount(0);
+    await computer.getByRole('button', { name: 'Close computer' }).click();
+    await page.getByRole('button', { name: /^Ran 4 commands/ }).click();
+    const jump = page.getByRole('button', { name: 'View in Terminal', exact: true }).last();
+    await jump.click();
+    await expect(computer.getByRole('tab', { name: 'Terminal' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    const selected = output.locator('[data-command-id]').last();
+    await expect(selected).toBeFocused();
+    await expect
+      .poll(async () => (await selected.boundingBox())!.y - (await output.boundingBox())!.y)
+      .toBeCloseTo(16, 0);
+    await expect(selected).toHaveAttribute('data-highlighted', 'true');
+    await expect(selected).not.toHaveAttribute('data-highlighted', { timeout: 2500 });
+    await page.screenshot({ path: info.outputPath('native-operation-output-desktop.png') });
     await page.reload();
     await computer.getByRole('tab', { name: 'Terminal' }).click();
-    await revealOutput('native-replay-2\n');
-    await expect(replay.getByText(cursor, { exact: true })).toBeVisible();
-    await expect(replay.getByText('Turn 3', { exact: true })).toBeVisible();
+    for (const number of [1, 2, 3, 4])
+      await expect(output.getByText(`native-replay-${number}`, { exact: true })).toBeVisible();
     await expect(
-      replay.locator('input:not([type=range]), textarea, iframe, canvas, [contenteditable=true]'),
+      output.locator('input, textarea, iframe, canvas, [contenteditable=true]'),
     ).toHaveCount(0);
-    await replay.getByRole('button', { name: 'Return Live' }).press('End');
-    await revealOutput('native-replay-4\n');
     await page.setViewportSize({ width: 390, height: 844 });
-    await replay.getByRole('button', { name: 'Previous operation' }).click();
-    await revealOutput('native-replay-3\n');
-    expect(await replay.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+    expect(await output.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
       true,
     );
     await expect
@@ -97,13 +116,17 @@ test('native operations survive real public history, keyboard replay and authori
         return box.x + box.width;
       })
       .toBeLessThanOrEqual(390);
-    await page.screenshot({ path: info.outputPath('native-operation-3-mobile.png') });
+    await page.screenshot({ path: info.outputPath('native-operation-output-mobile.png') });
     expect(writes).toEqual([]);
     expect(fixture.writes).toEqual([]);
     expect(fixture.errors).toEqual([]);
     writeFileSync(
       release,
-      JSON.stringify({ cursor, replayed: [4, 3, 2, 2, 4, 3], mutation_requests: writes }),
+      JSON.stringify({
+        observed: [1, 2, 3, 4],
+        reload_preserved_scrollback: true,
+        mutation_requests: writes,
+      }),
     );
   } finally {
     await fixture.close(page);

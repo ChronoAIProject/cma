@@ -64,7 +64,13 @@ for (const theme of ['light', 'dark'] as const) {
         await page.getByRole('button', { name: 'Show navigation', exact: true }).click();
       const nav = page.getByRole('complementary', { name: 'Application navigation' });
       await expect(nav.getByRole('link', { name: 'Settings', exact: true })).toHaveCount(0);
-      await expect(nav.getByRole('button', { name: 'Settings', exact: true })).toHaveCount(0);
+      await expect(
+        nav.locator('.sidebar__actions').getByRole('button', { name: 'Settings', exact: true }),
+      ).toHaveCount(0);
+      await expect(nav.getByRole('button', { name: 'Settings', exact: true })).toHaveCount(1);
+      await expect(
+        nav.locator('.sidebar__account').getByRole('button', { name: 'Settings', exact: true }),
+      ).toBeVisible();
       const filter = nav.getByRole('button', { name: 'Filter', exact: true });
       await filter.click();
       const filters = nav.getByRole('group', { name: 'Navigation filters' });

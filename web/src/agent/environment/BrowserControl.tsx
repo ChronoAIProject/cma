@@ -32,6 +32,7 @@ export function BrowserControl({
   incarnation,
   contextId,
   active,
+  running = false,
   admissionAllowed = false,
   children,
 }: {
@@ -41,6 +42,7 @@ export function BrowserControl({
   readonly incarnation: string;
   readonly contextId: string;
   readonly active: boolean;
+  readonly running?: boolean;
   readonly admissionAllowed?: boolean;
   readonly children: ReactNode;
 }) {
@@ -289,14 +291,24 @@ export function BrowserControl({
               ? 'You are controlling'
               : view.value?.state === 'user'
                 ? 'Another client is controlling'
-                : 'Agent is controlling';
+                : running
+                  ? 'Agent is in control · Working in Browser'
+                  : 'Agent paused · Desktop is idle';
   return (
     <>
       <div className="agent-browser__control">
-        <p role="status">{label}</p>
+        <p className="workspace-control-status" role="status">
+          <span
+            className={`workspace-control-dot${running && !owned ? ' workspace-control-dot--running' : ''}`}
+            aria-hidden="true"
+          />
+          {label}
+        </p>
         {view.phase === 'ready' && view.value?.state === 'agent' ? (
           <Button
             size="sm"
+            variant="primary"
+            placement="workspace-take-control"
             disabled={!active || !admissionAllowed || sending}
             onClick={() => {
               void command('acquire');

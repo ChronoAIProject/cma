@@ -14,7 +14,9 @@ pub const AGENT_TITLE_MAX_SCALARS: usize = 64;
 pub const AGENT_TITLE_FALLBACK_SCALARS: usize = 48;
 pub const AGENT_TITLE_CALL_TIMEOUT_SECONDS: u64 = 10;
 pub const AGENT_TITLE_CLAIM_SECONDS: u64 = 45;
-pub const AGENT_TITLE_ATTEMPTS: usize = 2;
+pub const AGENT_TITLE_ATTEMPTS: usize = 1;
+pub const AGENT_TITLE_MAX_ATTEMPTS: u32 = 3;
+pub const AGENT_TITLE_RETRY_SECONDS: u64 = 60;
 pub const EMPTY_AGENT_TITLE_FALLBACK: &str = "New conversation";
 
 /// Why the write-once title was selected.
@@ -205,7 +207,7 @@ impl AgentTitleTranscript {
                 super::AgentLogKind::AgentMessage { content }
                     if turn_sequence.is_some() && owner.is_some() =>
                 {
-                    assistant.get_or_insert(content.as_str());
+                    assistant = Some(content.as_str());
                 }
                 super::AgentLogKind::TurnCompleted {
                     turn_sequence: completed,
@@ -362,11 +364,19 @@ impl fmt::Debug for AgentTitleGenerationResponse {
 /// Content-free runtime failure suitable for logs and retries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("agent title generation failed")]
-pub struct AgentTitleGenerationError;
+pub struct AgentTitleGenerationError {
+    permanent: bool,
+}
 
 impl AgentTitleGenerationError {
     pub const fn unavailable() -> Self {
-        Self
+        Self { permanent: false }
+    }
+    pub const fn permanent() -> Self {
+        Self { permanent: true }
+    }
+    pub const fn is_permanent(self) -> bool {
+        self.permanent
     }
 }
 

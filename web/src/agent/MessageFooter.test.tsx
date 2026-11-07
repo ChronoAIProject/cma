@@ -1,22 +1,60 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
 import { agentClient } from '../test/agent';
 import { MessageFooter, MessageTimestamp } from './MessageFooter';
 import { useMessageFeedback } from './useMessageFeedback';
 import type { CmaWebClient, MessageFeedback, MessageVote } from '../api/client';
 
-it('always renders the recorded Singapore time independent of browser timezone and rerenders', () => {
-  const view = render(<MessageTimestamp at="2026-10-20T17:03:59Z" />);
-  const time = screen.getByText('21 Oct 2026, 01:03 SGT');
-  expect(time).toHaveAttribute('datetime', '2026-10-20T17:03:59Z');
-  view.rerender(<MessageTimestamp at="2026-10-20T17:03:59Z" />);
-  expect(time).toBeVisible();
-  view.rerender(<MessageTimestamp />);
-  expect(screen.getByText('Time unavailable')).toBeVisible();
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+it('keeps a semantic timestamp and refreshes relative labels at their boundaries', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-11-05T00:00:59Z'));
+  const view = render(<MessageTimestamp at="2026-11-05T00:00:00Z" />);
+  const time = screen.getByText('just now');
+  expect(time.tagName).toBe('TIME');
+  expect(time).toHaveAttribute('datetime', '2026-11-05T00:00:00Z');
+  expect(time).toHaveAttribute('aria-live', 'off');
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  expect(time).toHaveTextContent('1 minute ago');
+  await act(() => vi.advanceTimersByTimeAsync(240000));
+  expect(time).toHaveTextContent('5 minutes ago');
+  vi.setSystemTime(new Date('2026-11-05T03:00:00Z'));
+  await act(async () => window.dispatchEvent(new Event('focus')));
+  expect(time).toHaveTextContent('3 hours ago');
+  vi.setSystemTime(new Date('2026-11-07T00:00:00Z'));
+  await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+  expect(time).toHaveTextContent('2 days ago');
   view.rerender(<MessageTimestamp at="invalid" />);
-  expect(screen.getByText('Time unavailable')).toBeVisible();
+  expect(view.container.querySelector('time')).toBeNull();
+  view.rerender(<MessageTimestamp />);
+  expect(view.container).toBeEmptyDOMElement();
+});
+
+it('places the three persistent action icons before time and omits obsolete footer details', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-11-05T00:05:00Z'));
+  const { container } = render(
+    <MessageFooter id="event:1" canVote committed content="Answer" at="2026-11-05T00:00:00Z" />,
+  );
+  const footer = container.querySelector('footer')!;
+  expect(
+    within(footer)
+      .getAllByRole('button')
+      .map((button) => button.getAttribute('aria-label')),
+  ).toEqual(['Copy content', 'Helpful', 'Needs improvement']);
+  const actions = footer.querySelector('.message-footer__actions')!;
+  expect(actions.nextElementSibling?.tagName).toBe('TIME');
+  expect(actions.nextElementSibling).toHaveTextContent('5 minutes ago');
+  expect(footer).not.toHaveTextContent(
+    /SGT|Worked for|input tokens|output tokens|View plan|Watch replay/,
+  );
+  expect(within(footer).getByRole('button', { name: 'Helpful' })).toBeDisabled();
 });
 
 it('copies actual content, acknowledges success, and handles clipboard failure without changing text', async () => {
@@ -33,7 +71,7 @@ it('copies actual content, acknowledges success, and handles clipboard failure w
   await actor.click(button);
   expect(copy).toHaveBeenCalledWith('**Exact**\nmessage');
   expect(screen.getByRole('status')).toHaveTextContent('Copied');
-  expect(screen.queryByRole('button', { name: 'Helpful' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Helpful' })).toBeDisabled();
   copy.mockRejectedValueOnce(new Error('Permission denied'));
   await actor.click(button);
   expect(screen.getByRole('status')).toHaveTextContent('Copy failed.');
@@ -177,6 +215,6 @@ it('aborts old-account writes, hides old votes immediately, and refuses feedback
     'false',
   );
   view.rerender(wrapped(client, 'other', false));
-  expect(first.queryByRole('button', { name: 'Helpful' })).toBeNull();
+  expect(first.getByRole('button', { name: 'Helpful' })).toBeDisabled();
   expect(first.getByRole('button', { name: 'Copy content' })).toBeEnabled();
 });
