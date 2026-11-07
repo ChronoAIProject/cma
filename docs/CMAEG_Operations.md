@@ -44,7 +44,7 @@ versions are refused without downgrading them.
 
 The normal rollout needs no `--migrate-automation` command or external migration
 script. Initialization verifies the existing credential's effective migration
-authority before DDL; it never creates users or grants roles. Shared-schema
+authority before DDL; it never creates users or grants roles. The v6 RECORDS validator/index change is part of the base Gateway migration role printed by `--print-migration-role`, not the automation-only role printed by `--print-automation-migration-role`. In shared-schema mode the deployed database credential must therefore retain `collMod`, `createIndex`, `createCollection` and update authority on the Gateway `eg_*` collections. If that authority is absent, the background guard migration fails closed, GitHub remains `store_ready: false`, and ordinary channels continue serving. Shared-schema
 deployments can use their existing database-scoped grants. Exact isolated-mode
 checks remain unchanged; a least-privilege runtime account can open prepared
 storage, but cannot initialize unprepared storage without the necessary authority.

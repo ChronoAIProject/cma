@@ -181,6 +181,9 @@ impl PlanStore {
             }
             None => self.create(&manifest.id, manifest, &bytes).await,
         };
+        if matches!(&result, Err(RecordError::GuardConflict { .. })) {
+            return Err(AdmissionError::GuardConflict);
+        }
         match result {
             Ok(()) | Err(RecordError::Conflict { .. }) | Err(RecordError::Unavailable(_)) => {
                 // A lost response is resolved by reading the immutable root. A

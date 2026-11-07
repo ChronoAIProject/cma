@@ -156,6 +156,14 @@ export const BindingSchema = object({
 });
 export type Binding = Output<typeof BindingSchema>;
 
+export const DispatchProgressSchema = object({
+  channel_id: text,
+  status: text,
+  reason: optional(nullable(text)),
+  admission_id: optional(nullable(text)),
+});
+export type DispatchProgress = Output<typeof DispatchProgressSchema>;
+
 export const ReceiptSchema = object({
   receipt_id: text,
   app_ref: text,
@@ -172,16 +180,7 @@ export const ReceiptSchema = object({
   body_sha256: text,
   task_ids: array(text),
   authority_revision: integer,
-  dispatch: optional(
-    array(
-      object({
-        channel_id: text,
-        status: text,
-        reason: optional(nullable(text)),
-        admission_id: optional(nullable(text)),
-      }),
-    ),
-  ),
+  dispatch: optional(nullable(array(DispatchProgressSchema))),
 });
 export type Receipt = Output<typeof ReceiptSchema>;
 
