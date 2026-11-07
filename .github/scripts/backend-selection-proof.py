@@ -10,6 +10,7 @@ from collections import Counter
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -81,6 +82,28 @@ def old_libtest(args, suites):
     return selected
 
 
+def mongo_filters(source):
+    """Read the literal filter template and its three modes without running fixtures."""
+    template = shlex.split(next(line.strip() for line in source.splitlines()
+                                if line.strip().startswith("-E ")))[1]
+    scale_name = shlex.split(next(line for line in source.splitlines()
+                                 if line.startswith("readonly scale_test=")))[1].split("=", 1)[1]
+    predicates = {"all": "all()"}
+    for mode in ("scale", "ordinary"):
+        line = next(line.strip() for line in source.splitlines() if line.strip().startswith(f"{mode})"))
+        predicate = re.search(r'selection_filter="([^"]+)"', line).group(1)
+        # The pre-split source selected cma during compilation; reuse must
+        # express the same package restriction in the filter instead.
+        if mode == "scale" and "packages=(-p cma)" in line:
+            predicate = "package(=cma) and " + predicate
+        predicates[mode] = predicate.replace("$scale_test", scale_name)
+    filters = {mode: template.replace("$selection_filter", predicate)
+               for mode, predicate in predicates.items()}
+    if any("$" in expression for expression in filters.values()):
+        raise ValueError("Unresolved Mongo filter variable")
+    return filters
+
+
 def main():
     if len(sys.argv) != 3 or os.environ.get("CMA_NEXTEST_REUSE") != "1":
         raise SystemExit("usage: CMA_NEXTEST_REUSE=1 python3 backend-selection-proof.py BASELINE_SCRIPTS OUTPUT")
@@ -124,10 +147,16 @@ def main():
         compare(f"image-manager-{index:02}", expected, old_nextest(new))
     old_source = (baseline / "mongo-contract-tests.sh").read_text()
     new_source = (ROOT / ".github/scripts/mongo-contract-tests.sh").read_text()
-    def mongo_selection(text):
-        return shlex.split(next(line.strip() for line in text.splitlines() if line.strip().startswith("-E ")))[1]
-    compare("mongo", list_tests(["-E", mongo_selection(old_source), "--run-ignored", "only"])[0],
-            list_tests(["-E", mongo_selection(new_source), "--run-ignored", "only"])[0])
+    before_filters, after_filters = mongo_filters(old_source), mongo_filters(new_source)
+    mongo_sets = {}
+    for mode in ("all", "scale", "ordinary"):
+        old = list_tests(["-E", before_filters[mode], "--run-ignored", "only"])[0]
+        new = list_tests(["-E", after_filters[mode], "--run-ignored", "only"])[0]
+        compare(f"mongo-{mode}", old, new)
+        mongo_sets[mode] = new
+    if len(mongo_sets["scale"]) != 1 or mongo_sets["scale"] & mongo_sets["ordinary"]:
+        raise AssertionError("Mongo scale must run exactly once outside ordinary partitions")
+    compare("mongo-split-union", mongo_sets["all"], mongo_sets["scale"] | mongo_sets["ordinary"])
     compare("cmaeg-latency", old_nextest(["-p", "cmaeg", "-E", "test(latency_budget)", "--run-ignored", "ignored-only"]),
             list_tests(["-E", "package(=cmaeg) and test(~latency_budget)", "--run-ignored", "only"])[0])
     (output / "summary.json").write_text(json.dumps({"selections": reports, "shards": [len(s) for s in shards], "duplicates": 0}, indent=2) + "\n")

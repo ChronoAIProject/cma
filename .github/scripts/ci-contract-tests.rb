@@ -300,6 +300,17 @@ else
       reject.call("#{id} step #{index}: override hook") { |v| (v["ci"]["jobs"][id]["steps"][index]["env"] ||= {})["BASH_ENV"] = "/dev/null" }
     end
   end
+  %w[backend-tests backend-timing backend-mongo backend-image-manager cmaeg-latency backend].each do |id|
+    reject.call("#{id}: unnecessary capacity preparation") do |v|
+      capacity = v["ci"]["jobs"]["backend-lint"]["steps"][1]
+      v["ci"]["jobs"][id]["steps"].insert(1, capacity)
+    end
+  end
+  %w[cmaeg-latency backend].each do |id|
+    reject.call("#{id}: resource hook outside former Backend workload") do |v|
+      (v["ci"]["jobs"][id]["env"] ||= {})["BASH_ENV"] = "${{ github.workspace }}/.github/scripts/backend-resource-env.sh"
+    end
+  end
   ids = CIContract::BACKEND_NEEDS + %w[cmaeg-latency backend]
   ids.each do |id|
     reject.call("#{id}: wrong name") { |v| v["ci"]["jobs"][id]["name"] += " optional" }

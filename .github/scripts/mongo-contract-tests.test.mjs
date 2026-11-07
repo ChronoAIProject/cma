@@ -89,12 +89,13 @@ if (command === 'openssl') {
 }
 fs.appendFileSync(log, JSON.stringify({command,args,uri:process.env.CHRONO_TEST_MONGODB_URI})+'\\n');
 if (command === 'cargo') {
+  if (args[1] === 'run' && args.filter(value => value === '--no-tests').length !== 1) process.exit(24);
   if (args[1] === 'list') {
     if (scenario === 'list-error') process.exit(7);
     if (scenario === 'list-malformed') { console.log('invalid-json'); process.exit(0); }
     const count = scenario === 'list-empty' ? 0 : scenario.startsWith('batches') ? 161 : 80;
     const testcases = Object.fromEntries(Array.from({length:count}, (_, index) => [
-      'contract_'+index, {ignored:scenario !== 'list-not-ignored', 'filter-match':{status:'matches'}},
+      'store::usage_reports::tests::ordinary_'+index, {ignored:scenario !== 'list-not-ignored', 'filter-match':{status:'matches'}},
     ]));
     if (!['list-empty', 'list-no-scale'].includes(scenario)) {
       testcases[${JSON.stringify(scaleTest)}] = {ignored:scenario !== 'list-scale-not-ignored', 'filter-match':{status:'matches'}};
@@ -110,6 +111,10 @@ if (command === 'cargo') {
   const match = /^count:([1-9][0-9]*)\\/([1-9][0-9]*)$/.exec(partition);
   if (!match) process.exit(8);
   const index = scale ? 0 : Number(match[1]);
+  const count = scenario.startsWith('batches') ? 161 : 80;
+  const selected = scale ? [${JSON.stringify(scaleTest)}] : Array.from({length:count}, (_, i) =>
+    'store::usage_reports::tests::ordinary_'+i).filter((_, i) => i % Number(match[2]) === index-1);
+  fs.writeFileSync(log+'.selected-'+index, JSON.stringify(selected));
   fs.writeFileSync(log+'.started-'+index, 'started');
   if ((scenario === 'scale-empty' && scale) || (scenario === 'ordinary-empty' && index === 1)) {
     console.log('Starting 0 tests');
@@ -230,6 +235,11 @@ for (const reuse of [false, true]) {
           assert.equal(row.args[row.args.indexOf('-E') + 1], `${row === cargo[0] ? 'package(=cma) and ' : 'not '}test(=${scaleTest}) & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`);
         }
         for (const index of [0, 1, 2]) assert.ok(existsSync(`${f.log}.finished-${index}`), 'both partitions must finish, including after one fails');
+        const scale = JSON.parse(readFileSync(`${f.log}.selected-0`));
+        const ordinary = [1, 2].flatMap(index => JSON.parse(readFileSync(`${f.log}.selected-${index}`)));
+        assert.deepEqual(scale, [scaleTest]);
+        assert.equal(ordinary.length, 80);
+        assert.equal(new Set([...scale, ...ordinary]).size, 81, 'scale plus ordinary partitions select every mock test exactly once');
         const created = calls.filter(row => row.args[0] === 'run').map(row => row.args[row.args.indexOf('--name') + 1]);
         assert.equal(new Set(created).size, 3);
         const scaleCleanup = calls.findIndex(row => row.args[0] === 'volume' && row.args[1] === 'rm' && row.args[2] === `${created[0]}-data`);
@@ -377,6 +387,7 @@ for (const reuse of [false, true]) {
         const cargo = f.calls().filter(row => row.command === 'cargo' && row.args[1] === 'run');
         assert.equal(cargo.length, 3, 'the remaining contracts still run after an empty invocation');
         for (const row of cargo) {
+          assert.equal(row.args.filter(value => value === '--no-tests').length, 1);
           assert.equal(row.args[row.args.indexOf('--no-tests')+1], 'fail');
         }
         const empty = scenario === 'scale-empty' ? 0 : 1;
