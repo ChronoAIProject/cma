@@ -11,6 +11,8 @@ import time
 
 TESTS_PER_FIXTURE = 40
 CONCURRENT_FIXTURES = 2
+SCALE_TEST = ("store::usage_reports::tests::scale::"
+              "metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages")
 
 
 def partition_count(script):
@@ -20,17 +22,22 @@ def partition_count(script):
     )
     metadata = json.loads(listing.stdout)
     selected = [
-        test
+        (name, test)
         for suite in metadata["rust-suites"].values()
-        for test in suite["testcases"].values()
+        for name, test in suite["testcases"].items()
         if test["filter-match"]["status"] == "matches"
     ]
-    if not selected or not all(test["ignored"] for test in selected):
+    if not selected or not all(test["ignored"] for _, test in selected):
         raise ValueError("Mongo contracts must select a nonempty ignored-test set")
-    count = math.ceil(len(selected) / TESTS_PER_FIXTURE)
+    if sum(name == SCALE_TEST for name, _ in selected) != 1:
+        raise ValueError("Exactly one ignored reporting scale contract is required")
+    ordinary = len(selected) - 1
+    if ordinary == 0:
+        raise ValueError("Ordinary Mongo contract selection must not be empty")
+    count = math.ceil(ordinary / TESTS_PER_FIXTURE)
     print(f"Mongo contracts: {len(selected)} tests, {count} partitions, "
           f"at most {TESTS_PER_FIXTURE} tests per fixture, "
-          f"{CONCURRENT_FIXTURES} concurrent fixtures", flush=True)
+          f"{CONCURRENT_FIXTURES} concurrent ordinary fixtures; scale runs alone first", flush=True)
     return count
 
 
@@ -50,6 +57,12 @@ def run(script):
     signal.signal(signal.SIGINT, interrupt)
     signal.signal(signal.SIGTERM, interrupt)
     try:
+        # A fresh fixture gets the entire resource window. Its exit includes
+        # owned-container/volume cleanup before any ordinary fixture starts.
+        scale = subprocess.Popen(["bash", str(script), "--scale"], start_new_session=True)
+        children.append(scale)
+        while not interrupted and scale.poll() is None:
+            time.sleep(0.1)
         next_partition = 1
         # Failures remain failures, while every remaining partition still runs.
         while not interrupted:
@@ -86,7 +99,7 @@ def run(script):
                     pass
                 child.wait()
         return 128 + interrupted
-    return 0 if len(children) == count and all(child.returncode == 0 for child in children) else 1
+    return 0 if len(children) == count + 1 and all(child.returncode == 0 for child in children) else 1
 
 
 if __name__ == "__main__":
