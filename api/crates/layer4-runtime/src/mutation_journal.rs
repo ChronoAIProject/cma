@@ -9,6 +9,8 @@ use crate::failure::{Result, RuntimeError};
 
 #[path = "mutation_journal_io.rs"]
 mod io;
+#[path = "mutation_journal_lookup.rs"]
+mod lookup;
 #[path = "mutation_operation.rs"]
 mod operation;
 #[path = "mutation_journal_validation.rs"]
@@ -90,14 +92,10 @@ pub(crate) struct Pending {
 
 pub(crate) fn admitted(config: &RuntimeConfig, operation: &Operation) -> Result<bool> {
     validation::validate_operation(operation, config)?;
-    let records = records(config)?;
-    let Some(record) = records
-        .iter()
-        .find(|record| record.operation_id == operation.operation_id)
-    else {
+    let Some(record) = lookup::find(config, operation)? else {
         return Ok(false);
     };
-    ensure_exact(record, operation)?;
+    ensure_exact(&record, operation)?;
     Ok(true)
 }
 
@@ -114,10 +112,7 @@ pub(crate) fn begin<T: DeserializeOwned>(
         &crate::mutation_scope::root(config, &operation.subject),
         &operation.operation_id,
     );
-    if let Some(record) = records(config)?
-        .into_iter()
-        .find(|record| record.operation_id == operation.operation_id)
-    {
+    if let Some(record) = lookup::find(config, operation)? {
         return resolve_existing(path, record, operation);
     }
     crate::mutation_capacity::check(config, std::slice::from_ref(operation))?;
