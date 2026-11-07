@@ -207,7 +207,7 @@ impl Gateway {
                 }
                 Ok(_) => None,
             },
-            Err(crate::github::Error::NotFound) => None,
+            Err(crate::github::Error::NotFound | crate::github::Error::Retired) => None,
             Err(_) => {
                 authority_retry = true;
                 None
