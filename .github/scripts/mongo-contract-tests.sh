@@ -16,6 +16,7 @@ nextest_contracts() {
   local selection_filter='all()'
   case "$selection" in
     scale) selection_filter="package(=cma) and test(=$scale_test)" ;;
+    cpu-profile) selection_filter="package(=cma) and test(::cpu_profile::)" ;;
     ordinary) selection_filter="not test(=$scale_test)" ;;
   esac
   nextest_build "$@" --run-ignored only \
@@ -31,6 +32,8 @@ if [[ $# == 1 && "$1" == '--list' ]]; then
 fi
 if [[ $# == 1 && "$1" == '--scale' ]]; then
   selection='scale'
+elif [[ $# == 1 && "$1" == '--cpu-profile' ]]; then
+  selection='cpu-profile'
 else
   [[ $# == 1 && "$1" =~ ^count:([1-9][0-9]{0,5})/([1-9][0-9]{0,5})$ ]] || exit 2
   [[ ${BASH_REMATCH[1]} -le ${BASH_REMATCH[2]} ]] || exit 2
@@ -113,7 +116,7 @@ endpoint=$(docker port "$contract_name" 27017/tcp)
 export CHRONO_TEST_MONGODB_URI="mongodb://${endpoint}/?directConnection=true&replicaSet=cma_ci"
 export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
 cd "$repo_root/api"
-if [[ "$selection" == 'scale' ]]; then
+if [[ "$selection" == 'scale' || "$selection" == 'cpu-profile' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --success-output final
 else
   nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition"

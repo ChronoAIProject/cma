@@ -59,6 +59,53 @@ numbers, never names, query text, credentials or cursor contents. The production
 query, circuit thresholds, pool size and recovery behavior are unchanged. No
 query prototype, automatic retry or extra isolation is part of these diagnostics.
 
+## Local API CPU Profiles
+
+Run the synthetic API component profiles from the repository root with Docker,
+Cargo, cargo-nextest and `ps` available. Acquire the team's shared heavy-build
+lock first on shared development machines, and keep Cargo concurrency bounded:
+
+```sh
+CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 RUSTFLAGS='-C debuginfo=0' \
+  RUST_MIN_STACK=16777216 \
+  bash .github/scripts/mongo-contract-tests.sh --cpu-profile
+```
+
+The runner discards caller Mongo URIs and creates an owned, pinned replica set
+on a loopback port. It removes only its labelled container and volume on exit.
+It runs the two `cpu_profile` modules serially against synthetic records:
+connection discovery and authority reads, idle stream snapshots, and actual
+cleanup claim/failure transactions with deterministic in-memory provider errors.
+The ordinary Mongo-contract selection also includes these modules. Both modes
+use the shared Backend nextest wrapper: local runs build the workspace, while
+`CMA_NEXTEST_REUSE=1` uses an archive already extracted at its original paths.
+The CPU profile uses a package/test predicate in either mode, runs serially,
+and fails an empty selection through the wrapper's single `--no-tests fail`.
+
+Each `CPU_PROFILE` line contains aggregate JSON. `phase` identifies the measured
+operation. `cpu_seconds` is the Rust test process's accumulated user + system
+time from `ps`; it excludes Mongo and Docker CPU and has host-dependent
+resolution. `wall_seconds` measures elapsed execution. Per-iteration fields
+normalize these totals by the number of calls. `mean_cores` divides process CPU
+time by elapsed execution time; it is not an estimate for the deployed API.
+Mongo checkouts are counted by the driver's CMAP callback, without command
+monitoring that would add reply-decoding overhead.
+
+The `steady_removal_logical_hour_10000_entries` phase offers one due scan per
+logical second for an hour to an already repeatedly failing cleanup. Calls run
+serially without waiting for logical seconds to elapse. Durable due times decide
+which attempts run. `checkouts_per_logical_second` and
+`cpu_cores_per_logical_second` normalize by the offered logical duration, not
+wall time. Checkout totals include due discovery; the separate per-attempt
+cleanup measurement also includes a post-attempt state observation.
+
+Compare revisions using the same fixtures, toolchain, build flags and host load.
+Retain the aggregate JSON outside the repository or with the issue discussing
+the measurements. Small timings may be below `ps` resolution. Long histories
+are stress fixtures; these serial component measurements do not model a full
+serving process, provider latency, production CPU savings or replica scaling.
+No timing threshold is used as a correctness assertion.
+
 ## Backend Capacity Preparation
 
 `Prepare Backend capacity` runs in `Backend lint` and `Backend test build`,
