@@ -369,3 +369,6 @@ async fn budget_deferral_preserves_an_existing_sweep_without_polling_it() {
 
 #[path = "reconciliation_home_inventory_tests.rs"]
 mod home_inventory;
+
+#[path = "reconciliation_binding_tests.rs"]
+mod binding_tests;

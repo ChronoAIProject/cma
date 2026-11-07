@@ -218,3 +218,28 @@ async fn resumed_home_cleanup_rechecks_newly_published_ownership() {
         ]
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn held_binding_keeps_its_home_while_independent_orphan_cleanup_continues() {
+    let local = Homes::new("local", 2);
+    let native = Homes::new("native", 0);
+    let (store, reconciler) = reconciler(&local, &native).await;
+    let mut held = sandbox(0);
+    held.id = SandboxId(local.rows[0].request.sandbox_id.clone());
+    store.inner.create_sandbox(held.clone()).await.unwrap();
+    store.fail("get", held.id.as_str(), Failure::Unavailable);
+    complete(&reconciler).await;
+    assert_eq!(
+        *local.removed.lock().unwrap(),
+        [local.rows[1].request.volume_id.clone()]
+    );
+    assert_eq!(
+        store
+            .keys("get")
+            .iter()
+            .filter(|id| *id == held.id.as_str())
+            .count(),
+        1
+    );
+    assert!(reconciler.binding_holds.contains(held.id.as_str()));
+}

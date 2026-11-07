@@ -1,4 +1,4 @@
-//! Checkpoints only move after a bounded page/item has returned successfully.
+//! Failed bindings advance under a protective hold; other checkpoints require success.
 use super::{
     authority::Authority,
     corrupt, provider_error,
@@ -33,6 +33,7 @@ struct Sweep {
     inventory: Vec<RuntimeObservation>,
     authority: Authority,
     binding_cursor: Option<SandboxId>,
+    pending_binding: Option<SandboxId>,
     recovery_candidate: Option<SandboxId>,
     runtime_index: usize,
     claim_inventory: Option<Box<dyn layer3_adapter::InventoryCursor<NativePoolClaim>>>,
@@ -51,6 +52,7 @@ impl Default for Sweep {
             inventory: Vec::new(),
             authority: Authority::default(),
             binding_cursor: None,
+            pending_binding: None,
             recovery_candidate: None,
             runtime_index: 0,
             claim_inventory: None,
@@ -65,18 +67,34 @@ impl Default for Sweep {
 }
 
 impl SandboxReconciler {
-    pub(in crate::sandbox) async fn run_due(
-        &self,
-        now: SystemTime,
-    ) -> Result<bool, SandboxStoreError> {
+    pub(crate) async fn run_due(&self, now: SystemTime) -> Result<bool, SandboxStoreError> {
         let mut progress = self.progress.lock().await;
         let Progress { sweep, telemetry } = progress.get_or_insert_with(Progress::default);
+        // A cancelled binding already has protection/backoff from its drop guard.
+        sweep.pending_binding = None;
+        let _holds_report = self.binding_holds.report_on_drop();
         let mut attempt = telemetry.attempt();
         let started = tokio::time::Instant::now();
         let complete = loop {
             attempt.start(sweep.phase);
             match tokio::time::timeout(OPERATION, sweep.step(self, now)).await {
                 Ok(Ok(items)) => attempt.record(items),
+                Ok(Err(error)) if sweep.pending_binding.is_some() => {
+                    let reason = match error {
+                        SandboxStoreError::Unavailable(_) => "unavailable",
+                        SandboxStoreError::Corrupt(_) => "corrupt",
+                        SandboxStoreError::Conflict => "conflict",
+                        _ => "refused",
+                    };
+                    self.binding_holds
+                        .failed(&sweep.pending_binding.take().unwrap(), reason);
+                    attempt.record(0);
+                }
+                Err(_) if sweep.pending_binding.is_some() => {
+                    self.binding_holds
+                        .failed(&sweep.pending_binding.take().unwrap(), "deadline");
+                    attempt.record(0);
+                }
                 Ok(Err(error)) => {
                     attempt.finish("unavailable");
                     return Err(error);
@@ -128,6 +146,9 @@ impl Sweep {
                 let items = page.items.len() as u64;
                 if self.authority.accept(page)? {
                     self.phase = if self.phase == Phase::Authority {
+                        reconciler
+                            .binding_holds
+                            .retain_authority(&self.authority.items);
                         Phase::Bindings
                     } else {
                         self.recovery_candidate =
@@ -149,9 +170,20 @@ impl Sweep {
                     .next()
                     .map(|(id, _)| id.clone());
                 if let Some(id) = next {
+                    // Advance before I/O: cancellation must not pin this cursor.
+                    // The guard retains protection until a successful fresh check.
+                    self.binding_cursor = Some(id.clone());
+                    let Some(hold) = reconciler
+                        .binding_holds
+                        .begin(&self.authority.items[&id], &self.inventory)
+                    else {
+                        return Ok(0);
+                    };
+                    self.pending_binding = Some(id.clone());
                     // A retained page is discovery only. Reread before adoption
                     // or recovery so a previous attempt's write is replay-safe.
                     if let Some(sandbox) = reconciler.store.get_sandbox(&id).await? {
+                        hold.observe(&sandbox, &self.inventory);
                         sandbox
                             .validate()
                             .map_err(|error| corrupt(&error.to_string()))?;
@@ -159,7 +191,8 @@ impl Sweep {
                             .reconcile_binding(&sandbox, &self.inventory, now)
                             .await?;
                     }
-                    self.binding_cursor = Some(id);
+                    hold.complete();
+                    self.pending_binding = None;
                     return Ok(1);
                 }
                 self.authority = Authority::default();
@@ -167,9 +200,12 @@ impl Sweep {
             }
             Phase::Runtimes => {
                 if let Some(observed) = self.inventory.get(self.runtime_index) {
-                    reconciler.reconcile_runtime(observed).await?;
+                    let held = reconciler.binding_holds.protects_runtime(observed);
+                    if !held {
+                        reconciler.reconcile_runtime(observed).await?;
+                    }
                     self.runtime_index += 1;
-                    return Ok(1);
+                    return Ok(u64::from(!held));
                 }
                 self.inventory.clear();
                 self.phase = Phase::ClaimInventory;
@@ -191,9 +227,14 @@ impl Sweep {
             }
             Phase::Claims => {
                 if let Some(claim) = self.claims.front() {
-                    reconciler.reconcile_native_claim(claim).await?;
+                    let held = reconciler
+                        .binding_holds
+                        .contains(&claim.request.home.sandbox_id);
+                    if !held {
+                        reconciler.reconcile_native_claim(claim).await?;
+                    }
                     self.claims.pop_front();
-                    return Ok(1);
+                    return Ok(u64::from(!held));
                 }
                 self.phase = Phase::HomeInventory;
             }
@@ -214,9 +255,12 @@ impl Sweep {
             }
             Phase::Homes => {
                 if let Some(home) = self.homes.front() {
-                    reconciler.reconcile_home(home).await?;
+                    let held = reconciler.binding_holds.contains(&home.request.sandbox_id);
+                    if !held {
+                        reconciler.reconcile_home(home).await?;
+                    }
                     self.homes.pop_front();
-                    return Ok(1);
+                    return Ok(u64::from(!held));
                 }
                 self.phase = if reconciler.failed_runtime_recovery.is_some() {
                     Phase::RecoveryAuthority
@@ -226,7 +270,9 @@ impl Sweep {
             }
             Phase::Recovery => {
                 if let Some(id) = &self.recovery_candidate {
-                    reconciler.recover_failed_unpublished_runtime(id).await;
+                    if !reconciler.binding_holds.contains(id.as_str()) {
+                        reconciler.recover_failed_unpublished_runtime(id).await;
+                    }
                 }
                 self.authority = Authority::default();
                 self.phase = Phase::Policy;
@@ -276,6 +322,10 @@ impl Sweep {
                     .candidates
                     .front()
                     .expect("candidate is retained until admission finishes");
+                if reconciler.binding_holds.contains(id.as_str()) {
+                    self.next_candidate();
+                    return Ok(0);
+                }
                 if let Some(agents) = &reconciler.profile_agents {
                     if agents.reconcile_profile_agents(id).await.is_err() {
                         tracing::warn!(parent: None, phase = "profiles", reason = "unavailable", "automatic profile agent reconciliation failed");
