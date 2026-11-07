@@ -25,6 +25,24 @@ workspace build, and doctests. Doctests cannot be archived.
 The independent producer runs `cargo nextest archive --workspace --locked`.
 Producers and consumers install exactly `cargo-nextest@0.9.151`.
 
+Immediately after checkout, lint and test-build run `Prepare Backend capacity`
+from the repository root, before toolchain installation, cache restore or any
+compilation. The unchanged best-effort helper reclaims only its audited unused
+SDK paths and adds swap within the measured reclaimed-space budget. It addresses
+observed disk/swap exhaustion in the compiling workload. Consumers only extract
+and run the archive, with a much smaller disk/memory footprint and no measured
+need for this roughly 119-second preparation; adding it there would cost about
+two minutes on the critical path. See
+[capacity policy](CI_Contracts.md#backend-capacity-preparation).
+
+Lint, test-build, all three test shards, timing, Mongo and Image Manager set the
+job-level `BASH_ENV` to
+`${{ github.workspace }}/.github/scripts/backend-resource-env.sh`. This retains
+the former Backend job's diagnostic sampling, including during timing budgets.
+It does not wrap gates or change their exit status. The exact contract rejects
+step-level `shell`/`BASH_ENV` overrides and `defaults.run.shell`. CMAEG latency
+and the aggregate `Backend` check do not use the hook.
+
 The artifact is `backend-tests`, with one-day retention, no upload compression,
 `if-no-files-found: error` and `overwrite: true`. Its name does not contain
 `run_attempt`: rerunning only failed consumers reuses the successful producer's
@@ -59,7 +77,9 @@ retry and `api/target/cmaeg-latency.txt` upload.
 Job timeouts are 45 minutes for lint/build/shards, 35 for timing, 90 for Mongo,
 30 for Image Manager, 15 for CMAEG latency and 5 for the join. These exceed twice
 the supplied worst measured durations. Mongo retains its 75-minute step limit;
-Image Manager retains its 10-minute contract step limit.
+Image Manager retains develop's 15-minute contract step limit for fixture
+setup/cleanup, 14 archived groups and the browser contract. No compilation occurs
+in that step.
 
 ## Artifact dependency audit
 
@@ -100,10 +120,29 @@ coordinator inherits the same mode for its listing and every child partition;
 it neither extracts nor compiles on its own.
 
 Both modes discard caller Mongo URIs, create their own pinned disposable
-fixtures, and retain their ownership checks and cleanup scope. Mongo still uses
-at most two independent fixtures, with at most 40 tests per fixture and one test
-process per fixture. Image Manager uses one authenticated replica set and runs
-all its invocation groups sequentially.
+fixtures, and retain their ownership checks and cleanup scope. Mongo runs the
+20,001-Sandbox report-generation scale contract once in its own fresh fixture,
+then waits for cleanup before starting ordinary partitions. Those partitions
+exclude the exact scale name and run at most two independent fixtures, with at
+most 40 tests per fixture and one test process per fixture. Scale failure stays
+a failure while ordinary partitions are still attempted; cancellation stops the
+active process groups and cleans only their owned fixtures.
+
+Scale mode uses `package(=cma) and test(=full_test_name)` inside the common
+ignored-only selection. This is equivalent to develop's `-p cma` and exact name
+filter, while working with extracted metadata. Ordinary mode keeps the whole
+workspace corpus minus that exact name. Together the selections are disjoint
+and cover the original corpus; the coordinator rejects missing or duplicate
+scale entries and an empty ordinary set. The wrapper alone supplies
+`--no-tests fail`, once per run.
+
+Image Manager uses one authenticated replica set with
+`--setParameter enableTestCommands=1` and runs all 14 groups sequentially. The
+`organization_channels::` group follows `github_integrations::` and precedes
+`github_source`. Its predicate restricts package `cmaeg`, `kind(test)`, binary
+`management` and the same substring. It retains ignored-only execution and one
+test process, with the same no-fail-fast behavior as other converted libtest
+groups.
 
 Converted `cargo test` filters map as follows:
 
@@ -160,7 +199,7 @@ See the [rust-cache key implementation](https://github.com/Swatinem/rust-cache/b
 
 ## Reproduce selection equality
 
-Export the two baseline scripts from `8d2c8c109` into a temporary directory.
+Export the two baseline scripts from `a806d60a6` into a temporary directory.
 After extracting an archive, run from `api/`:
 
 ```sh
@@ -168,9 +207,9 @@ CMA_NEXTEST_REUSE=1 python3 ../.github/scripts/backend-selection-proof.py BASELI
 ```
 
 The proof compares the old main selection to the disjoint union of three
-partitions, both isolated budgets, the exact Linux case, Mongo, every Image
-Manager invocation, and CMAEG latency. It enumerates original `cargo test`
-filters through the archived binaries' own libtest `--list` interface, then
+partitions, both isolated budgets, the exact Linux case, Mongo's all/scale/ordinary
+selections and disjoint union, all 14 Image Manager invocations, and CMAEG
+latency. It enumerates original `cargo test` filters through the archived binaries' own libtest `--list` interface, then
 compares them to nextest lists. It emits sorted `(binary, test)` inventories and
 counts, and fails on an empty set, any difference, or a duplicate shard member.
 This proves selection semantics on the archive's compiled platform; it does
