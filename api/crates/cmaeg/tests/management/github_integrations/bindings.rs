@@ -198,7 +198,7 @@ async fn administrator_approval_is_owner_scoped_versioned_and_audited() {
 
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
-async fn eligible_business_delivery_is_unavailable_without_consuming_its_identity() {
+async fn eligible_business_delivery_without_a_matching_channel_is_a_terminal_receipt() {
     let fixture = Fixture::new(true).await;
     let (app, binding) = pending(&fixture).await;
     assert_eq!(
@@ -210,9 +210,9 @@ async fn eligible_business_delivery_is_unavailable_without_consuming_its_identit
         200
     );
     let app_ref = app["app_ref"].as_str().unwrap();
-    let body = json!({"action":"opened","installation":{"id":99},"repository":{"id":1001,"full_name":"fixture/source","owner":{"id":123}},"issue":{"id":9001,"number":7,"body":"untrusted instructions"}}).to_string();
+    let body = json!({"action":"opened","installation":{"id":99},"repository":{"id":1001,"full_name":"fixture/source","owner":{"id":123}},"issue":{"id":9001,"number":7,"html_url":"https://github.com/fixture/source/issues/7","body":"untrusted instructions"},"sender":{"login":"octocat","type":"User"}}).to_string();
     let url = format!("{}/v1/github/apps/{app_ref}/webhooks", fixture.base);
-    for _ in 0..2 {
+    for attempt in 0..2 {
         let response = fixture
             .webhook(
                 &url,
@@ -224,11 +224,9 @@ async fn eligible_business_delivery_is_unavailable_without_consuming_its_identit
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status(), 503);
-        assert_eq!(
-            response.json::<serde_json::Value>().await.unwrap()["code"],
-            "github_dispatch_unavailable"
-        );
+        assert_eq!(response.status(), 200);
+        let receipt = response.json::<serde_json::Value>().await.unwrap();
+        assert_eq!(receipt["reason"], "no_matching_channel");
         let read = fixture
             .read(
                 &fixture.base,
@@ -236,7 +234,13 @@ async fn eligible_business_delivery_is_unavailable_without_consuming_its_identit
                 "token-alice",
             )
             .await;
-        assert_eq!(read.status(), 404);
+        assert_eq!(read.status(), 200);
+        if attempt == 1 {
+            assert_eq!(
+                read.json::<serde_json::Value>().await.unwrap()["reason"],
+                "no_matching_channel"
+            );
+        }
     }
     let capabilities = fixture
         .read(&fixture.base, "/v1/github/capabilities", "token-alice")
@@ -245,7 +249,7 @@ async fn eligible_business_delivery_is_unavailable_without_consuming_its_identit
         .await
         .unwrap();
     assert_eq!(capabilities["ownership_verification"], true);
-    assert_eq!(capabilities["durable_dispatch"], false);
+    assert_eq!(capabilities["durable_dispatch"], true);
     assert_eq!(capabilities["automatic_reconciliation"], false);
 }
 
