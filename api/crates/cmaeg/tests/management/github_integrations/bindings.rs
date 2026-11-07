@@ -210,7 +210,7 @@ async fn eligible_business_delivery_without_a_matching_channel_is_a_terminal_rec
         200
     );
     let app_ref = app["app_ref"].as_str().unwrap();
-    let body = json!({"action":"opened","installation":{"id":99},"repository":{"id":1001,"full_name":"fixture/source","owner":{"id":123}},"issue":{"id":9001,"number":7,"body":"untrusted instructions"}}).to_string();
+    let body = json!({"action":"opened","installation":{"id":99},"repository":{"id":1001,"full_name":"fixture/source","owner":{"id":123}},"issue":{"id":9001,"number":7,"html_url":"https://github.com/fixture/source/issues/7","body":"untrusted instructions"},"sender":{"login":"octocat","type":"User"}}).to_string();
     let url = format!("{}/v1/github/apps/{app_ref}/webhooks", fixture.base);
     for attempt in 0..2 {
         let response = fixture
