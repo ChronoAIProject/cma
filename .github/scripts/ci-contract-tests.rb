@@ -32,6 +32,8 @@ job_ids.each do |workflow, ids|
 end
 
 guarded = mode == "release" ? [
+  ["ci", "trigger-release-contract", "Debian desktop fixture regressions"],
+  ["ci", "images", "Execute desktop image contract"],
   ["ci", "images", "Execute built runtime image contract"],
   ["ci", "images", "Require passing runtime image evidence"],
   ["ci", "images", "Export tested native image"],
@@ -40,6 +42,7 @@ guarded = mode == "release" ? [
   ["publish", "runtime-image-gate", "Execute published runtime image contract"],
 ] : [
   ["ci", "trigger-provider-smoke-contract", "Staging authority and evidence regressions"],
+  ["ci", "trigger-provider-smoke-contract", "Backend capacity preparation regressions"],
   ["ci", "trigger-provider-smoke-contract", "Typecheck every harness entry point"],
   ["ci", "trigger-provider-smoke-contract", "Local browser guard mechanics"],
   ["ci", "backend-timing", "Image normalization budgets"],
@@ -47,6 +50,9 @@ guarded = mode == "release" ? [
   ["ci", "backend-timing", "Gateway socket latency budget"],
   ["ci", "backend-mongo", "Disposable real Mongo persistence contracts"],
   ["ci", "backend-image-manager", "Image Manager authenticated Mongo isolation"],
+  ["ci", "trigger-provider-smoke-contract", "Backend resource sampling regressions"],
+  ["ci", "backend-lint", "Prepare Backend capacity"],
+  ["ci", "backend-test-build", "Prepare Backend capacity"],
   ["nightly-staging", "smoke", "Initialize isolated evidence path"],
   ["nightly-staging", "journeys", "Initialize isolated evidence path"],
   ["nightly-staging", "journeys", "Verify approval policy and independently observed deployment before fixture access"],
@@ -63,6 +69,32 @@ guarded.each do |workflow, id, name|
       when "optional" then entry["continue-on-error"] = true
       when "fake-success" then entry["run"] = "true"
       end
+    end
+  end
+end
+
+if mode == "provider"
+  require_relative "omarchy-ci-contract-tests"
+  OmarchyCIContractTests.run(reject)
+  [nil, 10, 30].each do |timeout|
+    reject.call("Image Manager loses its measured finite margin: #{timeout.inspect}") do |value|
+      row = value["ci"]["jobs"]["backend-image-manager"]["steps"].find { |step| step["name"] == "Image Manager authenticated Mongo isolation" }
+      timeout.nil? ? row.delete("timeout-minutes") : row["timeout-minutes"] = timeout
+    end
+  end
+  %w[backend-lint backend-test-build].each do |id|
+    reject.call("capacity runs after compilation") do |value|
+      rows = value["ci"]["jobs"][id]["steps"]
+      rows << rows.delete_at(1)
+    end
+    reject.call("capacity uses a different runner size") do |value|
+      value["ci"]["jobs"][id]["runs-on"] = "ubuntu-latest-4-cores"
+    end
+    reject.call("capacity uses a caller-controlled environment") do |value|
+      value["ci"]["jobs"][id]["steps"][1]["env"] = { "RUNNER_ENVIRONMENT" => "github-hosted" }
+    end
+    reject.call("capacity helper has the wrong working directory") do |value|
+      value["ci"]["jobs"][id]["steps"][1]["working-directory"] = "api"
     end
   end
 end
@@ -260,6 +292,14 @@ if mode == "release"
     raise "Gateway contract accepted incompatible CMA provider origin: #{origin}"
   end
 else
+  CIContract::BACKEND_NEEDS.each do |id|
+    reject.call("#{id}: remove resource hook") { |v| v["ci"]["jobs"][id]["env"].delete("BASH_ENV") }
+    reject.call("#{id}: wrap Backend shell") { |v| v["ci"]["jobs"][id]["defaults"]["run"]["shell"] = "true {0}" }
+    base["ci"]["jobs"][id]["steps"].each_index do |index|
+      reject.call("#{id} step #{index}: override shell") { |v| v["ci"]["jobs"][id]["steps"][index]["shell"] = "true {0}" }
+      reject.call("#{id} step #{index}: override hook") { |v| (v["ci"]["jobs"][id]["steps"][index]["env"] ||= {})["BASH_ENV"] = "/dev/null" }
+    end
+  end
   ids = CIContract::BACKEND_NEEDS + %w[cmaeg-latency backend]
   ids.each do |id|
     reject.call("#{id}: wrong name") { |v| v["ci"]["jobs"][id]["name"] += " optional" }

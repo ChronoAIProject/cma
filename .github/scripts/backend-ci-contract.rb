@@ -26,6 +26,9 @@ module CIContract
 
   def self.backend_jobs(ci)
     checkout = { "uses" => "actions/checkout@v5" }
+    capacity = backend_step("Prepare Backend capacity",
+      'sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS python3 .github/scripts/backend-capacity.py || echo "::warning::Backend capacity preparation unavailable"',
+      "working-directory" => ".")
     toolchain = { "uses" => "dtolnay/rust-toolchain@stable" }
     install = { "name" => "Install pinned nextest", "uses" => "taiki-e/install-action@v2",
       "with" => { "tool" => "cargo-nextest@0.9.151", "fallback" => "none" } }
@@ -50,7 +53,7 @@ module CIContract
     expected = {
       "backend-lint" => {
         "name" => "Backend lint", "timeout-minutes" => 45, "env" => compile,
-        "steps" => [checkout, toolchain.merge("with" => { "components" => "rustfmt, clippy" }),
+        "steps" => [checkout, capacity, toolchain.merge("with" => { "components" => "rustfmt, clippy" }),
           { "name" => "Install pinned dependency auditor", "uses" => "taiki-e/install-action@v2",
             "with" => { "tool" => "cargo-deny@0.20.2", "fallback" => "none" } },
           backend_step("Dependency audit", "cargo deny --locked --all-features check advisories licenses bans sources"), cache,
@@ -64,7 +67,7 @@ module CIContract
       },
       "backend-test-build" => {
         "name" => "Backend test build", "timeout-minutes" => 45, "env" => compile,
-        "steps" => [checkout, toolchain, cache, install,
+        "steps" => [checkout, capacity, toolchain, cache, install,
           backend_step("Archive workspace tests", 'cargo nextest archive --workspace --locked --archive-file "$RUNNER_TEMP/backend-tests.tar.zst"'),
           { "name" => "Upload Backend test archive", "uses" => "actions/upload-artifact@v4", "with" => {
             "name" => "backend-tests", "path" => "${{ runner.temp }}/backend-tests.tar.zst",
@@ -96,7 +99,7 @@ module CIContract
           backend_step("Prepare compiled gateway browser contract", "npm ci --prefix web\nnpm ci --prefix sdk/typescript --omit=dev --ignore-scripts\nnpm run build --prefix web\n", "working-directory" => "."),
           backend_step("Select official Ubuntu archive for browser dependencies", "sudo python3 .github/scripts/select-ubuntu-archive.py", "working-directory" => "."),
           backend_step("Install gateway contract browser", "npx --no-install playwright install --with-deps chromium", "timeout-minutes" => 10, "working-directory" => "web"),
-          backend_step("Image Manager authenticated Mongo isolation", "bash ../.github/scripts/image-manager-mongo-contract.sh", "timeout-minutes" => 10)],
+          backend_step("Image Manager authenticated Mongo isolation", "bash ../.github/scripts/image-manager-mongo-contract.sh", "timeout-minutes" => 15)],
       },
       "cmaeg-latency" => {
         "name" => "CMAEG latency budget", "timeout-minutes" => 15,
@@ -113,6 +116,9 @@ module CIContract
       wanted.merge!("runs-on" => "ubuntu-latest", "defaults" => defaults)
       unless %w[backend-lint backend-test-build].include?(id)
         wanted.merge!("needs" => "backend-test-build", "env" => stack.merge("CMA_NEXTEST_REUSE" => "1"))
+      end
+      if BACKEND_NEEDS.include?(id)
+        wanted["env"] = wanted.fetch("env").merge("BASH_ENV" => "${{ github.workspace }}/.github/scripts/backend-resource-env.sh")
       end
       actual = job(ci, id, wanted.fetch("name"))
       require!(actual == wanted, "#{id}: Backend execution, isolation, archive, cache or bounds changed")

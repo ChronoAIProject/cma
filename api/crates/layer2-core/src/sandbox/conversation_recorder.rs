@@ -23,7 +23,7 @@ mod checkpoint;
 
 #[path = "conversation_output.rs"]
 mod output;
-use output::output_replayed;
+use output::{is_identity_terminal_for_current, output_replayed, output_source_for_checkpoint};
 
 #[path = "conversation_live.rs"]
 pub(super) mod live;
@@ -247,8 +247,14 @@ impl DurableAgentUpdateRecorder {
             let recorded = previous
                 .as_ref()
                 .filter(|checkpoint| checkpoint.update_id == update_id);
+            let identity_terminal = is_identity_terminal_for_current(&current, update.as_ref());
             let replayed = if let Some(source) = &source {
-                output_replayed(source, &current, previous.as_ref())?
+                let replayed = output_replayed(source, &current, previous.as_ref())?;
+                // An older observer may have durably recorded this exact
+                // terminal as a quiet receipt. Preserve the validated source
+                // position, but let the replacement observer apply its
+                // identity-bearing terminal meaning to the still-active turn.
+                replayed && !identity_terminal
             } else {
                 false
             };
@@ -419,20 +425,12 @@ impl DurableAgentUpdateRecorder {
                 after_seq: next_agent.conversation.last_seq,
                 assembly: next_assembly.clone(),
                 outcome,
-                output: source.clone().or_else(|| {
-                    previous
-                        .as_ref()
-                        .filter(|checkpoint| {
-                            checkpoint.native_conversation_id
-                                == current
-                                    .conversation
-                                    .conversation_id
-                                    .as_deref()
-                                    .unwrap_or_default()
-                                && checkpoint.runtime_generation == runtime_generation
-                        })
-                        .and_then(|checkpoint| checkpoint.output.clone())
-                }),
+                output: output_source_for_checkpoint(
+                    source.as_ref(),
+                    previous.as_ref(),
+                    runtime_generation,
+                    identity_terminal,
+                ),
             };
             checkpoint.validate().map_err(store_error)?;
             let mutation = (!logs.is_empty()).then(|| AgentConversationMutation {

@@ -80,13 +80,9 @@ async fn bearer_refusal_stays_unauthenticated_and_missing_permission_stays_forbi
         "active": true, "sub": "owner", "permissions": [],
     }));
     assert_eq!(request(&app).await.status(), StatusCode::FORBIDDEN);
-    // Introspection authenticates CMA's service client, so its own 401 is not
-    // evidence that the end user's token has been revoked.
+    // Any explicit identity-boundary refusal rejects without retry or fallback.
     fixture.control.introspection.write().await.status = StatusCode::UNAUTHORIZED;
-    assert_eq!(
-        request(&app).await.status(),
-        StatusCode::SERVICE_UNAVAILABLE
-    );
+    assert_eq!(request(&app).await.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

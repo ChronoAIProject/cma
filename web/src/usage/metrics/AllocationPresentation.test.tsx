@@ -5,7 +5,14 @@ import { type UsageMetricPage } from '@chronoai/cma-sdk';
 import { AllocationChart, allocationComparisons } from './AllocationChart';
 import { AllocationHistory, humanDuration } from './AllocationHistory';
 import { UsageIdentity } from './UsageIdentity';
-import { asOf, metricRow } from './testFixtures';
+import { asOf, metricRow, metricsClient } from './testFixtures';
+
+const chartProps = {
+  api: metricsClient(true),
+  reportId: 'fixture-report',
+  active: true,
+  onFailure: vi.fn(),
+};
 
 const page: UsageMetricPage = {
   report_id: 'fixture-report',
@@ -30,7 +37,7 @@ const page: UsageMetricPage = {
 
 it('compares page allocation with distinct units, explicit scope and keyboard-accessible data', async () => {
   const actor = userEvent.setup();
-  render(<AllocationChart page={page} admin />);
+  render(<AllocationChart {...chartProps} page={page} admin />);
   expect(screen.getByRole('img')).toHaveAccessibleName('CPU allocated core-hours by sandbox');
   expect(screen.getByText(/2 of 200 Sandboxes on this page/)).toBeInTheDocument();
   const disclosure = screen.getByText('View allocation chart data');
@@ -43,9 +50,13 @@ it('compares page allocation with distinct units, explicit scope and keyboard-ac
   expect(within(table).getByRole('cell', { name: '48' })).toBeInTheDocument();
   await actor.click(screen.getByRole('button', { name: 'Allocation chart grouping' }));
   await actor.click(screen.getByRole('menuitemradio', { name: 'By owner' }));
-  expect(within(table).getAllByRole('row')).toHaveLength(2);
-  expect(within(table).getByRole('cell', { name: '72' })).toBeInTheDocument();
-  expect(within(table).getByRole('cell', { name: 'Partial' })).toBeInTheDocument();
+  expect(
+    await screen.findByRole('region', { name: 'Scrollable owner allocations' }),
+  ).toBeInTheDocument();
+  expect(chartProps.api.ownerAllocations).toHaveBeenCalledWith(
+    'fixture-report',
+    expect.objectContaining({ metric: 'memory' }),
+  );
 });
 
 it('keeps all page groups in the fallback and never turns an empty page into zero bars', async () => {
@@ -58,7 +69,7 @@ it('keeps all page groups in the fallback and never turns an empty page into zer
       name: `Sandbox ${index}`,
     })),
   };
-  const view = render(<AllocationChart page={many} admin={false} />);
+  const view = render(<AllocationChart {...chartProps} page={many} admin={false} />);
   expect(screen.getByText(/Largest 8 shown/)).toBeInTheDocument();
   await actor.click(screen.getByText('View allocation chart data'));
   expect(
@@ -67,17 +78,17 @@ it('keeps all page groups in the fallback and never turns an empty page into zer
       { hidden: true },
     ),
   ).toHaveLength(11);
-  view.rerender(<AllocationChart page={{ ...page, items: [] }} admin={false} />);
+  view.rerender(<AllocationChart {...chartProps} page={{ ...page, items: [] }} admin={false} />);
   expect(screen.queryByRole('img')).not.toBeInTheDocument();
   expect(screen.queryByText(/0 core-hours/)).not.toBeInTheDocument();
 });
 
-it('groups by identity even when owners share a display name', () => {
+it('keeps distinct Sandbox identities when their names match', () => {
   const rows = [
     metricRow,
     { ...metricRow, sandbox_id: 'other', owner: { ...metricRow.owner, subject: 'another-owner' } },
   ];
-  expect(allocationComparisons(rows, 'cpu', true)).toHaveLength(2);
+  expect(allocationComparisons(rows, 'cpu')).toHaveLength(2);
 });
 
 it('explains incomplete history without exposing raw seconds or implying missing time is zero', async () => {

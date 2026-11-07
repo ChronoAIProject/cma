@@ -62,7 +62,8 @@ test('LOCAL restores a cleared desktop without losing the conversation or granti
     await page.clock.pauseAt(clockStart);
     await page.setViewportSize({ width: 1600, height: 1000 });
     await fixture.route(page, baseURL!);
-    const stream = await desktopBoundary(page);
+    // Hold the external handshake until restoration/input safety is observed.
+    const stream = await desktopBoundary(page, true, (connection) => connection === 0);
     await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
       route.fulfill({
         json: {
@@ -104,6 +105,7 @@ test('LOCAL restores a cleared desktop without losing the conversation or granti
     expect(stream.connections).toHaveLength(1);
     await page.clock.resume();
     await expect.poll(() => stream.connections.length).toBe(2);
+    stream.connect();
     await expect(desktop.getByRole('status')).toContainText('Connected');
     await expect(desktop.getByRole('status')).toContainText('Ask the Agent');
     expect(

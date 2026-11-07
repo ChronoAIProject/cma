@@ -39,6 +39,8 @@ try {
   const mounts = [
     ['.github/scripts/desktop-browser-reopen.py', '/opt/desktop-browser-reopen.py'],
     ['.github/scripts/desktop-native-probe.cjs', '/opt/desktop-native-probe.cjs'],
+    ['.github/scripts/desktop-browser-input.py', '/opt/desktop-browser-input.py'],
+    ['.github/scripts/desktop-browser-page.cjs', '/opt/desktop-browser-page.cjs'],
     ['.github/scripts/desktop-vnc-probe.py', '/opt/desktop-vnc-probe.py'],
     ['.github/scripts/desktop-lifecycle-probe.py', '/opt/desktop-lifecycle-probe.py'],
     ['.github/scripts/desktop-shell-probe.py', '/opt/desktop-shell-probe.py'],

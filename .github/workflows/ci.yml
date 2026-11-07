@@ -30,6 +30,10 @@ jobs:
         run: python3 .github/scripts/api-cargo-cache-tests.py
       - name: Runtime image evidence and provenance regressions
         run: node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs
+      - name: Debian desktop fixture regressions
+        run: |
+          python3 .github/scripts/desktop-browser-input-tests.py
+          node --test .github/scripts/desktop-browser-page.test.cjs
 
   trigger-provider-smoke-contract:
     name: Trigger provider smoke contract
@@ -43,10 +47,14 @@ jobs:
         run: ruby .github/scripts/ci-contract.rb provider
       - name: Provider contract mutation regressions
         run: ruby .github/scripts/ci-contract-tests.rb provider
+      - name: Backend capacity preparation regressions
+        run: python3 .github/scripts/backend-capacity-tests.py
       - name: Staging authority and evidence regressions
         run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs
       - name: Authenticated Mongo startup regressions
         run: node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/image-manager-mongo-contract.test.mjs
+      - name: Backend resource sampling regressions
+        run: python3 .github/scripts/backend-resource-sampler-tests.py
       - name: Gateway sealed-record migration regressions
         run: node --test .github/scripts/export-gateway-records.test.mjs
       - name: Install harness dependencies
@@ -80,6 +88,106 @@ jobs:
       - name: Local browser guard mechanics
         working-directory: web
         run: npm run e2e:mechanics
+
+  omarchy:
+    name: Images (runtime-omarchy)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Reserve space on the disposable Omarchy runner
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h /
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: Omarchy desktop fixture regressions
+        run: |
+          python3 .github/scripts/omarchy-close-browser-tests.py
+          python3 .github/scripts/omarchy-browser-input-tests.py
+          node --test .github/scripts/omarchy-browser-page.test.cjs
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Set immutable Omarchy image version
+        id: identity
+        run: echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+      # Build the tool donor and supervisor from this checkout. The historical
+      # prototype's expiring donor artifact cannot supply a develop release gate.
+      - name: Build current-source Omarchy image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: infra/runtime/Dockerfile
+          target: omarchy
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: cma-runtime-omarchy:ci
+          build-args: |
+            OMARCHY_CMA_BASE=runtime
+            RUNTIME_DESKTOP=1
+            CHRONO_BUILD=${{ steps.identity.outputs.version }}
+            CHRONO_BUILD_SHA=${{ github.sha }}
+            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+          cache-from: type=gha,scope=runtime-omarchy
+          cache-to: type=gha,mode=max,scope=runtime-omarchy
+      - name: Release Omarchy build cache before image checks
+        run: |
+          image_id=$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')
+          docker buildx prune --all --force
+          test "$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')" = "$image_id"
+          df -h /
+      - name: Verify Omarchy runtime contract
+        run: node .github/scripts/omarchy-contract.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/runtime-contract.json"
+      - name: Prepare native Chromium namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Verify device-free Omarchy desktop
+        run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/device-free"
+      - name: Verify Omarchy virtual graphics desktop
+        env:
+          CMA_OMARCHY_TEST_DRM: '1'
+        run: |
+          sudo modprobe vkms
+          node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/virtual-drm"
+      - name: Verify Omarchy production temporary directory
+        env:
+          CMA_OMARCHY_TEST_IMAGE_TMP: '1'
+        run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/image-tmp"
+      - name: Scan tested Omarchy image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: cma-runtime-omarchy:ci
+          format: json
+          output: ${{ runner.temp }}/omarchy-evidence/vulnerabilities.json
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+      - name: Retain Omarchy image evidence
+        if: always() && steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: omarchy-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/omarchy-evidence/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Export tested Omarchy image
+        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        timeout-minutes: 10
+        run: python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
+      - name: Retain tested Omarchy image
+        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-native-image-runtime-omarchy-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-native-image/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
 
   structure:
     name: Repository structure
@@ -284,6 +392,8 @@ jobs:
     timeout-minutes: 45
     runs-on: ubuntu-latest
     env:
+      # Optional streamed evidence; the hook does not wrap or alter gate commands.
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
       # Full debug symbols made rust-lld crash linking the aggregate CMA test
       # binary on the hosted runner. Keep debug assertions and every test while
       # bounding linker output, as in the verified local workspace build.
@@ -297,6 +407,12 @@ jobs:
         working-directory: api
     steps:
       - uses: actions/checkout@v5
+      - name: Prepare Backend capacity
+        working-directory: .
+        run: >-
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS
+          python3 .github/scripts/backend-capacity.py
+          || echo "::warning::Backend capacity preparation unavailable"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -334,6 +450,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
       RUST_MIN_STACK: 33554432
@@ -342,6 +459,12 @@ jobs:
         working-directory: api
     steps:
       - uses: actions/checkout@v5
+      - name: Prepare Backend capacity
+        working-directory: .
+        run: >-
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS
+          python3 .github/scripts/backend-capacity.py
+          || echo "::warning::Backend capacity preparation unavailable"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -378,6 +501,7 @@ jobs:
       matrix:
         shard: [1, 2, 3]
     env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
       RUST_MIN_STACK: 33554432
       CMA_NEXTEST_REUSE: "1"
     defaults:
@@ -419,6 +543,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
       RUST_MIN_STACK: 33554432
       CMA_NEXTEST_REUSE: "1"
     defaults:
@@ -470,6 +595,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
       RUST_MIN_STACK: 33554432
       CMA_NEXTEST_REUSE: "1"
     defaults:
@@ -509,6 +635,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
       RUST_MIN_STACK: 33554432
       CMA_NEXTEST_REUSE: "1"
     defaults:
@@ -553,7 +680,9 @@ jobs:
         working-directory: web
         run: npx --no-install playwright install --with-deps chromium
       - name: Image Manager authenticated Mongo isolation
-        timeout-minutes: 10
+        # Allow fixture setup/cleanup, all 14 archived groups and the browser
+        # contract to finish with headroom while retaining a finite deadline.
+        timeout-minutes: 15
         run: bash ../.github/scripts/image-manager-mongo-contract.sh
 
   cmaeg-latency:
