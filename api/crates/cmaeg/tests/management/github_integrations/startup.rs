@@ -2,6 +2,71 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn old_channel_validator_is_upgraded_before_github_admission_without_manual_migrate() {
+    use futures_util::TryStreamExt;
+    use mongodb::bson::doc;
+    let mut fixture = Fixture::new(true).await;
+    fixture.allow_startup_migration().await;
+    let database = fixture.database.admin.database(&fixture.database.name);
+    database
+        .collection::<mongodb::bson::Document>("eg_schema_migrations")
+        .delete_one(doc! {"_id":"github_channel_guard"})
+        .await
+        .unwrap();
+    let old_validator = doc! {
+        "$jsonSchema": {
+            "bsonType":"object",
+            "additionalProperties":false,
+            "required":["_id","owner","blob","version","schema_version"],
+            "properties": {
+                "_id":{"bsonType":"string"},
+                "owner":{"bsonType":"string"},
+                "blob":{"bsonType":"binData"},
+                "version":{"bsonType":"long"},
+                "schema_version":{"enum":[1]}
+            }
+        }
+    };
+    database
+        .run_command(doc! {
+            "collMod":"eg_channel_records",
+            "validator":old_validator,
+            "validationLevel":"strict",
+            "validationAction":"error"
+        })
+        .await
+        .unwrap();
+    for child in &mut fixture.children {
+        child.kill().await.unwrap();
+    }
+    fixture.base = fixture.replica().await;
+    let marker = database
+        .collection::<mongodb::bson::Document>("eg_schema_migrations")
+        .find_one(doc! {"_id":"github_channel_guard","version":1})
+        .await
+        .unwrap();
+    assert!(
+        marker.is_some(),
+        "startup must install the additive guard marker"
+    );
+    let collections = database
+        .list_collections()
+        .await
+        .unwrap()
+        .try_collect::<Vec<_>>()
+        .await
+        .unwrap();
+    let validator = collections
+        .into_iter()
+        .find(|info| info.name == "eg_channel_records")
+        .and_then(|info| info.options.validator);
+    assert!(validator
+        .as_ref()
+        .is_some_and(|validator| validator.to_string().contains("guard_revision")));
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn blocked_github_initialization_keeps_http_available_and_recovers_without_restart() {
     use mongodb::bson::doc;
     use std::time::Duration;

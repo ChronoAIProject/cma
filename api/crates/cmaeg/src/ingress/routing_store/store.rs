@@ -1,5 +1,5 @@
 use super::{codec, types::*, Candidate};
-use crate::records::{RecordClient, RecordError};
+use crate::records::{AuthorityGuard, RecordClient, RecordError};
 use cmaeg_core::{
     ids::RecordId,
     seal::{open_interaction, seal_interaction, MasterKeyRing},
@@ -127,15 +127,20 @@ impl PlanStore {
 
     /// GitHub-only admission root. The channel version is guarded in the same
     /// Mongo transaction that inserts the immutable interaction root.
-    pub async fn admit_github(
+    pub(crate) async fn admit_github(
         &self,
         candidate: &Candidate,
         channel_record_id: &str,
         channel_version: u64,
+        authority_guards: &[AuthorityGuard],
     ) -> Result<AdmittedPlan, AdmissionError> {
         self.admit_inner(
             candidate,
-            Some((channel_record_id.to_owned(), channel_version)),
+            Some((
+                channel_record_id.to_owned(),
+                channel_version,
+                authority_guards.to_vec(),
+            )),
         )
         .await
     }
@@ -143,7 +148,7 @@ impl PlanStore {
     async fn admit_inner(
         &self,
         candidate: &Candidate,
-        github_guard: Option<(String, u64)>,
+        github_guard: Option<(String, u64, Vec<AuthorityGuard>)>,
     ) -> Result<AdmittedPlan, AdmissionError> {
         candidate.live((self.clock)())?;
         if let Some(plan) = self.load(candidate.identity()).await? {
@@ -163,9 +168,16 @@ impl PlanStore {
         let manifest = &candidate.manifest;
         let bytes = codec::encode(manifest)?;
         let result = match github_guard {
-            Some((record_id, version)) => {
-                self.create_guarded(&manifest.id, manifest, &bytes, &record_id, version)
-                    .await
+            Some((record_id, version, authority_guards)) => {
+                self.create_guarded(
+                    &manifest.id,
+                    manifest,
+                    &bytes,
+                    &record_id,
+                    version,
+                    &authority_guards,
+                )
+                .await
             }
             None => self.create(&manifest.id, manifest, &bytes).await,
         };
@@ -346,6 +358,7 @@ impl PlanStore {
         bytes: &[u8],
         channel_record_id: &str,
         channel_version: u64,
+        authority_guards: &[AuthorityGuard],
     ) -> Result<(), RecordError> {
         let blob = seal_interaction(&self.keys, id, bytes)
             .map_err(|_| RecordError::Rejected("routed record encryption failed".into()))?;
@@ -358,6 +371,7 @@ impl PlanStore {
                 manifest.retained_until,
                 channel_record_id,
                 channel_version,
+                authority_guards,
             )
             .await?;
         if version == 1 {
