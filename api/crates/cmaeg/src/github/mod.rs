@@ -32,6 +32,7 @@ pub struct Gateway {
     store: store::Store,
     ingress: Option<Arc<crate::ingress::IngressState>>,
     activity: Option<Arc<crate::activity::ActivityStore>>,
+    recovery_cursor: Arc<tokio::sync::Mutex<Option<(String, String)>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -189,6 +190,7 @@ impl Gateway {
             store: store::Store::open(database, keys).await?,
             ingress: None,
             activity: None,
+            recovery_cursor: Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 

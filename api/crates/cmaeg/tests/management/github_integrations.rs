@@ -155,7 +155,11 @@ impl Fixture {
             .run_command(cmaeg::github::migration_role(&self.database.name))
             .await
             .unwrap();
-        database.run_command(mongodb::bson::doc! {"grantRolesToUser":"runtime","roles":[{"role":"cma_eg_automation_migrator","db":&self.database.name}]}).await.unwrap();
+        database
+            .run_command(cmaeg::records::mongo::role(&self.database.name, true))
+            .await
+            .unwrap();
+        database.run_command(mongodb::bson::doc! {"grantRolesToUser":"runtime","roles":[{"role":"cma_eg_automation_migrator","db":&self.database.name},{"role":"cma_eg_migrator","db":&self.database.name}]}).await.unwrap();
         self.shared_schema = true;
     }
 

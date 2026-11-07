@@ -150,8 +150,8 @@ async fn replacement(historical_identity: bool) {
         child.kill().await.unwrap();
     }
     f.base = f.replica().await;
-    // Approval reaches the staged business boundary only for the new integration.
-    // Ordinary routed dispatch is introduced separately; eligible deliveries stay retryable.
+    // Approval reaches the receipt-first boundary; no channel is configured in
+    // this authority-only fixture, so the receipt is terminally ignored.
     let business = f
         .webhook(
             &format!("{}/v1/github/apps/{new_ref}/webhooks", f.base),
@@ -163,10 +163,10 @@ async fn replacement(historical_identity: bool) {
         .send()
         .await
         .unwrap();
-    assert_eq!(business.status(), 503);
+    assert_eq!(business.status(), 200);
     assert_eq!(
-        business.json::<serde_json::Value>().await.unwrap()["code"],
-        "github_dispatch_unavailable"
+        business.json::<serde_json::Value>().await.unwrap()["reason"],
+        "no_matching_channel"
     );
     assert_eq!(
         f.webhook(

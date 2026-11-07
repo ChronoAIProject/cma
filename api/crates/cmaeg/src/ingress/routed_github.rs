@@ -1,13 +1,22 @@
 use super::*;
 
+pub(crate) struct GithubAuthorityFence {
+    pub(crate) owner: String,
+    pub(crate) integration_id: String,
+    pub(crate) integration_version: u64,
+    pub(crate) binding_id: String,
+    pub(crate) binding_version: u64,
+}
+
 impl RoutedIngress {
     pub(crate) async fn launch_github_verified(
         &self,
-        request: LaunchRequest,
+        mut request: LaunchRequest,
         body: Vec<u8>,
         hold: OwnedSemaphorePermit,
         observer: &dyn ActivityObserver,
         resolver: &crate::channels::resolver::ChannelResolver,
+        authority: GithubAuthorityFence,
     ) -> LaunchOutcome {
         if !matches!(
             request.activity.source,
@@ -28,38 +37,30 @@ impl RoutedIngress {
                 "github_source_not_configured",
             ));
         }
-        let channel_url_matches = resolver
-            .record_client()
-            .record_url(request.channel.pointer.record_id.as_str())
-            .is_ok_and(|url| url.as_str() == request.channel.pointer.record_url);
-        if channel_url_matches {
-            let current = match resolver.resolve_current(request.channel.id.as_str()).await {
-                Ok(channel) => channel,
-                Err(_) => {
-                    drop(hold);
-                    return LaunchOutcome::Refused(Problem::new(
-                        ProblemCode::AdmissionRefused,
-                        422,
-                        "github_channel_removed_before_admission",
-                    ));
-                }
-            };
-            if !github_fence_allows(
-                request.channel.version,
-                current.version,
-                current
-                    .definition
-                    .source_of(&request.activity.source)
-                    .is_some(),
-            ) {
+        let current = match resolver.resolve_current(request.channel.id.as_str()).await {
+            Ok(channel) => channel,
+            Err(_) => {
                 drop(hold);
                 return LaunchOutcome::Refused(Problem::new(
                     ProblemCode::AdmissionRefused,
                     422,
-                    "github_channel_changed_before_admission",
+                    "github_channel_removed_before_admission",
                 ));
             }
+        };
+        if current
+            .definition
+            .source_of(&request.activity.source)
+            .is_none()
+        {
+            drop(hold);
+            return LaunchOutcome::Refused(Problem::new(
+                ProblemCode::AdmissionRefused,
+                422,
+                "github_channel_changed_before_admission",
+            ));
         }
+        request.channel = current;
         let verified = VerifiedIngress {
             oversized: body.len() > MAX_SOURCE_BYTES,
             body,
@@ -67,7 +68,10 @@ impl RoutedIngress {
             received_at: None,
             quote: super::super::quoted_context::Intake::Legacy,
         };
-        match self.admit(&request, verified, observer, false, None).await {
+        match self
+            .admit_github(&request, verified, observer, authority)
+            .await
+        {
             Ok(Some(outcome)) => {
                 drop(hold);
                 outcome
@@ -85,6 +89,25 @@ impl RoutedIngress {
                 LaunchOutcome::Refused(problem)
             }
         }
+    }
+
+    async fn admit_github(
+        &self,
+        request: &LaunchRequest,
+        source: VerifiedIngress,
+        observer: &dyn ActivityObserver,
+        authority: GithubAuthorityFence,
+    ) -> Result<Option<LaunchOutcome>, Problem> {
+        self.admit_once(
+            request,
+            source,
+            observer,
+            false,
+            None,
+            None,
+            Some(&authority),
+        )
+        .await
     }
 
     fn has_routed_source(&self, request: &LaunchRequest) -> bool {
@@ -120,21 +143,5 @@ impl RoutedIngress {
             retained_until: plan.retained_until,
             result: None,
         })
-    }
-}
-
-fn github_fence_allows(snapshot_version: u64, current_version: u64, source_present: bool) -> bool {
-    snapshot_version == current_version && source_present
-}
-
-#[cfg(test)]
-mod tests {
-    use super::github_fence_allows;
-
-    #[test]
-    fn route_removed_between_receipt_and_admission_is_refused() {
-        assert!(!github_fence_allows(4, 5, true));
-        assert!(!github_fence_allows(4, 4, false));
-        assert!(github_fence_allows(4, 4, true));
     }
 }
