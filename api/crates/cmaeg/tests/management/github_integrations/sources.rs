@@ -282,6 +282,207 @@ fn channel(app: &serde_json::Value) -> serde_json::Value {
     body
 }
 
+async fn ready_dispatch_fixture() -> (Fixture, serde_json::Value, String) {
+    let mut f = Fixture::new(true).await;
+    let (app, binding) = pending(&f).await;
+    verification(&f, &binding, "token-alice", "approve-race-fixture")
+        .send()
+        .await
+        .unwrap();
+    f.authoring = true;
+    f.base = f.replica().await;
+    let body = channel(&app);
+    let created = f
+        .client
+        .post(format!("{}/v1/channels", f.base))
+        .bearer_auth("token-alice")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), 201);
+    let channel = created.json::<serde_json::Value>().await.unwrap();
+    (f, app, channel["channel_id"].as_str().unwrap().to_owned())
+}
+
+fn issue_event() -> String {
+    json!({
+        "action":"opened","installation":{"id":99},
+        "repository":{"id":1001,"full_name":"fixture/source","owner":{"id":123}},
+        "issue":{"id":9001,"number":7,"html_url":"https://github.com/fixture/source/issues/7","state":"open"},
+        "sender":{"login":"octocat","type":"User"}
+    }).to_string()
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn authority_race_suspend_before_admission_refuses_without_provider_post() {
+    use mongodb::bson::doc;
+    let (mut f, app, _channel_id) = ready_dispatch_fixture().await;
+    for child in &mut f.children {
+        child.kill().await.unwrap();
+    }
+    let application = format!("github-race-suspend-{}", uuid::Uuid::new_v4());
+    f.database.uri.push_str(&format!("&appName={application}"));
+    f.base = f.replica().await;
+    f.database.admin.database("admin").run_command(doc! {
+        "configureFailPoint":"failCommand", "mode":{"times":1},
+        "data":{"failCommands":["update"],"appName":&application,"blockConnection":true,"blockTimeMS":700}
+    }).await.unwrap();
+    let event = issue_event();
+    let url = format!(
+        "{}/v1/github/apps/{}/webhooks",
+        f.base,
+        app["app_ref"].as_str().unwrap()
+    );
+    let before_posts = f
+        .provider
+        .requests()
+        .iter()
+        .filter(|request| request.path == "/api/v2/responses")
+        .count();
+    let webhook = f
+        .webhook(
+            &url,
+            "fixture-webhook-secret",
+            "race-suspend",
+            "issues",
+            &event,
+        )
+        .send();
+    tokio::pin!(webhook);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(150), &mut webhook)
+            .await
+            .is_err()
+    );
+    let suspend =
+        json!({"action":"suspend","installation":{"id":99,"app_id":42,"account":{"id":123}}})
+            .to_string();
+    assert_eq!(
+        f.webhook(
+            &url,
+            "fixture-webhook-secret",
+            "race-suspend-lifecycle",
+            "installation",
+            &suspend
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        200
+    );
+    let first = webhook.await.unwrap();
+    assert!(first.status().is_success());
+    let retry = f
+        .webhook(
+            &url,
+            "fixture-webhook-secret",
+            "race-suspend",
+            "issues",
+            &event,
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(retry.status(), 200);
+    let receipt = retry.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(receipt["task_ids"], json!([]));
+    assert_eq!(receipt["dispatch"][0]["status"], "refused");
+    assert_eq!(
+        f.provider
+            .requests()
+            .iter()
+            .filter(|request| request.path == "/api/v2/responses")
+            .count(),
+        before_posts
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn authority_race_unrelated_repository_removal_retries_and_admits_once() {
+    use mongodb::bson::doc;
+    let (mut f, app, _channel_id) = ready_dispatch_fixture().await;
+    for child in &mut f.children {
+        child.kill().await.unwrap();
+    }
+    let application = format!("github-race-unrelated-{}", uuid::Uuid::new_v4());
+    f.database.uri.push_str(&format!("&appName={application}"));
+    f.base = f.replica().await;
+    f.database.admin.database("admin").run_command(doc! {
+        "configureFailPoint":"failCommand", "mode":{"times":1},
+        "data":{"failCommands":["update"],"appName":&application,"blockConnection":true,"blockTimeMS":700}
+    }).await.unwrap();
+    let event = issue_event();
+    let url = format!(
+        "{}/v1/github/apps/{}/webhooks",
+        f.base,
+        app["app_ref"].as_str().unwrap()
+    );
+    let before_posts = f
+        .provider
+        .requests()
+        .iter()
+        .filter(|request| request.path == "/api/v2/responses")
+        .count();
+    let webhook = f
+        .webhook(
+            &url,
+            "fixture-webhook-secret",
+            "race-unrelated",
+            "issues",
+            &event,
+        )
+        .send();
+    tokio::pin!(webhook);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(150), &mut webhook)
+            .await
+            .is_err()
+    );
+    let removal = json!({"action":"removed","installation":{"id":99,"app_id":42,"account":{"id":123}},"repositories_removed":[{"id":2002}]}).to_string();
+    assert_eq!(
+        f.webhook(
+            &url,
+            "fixture-webhook-secret",
+            "race-unrelated-lifecycle",
+            "installation_repositories",
+            &removal
+        )
+        .send()
+        .await
+        .unwrap()
+        .status(),
+        200
+    );
+    let first = webhook.await.unwrap();
+    assert!(first.status().is_success());
+    let retry = f
+        .webhook(
+            &url,
+            "fixture-webhook-secret",
+            "race-unrelated",
+            "issues",
+            &event,
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(retry.status(), 200);
+    let receipt = retry.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(receipt["task_ids"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        f.provider
+            .requests()
+            .iter()
+            .filter(|request| request.path == "/api/v2/responses")
+            .count(),
+        before_posts + 1
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn channel_source_cannot_reference_another_owners_integration() {
