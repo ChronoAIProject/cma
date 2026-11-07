@@ -19,7 +19,7 @@ export function useDesktopNotice(phase: DesktopPhase, control: DesktopControl) {
         : mode === 'agent'
           ? 'The Agent has control. Watch its actions here.'
           : mode === 'view' && previous === 'agent'
-            ? 'The Agent finished. You can take control now.'
+            ? 'The Agent is paused. The desktop is idle.'
             : mode === 'view' && previous === 'user'
               ? 'Control released. You are watching the desktop.'
               : null;

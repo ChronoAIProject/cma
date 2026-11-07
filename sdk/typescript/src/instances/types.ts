@@ -158,6 +158,7 @@ export const agentTaskStatus = enumeration(
 export type AgentTaskStatus = Output<typeof agentTaskStatus>;
 
 export const hierarchyAgentSummary = object({
+  task_started_at: optional(text),
   task_status: optional(agentTaskStatus),
   owner_title: optional(text),
   runtime_metadata: optional(

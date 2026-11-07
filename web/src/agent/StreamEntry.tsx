@@ -8,8 +8,6 @@ import { PlanCard } from './PlanCard';
 import { ApprovalCard } from './ApprovalCard';
 import { UserMessage } from './UserMessage';
 import { visibleUserMessage } from './externalEventMessage';
-import { TurnUsage } from './TurnUsage';
-import type { AgentUsage } from '../api/types';
 import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
 import { MessageFooter } from './MessageFooter';
 import type { MessageFeedbackControls } from './useMessageFeedback';
@@ -17,25 +15,19 @@ import type { Entry } from './timeline';
 import { AnswerDeliverables } from './AnswerDeliverables';
 import { answerProse } from './answerDeliveries';
 import type { ConversationState } from './model';
-import { Button } from '../ui/Button';
 
 function StreamEntryView({
-  onReplay,
   entry,
   approvalBusy,
   approvalReadOnly = false,
   onApproval,
   activeRunId,
   planOutcome,
-  showUsage = false,
-  usage,
-  duration,
   user,
   unknownUserName,
   feedback,
   continued = false,
 }: {
-  readonly onReplay?: (turn: string) => void;
   readonly entry: Entry;
   readonly approvalBusy: boolean;
   readonly approvalReadOnly?: boolean;
@@ -43,9 +35,6 @@ function StreamEntryView({
   /** Only the active turn can still be running a call. */
   readonly activeRunId?: string;
   readonly planOutcome?: NonNullable<ConversationState['turnOutcomes']>[string];
-  readonly showUsage?: boolean;
-  readonly usage?: AgentUsage['currentTurn'];
-  readonly duration?: string;
   readonly user?: MessageUser;
   readonly unknownUserName?: string;
   readonly feedback?: MessageFeedbackControls;
@@ -83,19 +72,9 @@ function StreamEntryView({
           {canDeliver && delivery.references ? (
             <AnswerDeliverables answerId={message.id} references={delivery.references} />
           ) : null}
-          {/* A turn that reported nothing draws no line; absence is never shown as zero. */}
-          {duration === undefined ? null : (
-            <div className="message__duration" aria-label="Turn duration">
-              {duration}
-            </div>
-          )}
-          {showUsage && usage !== undefined ? (
-            <div className="message__usage" aria-label="Turn token usage">
-              <TurnUsage usage={usage} animateInitial={false} />
-            </div>
-          ) : null}
           <MessageFooter
             id={message.id}
+            showVotes={message.role === 'assistant'}
             canVote={message.role === 'assistant' && message.finalAnswer === true}
             at={message.at}
             content={delivery.content}
@@ -106,11 +85,6 @@ function StreamEntryView({
             }
             feedback={feedback}
           />
-          {onReplay && message.finalAnswer && message.runId ? (
-            <Button size="sm" onClick={() => onReplay(message.runId!)}>
-              View plan and replay
-            </Button>
-          ) : null}
         </div>
       </article>
     );
@@ -131,7 +105,6 @@ function StreamEntryView({
   if (entry.kind === 'plan')
     return (
       <PlanCard
-        onReplay={onReplay}
         plan={entry.item}
         active={entry.item.runId !== undefined && entry.item.runId === activeRunId}
         outcome={planOutcome}
@@ -176,14 +149,10 @@ function StreamEntryView({
 }
 
 export const StreamEntry = memo(StreamEntryView, (previous, next) => {
-  if (previous.onReplay !== next.onReplay) return false;
   if (previous.entry.kind !== next.entry.kind || previous.entry.item !== next.entry.item)
     return false;
   if (next.entry.kind === 'message')
     return (
-      previous.showUsage === next.showUsage &&
-      previous.usage === next.usage &&
-      previous.duration === next.duration &&
       previous.user === next.user &&
       previous.unknownUserName === next.unknownUserName &&
       previous.feedback === next.feedback &&

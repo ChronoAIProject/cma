@@ -39,3 +39,29 @@ it('reads bounded frames from the authorized Agent and rejects another runtime o
   await expect(client.agentBrowser.read('agent-a', scope)).rejects.toThrow(ProtocolError);
   await expect(client.agentBrowser.read('agent-a', scope)).rejects.toThrow(ProtocolError);
 });
+
+it.each([undefined, 'about:blank', 'http://localhost:5173', 'https://example.com'])(
+  'accepts an optional sanitized browser address: %s',
+  async (address) => {
+    const fetch = vi.fn().mockResolvedValue(Response.json({ ...observation, address }));
+    const client = createClient({ baseUrl: 'https://cma.example', fetch });
+    expect(
+      (await client.agentBrowser.read('agent-a', { runtime_incarnation: 'incarnation' })).address,
+    ).toBe(address);
+  },
+);
+
+it.each([
+  'https://example.com/private',
+  'https://example.com?private',
+  'https://example.com#private',
+  'https://user:pass@example.com',
+  'file:///home/private',
+  'javascript:alert(1)',
+])('rejects a browser address beyond the origin: %s', async (address) => {
+  const fetch = vi.fn().mockResolvedValue(Response.json({ ...observation, address }));
+  const client = createClient({ baseUrl: 'https://cma.example', fetch });
+  await expect(
+    client.agentBrowser.read('agent-a', { runtime_incarnation: 'incarnation' }),
+  ).rejects.toThrow(ProtocolError);
+});

@@ -81,6 +81,7 @@ fn spawn(worker: Arc<Work>) -> (watch::Sender<bool>, JoinHandle<()>) {
         concurrency: 2,
         poll_interval: Duration::from_millis(10),
         drain_timeout: Duration::from_millis(50),
+        start_interval: Duration::ZERO,
     }
     .spawn(signal);
     (shutdown, task)
@@ -188,4 +189,34 @@ async fn aborting_the_outer_scheduler_drops_its_running_children() {
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     until(|| worker.active.load(Ordering::SeqCst) == 0).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn historical_backfill_admits_at_most_one_title_per_ten_seconds() {
+    let worker = work(vec![page(&["one", "two", "three"], None)]);
+    let (shutdown, signal) = watch::channel(false);
+    let scheduler = AgentTitleScheduler {
+        worker: worker.clone(),
+        concurrency: 4,
+        poll_interval: Duration::from_secs(1),
+        drain_timeout: Duration::from_secs(1),
+        start_interval: START_INTERVAL,
+    }
+    .spawn(signal);
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(worker.calls.lock().unwrap().len(), 1);
+    tokio::time::advance(Duration::from_secs(9)).await;
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(worker.calls.lock().unwrap().len(), 1);
+    tokio::time::advance(Duration::from_secs(1)).await;
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(worker.calls.lock().unwrap().len(), 2);
+    shutdown.send(true).unwrap();
+    scheduler.await.unwrap();
 }

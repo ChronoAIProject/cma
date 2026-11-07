@@ -64,5 +64,8 @@ export function useTaskExperience(client: CmaWebClient, accountId?: string) {
     };
   }, [scope, client, accountId]);
   const current = result?.scope === scope ? result : undefined;
-  return { ...(current?.capabilities ?? disabled), settled: current !== undefined };
+  return useMemo(
+    () => ({ ...(current?.capabilities ?? disabled), settled: current !== undefined }),
+    [current],
+  );
 }

@@ -244,6 +244,8 @@ pub struct Worktree {
 pub struct HierarchyAgentSummary {
     #[doc = "Authorized task outcome; absent on older servers."]
     pub task_status: Option<AgentTaskStatus>,
+    /// Recorded start of the current task turn, absent when idle or unreported.
+    pub task_started_at: Option<String>,
     /// Canonical runtime metadata for this owned Agent.
     pub runtime_metadata: Option<crate::agents::AgentRuntimeMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

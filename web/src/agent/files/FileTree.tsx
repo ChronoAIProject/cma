@@ -1,3 +1,6 @@
+import { FileChangeStats } from './FileChangeStats';
+import { useId } from 'react';
+import type { FileChange } from '../fileChanges';
 import type { AgentFileEntry } from '../../api/agentFiles';
 import {
   IconChevronDownOutline14,
@@ -16,8 +19,12 @@ export function FileTree({
   loading,
   disabled = false,
   onDirectory,
+  changes,
+  rootPath = '',
   onFile,
 }: {
+  readonly changes?: ReadonlyMap<string, FileChange>;
+  readonly rootPath?: string;
   readonly directories: ReadonlyMap<string, readonly AgentFileEntry[]>;
   readonly expanded: ReadonlySet<string>;
   readonly hidden: boolean;
@@ -27,11 +34,23 @@ export function FileTree({
   readonly onDirectory: (path: string) => void;
   readonly onFile: (file: AgentFileEntry) => void;
 }) {
+  const metadataId = useId();
+  const changedFolders = new Set<string>();
+  for (const path of changes?.keys() ?? []) {
+    const parts = path.split('/');
+    parts.pop();
+    while (parts.length) {
+      changedFolders.add(parts.join('/'));
+      parts.pop();
+    }
+  }
   const rows = (path: string, level: number) => (
     <ul className="agent-files__tree" aria-label={level === 0 ? 'Home files' : undefined}>
       {(directories.get(path) ?? [])
         .filter((file) => hidden || !file.hidden)
         .map((file) => {
+          const change = file.kind === 'file' ? changes?.get(file.path) : undefined;
+          const descriptionId = `${metadataId}-${encodeURIComponent(file.path)}`;
           const folder = file.kind === 'directory';
           const open = expanded.has(file.path);
           return (
@@ -42,6 +61,12 @@ export function FileTree({
                 aria-expanded={folder ? open : undefined}
                 aria-current={selected === file.path ? 'true' : undefined}
                 title={`/home/${file.path}`}
+                aria-label={file.name}
+                aria-describedby={
+                  change || changedFolders.has(file.path)
+                    ? `${descriptionId} ${descriptionId}-changes`
+                    : descriptionId
+                }
                 onClick={() => (folder ? onDirectory(file.path) : onFile(file))}
                 disabled={disabled || file.kind === 'symlink'}
               >
@@ -65,7 +90,30 @@ export function FileTree({
                 ) : (
                   <IconCodeOutline16 />
                 )}
-                <span>{file.name}</span>
+                <span className="agent-files__file-label">
+                  <span>{file.name}</span>
+                  <span id={descriptionId} className="agent-files__file-path">
+                    /home/{file.path}
+                  </span>
+                </span>
+                {folder && changedFolders.has(file.path) ? (
+                  <span
+                    className="agent-files__changes"
+                    id={`${descriptionId}-changes`}
+                    aria-label="Contains changed files"
+                  >
+                    Changes
+                  </span>
+                ) : null}
+                {change ? (
+                  <span
+                    className="agent-files__changes"
+                    id={`${descriptionId}-changes`}
+                    title="Lines changed in completed recorded edits"
+                  >
+                    <FileChangeStats change={change} />
+                  </span>
+                ) : null}
               </button>
               {folder && open ? (
                 <div className="agent-files__children">
@@ -84,5 +132,5 @@ export function FileTree({
         })}
     </ul>
   );
-  return rows('', 0);
+  return rows(rootPath, 0);
 }

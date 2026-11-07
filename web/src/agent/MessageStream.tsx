@@ -14,7 +14,6 @@ import { ActiveThinking } from './ActiveThinking';
 import { MessageFooter } from './MessageFooter';
 import type { MessageFeedbackControls } from './useMessageFeedback';
 import { Button } from '../ui/Button';
-import { workedFor } from './turnTiming';
 import { MessageMediaContext, type MessageMediaAccess } from './mediaSources';
 import { AnswerDeliveryContext, type AnswerDeliveryAccess } from './answerDeliveries';
 import { ConversationEmpty } from './ConversationEmpty';
@@ -22,9 +21,7 @@ import type { ResourceStatus } from '../character/status';
 import { messageStreamKey } from './streamTimeline';
 
 interface MessageStreamProps {
-  readonly onReplay?: (turn: string) => void;
   readonly conversation: ConversationState;
-  readonly hideLatestDuration?: boolean;
   readonly approvalBusy?: boolean;
   readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
@@ -43,9 +40,7 @@ interface MessageStreamProps {
 }
 
 export function MessageStream({
-  onReplay,
   conversation,
-  hideLatestDuration = false,
   approvalBusy = false,
   approvalReadOnly = false,
   onApproval,
@@ -75,7 +70,7 @@ export function MessageStream({
     [deliveryAgent, viewerId, deliveryClient, authority],
   );
   const [projectTimeline] = useState(createStreamTimeline);
-  const { items, finalReply, continued, previousRole } = projectTimeline(conversation);
+  const { items, continued, previousRole } = projectTimeline(conversation);
   const { agentId, files, workingDirectory } = media ?? {};
   const mediaAccess = useMemo(
     () =>
@@ -140,11 +135,23 @@ export function MessageStream({
           <ConversationEmpty message={emptyMessage} status={agentStatus} />
         ) : null}
         {items.map((entry) =>
-          entry.kind === 'tools' ? (
-            <ToolCallGroup key={entry.id} group={entry} activeRunId={conversation.activeRunId} />
+          entry.kind === 'tools' || entry.kind === 'tool' ? (
+            <ToolCallGroup
+              key={entry.kind === 'tools' ? entry.id : `tools:${entry.item.id}`}
+              group={
+                entry.kind === 'tools'
+                  ? entry
+                  : {
+                      kind: 'tools',
+                      id: `tools:${entry.item.id}`,
+                      items: [entry.item],
+                      failed: entry.item.status === 'failed',
+                    }
+              }
+              activeRunId={conversation.activeRunId}
+            />
           ) : (
             <StreamEntry
-              onReplay={onReplay}
               key={messageStreamKey(entry)}
               entry={entry}
               approvalBusy={approvalBusy}
@@ -160,29 +167,6 @@ export function MessageStream({
               unknownUserName={unknownUserName}
               feedback={feedback}
               continued={entry.kind === 'message' && continued.has(entry.item.id)}
-              duration={
-                entry.kind === 'message' &&
-                (!hideLatestDuration || entry.item.runId !== conversation.latestTurnId) &&
-                entry.item.runId !== undefined &&
-                entry.item.runId !== conversation.activeRunId &&
-                finalReply.get(entry.item.runId) === entry.item.id
-                  ? workedFor(conversation.turnTiming?.[entry.item.runId])
-                  : undefined
-              }
-              showUsage={
-                entry.kind === 'message' &&
-                entry.item.runId !== undefined &&
-                entry.item.runId !== conversation.activeRunId &&
-                finalReply.get(entry.item.runId) === entry.item.id
-              }
-              usage={
-                entry.kind === 'message' && entry.item.runId !== undefined
-                  ? (conversation.turnUsage?.[entry.item.runId] ??
-                    (String(conversation.usage?.currentTurn?.turnSequence) === entry.item.runId
-                      ? conversation.usage?.currentTurn
-                      : undefined))
-                  : undefined
-              }
             />
           ),
         )}
