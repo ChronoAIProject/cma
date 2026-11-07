@@ -78,7 +78,7 @@ fn authority_at_4096_is_held_without_rewrite_but_safe_history_can_fold() {
         let result = admit(&config, count + 1, &add());
         if count == 4096 {
             let error = result.unwrap_err();
-            assert_eq!(error.code, "mutation_authority_corrupt");
+            assert_eq!(error.code, "mutation_ledger_capacity");
             assert!(!error.retryable);
             assert_eq!(records(&config).unwrap().len(), 4096);
             assert_eq!(recovery_fence(&config, &add()).unwrap(), Some(4096));
@@ -159,6 +159,20 @@ fn hidden_identity_conflict_and_illegal_recreation_hold_before_pruning() {
         );
         std::fs::remove_dir_all(&config.state_root).unwrap();
     }
+}
+
+#[test]
+fn first_partial_pair_admission_keeps_its_journal_and_cleanup_reservations() {
+    let config = config("partial-pair");
+    seed(&config, 7, &add()); // interrupted pair before its second authority write
+    let rows = records(&config).unwrap();
+    let occupancy = crate::mutation_capacity::occupancy(&[], &rows, &[]).unwrap();
+    assert_eq!(occupancy.missing_receipts, 1);
+    assert_eq!(occupancy.cleanup_receipts, 1);
+    assert_eq!(occupancy.reserved_authority_records, 3);
+    admit(&config, 8, &add()).unwrap();
+    assert_eq!(records(&config).unwrap().len(), 1);
+    std::fs::remove_dir_all(&config.state_root).unwrap();
 }
 
 #[test]
