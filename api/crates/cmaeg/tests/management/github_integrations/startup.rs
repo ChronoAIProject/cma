@@ -2,6 +2,32 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn missing_base_migration_authority_keeps_github_unavailable_but_http_healthy() {
+    use mongodb::bson::doc;
+    let mut fixture = Fixture::new(true).await;
+    let database = fixture.database.admin.database(&fixture.database.name);
+    database
+        .collection::<mongodb::bson::Document>("eg_schema_migrations")
+        .delete_one(doc! {"_id":"github_channel_guard"})
+        .await
+        .unwrap();
+    for child in &mut fixture.children {
+        child.kill().await.unwrap();
+    }
+    let base = fixture.replica_with_flag(Some(true)).await;
+    let channels = fixture.read(&base, "/v1/channels", "token-alice").await;
+    assert_eq!(channels.status(), 200);
+    let capabilities = fixture
+        .read(&base, "/v1/github/capabilities", "token-alice")
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(capabilities["store_ready"], false);
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn old_channel_validator_is_upgraded_before_github_admission_without_manual_migrate() {
     use futures_util::TryStreamExt;
     use mongodb::bson::doc;

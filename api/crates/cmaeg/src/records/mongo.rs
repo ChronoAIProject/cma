@@ -173,9 +173,9 @@ impl MongoRecords {
             .await
             .map_err(failure)?;
         if guarded.matched_count != 1 {
-            return Err(RecordError::Conflict {
+            return Err(RecordError::GuardConflict {
+                scope: "channel",
                 expected: channel_version,
-                actual: None,
             });
         }
         let authorities = self.db.collection::<Document>("eg_automation_records");
@@ -196,9 +196,9 @@ impl MongoRecords {
                 .await
                 .map_err(failure)?;
             if changed.matched_count != 1 {
-                return Err(RecordError::Conflict {
+                return Err(RecordError::GuardConflict {
+                    scope: guard.kind,
                     expected: guard.version,
-                    actual: None,
                 });
             }
         }
