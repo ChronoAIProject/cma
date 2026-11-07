@@ -153,8 +153,43 @@ class LinuxLifetime(unittest.TestCase):
         try:
             # An unreaped zombie is dead and has released every descriptor.
             return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
+            # Exit before open yields ENOENT; exit between open/read yields
+            # ESRCH. Both prove disappearance, not an inspection failure.
             return False
+
+    def test_exit_between_stat_open_and_read_is_dead(self):
+        child = subprocess.Popen(["/bin/sleep", "30"])
+        self.addCleanup(child.wait, timeout=3)
+        self.addCleanup(child.kill)
+        original_open = Path.open
+
+        def open_then_reap(path, *args, **kwargs):
+            descriptor = original_open(path, *args, **kwargs)
+            try:
+                child.terminate()
+                child.wait(timeout=3)
+            except BaseException:
+                descriptor.close()
+                raise
+            return descriptor
+
+        # Keep a real proc descriptor open across exit/reaping. Linux returns
+        # ESRCH on read, rather than ENOENT from opening a missing proc path.
+        with patch.object(Path, "open", open_then_reap):
+            self.assertFalse(self.live(child.pid))
+
+    def test_process_inspection_preserves_liveness_and_unrelated_errors(self):
+        for state, expected in [("R", True), ("S", True), ("T", True), ("Z", False)]:
+            with self.subTest(state=state), \
+                    patch.object(Path, "read_text", return_value=f"123 (sampler) {state} 1"):
+                self.assertEqual(self.live(123), expected)
+        with patch.object(Path, "read_text", side_effect=FileNotFoundError):
+            self.assertFalse(self.live(123))
+        for error in (PermissionError, OSError):
+            with self.subTest(error=error), patch.object(Path, "read_text", side_effect=error):
+                with self.assertRaises(error):
+                    self.live(123)
 
     def launch(self, write_fd, stalled=False):
         hook = SCRIPTS / "backend-resource-env.sh"
