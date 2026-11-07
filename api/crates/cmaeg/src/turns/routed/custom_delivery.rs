@@ -88,12 +88,8 @@ impl RoutedDelivery {
             .custom
             .as_ref()
             .ok_or(ExecutionError::Unsupported)?;
-        let event = body
-            .event_context
-            .event_ref
-            .open(&self.journal.keys, (self.journal.clock)())
-            .map_err(|_| ExecutionError::Expired)?
-            .payload;
+        let event =
+            body.settlement_event(plan, target, &self.journal.keys, (self.journal.clock)())?;
         let mut evidence = lease
             .state
             .delivery
@@ -139,29 +135,51 @@ impl RoutedDelivery {
             {
                 return Err(ExecutionError::AuthorityChanged);
             }
-            let gate = DeliveryGate::new(
-                self.journal.clone(),
-                lease,
-                self.authority.clone(),
-                plan.clone(),
-                target.clone(),
-                current.version,
-                None,
-            );
-            let cancel = CancelSend(gate.clone());
-            let _ticket = gate
-                .enter_route(NO_CHAT_ROUTE)
-                .await
-                .map_err(|_| ExecutionError::LostLease)?;
-            if !gate.commit() {
-                return Err(ExecutionError::LostLease);
-            }
-            evidence.local = Some(if body.metadata.contains_key(super::media_schedule::KEY) {
-                custom.local_response(&event, effect, &frame.response_id)
+            let outcome = if event.expires_at <= (self.journal.clock)() {
+                // Only a content-free terminal control may close the original waiter.
+                // Expiry still refuses answer text and every external delivery leg.
+                self.journal.guard(lease).await?;
+                let control = match effect {
+                    CustomStreamEffect::Completed { .. } => {
+                        Some(CustomStreamEffect::Completed { final_text: None })
+                    }
+                    CustomStreamEffect::Failed => Some(CustomStreamEffect::Failed),
+                    _ => None,
+                };
+                control.map_or(LocalStreamOutcome::Unavailable, |control| {
+                    if body.metadata.contains_key(super::media_schedule::KEY) {
+                        custom.local_response(&event, &control, &frame.response_id)
+                    } else {
+                        custom.local(&event, &control)
+                    }
+                })
             } else {
-                custom.local(&event, effect)
-            });
-            drop(cancel);
+                let gate = DeliveryGate::new(
+                    self.journal.clone(),
+                    lease,
+                    self.authority.clone(),
+                    plan.clone(),
+                    target.clone(),
+                    current.version,
+                    None,
+                );
+                let cancel = CancelSend(gate.clone());
+                let _ticket = gate
+                    .enter_route(NO_CHAT_ROUTE)
+                    .await
+                    .map_err(|_| ExecutionError::LostLease)?;
+                if !gate.commit() {
+                    return Err(ExecutionError::LostLease);
+                }
+                let outcome = if body.metadata.contains_key(super::media_schedule::KEY) {
+                    custom.local_response(&event, effect, &frame.response_id)
+                } else {
+                    custom.local(&event, effect)
+                };
+                drop(cancel);
+                outcome
+            };
+            evidence.local = Some(outcome);
             self.record_custom(lease, &evidence).await?;
             if effect.terminal() {
                 let mut change = crate::activity::facts::delivery(
@@ -190,6 +208,30 @@ impl RoutedDelivery {
                 continue;
             }
             let destination = evidence.webhooks[index].destination.clone();
+            if event.expires_at <= (self.journal.clock)() {
+                let outcome = DeliveryOutcome::Rejected {
+                    reason: "event_ref_expired".into(),
+                };
+                self.journal
+                    .observe(
+                        &plan.identity,
+                        crate::activity::facts::delivery(
+                            target.launch.consumer.as_str(),
+                            crate::turns::observer::DeliveryStep::Answer,
+                            &outcome,
+                            crate::turns::observer::Destination::Origin,
+                            &cmaeg_core::seal::ReplyAddress::ResultWebhook {
+                                url: destination.url,
+                                hmac_key_id: String::new(),
+                            },
+                            None,
+                        ),
+                    )
+                    .await;
+                evidence.webhooks[index].status = WebhookStatus::Settled { outcome };
+                self.record_custom(lease, &evidence).await?;
+                continue;
+            }
             let current = current_target(self.authority.as_ref(), plan, target).await?;
             if !webhook_authorized(&current, &destination) {
                 return Err(ExecutionError::AuthorityChanged);

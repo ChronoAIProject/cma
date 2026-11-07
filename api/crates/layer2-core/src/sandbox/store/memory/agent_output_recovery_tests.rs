@@ -1,6 +1,9 @@
 use super::*;
 use layer3_adapter::{RuntimeOutputReceipt, RuntimeOutputSource};
 
+#[path = "agent_output_identity_tests.rs"]
+mod identity_tests;
+
 const STREAM: &str = "d99003d1-0c3c-46cd-aa47-9bbdbed50b12";
 
 fn retained(cursor: u64, update: Option<ConversationUpdate>) -> ConversationUpdate {
