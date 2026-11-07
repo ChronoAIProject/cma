@@ -10,6 +10,9 @@ use super::*;
 #[path = "command_admission_result_tests.rs"]
 mod admission_results;
 
+#[path = "command_queue_policy_tests.rs"]
+mod queue_policy;
+
 #[path = "command_bootstrap_race_tests.rs"]
 mod bootstrap_races;
 

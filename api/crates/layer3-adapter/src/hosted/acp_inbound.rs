@@ -27,9 +27,14 @@ impl Bridge {
                 };
                 if let Some(waiting) = waiting {
                     if waiting.prompt {
+                        let prompt_id = id.as_str().and_then(crate::PromptIdentity::parse);
+                        if let Some(id) = id.as_str() {
+                            self.mark_prompt_completed(id).await;
+                        }
                         updates.send(super::acp_turn::scoped_turn_outcome(
                             super::acp_turn::turn_outcome(frame.clone()),
                             true,
+                            prompt_id,
                         ));
                     }
                     let _ = waiting.answer.send(frame);
@@ -42,14 +47,37 @@ impl Bridge {
                         self.answered.lock().await.clear();
                         return;
                     }
+                    let already_completed = self.prompt_was_completed(id).await;
+                    if !already_completed {
+                        // The response ID is the native authority. A passive
+                        // attachment may have no local waiter, but it must
+                        // still carry a valid terminal identity to the durable
+                        // recorder before it can ACK the retained frame.
+                        if let Some(prompt_id) = crate::PromptIdentity::parse(id) {
+                            if let Some(outcome) = prompt_outcome(&frame) {
+                                self.mark_prompt_completed(id).await;
+                                self.orphaned_prompt_response
+                                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                                updates.send(super::acp_turn::scoped_turn_outcome(
+                                    outcome,
+                                    true,
+                                    Some(prompt_id),
+                                ));
+                                return;
+                            }
+                        }
+                    }
                 }
                 if id.as_i64().is_some()
                     && self
                         .orphaned_prompt_response
                         .swap(false, std::sync::atomic::Ordering::SeqCst)
                 {
+                    // A restored permission has no native terminal identity
+                    // on this legacy numeric path. Consume the compatibility
+                    // marker, but never let an unrelated numeric response
+                    // close whichever turn happens to be active.
                     self.answered.lock().await.clear();
-                    updates.send(super::acp_turn::turn_outcome(frame).into_update());
                 }
                 return;
             }
@@ -382,6 +410,15 @@ pub(crate) fn outcome_for(
         }
     }
     serde_json::json!({ "outcome": "cancelled" })
+}
+
+fn prompt_outcome(frame: &serde_json::Value) -> Option<super::acp::Outcome> {
+    let terminal = frame.get("error").is_some()
+        || frame
+            .get("result")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|result| result.contains_key("stopReason"));
+    terminal.then(|| super::acp_turn::turn_outcome(frame.clone()))
 }
 
 fn valid_call(call: &serde_json::Value) -> bool {

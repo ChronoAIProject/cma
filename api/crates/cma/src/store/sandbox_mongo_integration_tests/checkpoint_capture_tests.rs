@@ -10,6 +10,7 @@ use crate::store::sandbox_maintenance::mongo_integration_tests::{
 
 mod concurrency_tests;
 mod cooldown_tests;
+mod identity_receipt_tests;
 mod publication_tests;
 mod quiet_tests;
 mod renewal_tests;
