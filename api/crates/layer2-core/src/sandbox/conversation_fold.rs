@@ -3,7 +3,7 @@ use layer3_adapter::{ConversationUpdate, SessionUpdate};
 use super::conversation_fold_support::{
     active_turn, append_bounded, approval_detail, bounded, complete_first_message,
     fail_first_message, flush_message, observe_first_message, observe_operation, plain_text,
-    prompt_evidence, wire_name,
+    prompt_evidence, validate_prompt_identity, wire_name,
 };
 use super::{
     Agent, AgentAvailableCommand, AgentConfigOption, AgentConversationError, AgentLogKind,
@@ -35,6 +35,27 @@ pub(super) fn fold_update(
         ));
     }
     let (update, prompt_evidence) = prompt_evidence(update);
+    let update = match update {
+        ConversationUpdate::TurnEndedForPrompt {
+            prompt_id,
+            response,
+        } => {
+            validate_prompt_identity(current, &prompt_id)?;
+            ConversationUpdate::TurnEnded(response)
+        }
+        ConversationUpdate::FailedForPrompt {
+            prompt_id,
+            message,
+            capability,
+        } => {
+            validate_prompt_identity(current, &prompt_id)?;
+            ConversationUpdate::Failed {
+                message,
+                capability,
+            }
+        }
+        update => update,
+    };
     if !prompt_evidence
         && current.conversation.active_turn.is_none()
         && update.turn_evidence().is_some()
@@ -229,6 +250,10 @@ pub(super) fn fold_update(
             appended_at,
         ),
         ConversationUpdate::WithoutPromptEvidence(_) => unreachable!("wrapper removed"),
+        ConversationUpdate::TurnEndedForPrompt { .. }
+        | ConversationUpdate::FailedForPrompt { .. } => {
+            unreachable!("prompt-scoped terminal was normalized before folding")
+        }
         ConversationUpdate::RuntimeOutput { .. } => Err(AgentConversationError::InvalidState(
             "runtime output receipt must be recorded before folding",
         )),
