@@ -58,7 +58,12 @@ this hold from corruption, runtime loss and owner quota.
 An already-unsafe legacy ledger is held without increasing scan limits or
 pruning its canonical state to force admission. Malformed records and conflicting
 replacements remain corruption. Normal startup validates the whole active V1
-history; bounded global scans still run on mutations. No overall logarithmic
+history; bounded global scans still run on admission, recovery and process
+checks. Within that validated operation gate, replay reads the existing hashed
+operation path instead of decoding the entire journal again. A bounded filename
+walk detects replacement temporaries; any replacement uses full validation and
+reconciliation before another write or replay. Record identity, payload,
+no-follow IO and completed-open liveness checks remain. No overall logarithmic
 complexity is claimed.
 
 A frozen predecessor authority reader tests the retained V1 representation,
