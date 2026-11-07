@@ -193,8 +193,8 @@ key, one more than the former Backend job. New per-PR Backend entries and
 `v0-rust-cmaeg-latency-*` writes are eliminated. Old Backend, PR and latency
 entries remain until Actions evicts them; this workflow performs no remote cache
 deletion. The hosted PR run created no Backend merge-ref caches. The first
-develop-push save remains to be verified after merge using the
-[caches API procedure](Backend_CI_Archive_Verification.md#hosted-actions-evidence).
+develop push after merge saved both job caches; see
+[first develop push](Backend_CI_Archive_Verification.md#first-develop-push).
 See the [rust-cache key implementation](https://github.com/Swatinem/rust-cache/blob/v2/src/config.ts).
 
 ## Reproduce selection equality
