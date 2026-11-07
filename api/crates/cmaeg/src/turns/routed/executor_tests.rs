@@ -28,8 +28,20 @@ pub(super) fn executor(
     mpsc::Receiver<DeliveryCommand>,
     WorkItem,
 ) {
+    executor_with_timeout(setup, http, Duration::from_secs(60))
+}
+
+pub(super) fn executor_with_timeout(
+    setup: &Setup,
+    http: &HttpServer,
+    request_timeout: Duration,
+) -> (
+    RoutedTargetExecutor,
+    mpsc::Receiver<DeliveryCommand>,
+    WorkItem,
+) {
     let port = Arc::new(HttpExecutionPort::new(
-        http.client(true, Duration::from_secs(60)),
+        http.client(true, request_timeout),
         setup.port.clone(),
         setup.server.store(),
         setup.journal().clone(),

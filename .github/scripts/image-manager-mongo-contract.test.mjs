@@ -15,6 +15,7 @@ const selections = [
   ['package(=cmaeg) and kind(lib) and test(~whatsapp_retention_on_real_mongo)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=mongo_isolation)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~github_integrations::)', 'only', true],
+  ['package(=cmaeg) and kind(test) and binary(=management) and test(~organization_channels::)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=github_source)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~tools::threads::ledger::mongo_tests::)', 'only', true],
   ['package(=cma) and test(~store::isolation::tests::real_)', 'only', false],
@@ -75,6 +76,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
+      assert.equal(selections.length, 14);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];
@@ -92,6 +94,7 @@ for (const reuse of [false, true]) {
       assert.equal(created.args[created.args.indexOf('--name')+1], name);
       assert.equal(created.args[created.args.indexOf('--label')+1], `dev.chrono.cma.im-contract=${'ab'.repeat(12)}`);
       assert.ok(created.args.includes('mongo:8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c'));
+      assert.match(created.args.at(-1), /--setParameter enableTestCommands=1$/);
       assert.deepEqual(calls.at(-1).args, ['rm', '--force', '--volumes', name]);
       assert.deepEqual(calls.at(-2).args, ['inspect', '--format', '{{index .Config.Labels "dev.chrono.cma.im-contract"}}', name]);
     } finally { f.close(); }
