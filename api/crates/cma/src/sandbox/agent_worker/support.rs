@@ -129,6 +129,7 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        super::ledger_telemetry::observe(&failure);
         if agent.work.step == AgentWorkStep::PublishConnection {
             self.retry_connection_failure(&agent, failure, now).await
         } else if failure.retryable || agent.status != AgentStatus::Starting {
