@@ -53,6 +53,25 @@ impl Initialization {
         ingress: crate::ingress::IngressState,
     ) -> Self {
         Self(tokio::spawn(async move {
+            let Some(records_database) = state.records.database() else {
+                return;
+            };
+            match crate::records::mongo::guard_migration_required(&records_database).await {
+                Ok(true) => {
+                    if crate::records::mongo::migrate(&records_database)
+                        .await
+                        .is_err()
+                    {
+                        tracing::warn!("Gateway RECORDS guard migration did not complete; GitHub remains unavailable");
+                        return;
+                    }
+                }
+                Ok(false) => {}
+                Err(_) => {
+                    tracing::warn!("Gateway RECORDS guard migration did not complete; GitHub remains unavailable");
+                    return;
+                }
+            }
             let Some(mut gateway) =
                 Gateway::from_records(&state.records, state.master_keys.clone()).await
             else {
@@ -60,7 +79,12 @@ impl Initialization {
             };
             gateway.attach_ingress(Arc::new(ingress));
             gateway.attach_activity(state.activity.clone());
-            let _ = state.github.set(Arc::new(gateway));
+            let gateway = Arc::new(gateway);
+            let _ = state.github.set(gateway.clone());
+            loop {
+                gateway.recover_tick().await;
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
         }))
     }
     pub(crate) fn stop(&self) {

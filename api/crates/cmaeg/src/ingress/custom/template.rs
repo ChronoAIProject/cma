@@ -20,15 +20,29 @@ pub fn render(template: &str, event: &CloudEvent) -> String {
         };
         let end = open + 2 + close + 2;
         let name = &remaining[open + 2..end - 2];
-        output.push_str(match name {
-            "type" => &event.r#type,
-            "source" => &event.source,
-            "subject" => event.subject.as_deref().unwrap_or_default(),
-            "id" => &event.id,
-            "time" => event.time.as_deref().unwrap_or_default(),
-            "data" => &data,
-            _ => &remaining[open..end],
-        });
+        let replacement = match name {
+            "type" => event.r#type.clone(),
+            "source" => event.source.clone(),
+            "subject" => event.subject.clone().unwrap_or_default(),
+            "id" => event.id.clone(),
+            "time" => event.time.clone().unwrap_or_default(),
+            "data" => data.clone(),
+            path if path.starts_with("data.") => event
+                .data
+                .as_ref()
+                .and_then(|value| {
+                    path.split('.')
+                        .skip(1)
+                        .try_fold(value, |value, key| value.get(key))
+                })
+                .map(|value| match value {
+                    serde_json::Value::String(value) => value.clone(),
+                    value => canonical_json(value.clone()),
+                })
+                .unwrap_or_default(),
+            _ => remaining[open..end].to_owned(),
+        };
+        output.push_str(&replacement);
         remaining = &remaining[end..];
         if output.len() >= 32768 {
             return bounded(&output, 32768);
