@@ -30,6 +30,8 @@ job_ids.each do |workflow, ids|
 end
 
 guarded = mode == "release" ? [
+  ["ci", "trigger-release-contract", "Debian desktop fixture regressions"],
+  ["ci", "images", "Execute desktop image contract"],
   ["ci", "images", "Execute built runtime image contract"],
   ["ci", "images", "Require passing runtime image evidence"],
   ["ci", "images", "Export tested native image"],
