@@ -122,6 +122,29 @@ impl PlanStore {
     /// Returns only after the root is committed and the complete payload verifies.
     /// A duplicate logical request restores the original plan despite policy edits.
     pub async fn admit(&self, candidate: &Candidate) -> Result<AdmittedPlan, AdmissionError> {
+        self.admit_inner(candidate, None).await
+    }
+
+    /// GitHub-only admission root. The channel version is guarded in the same
+    /// Mongo transaction that inserts the immutable interaction root.
+    pub async fn admit_github(
+        &self,
+        candidate: &Candidate,
+        channel_record_id: &str,
+        channel_version: u64,
+    ) -> Result<AdmittedPlan, AdmissionError> {
+        self.admit_inner(
+            candidate,
+            Some((channel_record_id.to_owned(), channel_version)),
+        )
+        .await
+    }
+
+    async fn admit_inner(
+        &self,
+        candidate: &Candidate,
+        github_guard: Option<(String, u64)>,
+    ) -> Result<AdmittedPlan, AdmissionError> {
         candidate.live((self.clock)())?;
         if let Some(plan) = self.load(candidate.identity()).await? {
             return same_request(candidate, plan);
@@ -139,7 +162,13 @@ impl PlanStore {
         candidate.live((self.clock)())?;
         let manifest = &candidate.manifest;
         let bytes = codec::encode(manifest)?;
-        let result = self.create(&manifest.id, manifest, &bytes).await;
+        let result = match github_guard {
+            Some((record_id, version)) => {
+                self.create_guarded(&manifest.id, manifest, &bytes, &record_id, version)
+                    .await
+            }
+            None => self.create(&manifest.id, manifest, &bytes).await,
+        };
         match result {
             Ok(()) | Err(RecordError::Conflict { .. }) | Err(RecordError::Unavailable(_)) => {
                 // A lost response is resolved by reading the immutable root. A
@@ -308,6 +337,34 @@ impl PlanStore {
                     Err(RecordError::Malformed("invalid create version".into()))
                 }
             })
+    }
+
+    async fn create_guarded(
+        &self,
+        id: &str,
+        manifest: &Manifest,
+        bytes: &[u8],
+        channel_record_id: &str,
+        channel_version: u64,
+    ) -> Result<(), RecordError> {
+        let blob = seal_interaction(&self.keys, id, bytes)
+            .map_err(|_| RecordError::Rejected("routed record encryption failed".into()))?;
+        let version = self
+            .records
+            .put_interaction_guarded(
+                id,
+                &manifest.identity.owner,
+                &blob,
+                manifest.retained_until,
+                channel_record_id,
+                channel_version,
+            )
+            .await?;
+        if version == 1 {
+            Ok(())
+        } else {
+            Err(RecordError::Malformed("invalid create version".into()))
+        }
     }
 }
 

@@ -36,6 +36,8 @@ struct Record {
     blob: Binary,
     version: i64,
     schema_version: i32,
+    #[serde(default)]
+    guard_revision: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_at: Option<DateTime>,
 }
@@ -120,6 +122,80 @@ impl MongoRecords {
         self.put_with_retention(id, owner, blob, expected, expires_at, Default::default())
             .await
     }
+
+    pub(crate) async fn guarded_insert_interaction(
+        &self,
+        id: &str,
+        owner: &str,
+        blob: &[u8],
+        expires_at: i64,
+        channel_record_id: &str,
+        channel_version: u64,
+    ) -> Result<u64, RecordError> {
+        if self.kind != RecordKind::Interaction
+            || id.is_empty()
+            || owner.is_empty()
+            || blob.is_empty()
+            || blob.len() > 65_536
+        {
+            return Err(RecordError::Rejected("invalid guarded interaction".into()));
+        }
+        let expiry = DateTime::from_millis(
+            expires_at
+                .checked_mul(1000)
+                .ok_or_else(|| RecordError::Rejected("invalid interaction expiry".into()))?,
+        );
+        let mut session = self.db.client().start_session().await.map_err(failure)?;
+        session
+            .start_transaction()
+            .read_concern(mongodb::options::ReadConcern::snapshot())
+            .write_concern(
+                mongodb::options::WriteConcern::builder()
+                    .w(mongodb::options::Acknowledgment::Majority)
+                    .build(),
+            )
+            .await
+            .map_err(failure)?;
+        let channel = self.db.collection::<Document>(RECORDS);
+        let guarded = channel
+            .update_one(
+                doc! {
+                    "_id": channel_record_id,
+                    "owner": owner,
+                    "version": i64::try_from(channel_version)
+                        .map_err(|_| RecordError::Rejected("invalid channel version".into()))?,
+                },
+                doc! {"$inc":{"guard_revision":1_i64}},
+            )
+            .session(&mut session)
+            .await
+            .map_err(failure)?;
+        if guarded.matched_count != 1 {
+            return Err(RecordError::Conflict {
+                expected: channel_version,
+                actual: None,
+            });
+        }
+        let row = Record {
+            id: id.into(),
+            owner: owner.into(),
+            blob: Binary {
+                subtype: BinarySubtype::Generic,
+                bytes: blob.to_vec(),
+            },
+            version: 1,
+            schema_version: 1,
+            guard_revision: 0,
+            expires_at: Some(expiry),
+        };
+        self.records
+            .insert_one(row)
+            .session(&mut session)
+            .await
+            .map_err(failure)?;
+        session.commit_transaction().await.map_err(failure)?;
+        Ok(1)
+    }
     pub(super) async fn put_with_retention(
         &self,
         id: &str,
@@ -188,6 +264,7 @@ impl MongoRecords {
             blob: binary,
             version: 1,
             schema_version: 1,
+            guard_revision: 0,
             expires_at: expiry,
         };
         match self.records.insert_one(&row).await {

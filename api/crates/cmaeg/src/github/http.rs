@@ -52,7 +52,7 @@ pub async fn capabilities(
             app_identity_verification: true,
             ownership_verification: true,
             automatic_reconciliation: false,
-            durable_dispatch: false,
+            durable_dispatch: true,
         })
         .into_response(),
     )
@@ -308,7 +308,7 @@ pub async fn webhook(
     .map_err(|_| Error::Unavailable)??;
     Ok(crate::http::problems::no_store(
         (
-            if created && receipt.status == "accepted" {
+            if created && matches!(receipt.status.as_str(), "pending" | "accepted") {
                 StatusCode::ACCEPTED
             } else {
                 StatusCode::OK
