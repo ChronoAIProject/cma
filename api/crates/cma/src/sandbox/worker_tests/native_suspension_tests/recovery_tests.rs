@@ -237,3 +237,6 @@ async fn missing_original_home_or_provider_object_never_creates_an_empty_replace
         assert_eq!(fixture.backend.calls.snapshot(), ["create"]);
     }
 }
+
+#[path = "fair_recovery_tests.rs"]
+mod fair_recovery_tests;
