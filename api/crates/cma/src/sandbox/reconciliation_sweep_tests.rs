@@ -387,3 +387,41 @@ mod binding_tests;
 
 #[path = "reconciliation_schedule_tests.rs"]
 mod schedule_tests;
+
+// Regress the reviewer's skipped Recovery probe, with absent/unheld controls.
+#[tokio::test(start_paused = true)]
+async fn recovery_progress_counts_attempted_candidates_only() {
+    for (present, held, expected) in [(false, false, 0), (true, true, 0), (true, false, 1)] {
+        let (store, reconciler) = setup(1, Duration::ZERO).await;
+        let reconciler = reconciler.with_failed_runtime_recovery(std::sync::Arc::new(
+            layer2_core::sandbox::SandboxRuntimeUpdateService::new(
+                store.clone(),
+                "fixture-image".into(),
+            ),
+        ));
+        let row = sandbox(0);
+        if held {
+            drop(reconciler.binding_holds.begin(&row, &[]).unwrap());
+        }
+        let mut sweep = Sweep {
+            phase: Phase::Recovery,
+            recovery_candidate: present.then(|| row.id.clone()),
+            ..Default::default()
+        };
+        sweep.authority.items.insert(row.id.clone(), row.clone());
+        assert_eq!(
+            sweep.step(&reconciler, SystemTime::now()).await.unwrap(),
+            expected
+        );
+        assert_eq!(sweep.phase, Phase::Policy);
+        assert!(sweep.authority.items.is_empty());
+        assert_eq!(reconciler.binding_holds.contains(row.id.as_str()), held);
+        // The unheld attempt rereads the row and retains its ordinary eligibility
+        // refusal. Neither skipped case calls the service or changes the row.
+        assert_eq!(store.keys("get").len(), expected as usize);
+        assert_eq!(
+            store.inner.get_sandbox(&row.id).await.unwrap().unwrap(),
+            row
+        );
+    }
+}

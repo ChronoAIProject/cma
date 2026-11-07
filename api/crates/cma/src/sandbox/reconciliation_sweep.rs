@@ -224,14 +224,16 @@ impl Sweep {
                 };
             }
             Phase::Recovery => {
-                if let Some(id) = &self.recovery_candidate {
-                    if !reconciler.binding_holds.contains(id.as_str()) {
+                let items = match &self.recovery_candidate {
+                    Some(id) if !reconciler.binding_holds.contains(id.as_str()) => {
                         reconciler.recover_failed_unpublished_runtime(id).await;
+                        1
                     }
-                }
+                    _ => 0,
+                };
                 self.authority = Authority::default();
                 self.phase = Phase::Policy;
-                return Ok(u64::from(self.recovery_candidate.is_some()));
+                return Ok(items);
             }
             Phase::Policy => {
                 self.phase = if reconciler.automatic_pause_threshold(now).await?.is_some() {
