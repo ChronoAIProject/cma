@@ -112,6 +112,10 @@ module CIContract
     step(gate, "Release workflow and Gateway source contracts", "ruby .github/scripts/ci-contract.rb release")
     step(gate, "Release contract mutation regressions", "ruby .github/scripts/ci-contract-tests.rb release")
     step(gate, "Runtime image evidence and provenance regressions", "node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs")
+    step(gate, "Debian desktop fixture regressions", <<~SH)
+      python3 .github/scripts/desktop-browser-input-tests.py
+      node --test .github/scripts/desktop-browser-page.test.cjs
+    SH
     images = job(ci, "images", "Images")
     require!(!images.key?("if") && images.dig("strategy", "matrix", "component") == %w[api web runtime runtime-desktop cmaeg image-manager], "all image gates must execute")
     %w[images image-exports].each do |id|
