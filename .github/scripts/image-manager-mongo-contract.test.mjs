@@ -82,7 +82,6 @@ for (const reuse of [false, true]) {
         const [selection, ignored, converted] = selections[index];
         const build = reuse ? ['--binaries-metadata', join(f.metadata, 'binaries-metadata.json'), '--cargo-metadata', join(f.metadata, 'cargo-metadata.json')] : ['--workspace', '--locked'];
         const args = ['nextest', 'run', ...build, '--no-tests', 'fail'];
-        if (selection.includes('github_integrations::')) args.push('--concurrency', '1');
         if (converted) args.push('--run-ignored', ignored, '--test-threads', '1', '--no-fail-fast', '-E', selection);
         else args.push('-E', selection, '--run-ignored', ignored, '--test-threads', '1');
         assert.deepEqual(row.args, args);
