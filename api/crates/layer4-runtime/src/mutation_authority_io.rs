@@ -49,7 +49,7 @@ pub(super) fn scan(state_root: &Path) -> Result<Vec<AuthorityFile>> {
             ));
         }
         if files.len() == MAX_AUTHORITY_RECORDS {
-            return Err(corrupt("mutation authority contains too many records"));
+            return Err(crate::mutation_capacity::exhausted());
         }
         files.push(AuthorityFile {
             path: path.clone(),

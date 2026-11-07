@@ -120,6 +120,7 @@ pub(crate) fn begin<T: DeserializeOwned>(
     {
         return resolve_existing(path, record, operation);
     }
+    crate::mutation_capacity::check(config, std::slice::from_ref(operation))?;
     create_started(config, operation)
 }
 
@@ -270,14 +271,21 @@ impl Ticket {
     }
 }
 
+pub(crate) fn inventory(config: &RuntimeConfig) -> Result<Vec<Operation>> {
+    read_records(config, false).map(|records| records.iter().map(Record::operation).collect())
+}
+
 fn records(config: &RuntimeConfig) -> Result<Vec<Record>> {
+    crate::mutation_capacity::check(config, &[])?;
+    read_records(config, true)
+}
+
+fn read_records(config: &RuntimeConfig, apply: bool) -> Result<Vec<Record>> {
     let mut files = Vec::new();
     for root in crate::mutation_scope::roots(config)? {
         files.extend(io::scan(&root)?);
         if files.len() > MAX_JOURNAL_ENTRIES {
-            return Err(corrupt(
-                "runtime mutation journal contains too many entries",
-            ));
+            return Err(crate::mutation_capacity::exhausted());
         }
     }
     for file in &files {
@@ -299,7 +307,7 @@ fn records(config: &RuntimeConfig) -> Result<Vec<Record>> {
             ));
         }
     }
-    io::reconcile(files).map(|files| files.into_iter().map(|file| file.record).collect())
+    io::reconcile(files, apply).map(|files| files.into_iter().map(|file| file.record).collect())
 }
 
 fn resolve_existing<T: DeserializeOwned>(
@@ -436,3 +444,7 @@ pub(super) fn io_error(operation: &'static str, error: std::io::Error) -> Runtim
 #[cfg(test)]
 #[path = "mutation_journal_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mutation_capacity_tests.rs"]
+pub(crate) mod capacity_tests;
