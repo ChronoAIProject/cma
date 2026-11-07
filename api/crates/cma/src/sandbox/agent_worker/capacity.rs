@@ -63,7 +63,7 @@ impl AgentWorker {
                     &self.config.holder,
                     fence,
                     &rfc3339_at(at),
-                    &rfc3339_at(at + self.config.retry_delay),
+                    &rfc3339_at(at + self.failure_retry_delay(&current)),
                 )?
             } else {
                 let worktree = self
