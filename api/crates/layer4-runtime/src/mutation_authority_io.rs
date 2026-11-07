@@ -101,6 +101,16 @@ pub(super) fn persist_new(state_root: &Path, record: &Record) -> Result<()> {
         .map_err(|error| io_error("remove mutation authority temporary file", error))
 }
 
+pub(super) fn sync_record(path: &Path) -> Result<()> {
+    crate::fs_durability::sync_file(path)
+        .map_err(|error| io_error("sync retained mutation authority", error))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| corrupt("mutation authority has no parent"))?;
+    crate::fs_durability::sync_directory(parent)
+        .map_err(|error| io_error("sync retained mutation authority directory", error))
+}
+
 fn read_record(path: &Path) -> Result<Record> {
     let mut file =
         open_no_follow(path).map_err(|error| io_error("open mutation authority record", error))?;
