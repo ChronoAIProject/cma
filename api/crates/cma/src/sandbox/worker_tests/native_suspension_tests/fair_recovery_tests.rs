@@ -7,6 +7,7 @@ struct FailingStore {
     inner: Arc<InMemorySandboxStore>,
     held: SandboxId,
     calls: AtomicUsize,
+    fail_pause: AtomicBool,
 }
 #[async_trait::async_trait]
 impl SandboxStore for FailingStore {
@@ -60,6 +61,11 @@ impl SandboxMaintenanceStore for FailingStore {
         &self,
         request: SandboxInactivityPauseRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+        if self.fail_pause.load(Ordering::SeqCst) {
+            return Err(SandboxStoreError::Unavailable(
+                "fixture pause is unavailable".into(),
+            ));
+        }
         self.inner.schedule_inactivity_pause(request).await
     }
     async fn preview_inactivity_pause(
@@ -129,6 +135,7 @@ async fn permanently_failed_early_binding_does_not_starve_a_real_native_boot_rep
         inner: fixture.harness.store.clone(),
         held: early.id.clone(),
         calls: AtomicUsize::new(0),
+        fail_pause: AtomicBool::new(false),
     });
     let reconciler = SandboxReconciler::new(
         store.clone(),
@@ -204,6 +211,7 @@ async fn held_native_binding_never_reaches_claim_home_or_runtime_reclamation() {
         inner: fixture.harness.store.clone(),
         held: active.id.clone(),
         calls: AtomicUsize::new(0),
+        fail_pause: AtomicBool::new(false),
     });
     let reconciler = SandboxReconciler::new(
         store.clone(),
@@ -231,4 +239,70 @@ async fn held_native_binding_never_reaches_claim_home_or_runtime_reclamation() {
             .len()
             == 1
     );
+}
+
+#[tokio::test]
+async fn an_ordinary_binding_detects_later_boot_loss_behind_a_persistent_pause_fault() {
+    let mut fixture = Fixture::native().await;
+    let created = fixture.harness.create().await;
+    let mut now = start_time(&created);
+    let active = fixture
+        .drive(
+            &created.id,
+            &mut now,
+            SandboxStatus::Active,
+            &runtime_image(),
+        )
+        .await;
+    fixture.harness.adapter = fixture.adapter(&runtime_image());
+    crate::sandbox::runtime_attachment::adopt_bound_runtime(
+        fixture.harness.adapter.as_ref(),
+        &active,
+        "test",
+    )
+    .await
+    .unwrap();
+    let agent = lifecycle_recovery_tests::prepare_agent(&fixture.harness, &active, now, 1).await;
+    let store = Arc::new(FailingStore {
+        inner: fixture.harness.store.clone(),
+        held: SandboxId("sbx_not_present".into()),
+        calls: AtomicUsize::new(0),
+        fail_pause: AtomicBool::new(true),
+    });
+    let reconciler = SandboxReconciler::new(
+        store,
+        fixture.adapter(&runtime_image()),
+        Arc::new(fixture.harness.policy.clone()),
+        "test".into(),
+    );
+    assert!(reconciler.run_due(now).await.is_err());
+    assert_eq!(fixture.harness.stored(&active.id).await, active);
+    fixture.backend.restart_process().await;
+    assert!(reconciler.run_due(now).await.is_err());
+    let recovered = fixture.harness.stored(&active.id).await;
+    assert_eq!(recovered.status, SandboxStatus::Reviving);
+    assert_eq!(recovered.lifecycle.home, active.lifecycle.home);
+    assert_eq!(
+        recovered.lifecycle.suspended_runtime.as_deref(),
+        active.runtime.as_ref()
+    );
+    let paused = fixture
+        .harness
+        .store
+        .get_agent(&agent.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(paused.status, AgentStatus::Paused);
+    assert_eq!(
+        paused.conversation.conversation_id,
+        agent.conversation.conversation_id
+    );
+    assert!(reconciler.run_due(now).await.is_err());
+    assert_eq!(fixture.harness.stored(&active.id).await, recovered);
+    assert!(!fixture
+        .backend
+        .calls
+        .snapshot()
+        .contains(&"delete-retained".into()));
 }
