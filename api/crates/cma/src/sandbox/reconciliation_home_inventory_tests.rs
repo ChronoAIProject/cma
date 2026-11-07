@@ -214,6 +214,7 @@ async fn resumed_home_cleanup_rechecks_newly_published_ownership() {
         store.keys("get"),
         [
             home.request.sandbox_id.clone(),
+            home.request.sandbox_id.clone(),
             home.request.sandbox_id.clone()
         ]
     );

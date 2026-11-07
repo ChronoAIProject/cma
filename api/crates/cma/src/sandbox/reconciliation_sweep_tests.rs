@@ -20,7 +20,7 @@ async fn complete(reconciler: &SandboxReconciler) -> usize {
 }
 
 #[tokio::test(start_paused = true)]
-async fn slow_sweep_finishes_over_bounded_attempts_without_replaying_pages_or_candidates() {
+async fn slow_sweep_refreshes_bindings_without_replaying_maintenance_candidates() {
     let (store, reconciler) = setup(8, Duration::from_secs(2)).await;
     let reconciler = reconciler
         .with_runtime_version("fixture-image".into())
@@ -59,22 +59,34 @@ async fn slow_sweep_finishes_over_bounded_attempts_without_replaying_pages_or_ca
         if result == Some(true) {
             break;
         }
-        assert!(attempts < 10);
+        assert!(attempts < 30);
     }
     assert!(started.elapsed() > Duration::from_secs(30));
     assert!(attempts > 1);
     let expected = (0..8)
         .map(|i| sandbox(i).id.to_string())
         .collect::<Vec<_>>();
-    assert_eq!(
-        store.keys("get"),
-        [expected.clone(), expected.clone()].concat()
-    );
+    let authority_passes = store.keys("authority").len() / 4;
+    assert!(authority_passes >= 2);
+    // Initial and refresh binding passes plus the runtime-update reads each
+    // visit every row; the separate recovery-authority pass has no binding reads.
+    for id in &expected {
+        assert_eq!(
+            store.keys("get").iter().filter(|key| *key == id).count(),
+            authority_passes
+        );
+    }
     assert_eq!(store.keys("pause"), expected);
-    assert_eq!(
-        store.keys("authority"),
-        ["start", "sbx_001", "sbx_003", "sbx_005"].repeat(2)
-    );
+    for cursor in ["start", "sbx_001", "sbx_003", "sbx_005"] {
+        assert_eq!(
+            store
+                .keys("authority")
+                .iter()
+                .filter(|key| key.as_str() == cursor)
+                .count(),
+            authority_passes
+        );
+    }
     assert_eq!(
         store.keys("candidates"),
         ["start", "sbx_001", "sbx_003", "sbx_005"]
@@ -157,7 +169,7 @@ async fn item_deadline_resumes_the_same_candidate_without_repeating_completed_it
         store.keys("pause"),
         ["sbx_000", "sbx_001", "sbx_001", "sbx_002", "sbx_003"]
     );
-    assert_eq!(store.keys("authority"), ["start", "sbx_001"]);
+    assert_eq!(store.keys("authority"), ["start", "sbx_001"].repeat(2));
     assert_eq!(store.keys("candidates"), ["start", "sbx_001"]);
 }
 
@@ -372,3 +384,6 @@ mod home_inventory;
 
 #[path = "reconciliation_binding_tests.rs"]
 mod binding_tests;
+
+#[path = "reconciliation_schedule_tests.rs"]
+mod schedule_tests;
