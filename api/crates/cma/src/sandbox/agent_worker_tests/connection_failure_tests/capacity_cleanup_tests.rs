@@ -5,6 +5,7 @@ use mongodb::bson::{doc, serialize_to_bson, Document};
 use mongodb::Client;
 
 mod cpu_profile;
+mod ledger_hold_tests;
 mod removal_retry_tests;
 mod settlement_tests;
 

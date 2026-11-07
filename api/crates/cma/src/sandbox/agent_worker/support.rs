@@ -15,6 +15,8 @@ use super::AgentWorker;
 
 mod context;
 mod effects;
+#[cfg(test)]
+mod ledger_hold_tests;
 mod mapping;
 mod retry_delay;
 pub(super) use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
@@ -59,6 +61,10 @@ impl WorkerFailure {
             detail: detail.into(),
             retryable: false,
         }
+    }
+
+    pub(in crate::sandbox::agent_worker) fn is_ledger_hold(&self) -> bool {
+        self.class == layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD
     }
 
     fn typed(&self) -> TypedFailure {
@@ -123,6 +129,7 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        super::ledger_telemetry::observe(&failure);
         if agent.work.step == AgentWorkStep::PublishConnection {
             self.retry_connection_failure(&agent, failure, now).await
         } else if failure.retryable || agent.status != AgentStatus::Starting {
@@ -138,7 +145,7 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        let delay = self.failure_retry_delay(&agent);
+        let delay = self.failure_retry_delay(&agent, failure.is_ledger_hold());
         self.retry_at(agent, failure, now, now + delay).await
     }
 
@@ -149,6 +156,9 @@ impl AgentWorker {
         now: SystemTime,
         ready_at: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if failure.is_ledger_hold() {
+            return self.retry_ledger_hold_at(agent, now, ready_at).await;
+        }
         let expected = agent.revision;
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let step = agent.work.step;
@@ -295,6 +305,10 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         | AdapterError::Unavailable(detail) => {
             WorkerFailure::retryable("agent_runtime_unavailable", detail)
         }
+        AdapterError::RuntimeLedgerHold(_) => WorkerFailure::retryable(
+            layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD,
+            layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD_DETAIL,
+        ),
         AdapterError::AtCapacity(detail) => WorkerFailure::terminal("agent_resource_quota", detail),
         AdapterError::Rejected(detail) | AdapterError::OperationIdentityConflict(detail) => {
             WorkerFailure::terminal("agent_runtime_rejected", detail)
@@ -305,6 +319,14 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         AdapterError::RuntimeContractMismatch(error) => {
             WorkerFailure::terminal("agent_runtime_contract_mismatch", error.to_string())
         }
+    }
+}
+
+pub(super) fn cleanup_failure(error: layer3_adapter::AdapterError) -> WorkerFailure {
+    if matches!(error, layer3_adapter::AdapterError::RuntimeLedgerHold(_)) {
+        adapter_failure(error)
+    } else {
+        WorkerFailure::retryable("agent_cleanup_unavailable", error.to_string())
     }
 }
 
