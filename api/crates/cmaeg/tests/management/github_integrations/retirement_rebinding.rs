@@ -22,7 +22,7 @@ async fn replacement(historical_identity: bool) {
     }
     let old_ref = old_app["app_ref"].as_str().unwrap();
     let old_id = old_binding["binding_id"].as_str().unwrap();
-    let body = json!({"action":"opened","installation":{"id":99},"repository":{"id":1001,"full_name":"fixture/source","owner":{"id":123}},"issue":{"id":9001,"number":7}}).to_string();
+    let body = json!({"action":"opened","installation":{"id":99},"repository":{"id":1001,"full_name":"fixture/source","owner":{"id":123}},"issue":{"id":9001,"number":7,"html_url":"https://github.com/fixture/source/issues/7"},"sender":{"login":"octocat","type":"User"}}).to_string();
     let old_url = format!("{}/v1/github/apps/{old_ref}/webhooks", f.base);
     let receipt = f
         .webhook(
@@ -150,8 +150,8 @@ async fn replacement(historical_identity: bool) {
         child.kill().await.unwrap();
     }
     f.base = f.replica().await;
-    // Approval reaches the staged business boundary only for the new integration.
-    // Ordinary routed dispatch is introduced separately; eligible deliveries stay retryable.
+    // Approval reaches the receipt-first boundary; no channel is configured in
+    // this authority-only fixture, so the receipt is terminally ignored.
     let business = f
         .webhook(
             &format!("{}/v1/github/apps/{new_ref}/webhooks", f.base),
@@ -163,10 +163,10 @@ async fn replacement(historical_identity: bool) {
         .send()
         .await
         .unwrap();
-    assert_eq!(business.status(), 503);
+    assert_eq!(business.status(), 200);
     assert_eq!(
-        business.json::<serde_json::Value>().await.unwrap()["code"],
-        "github_dispatch_unavailable"
+        business.json::<serde_json::Value>().await.unwrap()["reason"],
+        "no_matching_channel"
     );
     assert_eq!(
         f.webhook(

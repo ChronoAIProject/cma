@@ -144,6 +144,7 @@ impl Gateway {
             body_sha256: fingerprint.into(),
             task_ids: Vec::new(),
             authority_revision: binding.authority_revision,
+            dispatch: None,
         };
         if binding.version == previous.version {
             return self.persist(owner, integration, receipt, body, None).await;
@@ -151,6 +152,7 @@ impl Gateway {
         let delivery = Delivery {
             receipt: receipt.clone(),
             raw_body_records: self.store.source(owner, &receipt, body).await?,
+            dispatch: None,
         };
         if let Err(error) = self
             .store

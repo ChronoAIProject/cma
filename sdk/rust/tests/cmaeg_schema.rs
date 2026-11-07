@@ -40,6 +40,19 @@ fn historical_activity_receipts_roundtrip_without_inventing_event_facts() {
 }
 
 #[test]
+fn github_receipt_dispatch_progress_is_additive_and_nullable() {
+    let mut receipt = fixtures()["Receipt"][0].clone();
+    receipt["dispatch"] = json!([{
+        "channel_id":"cmaeg1.ch.example",
+        "status":"dispatched",
+        "reason":null,
+        "admission_id":"admission-1"
+    }]);
+    let decoded: Receipt = serde_json::from_value(receipt.clone()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), receipt);
+}
+
+#[test]
 fn historical_media_capabilities_do_not_advertise_native_presentations() {
     let mut legacy = fixtures()["NativeMediaCapabilities"][0].clone();
     legacy
@@ -223,6 +236,7 @@ fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properti
         CustomAttachments,
         CustomAuth,
         DeliveryOutcome,
+        DispatchProgress,
         EndpointResponse,
         EventAccepted,
         EventContextSnapshot,

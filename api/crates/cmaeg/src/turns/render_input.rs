@@ -185,7 +185,7 @@ mod tests {
             deny_repository_ids: Vec::new(),
             events: vec!["issues".into()],
             actions: vec!["opened".into()],
-            prompt_template: None,
+            prompt_template: Some("{{data.issue.title}} {{data.issue.body}}".into()),
         }];
 
         let mut activity = crate::console::test_support::activity("github-event-1");
@@ -227,8 +227,8 @@ mod tests {
             .as_str()
             .expect("rendered input text");
 
-        assert!(text.starts_with("Event com.github.issues from github://app/pilot:"));
-        assert!(text.contains("delivery-1"));
-        assert!(text.contains("fixture/source"));
+        assert_eq!(text, " ");
+        assert!(!text.contains("raw-title-sentinel"));
+        assert!(!text.contains("raw-body-sentinel"));
     }
 }

@@ -3,23 +3,22 @@ mod integrations;
 pub(super) use integrations::RecordUpdate;
 #[path = "binding_store.rs"]
 mod bindings;
-use std::sync::Arc;
-
+#[path = "store_dispatch.rs"]
+mod dispatch;
+use super::{
+    schema::{runtime_role, COLLECTION},
+    Error,
+};
 use base64::Engine;
 use cmaeg_core::seal::{open_blob, seal_blob, MasterKeyRing};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
-    options::{Acknowledgment, CollectionOptions, ReadConcern, WriteConcern},
+    options::{Acknowledgment, CollectionOptions, ReadConcern, ReturnDocument, WriteConcern},
     Collection, Database, IndexModel,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-
-use super::{
-    schema::{runtime_role, COLLECTION},
-    Error,
-};
-
+use std::sync::Arc;
 pub(super) struct Store {
     database: Database,
     raw: crate::records::mongo::MongoRecords,
@@ -27,7 +26,6 @@ pub(super) struct Store {
     keys: Arc<MasterKeyRing>,
     pub(super) clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
-
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Row {
@@ -40,10 +38,13 @@ struct Row {
     #[serde(default)]
     guard_revision: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    lease_until: Option<i64>,
+    #[serde(default)]
+    next_dispatch_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_at: Option<DateTime>,
     blob: Binary,
 }
-
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Sealed {
@@ -52,13 +53,11 @@ struct Sealed {
     kind: String,
     value: serde_json::Value,
 }
-
 pub(super) struct NewRecord {
     id: String,
     kind: &'static str,
     value: serde_json::Value,
 }
-
 impl NewRecord {
     pub fn new(id: &str, kind: &'static str, value: &impl Serialize) -> Result<Self, Error> {
         Ok(Self {
@@ -68,7 +67,6 @@ impl NewRecord {
         })
     }
 }
-
 impl Store {
     pub async fn open(database: Database, keys: Arc<MasterKeyRing>) -> Result<Self, Error> {
         let hello = database
@@ -80,7 +78,7 @@ impl Store {
         }
         let marker = database
             .collection::<Document>(crate::records::mongo::MIGRATIONS)
-            .find_one(doc! {"_id":"github_integrations","version":4})
+            .find_one(doc! {"_id":"github_integrations","version":6})
             .read_concern(ReadConcern::majority())
             .await
             .map_err(|_| Error::Unavailable)?;
@@ -105,7 +103,7 @@ impl Store {
             .try_collect()
             .await
             .map_err(|_| Error::Unavailable)?;
-        if indexes.len() != 3
+        if indexes.len() != 4
             || !indexes
                 .iter()
                 .any(|index| index.keys == doc! {"owner":1,"kind":1,"_id":1})
@@ -122,6 +120,9 @@ impl Store {
                         || options.sparse == Some(true)
                 })
             })
+            || !indexes
+                .iter()
+                .any(|index| index.keys == doc! {"owner":1,"kind":1,"next_dispatch_at":1,"_id":1})
         {
             return Err(Error::Unavailable);
         }
@@ -144,11 +145,9 @@ impl Store {
             clock: Arc::new(super::now),
         })
     }
-
     pub(super) fn current_time(&self) -> i64 {
         (self.clock)()
     }
-
     pub async fn create(
         &self,
         id: &str,
@@ -163,11 +162,9 @@ impl Store {
             .map_err(|_| Error::Unavailable)?;
         Ok(())
     }
-
     pub async fn create_many(&self, owner: &str, records: Vec<NewRecord>) -> Result<(), Error> {
         self.create_many_guarded(owner, records, None).await
     }
-
     pub async fn create_many_guarded(
         &self,
         owner: &str,
@@ -205,7 +202,6 @@ impl Store {
             .map_err(transaction_error)?;
         Ok(())
     }
-
     pub async fn source(
         &self,
         owner: &str,
@@ -236,7 +232,6 @@ impl Store {
         }
         Ok(ids)
     }
-
     fn row(
         &self,
         id: &str,
@@ -255,9 +250,14 @@ impl Store {
                 .pointer("/receipt/retained_until")
                 .and_then(serde_json::Value::as_i64)
                 .ok_or(Error::Unavailable)?;
+            let max_retention = receipt_retention_limit(
+                value
+                    .pointer("/receipt/status")
+                    .and_then(serde_json::Value::as_str),
+            );
             if until <= self.current_time()
                 || until <= received
-                || until.saturating_sub(received) > 7 * 86400
+                || until.saturating_sub(received) > max_retention
             {
                 return Err(Error::DeliveryExpired);
             }
@@ -267,6 +267,8 @@ impl Store {
         } else {
             None
         };
+        let dispatch_pending = kind == "delivery" && delivery_pending(&value);
+        let next_dispatch_at = delivery_next_attempt(&value).unwrap_or(0);
         let sealed = Sealed {
             id: id.into(),
             owner: owner.into(),
@@ -282,6 +284,12 @@ impl Store {
             version,
             schema_version: 1,
             guard_revision: 0,
+            lease_until: None,
+            next_dispatch_at: if dispatch_pending {
+                next_dispatch_at
+            } else {
+                i64::MAX
+            },
             expires_at,
             blob: Binary {
                 subtype: BinarySubtype::Generic,
@@ -289,7 +297,6 @@ impl Store {
             },
         })
     }
-
     pub async fn commit_with_authority(
         &self,
         owner: &str,
@@ -340,7 +347,6 @@ impl Store {
             .map_err(transaction_error)?;
         Ok(())
     }
-
     pub async fn read<T: DeserializeOwned>(
         &self,
         id: &str,
@@ -349,7 +355,6 @@ impl Store {
         let (owner, _, value) = self.read_versioned(id, kind).await?;
         Ok((owner, value))
     }
-
     pub async fn read_owned<T: DeserializeOwned>(
         &self,
         owner: &str,
@@ -365,7 +370,6 @@ impl Store {
         let (_, version, value) = self.open_row(row)?;
         Ok((version, value))
     }
-
     pub async fn read_versioned<T: DeserializeOwned>(
         &self,
         id: &str,
@@ -379,7 +383,6 @@ impl Store {
             .ok_or(Error::NotFound)?;
         self.open_row(row)
     }
-
     fn open_row<T: DeserializeOwned>(&self, row: Row) -> Result<(String, u64, T), Error> {
         let opened = open_blob(&self.keys, &row.blob.bytes).map_err(|_| Error::Unavailable)?;
         let mut sealed: Sealed =
@@ -418,7 +421,6 @@ impl Store {
             serde_json::from_value(sealed.value).map_err(|_| Error::Unavailable)?,
         ))
     }
-
     pub async fn list_owner<T: DeserializeOwned>(
         &self,
         owner: &str,
@@ -446,11 +448,44 @@ impl Store {
         Ok(values)
     }
 }
-
+fn receipt_retention_limit(status: Option<&str>) -> i64 {
+    if status == Some("ignored") {
+        7 * 86400
+    } else {
+        14 * 86400
+    }
+}
+fn delivery_pending(value: &serde_json::Value) -> bool {
+    value
+        .pointer("/dispatch/channels")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|channels| {
+            channels.iter().any(|channel| {
+                channel.get("status").and_then(serde_json::Value::as_str) == Some("pending")
+            })
+        })
+}
+fn delivery_next_attempt(value: &serde_json::Value) -> Option<i64> {
+    value
+        .pointer("/dispatch/channels")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|channels| {
+            channels
+                .iter()
+                .filter(|channel| {
+                    channel.get("status").and_then(serde_json::Value::as_str) == Some("pending")
+                })
+                .filter_map(|channel| {
+                    channel
+                        .get("next_attempt_at")
+                        .and_then(serde_json::Value::as_i64)
+                })
+                .min()
+        })
+}
 fn guarded_update(row: Row) -> Document {
     doc! {"$set":{"owner":row.owner,"kind":row.kind,"version":row.version,"schema_version":row.schema_version,"blob":row.blob},"$inc":{"guard_revision":1_i64}}
 }
-
 fn transaction_error(error: mongodb::error::Error) -> Error {
     if error.contains_label("TransientTransactionError")
         || matches!(error.kind.as_ref(),

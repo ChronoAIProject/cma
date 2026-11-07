@@ -97,6 +97,21 @@ pub struct Receipt {
     pub body_sha256: String,
     pub task_ids: Vec<String>,
     pub authority_revision: u64,
+    /// Per-channel durable dispatch progress. This is additive to the v1 receipt
+    /// contract and is absent on retained lifecycle/ignored receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch: Option<Vec<DispatchProgress>>,
+}
+
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DispatchProgress {
+    pub channel_id: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_id: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
