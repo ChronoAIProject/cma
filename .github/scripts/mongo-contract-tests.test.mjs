@@ -120,6 +120,7 @@ if (command === 'cargo') {
     'store::usage_reports::tests::ordinary_'+i).filter((_, i) => i % Number(match[2]) === index-1);
   fs.writeFileSync(log+'.selected-'+index, JSON.stringify(selected));
   fs.writeFileSync(log+'.started-'+index, 'started');
+  if (scenario === 'batches-cleanup-error' && index === 1) fs.writeFileSync(log+'.failed-cleanup-uri', process.env.CHRONO_TEST_MONGODB_URI);
   if ((scenario === 'scale-empty' && scale) || (scenario === 'ordinary-empty' && index === 1)) {
     console.log('Starting 0 tests');
     const option = args.indexOf('--no-tests');
@@ -127,7 +128,7 @@ if (command === 'cargo') {
     fs.writeFileSync(log+'.empty-'+index, policy || 'auto');
     process.exit(policy === 'pass' ? 0 : 4);
   }
-  if ((scenario === 'cancel' && !scale) || (scenario === 'cancel-scale' && scale)) { setInterval(() => {}, 1000); }
+  if ((scenario === 'batches-cleanup-error' && index === 2) || (scenario === 'cancel' && !scale) || (scenario === 'cancel-scale' && scale)) { setInterval(() => {}, 1000); }
   else {
     const deadline = Date.now()+5000;
     while (index >= 1 && index <= 2 && !fs.existsSync(log+'.started-'+(3-index))) {
@@ -186,6 +187,7 @@ if (command === 'cargo') {
     const selected = files.find(name => require('node:crypto').createHash('sha256')
       .update(name.slice('calls.ndjson.container-'.length)).digest('hex').startsWith(args[2]));
     if (!selected) process.exit(10);
+    if (scenario === 'batches-cleanup-error' && fs.existsSync(log+'.failed-cleanup-uri') && fs.readFileSync(log+'.failed-cleanup-uri', 'utf8').includes(':'+JSON.parse(fs.readFileSync(path.join(path.dirname(log),selected))).port+'/')) process.exit(1);
     fs.unlinkSync(path.join(path.dirname(log),selected));
   } else process.exit(11);
 }
@@ -229,7 +231,7 @@ for (const reuse of [false, true]) {
   });
 
   test(`${mode}: scale runs alone before concurrent Mongo partitions, preserves failures and removes only owned fixtures`, () => {
-    for (const scenario of ['entropy-error', 'entropy-malformed', 'success', 'scale-error', 'test-error', 'cleanup-error', 'volume-cleanup-error']) {
+    for (const scenario of ['entropy-error', 'entropy-malformed', 'success', 'scale-error', 'test-error']) {
       const f = fixture(scenario, reuse);
       try {
         const run = () => execFileSync('bash', f.args, { env: f.env, timeout: 15000, stdio: 'pipe' });
@@ -290,11 +292,38 @@ for (const reuse of [false, true]) {
         const removed = calls.filter(row => row.args[0] === 'rm');
         assert.equal(removed.length, 3);
         assert.ok(removed.every(row => row.args.length === 3 && row.args[1] === '--force' && /^[0-9a-f]{12}$/.test(row.args[2])));
-        assert.equal(f.containers().length, scenario === 'cleanup-error' ? 3 : 0);
-        assert.equal(f.volumes().length, scenario.endsWith('cleanup-error') ? 3 : 0);
+        assert.equal(f.containers().length, 0);
+        assert.equal(f.volumes().length, 0);
         assert.ok(existsSync(f.foreignVolume));
       } finally { f.close(); }
     }
+  });
+
+  test(`${mode}: uncertain exclusive cleanup prevents later fixture allocation`, () => {
+    for (const scenario of ['cleanup-error', 'volume-cleanup-error']) {
+      const f = fixture(scenario, reuse);
+      try {
+        assert.throws(() => execFileSync('bash', f.args, {env: f.env, timeout: 15000, stdio: 'pipe'}), error => error.status === 1);
+        assert.equal(f.calls().filter(row => row.command === 'docker' && row.args[0] === 'run').length, 1);
+        assert.equal(existsSync(`${f.log}.started-1`), false);
+        assert.equal(f.containers().length, scenario === 'cleanup-error' ? 1 : 0);
+        assert.equal(f.volumes().length, 1);
+        assert.ok(existsSync(f.foreignVolume));
+      } finally { f.close(); }
+    }
+  });
+
+  test(`${mode}: ordinary cleanup failure stops allocation and cleans the active peer`, () => {
+    const f = fixture('batches-cleanup-error', reuse);
+    try {
+      assert.throws(() => execFileSync('bash', f.args, {env: f.env, timeout: 15000, stdio: 'pipe'}), error => error.status === 1);
+      assert.equal(f.calls().filter(row => row.command === 'docker' && row.args[0] === 'run').length, 3);
+      assert.ok(existsSync(`${f.log}.started-2`));
+      assert.equal(existsSync(`${f.log}.started-3`), false);
+      assert.equal(f.containers().length, 1);
+      assert.equal(f.volumes().length, 1);
+      assert.ok(existsSync(f.foreignVolume));
+    } finally { f.close(); }
   });
 
   test(`${mode}: volume creation, run and ownership failures retain foreign data and clean exact partial fixtures`, () => {
@@ -307,7 +336,7 @@ for (const reuse of [false, true]) {
         assert.equal(f.containers().length, 0);
         assert.ok(existsSync(f.foreignVolume));
         const retained = ['foreign-volume', 'volume-owner-mismatch'].includes(scenario);
-        assert.equal(f.volumes().length, retained ? 3 : 0);
+        assert.equal(f.volumes().length, retained ? (scenario === 'volume-owner-mismatch' ? 1 : 3) : 0);
         const removals = calls.filter(row => row.args[0] === 'volume' && row.args[1] === 'rm');
         assert.equal(removals.length, ['volume-create-error', 'run-error'].includes(scenario) ? 3 : 0);
         assert.ok(removals.every(row => /^cma-mongo-ci-[0-9a-f]{24}-data$/.test(row.args[2])));
