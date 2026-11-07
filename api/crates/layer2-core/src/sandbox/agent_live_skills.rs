@@ -304,7 +304,10 @@ pub fn validate_install_work(
                 .material = new.material.clone();
         }
         AgentSkillInstallStatus::Pending if old == new => {
-            if !mutation.agent_logs.is_empty() || next.work.ready_at <= mutation.appended_at {
+            if (!mutation.agent_logs.is_empty()
+                && !super::store::agent_cleanup_capacity_retry(current, mutation))
+                || next.work.ready_at <= mutation.appended_at
+            {
                 return Err(Error::Conflict);
             }
             expected

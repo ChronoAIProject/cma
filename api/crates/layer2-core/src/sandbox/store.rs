@@ -66,7 +66,8 @@ pub use agent_log_capacity::{plan_agent_log_capacity_failure, AGENT_LOG_CAPACITY
 mod agent_cleanup_capacity;
 pub use agent_cleanup_capacity::{
     agent_cleanup_capacity_retry, plan_agent_cleanup_capacity_retry,
-    validate_agent_cleanup_capacity_log,
+    plan_agent_runtime_ledger_hold_retry, validate_agent_cleanup_capacity_log,
+    AGENT_RUNTIME_LEDGER_HOLD, AGENT_RUNTIME_LEDGER_HOLD_DETAIL,
 };
 mod agent_sign_in;
 pub use agent_lifecycle::{

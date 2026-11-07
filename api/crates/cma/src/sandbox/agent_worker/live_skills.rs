@@ -32,6 +32,11 @@ impl AgentWorker {
             {
                 context
             }
+            Err(failure) if failure.is_ledger_hold() => {
+                return self
+                    .handle_failure(agent, failure, now + started.elapsed())
+                    .await;
+            }
             _ => return self.retry_skill(agent, now + started.elapsed()).await,
         };
         let installation = agent.work.live_skills.last().cloned().ok_or_else(|| {
@@ -130,6 +135,14 @@ impl AgentWorker {
                 self.finish_skill(
                     agent,
                     Some("runtime_skill_install_rejected"),
+                    now + started.elapsed(),
+                )
+                .await
+            }
+            Err(error @ layer3_adapter::AdapterError::RuntimeLedgerHold(_)) => {
+                self.handle_failure(
+                    agent,
+                    super::support::adapter_failure(error),
                     now + started.elapsed(),
                 )
                 .await
