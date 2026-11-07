@@ -1,4 +1,5 @@
 use super::*;
+use layer2_core::sandbox::store::SandboxStoreError;
 
 async fn pending(h: &Harness<MongoSandboxStore>) -> Agent {
     let agent = h.admit("removal-retry", vec![]).await;
@@ -178,6 +179,47 @@ async fn new_holder_retries_at_deadline_without_resetting_attempts() {
     assert_eq!(
         h.stored(&initial.id).await.work.step,
         AgentWorkStep::PublishDeleted
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn capacity_retry_still_rejects_a_gap_before_the_observed_tail() {
+    let (client, name, h) = fixture().await;
+    let initial = pending(&h).await;
+    fill_history(&client, &name, &h, &initial.id).await;
+    let now = SystemTime::now();
+    let claimed = h
+        .store
+        .claim_agent_work(
+            &initial.id,
+            "agent-worker",
+            rfc3339_at(now),
+            rfc3339_at(now + Duration::from_secs(18 * 60)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    client
+        .database(&name)
+        .collection::<Document>("agent_log")
+        .delete_one(doc! {"agent_id":initial.id.as_str(),"seq":5_000_i64})
+        .await
+        .unwrap();
+    let result = h
+        .worker
+        .finish_capacity_attempt(
+            &claimed,
+            Err(SandboxStoreError::AgentLogCapacityExceeded),
+            now,
+        )
+        .await;
+    assert_eq!(result, Err(SandboxStoreError::SequenceConflict));
+    assert_eq!(
+        h.stored(&initial.id).await,
+        claimed,
+        "a valid tail cannot authorize a mutation across an earlier gap"
     );
     client.database(&name).drop().await.unwrap();
 }
