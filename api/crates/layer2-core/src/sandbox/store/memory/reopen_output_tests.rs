@@ -1,7 +1,10 @@
 use super::*;
-use crate::sandbox::store::{AgentConversationStore, AgentReopenGuard, AgentStore};
+use crate::sandbox::store::{
+    AgentConversationStore, AgentMessageCheckpoint, AgentReopenGuard, AgentStore,
+};
 use crate::sandbox::{
-    AgentConversationError, AgentMessageAssembly, AgentUpdateRecorder, DurableAgentUpdateRecorder,
+    AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
+    DurableAgentUpdateRecorder,
 };
 use layer3_adapter::{ConversationUpdate, RuntimeOutputReceipt, RuntimeOutputSource};
 
@@ -328,4 +331,97 @@ async fn reopen_metadata_commits_in_order_without_publishing_the_generation() {
         .unwrap()
         .unwrap()
         .matches(&ready));
+}
+
+#[tokio::test]
+async fn source_less_reopen_metadata_drops_the_prior_generation_receipt() {
+    let (fixture, guard) = fixture().await;
+    let original = &fixture.agents[0];
+    let old_receipt = layer3_adapter::RuntimeOutputSource {
+        stream_id: "d99003d1-0c3c-46cd-aa47-9bbdbed50b12".into(),
+        cursor: 9,
+        native_conversation_id: guard.native_conversation_id.clone(),
+        payload_sha256: "a".repeat(64),
+    };
+    fixture.store.lock().agent_message_checkpoints.insert(
+        original.id.clone(),
+        AgentMessageCheckpoint {
+            version: 1,
+            update_id: uuid::Uuid::new_v4().to_string(),
+            update_fingerprint: "b".repeat(64),
+            native_conversation_id: guard.native_conversation_id.clone(),
+            runtime_generation: 4,
+            active_turn: None,
+            after_seq: original.conversation.last_seq,
+            assembly: AgentMessageAssembly::default(),
+            outcome: AgentUpdateOutcome {
+                appended: vec![],
+                turn_closed: false,
+            },
+            output: Some(old_receipt),
+        },
+    );
+    let recorder = DurableAgentUpdateRecorder::new(Arc::new(fixture.store.clone()));
+    recorder
+        .record_reopen_update(
+            &original.id,
+            &guard,
+            &mut AgentMessageAssembly::default(),
+            ConversationUpdate::SignInRequired {
+                url: "https://example.invalid/sign-in".into(),
+                code: None,
+                message: None,
+            },
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    let reopened = fixture
+        .store
+        .get_agent(&original.id)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture
+        .store
+        .commit_sandbox_lifecycle(reopen_mutation(&fixture.current, &[reopened]))
+        .await
+        .unwrap();
+    let ready = fixture
+        .store
+        .get_agent(&original.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let checkpoint = fixture
+        .store
+        .agent_message_checkpoint(&original.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(checkpoint.runtime_generation, 5);
+    assert_eq!(checkpoint.output, None);
+    let replacement = DurableAgentUpdateRecorder::new(Arc::new(fixture.store.clone()));
+    replacement
+        .record_update(
+            &original.id,
+            5,
+            &mut AgentMessageAssembly::default(),
+            output(&guard, 1, None),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .agent_message_checkpoint(&ready.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .output
+            .unwrap()
+            .cursor,
+        1
+    );
 }
