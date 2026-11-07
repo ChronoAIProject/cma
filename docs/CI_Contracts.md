@@ -38,12 +38,28 @@ disposable replica set. The test runner fails on an empty selection, and
 cleanup removes only containers carrying the generated exact run label.
 
 The 20,001-Sandbox report-generation scale contract runs once in an exclusive
-fresh fixture before ordinary partitions in `Backend Mongo contracts`. Its
-`--scale` invocation uses `package(=cma) and test(=full_test_name)` with the same
-ignored-only corpus as the ordinary partition filter, which excludes that exact
-test. Both source and extracted-archive modes use these filters. The wrapper
-supplies `--no-tests fail` once per run; no invocation can silently pass empty.
-Options and owner-allocation scale contracts retain their ordinary partition placement and all original assertions.
+fresh fixture, followed by the unchanged 400/20,001-owner allocation contract in
+another exclusive fresh fixture, before ordinary partitions in `Backend Mongo
+contracts`. The `--scale` and `--owner-allocation` invocations each use
+`package(=cma) and test(=full_test_name)` with the same ignored-only corpus as the
+ordinary partition filter, which excludes both exact names. Both source and
+extracted-archive modes use these filters. The coordinator requires exactly one
+ignored entry for each exclusive contract. The wrapper supplies `--no-tests
+fail` once per run; no invocation can silently pass empty. Ordinary test failures
+remain failures while subsequent phases execute. Cleanup uncertainty returns
+125 and prevents further fixture allocation; the coordinator terminates any
+remaining children and fails. Each exclusive fixture's cleanup must finish
+before the next phase starts.
+
+The options scale contract retains its ordinary partition placement. All
+workload assertions and circuit thresholds are unchanged. Owner isolation adds
+one fixture startup/cleanup and serializes its test time before ordinary work;
+it removes sensitivity to changes in ordinary partition membership, without
+claiming that isolation fixes every reporting capacity failure.
+To run only the owner contract locally, acquire the shared build lock and run
+`CARGO_BUILD_JOBS=2 RUST_MIN_STACK=33554432 bash .github/scripts/mongo-contract-tests.sh --owner-allocation`
+from the repository root with Docker available. Omitting the option runs every
+Mongo contract in the prescribed phase order.
 Their shared test-only capture starts before connection/initialization and names
 the cohort, setup/read phase and one-based page. A failure preserves the observed
 opening phase/page, circuit reason and event duration separately from the later
@@ -57,7 +73,7 @@ keys correlate those samples; the observed event phase alone is not the checkout
 phase or proof of the triggering query. Capture contains fixed categories and
 numbers, never names, query text, credentials or cursor contents. The production
 query, circuit thresholds, pool size and recovery behavior are unchanged. No
-query prototype, automatic retry or extra isolation is part of these diagnostics.
+query prototype or automatic retry is part of these diagnostics.
 
 ## Local API CPU Profiles
 
