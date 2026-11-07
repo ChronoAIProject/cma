@@ -40,6 +40,9 @@ pub struct AgentConnectionRecoveryCandidate {
     pub runtime_generation: u64,
     pub revision: u64,
     pub work_step: AgentWorkStep,
+    /// A validated discovery observation may skip a no-op recovery read. This
+    /// is not write authority: eligible recovery still rereads and fences state.
+    pub recovery_eligible: bool,
     /// Monotonic applied revision from the same validated Agent observation.
     /// This can skip completed maintenance, never authorize a new write.
     pub managed_guidance_revision: u64,
@@ -66,6 +69,12 @@ impl AgentConnectionRecoveryCandidate {
             runtime_generation,
             revision: agent.revision,
             work_step: agent.work.step,
+            recovery_eligible: matches!(
+                agent.status,
+                AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval
+            ) && agent.requested_stop_reason.is_none()
+                && agent.work.step == AgentWorkStep::None
+                && agent.work.lease.is_none(),
             managed_guidance_revision: agent.conversation.managed_guidance_revision,
             managed_context_eligible: crate::sandbox::agent_live_skills::idle(agent)
                 && agent.settings().validate().is_ok(),
