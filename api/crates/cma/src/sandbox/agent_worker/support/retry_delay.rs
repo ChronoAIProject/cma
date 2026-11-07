@@ -4,7 +4,17 @@ use std::time::Duration;
 use super::{Agent, AgentWorkStep, AgentWorker};
 
 impl AgentWorker {
-    pub(in crate::sandbox::agent_worker) fn failure_retry_delay(&self, agent: &Agent) -> Duration {
+    pub(in crate::sandbox::agent_worker) fn failure_retry_delay(
+        &self,
+        agent: &Agent,
+        ledger_hold: bool,
+    ) -> Duration {
+        if ledger_hold {
+            return removal_delay(
+                self.config.retry_delay.max(Duration::from_secs(30)),
+                agent.work.attempts,
+            );
+        }
         if agent.work.step != AgentWorkStep::RemoveWorktree {
             return self.config.retry_delay;
         }

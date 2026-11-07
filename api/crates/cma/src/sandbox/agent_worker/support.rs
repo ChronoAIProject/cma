@@ -63,6 +63,10 @@ impl WorkerFailure {
         }
     }
 
+    pub(in crate::sandbox::agent_worker) fn is_ledger_hold(&self) -> bool {
+        self.class == layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD
+    }
+
     fn typed(&self) -> TypedFailure {
         TypedFailure {
             class: self.class.into(),
@@ -140,7 +144,7 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        let delay = self.failure_retry_delay(&agent);
+        let delay = self.failure_retry_delay(&agent, failure.is_ledger_hold());
         self.retry_at(agent, failure, now, now + delay).await
     }
 
@@ -151,6 +155,9 @@ impl AgentWorker {
         now: SystemTime,
         ready_at: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if failure.is_ledger_hold() {
+            return self.retry_ledger_hold_at(agent, now, ready_at).await;
+        }
         let expected = agent.revision;
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let step = agent.work.step;
@@ -298,8 +305,8 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
             WorkerFailure::retryable("agent_runtime_unavailable", detail)
         }
         AdapterError::RuntimeLedgerHold(_) => WorkerFailure::retryable(
-            "agent_runtime_ledger_hold",
-            "Runtime mutation ledger capacity requires recovery. The original work remains pending; no runtime loss or resource removal is confirmed.",
+            layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD,
+            layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD_DETAIL,
         ),
         AdapterError::AtCapacity(detail) => WorkerFailure::terminal("agent_resource_quota", detail),
         AdapterError::Rejected(detail) | AdapterError::OperationIdentityConflict(detail) => {
