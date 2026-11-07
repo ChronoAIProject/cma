@@ -47,23 +47,21 @@ impl AgentWorker {
                     | AgentWorkStep::PublishDeleted
             );
             let mutation = if cleanup {
+                // This is only a planning observation. The fenced commit below
+                // validates the complete log and this exact tail again, so do
+                // not scan the whole history just to select its final entry.
                 let last = self
                     .dependencies
                     .store
-                    .agent_log(
-                        &current.id,
-                        current.conversation.last_seq.saturating_sub(1),
-                        1,
-                    )
-                    .await?
-                    .pop();
+                    .agent_log_entry(&current.id, current.conversation.last_seq)
+                    .await?;
                 plan_agent_cleanup_capacity_retry(
                     &current,
                     last.as_ref(),
                     &self.config.holder,
                     fence,
                     &rfc3339_at(at),
-                    &rfc3339_at(at + self.config.retry_delay),
+                    &rfc3339_at(at + self.failure_retry_delay(&current)),
                 )?
             } else {
                 let worktree = self
