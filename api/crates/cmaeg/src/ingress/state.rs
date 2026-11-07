@@ -77,10 +77,11 @@ impl IngressState {
         self
     }
 
-    pub async fn launch_github(
+    pub(crate) async fn launch_github(
         &self,
         request: super::launch::LaunchRequest,
         body: Vec<u8>,
+        authority: super::routed::github::GithubAuthorityFence,
     ) -> super::launch::LaunchOutcome {
         let Some(routed) = self.routed.as_ref() else {
             return super::launch::LaunchOutcome::Refused(cmaeg_core::problem::Problem::new(
@@ -97,7 +98,14 @@ impl IngressState {
             ));
         };
         routed
-            .launch_github_verified(request, body, hold, self.activity.as_ref())
+            .launch_github_verified(
+                request,
+                body,
+                hold,
+                self.activity.as_ref(),
+                &self.resolver,
+                authority,
+            )
             .await
     }
     pub fn with_media_enabled(mut self, enabled: bool) -> Self {
