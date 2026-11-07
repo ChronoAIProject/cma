@@ -12,9 +12,13 @@ fn query(metric: Metric, limit: u16, cursor: Option<String>) -> OwnerAllocationQ
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound() {
+    let mut window = super::circuit_capture::ScaleWindow::start_for("owner_allocation", 0);
     for count in [400, 20_001] {
+        window.cohort(count);
         let per_owner = if count == 400 { 2 } else { 1 };
         let store = fixture().await;
+        window.attach(&store);
+        window.phase("submit_claim", 0);
         let at = now();
         let report = store
             .submit(
@@ -38,7 +42,9 @@ async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_c
                     state
                 })
                 .collect();
+            window.phase("seed_states", offset / 200 + 1);
             seed(&store, &states).await;
+            window.phase("seed_report_chunk", offset / 200 + 1);
             let rows: Vec<_> = states
                 .iter()
                 .enumerate()
@@ -56,15 +62,18 @@ async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_c
                 .await
                 .unwrap();
         }
+        window.phase("finish_report", 0);
         store
             .finish_report(&lease, report.clone(), true)
             .await
             .unwrap();
+        window.phase("seed_directory", 0);
         store.collection("users").insert_many([
             doc! {"_id":"owner-000000","display_name":"Alex Chen","first_seen_at":"2026-01-01T00:00:00Z"},
             doc! {"_id":"owner-000001","display_name":"Alex Chen","first_seen_at":"2026-02-01T00:00:00Z"},
             doc! {"_id":"owner-000002","display_name":"Name-91892afa-5fa5-4f4f-9100-2b8d986d2f71"},
         ]).await.unwrap();
+        window.phase("first_owner_page", 1);
         let started = std::time::Instant::now();
         let first = store
             .owner_allocations(
@@ -90,6 +99,7 @@ async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_c
         );
         assert_eq!(first.items[2].label, "Unnamed owner");
         assert!(started.elapsed() < Duration::from_secs(2));
+        window.phase("cursor_probe", 1);
         let token = store
             .owner_allocations(
                 &report,
@@ -100,6 +110,7 @@ async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_c
             .unwrap()
             .next
             .unwrap();
+        window.phase("invalid_cursor", 0);
         for (changed, q) in [
             (
                 report.clone(),
@@ -133,6 +144,7 @@ async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_c
                 Err(MetricsError::Invalid(_))
             ));
         }
+        window.phase("http_owner_page", 1);
         let http_started = std::time::Instant::now();
         let (status, body) = super::allocated::request(
             &store,
@@ -158,7 +170,10 @@ async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_c
         let mut subjects = std::collections::BTreeSet::new();
         let mut total = 0.;
         let mut previous = f64::INFINITY;
+        let mut page_number = 0;
         loop {
+            page_number += 1;
+            window.phase("owner_page", page_number);
             let page = store
                 .owner_allocations(
                     &report,
@@ -182,6 +197,7 @@ async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_c
         }
         assert_eq!(subjects.len(), count.div_ceil(per_owner));
         assert_eq!(total, count as f64);
+        window.phase("other_metric_pages", 1);
         for (metric, expected) in [
             (Metric::Memory, 2. * per_owner as f64),
             (Metric::Disk, 3. * per_owner as f64),
@@ -213,6 +229,8 @@ async fn metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_c
             subjects.len(),
             started.elapsed().as_millis()
         );
+        window.phase("cleanup", 0);
         store.db.drop().await.unwrap();
+        window.phase("done", 0);
     }
 }
