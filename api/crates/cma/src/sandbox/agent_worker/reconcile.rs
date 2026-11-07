@@ -28,6 +28,7 @@ impl AgentWorker {
         let mut context_checks = 0_u64;
         let mut context_throttled = 0_u64;
         let mut transport_attempts = 0_u64;
+        let mut recovery_deferred = 0_u64;
         loop {
             let page = self
                 .dependencies
@@ -98,6 +99,13 @@ impl AgentWorker {
                     }
                     continue;
                 }
+                // The same sweep already validated the entire Agent. A paused,
+                // stopping or already scheduled candidate cannot be recovered
+                // by this observation. Changes remain visible on the next sweep.
+                if !candidate.recovery_eligible {
+                    recovery_deferred += 1;
+                    continue;
+                }
                 if self
                     .dependencies
                     .store
@@ -114,6 +122,7 @@ impl AgentWorker {
                 tracing::info!(
                     parent: None,
                     candidates,
+                    recovery_deferred,
                     context_current,
                     context_deferred,
                     context_checks,
