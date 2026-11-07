@@ -1,5 +1,19 @@
+use super::model::DispatchProgress;
 use super::*;
-
+use crate::records::RecordError;
+use cmaeg_core::{
+    activity::{
+        Activity, ActivityConversation, ActivityKind, Actor, ActorKind, ConversationKind,
+        SourceKind,
+    },
+    cloudevent::CloudEvent,
+    ids::{compact_partition_key, ConversationId, EventId, IdempotencyKey, RecordId},
+    seal::{
+        event_ref::activity_digest, open_blob, ChannelPointer, EventRef, EventRefPayload,
+        ReplyAddress,
+    },
+};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
 impl Gateway {
     pub(super) async fn receive(
         &self,
@@ -11,7 +25,6 @@ impl Gateway {
     ) -> Result<(Receipt, bool), Error> {
         retry::run(|| self.receive_once(app_ref, delivery_id, event, signature, body)).await
     }
-
     async fn receive_once(
         &self,
         app_ref: &str,
@@ -46,7 +59,24 @@ impl Gateway {
         let receipt_id = identity("delivery", &(app_ref, delivery_id));
         let fingerprint = format!("{:x}", Sha256::digest(body));
         match self.store.read::<Delivery>(&receipt_id, "delivery").await {
-            Ok((_, delivery)) => return duplicate(delivery, event, &fingerprint),
+            Ok((_, delivery)) => {
+                if delivery.receipt.event != event || delivery.receipt.body_sha256 != fingerprint {
+                    return Err(Error::Conflict);
+                }
+                if delivery.dispatch.as_ref().is_some_and(|dispatch| {
+                    dispatch
+                        .channels
+                        .iter()
+                        .any(|channel| channel.status == "pending")
+                }) {
+                    return Ok((
+                        self.dispatch_pending(&integration_owner, &receipt_id)
+                            .await?,
+                        false,
+                    ));
+                }
+                return Ok((delivery.receipt, false));
+            }
             Err(Error::NotFound) => (),
             Err(error) => return Err(error),
         }
@@ -82,6 +112,7 @@ impl Gateway {
                 body_sha256: fingerprint,
                 task_ids: Vec::new(),
                 authority_revision: 0,
+                dispatch: None,
             };
             return self
                 .persist(&integration_owner, &app, receipt, body, None)
@@ -112,6 +143,7 @@ impl Gateway {
             body_sha256: fingerprint.clone(),
             task_ids: Vec::new(),
             authority_revision,
+            dispatch: None,
         };
         let owner = integration_owner.clone();
         let mut binding = match self
@@ -294,7 +326,80 @@ impl Gateway {
                     ));
         }
         if supported {
-            return Err(Error::DispatchUnavailable);
+            let projection = projection::compact_projection(
+                &payload,
+                app_ref,
+                delivery_id,
+                event,
+                action,
+                installation_id,
+            )?;
+            let channels = self
+                .matching_channels(
+                    &integration_owner,
+                    &app,
+                    installation_id,
+                    repository_id,
+                    event,
+                    action,
+                )
+                .await?;
+            if channels.is_empty() {
+                let mut receipt = ignored("no_matching_channel", binding.authority_revision);
+                receipt.raw_body_expires_at = received_at + 86400;
+                receipt.retained_until = Some(received_at + 7 * 86400);
+                return self.persist(&owner, &app, receipt, body, None).await;
+            }
+            let dispatch = DispatchState {
+                schema_version: 1,
+                projection,
+                channels,
+                lease: None,
+            };
+            let receipt = Receipt {
+                receipt_id,
+                app_ref: app_ref.into(),
+                installation_id: Some(installation_id),
+                delivery_id: delivery_id.into(),
+                repository_id: Some(repository_id),
+                event: event.into(),
+                action: action.map(str::to_owned),
+                status: "pending".into(),
+                reason: None,
+                received_at,
+                raw_body_expires_at: received_at + 86400,
+                // A pending receipt may commit an admission on the last day of
+                // this window; retain the receipt for that admission's full
+                // seven-day execution horizon.
+                retained_until: Some(received_at + 14 * 86400),
+                body_sha256: fingerprint.clone(),
+                task_ids: Vec::new(),
+                authority_revision: binding.authority_revision,
+                dispatch: Some(
+                    dispatch
+                        .channels
+                        .iter()
+                        .map(DispatchProgress::from)
+                        .collect(),
+                ),
+            };
+            let delivery = Delivery {
+                receipt: receipt.clone(),
+                raw_body_records: self.store.source(&owner, &receipt, body).await?,
+                dispatch: Some(dispatch),
+            };
+            if let Err(error) = self.store.create_delivery(&owner, &delivery).await {
+                if !matches!(error, Error::Conflict) {
+                    return Err(error);
+                }
+                let (_, committed): (u64, Delivery) = self
+                    .store
+                    .read_owned(&owner, &receipt.receipt_id, "delivery")
+                    .await?;
+                return Ok((committed.receipt, false));
+            }
+            let receipt = self.dispatch_pending(&owner, &receipt.receipt_id).await?;
+            return Ok((receipt, true));
         }
         let (status, task_ids) = ("ignored", Vec::new());
         let receipt = Receipt {
@@ -313,10 +418,10 @@ impl Gateway {
             body_sha256: fingerprint.clone(),
             task_ids,
             authority_revision: binding.authority_revision,
+            dispatch: None,
         };
         self.persist(&owner, &app, receipt, body, None).await
     }
-
     pub(super) async fn persist(
         &self,
         owner: &str,
@@ -328,6 +433,7 @@ impl Gateway {
         let delivery = Delivery {
             receipt: receipt.clone(),
             raw_body_records: self.store.source(owner, &receipt, body).await?,
+            dispatch: None,
         };
         let committed = match authority {
             Some((binding, expected_version)) => {
@@ -359,12 +465,34 @@ impl Gateway {
         }
         Ok((receipt, true))
     }
-
-    pub(super) async fn receipt(&self, owner: &str, id: &str) -> Result<Receipt, Error> {
-        let (_, delivery): (u64, Delivery) = self.store.read_owned(owner, id, "delivery").await?;
-        if delivery.receipt.receipt_id != id {
-            return Err(Error::Unavailable);
+}
+impl From<&DispatchChannel> for DispatchProgress {
+    fn from(value: &DispatchChannel) -> Self {
+        Self {
+            channel_id: value.channel_id.clone(),
+            status: value.status.clone(),
+            reason: value.reason.clone(),
+            admission_id: value.admission_id.clone(),
         }
-        Ok(delivery.receipt)
     }
 }
+fn backoff(attempts: u32) -> i64 {
+    5_i64.saturating_mul(1_i64 << attempts.min(8))
+}
+
+fn retryable_problem(problem: &cmaeg_core::problem::Problem) -> bool {
+    problem.status >= 500
+        || problem.status == 429
+        || matches!(
+            problem.code,
+            cmaeg_core::problem::ProblemCode::ProviderUnavailable
+                | cmaeg_core::problem::ProblemCode::ProviderBusy
+                | cmaeg_core::problem::ProblemCode::Draining
+                | cmaeg_core::problem::ProblemCode::RateLimited
+        )
+}
+
+#[path = "receiver_dispatch.rs"]
+mod dispatch;
+#[path = "receiver_projection.rs"]
+mod projection;

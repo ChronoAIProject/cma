@@ -3746,6 +3746,34 @@
           }
         ]
       },
+      "DispatchProgress": {
+        "additionalProperties": false,
+        "properties": {
+          "admission_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channel_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel_id",
+          "status"
+        ],
+        "type": "object"
+      },
       "EmptyEffectRequest": {
         "additionalProperties": false,
         "type": "object"
@@ -6439,6 +6467,16 @@
           },
           "delivery_id": {
             "type": "string"
+          },
+          "dispatch": {
+            "description": "Per-channel durable dispatch progress. This is additive to the v1 receipt\ncontract and is absent on retained lifecycle/ignored receipts.",
+            "items": {
+              "$ref": "#/components/schemas/DispatchProgress"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "event": {
             "type": "string"
