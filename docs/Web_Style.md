@@ -5887,3 +5887,15 @@ reported a task status.
 | 2026-11-06 | Prefer Sandbox creation dates and precise UTC creation/join times for duplicate Ops filter names before a last-resort secondary reference; preserve plain selected labels and accessible duplicate context. |
 
 | 2026-11-06 | Gate precise owner join times on current directory-read access and resolve collisions between final duplicate-option contexts, including generated-looking owner names; keep accessible choices distinct. |
+
+### Channel queue wait policy (2026-11-06)
+
+The channel Agent settings inspector includes a **Queue wait** group using the
+existing Section and NumberField controls. **Maximum wait (seconds)** defaults to
+300 and accepts whole values from 1 to 86,400. Explain that a message which exceeds
+this wait fails without starting, and that changes apply to newly admitted
+messages. The same control is available for an existing Agent without allowing
+its destination or runtime settings to change. Preserve other profile fields when
+saving. Use existing form spacing, labels and validation; introduce no new tokens.
+
+| 2026-11-06 | Add an editable channel queue wait limit with a five-minute default, a one-day maximum and explicit never-started expiry behavior; preserve the existing Agent destination. |

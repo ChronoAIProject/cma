@@ -63,6 +63,47 @@ async fn ready(store: &MongoSandboxStore) -> ProviderBinding {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn mongo_binding_queue_policy_survives_reopen_and_fences_stale_updates() {
+    let (client, database, store) = fixture().await;
+    let original = ready(&store).await;
+    assert_eq!(original.profile.effective_queue_lifetime_seconds(), 300);
+    let mut profile = original.profile.clone();
+    profile.queue_lifetime_seconds = Some(86400);
+    profile.configuration_digest = Some(original.profile_digest.clone());
+    profile.profile_digest = format!("sha256:{}", "b".repeat(64));
+    let updated = original
+        .reconfigure(profile, original.key_sha256.clone(), NOW.into())
+        .unwrap();
+    store
+        .save_binding(Some(original.revision), updated.clone())
+        .await
+        .unwrap();
+    let reopened = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let retained = reopened
+        .binding(&original.binding_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retained, updated);
+    assert_eq!(retained.profile.effective_queue_lifetime_seconds(), 86400);
+    let mut stale_profile = original.profile.clone();
+    stale_profile.queue_lifetime_seconds = Some(3600);
+    let stale = original
+        .reconfigure(stale_profile, original.key_sha256.clone(), NOW.into())
+        .unwrap();
+    assert_eq!(
+        reopened.save_binding(Some(original.revision), stale).await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(
+        store.binding(&original.binding_id).await.unwrap(),
+        Some(updated)
+    );
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn mongo_bindings_cas_reopen_reconfigure_and_conversation_races() {
     let (client, database, store) = fixture().await;
     let value = ready(&store).await;
