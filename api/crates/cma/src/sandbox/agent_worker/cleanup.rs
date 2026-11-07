@@ -12,7 +12,8 @@ use layer3_adapter::{AgentCloseRequest, AgentHomeRemoveRequest, AgentSlot, Workt
 
 use super::startup_support::has_startup_evidence;
 use super::support::{
-    bump_log_sequence, claimed_fence, request_evidence, validate_lineage, WorkerFailure,
+    bump_log_sequence, claimed_fence, cleanup_failure, request_evidence, validate_lineage,
+    WorkerFailure,
 };
 use super::AgentWorker;
 
@@ -482,8 +483,4 @@ fn has_receipt(agent: &Agent, step: AgentWorkStep) -> bool {
         .receipts
         .iter()
         .any(|receipt| receipt.step == step)
-}
-
-fn cleanup_failure(error: layer3_adapter::AdapterError) -> WorkerFailure {
-    WorkerFailure::retryable("agent_cleanup_unavailable", error.to_string())
 }

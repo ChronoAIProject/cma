@@ -15,6 +15,8 @@ use super::AgentWorker;
 
 mod context;
 mod effects;
+#[cfg(test)]
+mod ledger_hold_tests;
 mod mapping;
 mod retry_delay;
 pub(super) use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
@@ -295,6 +297,10 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         | AdapterError::Unavailable(detail) => {
             WorkerFailure::retryable("agent_runtime_unavailable", detail)
         }
+        AdapterError::RuntimeLedgerHold(_) => WorkerFailure::retryable(
+            "agent_runtime_ledger_hold",
+            "Runtime mutation ledger capacity requires recovery. The original work remains pending; no runtime loss or resource removal is confirmed.",
+        ),
         AdapterError::AtCapacity(detail) => WorkerFailure::terminal("agent_resource_quota", detail),
         AdapterError::Rejected(detail) | AdapterError::OperationIdentityConflict(detail) => {
             WorkerFailure::terminal("agent_runtime_rejected", detail)
@@ -305,6 +311,14 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         AdapterError::RuntimeContractMismatch(error) => {
             WorkerFailure::terminal("agent_runtime_contract_mismatch", error.to_string())
         }
+    }
+}
+
+pub(super) fn cleanup_failure(error: layer3_adapter::AdapterError) -> WorkerFailure {
+    if matches!(error, layer3_adapter::AdapterError::RuntimeLedgerHold(_)) {
+        adapter_failure(error)
+    } else {
+        WorkerFailure::retryable("agent_cleanup_unavailable", error.to_string())
     }
 }
 
