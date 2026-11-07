@@ -491,7 +491,7 @@ async fn authority_race_unrelated_repository_removal_retries_and_admits_once() {
             .await
             .is_err()
     );
-    let removal = json!({"action":"removed","installation":{"id":99,"app_id":42,"account":{"id":123}},"repositories_removed":[{"id":2002}]}).to_string();
+    let removal = json!({"action":"removed","installation":{"id":99,"app_id":42,"account":{"id":123}},"repositories_removed":[{"id":2002}],"repositories_added":[]}).to_string();
     assert_eq!(
         f.webhook(
             &url,
@@ -508,25 +508,46 @@ async fn authority_race_unrelated_repository_removal_retries_and_admits_once() {
     );
     let first = webhook.await.unwrap();
     assert!(first.status().is_success());
-    let retry = f
-        .webhook(
-            &url,
-            "fixture-webhook-secret",
-            "race-unrelated",
-            "issues",
-            &event,
-        )
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(retry.status(), 200);
-    let receipt = retry.json::<serde_json::Value>().await.unwrap();
-    assert_eq!(receipt["task_ids"].as_array().unwrap().len(), 1);
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let receipt = f
+                .read(
+                    &f.base,
+                    &format!(
+                        "/v1/github/apps/{}/deliveries/race-unrelated",
+                        app["app_ref"].as_str().unwrap()
+                    ),
+                    "token-alice",
+                )
+                .await
+                .json::<serde_json::Value>()
+                .await
+                .unwrap();
+            if receipt["dispatch"][0]["status"] == "dispatched" {
+                assert_eq!(receipt["task_ids"].as_array().unwrap().len(), 1);
+                break;
+            }
+            assert_eq!(receipt["dispatch"][0]["status"], "pending", "{receipt}");
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        while f
+            .provider
+            .requests()
+            .iter()
+            .filter(|r| r.path == "/api/v2/responses")
+            .count()
+            < before_posts + 1
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("recovery retries the unchanged eligible repository");
     assert_eq!(
         f.provider
             .requests()
             .iter()
-            .filter(|request| request.path == "/api/v2/responses")
+            .filter(|r| r.path == "/api/v2/responses")
             .count(),
         before_posts + 1
     );

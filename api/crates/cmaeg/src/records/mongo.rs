@@ -36,10 +36,15 @@ struct Record {
     blob: Binary,
     version: i64,
     schema_version: i32,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "zero_guard")]
     guard_revision: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expires_at: Option<DateTime>,
+}
+
+// Unfenced records retain their wire shape under existing optional validators.
+fn zero_guard(revision: &i64) -> bool {
+    *revision == 0
 }
 
 impl MongoRecords {

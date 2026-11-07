@@ -22,7 +22,7 @@ async fn replacement(historical_identity: bool) {
     }
     let old_ref = old_app["app_ref"].as_str().unwrap();
     let old_id = old_binding["binding_id"].as_str().unwrap();
-    let body = json!({"action":"opened","installation":{"id":99},"repository":{"id":1001,"full_name":"fixture/source","owner":{"id":123}},"issue":{"id":9001,"number":7}}).to_string();
+    let body = json!({"action":"opened","installation":{"id":99},"repository":{"id":1001,"full_name":"fixture/source","owner":{"id":123}},"issue":{"id":9001,"number":7,"html_url":"https://github.com/fixture/source/issues/7"},"sender":{"login":"octocat","type":"User"}}).to_string();
     let old_url = format!("{}/v1/github/apps/{old_ref}/webhooks", f.base);
     let receipt = f
         .webhook(
