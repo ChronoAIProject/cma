@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const scaleTest = 'store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages';
+const ownerTest = 'store::usage_reports::tests::owner_allocation::metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound';
+const ordinaryPredicate = `not (test(=${scaleTest}) or test(=${ownerTest}))`;
 const requiredPrefixes = [
   'store::usage_reports::tests::',
   'sandbox::funding::tests::mongo::',
@@ -93,16 +95,20 @@ if (command === 'cargo') {
   if (args[1] === 'list') {
     if (scenario === 'list-error') process.exit(7);
     if (scenario === 'list-malformed') { console.log('invalid-json'); process.exit(0); }
-    const count = scenario === 'list-empty' ? 0 : scenario.startsWith('batches') ? 161 : 80;
+    const count = ['list-empty', 'list-no-ordinary'].includes(scenario) ? 0 : scenario.startsWith('batches') ? 161 : 80;
     const testcases = Object.fromEntries(Array.from({length:count}, (_, index) => [
       'store::usage_reports::tests::ordinary_'+index, {ignored:scenario !== 'list-not-ignored', 'filter-match':{status:'matches'}},
     ]));
     if (!['list-empty', 'list-no-scale'].includes(scenario)) {
       testcases[${JSON.stringify(scaleTest)}] = {ignored:scenario !== 'list-scale-not-ignored', 'filter-match':{status:'matches'}};
     }
+    if (!['list-empty', 'list-no-owner'].includes(scenario)) {
+      testcases[${JSON.stringify(ownerTest)}] = {ignored:scenario !== 'list-owner-not-ignored', 'filter-match':{status:'matches'}};
+    }
     testcases.filtered = {ignored:true, 'filter-match':{status:'mismatch'}};
     const suites = {fixture:{testcases}};
     if (scenario === 'list-duplicate-scale') suites.duplicate = {testcases:{[${JSON.stringify(scaleTest)}]:testcases[${JSON.stringify(scaleTest)}]}};
+    if (scenario === 'list-duplicate-owner') suites.duplicate = {testcases:{[${JSON.stringify(ownerTest)}]:testcases[${JSON.stringify(ownerTest)}]}};
     console.log(JSON.stringify({'rust-suites':suites}));
     process.exit(0);
   }
@@ -111,23 +117,26 @@ if (command === 'cargo') {
     process.exit(scenario === 'cpu-error' ? 7 : scenario === 'cpu-empty' ? 4 : 0);
   }
   const scale = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${scaleTest})');
-  const partition = scale ? 'count:1/1' : args[args.indexOf('--partition') + 1];
+  const owner = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${ownerTest})');
+  const isolated = scale || owner;
+  const partition = isolated ? 'count:1/1' : args[args.indexOf('--partition') + 1];
   const match = /^count:([1-9][0-9]*)\\/([1-9][0-9]*)$/.exec(partition);
   if (!match) process.exit(8);
-  const index = scale ? 0 : Number(match[1]);
+  const index = scale ? 0 : owner ? -1 : Number(match[1]);
   const count = scenario.startsWith('batches') ? 161 : 80;
-  const selected = scale ? [${JSON.stringify(scaleTest)}] : Array.from({length:count}, (_, i) =>
+  const selected = scale ? [${JSON.stringify(scaleTest)}] : owner ? [${JSON.stringify(ownerTest)}] : Array.from({length:count}, (_, i) =>
     'store::usage_reports::tests::ordinary_'+i).filter((_, i) => i % Number(match[2]) === index-1);
   fs.writeFileSync(log+'.selected-'+index, JSON.stringify(selected));
   fs.writeFileSync(log+'.started-'+index, 'started');
-  if ((scenario === 'scale-empty' && scale) || (scenario === 'ordinary-empty' && index === 1)) {
+  if (scenario === 'batches-cleanup-error' && index === 1) fs.writeFileSync(log+'.failed-cleanup-uri', process.env.CHRONO_TEST_MONGODB_URI);
+  if ((scenario === 'scale-empty' && scale) || (scenario === 'owner-empty' && owner) || (scenario === 'ordinary-empty' && index === 1)) {
     console.log('Starting 0 tests');
     const option = args.indexOf('--no-tests');
     const policy = option >= 0 ? args[option+1] : process.env.NEXTEST_NO_TESTS;
     fs.writeFileSync(log+'.empty-'+index, policy || 'auto');
     process.exit(policy === 'pass' ? 0 : 4);
   }
-  if ((scenario === 'cancel' && !scale) || (scenario === 'cancel-scale' && scale)) { setInterval(() => {}, 1000); }
+  if ((scenario === 'batches-cleanup-error' && index === 2) || (scenario === 'cancel' && !isolated) || (scenario === 'cancel-scale' && scale) || (scenario === 'cancel-owner' && owner)) { setInterval(() => {}, 1000); }
   else {
     const deadline = Date.now()+5000;
     while (index >= 1 && index <= 2 && !fs.existsSync(log+'.started-'+(3-index))) {
@@ -135,7 +144,7 @@ if (command === 'cargo') {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
     }
     fs.writeFileSync(log+'.finished-'+index, 'finished');
-    process.exit((['test-error','batches-error'].includes(scenario) && index === 1) || (scenario === 'scale-error' && scale) ? 7 : 0);
+    process.exit((['test-error','batches-error'].includes(scenario) && index === 1) || (scenario === 'scale-error' && scale) || (scenario === 'owner-error' && owner) ? 7 : 0);
   }
 } else {
   const file = name => log+'.container-'+name;
@@ -161,7 +170,7 @@ if (command === 'cargo') {
       const name = args[2];
       const owner = JSON.parse(fs.readFileSync(volume(name))).owner;
       if (name !== owner+'-data' || args.length !== 3) process.exit(20);
-      if (scenario === 'volume-cleanup-error' || fs.existsSync(file(owner))) process.exit(21);
+      if (scenario === 'volume-cleanup-error' || (scenario === 'owner-volume-cleanup-error' && fs.existsSync(log+'.finished--1')) || fs.existsSync(file(owner))) process.exit(21);
       fs.unlinkSync(volume(name));
     } else process.exit(22);
   } else if (args[0] === 'run') {
@@ -180,12 +189,13 @@ if (command === 'cargo') {
     const name = args.find(value => value.startsWith('label=')).split('=').at(-1);
     console.log(fs.existsSync(file(name)) ? JSON.parse(fs.readFileSync(file(name))).id.slice(0,12) : '');
   } else if (args[0] === 'rm') {
-    if (scenario === 'cleanup-error') process.exit(1);
+    if (scenario === 'cleanup-error' || (scenario === 'owner-cleanup-error' && fs.existsSync(log+'.finished--1'))) process.exit(1);
     const files = fs.readdirSync(path.dirname(log)).filter(name => name.startsWith('calls.ndjson.container-'));
     // Match immutable mock identity without reading another concurrently removed file.
     const selected = files.find(name => require('node:crypto').createHash('sha256')
       .update(name.slice('calls.ndjson.container-'.length)).digest('hex').startsWith(args[2]));
     if (!selected) process.exit(10);
+    if (scenario === 'batches-cleanup-error' && fs.existsSync(log+'.failed-cleanup-uri') && fs.readFileSync(log+'.failed-cleanup-uri', 'utf8').includes(':'+JSON.parse(fs.readFileSync(path.join(path.dirname(log),selected))).port+'/')) process.exit(1);
     fs.unlinkSync(path.join(path.dirname(log),selected));
   } else process.exit(11);
 }
@@ -228,8 +238,8 @@ for (const reuse of [false, true]) {
     }
   });
 
-  test(`${mode}: scale runs alone before concurrent Mongo partitions, preserves failures and removes only owned fixtures`, () => {
-    for (const scenario of ['entropy-error', 'entropy-malformed', 'success', 'scale-error', 'test-error', 'cleanup-error', 'volume-cleanup-error']) {
+  test(`${mode}: report scale and owner allocation run alone before concurrent Mongo partitions, preserves failures and removes only owned fixtures`, () => {
+    for (const scenario of ['entropy-error', 'entropy-malformed', 'success', 'scale-error', 'owner-error', 'test-error']) {
       const f = fixture(scenario, reuse);
       try {
         const run = () => execFileSync('bash', f.args, { env: f.env, timeout: 15000, stdio: 'pipe' });
@@ -239,39 +249,42 @@ for (const reuse of [false, true]) {
         const cargo = calls.filter(row => row.command === 'cargo' && row.args[1] === 'run');
         for (const row of calls.filter(row => row.command === 'cargo')) {
           const action = row.args[1];
-          const predicate = action === 'list' ? 'all()' : row === cargo[0] ? `package(=cma) and test(=${scaleTest})` : `not test(=${scaleTest})`;
+          const predicate = action === 'list' ? 'all()' : row === cargo[0] ? `package(=cma) and test(=${scaleTest})` : row === cargo[1] ? `package(=cma) and test(=${ownerTest})` : ordinaryPredicate;
           const selection = `${predicate} & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`;
           const build = reuse ? ['--binaries-metadata', join(f.metadata, 'binaries-metadata.json'), '--cargo-metadata', join(f.metadata, 'cargo-metadata.json')] : ['--workspace', '--locked'];
-          const operation = action === 'list' ? ['--message-format', 'json'] : ['--no-tests', 'fail', '--test-threads', '1', '--no-fail-fast', ...(row === cargo[0] ? ['--success-output', 'final'] : ['--partition', row.args[row.args.indexOf('--partition')+1]])];
+          const operation = action === 'list' ? ['--message-format', 'json'] : ['--no-tests', 'fail', '--test-threads', '1', '--no-fail-fast', ...(cargo.indexOf(row) < 2 ? ['--success-output', 'final'] : ['--partition', row.args[row.args.indexOf('--partition')+1]])];
           assert.deepEqual(row.args, ['nextest', action, ...build, ...operation, '--run-ignored', 'only', '-E', selection]);
           if (action === 'list') assert.equal(row.uri, undefined, 'listing must discard caller Mongo URI too');
         }
 
-        assert.equal(cargo.length, 3);
-        assert.ok(!cargo[0].args.includes('--partition'));
-        assert.deepEqual(cargo.slice(1).map(row => row.args[row.args.indexOf('--partition') + 1]).sort(), ['count:1/2', 'count:2/2']);
-        assert.equal(new Set(cargo.map(row => row.uri)).size, 3);
+        assert.equal(cargo.length, 4);
+        assert.ok(cargo.slice(0, 2).every(row => !row.args.includes('--partition')));
+        assert.deepEqual(cargo.slice(2).map(row => row.args[row.args.indexOf('--partition') + 1]).sort(), ['count:1/2', 'count:2/2']);
+        assert.equal(new Set(cargo.map(row => row.uri)).size, 4);
         for (const row of cargo) {
           assert.match(row.uri, /^mongodb:\/\/127\.0\.0\.1:[0-9]+\/\?directConnection=true&replicaSet=cma_ci$/);
           assert.ok(row.args.includes('--run-ignored') && row.args.includes('only'));
           assert.ok(row.args.includes('--no-fail-fast'));
           assert.equal(row.args[row.args.indexOf('--test-threads') + 1], '1');
-          assert.equal(row.args[row.args.indexOf('-E') + 1], `${row === cargo[0] ? 'package(=cma) and ' : 'not '}test(=${scaleTest}) & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`);
         }
-        for (const index of [0, 1, 2]) assert.ok(existsSync(`${f.log}.finished-${index}`), 'both partitions must finish, including after one fails');
+        for (const index of [0, -1, 1, 2]) assert.ok(existsSync(`${f.log}.finished-${index}`), 'both partitions must finish, including after one fails');
         const scale = JSON.parse(readFileSync(`${f.log}.selected-0`));
+        const owner = JSON.parse(readFileSync(`${f.log}.selected--1`));
         const ordinary = [1, 2].flatMap(index => JSON.parse(readFileSync(`${f.log}.selected-${index}`)));
         assert.deepEqual(scale, [scaleTest]);
+        assert.deepEqual(owner, [ownerTest]);
         assert.equal(ordinary.length, 80);
-        assert.equal(new Set([...scale, ...ordinary]).size, 81, 'scale plus ordinary partitions select every mock test exactly once');
+        assert.equal(new Set([...scale, ...owner, ...ordinary]).size, 82, 'both isolated phases plus ordinary partitions select every mock test exactly once');
         const created = calls.filter(row => row.args[0] === 'run').map(row => row.args[row.args.indexOf('--name') + 1]);
-        assert.equal(new Set(created).size, 3);
-        const scaleCleanup = calls.findIndex(row => row.args[0] === 'volume' && row.args[1] === 'rm' && row.args[2] === `${created[0]}-data`);
-        const secondStart = calls.findIndex(row => row.args[0] === 'run' && row.args.includes(created[1]));
-        assert.ok(scaleCleanup >= 0 && secondStart > scaleCleanup, 'scale fixture cleanup precedes all ordinary fixtures');
+        assert.equal(new Set(created).size, 4);
+        for (const index of [0, 1]) {
+          const cleanup = calls.findIndex(row => row.args[0] === 'volume' && row.args[1] === 'rm' && row.args[2] === `${created[index]}-data`);
+          const nextStart = calls.findIndex(row => row.args[0] === 'run' && row.args.includes(created[index+1]));
+          assert.ok(cleanup >= 0 && nextStart > cleanup, 'each exclusive fixture is removed before the next phase starts');
+        }
         assert.ok(created.every(name => /^cma-mongo-ci-[0-9a-f]{24}$/.test(name)));
         const volumeCreates = calls.filter(row => row.args[0] === 'volume' && row.args[1] === 'create');
-        assert.equal(volumeCreates.length, 3);
+        assert.equal(volumeCreates.length, 4);
         for (const name of created) {
           assert.deepEqual(volumeCreates.find(row => row.args.at(-1) === `${name}-data`).args,
             ['volume', 'create', '--label', `dev.chrono.cma.mongo-contract=${name}`, `${name}-data`]);
@@ -288,13 +301,41 @@ for (const reuse of [false, true]) {
         }
         assert.ok(calls.filter(row => row.args[0] === 'ps').every(row => created.some(name => row.args.includes(`label=dev.chrono.cma.mongo-contract=${name}`))));
         const removed = calls.filter(row => row.args[0] === 'rm');
-        assert.equal(removed.length, 3);
+        assert.equal(removed.length, 4);
         assert.ok(removed.every(row => row.args.length === 3 && row.args[1] === '--force' && /^[0-9a-f]{12}$/.test(row.args[2])));
-        assert.equal(f.containers().length, scenario === 'cleanup-error' ? 3 : 0);
-        assert.equal(f.volumes().length, scenario.endsWith('cleanup-error') ? 3 : 0);
+        assert.equal(f.containers().length, 0);
+        assert.equal(f.volumes().length, 0);
         assert.ok(existsSync(f.foreignVolume));
       } finally { f.close(); }
     }
+  });
+
+  test(`${mode}: uncertain exclusive cleanup stops before another fixture can overlap`, () => {
+    for (const scenario of ['cleanup-error', 'volume-cleanup-error', 'owner-cleanup-error', 'owner-volume-cleanup-error']) {
+      const f = fixture(scenario, reuse);
+      try {
+        assert.throws(() => execFileSync('bash', f.args, {env: f.env, timeout: 15000, stdio: 'pipe'}), error => error.status === 1);
+        const created = f.calls().filter(row => row.command === 'docker' && row.args[0] === 'run');
+        assert.equal(created.length, scenario.startsWith('owner-') ? 2 : 1);
+        assert.equal(existsSync(`${f.log}.started-1`), false, 'ordinary work cannot start while exclusive cleanup is uncertain');
+        assert.equal(f.containers().length, scenario.includes('volume') ? 0 : 1);
+        assert.equal(f.volumes().length, 1);
+        assert.ok(existsSync(f.foreignVolume));
+      } finally { f.close(); }
+    }
+  });
+
+  test(`${mode}: ordinary cleanup failure stops allocation and cleans the active peer`, () => {
+    const f = fixture('batches-cleanup-error', reuse);
+    try {
+      assert.throws(() => execFileSync('bash', f.args, {env: f.env, timeout: 15000, stdio: 'pipe'}), error => error.status === 1);
+      assert.equal(f.calls().filter(row => row.command === 'docker' && row.args[0] === 'run').length, 4);
+      assert.ok(existsSync(`${f.log}.started-2`));
+      assert.equal(existsSync(`${f.log}.started-3`), false);
+      assert.equal(f.containers().length, 1);
+      assert.equal(f.volumes().length, 1);
+      assert.ok(existsSync(f.foreignVolume));
+    } finally { f.close(); }
   });
 
   test(`${mode}: volume creation, run and ownership failures retain foreign data and clean exact partial fixtures`, () => {
@@ -307,9 +348,9 @@ for (const reuse of [false, true]) {
         assert.equal(f.containers().length, 0);
         assert.ok(existsSync(f.foreignVolume));
         const retained = ['foreign-volume', 'volume-owner-mismatch'].includes(scenario);
-        assert.equal(f.volumes().length, retained ? 3 : 0);
+        assert.equal(f.volumes().length, retained ? (scenario === 'volume-owner-mismatch' ? 1 : 4) : 0);
         const removals = calls.filter(row => row.args[0] === 'volume' && row.args[1] === 'rm');
-        assert.equal(removals.length, ['volume-create-error', 'run-error'].includes(scenario) ? 3 : 0);
+        assert.equal(removals.length, ['volume-create-error', 'run-error'].includes(scenario) ? 4 : 0);
         assert.ok(removals.every(row => /^cma-mongo-ci-[0-9a-f]{24}-data$/.test(row.args[2])));
         if (scenario === 'foreign-volume' || scenario === 'volume-list-error') {
           assert.equal(calls.filter(row => row.args[0] === 'volume' && row.args[1] === 'create').length, 0);
@@ -329,9 +370,9 @@ for (const reuse of [false, true]) {
     } finally { f.close(); }
   });
 
-  for (const scenario of ['cancel', 'cancel-scale']) for (const signal of ['SIGTERM', 'SIGINT']) test(`${mode}: ${signal} stops ${scenario} process groups and removes their exact disk volumes`, async () => {
+  for (const scenario of ['cancel', 'cancel-scale', 'cancel-owner']) for (const signal of ['SIGTERM', 'SIGINT']) test(`${mode}: ${signal} stops ${scenario} process groups and removes their exact disk volumes`, async () => {
     const f = fixture(scenario, reuse);
-    const active = scenario === 'cancel-scale' ? [0] : [1, 2];
+    const active = scenario === 'cancel-scale' ? [0] : scenario === 'cancel-owner' ? [-1] : [1, 2];
     const child = spawn('bash', f.args, { env: f.env, stdio: 'ignore' });
     const exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({code,signal})));
     try {
@@ -366,10 +407,10 @@ for (const reuse of [false, true]) {
         const calls = f.calls();
         assert.equal(calls.filter(row => row.command === 'cargo' && row.args[1] === 'list').length, 1);
         const cargo = calls.filter(row => row.command === 'cargo' && row.args[1] === 'run');
-        assert.ok(!cargo[0].args.includes('--partition'));
-        assert.deepEqual(cargo.slice(1).map(row => row.args[row.args.indexOf('--partition')+1]).sort(),
+        assert.ok(cargo.slice(0, 2).every(row => !row.args.includes('--partition')));
+        assert.deepEqual(cargo.slice(2).map(row => row.args[row.args.indexOf('--partition')+1]).sort(),
           [1,2,3,4,5].map(index => `count:${index}/5`));
-        assert.equal(new Set(cargo.map(row => row.uri)).size, 6);
+        assert.equal(new Set(cargo.map(row => row.uri)).size, 7);
         let active = 0;
         let maximum = 0;
         for (const row of calls) {
@@ -382,13 +423,13 @@ for (const reuse of [false, true]) {
         assert.equal(f.containers().length, 0);
         assert.equal(f.volumes().length, 0);
         assert.ok(existsSync(f.foreignVolume));
-        for (const index of [0,1,2,3,4,5]) assert.ok(existsSync(`${f.log}.finished-${index}`));
+        for (const index of [0,-1,1,2,3,4,5]) assert.ok(existsSync(`${f.log}.finished-${index}`));
       } finally { f.close(); }
     }
   });
 
   test(`${mode}: unavailable, malformed, empty or non-ignored selection fails before allocating any fixture`, () => {
-    for (const scenario of ['list-error','list-malformed','list-empty','list-not-ignored','list-no-scale','list-scale-not-ignored','list-duplicate-scale']) {
+    for (const scenario of ['list-error','list-malformed','list-empty','list-not-ignored','list-no-scale','list-scale-not-ignored','list-duplicate-scale','list-no-owner','list-owner-not-ignored','list-duplicate-owner','list-no-ordinary']) {
       const f = fixture(scenario, reuse);
       try {
         assert.throws(() => execFileSync('bash', f.args, {env:f.env, timeout:5000, stdio:'pipe'}));
@@ -402,21 +443,21 @@ for (const reuse of [false, true]) {
 
 
   test(`${mode}: zero-test runs fail despite an environment that allows empty selections`, () => {
-    for (const scenario of ['scale-empty', 'ordinary-empty']) {
+    for (const scenario of ['scale-empty', 'owner-empty', 'ordinary-empty']) {
       const f = fixture(scenario, reuse);
       try {
         const env = {...f.env, NEXTEST_NO_TESTS: 'pass'};
         assert.throws(() => execFileSync('bash', f.args, {env, timeout:15000, stdio:'pipe'}),
           error => error.status === 1, 'an empty invocation must fail the complete gate');
         const cargo = f.calls().filter(row => row.command === 'cargo' && row.args[1] === 'run');
-        assert.equal(cargo.length, 3, 'the remaining contracts still run after an empty invocation');
+        assert.equal(cargo.length, 4, 'the remaining contracts still run after an empty invocation');
         for (const row of cargo) {
           assert.equal(row.args.filter(value => value === '--no-tests').length, 1);
           assert.equal(row.args[row.args.indexOf('--no-tests')+1], 'fail');
         }
-        const empty = scenario === 'scale-empty' ? 0 : 1;
+        const empty = scenario === 'scale-empty' ? 0 : scenario === 'owner-empty' ? -1 : 1;
         assert.equal(readFileSync(`${f.log}.empty-${empty}`, 'utf8'), 'fail');
-        for (const index of [0,1,2].filter(index => index !== empty)) {
+        for (const index of [0,-1,1,2].filter(index => index !== empty)) {
           assert.ok(existsSync(`${f.log}.finished-${index}`));
         }
         assert.equal(f.containers().length, 0);
@@ -426,3 +467,25 @@ for (const reuse of [false, true]) {
     }
   });
 }
+
+test('selection proof parses both old and isolated owner predicates', () => {
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const result = execFileSync('python3', ['-c', `
+import json, runpy, sys
+parse = runpy.run_path(sys.argv[1])["mongo_filters"]
+source = sys.argv[2]
+before = "\\n".join(line for line in source.splitlines()
+    if not line.startswith("readonly owner_allocation_test=")
+    and not line.strip().startswith("owner-allocation)"))
+before = before.replace('not (test(=$scale_test) or test(=$owner_allocation_test))', 'not test(=$scale_test)')
+print(json.dumps({"before": parse(before), "after": parse(source)}))
+`, new URL('backend-selection-proof.py', import.meta.url).pathname, source], {
+    env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
+  });
+  const {before, after} = JSON.parse(result);
+  assert.equal(before['owner-allocation'], undefined);
+  assert.ok(before.ordinary.startsWith(`not test(=${scaleTest}) & (`));
+  assert.ok(after.ordinary.startsWith(`${ordinaryPredicate} & (`));
+  assert.ok(after['owner-allocation'].startsWith(`package(=cma) and test(=${ownerTest}) & (`));
+  for (const mode of ['all', 'scale', 'cpu-profile']) assert.equal(before[mode], after[mode]);
+});
