@@ -24,16 +24,27 @@ def identity(pid):
         return None
 
 
-def browsers():
+def profile_browser(cmdline):
     argument = os.fsencode('--user-data-dir=' + str(PROFILE))
+    args = cmdline.rstrip(b'\0').split(b'\0')
+    if len(args) == 1:
+        # Chromium's Linux SetProcessTitleFromCommandLine replaces argv with
+        # one space-separated title. Match whole flags, including a profile
+        # path containing spaces; a renderer's title must never become an owner.
+        title = b' ' + args[0] + b' '
+        return (b'chrom' in args[0].split(b' ', 1)[0]
+                and b' ' + argument + b' ' in title and b' --type=' not in title)
+    return (argument in args and b'chrom' in args[0]
+            and not any(a.startswith(b'--type=') for a in args))
+
+
+def browsers():
     found = []
     for entry in Path('/proc').iterdir():
         if not entry.name.isdigit():
             continue
         try:
-            args = (entry / 'cmdline').read_bytes().split(b'\0')
-            if (argument in args and b'chrom' in args[0]
-                    and not any(a.startswith(b'--type=') for a in args)
+            if (profile_browser((entry / 'cmdline').read_bytes())
                     and identity(int(entry.name))):
                 found.append(int(entry.name))
         except (FileNotFoundError, ProcessLookupError):
@@ -72,8 +83,10 @@ class Manager:
                 windows = [w for w in json.loads(result.stdout)
                            if w.get('pid') == pid and 'chrom' in w.get('class', '').lower()]
                 if windows and focus:
-                    run(command + ['dispatch', 'focuswindow',
-                                   'address:' + windows[0]['address']], deadline, self.env)
+                    # Omarchy's pinned Hyprland uses Lua dispatcher expressions.
+                    selector = json.dumps('address:' + windows[0]['address'])
+                    run(command + ['dispatch', 'hl.dsp.focus({window = ' + selector + '})'],
+                        deadline, self.env)
             else:
                 result = run(['xdotool', 'search', '--all', '--onlyvisible', '--pid', str(pid),
                               '--class', 'chromium'], deadline, self.env)
