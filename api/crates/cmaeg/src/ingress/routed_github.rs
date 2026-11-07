@@ -39,13 +39,9 @@ impl RoutedIngress {
         }
         let current = match resolver.resolve_current(request.channel.id.as_str()).await {
             Ok(channel) => channel,
-            Err(_) => {
+            Err(error) => {
                 drop(hold);
-                return LaunchOutcome::Refused(Problem::new(
-                    ProblemCode::AdmissionRefused,
-                    422,
-                    "github_channel_removed_before_admission",
-                ));
+                return LaunchOutcome::Refused(channel_restore_problem(&error));
             }
         };
         if current
@@ -143,5 +139,44 @@ impl RoutedIngress {
             retained_until: plan.retained_until,
             result: None,
         })
+    }
+}
+
+fn channel_restore_problem(error: &crate::channels::resolver::ResolveError) -> Problem {
+    if matches!(
+        error,
+        crate::channels::resolver::ResolveError::NotFound
+            | crate::channels::resolver::ResolveError::Tampered
+    ) {
+        Problem::new(
+            ProblemCode::AdmissionRefused,
+            422,
+            "github_channel_removed_before_admission",
+        )
+    } else {
+        Problem::new(
+            ProblemCode::ProviderUnavailable,
+            503,
+            "github_channel_restore_unavailable",
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::channel_restore_problem;
+    use crate::channels::resolver::ResolveError;
+
+    #[test]
+    fn transient_channel_restore_errors_are_retryable() {
+        assert_eq!(channel_restore_problem(&ResolveError::NotFound).status, 422);
+        assert_eq!(
+            channel_restore_problem(&ResolveError::Unavailable).status,
+            503
+        );
+        assert_eq!(
+            channel_restore_problem(&ResolveError::RateLimited).status,
+            503
+        );
     }
 }

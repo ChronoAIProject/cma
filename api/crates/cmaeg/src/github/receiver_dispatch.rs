@@ -200,12 +200,14 @@ impl Gateway {
                 {
                     Some((app, binding))
                 }
+                Err(crate::github::Error::NotFound) => None,
                 Err(_) => {
                     authority_retry = true;
                     None
                 }
                 Ok(_) => None,
             },
+            Err(crate::github::Error::NotFound) => None,
             Err(_) => {
                 authority_retry = true;
                 None
