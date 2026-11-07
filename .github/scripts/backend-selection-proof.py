@@ -86,20 +86,22 @@ def mongo_filters(source):
     """Read corpus modes and the optional CPU profile without running fixtures."""
     template = shlex.split(next(line.strip() for line in source.splitlines()
                                 if line.strip().startswith("-E ")))[1]
-    scale_name = shlex.split(next(line for line in source.splitlines()
-                                 if line.startswith("readonly scale_test=")))[1].split("=", 1)[1]
+    names = dict(shlex.split(line)[1].split("=", 1) for line in source.splitlines()
+                 if line.startswith(("readonly scale_test=", "readonly owner_allocation_test=")))
     predicates = {"all": "all()"}
-    for mode in ("scale", "ordinary", "cpu-profile"):
+    for mode in ("scale", "owner-allocation", "ordinary", "cpu-profile"):
         line = next((line.strip() for line in source.splitlines()
                      if line.strip().startswith(f"{mode})")), None)
-        if mode == "cpu-profile" and line is None:
+        if mode in ("owner-allocation", "cpu-profile") and line is None:
             continue
         predicate = re.search(r'''selection_filter=(["'])(.*?)\1''', line).group(2)
         # The pre-split source selected cma during compilation; reuse must
         # express the same package restriction in the filter instead.
         if "packages=(-p cma)" in line:
             predicate = "package(=cma) and " + predicate
-        predicates[mode] = predicate.replace("$scale_test", scale_name)
+        for variable, name in names.items():
+            predicate = predicate.replace(f"${variable}", name)
+        predicates[mode] = predicate
     filters = {mode: template.replace("$selection_filter", predicate)
                for mode, predicate in predicates.items()}
     if any("$" in expression for expression in filters.values()):
@@ -151,15 +153,27 @@ def main():
     old_source = (baseline / "mongo-contract-tests.sh").read_text()
     new_source = (ROOT / ".github/scripts/mongo-contract-tests.sh").read_text()
     before_filters, after_filters = mongo_filters(old_source), mongo_filters(new_source)
-    mongo_sets = {}
+    owner = list_tests(["-E", after_filters["owner-allocation"], "--run-ignored", "only"])[0]
+    if len(owner) != 1:
+        raise AssertionError("Exactly one Mongo owner-allocation contract is required")
+    mongo_sets = {"owner-allocation": owner}
     for mode in ("all", "scale", "ordinary"):
         old = list_tests(["-E", before_filters[mode], "--run-ignored", "only"])[0]
         new = list_tests(["-E", after_filters[mode], "--run-ignored", "only"])[0]
+        if mode == "ordinary" and "owner-allocation" not in before_filters:
+            if not owner <= old:
+                raise AssertionError("Isolated owner contract was absent from the old ordinary corpus")
+            old -= owner
         compare(f"mongo-{mode}", old, new)
         mongo_sets[mode] = new
-    if len(mongo_sets["scale"]) != 1 or mongo_sets["scale"] & mongo_sets["ordinary"]:
-        raise AssertionError("Mongo scale must run exactly once outside ordinary partitions")
-    compare("mongo-split-union", mongo_sets["all"], mongo_sets["scale"] | mongo_sets["ordinary"])
+    counts = Counter(test for mode in ("scale", "owner-allocation", "ordinary")
+                     for test in mongo_sets[mode])
+    if len(mongo_sets["scale"]) != 1 or any(count != 1 for count in counts.values()):
+        raise AssertionError("Mongo exclusive phases and ordinary partitions must not overlap")
+    compare("mongo-split-union", mongo_sets["all"], set(counts))
+    if "owner-allocation" in before_filters:
+        compare("mongo-owner-allocation", list_tests([
+            "-E", before_filters["owner-allocation"], "--run-ignored", "only"])[0], owner)
     if "cpu-profile" in after_filters:
         profiles = list_tests(["-E", after_filters["cpu-profile"], "--run-ignored", "only"])[0]
         expected = {(binary, name) for binary, name in mongo_sets["ordinary"]
