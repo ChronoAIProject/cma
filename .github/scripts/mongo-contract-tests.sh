@@ -11,13 +11,15 @@ source "$script_directory/backend-nextest.sh"
 # Listing and execution share one complete selection. The coordinator sizes
 # disposable fixtures from this list, keeping database metadata growth bounded.
 readonly scale_test='store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages'
+readonly owner_allocation_test='store::usage_reports::tests::owner_allocation::metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound'
 selection='all'
 nextest_contracts() {
   local selection_filter='all()'
   case "$selection" in
     scale) selection_filter="package(=cma) and test(=$scale_test)" ;;
+    owner-allocation) selection_filter="package(=cma) and test(=$owner_allocation_test)" ;;
     cpu-profile) selection_filter="package(=cma) and test(::cpu_profile::)" ;;
-    ordinary) selection_filter="not test(=$scale_test)" ;;
+    ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test))" ;;
   esac
   nextest_build "$@" --run-ignored only \
     -E "$selection_filter & ("'test(store::usage_reports::tests::) | test(sandbox::funding::tests::mongo::) | test(usage_billing::tests::) | test(store::request_limits::tests::) | test(store::sandbox_mongo_integration_tests::sandbox_usage_tests::) | test(document_artifacts::mongo_integration_tests::) | test(store::message_feedback::tests::) | test(store::sandbox_colors::tests::) | test(agent_lifecycle::workspace::tests::mongo::) | test(agent_lifecycle::workspace::tests::bootstrap::) | test(warm_pools::tests::mongo::) | test(store::native_warm_pools::retirement::tests::) | test(store::native_prepared::tests::) | test(store::sandbox_admission_mongo_integration_tests::warmup::) | test(store::auth::api_bearer_tests::) | test(store::agent_conversation_store::checkpoint_tests::) | test(store::agent_conversation_store::admission_tests::) | test(store::agent_conversation_store::reopen_tests::) | test(store::agent_access_tools::) | test(store::agent_access_requests::) | test(agent_access_worker::) | test(owner_service_access::) | test(store::sandbox_mongo_integration_tests::warm_hierarchy_tests::) | test(store::agent_admission::mongo_integration_tests::) | test(store::schema_mongo_integration_tests::) | test(store::workspaces::mongo_integration_tests::) | test(store::bindings::) | test(store::gateway_records_mongo_integration_tests::) | test(store::bots_mongo_integration_tests::) | test(store::bot_setups::mongo_integration_tests::) | test(bot_setups::events::tests::) | test(store::trigger_definitions::launch_mongo_integration_tests::) | test(store::trigger_definitions::archive_mongo_tests::) | test(store::checkpoint_objects::mongo_integration_tests::) | test(store::sandbox_mongo_integration_tests::checkpoint_capture_tests::) | test(store::sandbox_mongo_integration_tests::service_access_tests::) | test(store::sandbox_mongo_integration_tests::command_ledger_tests::) | test(store::sandbox_mongo_integration_tests::resource_access_tests::) | test(store::sandbox_maintenance::mongo_integration_tests::) | test(store::sandbox_maintenance::consented::scope_tests::) | test(store::sandbox_reconciliation::mongo_integration_tests::channel_home_retention::) | test(sandbox::agent_worker_tests::sdk_conformance_tests::mongo_tests::) | test(sandbox::agent_worker_tests::first_message_contention_tests::) | test(sandbox::worker_tests::lifecycle_queue_contention_tests::) | test(store::sandbox_mongo_integration_tests::sandbox_lifecycle_tests::lifecycle_phase_reconciles_an_ambiguous_commit_without_duplicate_logs) | test(sandbox::agent_worker::prepared_open_ready::) | test(store::mongo_latency::tests::) | test(store::agent_task_status::batch::tests::) | test(store::sandbox_mongo_integration_tests::agent_worker_tests::reconciliation_context_tests::) | test(store::sandbox_mongo_integration_tests::agent_transaction_tests::capacity_tests::) | test(sandbox::agent_worker_tests::connection_failure_tests::capacity_cleanup_tests::)'")"
@@ -32,6 +34,8 @@ if [[ $# == 1 && "$1" == '--list' ]]; then
 fi
 if [[ $# == 1 && "$1" == '--scale' ]]; then
   selection='scale'
+elif [[ $# == 1 && "$1" == '--owner-allocation' ]]; then
+  selection='owner-allocation'
 elif [[ $# == 1 && "$1" == '--cpu-profile' ]]; then
   selection='cpu-profile'
 else
@@ -117,7 +121,7 @@ endpoint=$(docker port "$contract_name" 27017/tcp)
 export CHRONO_TEST_MONGODB_URI="mongodb://${endpoint}/?directConnection=true&replicaSet=cma_ci"
 export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
 cd "$repo_root/api"
-if [[ "$selection" == 'scale' || "$selection" == 'cpu-profile' ]]; then
+if [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'cpu-profile' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --success-output final
 else
   nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition"
