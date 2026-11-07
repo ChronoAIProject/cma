@@ -25,6 +25,8 @@ const OPERATION: Duration = Duration::from_secs(5);
 #[derive(Default)]
 pub(super) struct Progress {
     sweep: Sweep,
+    binding_refresh: Option<Sweep>,
+    refresh_required: bool,
     telemetry: Telemetry,
 }
 
@@ -66,64 +68,17 @@ impl Default for Sweep {
     }
 }
 
-impl SandboxReconciler {
-    pub(crate) async fn run_due(&self, now: SystemTime) -> Result<bool, SandboxStoreError> {
-        let mut progress = self.progress.lock().await;
-        let Progress { sweep, telemetry } = progress.get_or_insert_with(Progress::default);
-        // A cancelled binding already has protection/backoff from its drop guard.
-        sweep.pending_binding = None;
-        let _holds_report = self.binding_holds.report_on_drop();
-        let mut attempt = telemetry.attempt();
-        let started = tokio::time::Instant::now();
-        let complete = loop {
-            attempt.start(sweep.phase);
-            match tokio::time::timeout(OPERATION, sweep.step(self, now)).await {
-                Ok(Ok(items)) => attempt.record(items),
-                Ok(Err(error)) if sweep.pending_binding.is_some() => {
-                    let reason = match error {
-                        SandboxStoreError::Unavailable(_) => "unavailable",
-                        SandboxStoreError::Corrupt(_) => "corrupt",
-                        SandboxStoreError::Conflict => "conflict",
-                        _ => "refused",
-                    };
-                    self.binding_holds
-                        .failed(&sweep.pending_binding.take().unwrap(), reason);
-                    attempt.record(0);
-                }
-                Err(_) if sweep.pending_binding.is_some() => {
-                    self.binding_holds
-                        .failed(&sweep.pending_binding.take().unwrap(), "deadline");
-                    attempt.record(0);
-                }
-                Ok(Err(error)) => {
-                    attempt.finish("unavailable");
-                    return Err(error);
-                }
-                Err(_) => {
-                    attempt.finish("deadline");
-                    return Err(SandboxStoreError::Unavailable(
-                        "sandbox maintenance operation deadline exceeded".into(),
-                    ));
-                }
-            }
-            if sweep.phase == Phase::Complete {
-                break true;
-            }
-            if started.elapsed() >= SLICE {
-                break false;
-            }
-            tokio::task::yield_now().await;
-        };
-        attempt.finish(if complete { "complete" } else { "yielded" });
-        drop(attempt);
-        if complete {
-            *progress = None;
-        }
-        Ok(complete)
-    }
-}
+#[path = "reconciliation_schedule.rs"]
+mod schedule;
 
 impl Sweep {
+    fn is_binding_phase(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::Inventory | Phase::Authority | Phase::Bindings
+        )
+    }
+
     async fn step(
         &mut self,
         reconciler: &SandboxReconciler,
@@ -335,6 +290,9 @@ impl Sweep {
                 return Ok(1);
             }
             Phase::RuntimeUpdates => {
+                if self.skip_held_candidate(reconciler) {
+                    return Ok(0);
+                }
                 let id = self
                     .candidates
                     .front()
@@ -347,6 +305,9 @@ impl Sweep {
                 return Ok(1);
             }
             Phase::IdlePause => {
+                if self.skip_held_candidate(reconciler) {
+                    return Ok(0);
+                }
                 // A sweep can yield or retry after policy changes. Never carry
                 // enablement, grace or a threshold across an admission attempt.
                 let Some(pause_after_seconds) = reconciler.automatic_pause_threshold(now).await?
@@ -380,6 +341,20 @@ impl Sweep {
             Phase::Complete => {}
         }
         Ok(0)
+    }
+
+    // A binding refresh can introduce a hold while this candidate is retained
+    // midway through maintenance. Recheck at every admission boundary.
+    fn skip_held_candidate(&mut self, reconciler: &SandboxReconciler) -> bool {
+        if self
+            .candidates
+            .front()
+            .is_some_and(|id| reconciler.binding_holds.contains(id.as_str()))
+        {
+            self.next_candidate();
+            return true;
+        }
+        false
     }
 
     fn next_candidate(&mut self) {
