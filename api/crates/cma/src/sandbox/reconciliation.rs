@@ -30,6 +30,8 @@ mod updates;
 
 #[path = "reconciliation_authority.rs"]
 mod authority;
+#[path = "reconciliation_binding_holds.rs"]
+mod binding_holds;
 #[path = "reconciliation_sweep.rs"]
 mod sweep;
 #[path = "reconciliation_telemetry.rs"]
@@ -55,6 +57,7 @@ pub(crate) struct SandboxReconciler {
     failed_runtime_recovery: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
     recovery_schedule_cursor: std::sync::atomic::AtomicUsize,
     progress: tokio::sync::Mutex<Option<sweep::Progress>>,
+    binding_holds: binding_holds::BindingHolds,
 }
 
 impl SandboxReconciler {
@@ -74,6 +77,7 @@ impl SandboxReconciler {
             failed_runtime_recovery: None,
             recovery_schedule_cursor: std::sync::atomic::AtomicUsize::new(0),
             progress: tokio::sync::Mutex::new(None),
+            binding_holds: Default::default(),
         }
     }
 
@@ -230,6 +234,7 @@ impl SandboxReconciler {
             .runtime_inventory()
             .await
             .map_err(provider_error)?;
+        self.binding_holds.observe_inventory(sandbox, &fresh);
         if sandbox.status == SandboxStatus::Retiring
             && fresh.iter().any(|item| {
                 item.handle.0 == binding.runtime_id || item.sandbox_id == sandbox.id.as_str()
