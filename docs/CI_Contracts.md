@@ -188,6 +188,16 @@ extending it to 30. No reporting-circuit threshold or retry behavior changes.
 
 ## Image Identity
 
+The Debian desktop fixture requires distinct navigation readiness, the active
+Chromium window's fullscreen state and its actual 1280x800 page viewport before
+fixed-coordinate input. Page events acknowledge focus, the exact typed value and
+the button result in order. Every wait fails with its stage and last observation
+on timeout. Before the retained-home restart, the fixture verifies normal-window
+geometry and the original browser process exiting, so profile persistence does
+not depend on a sleep. Mandatory release-contract regressions reject stale,
+missing or conflicting acknowledgements; the real native image still must pass
+all Agent, shared authenticated input, lifecycle and retained-profile assertions.
+
 `Images (runtime-omarchy)` runs independently of Backend and the other image
 jobs on ordinary PRs and develop pushes. It builds the explicit Omarchy target
 on native amd64 with a current-source Debian desktop donor, rather than the
