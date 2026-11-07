@@ -1,9 +1,8 @@
 use std::time::SystemTime;
 
-use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
-    retired_sandbox_cleanup_is_absent, retiring_sandbox_process_is_absent, AgentWorkMutation,
-    SandboxStoreError, VersionedWorktree,
+    retired_sandbox_cleanup_is_absent, retiring_sandbox_process_is_absent, SandboxStoreError,
+    VersionedWorktree,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, WorktreeStatus,
@@ -12,8 +11,7 @@ use layer3_adapter::{AgentCloseRequest, AgentHomeRemoveRequest, AgentSlot, Workt
 
 use super::startup_support::has_startup_evidence;
 use super::support::{
-    bump_log_sequence, claimed_fence, cleanup_failure, request_evidence, validate_lineage,
-    WorkerFailure,
+    claimed_fence, cleanup_failure, request_evidence, validate_lineage, WorkerFailure,
 };
 use super::AgentWorker;
 
@@ -50,6 +48,7 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         if !agent.status.is_live() || agent.requested_stop_reason.is_none() {
             return self.invalid_cleanup(agent, now).await;
         }
@@ -93,7 +92,7 @@ impl AgentWorker {
                 }
                 Err(error) => {
                     return self
-                        .handle_failure(agent, cleanup_failure(error), now)
+                        .handle_failure(agent, cleanup_failure(error), now + started.elapsed())
                         .await
                 }
             }
@@ -117,7 +116,11 @@ impl AgentWorker {
         }
         let context = match self.cleanup_context(&agent).await {
             Ok(context) => context,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_failure(agent, failure, now + started.elapsed())
+                    .await
+            }
         };
         if !has_startup_evidence(&agent, AgentWorkStep::OpenConversation) {
             return self
@@ -157,85 +160,10 @@ impl AgentWorker {
                 .await
             }
             Err(error) => {
-                self.handle_failure(agent, cleanup_failure(error), now)
+                self.handle_failure(agent, cleanup_failure(error), now + started.elapsed())
                     .await
             }
         }
-    }
-
-    pub(super) async fn publish_stopped(
-        &self,
-        mut agent: Agent,
-        now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        let Some(reason) = agent.requested_stop_reason.clone() else {
-            return self.invalid_cleanup(agent, now).await;
-        };
-        if !agent.status.is_live() {
-            return self.invalid_cleanup(agent, now).await;
-        }
-        let expected = agent.revision;
-        let fence = claimed_fence(&agent, &self.config.holder)?;
-        let stamp = rfc3339_at(now);
-        let previous = agent.status;
-        let mut worktree = self
-            .dependencies
-            .store
-            .get_worktree(&agent.worktree_id)
-            .await?
-            .ok_or(SandboxStoreError::NotFound)?;
-        let versioned = match worktree.status {
-            WorktreeStatus::Creating => {
-                let expected_revision = worktree.revision;
-                worktree
-                    .transition(WorktreeStatus::Failed)
-                    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-                Some(VersionedWorktree {
-                    expected_revision,
-                    worktree,
-                })
-            }
-            WorktreeStatus::Ready | WorktreeStatus::Failed => None,
-            WorktreeStatus::Removing | WorktreeStatus::Removed => {
-                return self.invalid_cleanup(agent, now).await;
-            }
-        };
-        agent
-            .work
-            .advance(
-                &self.config.holder,
-                fence,
-                AgentWorkStep::None,
-                stamp.clone(),
-            )
-            .map_err(|_| SandboxStoreError::Conflict)?;
-        agent
-            .transition(AgentStatus::Stopped, stamp.clone(), Some(reason.clone()))
-            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-        bump_log_sequence(&mut agent, 1)?;
-        self.dependencies
-            .registry
-            .fence(&agent.id, agent.conversation.runtime_generation, fence);
-        let id = agent.id.clone();
-        self.dependencies
-            .store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: expected,
-                holder: self.config.holder.clone(),
-                fence,
-                agent,
-                worktree: versioned,
-                appended_at: stamp,
-                sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
-                    agent_id: id,
-                    from: previous,
-                    to: AgentStatus::Stopped,
-                }),
-                agent_logs: vec![AgentLogKind::Stopped {
-                    reason: reason.as_str().into(),
-                }],
-            })
-            .await
     }
 
     pub(super) async fn ensure_process_closed(
@@ -243,6 +171,7 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         if self.complete_retired_cleanup(&agent, now).await? {
             return Ok(());
         }
@@ -255,7 +184,11 @@ impl AgentWorker {
             .fence(&agent.id, agent.conversation.runtime_generation, fence);
         let context = match self.cleanup_context(&agent).await {
             Ok(context) => context,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_failure(agent, failure, now + started.elapsed())
+                    .await
+            }
         };
         if !matches!(
             context.worktree.status,
@@ -314,7 +247,7 @@ impl AgentWorker {
                 .await
             }
             Err(error) => {
-                self.handle_failure(agent, cleanup_failure(error), now)
+                self.handle_failure(agent, cleanup_failure(error), now + started.elapsed())
                     .await
             }
         }
@@ -325,12 +258,17 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         if self.complete_retired_cleanup(&agent, now).await? {
             return Ok(());
         }
         let context = match self.cleanup_context(&agent).await {
             Ok(context) => context,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_failure(agent, failure, now + started.elapsed())
+                    .await
+            }
         };
         if context.worktree.status != WorktreeStatus::Removing {
             return self.invalid_cleanup(agent, now).await;
@@ -376,7 +314,7 @@ impl AgentWorker {
                 .await
             }
             Err(error) => {
-                self.handle_failure(agent, cleanup_failure(error), now)
+                self.handle_failure(agent, cleanup_failure(error), now + started.elapsed())
                     .await
             }
         }
@@ -387,12 +325,17 @@ impl AgentWorker {
         agent: Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         if self.complete_retired_cleanup(&agent, now).await? {
             return Ok(());
         }
         let context = match self.cleanup_context(&agent).await {
             Ok(context) => context,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_failure(agent, failure, now + started.elapsed())
+                    .await
+            }
         };
         if context.worktree.status != WorktreeStatus::Removing {
             return self.invalid_cleanup(agent, now).await;
@@ -414,7 +357,7 @@ impl AgentWorker {
                 .await
             {
                 return self
-                    .handle_failure(agent, cleanup_failure(error), now)
+                    .handle_failure(agent, cleanup_failure(error), now + started.elapsed())
                     .await;
             }
         }
@@ -453,7 +396,7 @@ impl AgentWorker {
         })
     }
 
-    async fn invalid_cleanup(
+    pub(super) async fn invalid_cleanup(
         &self,
         agent: Agent,
         now: SystemTime,
