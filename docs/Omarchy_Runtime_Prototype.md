@@ -10,6 +10,13 @@ Provider acceptance and production image adoption still require a separate
 release decision. Existing explicit-image Machine updates remain tracked in
 [#1416](https://github.com/ChronoAIProject/cma/issues/1416).
 
+Omarchy also rebuilds Gum 2.0.2 separately from the donor's GitHub CLI. Its
+checksum-pinned source and Go 1.26.10 toolchain now use `golang.org/x/net`
+0.62.0 for CVE-2026-78661 and the required `golang.org/x/text` 0.43.0.
+Module verification, exact resolved-version checks and readonly compilation
+remain enabled. The donor CLI update alone does not fix the Gum executable;
+the strict scan covers both binaries in the completed Omarchy image.
+
 The reopen fixture selects and closes Chromium through Hyprland before invoking
 the shared launcher from the native Agent tool. Startup closure preserves the
 normal window state; closure after the input probe restores fullscreen first.
