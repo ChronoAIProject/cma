@@ -34,6 +34,24 @@ writer-capture authority; failpoint cases run serially against the same
 disposable replica set. The test runner fails on an empty selection, and
 cleanup removes only containers carrying the generated exact run label.
 
+The 20,001-Sandbox report-generation scale contract runs once in an exclusive
+fresh fixture before ordinary partitions. Options and owner-allocation scale
+contracts retain their ordinary partition placement and all original assertions.
+Their shared test-only capture starts before connection/initialization and names
+the cohort, setup/read phase and one-based page. A failure preserves the observed
+opening phase/page, circuit reason and event duration separately from the later
+refused phase/page. Owner allocation also records per-phase and read duration,
+aggregate/label timing, and pool checkout/hold samples. Timing probes never count
+as circuit openings or overwrite the last opening event.
+
+The Mongo driver queues check-in to its pool worker: a connection acquired on one
+page can be reported returned during the next. Test-only numeric client/connection
+keys correlate those samples; the observed event phase alone is not the checkout
+phase or proof of the triggering query. Capture contains fixed categories and
+numbers, never names, query text, credentials or cursor contents. The production
+query, circuit thresholds, pool size and recovery behavior are unchanged. No
+query prototype, automatic retry or extra isolation is part of these diagnostics.
+
 ## Backend Capacity Preparation
 
 `Prepare Backend capacity` runs immediately after checkout, before toolchain

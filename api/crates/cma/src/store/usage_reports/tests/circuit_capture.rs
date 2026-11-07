@@ -10,6 +10,10 @@ pub(crate) struct CircuitEvent {
     pub reason: String,
     pub elapsed_ms: u64,
     pub failed: bool,
+    pub probe: bool,
+    pub operation: String,
+    pub client_key: u64,
+    pub connection_key: u64,
     pub observed_phase: EventPhase,
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -21,16 +25,28 @@ pub(crate) struct EventPhase {
 }
 impl Visit for CircuitEvent {
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "operation" {
+            self.operation = value.into();
+        }
         if field.name() == "reason" {
             self.reason = value.into();
         }
     }
     fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        if field.name() == "client_key" {
+            self.client_key = value;
+        }
+        if field.name() == "connection_key" {
+            self.connection_key = value;
+        }
         if field.name() == "elapsed_ms" {
             self.elapsed_ms = value;
         }
     }
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+        if field.name() == "probe" {
+            self.probe = value;
+        }
         if field.name() == "failed" {
             self.failed = value;
         }
@@ -69,10 +85,13 @@ impl<S: Subscriber> Layer<S> for Capture {
         fields.observed_phase = self.1.lock().unwrap().clone();
         let phase = &fields.observed_phase;
         eprintln!(
-            "metrics_scale workload={} cohort_size={} event_phase={} event_page={} circuit_reason={} event_elapsed_ms={} checkout_failed={}",
+            "metrics_scale workload={} cohort_size={} event_phase={} event_page={} circuit_reason={} event_elapsed_ms={} checkout_failed={} probe={} operation={} client_key={} connection_key={}",
             phase.workload, phase.cohort_size, phase.phase, phase.page,
-            fields.reason, fields.elapsed_ms, fields.failed,
+            fields.reason, fields.elapsed_ms, fields.failed, fields.probe, fields.operation, fields.client_key, fields.connection_key,
         );
+        if fields.probe {
+            return;
+        }
         let mut state = self.0.lock().unwrap();
         state.0 += 1;
         state.1 = Some(fields);
@@ -107,7 +126,7 @@ impl ScaleWindow {
             tracing_subscriber::registry().with(
                 capture.clone().with_filter(
                     tracing_subscriber::filter::Targets::new()
-                        .with_target("cma::store::usage_reports::budget", tracing::Level::WARN),
+                        .with_target("cma::store::usage_reports::budget", tracing::Level::INFO),
                 ),
             ),
         )
@@ -132,6 +151,14 @@ impl ScaleWindow {
         self.phase("connect", 0);
     }
     pub fn phase(&mut self, phase: &'static str, page: usize) {
+        eprintln!(
+            "metrics_phase workload={} cohort_size={} phase={} page={} elapsed_ms={}",
+            self.workload,
+            self.cohort_size,
+            self.phase,
+            self.page,
+            self.phase_started.elapsed().as_millis()
+        );
         self.phase = phase;
         self.page = page;
         self.phase_started = Instant::now();
@@ -193,4 +220,79 @@ fn opening_event_keeps_setup_phase_when_later_option_page_is_refused() {
     assert_eq!(event.reason, "connection_hold_deadline");
     assert_eq!(event.elapsed_ms, 2001);
     assert!(!event.failed);
+}
+
+#[test]
+fn owner_opening_keeps_setup_or_read_page_when_a_later_page_is_refused() {
+    for (phase, page) in [("seed_report_chunk", 101), ("owner_page", 42)] {
+        let capture = Capture::default();
+        let opening = EventPhase {
+            workload: "owner_allocation",
+            cohort_size: 20_001,
+            phase,
+            page,
+        };
+        capture.phase(opening.clone());
+        tracing::subscriber::with_default(
+            tracing_subscriber::registry().with(capture.clone()),
+            || {
+                tracing::warn!(target: "cma::store::usage_reports::budget",
+                reason = "connection_hold_deadline", elapsed_ms = 2001_u64, failed = false);
+            },
+        );
+        capture.phase(EventPhase {
+            phase: "owner_page",
+            page: 43,
+            ..opening.clone()
+        });
+        let (count, event) = capture.snapshot();
+        assert_eq!(count, 1);
+        let event = event.unwrap();
+        assert_eq!(event.observed_phase, opening);
+        assert_eq!(event.reason, "connection_hold_deadline");
+        assert_eq!(event.elapsed_ms, 2001);
+        assert!(!event.failed);
+    }
+}
+
+#[test]
+fn timing_probes_neither_count_as_openings_nor_replace_the_last_opening() {
+    let capture = Capture::default();
+    let opening = EventPhase {
+        workload: "owner_allocation",
+        cohort_size: 20_001,
+        phase: "owner_page",
+        page: 42,
+    };
+    capture.phase(opening.clone());
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(capture.clone()), || {
+        tracing::info!(target: "cma::store::usage_reports::budget",
+            reason = "checkout_sample", probe = true, elapsed_ms = 0_u64,
+            client_key = 3_u64, connection_key = 7_u64, failed = false);
+        assert_eq!(capture.snapshot().0, 0);
+        assert!(capture.snapshot().1.is_none());
+        tracing::warn!(target: "cma::store::usage_reports::budget",
+            reason = "connection_hold_deadline", elapsed_ms = 2001_u64, failed = false);
+        capture.phase(EventPhase {
+            page: 43,
+            ..opening.clone()
+        });
+        for reason in [
+            "connection_hold_sample",
+            "owner_aggregate_sample",
+            "owner_labels_sample",
+            "read_wall_sample",
+        ] {
+            tracing::info!(target: "cma::store::usage_reports::budget",
+                reason, probe = true, elapsed_ms = 2001_u64,
+                client_key = 3_u64, connection_key = 7_u64, operation = "owner_allocations");
+        }
+    });
+    let (count, event) = capture.snapshot();
+    assert_eq!(count, 1);
+    let event = event.unwrap();
+    assert_eq!(event.observed_phase, opening);
+    assert_eq!(event.reason, "connection_hold_deadline");
+    assert_eq!(event.elapsed_ms, 2001);
+    assert!(!event.probe);
 }
