@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 /// CMAEG `EventWorkerProfile` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventWorkerProfile {
+    /// Binding message queue lifetime; omitted uses 300 seconds, maximum 86400.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_lifetime_seconds: Option<u32>,
     /// Wire field `context`.
     pub context: ContextConfig,
     /// Wire field `environment`.

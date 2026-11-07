@@ -175,7 +175,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn github_batch_event_reaches_agent_input() {
+    fn github_event_reaches_agent_input() {
         let record = crate::console::test_support::record(1);
         let mut definition = crate::console::test_support::definition(&record, "owner-1", "github");
         definition.sources = vec![Source::Github {
@@ -194,14 +194,15 @@ mod tests {
                 specversion: "1.0".into(),
                 id: "delivery-1".into(),
                 source: "github://app/pilot".into(),
-                r#type: "com.github.batch".into(),
+                r#type: "com.github.issues".into(),
                 time: None,
                 subject: Some("repo:42".into()),
                 datacontenttype: Some("application/json".into()),
                 dataschema: None,
                 data: Some(json!({
-                    "batch_id": "batch-1",
-                    "events": [{"repository_id": 42, "action": "opened"}],
+                    "delivery_id": "delivery-1",
+                    "repository": {"id": 42, "full_name": "fixture/source"},
+                    "action": "opened",
                 })),
                 extensions: BTreeMap::new(),
             },
@@ -226,8 +227,8 @@ mod tests {
             .as_str()
             .expect("rendered input text");
 
-        assert!(text.starts_with("Event com.github.batch from github://app/pilot:"));
-        assert!(text.contains("batch-1"));
-        assert!(text.contains("repository_id"));
+        assert!(text.starts_with("Event com.github.issues from github://app/pilot:"));
+        assert!(text.contains("delivery-1"));
+        assert!(text.contains("fixture/source"));
     }
 }

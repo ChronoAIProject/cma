@@ -703,11 +703,14 @@ content or report an empty list. Errors and pending commands remain scoped to
 their resource. Boot reserves geometry and never disables sign-in while a
 decorative asset loads.
 
-When the service cannot be reached while checking identity, the page says so in words a person can
-act on: a 20px heading *CMA could not reach its service*, the line *It may be starting up. Reload
-to try again.*, a primary **Reload**, and the service's own sentence beneath as a 12px mono detail
-for whoever reads a report. Unreachable is never shown as signed out, and nothing on the page is
-coloured as an alarm.
+When NyxID is unavailable while checking identity, the initial error page uses the existing 20px
+heading *The identity service is temporarily unavailable*, the line *Retrying automatically. You
+can also try again now.*, and a primary **Retry now**. Other failures say *CMA could not verify your
+sign-in* without guessing that CMA is starting up. Retry checks identity without reloading the
+page. For an already authenticated view, keep the same mounted content and drafts and show the
+shared warning Alert at the top of the service shell with the outage message and **Retry now**.
+Automatic retries back off; explicit rejection returns to sign-in. The detail remains in the
+existing 12px mono style. Unreachable is never presented as signed out.
 
 ---
 
@@ -867,8 +870,18 @@ runtime lists have an inline name-search field, a scrollable page of at most 50
 choices, and Previous/Next controls. Search is debounced; paging replaces the
 current page rather than accumulating DOM rows. Arrow keys move from search to
 choices; Escape closes and restores focus. Loading, empty and retry states stay
-inside the dropdown. Selected identities show a display name with a stable short
-derived reference; missing names use Unnamed owner/Sandbox, never a raw ID.
+inside the dropdown. Primary and selected labels show only the plain display
+name; missing names use Unnamed owner/Sandbox, never a raw ID. Duplicate names
+on the current page have secondary human context: owners use join date;
+Sandboxes use owner name, then creation date when owner names also match.
+Matching dates add UTC time, increasing precision through minutes, seconds and
+available fractional seconds. Owner clock precision requires directory-read
+access; Sandbox-only access retains owner join dates. Compare final rendered
+context across the duplicate group, including names that resemble generated
+context. A derived reference is a last resort in secondary text only when all
+available authorized human context still ties or is unavailable.
+Accessible menu text includes the same context; selected text, title and accessible
+label stay plain.
 The time-range picker retains Custom with local date/time fields. Apply filters
 commits the draft atomically; Clear filters restores Last 24 hours and all choices.
 
@@ -5709,6 +5722,38 @@ hints stay beside the action they explain.
 | 2026-11-06 | Apply lead review to Usage toolbar alignment, overview spacing, refresh placement, history disclosure, chart labels and compact inventory rows. |
 | 2026-11-06 | Specify Ops usage dropdown search, bounded paging, keyboard navigation, visible discovery states and human-readable identity labels; preserve Custom date ranges and atomic Apply/Clear. |
 
+| 2026-11-06 | Add complete-cohort owner allocation rankings with plain identity labels, Top 5/10/50/All, bounded internal scrolling and an always-visible value axis. |
+
+#### Owner allocation rankings — 2026-11-06
+
+Operations owner allocation uses the complete frozen report cohort, independently
+of the Sandbox inventory page. Keep the existing resource and grouping Pickers;
+add a chart-only Top 5 / Top 10 / Top 50 / All Picker, default Top 10. Rank recorded
+resource-hours descending. Changing the visible count never applies report filters
+or creates another report. All loads bounded owner pages as the user scrolls;
+show loaded and total owner counts and an explicit retry if a page is unavailable.
+
+Use the filter discovery identity policy for plain owner display names, safe
+unnamed labels and duplicate-only secondary context. A derived reference is a
+last resort when human context cannot distinguish real duplicates. No raw owner
+identifier may appear in chart text, accessible names, titles or tooltips.
+
+Owner bars use fixed 48px rows in a focusable chart-local scroll area, at most
+384px high, with overscroll containment and a visible scrollbar gutter. Render
+only visible rows with a small overscan. Keep a 136px left name column aligned
+with bars and a persistent numeric value axis outside the scrolling rows. Long
+names truncate; hover and keyboard-readable chart data retain the full name.
+The data table also pages rather than rendering the entire owner list. Use the
+existing Recharts library, theme tokens and nonanimated bars. Empty, loading,
+partial-history and failure states stay explicit in both themes.
+
+Owner-name disclosure is portalled outside the scrolling chart and placed with
+the shared viewport placement helper. Hover and keyboard focus show the same
+full name and secondary context; Escape dismisses it. Reposition it on scrolling
+and resizing so the final row and bottom visible row cannot clip its text.
+Owner identity context is resolved across the report cohort, not each API page,
+with the same authorized human-context policy used by filter discovery.
+
 
 #### Settled landing capability checks — 2026-11-06
 
@@ -5834,3 +5879,23 @@ summary's last reported task status while requesting a navigation refresh.
 reported a task status.
 
 | 2026-11-06 | Keep the open Agent's last reported task status in the sidebar while its stale summary refreshes; show Status unavailable only when no status was ever reported. |
+
+| 2026-11-06 | Explain temporary identity outages explicitly, retry without reloading, and preserve mounted authenticated views and drafts with the shared warning Alert until verification recovers or rejects. |
+
+| 2026-11-06 | Resolve owner chart identities across report pages with the shared authorized context policy; portal full-name disclosure outside the scroll viewport and clamp it on keyboard focus and hover. |
+
+| 2026-11-06 | Prefer Sandbox creation dates and precise UTC creation/join times for duplicate Ops filter names before a last-resort secondary reference; preserve plain selected labels and accessible duplicate context. |
+
+| 2026-11-06 | Gate precise owner join times on current directory-read access and resolve collisions between final duplicate-option contexts, including generated-looking owner names; keep accessible choices distinct. |
+
+### Channel queue wait policy (2026-11-06)
+
+The channel Agent settings inspector includes a **Queue wait** group using the
+existing Section and NumberField controls. **Maximum wait (seconds)** defaults to
+300 and accepts whole values from 1 to 86,400. Explain that a message which exceeds
+this wait fails without starting, and that changes apply to newly admitted
+messages. The same control is available for an existing Agent without allowing
+its destination or runtime settings to change. Preserve other profile fields when
+saving. Use existing form spacing, labels and validation; introduce no new tokens.
+
+| 2026-11-06 | Add an editable channel queue wait limit with a five-minute default, a one-day maximum and explicit never-started expiry behavior; preserve the existing Agent destination. |

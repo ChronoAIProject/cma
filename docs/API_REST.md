@@ -595,6 +595,17 @@ remain `503 binding_unavailable`; they are not classified as deleted resources.
 The gateway presents this specific refusal as an actionable 409 instead of a
 generic provider 502.
 
+CMA accepts optional `profile.queue_lifetime_seconds` on binding PUT: a whole
+number from 1 through 86,400, defaulting to 300 when omitted. Binding GET/PUT
+returns the effective `queue_lifetime_seconds`; explicit supported values appear
+in `honoured`. The verified binding's retained policy sets the deadline only for
+new message admissions. Existing-Agent policy updates preserve the Agent,
+configuration, credentials and conversation, and reject unrelated profile changes.
+Already admitted messages and exact retries retain their original deadline.
+Capacity remains 64. Expiry before dispatch produces the definite failure
+`agent_command_queue_timeout` without starting an Agent turn. Ordinary chat/UI and
+Trigger messages retain their existing 300-second wait.
+
 CMA's optional profile extension `environment.session_affinity:"source_user"`
 changes provider selection without changing gateway partitioning. CMA verifies
 the original human Activity with the gateway, then maps binding generation,
@@ -1877,6 +1888,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v1/admin/usage/metrics/reports/{report}/series` | - | metric*, group_by, series_id, top | 200 UsageMetricSeries |
 | `GET /api/v1/admin/usage/metrics/reports/{report}/sandboxes/{sandbox}` | - | - | 200 UsageMetricRow |
 | `GET /api/v1/admin/usage/metrics/reports/{report}/owners` | - | search, cursor, limit | 200 UsageMetricOwners |
+| `GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations` | - | metric, cursor, limit | 200 UsageOwnerAllocations |
 
 ### Agent usage
 
@@ -2410,3 +2422,33 @@ See [Measured Sandbox resource reports](CMA_Sandbox_Metrics.md) for the new
 owner/admin report APIs, CPU/working-set/PVC semantics, coverage, retention,
 read-model migration, monitoring permissions and production verification.
 The existing allocated usage ledger and billing quantities keep their meanings.
+
+### Owner allocation rankings
+
+`GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations` reads the
+complete frozen report cohort, independently of its Sandbox table page. It
+requires `ReadAllSandboxes` on every request and rechecks report ownership,
+expiry and current Sandbox attribution. It never creates a report. `metric` is
+`cpu`, `memory` or `disk`; `limit` is 1–200 (default 50). Results sort by recorded
+allocation descending with an opaque owner tie-breaker. `next` is a signed cursor
+bound to the administrator, report and metric; `total_count` counts all owners.
+
+Each item includes `subject` (keys only), `label`, optional duplicate-name
+`disambiguator`, `allocated_hours`, `sandbox_count` and `complete`. Names and
+fallbacks follow administrator filter options. Units are `core-hours` for CPU
+and `GiB-hours` for memory/disk. Partial histories retain their recorded totals
+and explicitly set `complete: false`. Never display `subject` as a label.
+
+Duplicate context is resolved against the complete report cohort before slicing
+the page, so clients can append pages without changing identity policy. It uses
+the same `OptionContext` resolver as filter discovery: join date first, precise
+UTC context only with current `ReadUserDirectory` authority, and a derived
+secondary reference only after authorized human context is exhausted. Directory
+authority is checked afresh for signed continuations; query input cannot grant it.
+The database reads a thin cohort-wide identity projection for each page; it is
+subject to Mongo document/memory limits as well as the reporting deadlines.
+
+Reads use the reporting pool/circuit, a two-second Mongo deadline and a five-second
+HTTP deadline. Open circuits return 429 before database access; source failures
+return 503. Responses are `private, no-store`. An unavailable page is not zero
+allocation; consumers should retain the loaded count and offer a bounded retry.

@@ -2,10 +2,12 @@
 mod model;
 mod numeric;
 mod options;
+mod owner_allocation;
 use crate::{Client, Error, Result, http::Request, resources::identity};
 pub use model::*;
 pub use numeric::Quantity;
 pub use options::{FilterOption, FilterOptions, OptionKind, OptionQuery};
+pub use owner_allocation::{OwnerAllocation, OwnerAllocationQuery, OwnerAllocations};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 

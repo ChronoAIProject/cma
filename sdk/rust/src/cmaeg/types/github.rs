@@ -30,6 +30,13 @@ pub struct AppIntegration {
     pub webhook_credential: WebhookCredentialStatus,
     /// Wire field `webhook_url`.
     pub webhook_url: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    /// Wire field `retired_at`.
+    pub retired_at: Option<Option<i64>>,
 }
 
 /// CMAEG `AppList` wire document.
@@ -67,7 +74,14 @@ pub struct BindRequest {
     /// Wire field `installation_id`.
     pub installation_id: u64,
     /// Wire field `proof_ref`.
-    pub proof_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Wire field `account_id`.
+    pub account_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Wire field `repository_ids`.
+    pub repository_ids: Option<Vec<u64>>,
 }
 
 /// CMAEG `Binding` wire document.
@@ -96,6 +110,25 @@ pub struct Binding {
     pub verified_by: String,
     /// Wire field `verified_until`.
     pub verified_until: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Wire field `version`.
+    pub version: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Wire field `requested_repository_ids`.
+    pub requested_repository_ids: Option<Vec<u64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Wire field `approved_repository_ids`.
+    pub approved_repository_ids: Option<Vec<u64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Wire field `excluded_repository_ids`.
+    pub excluded_repository_ids: Option<Vec<u64>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    /// Wire field `approval`.
+    pub approval: Option<Option<BindingApproval>>,
 }
 
 /// CMAEG `CreateAppRequest` wire document.
@@ -147,6 +180,9 @@ pub struct GitHubCapabilities {
     pub store_ready: bool,
     /// Wire field `webhook_secret_rotation`.
     pub webhook_secret_rotation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Wire field `durable_dispatch`.
+    pub durable_dispatch: Option<bool>,
 }
 
 /// CMAEG `Receipt` wire document.
@@ -179,6 +215,13 @@ pub struct Receipt {
     pub installation_id: Option<Option<u64>>,
     /// Wire field `raw_body_expires_at`.
     pub raw_body_expires_at: i64,
+    /// Bounded receipt and duplicate-detection deadline; absent on older gateways.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    pub retained_until: Option<Option<i64>>,
     /// Wire field `receipt_id`.
     pub receipt_id: String,
     /// Wire field `received_at`.
@@ -194,6 +237,13 @@ pub struct Receipt {
     pub status: String,
     /// Wire field `task_ids`.
     pub task_ids: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    /// Wire field `reason`.
+    pub reason: Option<Option<String>>,
 }
 
 /// CMAEG `Task` wire document.
@@ -338,4 +388,40 @@ pub struct WebhookSecretRequest {
     pub overlap_seconds: Option<u32>,
     /// Write-only request credential; never included in integration responses.
     pub webhook_secret: Secret,
+}
+
+/// Administrator approval audit for installation authority.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BindingApproval {
+    /// Wire field `verified_by`.
+    pub verified_by: String,
+    /// Wire field `evidence_ref`.
+    pub evidence_ref: String,
+    /// Wire field `approved_at`.
+    pub approved_at: i64,
+    /// Wire field `authority_revision`.
+    pub authority_revision: u64,
+    /// Wire field `repository_ids`.
+    pub repository_ids: Vec<u64>,
+}
+
+/// Explicit initial approval or re-approval; installation identity remains fixed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerifyBindingRequest {
+    /// Wire field `expected_version`.
+    pub expected_version: u64,
+    /// Wire field `evidence_ref`.
+    pub evidence_ref: String,
+    /// Wire field `repository_ids`.
+    pub repository_ids: Vec<u64>,
+}
+
+/// Terminal integration retirement.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetireAppRequest {
+    /// Wire field `expected_version`.
+    pub expected_version: u64,
 }

@@ -63,21 +63,12 @@ async fn early_introspection_still_requires_matching_complete_active_evidence() 
     ] {
         let fixture = Fixture::new().await;
         let state = fixture.seed().await;
-        let inactive = body["active"] == false;
         *fixture.control.introspection.write().await = Reply::json(body);
         let (userinfo, introspection, pending) = overlapping_request(&fixture, state.clone()).await;
         introspection.release.notify_one();
         tokio::task::yield_now().await;
-        assert!(!pending.is_finished());
         userinfo.release.notify_one();
-        let result = pending.await.unwrap();
-        if inactive {
-            let request = result.unwrap();
-            assert_eq!(request.authorization, Authorization::none());
-            assert!(request.delegated_credential.is_none());
-        } else {
-            assert_unavailable(result);
-        }
+        assert_unavailable(pending.await.unwrap());
         fixture.assert_unchanged(&state).await;
     }
 }
@@ -167,7 +158,7 @@ async fn userinfo_failure_keeps_precedence_and_cancels_pending_introspection() {
                 assert_eq!(status, StatusCode::OK);
                 assert_eq!(detail, "userinfo response has no subject");
             }
-            Ok(_) => panic!("invalid userinfo must never authorize"),
+            _ => panic!("invalid userinfo must never authorize or permit fallback"),
         }
         introspection.release.notify_one();
     }

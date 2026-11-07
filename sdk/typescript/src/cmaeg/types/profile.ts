@@ -78,6 +78,7 @@ export const EventWorkerProfileSchema = object({
   metadata: ProfileMetadataSchema,
   model: ModelConfigSchema,
   permission: PermissionConfigSchema,
+  queue_lifetime_seconds: optional(integer),
   schema_version: integer,
 });
 export type EventWorkerProfile = Output<typeof EventWorkerProfileSchema>;
