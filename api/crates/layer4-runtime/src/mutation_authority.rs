@@ -7,6 +7,8 @@ use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
 use crate::mutation_journal::{self, Operation, Subject};
 
+#[path = "mutation_authority_fold.rs"]
+mod fold;
 #[path = "mutation_authority_io.rs"]
 mod io;
 
@@ -95,26 +97,44 @@ fn admit_once(
     operation: &Operation,
     retry_race: bool,
 ) -> Result<()> {
-    let records = records(config)?;
+    let files = files(config)?;
+    let records = files
+        .iter()
+        .map(|file| file.record.clone())
+        .collect::<Vec<_>>();
     require_skill_parent(&records, operation)?;
     let incoming = Record::new(config, authority_fence, operation);
     let relevant = records
         .iter()
         .filter(|record| record.resource == incoming.resource)
         .collect::<Vec<_>>();
-    if !authorize(&relevant, &incoming)? {
-        return Ok(());
-    }
+    let append = authorize(&relevant, &incoming)?;
+    // Do not rewrite an exhausted legacy population to force new admission.
     if records.len() >= MAX_AUTHORITY_RECORDS {
         return Err(corrupt(
             "runtime mutation authority contains too many records",
         ));
     }
-    match io::persist_new(
-        &crate::mutation_scope::root(config, &operation.subject),
-        &incoming,
-    ) {
-        Ok(()) => Ok(()),
+    let mut files = fold::prune(files)?;
+    if !append {
+        return Ok(());
+    }
+    // Keep one physical append slot even if publication precedes a crash.
+    if files.len() + 1 >= MAX_AUTHORITY_RECORDS {
+        return Err(corrupt(
+            "runtime mutation authority contains too many records",
+        ));
+    }
+    let root = crate::mutation_scope::root(config, &operation.subject);
+    match io::persist_new(&root, &incoming) {
+        Ok(()) => {
+            files.push(io::AuthorityFile {
+                path: io::record_path(&root, &incoming),
+                record: incoming,
+            });
+            fold::prune(files)?;
+            Ok(())
+        }
         Err(error) if retry_race && error.code == "mutation_authority_raced" => {
             admit_once(config, authority_fence, operation, false)
         }
@@ -191,6 +211,10 @@ fn current<'a>(records: impl Iterator<Item = &'a Record>) -> Option<&'a Record> 
 }
 
 fn records(config: &RuntimeConfig) -> Result<Vec<Record>> {
+    files(config).map(|files| files.into_iter().map(|file| file.record).collect())
+}
+
+fn files(config: &RuntimeConfig) -> Result<Vec<io::AuthorityFile>> {
     let mut files = Vec::new();
     for root in crate::mutation_scope::roots(config)? {
         files.extend(io::scan(&root)?);
@@ -211,7 +235,7 @@ fn records(config: &RuntimeConfig) -> Result<Vec<Record>> {
     for history in grouped.values() {
         validate_history(history)?;
     }
-    Ok(files.into_iter().map(|file| file.record).collect())
+    Ok(files)
 }
 
 fn validate_record(record: &Record, config: &RuntimeConfig, path: &Path) -> Result<()> {
@@ -346,3 +370,7 @@ fn require_skill_parent(records: &[Record], operation: &Operation) -> Result<()>
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "mutation_authority_capacity_tests.rs"]
+mod capacity_tests;
