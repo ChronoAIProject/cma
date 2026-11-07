@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const scaleTest = 'store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages';
 const requiredPrefixes = [
   'store::usage_reports::tests::',
   'sandbox::funding::tests::mongo::',
@@ -86,24 +87,37 @@ if (command === 'cargo') {
     const testcases = Object.fromEntries(Array.from({length:count}, (_, index) => [
       'contract_'+index, {ignored:scenario !== 'list-not-ignored', 'filter-match':{status:'matches'}},
     ]));
+    if (!['list-empty', 'list-no-scale'].includes(scenario)) {
+      testcases[${JSON.stringify(scaleTest)}] = {ignored:scenario !== 'list-scale-not-ignored', 'filter-match':{status:'matches'}};
+    }
     testcases.filtered = {ignored:true, 'filter-match':{status:'mismatch'}};
-    console.log(JSON.stringify({'rust-suites':{fixture:{testcases}}}));
+    const suites = {fixture:{testcases}};
+    if (scenario === 'list-duplicate-scale') suites.duplicate = {testcases:{[${JSON.stringify(scaleTest)}]:testcases[${JSON.stringify(scaleTest)}]}};
+    console.log(JSON.stringify({'rust-suites':suites}));
     process.exit(0);
   }
-  const partition = args[args.indexOf('--partition') + 1];
+  const scale = args[args.indexOf('-E')+1].startsWith('test(=${scaleTest})');
+  const partition = scale ? 'count:1/1' : args[args.indexOf('--partition') + 1];
   const match = /^count:([1-9][0-9]*)\\/([1-9][0-9]*)$/.exec(partition);
   if (!match) process.exit(8);
-  const index = Number(match[1]);
+  const index = scale ? 0 : Number(match[1]);
   fs.writeFileSync(log+'.started-'+index, 'started');
-  if (scenario === 'cancel') { setInterval(() => {}, 1000); }
+  if ((scenario === 'scale-empty' && scale) || (scenario === 'ordinary-empty' && index === 1)) {
+    console.log('Starting 0 tests');
+    const option = args.indexOf('--no-tests');
+    const policy = option >= 0 ? args[option+1] : process.env.NEXTEST_NO_TESTS;
+    fs.writeFileSync(log+'.empty-'+index, policy || 'auto');
+    process.exit(policy === 'pass' ? 0 : 4);
+  }
+  if ((scenario === 'cancel' && !scale) || (scenario === 'cancel-scale' && scale)) { setInterval(() => {}, 1000); }
   else {
     const deadline = Date.now()+5000;
-    while (index <= 2 && !fs.existsSync(log+'.started-'+(3-index))) {
+    while (index >= 1 && index <= 2 && !fs.existsSync(log+'.started-'+(3-index))) {
       if (Date.now() >= deadline) process.exit(9);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
     }
     fs.writeFileSync(log+'.finished-'+index, 'finished');
-    process.exit(['test-error','batches-error'].includes(scenario) && index === 1 ? 7 : 0);
+    process.exit((['test-error','batches-error'].includes(scenario) && index === 1) || (scenario === 'scale-error' && scale) ? 7 : 0);
   }
 } else {
   const file = name => log+'.container-'+name;
@@ -173,8 +187,8 @@ if (command === 'cargo') {
   };
 }
 
-test('both Mongo partitions run concurrently and remove only their owned containers and disk volumes', () => {
-  for (const scenario of ['entropy-error', 'entropy-malformed', 'success', 'test-error', 'cleanup-error', 'volume-cleanup-error']) {
+test('scale runs alone before concurrent Mongo partitions, preserves failures and removes only owned fixtures', () => {
+  for (const scenario of ['entropy-error', 'entropy-malformed', 'success', 'scale-error', 'test-error', 'cleanup-error', 'volume-cleanup-error']) {
     const f = fixture(scenario);
     try {
       const run = () => execFileSync('bash', f.args, { env: f.env, timeout: 15000, stdio: 'pipe' });
@@ -182,22 +196,26 @@ test('both Mongo partitions run concurrently and remove only their owned contain
       if (scenario.startsWith('entropy-')) { assert.deepEqual(f.calls().map(row => [row.command,row.args[1]]), [['cargo','list']]); continue; }
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo' && row.args[1] === 'run');
-      assert.equal(cargo.length, 2);
-      assert.deepEqual(cargo.map(row => row.args[row.args.indexOf('--partition') + 1]).sort(), ['count:1/2', 'count:2/2']);
-      assert.equal(new Set(cargo.map(row => row.uri)).size, 2);
+      assert.equal(cargo.length, 3);
+      assert.ok(!cargo[0].args.includes('--partition'));
+      assert.deepEqual(cargo.slice(1).map(row => row.args[row.args.indexOf('--partition') + 1]).sort(), ['count:1/2', 'count:2/2']);
+      assert.equal(new Set(cargo.map(row => row.uri)).size, 3);
       for (const row of cargo) {
         assert.match(row.uri, /^mongodb:\/\/127\.0\.0\.1:[0-9]+\/\?directConnection=true&replicaSet=cma_ci$/);
         assert.ok(row.args.includes('--run-ignored') && row.args.includes('only'));
         assert.ok(row.args.includes('--no-fail-fast'));
         assert.equal(row.args[row.args.indexOf('--test-threads') + 1], '1');
-        assert.equal(row.args[row.args.indexOf('-E') + 1], requiredPrefixes.map(prefix => `test(${prefix})`).join(' | '));
+        assert.equal(row.args[row.args.indexOf('-E') + 1], `${row === cargo[0] ? '' : 'not '}test(=${scaleTest}) & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`);
       }
-      for (const index of [1, 2]) assert.ok(existsSync(`${f.log}.finished-${index}`), 'both partitions must finish, including after one fails');
+      for (const index of [0, 1, 2]) assert.ok(existsSync(`${f.log}.finished-${index}`), 'both partitions must finish, including after one fails');
       const created = calls.filter(row => row.args[0] === 'run').map(row => row.args[row.args.indexOf('--name') + 1]);
-      assert.equal(new Set(created).size, 2);
+      assert.equal(new Set(created).size, 3);
+      const scaleCleanup = calls.findIndex(row => row.args[0] === 'volume' && row.args[1] === 'rm' && row.args[2] === `${created[0]}-data`);
+      const secondStart = calls.findIndex(row => row.args[0] === 'run' && row.args.includes(created[1]));
+      assert.ok(scaleCleanup >= 0 && secondStart > scaleCleanup, 'scale fixture cleanup precedes all ordinary fixtures');
       assert.ok(created.every(name => /^cma-mongo-ci-[0-9a-f]{24}$/.test(name)));
       const volumeCreates = calls.filter(row => row.args[0] === 'volume' && row.args[1] === 'create');
-      assert.equal(volumeCreates.length, 2);
+      assert.equal(volumeCreates.length, 3);
       for (const name of created) {
         assert.deepEqual(volumeCreates.find(row => row.args.at(-1) === `${name}-data`).args,
           ['volume', 'create', '--label', `dev.chrono.cma.mongo-contract=${name}`, `${name}-data`]);
@@ -214,10 +232,10 @@ test('both Mongo partitions run concurrently and remove only their owned contain
       }
       assert.ok(calls.filter(row => row.args[0] === 'ps').every(row => created.some(name => row.args.includes(`label=dev.chrono.cma.mongo-contract=${name}`))));
       const removed = calls.filter(row => row.args[0] === 'rm');
-      assert.equal(removed.length, 2);
+      assert.equal(removed.length, 3);
       assert.ok(removed.every(row => row.args.length === 3 && row.args[1] === '--force' && /^[0-9a-f]{12}$/.test(row.args[2])));
-      assert.equal(f.containers().length, scenario === 'cleanup-error' ? 2 : 0);
-      assert.equal(f.volumes().length, scenario.endsWith('cleanup-error') ? 2 : 0);
+      assert.equal(f.containers().length, scenario === 'cleanup-error' ? 3 : 0);
+      assert.equal(f.volumes().length, scenario.endsWith('cleanup-error') ? 3 : 0);
       assert.ok(existsSync(f.foreignVolume));
     } finally { f.close(); }
   }
@@ -233,9 +251,9 @@ test('volume creation, run and ownership failures retain foreign data and clean 
       assert.equal(f.containers().length, 0);
       assert.ok(existsSync(f.foreignVolume));
       const retained = ['foreign-volume', 'volume-owner-mismatch'].includes(scenario);
-      assert.equal(f.volumes().length, retained ? 2 : 0);
+      assert.equal(f.volumes().length, retained ? 3 : 0);
       const removals = calls.filter(row => row.args[0] === 'volume' && row.args[1] === 'rm');
-      assert.equal(removals.length, ['volume-create-error', 'run-error'].includes(scenario) ? 2 : 0);
+      assert.equal(removals.length, ['volume-create-error', 'run-error'].includes(scenario) ? 3 : 0);
       assert.ok(removals.every(row => /^cma-mongo-ci-[0-9a-f]{24}-data$/.test(row.args[2])));
       if (scenario === 'foreign-volume' || scenario === 'volume-list-error') {
         assert.equal(calls.filter(row => row.args[0] === 'volume' && row.args[1] === 'create').length, 0);
@@ -255,17 +273,18 @@ test('invalid partition arguments fail before Docker or Cargo', () => {
   } finally { f.close(); }
 });
 
-for (const signal of ['SIGTERM', 'SIGINT']) test(`${signal} stops both process groups and removes their exact disk volumes`, async () => {
-  const f = fixture('cancel');
+for (const scenario of ['cancel', 'cancel-scale']) for (const signal of ['SIGTERM', 'SIGINT']) test(`${signal} stops ${scenario} process groups and removes their exact disk volumes`, async () => {
+  const f = fixture(scenario);
+  const active = scenario === 'cancel-scale' ? [0] : [1, 2];
   const child = spawn('bash', f.args, { env: f.env, stdio: 'ignore' });
   const exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({code,signal})));
   try {
     const deadline = Date.now() + 10000;
-    while (![1, 2].every(index => existsSync(`${f.log}.started-${index}`))) {
-      assert.ok(Date.now() < deadline, 'both child Cargo processes must start');
+    while (!active.every(index => existsSync(`${f.log}.started-${index}`))) {
+      assert.ok(Date.now() < deadline, 'selected child Cargo processes must start');
       await new Promise(resolve => setTimeout(resolve, 10));
     }
-    assert.equal(f.volumes().length, 2);
+    assert.equal(f.volumes().length, active.length);
     child.kill(signal);
     const result = await Promise.race([
       exited,
@@ -291,9 +310,10 @@ test('larger suites use bounded fresh fixtures, with at most two running and all
       const calls = f.calls();
       assert.equal(calls.filter(row => row.command === 'cargo' && row.args[1] === 'list').length, 1);
       const cargo = calls.filter(row => row.command === 'cargo' && row.args[1] === 'run');
-      assert.deepEqual(cargo.map(row => row.args[row.args.indexOf('--partition')+1]).sort(),
+      assert.ok(!cargo[0].args.includes('--partition'));
+      assert.deepEqual(cargo.slice(1).map(row => row.args[row.args.indexOf('--partition')+1]).sort(),
         [1,2,3,4,5].map(index => `count:${index}/5`));
-      assert.equal(new Set(cargo.map(row => row.uri)).size, 5);
+      assert.equal(new Set(cargo.map(row => row.uri)).size, 6);
       let active = 0;
       let maximum = 0;
       for (const row of calls) {
@@ -306,17 +326,42 @@ test('larger suites use bounded fresh fixtures, with at most two running and all
       assert.equal(f.containers().length, 0);
       assert.equal(f.volumes().length, 0);
       assert.ok(existsSync(f.foreignVolume));
-      for (const index of [1,2,3,4,5]) assert.ok(existsSync(`${f.log}.finished-${index}`));
+      for (const index of [0,1,2,3,4,5]) assert.ok(existsSync(`${f.log}.finished-${index}`));
     } finally { f.close(); }
   }
 });
 
 test('unavailable, malformed, empty or non-ignored selection fails before allocating any fixture', () => {
-  for (const scenario of ['list-error','list-malformed','list-empty','list-not-ignored']) {
+  for (const scenario of ['list-error','list-malformed','list-empty','list-not-ignored','list-no-scale','list-scale-not-ignored','list-duplicate-scale']) {
     const f = fixture(scenario);
     try {
       assert.throws(() => execFileSync('bash', f.args, {env:f.env, timeout:5000, stdio:'pipe'}));
       assert.deepEqual(f.calls().map(row => [row.command,row.args[1]]), [['cargo','list']]);
+      assert.equal(f.containers().length, 0);
+      assert.equal(f.volumes().length, 0);
+      assert.ok(existsSync(f.foreignVolume));
+    } finally { f.close(); }
+  }
+});
+
+
+test('zero-test runs fail despite an environment that allows empty selections', () => {
+  for (const scenario of ['scale-empty', 'ordinary-empty']) {
+    const f = fixture(scenario);
+    try {
+      const env = {...f.env, NEXTEST_NO_TESTS: 'pass'};
+      assert.throws(() => execFileSync('bash', f.args, {env, timeout:15000, stdio:'pipe'}),
+        error => error.status === 1, 'an empty invocation must fail the complete gate');
+      const cargo = f.calls().filter(row => row.command === 'cargo' && row.args[1] === 'run');
+      assert.equal(cargo.length, 3, 'the remaining contracts still run after an empty invocation');
+      for (const row of cargo) {
+        assert.equal(row.args[row.args.indexOf('--no-tests')+1], 'fail');
+      }
+      const empty = scenario === 'scale-empty' ? 0 : 1;
+      assert.equal(readFileSync(`${f.log}.empty-${empty}`, 'utf8'), 'fail');
+      for (const index of [0,1,2].filter(index => index !== empty)) {
+        assert.ok(existsSync(`${f.log}.finished-${index}`));
+      }
       assert.equal(f.containers().length, 0);
       assert.equal(f.volumes().length, 0);
       assert.ok(existsSync(f.foreignVolume));
