@@ -212,5 +212,8 @@ selections and disjoint union, all 14 Image Manager invocations, and CMAEG
 latency. It enumerates original `cargo test` filters through the archived binaries' own libtest `--list` interface, then
 compares them to nextest lists. It emits sorted `(binary, test)` inventories and
 counts, and fails on an empty set, any difference, or a duplicate shard member.
+When the CPU profiling entry point is present, the proof also verifies that
+its selection is exactly the profiling subset of the ordinary Mongo corpus,
+and preserves the baseline selection when that baseline already has the mode.
 This proves selection semantics on the archive's compiled platform; it does
 not substitute an ARM64 inventory for the x86_64 Actions run.
