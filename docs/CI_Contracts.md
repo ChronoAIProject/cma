@@ -188,6 +188,32 @@ extending it to 30. No reporting-circuit threshold or retry behavior changes.
 
 ## Image Identity
 
+`Images (runtime-omarchy)` runs independently of Backend and the other image
+jobs on ordinary PRs and develop pushes. It builds the explicit Omarchy target
+on native amd64 with a current-source Debian desktop donor, rather than the
+historical prototype's expiring artifact. The runtime contract, device-free
+desktop, VKMS comparison, production-image temporary directory, retained-home
+restart and configured vulnerability scan must all pass before native export.
+The desktop probes require browser launch completion and native terminal turns
+while the page stays open. Failed jobs retain diagnostic evidence but cannot
+export an accepted image. Evidence lasts 90 days; the exact native transfer lasts
+one day and records source/tree, run/attempt, image identity and archive hash.
+
+The Omarchy input fixture waits for the launch page before keyboard navigation
+to a page with a distinct readiness title. It then requires acknowledgements
+from the page for the full 1280x800 browser viewport, field focus, typed value
+and button result. A stale title or a timeout cannot advance the input sequence.
+Close, input-order and page-acknowledgement regressions run before image build;
+the native Agent, authenticated user input and retained-profile gates remain
+the acceptance proof for the actual desktop.
+
+The provider workflow contract and its Omarchy mutation regressions protect this
+job's native platform, current-source donor, ordered gates and read-only authority.
+The job has no Backend dependency, so it composes with the parallel nextest
+archive graph in #1394. A passing local image contract does not establish live
+provider acceptance, a public Agent response or production activation. Image
+promotion and runtime-default adoption remain separate authorized release steps.
+
 An OCI root digest, selected platform manifest digest, configuration digest,
 and Docker's local image ID are separate facts. Docker's local `.Id` is opaque:
 depending on the storage backend it can name a manifest instead of a config.
