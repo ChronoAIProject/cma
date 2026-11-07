@@ -202,7 +202,7 @@ it('renders the paused notice verbatim and sends through the normal composer flo
   );
   expect(screen.getByText("This Agent's Sandbox is paused.")).toBeInTheDocument();
   const composer = screen.getByRole('textbox', { name: 'Message' });
-  expect(composer).toHaveAttribute('placeholder', 'Send a message to continue.');
+  expect(composer).toHaveAttribute('placeholder', 'Reply to Chrono Agent…');
   expect(composer).toHaveFocus();
   await actor.type(composer, 'Revive and continue.{Enter}');
   expect(onSend).toHaveBeenCalledWith('Revive and continue.', expect.any(Function));
@@ -302,10 +302,12 @@ it('clears the running composer state when the recorded turn completes', () => {
     />
   );
   const { rerender } = render(draw(true));
-  expect(screen.getByPlaceholderText('Add a follow-up while the Agent works.')).toBeInTheDocument();
+  expect(
+    screen.getByPlaceholderText("Add a follow-up — it'll be queued while the agent works"),
+  ).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Stop response' })).toBeInTheDocument();
   rerender(draw(false));
-  expect(screen.getByPlaceholderText('Message Agent')).toBeInTheDocument();
+  expect(screen.getByPlaceholderText('Reply to Chrono Agent…')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument();
 });
@@ -318,7 +320,6 @@ it('keeps every control inside the box and offers steering only while a turn run
       status={running ? 'working' : 'ready'}
       running={running}
       queueWhileRunning
-      showUsage
       steeringMode="queue"
       onSteeringModeChange={onSteeringModeChange}
       busy={false}
@@ -331,13 +332,13 @@ it('keeps every control inside the box and offers steering only while a turn run
   const { rerender } = render(draw(false));
   const box = screen.getByRole('textbox', { name: 'Message' }).parentElement!;
   expect(box).toHaveClass('agent-composer__box');
-  for (const name of ['Attach files', 'Context usage', 'Send message'])
+  for (const name of ['Attach files', 'Send message'])
     expect(box).toContainElement(screen.getByRole('button', { name }));
   expect(screen.queryByRole('button', { name: /Steering mode/ })).not.toBeInTheDocument();
   rerender(draw(true));
   const steering = screen.getByRole('button', { name: 'Steering mode: Queue' });
   expect(box).toContainElement(steering);
-  expect(box).toContainElement(screen.getByRole('button', { name: 'Queue message' }));
+  expect(screen.queryByRole('button', { name: 'Queue message' })).not.toBeInTheDocument();
   expect(box).toContainElement(screen.getByRole('button', { name: 'Stop response' }));
   await actor.click(steering);
   await actor.click(screen.getByRole('menuitemradio', { name: /Interrupt/ }));
@@ -362,4 +363,59 @@ it('does not offer steering to a tab that cannot queue behind a running turn', (
   expect(screen.queryByRole('button', { name: /Steering mode/ })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Queue message' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
+});
+
+it('uses one primary action and handles follow-up and stop keys without losing the draft', async () => {
+  const onSend = vi.fn();
+  const onStop = vi.fn();
+  const props = {
+    status: 'ready' as const,
+    running: false,
+    busy: false,
+    inputAvailability: { allowed: true },
+    onSend,
+    onStop,
+    queueWhileRunning: true,
+  };
+  const { rerender } = render(<Composer {...props} />);
+  const field = screen.getByRole('textbox', { name: 'Message' });
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  expect(field).toHaveAttribute('placeholder', 'Reply to Chrono Agent…');
+  rerender(<Composer {...props} status="working" running />);
+  expect(screen.queryByRole('button', { name: 'Queue message' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
+  expect(screen.getByText('Esc to stop')).toBeVisible();
+  fireEvent.change(field, { target: { value: 'Keep my follow-up' } });
+  expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Queue message' })).toBeEnabled();
+  fireEvent.keyDown(field, { key: 'Enter', shiftKey: true });
+  expect(onSend).not.toHaveBeenCalled();
+  fireEvent.keyDown(field, { key: 'Escape' });
+  expect(onStop).toHaveBeenCalledOnce();
+  expect(field).toHaveValue('Keep my follow-up');
+  await act(async () => fireEvent.keyDown(field, { key: 'Enter' }));
+  expect(onSend).toHaveBeenCalledWith('Keep my follow-up', expect.any(Function));
+});
+
+it('keeps Stop clickable with a draft when running input cannot be queued', async () => {
+  const stop = vi.fn();
+  const send = vi.fn();
+  render(
+    <Composer
+      status="working"
+      running
+      queueWhileRunning={false}
+      busy={false}
+      inputAvailability={{ allowed: true }}
+      onSend={send}
+      onStop={stop}
+    />,
+  );
+  const field = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(field, { target: { value: 'Keep my next message' } });
+  expect(screen.queryByRole('button', { name: 'Queue message' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Stop response' }));
+  expect(stop).toHaveBeenCalledOnce();
+  expect(send).not.toHaveBeenCalled();
+  expect(field).toHaveValue('Keep my next message');
 });

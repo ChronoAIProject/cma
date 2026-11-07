@@ -58,6 +58,9 @@ impl std::fmt::Debug for BrowserFrame {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BrowserObservation {
+    /// Sanitized current origin; no path, query, fragment or credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
     pub state: BrowserState,
     pub context_id: Option<String>,
     pub location: String,
@@ -75,6 +78,7 @@ impl BrowserObservation {
     pub fn idle(state: BrowserState) -> Self {
         Self {
             state,
+            address: None,
             context_id: None,
             location: "Blank page".into(),
             frame: None,
@@ -90,7 +94,14 @@ impl BrowserObservation {
 
     pub fn valid(&self) -> bool {
         use base64::Engine as _;
-        self.observers <= 16
+        self.address.as_ref().is_none_or(|value| {
+            value == "about:blank"
+                || value.len() <= 8192
+                    && url::Url::parse(value).is_ok_and(|url| {
+                        matches!(url.scheme(), "http" | "https")
+                            && url.origin().ascii_serialization() == *value
+                    })
+        }) && self.observers <= 16
             && self.min_interval_ms == 1000
             && self.fresh_for_ms == 3000
             && self.max_frame_bytes == 262144
@@ -145,4 +156,37 @@ pub trait BrowserAdapter: Send + Sync {
         handle: &crate::RuntimeHandle,
         request: &BrowserRequest,
     ) -> crate::Result<BrowserReceipt>;
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_old_observations_and_only_sanitized_optional_addresses() {
+        let idle = BrowserObservation::idle(BrowserState::Ready);
+        let encoded = serde_json::to_value(&idle).unwrap();
+        assert!(encoded.get("address").is_none());
+        let mut decoded: BrowserObservation = serde_json::from_value(encoded).unwrap();
+        assert!(decoded.valid());
+        for address in [
+            "about:blank",
+            "http://localhost:5173",
+            "https://example.com",
+        ] {
+            decoded.address = Some(address.into());
+            assert!(decoded.valid(), "{address}");
+        }
+        for address in [
+            "https://example.com/secret",
+            "https://example.com?query=private",
+            "https://example.com#private",
+            "https://user:pass@example.com",
+            "file:///home/private",
+            "javascript:alert(1)",
+        ] {
+            decoded.address = Some(address.into());
+            assert!(!decoded.valid(), "{address}");
+        }
+    }
 }

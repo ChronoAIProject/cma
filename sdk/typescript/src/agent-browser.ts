@@ -2,7 +2,7 @@ import type { ResolvedConfig } from './config.js';
 import { ProtocolError } from './errors.js';
 import { requestBytes, type OperationOptions, type RequestOptions } from './http.js';
 import { query, segment } from './resources.js';
-import { enumeration, integer, nullable, object, text, type Output } from './schema.js';
+import { enumeration, integer, nullable, object, optional, text, type Output } from './schema.js';
 
 const browserFrame = object({
   sequence: integer,
@@ -26,6 +26,7 @@ const browserObservation = object({
     'disconnected',
   ),
   location: text,
+  address: optional(text),
   frame: nullable(browserFrame),
   observers: integer,
   captures: integer,
@@ -90,6 +91,20 @@ export class AgentBrowser implements AgentBrowserClient {
       throw new ProtocolError('Invalid browser observation.', { cause });
     }
     if (
+      (value.address !== undefined &&
+        value.address !== 'about:blank' &&
+        (() => {
+          try {
+            const url = new URL(value.address);
+            return (
+              !['http:', 'https:'].includes(url.protocol) ||
+              url.origin !== value.address ||
+              value.address.length > 8192
+            );
+          } catch {
+            return true;
+          }
+        })()) ||
       value.agent_id !== agent ||
       value.runtime_incarnation !== scope.runtime_incarnation ||
       (scope.context_id !== undefined &&

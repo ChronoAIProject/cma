@@ -297,7 +297,8 @@ pub use title::{
     AgentTitleGenerationRequest, AgentTitleGenerationResponse, AgentTitleGenerator,
     AgentTitleSource, AgentTitleTranscript, AGENT_TITLE_ATTEMPTS, AGENT_TITLE_CALL_TIMEOUT_SECONDS,
     AGENT_TITLE_CLAIM_SECONDS, AGENT_TITLE_FALLBACK_SCALARS, AGENT_TITLE_INPUT_BYTES,
-    AGENT_TITLE_MAX_SCALARS, AGENT_TITLE_SYSTEM_PROMPT, EMPTY_AGENT_TITLE_FALLBACK,
+    AGENT_TITLE_MAX_ATTEMPTS, AGENT_TITLE_MAX_SCALARS, AGENT_TITLE_RETRY_SECONDS,
+    AGENT_TITLE_SYSTEM_PROMPT, EMPTY_AGENT_TITLE_FALLBACK,
 };
 pub use title_service::{AgentTitleOutcome, AgentTitleService, AgentTitleServiceError};
 pub use title_store::{

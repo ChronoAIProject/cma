@@ -56,7 +56,7 @@ it('releases interaction immediately and removes the collapsed exit instead of l
       conversation={conversationFromTranscript({ agentId: 'agent', throughSeq: 0, turns: [] })}
     />,
   );
-  expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'View activity' })).not.toBeInTheDocument();
   expect(container.querySelector('.active-thinking')).toHaveAttribute('inert');
   act(() => vi.advanceTimersByTime(200));
   expect(container.querySelector('.active-thinking')).toBeNull();

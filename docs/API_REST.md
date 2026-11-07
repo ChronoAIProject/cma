@@ -884,9 +884,80 @@ and unknown-source observations cannot replace it; a valid provider title can.
 Owner `owner_title` from revisioned preferences remains the display priority and
 supports repeated renames even when an automatic title was already saved. The
 separate legacy title setter retains its write-once compatibility behavior.
+Reported edit diffs use the existing `tool_output_reported.output.text` and
+`tool_call_updated.output.text` fields; no event kind or API schema changes.
+Their text begins with `File changes: <count> +<added> −<removed>`, followed by
+`File: <JSON-quoted path> +<added> −<removed>` lines and unified diffs. Totals
+come from the reported before/after contents. Summaries precede diff bodies so
+the existing 16 KiB output limit preserves totals; `truncated` remains explicit.
+Each file receives its own 50ms diff-calculation budget. If that budget expires,
+its header becomes `File: <JSON-quoted path> counts unavailable` and the aggregate
+becomes `File changes: <count> counts unavailable`; no exact totals are claimed
+from a degraded replace-all diff. Other files keep their independently calculated
+counts. Clients display “Counts unavailable” and must not reconstruct those totals
+from the fallback diff body. The existing output-byte limit and truncation flag
+remain unchanged.
+Tool status still determines whether an edit completed. A proposed or failed
+edit does not prove that a file was modified. Ordinary text output is unchanged.
+
+Workspace hierarchy Agent summaries include optional `task_started_at` only when
+the current active turn has a matching recorded start. Clients use that timestamp
+for a running task's elapsed clock; `updated_at` remains activity metadata and
+must not reset an elapsed clock. Idle tasks omit the start timestamp. Hierarchy
+reads use one reverse, single-result lookup per active Agent, bounded by the
+confirmed log head and matching turn id, with the existing
+`agent_log_task_status` index (`agent_id`, `record.kind.type`, descending `seq`).
+
 Automatic title generation excludes a recorded setup/unknown first turn and
 uses the first subsequent task; names and sources remain durable across reads.
+The persisted `title` takes precedence over a prompt preview or runtime label;
+`owner_title` still wins over every automatic name. `title_set` with source
+`generated` updates that title in both durable replay and the live `/title`
+delta. Title generation uses the owner's scoped model service directly, so it
+does not depend on a legacy hosting-provider port route. Its inputs are the
+first task's owner message and final recorded assistant message. It never opens
+another Agent turn. Each 45-second durable lease admits one model call bounded to ten seconds.
+Per-Agent `title_attempt_count`, `title_next_attempt_at` and `title_settled`
+metadata survive worker restarts. The first two transient failures defer for
+60 and 120 seconds; at most three model calls are admitted. An expired third
+claim settles the fallback without another model call. Permanent 4xx denials
+(except request timeout/rate limiting), quota/billing denials and missing model
+scope settle immediately. Network errors, 408, rate-limited 429 and 5xx retry
+within that bound. Generated and user titles remain terminal.
 
+Old documents without retry metadata start at zero attempts and remain readable;
+historical fallback titles can be regenerated, including in own-credential
+Sandboxes with the required scoped model access. New retry metadata lives outside
+the Agent record schema and is preserved by normal Agent updates, so old readers
+continue to read the retained title and new readers retain the retry budget.
+Owner renames always take precedence over pending generation.
+
+Rollback readers remain compatible throughout title regeneration. Titleless
+Agents use the retained `title_lease_*` fields. Regeneration of a stored fallback
+uses a separate top-level `title_regeneration_lease` envelope, which older API
+binaries ignore; the original lease fields remain null whenever a title is
+stored. This holds during claims, transient-failure backoff, crashes and pauses
+that defer recovery indefinitely. Completion and user-title writes clear both
+lease locations atomically. Exact holder/token/mode/deadline fencing, bounded
+attempt counts and retry times remain durable in the new reader. A terminal
+user/generated title also fences any regeneration envelope left by an older
+writer; owner presentation renames remain authoritative across rollback.
+
+
+The existing Mongo `request_rate_limits` budget `background:agent-titles` admits
+six title jobs per minute deployment-wide (maximum burst six), using the database
+clock and surviving process restarts and rolling overlap. The scheduler further
+spaces starts by ten seconds. Budget failures authorize no model call and consume
+no per-Agent attempt. No new configuration, collection or deployment input is
+required.
+
+Suggested replies use the same explicit scoped platform model-service endpoint,
+with the current Sandbox service credential as Bearer authorization and no legacy
+provider-port authorization header. The worker rechecks owner/runtime/credential
+authority and its durable running suggestion claim before sending. It sends a
+strict JSON-schema Responses request with no tools, bounded goal/answer context,
+and authoritative confirmed-resource evidence. Title retry/backfill limits apply
+only to title jobs; suggestion admission retains its existing policy and bounds.
 
 Sandbox pause/revive and removal return recorded lifecycle state. Stopping an
 Agent preserves readable history; deleting it records cleanup of its Worktree
@@ -1780,6 +1851,13 @@ the first frame, clients send its opaque UUID `context_id` to fence later reads.
 An empty paused, disabled or unsupported observation may withdraw that context;
 a different live context cannot replace it. Current unauthorized reads return
 403 or undisclosing 404. These fields are correlation values, never access grants.
+
+The live Agent browser observation optionally includes `address`, the current
+HTTP(S) origin or `about:blank`. It contains no credentials, path, query or
+fragment. This additive field accompanies the existing current-frame response;
+it is never a historical screen record. Older runtimes omit it and remain
+readable without replacement. The web address bar uses this reported origin and
+retains the existing location label when an origin is absent.
 
 `BrowserView` contains Agent/incarnation/context, `state`, a sanitized `location`
 (`Blank page`, `Local page` or `Web page`), nullable `frame`, and bounded counters.

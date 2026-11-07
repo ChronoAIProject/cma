@@ -47,6 +47,8 @@ pub(crate) struct BrowserView {
     state: &'static str,
     context_id: Option<String>,
     location: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    address: Option<String>,
     frame: Option<BrowserFrameView>,
     observers: u32,
     captures: u64,
@@ -74,6 +76,7 @@ impl From<BrowserObservationView> for BrowserView {
             },
             context_id: observed.context_id,
             location: observed.location,
+            address: observed.address,
             frame: observed.frame.map(|frame| BrowserFrameView {
                 sequence: frame.sequence,
                 captured_at: frame.captured_at,

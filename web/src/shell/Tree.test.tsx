@@ -108,10 +108,8 @@ describe('Sandbox navigation tree', () => {
       'title',
       '/home/cma/project-from-codex',
     );
-    expect(
-      screen.getByRole('link', { name: /Investigate the failing deployment/ }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Agent one/ })).toBeInTheDocument();
+    expect(screen.queryByText('Investigate the failing deployment')).not.toBeInTheDocument();
     view.unmount();
     renderTree({ items });
     expect(screen.getByText('/workspaces/chrono-bot')).toBeInTheDocument();
@@ -602,7 +600,7 @@ describe('Flat Agent navigation', () => {
       'agent:middle',
       'agent:older',
     ]);
-    expect(within(tree).queryByRole('group')).not.toBeInTheDocument();
+    expect(within(tree).getByRole('group', { name: 'Earlier' })).toBeInTheDocument();
     for (const name of [
       'Atlas',
       'Other Sandbox',

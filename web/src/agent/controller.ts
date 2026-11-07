@@ -84,7 +84,7 @@ export function useAgentController(
     state.conversation.activeRunId !== undefined;
   const [pending, setPending] = useState<AgentCommand>();
   const [actionError, setActionError] = useState<string>();
-  const [replayError, setReplayError] = useState<string>();
+  const [streamError, setStreamError] = useState<string>();
   const [keys] = useState(() => new CommandKeys());
   const actionAbortRef = useRef<AbortController | undefined>(undefined);
   const actionKindRef = useRef<AgentCommand | undefined>(undefined);
@@ -98,7 +98,7 @@ export function useAgentController(
       replayAbortRef.current?.abort();
       setPending(undefined);
       setActionError(undefined);
-      setReplayError(undefined);
+      setStreamError(undefined);
       setState({ status: 'error', message: new IdentityChangedError().message });
       return true;
     },
@@ -160,7 +160,7 @@ export function useAgentController(
     queueMicrotask(() => {
       if (controller.signal.aborted) return;
       setActionError(undefined);
-      setReplayError(undefined);
+      setStreamError(undefined);
       setPending(undefined);
       if (agentId === undefined) {
         loaded.current = undefined;
@@ -329,7 +329,7 @@ export function useAgentController(
     const controller = new AbortController();
     replayAbortRef.current = controller;
     queueMicrotask(() => {
-      if (!controller.signal.aborted) setReplayError(undefined);
+      if (!controller.signal.aborted) setStreamError(undefined);
     });
     const after =
       stateRef.current.status === 'ready'
@@ -362,11 +362,11 @@ export function useAgentController(
               liveCursor.current = conversation.cursor;
               setState({ ...current, conversation });
             },
-            setReplayError,
+            setStreamError,
           );
     void replay.catch((error: unknown) => {
       if (controller.signal.aborted || onIdentityChange(error)) return;
-      setReplayError(`Live Agent updates are unavailable. ${errorMessage(error)}`);
+      setStreamError(`Live Agent updates are unavailable. ${errorMessage(error)}`);
     });
     return () => {
       controller.abort();
@@ -398,7 +398,7 @@ export function useAgentController(
   const applyAgentTitle = useAgentTitle(agentId, setState);
   const reload = useCallback(() => {
     setActionError(undefined);
-    setReplayError(undefined);
+    setStreamError(undefined);
     setState(agentId === undefined ? { status: 'idle' } : { status: 'loading' });
     setRevision((value) => value + 1);
   }, [agentId, setState]);
@@ -439,6 +439,12 @@ export function useAgentController(
     `${state.status === 'ready' ? state.conversation.cursor : 0}:${requestRevision}`,
     onIdentityChange,
   );
+  const interruptTurn = (strict: boolean) =>
+    command(
+      'interrupt',
+      (id, key, signal) => client.interruptAgent(id, { idempotencyKey: key, signal }),
+      strict,
+    );
   return {
     ...presentRetainedInputs(v2, legacy),
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
@@ -462,12 +468,12 @@ export function useAgentController(
       : resourceAvailability,
     progressObservation,
     pending,
-    actionError: actionError ?? replayError,
+    actionError: actionError ?? streamError,
     reload,
     applyAgentTitle,
     clearActionError: () => {
       setActionError(undefined);
-      setReplayError(undefined);
+      setStreamError(undefined);
     },
     send: (content, onAccepted, onReceiptObserved, onRefused, answerContext) =>
       run(content, onAccepted, onReceiptObserved, onRefused, 'send', undefined, answerContext),
@@ -482,10 +488,8 @@ export function useAgentController(
         : (content, onAccepted, onReceiptObserved, onRefused, onOrdinaryInput) =>
             run(content, onAccepted, onReceiptObserved, onRefused, 'interrupt', onOrdinaryInput),
     approve: (approvalId, decision) => run({ id: approvalId, decision }),
-    interrupt: () =>
-      command('interrupt', (id, key, signal) =>
-        client.interruptAgent(id, { idempotencyKey: key, signal }),
-      ),
+    interruptForControl: () => interruptTurn(true),
+    interrupt: () => interruptTurn(false),
     stop: () =>
       command('stop', (id, key, signal) => client.stopAgent(id, { idempotencyKey: key, signal })),
     delete: () =>

@@ -5,7 +5,6 @@ import { CommandKeys } from './api/client';
 import type { TreeAction } from './shell/Tree';
 import { StopAgentDialog } from './agent/StopAgentDialog';
 import { DeletionDialog } from './DeletionDialog';
-import { Button } from './ui/Button';
 import { useConnectionGate } from './connections/useConnectionGate';
 import { restoreDeletion, type DeleteAction, type DeletionRequest } from './deletion';
 import { downloadAgentHistory } from './agent/historyExport';
@@ -179,6 +178,8 @@ export function useResourceActions(
     ),
     pending: pending || deletion !== undefined || stopping !== undefined || connections.pending,
     error: error ?? connections.error,
+    viewDeletionStatus:
+      retained === undefined ? undefined : () => setDeletion({ request: retained, restored: true }),
     notice: (
       <>
         {sandboxRequests.map((sandboxRequest) => (
@@ -210,11 +211,6 @@ export function useResourceActions(
             onNavigate={onNavigate}
           />
         ))}
-        {deletion === undefined && retained !== undefined ? (
-          <Button onClick={() => setDeletion({ request: retained, restored: true })}>
-            View deletion status
-          </Button>
-        ) : null}
       </>
     ),
     overlay: (

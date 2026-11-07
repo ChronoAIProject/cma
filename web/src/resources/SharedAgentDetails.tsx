@@ -10,6 +10,7 @@ import { IconCloseOutline16 } from '../ui/icons';
 import { statusLabel } from '../vocabulary/status';
 import '../agent/Details.css';
 import { AgentFiles } from '../agent/files/AgentFiles';
+import { creationLabel, useAgentProvenance } from '../agent/provenance';
 
 /** Only the accessible projection is read; a narrow Agent share grants no ancestry. */
 export function SharedAgentDetails({
@@ -29,6 +30,7 @@ export function SharedAgentDetails({
   const current = useAgentAccess(client, open ? agent : undefined);
   const ready = current.state.status === 'ready' ? current.state.value : undefined;
   const detail = ready?.detail.access === 'shared' ? ready.detail : undefined;
+  const provenance = useAgentProvenance(agent, open && detail !== undefined);
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -77,6 +79,10 @@ export function SharedAgentDetails({
             <section className="agent-details__band">
               <h2>Agent</h2>
               <dl>
+                <div className="agent-details__fact">
+                  <dt>Creation origin</dt>
+                  <dd>{creationLabel(provenance)}</dd>
+                </div>
                 <div className="agent-details__fact">
                   <dt>Name</dt>
                   <dd>{detail.title?.trim() || 'Untitled agent'}</dd>
