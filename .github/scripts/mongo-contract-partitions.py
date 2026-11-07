@@ -11,6 +11,7 @@ import time
 
 TESTS_PER_FIXTURE = 40
 CONCURRENT_FIXTURES = 2
+CLEANUP_FAILURE = 125
 SCALE_TEST = ("store::usage_reports::tests::scale::"
               "metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages")
 
@@ -49,6 +50,7 @@ def run(script):
         return 1
     children = []
     interrupted = 0
+    cleanup_failed = False
 
     def interrupt(number, _frame):
         nonlocal interrupted
@@ -63,10 +65,17 @@ def run(script):
         children.append(scale)
         while not interrupted and scale.poll() is None:
             time.sleep(0.1)
+        if scale.returncode == CLEANUP_FAILURE:
+            return 1
         next_partition = 1
-        # Failures remain failures, while every remaining partition still runs.
+        # Test failures retain full coverage. Uncertain cleanup stops allocation.
         while not interrupted:
-            active = sum(child.poll() is None for child in children)
+            statuses = [child.poll() for child in children]
+            if CLEANUP_FAILURE in statuses:
+                cleanup_failed = True
+                break
+            # Keep each child slot until its cleanup result is checked.
+            active = sum(status is None for status in statuses)
             while not interrupted and active < CONCURRENT_FIXTURES and next_partition <= count:
                 partition = f"count:{next_partition}/{count}"
                 children.append(subprocess.Popen(
@@ -79,7 +88,7 @@ def run(script):
             time.sleep(0.1)
     except OSError:
         interrupted = signal.SIGTERM
-    if interrupted:
+    if interrupted or cleanup_failed:
         for child in children:
             if child.poll() is None:
                 try:
@@ -98,7 +107,7 @@ def run(script):
                 except ProcessLookupError:
                     pass
                 child.wait()
-        return 128 + interrupted
+        return 128 + interrupted if interrupted else 1
     return 0 if len(children) == count + 1 and all(child.returncode == 0 for child in children) else 1
 
 
