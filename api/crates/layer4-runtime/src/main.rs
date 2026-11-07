@@ -27,6 +27,10 @@ mod install_state_validation;
 mod lanes;
 mod link;
 mod mutation_authority;
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "mutation_authority_v1_tests.rs"]
+mod mutation_authority_v1;
 mod mutation_journal;
 mod mutation_scope;
 mod paths;
