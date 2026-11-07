@@ -37,6 +37,141 @@ writer-capture authority; failpoint cases run serially within each
 disposable replica set. The test runner fails on an empty selection, and
 cleanup removes only containers carrying the generated exact run label.
 
+The 20,001-Sandbox report-generation scale contract runs once in an exclusive
+fresh fixture before ordinary partitions. Options and owner-allocation scale
+contracts retain their ordinary partition placement and all original assertions.
+Their shared test-only capture starts before connection/initialization and names
+the cohort, setup/read phase and one-based page. A failure preserves the observed
+opening phase/page, circuit reason and event duration separately from the later
+refused phase/page. Owner allocation also records per-phase and read duration,
+aggregate/label timing, and pool checkout/hold samples. Timing probes never count
+as circuit openings or overwrite the last opening event.
+
+The Mongo driver queues check-in to its pool worker: a connection acquired on one
+page can be reported returned during the next. Test-only numeric client/connection
+keys correlate those samples; the observed event phase alone is not the checkout
+phase or proof of the triggering query. Capture contains fixed categories and
+numbers, never names, query text, credentials or cursor contents. The production
+query, circuit thresholds, pool size and recovery behavior are unchanged. No
+query prototype, automatic retry or extra isolation is part of these diagnostics.
+
+## Backend Capacity Preparation
+
+`Prepare Backend capacity` runs immediately after checkout, before toolchain
+installation, cache restore, or compilation. This isolated CI policy change
+addresses measured capacity: #1425/#1426 observed about 263 MiB available disk
+late in Backend and 117 MiB free of 3 GiB swap during test compilation; #1424
+separately failed with ENOSPC. It is **not a fix for the unexplained runner
+shutdowns**. Runner size, Cargo concurrency, existing gate commands, assertions,
+thresholds and relative order are unchanged. The separately authorized Image
+Manager deadline adjustment below is the sole timeout change.
+
+The helper accepts no input paths and runs only as root on an ephemeral Linux
+GitHub-hosted runner whose workspace shares the root filesystem. Its exact
+allowlist was audited against the Backend workflow, API manifests/native build
+requirements and process launches, Mongo harnesses, and web/SDK package scripts:
+
+| Removed path | Why it is unused in Backend |
+| --- | --- |
+| `/usr/local/lib/android` | Android SDK/NDKs/emulator. Backend builds and tests native Linux Rust; no Android target, Gradle, adb or Android SDK command runs. Android-only Cargo lockfile entries do not require this SDK on Linux. |
+| `/usr/share/dotnet` | .NET SDKs/runtimes. No managed .NET build, test, or dotnet-based tool is invoked. Native system libraries are retained. |
+| `/opt/hostedtoolcache/CodeQL` | Cached CodeQL CLI bundle. Backend does not run CodeQL analysis or use the bundle. Other hosted toolcache entries are retained for Python and Node setup. |
+
+Installation locations are confirmed by the upstream
+[runner-image installers](https://github.com/actions/runner-images/tree/fad015e47059f40cf0786dcb4593384f6a0720d3/images/ubuntu/scripts/build)
+(`install-android-sdk.sh`, `install-dotnetcore-sdk.sh`, `install-codeql-bundle.sh`).
+Rust/Cargo caches, C/C++ compilers/linkers, system libraries, Python, Git, Node/npm,
+Docker/Mongo, FFmpeg, OpenSSL, curl, Chromium and Playwright are retained. No
+package purge, Docker prune, or blanket toolcache deletion runs. Missing paths
+are no-ops; symlinked paths/ancestors and mounted SDK paths are skipped. Removal
+does not cross filesystem boundaries.
+
+Each removal logs root-filesystem available bytes before/after, the signed
+difference, status and elapsed time. Allocation uses the total measured gain,
+not SDK apparent sizes: additional swap is the minimum of 8 GiB, half the gain,
+and the gain minus 4 GiB, rounded down to whole GiB (zero if insufficient).
+This preserves at least half the reclaimed space and at least 4 GiB of net disk
+gain whenever swap is allocated. The root-only `/cma-backend.swap` is created
+exclusively with mode 0600, fully allocated, formatted and activated; original
+swap stays active. Existing files/symlinks are never overwritten. Failed
+allocation/format/activation removes only the new, confirmed-inactive file;
+uncertain or active swap is retained. No fstab, sysctl or concurrency setting
+changes. Final disk/memory/swap totals and complete preparation duration are
+streamed to the step log.
+
+Preparation is best effort and cannot turn a later gate failure into success.
+The helper logs failures; the startup fallback applies only to this step.
+Provider contracts pin placement, command, runner and regression execution.
+Regressions cover absent/unsafe paths, measured accounting, budget bounds,
+exclusive allocation, activation failures and non-gating failures. Compare
+per-step telemetry minima and whole-job elapsed time including preparation;
+different cache/source/runner conditions limit causal timing comparisons.
+Draft #1394 can rehome this single step/helper to its compilation jobs without
+duplicating its job restructuring. No public API contract changes here.
+
+## Backend Shutdown Evidence
+
+Backend Bash steps source `backend-resource-env.sh` through `BASH_ENV`.
+The hook starts one optional sampler per step; descendant shells inherit its
+marker. It disowns that child so a caller's bare `wait` cannot wait for telemetry.
+Disowning retains the shell as the process parent. It does not wrap commands,
+install traps, change shell options, wait
+for telemetry, or change gate order, timeouts, assertions or exit status.
+The provider contract checks the hook and runs its failure-path regressions.
+This dedicated CI change diagnoses unexplained runner shutdowns; it does not
+change resource limits or duplicate the archive/job split proposed in #1394.
+
+`[backend-resource]` JSON lines are offered directly to the current step log at
+startup and about every ten seconds. They include UTC and elapsed step time,
+memory/swap KiB and swap I/O page counters, disk bytes/free inodes, load
+averages, the ten largest process RSS values in KiB, and root cgroup v2 memory
+counters when available. Processes expose only numeric PIDs and kernel names
+from `/proc/PID/comm`; arguments and environments are never read. JSON escapes
+names so they cannot become workflow commands. Unsupported or failed probes
+report `unavailable` without exception details. Sampling failures cannot set
+the gate result. Before probing, the sampler installs Linux `PR_SET_PDEATHSIG`
+with `SIGKILL`, then checks the expected parent again to close the startup race.
+Parent death terminates the sampler independently of probe/output progress;
+polling between samples is not its lifetime guarantee. If protection cannot be
+installed (including non-Linux systems), sampling is disabled.
+
+Output uses a new open file description from `/proc/self/fd/1`, opened with
+`O_NONBLOCK`, and closes the sampler's inherited stdout descriptor. It never
+changes flags on the gate's shared stdout. Only FIFO log output is supported;
+other output types disable sampling. Each record is one atomic write bounded
+by `PIPE_BUF`; full pipes, oversized records, and output errors discard the
+sample without queues, retries or blocking flushes. A stalled probe may lose
+subsequent samples, but cannot defer kernel parent-death termination. Real
+Linux regressions exercise full pipes, a FIFO-blocked probe, descriptor EOF,
+process death, unchanged gate status/stdout flags, and bare `wait`. A runner-wide
+termination may prevent a final sample.
+Action steps without a Bash shell are not sampled by this hook.
+
+Samples show observations, not automatic diagnoses. RSS may include shared
+pages, root cgroup counters have their own scope, and a ten-second sample can
+miss a short peak. A missing sample or an exit-143 runner shutdown alone does
+not prove OOM, disk exhaustion, or manual cancellation. Compare passing and
+failed timelines before proposing a fix. The Image Manager step's existing
+deadline remains a distinct failure mode.
+
+## Image Manager Deadline Margin
+
+`Image Manager authenticated Mongo isolation` retains a finite **15-minute**
+step deadline. This deliberate CI policy change has its own commit: the former
+10-minute bound expired on #1419 and #1418, and a passing run took 9m57s. Measured
+compilation took 242-434 seconds before a comparatively stable 150-166 seconds
+of tests, leaving no reliable setup/cleanup margin. Capacity measurement run
+42299517097 retained the old bound and reproduced the deadline: its final
+eight-test success summary preceded the timeout error by 0.60 seconds, despite
+10.35 GiB of sampled available disk. That output order does not prove when
+cancellation began, but does confirm that disk reclamation alone does not
+address the step's deadline margin.
+
+The 15-minute limit preserves hang protection. Commands, tests, assertions,
+concurrency and gate order are unchanged. The executable contract and mutation
+regressions reject removing the deadline, restoring 10 minutes, or silently
+extending it to 30. No reporting-circuit threshold or retry behavior changes.
+
 ## Historical Guarantee Mapping
 
 | Historical guarantee | Current disposition and evidence |
@@ -55,6 +190,42 @@ cleanup removes only containers carrying the generated exact run label.
 | Fresh signup, cross-owner isolation, real provider/model continuation and rotation | Remain full-campaign obligations. Owner-only evidence cannot advance them. This delivery does not provision identities, alter NyxID, or manufacture missing observations. |
 
 ## Image Identity
+
+The Debian desktop fixture requires distinct navigation readiness, the active
+Chromium window's fullscreen state and its actual 1280x800 page viewport before
+fixed-coordinate input. Page events acknowledge focus, the exact typed value and
+the button result in order. Every wait fails with its stage and last observation
+on timeout. Before the retained-home restart, the fixture verifies normal-window
+geometry and the original browser process exiting, so profile persistence does
+not depend on a sleep. Mandatory release-contract regressions reject stale,
+missing or conflicting acknowledgements; the real native image still must pass
+all Agent, shared authenticated input, lifecycle and retained-profile assertions.
+
+`Images (runtime-omarchy)` runs independently of Backend and the other image
+jobs on ordinary PRs and develop pushes. It builds the explicit Omarchy target
+on native amd64 with a current-source Debian desktop donor, rather than the
+historical prototype's expiring artifact. The runtime contract, device-free
+desktop, VKMS comparison, production-image temporary directory, retained-home
+restart and configured vulnerability scan must all pass before native export.
+The desktop probes require browser launch completion and native terminal turns
+while the page stays open. Failed jobs retain diagnostic evidence but cannot
+export an accepted image. Evidence lasts 90 days; the exact native transfer lasts
+one day and records source/tree, run/attempt, image identity and archive hash.
+
+The Omarchy input fixture waits for the launch page before keyboard navigation
+to a page with a distinct readiness title. It then requires acknowledgements
+from the page for the full 1280x800 browser viewport, field focus, typed value
+and button result. A stale title or a timeout cannot advance the input sequence.
+Close, input-order and page-acknowledgement regressions run before image build;
+the native Agent, authenticated user input and retained-profile gates remain
+the acceptance proof for the actual desktop.
+
+The provider workflow contract and its Omarchy mutation regressions protect this
+job's native platform, current-source donor, ordered gates and read-only authority.
+The job has no Backend dependency, so it composes with the parallel nextest
+archive graph in #1394. A passing local image contract does not establish live
+provider acceptance, a public Agent response or production activation. Image
+promotion and runtime-default adoption remain separate authorized release steps.
 
 An OCI root digest, selected platform manifest digest, configuration digest,
 and Docker's local image ID are separate facts. Docker's local `.Id` is opaque:

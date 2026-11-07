@@ -14,12 +14,34 @@ const REPORT: &str = "umr_00000000000000000000000000000001";
 const SANDBOX: &str = "sbx_00000000000000000000000000000001";
 #[derive(Default)]
 pub(super) struct Store {
-    saved: Mutex<Option<Report>>,
+    pub(super) saved: Mutex<Option<Report>>,
     pub(super) revoked: AtomicBool,
+    pub(super) owner_context: Mutex<Vec<OwnerContextAccess>>,
 }
 #[async_trait]
 impl MetricsStore for Store {
-    async fn options(&self, scope: &Scope, query: OptionQuery) -> Result<FilterOptions> {
+    async fn owner_allocations(
+        &self,
+        r: &Report,
+        q: OwnerAllocationQuery,
+        owner_context: OwnerContextAccess,
+    ) -> Result<OwnerAllocations> {
+        self.owner_context.lock().unwrap().push(owner_context);
+        Ok(OwnerAllocations {
+            report_id: r.report_id.clone(),
+            metric: q.metric,
+            unit: q.unit().into(),
+            items: vec![],
+            next: None,
+            total_count: 0,
+        })
+    }
+    async fn options(
+        &self,
+        scope: &Scope,
+        query: OptionQuery,
+        owner_context: OwnerContextAccess,
+    ) -> Result<FilterOptions> {
         assert!(scope.admin);
         assert!(
             self.saved.lock().unwrap().is_none(),
@@ -28,12 +50,22 @@ impl MetricsStore for Store {
         if self.revoked.load(Ordering::SeqCst) {
             return Err(MetricsError::Unavailable);
         }
+        let mut items = vec![FilterOption {
+            value: "owner-a".into(),
+            label: option_label(query.kind, "owner-a", Some("Alex")),
+            disambiguator: None,
+        }];
+        if query.search == "duplicate" {
+            items.push(FilterOption {
+                value: "owner-b".into(),
+                ..items[0].clone()
+            });
+        }
+        let contexts = ["2026-11-01T12:30:00.001Z", "2026-11-01T12:30:00.002Z"]
+            .map(|at| OptionContext::owner_with_access(Some(at), owner_context));
+        disambiguate_options_with_context(&mut items, &contexts);
         Ok(FilterOptions {
-            items: vec![FilterOption {
-                value: "owner-a".into(),
-                label: option_label(query.kind, "owner-a", Some("Alex")),
-                disambiguator: None,
-            }],
+            items,
             next: Some("next-page".into()),
         })
     }

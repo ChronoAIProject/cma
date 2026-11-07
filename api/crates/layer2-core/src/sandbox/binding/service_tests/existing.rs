@@ -41,6 +41,72 @@ fn key() -> ProvidedCredential {
     ProvidedCredential::new(format!("nyx_{}", uuid::Uuid::new_v4().simple())).unwrap()
 }
 
+#[tokio::test]
+async fn queue_policy_updates_preserve_existing_agent_configuration_and_identity() {
+    let f = fixture();
+    let (_, conversation) = ready_agent(&f, "human").await;
+    let before = f.store.get_agent(&conversation.agent_id).await.unwrap();
+    let credential = key();
+    let mut value = profile("This must never replace the existing Agent instruction");
+    for seconds in [None, Some(86400), Some(3600), None] {
+        if let Some(seconds) = seconds {
+            value["queue_lifetime_seconds"] = seconds.into();
+        } else {
+            value
+                .as_object_mut()
+                .unwrap()
+                .remove("queue_lifetime_seconds");
+        }
+        let digest = format!("sha256:{}", content_digest(&value).unwrap());
+        let binding = f
+            .service
+            .put_existing_agent(
+                &f.caller,
+                "queue-policy",
+                value.clone(),
+                &digest,
+                &credential,
+                conversation.agent_id.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            binding.profile.effective_queue_lifetime_seconds(),
+            seconds.unwrap_or(300)
+        );
+        assert_eq!(
+            binding.honoured.contains(&"queue_lifetime_seconds".into()),
+            seconds.is_some()
+        );
+        assert_eq!(
+            binding.existing_agent.as_ref().unwrap().agent_id,
+            conversation.agent_id
+        );
+        assert_eq!(
+            f.store.get_agent(&conversation.agent_id).await.unwrap(),
+            before
+        );
+    }
+    let retained = f.store.binding("queue-policy").await.unwrap();
+    value["context"]["system_prompt"] = "Changed Agent configuration".into();
+    value["queue_lifetime_seconds"] = 86400.into();
+    let digest = format!("sha256:{}", content_digest(&value).unwrap());
+    assert!(matches!(
+        f.service
+            .put_existing_agent(
+                &f.caller,
+                "queue-policy",
+                value,
+                &digest,
+                &credential,
+                conversation.agent_id
+            )
+            .await,
+        Err(BindingError::Conflict)
+    ));
+    assert_eq!(f.store.binding("queue-policy").await.unwrap(), retained);
+}
+
 async fn attach(
     f: &Fixture,
     id: &str,

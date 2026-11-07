@@ -14,7 +14,7 @@ import './styles/components.css';
 import './AppError.css';
 import { lazy, Suspense, useLayoutEffect, useState } from 'react';
 import { Presence } from './ui/Presence';
-import { Button } from './ui/Button';
+import { IdentityNotice, IdentityError } from './auth/IdentityNotice';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
 import type { CreationRequest } from './create/CreationFlow';
 import { ReferenceProvider } from './profiles/ReferenceLink';
@@ -99,15 +99,17 @@ export function App() {
   const publicJourney = router.route.kind === 'public_trigger' || router.route.kind === 'launch';
   if (publicJourney)
     return (
-      <>
+      <div className="service-shell">
+        <IdentityNotice />
         <AgentApp router={router} />
         {usageDialog}
-      </>
+      </div>
     );
   const navigateService = (next: AppRoute) =>
     router.navigate(next.kind === 'agent_manager' ? lastAgentRoute : next);
   return (
     <div className="service-shell">
+      <IdentityNotice />
       {usageDialog}
       {home ? (
         <ServiceBody>
@@ -201,18 +203,7 @@ function AgentApp({
   if (state.status === 'checking') {
     return <ShellLoading label="Signing you in" />;
   }
-  if (state.status === 'error') {
-    return (
-      <main className="app-error" role="alert">
-        <h1 className="app-error__title">CMA could not reach its service</h1>
-        <p className="app-error__next">It may be starting up. Reload to try again.</p>
-        <Button variant="primary" onClick={() => window.location.reload()}>
-          Reload
-        </Button>
-        <p className="app-error__what">{state.message}</p>
-      </main>
-    );
-  }
+  if (state.status === 'error') return <IdentityError state={state} />;
   if (state.status === 'anonymous') {
     return (
       <PortalFrame

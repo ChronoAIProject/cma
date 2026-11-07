@@ -9,6 +9,12 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
         for (suffix, method, name, schema) in [
             ("/options", "post", "options", "UsageFilterOptions"),
             (
+                "/reports/{report}/owner-allocations",
+                "get",
+                "owner_allocations",
+                "UsageOwnerAllocations",
+            ),
+            (
                 "/reports/{report}/owners",
                 "get",
                 "owners",
@@ -35,7 +41,7 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
                 "UsageMetricRow",
             ),
         ] {
-            if matches!(name, "owners" | "options") && !admin {
+            if matches!(name, "owners" | "options" | "owner_allocations") && !admin {
                 continue;
             }
             let mut operation = json!({"operationId":format!("{}UsageMetrics{name}",if admin{"admin"}else{"owner"}),"tags":["usage-metrics"],
@@ -67,6 +73,14 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
                     parameters
                         .push(json!({"name":key,"in":"query","required":false,"schema":schema}));
                 }
+            }
+            if name == "owner_allocations" {
+                parameters.extend([
+                    json!({"name":"metric","in":"query","required":true,"schema":{"type":"string","enum":["cpu","memory","disk"]}}),
+                    json!({"name":"limit","in":"query","required":false,"schema":{"type":"integer","minimum":1,"maximum":200,"default":50}}),
+                    json!({"name":"cursor","in":"query","required":false,"schema":{"type":"string","minLength":1,"maxLength":4096}}),
+                ]);
+                operation["summary"] = json!("Paged owner allocation totals across the frozen administrator report; descending allocation then owner identity, reauthorized and budgeted on every read");
             }
             if name == "owners" {
                 parameters.extend([

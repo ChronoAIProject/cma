@@ -218,3 +218,83 @@ for (const [kind, label, safe] of [
     expect(api.options).toHaveBeenCalledWith(expect.objectContaining({ selected: value }));
   });
 }
+
+for (const [kind, contexts] of [
+  ['sandbox', ['Alice · Created 2026-11-01', 'Alice · Created 2026-11-02']],
+  ['sandbox', ['Alice · Created 2026-11-01 12:30 UTC', 'Alice · Created 2026-11-01 12:31 UTC']],
+  [
+    'sandbox',
+    ['Alice · Created 2026-11-01 12:30:00 UTC', 'Alice · Created 2026-11-01 12:30:01 UTC'],
+  ],
+  ['owner', ['Joined 2026-11-01 12:30 UTC', 'Joined 2026-11-01 12:31 UTC']],
+  ['owner', ['Joined 2026-11-01 12:30:00.001 UTC', 'Joined 2026-11-01 12:30:00.002 UTC']],
+] as const) {
+  it(`${kind} announces distinct human context for ${contexts[0]} and keeps the selected name plain`, async () => {
+    const api = metricsClient(true);
+    const change = vi.fn();
+    const name = kind === 'owner' ? 'Alice' : 'Research';
+    const label = kind === 'owner' ? 'Owner' : 'Sandbox';
+    const items = contexts.map((disambiguator, index) => ({
+      value: `opaque-${index}`,
+      label: name,
+      disambiguator,
+    }));
+    api.options.mockResolvedValue({ items, next: null });
+    const view = render(
+      <FilterOptionPicker api={api} kind={kind} value="" onChange={change} active />,
+    );
+    await userEvent.click(screen.getByRole('button', { name: new RegExp(`^${label}:`) }));
+    for (const context of contexts) {
+      const option = await screen.findByRole('menuitemradio', { name: `${name} ${context}` });
+      expect(option).toHaveTextContent(context);
+      expect(option).not.toHaveTextContent(/reference|opaque/);
+    }
+    await userEvent.click(screen.getByRole('menuitemradio', { name: `${name} ${contexts[1]}` }));
+    expect(change).toHaveBeenLastCalledWith('opaque-1');
+    view.rerender(
+      <FilterOptionPicker api={api} kind={kind} value="opaque-1" onChange={change} active />,
+    );
+    const trigger = screen.getByRole('button', { name: `${label}: ${name}` });
+    expect(trigger).toHaveTextContent(name);
+    expect(trigger.title).toBe(name);
+    expect(trigger).not.toHaveTextContent(/Created|Joined|reference|opaque/);
+  });
+}
+
+it('announces distinct final contexts when an owner name resembles generated creation text', async () => {
+  const api = metricsClient(true);
+  const change = vi.fn();
+  const contexts = [
+    'Alice · Created 2026-11-01 12:30 UTC',
+    'Alice · Created 2026-11-02',
+    'Alice · Created 2026-11-01 · Created 2026-11-03',
+  ];
+  api.options.mockResolvedValue({
+    items: contexts.map((disambiguator, index) => ({
+      value: `sandbox-${index}`,
+      label: 'Research',
+      disambiguator,
+    })),
+    next: null,
+  });
+  const view = render(
+    <FilterOptionPicker api={api} kind="sandbox" value="" onChange={change} active />,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Sandbox: All Sandboxes' }));
+  for (const context of contexts) {
+    const option = await screen.findByRole('menuitemradio', {
+      name: `Research ${context}`,
+    });
+    expect(option).toHaveTextContent(context);
+    expect(option).not.toHaveTextContent('reference');
+  }
+  expect(screen.getAllByRole('menuitemradio', { name: /^Research / })).toHaveLength(3);
+  await userEvent.click(screen.getByRole('menuitemradio', { name: `Research ${contexts[2]}` }));
+  expect(change).toHaveBeenLastCalledWith('sandbox-2');
+  view.rerender(
+    <FilterOptionPicker api={api} kind="sandbox" value="sandbox-2" onChange={change} active />,
+  );
+  const selected = screen.getByRole('button', { name: 'Sandbox: Research' });
+  expect(selected.title).toBe('Research');
+  expect(selected).not.toHaveTextContent(/Created|reference/);
+});

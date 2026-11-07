@@ -113,6 +113,10 @@ module CIContract
     step(gate, "Release workflow and Gateway source contracts", "ruby .github/scripts/ci-contract.rb release")
     step(gate, "Release contract mutation regressions", "ruby .github/scripts/ci-contract-tests.rb release")
     step(gate, "Runtime image evidence and provenance regressions", "node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs")
+    step(gate, "Debian desktop fixture regressions", <<~SH)
+      python3 .github/scripts/desktop-browser-input-tests.py
+      node --test .github/scripts/desktop-browser-page.test.cjs
+    SH
     images = job(ci, "images", "Images")
     require!(!images.key?("if") && images.dig("strategy", "matrix", "component") == %w[api web runtime runtime-desktop cmaeg image-manager], "all image gates must execute")
     %w[images image-exports].each do |id|
@@ -177,12 +181,15 @@ module CIContract
 
   def self.provider(inputs)
     ci = inputs.fetch("ci")
+    require_relative "omarchy-ci-contract"
+    OmarchyCIContract.validate(ci)
     workflow = inputs.fetch("nightly-staging")
     gate = job(ci, "trigger-provider-smoke-contract", "Trigger provider smoke contract")
     require!(!gate.key?("if") && !gate.key?("needs"), "provider contract must execute on every PR")
     {
       "Provider workflow authority contract" => "ruby .github/scripts/ci-contract.rb provider",
       "Provider contract mutation regressions" => "ruby .github/scripts/ci-contract-tests.rb provider",
+      "Backend capacity preparation regressions" => "python3 .github/scripts/backend-capacity-tests.py",
       "Staging authority and evidence regressions" => "node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs",
       "Authenticated Mongo startup regressions" => "node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/image-manager-mongo-contract.test.mjs",
       "Typecheck every harness entry point" => "npm run e2e:typecheck",
@@ -192,6 +199,7 @@ module CIContract
       "Local browser guard mechanics" => "npm run e2e:mechanics",
     }.each { |name, command| step(gate, name, command) }
     backend_jobs(ci)
+    step(gate, "Backend resource sampling regressions", "python3 .github/scripts/backend-resource-sampler-tests.py")
     require!(workflow["permissions"] == { "contents" => "read" }, "remote workflow permissions broadened")
     require!(workflow.dig("concurrency", "cancel-in-progress") == false, "remote writers cannot be cancelled by a newer run")
     triggers = workflow["on"] || workflow[true]

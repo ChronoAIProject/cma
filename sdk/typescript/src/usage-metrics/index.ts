@@ -3,6 +3,12 @@ import { ProtocolError, ValidationError } from '../errors.js';
 import type { OperationOptions } from '../http.js';
 import { query, read, segment } from '../resources.js';
 import * as schema from './schema.js';
+import { ownerAllocations, type UsageOwnerAllocationQuery } from './owner-allocation.js';
+export type {
+  UsageOwnerAllocationQuery,
+  UsageOwnerAllocations,
+  UsageOwnerAllocation,
+} from './owner-allocation.js';
 import { filterOptions, type UsageFilterOptionsQuery } from './options.js';
 export type { UsageFilterOptionsQuery, UsageFilterOptions } from './options.js';
 export type {
@@ -56,6 +62,10 @@ export class SandboxMetrics {
   /** Bounded administrator discovery independent of report readiness. */
   options(query: UsageFilterOptionsQuery) {
     return filterOptions(this.config, this.admin, query);
+  }
+  /** Paged, globally ranked allocation across the same report; administrator only. */
+  ownerAllocations(id: string, options: UsageOwnerAllocationQuery) {
+    return ownerAllocations(this.config, this.admin, id, options);
   }
   constructor(
     readonly config: ResolvedConfig,

@@ -1,13 +1,19 @@
 import type { Page } from '@playwright/test';
 
 /** Local RFB frames prove viewer behavior; remote-runtime evidence is separate. */
-export async function desktopBoundary(page: Page, autoPaint = true) {
+export async function desktopBoundary(
+  page: Page,
+  autoPaint = true,
+  autoConnect: boolean | ((connection: number) => boolean) = true,
+) {
   const connections: number[] = [];
   const painters: (() => void)[] = [];
+  const starters: (() => void)[] = [];
   const inputs: { kind: 'key' | 'pointer'; down?: boolean; keysym?: number; buttons?: number }[] =
     [];
   await page.routeWebSocket('**/api/v1/agents/agt_contract/desktop/ws', (socket) => {
-    connections.push(connections.length);
+    const index = connections.length;
+    connections.push(index);
     const paint = () => {
       // One actual, opaque black RRE framebuffer rectangle. A handshake alone
       // must not dismiss the loading surface or enable input.
@@ -41,7 +47,9 @@ export async function desktopBoundary(page: Page, autoPaint = true) {
       }
       step++;
     });
-    socket.send(Buffer.from('RFB 003.008\n'));
+    const start = () => socket.send(Buffer.from('RFB 003.008\n'));
+    starters.push(start);
+    if (typeof autoConnect === 'function' ? autoConnect(index) : autoConnect) start();
   });
   // Playwright adds a prototype level to WebSocket. noVNC checks only one level;
   // expose the routed socket's existing descriptors without replacing its behavior.
@@ -73,5 +81,10 @@ export async function desktopBoundary(page: Page, autoPaint = true) {
       },
     });
   });
-  return { connections, inputs, paint: () => painters.at(-1)?.() };
+  return {
+    connections,
+    inputs,
+    paint: () => painters.at(-1)?.(),
+    connect: () => starters.at(-1)?.(),
+  };
 }

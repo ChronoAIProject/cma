@@ -7,13 +7,11 @@ use std::time::Duration;
 use tokio::sync::{Mutex, OnceCell};
 
 use super::{
-    identity::{self, VerifiedSubject},
-    persistence::SecretDigest,
-    verification_error::ProviderVerificationError,
-    AuthState, ProviderMetadata,
+    identity::VerifiedSubject, identity_fallback::CredentialPurpose, persistence::SecretDigest,
+    verification_error::ProviderVerificationError, AuthState, ProviderMetadata,
 };
 
-const PROVIDER_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(15);
+const PROVIDER_VERIFICATION_TIMEOUT: Duration = super::identity_retry::DEADLINE;
 const MAX_VERIFICATION_FLIGHTS: usize = 256;
 type VerificationFlight = OnceCell<Result<Arc<VerifiedSubject>, ProviderVerificationError>>;
 
@@ -63,29 +61,42 @@ async fn verify_with_timeout(
     credential: &str,
     timeout: Duration,
 ) -> Result<Arc<VerifiedSubject>, ProviderVerificationError> {
-    // AuthState fixes the provider/client scope. The key contains no raw bearer;
-    // distinct credentials must never share identity, permissions or expiry.
+    verify_optional_metadata(auth, Some(metadata), credential, timeout).await
+}
+
+pub(super) async fn verify_request(
+    auth: &AuthState,
+    credential: &str,
+) -> Result<Arc<VerifiedSubject>, ProviderVerificationError> {
+    verify_optional_metadata(auth, None, credential, PROVIDER_VERIFICATION_TIMEOUT).await
+}
+
+async fn verify_optional_metadata(
+    auth: &AuthState,
+    metadata: Option<&ProviderMetadata>,
+    credential: &str,
+    timeout: Duration,
+) -> Result<Arc<VerifiedSubject>, ProviderVerificationError> {
     let key = SecretDigest::identify("independent-bearer-verification", credential);
     let flight = auth.bearer_verifications.acquire(&key).await;
-    // Completed evidence is not reused by later requests. Every caller retains
-    // its own custody, expiry, resource policy and command fences after this IO.
-    // OnceCell keeps verification attached to a caller: cancellation never
-    // leaves a detached provider task running or a permanently pending entry.
     let verified = match tokio::time::timeout(
         timeout,
-        flight.get_or_init(|| async {
-            identity::verify_subject(auth, metadata, credential)
-                .await
-                .map(Arc::new)
+        flight.get_or_init(|| {
+            let purpose = if super::agent_keys::is_agent_key(credential) {
+                CredentialPurpose::AgentKey
+            } else {
+                CredentialPurpose::IndependentBearer
+            };
+            super::identity_retry::verify(auth, metadata, credential, purpose, None, None, timeout)
         }),
     )
     .await
     {
         Ok(result) => result.clone(),
         Err(_) => {
-            identity::verification_failure("bearer", "deadline", None);
+            auth.identity_store.invalidate_token(credential);
             Err(ProviderVerificationError::Unavailable(
-                "bearer authorization verification deadline exceeded".into(),
+                "identity caller deadline elapsed".into(),
             ))
         }
     };

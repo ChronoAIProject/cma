@@ -5,7 +5,23 @@ use std::sync::Arc;
 
 #[async_trait]
 pub trait MetricsStore: Send + Sync {
-    async fn options(&self, _scope: &Scope, _query: OptionQuery) -> Result<FilterOptions> {
+    fn check_read_budget(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn owner_allocations(
+        &self,
+        _report: &Report,
+        _query: OwnerAllocationQuery,
+        _owner_context: OwnerContextAccess,
+    ) -> Result<OwnerAllocations> {
+        Err(MetricsError::Unavailable)
+    }
+    async fn options(
+        &self,
+        _scope: &Scope,
+        _query: OptionQuery,
+        _owner_context: OwnerContextAccess,
+    ) -> Result<FilterOptions> {
         Err(MetricsError::Unavailable)
     }
     async fn resolve_agent(&self, scope: &Scope, id: &str) -> Result<String>;
@@ -27,10 +43,35 @@ pub struct MetricsService {
     store: Arc<dyn MetricsStore>,
 }
 impl MetricsService {
+    pub async fn owner_allocations(
+        &self,
+        caller: &Caller,
+        id: &str,
+        query: OwnerAllocationQuery,
+        now: u64,
+    ) -> Result<OwnerAllocations> {
+        authorize(caller, true)?;
+        query.validate()?;
+        self.store.check_read_budget()?;
+        let report = self.ready(caller, true, id, now).await?;
+        self.store
+            .owner_allocations(
+                &report,
+                query,
+                OwnerContextAccess::from_authorization(&caller.authorization),
+            )
+            .await
+    }
     pub async fn options(&self, caller: &Caller, query: OptionQuery) -> Result<FilterOptions> {
         let scope = authorize(caller, true)?;
         query.validate()?;
-        self.store.options(&scope, query).await
+        self.store
+            .options(
+                &scope,
+                query,
+                OwnerContextAccess::from_authorization(&caller.authorization),
+            )
+            .await
     }
     pub fn new(store: Arc<dyn MetricsStore>) -> Arc<Self> {
         Arc::new(Self { store })

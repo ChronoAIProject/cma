@@ -415,7 +415,7 @@ and the public Trigger embed routes are already included in the OpenAPI table.
 | --- | --- |
 | `GET /auth/login` | Start browser OAuth sign-in or registration. |
 | `GET /auth/callback` | Complete the browser identity exchange. |
-| `GET /auth/session` | Read the signed-in subject and capabilities. |
+| `GET /auth/session` | Read the signed-in subject and capabilities. Exhausted identity outages return 503 `identity_unavailable` with `Retry-After: 3`; only this browser-cookie read may use bounded recent evidence under [Identity Outage Policy](Identity_Outage_Policy.md). |
 | `GET /auth/logout` | End browser sign-in and redirect through logout. |
 | `POST /auth/connections/check` | Check the owner's selected service connection. |
 | `POST /auth/connections/start` | Start the browser service connection flow. |
