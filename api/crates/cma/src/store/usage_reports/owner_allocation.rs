@@ -75,6 +75,8 @@ impl ReportingStore {
         ];
         // Mongo errors can include user data. Do not log driver errors here.
 
+        #[cfg(test)]
+        let query_started = std::time::Instant::now();
         let mut cursor = self
             .collection(ROWS)
             .aggregate(pipeline)
@@ -87,6 +89,10 @@ impl ReportingStore {
             .await
             .map_err(|_| MetricsError::Unavailable)?
             .ok_or(MetricsError::Unavailable)?;
+        #[cfg(test)]
+        tracing::info!(target: "cma::store::usage_reports::budget", reason = "owner_aggregate_sample", probe = true, elapsed_ms = query_started.elapsed().as_millis() as u64);
+        #[cfg(test)]
+        let labels_started = std::time::Instant::now();
         let total_count = document
             .get_array("count")
             .map_err(|_| MetricsError::Unavailable)?
@@ -121,6 +127,8 @@ impl ReportingStore {
             .into_iter()
             .map(|label| (label.value.clone(), label))
             .collect();
+        #[cfg(test)]
+        tracing::info!(target: "cma::store::usage_reports::budget", reason = "owner_labels_sample", probe = true, elapsed_ms = labels_started.elapsed().as_millis() as u64);
         let mut items = Vec::new();
         for value in document
             .get_array("page")

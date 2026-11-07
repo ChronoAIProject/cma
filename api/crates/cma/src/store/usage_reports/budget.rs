@@ -18,6 +18,15 @@ struct Pressure {
 }
 impl Pressure {
     fn checkout(&self, key: u64, duration: Duration, failed: bool, at: Instant) {
+        #[cfg(test)]
+        tracing::info!(
+            reason = "checkout_sample",
+            probe = true,
+            client_key = Arc::as_ptr(&self.circuit) as usize as u64,
+            connection_key = key,
+            elapsed_ms = duration.as_millis() as u64,
+            failed
+        );
         if !failed {
             let mut pending = self.checked_out.lock().unwrap_or_else(|e| e.into_inner());
             // The reporting pool has four connections; bound diagnostic state
@@ -67,6 +76,14 @@ impl Pressure {
             .remove(&key);
         if let Some(start) = start {
             let duration = at.saturating_duration_since(start);
+            #[cfg(test)]
+            tracing::info!(
+                reason = "connection_hold_sample",
+                probe = true,
+                client_key = Arc::as_ptr(&self.circuit) as usize as u64,
+                connection_key = key,
+                elapsed_ms = duration.as_millis() as u64
+            );
             if duration > DB_DEADLINE {
                 self.open(
                     "connection_hold",
@@ -134,6 +151,13 @@ pub(crate) struct ReadTimer {
 }
 impl Drop for ReadTimer {
     fn drop(&mut self) {
+        #[cfg(test)]
+        tracing::info!(
+            reason = "read_wall_sample",
+            probe = true,
+            operation = self.operation,
+            elapsed_ms = self.start.elapsed().as_millis() as u64
+        );
         tracing::debug!(
             operation = self.operation,
             elapsed_ms = self.start.elapsed().as_millis() as u64,
