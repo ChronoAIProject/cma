@@ -225,3 +225,65 @@ its files and returns terminal `workspace_prepare_outcome_unknown`; the Workspac
 worker records Failed and clears pending work, rather than retrying indefinitely.
 The Sandbox remains Active. That incomplete Workspace requires explicit recovery;
 it is not marked Ready and does not admit an Agent as a usable workspace.
+
+## Runtime mutation ledger capacity
+
+The API distinguishes a reachable runtime's full mutation ledger from runtime
+loss, owner quota and native HTTP concurrency pressure. Both runtime transports
+recognize only the exact pair `mutation_ledger_capacity` /
+`runtime mutation ledger capacity is exhausted` before generic retryability.
+Details are never trimmed or matched by prefix/suffix. For retained runtimes,
+only these exact legacy code/detail pairs have the same meaning:
+
+| Code | Detail |
+| --- | --- |
+| `mutation_authority_corrupt` | `runtime mutation authority contains too many records` |
+| `mutation_authority_corrupt` | `mutation authority contains too many records` |
+| `mutation_journal_corrupt` | `runtime mutation journal contains too many entries` |
+
+Other corruption, stale/conflicting authority and prefix/suffix near-matches keep
+their existing behavior. A capacity refusal is not evidence that an operation
+completed or that a process, home or Worktree disappeared. It never authorizes
+runtime replacement.
+
+Held Agent startup, connection publication/recovery, first-message attachment,
+skill installation and cleanup keep their original pending work. The existing
+durable attempt count schedules retries at 30, 60, 120, 240 and then 300 seconds
+from the completed failure. A configured base longer than 300 seconds remains
+unchanged. Successful advancement resets attempts. Restart/takeover does not
+reset the schedule. No lease is held while waiting; retries retain operation IDs
+and request digests and claim normally allocated newer fences. Once capacity is
+restored, recovery can be delayed by up to the current retry interval.
+
+A fixed `agent_runtime_ledger_hold` failure records the reason. Consecutive holds
+at the same step reuse the exact retained tail marker, with the full Agent,
+lease, log and parent checks in the existing transaction; they do not append an
+unbounded stream of duplicate diagnostics. At the normal Agent-log limit this
+marker uses existing diagnostic headroom and preserves the active turn, partial
+answer, output receipt and cleanup debt. If even that reserved headroom is
+unavailable, the publication fails closed without settling the Agent as failed
+or cleanup as complete; normal lease expiry controls takeover. This does not
+repair a full Agent log or grant normal startup publication extra log capacity.
+
+The API's structured operational metrics emit `agent runtime ledger hold
+observed`, a fixed `reason=runtime_ledger_capacity`, and a saturating process-local
+`failures_total`. It counts observed refused attempts, not Sandboxes, and resets
+with the API process. It excludes provider error text, resource identifiers and
+caller spans. `occupancy=unknown` and `occupancy_support=unknown` are explicit:
+these failures provide no trustworthy occupancy/free-slot count. RuntimeStatus
+JSON remains unchanged; observation does not scan or mutate runtime ledgers.
+
+| API | Runtime | Capacity behavior |
+| --- | --- | --- |
+| Old | Old | Legacy nonretryable rejection; startup may fail and cleanup follows the old retry path. |
+| New | Old | Exact legacy capacity pairs retain pending work with sparse retries. |
+| New | New | The exact capacity code/detail pair retains pending work with sparse retries. |
+| Old | New | Requires `mutation_ledger_capacity` with `retryable=false`; the old API treats it as nonretryable rejection, not runtime loss or quota. Startup can still fail. |
+
+This is API containment only. Existing runtimes keep their image and ledgers;
+retries can still consume authority on an old runtime, at a reduced rate. It
+neither frees slots nor permanently bounds their growth. Runtime prevention and
+any repair of an exhausted home require their separate release/recovery work.
+No durable schema, operation identity, receipt or fence format changes here.
+An API rollback can read these records but restores its previous failure/retry
+behavior; format compatibility does not retain this containment policy.

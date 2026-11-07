@@ -53,7 +53,8 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        self.retry_connection_with_failure(claimed, failure, now, self.config.retry_delay)
+        let delay = self.failure_retry_delay(claimed, failure.is_ledger_hold());
+        self.retry_connection_with_failure(claimed, failure, now, delay)
             .await
     }
 

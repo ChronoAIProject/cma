@@ -416,6 +416,7 @@ fn protected_setup_failure(error: AdapterError, phase: &'static str) -> AdapterE
         AdapterError::OperationIdentityConflict(_) => {
             AdapterError::OperationIdentityConflict(detail)
         }
+        AdapterError::RuntimeLedgerHold(_) => AdapterError::RuntimeLedgerHold(detail),
         AdapterError::AtCapacity(_) => AdapterError::AtCapacity(detail),
         AdapterError::Unsupported(_) => AdapterError::Unsupported(detail),
         AdapterError::RuntimeContractMismatch(_) => AdapterError::Rejected(detail),
