@@ -244,6 +244,33 @@ pub struct Receipt {
     )]
     /// Wire field `reason`.
     pub reason: Option<Option<String>>,
+    /// Wire field `dispatch`: per-channel durable dispatch progress.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch: Option<Vec<DispatchProgress>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+/// One channel's durable GitHub dispatch progress.
+pub struct DispatchProgress {
+    /// Channel identity selected from the owner's persisted definitions.
+    pub channel_id: String,
+    /// `pending`, `dispatched` or a definitive refusal state.
+    pub status: String,
+    /// Optional bounded refusal/recovery reason.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    pub reason: Option<Option<String>>,
+    /// Committed ordinary routed admission ID, when available.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::native_media_update::present"
+    )]
+    pub admission_id: Option<Option<String>>,
 }
 
 /// CMAEG `Task` wire document.

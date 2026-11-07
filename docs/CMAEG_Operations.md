@@ -33,13 +33,13 @@ it does not permit a rollback to an image below that floor.
 When enabled, initialization runs in the background after the HTTP listener binds,
 using the existing gateway Mongo connection and keyring. GitHub operations return
 503 until initialization succeeds; ordinary channel traffic can proceed meanwhile.
-Missing or version-1/version-2/version-3 `github_integrations` storage is prepared in service code:
-the record validator, owner/kind index and migration-marker validator are updated,
-then the version-5 marker is committed with majority acknowledgement. The expiry
+Missing or version-1/version-2/version-3/version-4/version-5 `github_integrations` storage is prepared in service code:
+the record validator, owner/kind index, pending-dispatch recovery index and migration-marker validator are updated,
+then the version-6 marker is committed with majority acknowledgement. An older `--migrate` must not narrow these additive validator/index rules; rollback keeps GitHub unavailable until a version-6 reader returns. The expiry
 field/TTL index apply only to delivery rows. Legacy receipts receive one fixed
 seven-day cleanup deadline; their sealed bodies and configuration are not rewritten.
-Version 4 skips DDL and verifies runtime authority plus both permanent and receipt
-TTL indexes; unknown
+Version 6 readers verify runtime authority plus both permanent and receipt
+TTL indexes; unknown versions are refused without downgrading them; unknown
 versions are refused without downgrading them.
 
 The normal rollout needs no `--migrate-automation` command or external migration

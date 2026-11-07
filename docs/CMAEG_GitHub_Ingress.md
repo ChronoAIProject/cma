@@ -66,7 +66,7 @@ jittered backoff within 3.5 seconds. Approval commits audit/idempotency atomical
 Management CAS version and effective eligibility revision are separate: unrelated
 repository events and already-applied exclusions do not advance authority revision.
 
-Version 5 storage is prepared through the existing flag-gated startup migration.
+Version 6 storage is prepared through the existing flag-gated startup migration.
 Unknown versions and unreadable legacy records fail closed; no static config
 loader or legacy execution worker remains. Receipt reads/replay return 410 after the recorded deadline while the row remains,
 then 404 after TTL removal. Ignored duplicate recovery is bounded to seven days;

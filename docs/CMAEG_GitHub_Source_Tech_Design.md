@@ -12,7 +12,7 @@ prerequisite or fallback. The owner's current release decisions govern.
 | App control plane | `github/integrations.rs`, `mutations.rs`, `http.rs`: owner-scoped registration, credential custody, independent App verification and terminal retirement |
 | Installation authority | `github/bindings.rs`, `model.rs`: pending requests, admin approval/re-approval, exact approved repository sets, CAS and replay |
 | Lifecycle | `github/installations.rs`, `receiver.rs`: immediate tightening, durable exclusions, no positive-event widening, compact ignored outcomes |
-| Storage | `github/store.rs`, `binding_store.rs`, `schema.rs`, `startup.rs`: sealed records, transactional guards, version-5 feature-gated initialization and bounded receipt TTL |
+| Storage | `github/store.rs`, `binding_store.rs`, `schema.rs`, `startup.rs`: sealed records, transactional guards, version-6 feature-gated initialization and bounded receipt TTL |
 | Channel selection | Saved `Source::Github` identities/allowlists; dynamic owner/binding checks and current source diagnostics |
 | Ordinary execution | `github/receiver.rs` plus existing routed admission: receipt-first recovery, compact System Event, explicit non-human consent, task ID equals admission ID |
 | Serialization | CMA's existing per-Agent durable command lane, capacity 64; both bindings explicitly opt into the deployed bounded queue-lifetime policy |

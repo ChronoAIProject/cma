@@ -2982,8 +2982,8 @@ support preserves records and performs no GitHub schema writes. New or changed
 GitHub sources remain subject to `github_writes_disabled`; retaining unchanged
 sources or removing them remains allowed.
 
-Startup prepares missing/version-1/version-2/version-3/version-4 storage with the existing database
-credential and commits the `github_integrations` version-5 marker last. It verifies
+Startup prepares missing/version-1/version-2/version-3/version-4/version-5 storage with the existing database
+credential and commits the `github_integrations` version-6 marker last. It verifies
 runtime authority and indexes before publishing readiness. Unknown versions fail
 closed; the 30-second initialization deadline or an error leaves GitHub unavailable
 until a later successful startup. No manual migration is required for a normal

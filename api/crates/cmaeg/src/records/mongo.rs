@@ -1,5 +1,5 @@
 //! Gateway-owned sealed record persistence. No Agent Manager collections.
-use super::{RecordError, RecordHead, RecordKind, RecordValue};
+use super::{AuthorityGuard, RecordError, RecordHead, RecordKind, RecordValue};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
@@ -123,6 +123,7 @@ impl MongoRecords {
             .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn guarded_insert_interaction(
         &self,
         id: &str,
@@ -131,6 +132,7 @@ impl MongoRecords {
         expires_at: i64,
         channel_record_id: &str,
         channel_version: u64,
+        authority_guards: &[AuthorityGuard],
     ) -> Result<u64, RecordError> {
         if self.kind != RecordKind::Interaction
             || id.is_empty()
@@ -175,6 +177,30 @@ impl MongoRecords {
                 expected: channel_version,
                 actual: None,
             });
+        }
+        let authorities = self.db.collection::<Document>("eg_automation_records");
+        for guard in authority_guards {
+            let changed = authorities
+                .update_one(
+                    doc! {
+                        "_id": &guard.id,
+                        "owner": &guard.owner,
+                        "kind": guard.kind,
+                        "version": i64::try_from(guard.version).map_err(|_| {
+                            RecordError::Rejected("invalid authority version".into())
+                        })?,
+                    },
+                    doc! {"$inc":{"guard_revision":1_i64}},
+                )
+                .session(&mut session)
+                .await
+                .map_err(failure)?;
+            if changed.matched_count != 1 {
+                return Err(RecordError::Conflict {
+                    expected: guard.version,
+                    actual: None,
+                });
+            }
         }
         let row = Record {
             id: id.into(),
@@ -389,7 +415,7 @@ fn failure(_: mongodb::error::Error) -> RecordError {
 #[path = "mongo_schema.rs"]
 mod schema;
 pub(crate) use schema::migration_validator;
-pub use schema::{migrate, role, verify, verify_with_authority};
+pub use schema::{guard_migration_required, migrate, role, verify, verify_with_authority};
 
 #[path = "mongo_thread_fences.rs"]
 mod thread_fences;

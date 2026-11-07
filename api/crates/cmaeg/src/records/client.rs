@@ -7,6 +7,9 @@ use cmaeg_core::{channel::Secret, ids::RecordId};
 use reqwest::{Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 
+#[path = "client_guarded.rs"]
+mod guarded;
+
 const RECORD_PATH: &str = "/api/v1/gateway/channel-records";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +22,16 @@ pub struct RecordValue {
 pub struct RecordHead {
     pub record_id: String,
     pub owner: String,
+    pub version: u64,
+}
+
+/// A versioned authority row that must be written with a guarded interaction
+/// root. This is crate-private because only routed admission may use it.
+#[derive(Clone, Debug)]
+pub(crate) struct AuthorityGuard {
+    pub owner: String,
+    pub kind: &'static str,
+    pub id: String,
     pub version: u64,
 }
 
@@ -197,30 +210,6 @@ impl RecordClient {
         expected_version: Option<u64>,
     ) -> Result<u64, RecordError> {
         self.put_expiring(record_id, owner, blob, expected_version, None)
-            .await
-    }
-
-    pub(crate) async fn put_interaction_guarded(
-        &self,
-        id: &str,
-        owner: &str,
-        blob: &[u8],
-        expires_at: i64,
-        channel_record_id: &str,
-        channel_version: u64,
-    ) -> Result<u64, RecordError> {
-        let database = self.database.as_ref().ok_or_else(|| {
-            RecordError::Unavailable("guarded admission requires local records".into())
-        })?;
-        database
-            .guarded_insert_interaction(
-                id,
-                owner,
-                blob,
-                expires_at,
-                channel_record_id,
-                channel_version,
-            )
             .await
     }
 
