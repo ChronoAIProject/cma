@@ -75,7 +75,7 @@ nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~whatsapp_retention_on_real_mongo)'
 nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=mongo_isolation)'
-nextest_build run --concurrency 1 --run-ignored only --test-threads 1 --no-fail-fast \
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=management) and test(~github_integrations::)'
 nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=management) and test(~organization_channels::)'
