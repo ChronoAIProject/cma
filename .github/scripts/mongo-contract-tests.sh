@@ -56,26 +56,27 @@ existing_volume=$(docker volume ls --quiet --filter "name=^${contract_volume}$")
 
 cleanup() {
   local status=$? ids remaining id volume owner
+  # 125 tells the coordinator cleanup is uncertain, so no new phase may start.
   trap - EXIT
   trap '' INT TERM
   if ! ids=$(docker ps --all --quiet --filter "label=${contract_label}"); then
-    exit 1
+    exit 125
   fi
   for id in $ids; do
-    [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || exit 1
-    docker rm --force "$id" >/dev/null || status=1
+    [[ "$id" =~ ^[0-9a-f]{12,64}$ ]] || exit 125
+    docker rm --force "$id" >/dev/null || status=125
   done
-  remaining=$(docker ps --all --quiet --filter "label=${contract_label}") || exit 1
-  [[ -z "$remaining" ]] || status=1
-  volume=$(docker volume ls --quiet --filter "name=^${contract_volume}$") || exit 1
+  remaining=$(docker ps --all --quiet --filter "label=${contract_label}") || exit 125
+  [[ -z "$remaining" ]] || status=125
+  volume=$(docker volume ls --quiet --filter "name=^${contract_volume}$") || exit 125
   if [[ -n "$volume" ]]; then
-    [[ "$volume" == "$contract_volume" ]] || exit 1
-    owner=$(docker volume inspect --format '{{index .Labels "dev.chrono.cma.mongo-contract"}}' "$volume") || exit 1
-    [[ "$owner" == "$contract_name" ]] || exit 1
-    docker volume rm "$volume" >/dev/null || status=1
+    [[ "$volume" == "$contract_volume" ]] || exit 125
+    owner=$(docker volume inspect --format '{{index .Labels "dev.chrono.cma.mongo-contract"}}' "$volume") || exit 125
+    [[ "$owner" == "$contract_name" ]] || exit 125
+    docker volume rm "$volume" >/dev/null || status=125
   fi
-  remaining=$(docker volume ls --quiet --filter "name=^${contract_volume}$") || exit 1
-  [[ -z "$remaining" ]] || status=1
+  remaining=$(docker volume ls --quiet --filter "name=^${contract_volume}$") || exit 125
+  [[ -z "$remaining" ]] || status=125
   exit "$status"
 }
 trap cleanup EXIT
