@@ -193,7 +193,7 @@ pub async fn check(
                     "GitHub storage is unavailable.",
                 )),
             }
-            checks.push(item("github_dispatch", "Durable business dispatch", false, "Business dispatch is unavailable in this release; eligible deliveries return github_dispatch_unavailable without consuming their delivery ID."));
+            checks.push(item("github_dispatch", "Durable business dispatch", true, "Eligible deliveries commit a receipt before ordinary routed admission; per-channel progress is recoverable after restart."));
             "github".into()
         }
     };

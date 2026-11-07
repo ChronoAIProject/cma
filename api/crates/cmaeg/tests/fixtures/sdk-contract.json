@@ -9870,6 +9870,14 @@
       "fallback_value": "26 October 2026"
     }
   ],
+  "DispatchProgress": [
+    {
+      "channel_id": "cmaeg1.ch.example",
+      "status": "dispatched",
+      "reason": null,
+      "admission_id": "admission-1"
+    }
+  ],
   "EmptyEffectRequest": [
     {}
   ],
@@ -11150,7 +11158,7 @@
       "app_identity_verification": true,
       "ownership_verification": true,
       "automatic_reconciliation": false,
-      "durable_dispatch": false
+      "durable_dispatch": true
     }
   ],
   "Receipt": [
@@ -11164,7 +11172,15 @@
       "raw_body_expires_at": 1700086400,
       "body_sha256": "fixture-body-digest",
       "task_ids": [],
-      "authority_revision": 0
+      "authority_revision": 0,
+      "dispatch": [
+        {
+          "channel_id": "cmaeg1.ch.example",
+          "status": "dispatched",
+          "reason": null,
+          "admission_id": "admission-1"
+        }
+      ]
     },
     {
       "receipt_id": "receipt-fixture",
@@ -11179,7 +11195,15 @@
       "authority_revision": 0,
       "installation_id": null,
       "repository_id": null,
-      "action": null
+      "action": null,
+      "dispatch": [
+        {
+          "channel_id": "cmaeg1.ch.example",
+          "status": "dispatched",
+          "reason": null,
+          "admission_id": "admission-1"
+        }
+      ]
     },
     {
       "receipt_id": "receipt-fixture",
@@ -11196,7 +11220,15 @@
       "authority_revision": 1,
       "action": "opened",
       "installation_id": 99,
-      "repository_id": 1001
+      "repository_id": 1001,
+      "dispatch": [
+        {
+          "channel_id": "cmaeg1.ch.example",
+          "status": "dispatched",
+          "reason": null,
+          "admission_id": "admission-1"
+        }
+      ]
     },
     {
       "receipt_id": "receipt-fixture",
@@ -11210,7 +11242,15 @@
       "task_ids": [],
       "authority_revision": 0,
       "reason": "installation_unbound",
-      "retained_until": 1700604800
+      "retained_until": 1700604800,
+      "dispatch": [
+        {
+          "channel_id": "cmaeg1.ch.example",
+          "status": "dispatched",
+          "reason": null,
+          "admission_id": "admission-1"
+        }
+      ]
     }
   ],
   "Task": [

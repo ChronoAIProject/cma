@@ -135,11 +135,11 @@ retired parent prevents any authority use or reactivation. Lookup also supports
 existing `(app_id, installation_id)` IDs, but only when their owner and integration
 match. It never reuses a retired integration's approval for its replacement.
 
-The feature-gated migration advances versions 1–4 to version 5, adds receipt TTL
+The feature-gated migration advances versions 1–5 to version 6, adds receipt TTL and the indexed pending-dispatch marker
 metadata/indexes, and stamps legacy receipts with one fixed seven-day migration
 deadline without rewriting their sealed bodies. Restarts never extend that stamp.
 Only delivery rows can carry expiry. The marker commits last; unknown versions
-fail closed. No new service, deployment key, App config file or database grant is
+fail closed. An older binary or `--migrate` command must not narrow the RECORDS validator or remove the pending-dispatch index; rollback keeps the version-6 validator/index and runs an older reader that reports GitHub unavailable until the compatible binary returns. No new service, deployment key, App config file or database grant is
 required. Disabling GitHub preserves configuration; existing receipt TTLs continue.
 
 Legacy bindings are not inferred to be approved. The new version/audit shape is

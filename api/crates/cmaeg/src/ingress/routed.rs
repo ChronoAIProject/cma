@@ -1,9 +1,7 @@
-//! Durable admission for explicitly selected channel records. Legacy traffic
-//! never performs a routing-store read or retains its raw body here.
 #[path = "routed_custom.rs"]
 mod custom;
 #[path = "routed_github.rs"]
-mod github;
+pub(crate) mod github;
 #[path = "routed_problem.rs"]
 mod problem;
 use problem::admission_problem;
@@ -17,7 +15,6 @@ mod quoted;
 mod whatsapp;
 #[path = "routed_whatsapp_flow.rs"]
 mod whatsapp_flow;
-
 use super::{
     launch::{LaunchOutcome, LaunchRequest},
     routing_plan::{self, OrdinaryPlan, RoutingOptions},
@@ -36,9 +33,6 @@ use cmaeg_core::{
 };
 use std::{collections::BTreeSet, sync::Arc};
 use tokio::sync::OwnedSemaphorePermit;
-
-/// Constructed only after ingress authenticates the original request. Neither
-/// its body nor its authentication facts come from a normalized event field.
 #[derive(Clone)]
 pub struct VerifiedIngress {
     quote: super::quoted_context::Intake,
@@ -47,12 +41,10 @@ pub struct VerifiedIngress {
     attributes_signed: bool,
     received_at: Option<i64>,
 }
-
 #[path = "routed_message_event.rs"]
 mod message_event;
 #[path = "routed_telegram.rs"]
 pub(crate) mod telegram;
-
 pub struct RoutedIngress {
     plans: PlanStore,
     schedule: ScheduleHandle,
@@ -69,7 +61,6 @@ pub struct RoutedIngress {
     custom_media_providers: BTreeSet<String>,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
-
 impl RoutedIngress {
     pub fn new(
         plans: PlanStore,
@@ -96,11 +87,9 @@ impl RoutedIngress {
             clock: Arc::new(|| time::OffsetDateTime::now_utc().unix_timestamp()),
         }
     }
-
     pub fn selected(&self, record: &RecordId) -> bool {
         self.records.contains(record.as_str())
     }
-
     pub fn with_native_discovery(
         mut self,
         selection: crate::discord::selection::Selection,
@@ -108,7 +97,6 @@ impl RoutedIngress {
         self.native_discovery = selection;
         self
     }
-
     pub(crate) fn native_eligible(
         &self,
         definition: &cmaeg_core::channel::ChannelDefinition,
@@ -122,15 +110,11 @@ impl RoutedIngress {
                         .contains(consumer.provider.slug.as_str())
                 })
     }
-
     #[cfg(test)]
     pub(crate) fn with_clock(mut self, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
         self.clock = clock;
         self
     }
-
-    /// Generation pins remain enabled after replacement enrollment is disabled.
-    /// This gate is deployment authority and is never read from event JSON.
     pub fn with_binding_preparation(
         mut self,
         enabled: bool,
@@ -140,28 +124,23 @@ impl RoutedIngress {
         self.binding_replacement_bindings = replacements;
         self
     }
-
     pub fn with_quoted_context(mut self, enabled: bool) -> Self {
         self.quoted_context_enabled = enabled;
         self
     }
-
     pub fn with_admissions_enabled(mut self, enabled: bool) -> Self {
         self.admission_enabled = enabled;
         self
     }
-    /// Enable only when execution shares the ingress SyncRegistry through
-    /// DeliveryCoordinator::with_custom_stream.
     pub fn with_sync_delivery(mut self, enabled: bool) -> Self {
         self.sync_delivery_enabled = enabled;
         self
     }
-
     pub fn with_custom_media_providers(mut self, providers: BTreeSet<String>) -> Self {
         self.custom_media_providers = providers;
         self
     }
-
+    #[allow(clippy::too_many_arguments)]
     async fn admit_once(
         &self,
         request: &LaunchRequest,
@@ -170,11 +149,11 @@ impl RoutedIngress {
         native_interaction: bool,
         message_plan: Option<super::routing_plan::RoutedPlan>,
         quote_projection: Option<u8>,
+        github_fence: Option<&github::GithubAuthorityFence>,
     ) -> Result<Option<LaunchOutcome>, Problem> {
         if source.oversized {
             return Err(admission_problem(AdmissionError::TooLarge));
         }
-        // Restore committed selection before looking at mutable routing policy.
         let replay = if message_plan.is_some() {
             self.plans.replay_message_event(request, &source.body).await
         } else if native_interaction {
@@ -284,28 +263,39 @@ impl RoutedIngress {
                     )
                 }
                 .map_err(admission_problem)?;
-                let committed = if matches!(
-                    request.activity.source,
-                    cmaeg_core::activity::SourceKind::Github { .. }
-                ) && request
-                    .channel
-                    .pointer
-                    .record_url
-                    .contains("/api/v1/gateway/channel-records/")
-                {
+                let committed = if let Some(github_fence) = github_fence {
+                    let authority_guards = vec![
+                        crate::records::AuthorityGuard {
+                            owner: github_fence.owner.clone(),
+                            kind: "app_integration",
+                            id: github_fence.integration_id.clone(),
+                            version: github_fence.integration_version,
+                        },
+                        crate::records::AuthorityGuard {
+                            owner: github_fence.owner.clone(),
+                            kind: "binding",
+                            id: github_fence.binding_id.clone(),
+                            version: github_fence.binding_version,
+                        },
+                    ];
                     self.plans
                         .admit_github(
                             &candidate,
                             request.channel.pointer.record_id.as_str(),
                             request.channel.version,
+                            &authority_guards,
                         )
                         .await
+                } else if matches!(
+                    request.activity.source,
+                    cmaeg_core::activity::SourceKind::Github { .. }
+                ) {
+                    Err(AdmissionError::Unavailable)
                 } else {
                     self.plans.admit(&candidate).await
                 }
                 .map_err(admission_problem)?;
                 // Only a durable winning snapshot is reported or scheduled.
-                // Concurrent configuration changes can select a different
                 // winner, so do not report this candidate's trace as its trace.
                 committed
             }
@@ -365,7 +355,6 @@ impl RoutedIngress {
         }))
     }
 }
-
 impl IngressState {
     /// Native inbox work is acknowledged only by durable routed admission.
     /// In particular, missing/disabled routing must never reach the legacy launcher.
@@ -426,7 +415,6 @@ impl IngressState {
             Err(problem) => LaunchOutcome::Refused(problem),
         }
     }
-
     pub fn capture_routed(
         &self,
         request: &LaunchRequest,
@@ -460,7 +448,6 @@ impl IngressState {
                 received_at: None,
             })
     }
-
     /// Holds bounded ingress capacity until durable admission is confirmed.
     /// It never acknowledges a partial upload or starts a detached provider call.
     pub async fn launch_verified(
@@ -503,13 +490,11 @@ impl IngressState {
         self.launcher.launch_holding(request, hold).await
     }
 }
-
 fn ordinary(request: &LaunchRequest) -> bool {
     request.consumer.is_none()
         && request.activity.routing.is_none()
         && !matches!(request.activity.kind, ActivityKind::Interaction(_))
 }
-
 #[cfg(test)]
 #[path = "routed_tests.rs"]
 mod tests;

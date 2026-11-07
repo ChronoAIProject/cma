@@ -172,6 +172,16 @@ export const ReceiptSchema = object({
   body_sha256: text,
   task_ids: array(text),
   authority_revision: integer,
+  dispatch: optional(
+    array(
+      object({
+        channel_id: text,
+        status: text,
+        reason: optional(nullable(text)),
+        admission_id: optional(nullable(text)),
+      }),
+    ),
+  ),
 });
 export type Receipt = Output<typeof ReceiptSchema>;
 
