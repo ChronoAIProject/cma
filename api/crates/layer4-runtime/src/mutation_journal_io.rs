@@ -136,7 +136,34 @@ fn same_operation(left: &Record, right: &Record) -> bool {
         && left.subject == right.subject
 }
 
-fn read_record(path: &Path) -> Result<Option<Record>> {
+pub(super) fn has_replacements(state_root: &Path, count: &mut usize) -> Result<bool> {
+    let directory = journal_directory(state_root);
+    match std::fs::symlink_metadata(&directory) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(io_error("inspect runtime mutation journal", error)),
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => return Err(corrupt("runtime mutation journal is not a real directory")),
+    }
+    for entry in std::fs::read_dir(directory)
+        .map_err(|error| io_error("list runtime mutation journal", error))?
+    {
+        if *count == MAX_JOURNAL_ENTRIES {
+            return Err(crate::mutation_capacity::exhausted());
+        }
+        *count += 1;
+        let name = entry
+            .map_err(|error| io_error("read runtime mutation entry", error))?
+            .file_name()
+            .into_string()
+            .map_err(|_| corrupt("runtime mutation journal filename is not UTF-8"))?;
+        if classify_name(&name)? == FileKind::Temporary {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub(super) fn read_record(path: &Path) -> Result<Option<Record>> {
     let mut file = match open_no_follow(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),

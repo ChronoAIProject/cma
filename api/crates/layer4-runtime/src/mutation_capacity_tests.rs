@@ -320,3 +320,6 @@ fn partial_replacement_is_ambiguous_and_never_frees_capacity() {
     );
     cleanup(&config);
 }
+
+#[path = "mutation_journal_lookup_tests.rs"]
+mod lookup_tests;
