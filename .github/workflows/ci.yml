@@ -43,10 +43,14 @@ jobs:
         run: ruby .github/scripts/ci-contract.rb provider
       - name: Provider contract mutation regressions
         run: ruby .github/scripts/ci-contract-tests.rb provider
+      - name: Backend capacity preparation regressions
+        run: python3 .github/scripts/backend-capacity-tests.py
       - name: Staging authority and evidence regressions
         run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs
       - name: Authenticated Mongo startup regressions
         run: node --test .github/scripts/authenticated-mongo-readiness.test.mjs
+      - name: Backend resource sampling regressions
+        run: python3 .github/scripts/backend-resource-sampler-tests.py
       - name: Gateway sealed-record migration regressions
         run: node --test .github/scripts/export-gateway-records.test.mjs
       - name: Install harness dependencies
@@ -383,6 +387,8 @@ jobs:
     name: Backend
     runs-on: ubuntu-latest
     env:
+      # Optional streamed evidence; the hook does not wrap or alter gate commands.
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
       # Full debug symbols made rust-lld crash linking the aggregate CMA test
       # binary on the hosted runner. Keep debug assertions and every test while
       # bounding linker output, as in the verified local workspace build.
@@ -396,6 +402,12 @@ jobs:
         working-directory: api
     steps:
       - uses: actions/checkout@v5
+      - name: Prepare Backend capacity
+        working-directory: .
+        run: >-
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS
+          python3 .github/scripts/backend-capacity.py
+          || echo "::warning::Backend capacity preparation unavailable"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -466,7 +478,9 @@ jobs:
         working-directory: web
         run: npx --no-install playwright install --with-deps chromium
       - name: Image Manager authenticated Mongo isolation
-        timeout-minutes: 10
+        # Compilation takes 242-434 seconds before 150-166 seconds of tests.
+        # Repeated 10-minute expirations leave no setup/cleanup margin.
+        timeout-minutes: 15
         run: bash ../.github/scripts/image-manager-mongo-contract.sh
       - name: Doctests
         run: cargo test --doc --workspace --locked

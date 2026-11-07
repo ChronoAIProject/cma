@@ -609,6 +609,33 @@ server is `{url,auth}` with HTTPS URL and auth `{type:"none"}` or
 `{type:"nyxid_service",slug}`. Provider refusals MUST explicitly identify
 unsupported fields; accepting a profile does not silently promise every field.
 
+Optional `profile.queue_lifetime_seconds` configures the provider binding's maximum
+wait for a newly admitted message: 300 seconds by default, with whole values from
+1 through 86,400. CMA reports the effective value on binding reads and lists the
+explicit field in `honoured`. Only verified, persisted binding authority selects
+this deadline; message metadata cannot override it. The Agent lane still holds at
+most 64 queued commands. A policy update preserves existing Agent settings and
+already admitted deadlines; exact retries retain the original deadline. Ordinary
+chat, UI and Trigger submissions retain their existing five-minute policy.
+
+If the queue deadline expires before dispatch, the response fails durably with
+`agent_command_queue_timeout`. No Agent turn starts, and the gateway settles the
+failed response without resubmitting it. Owners can inspect the failed activity
+and explicitly submit a new event after addressing the queue delay.
+
+For already provider-accepted Custom and GitHub execution, the gateway can verify
+retained event identity and settle terminal provider frames after the reply
+reference expires, within the existing seven-day journal retention. This does not
+renew a reply or tool capability: expired answers and result webhooks are refused
+with `event_ref_expired`. The original Custom stream may receive only a content-free
+terminal control after expiry. Never-started gateway work keeps its existing
+expiry refusal, and other source behavior is unchanged.
+
+See the [routed binding deadline audit](CMAEG_Binding_Queue_Deadlines.md) for the
+submission, recovery, lease, retention and observer deadlines, and the
+clock-advanced existing-Agent regression covering a near-day queue wait plus a
+thirty-minute run.
+
 An optional `Idempotency-Key` header of 1–256 ASCII bytes replays an identical
 create for the same creator on the same replica for ten minutes. Different
 content under the same key returns 409. It is not durable or cross-replica.
