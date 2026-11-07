@@ -30,7 +30,7 @@ ARG GH_GO_VERSION=1.26.10
 ARG GH_GO_SHA256_AMD64=ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5
 ARG GH_GO_SHA256_ARM64=3f4227ce7b206a513e794f1393adb473a07b46e94d18bd15d1c684bbb7319797
 ARG GH_X_MOD_VERSION=0.41.0
-ARG GH_X_NET_VERSION=0.60.0
+ARG GH_X_NET_VERSION=0.62.0
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
