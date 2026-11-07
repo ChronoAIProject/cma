@@ -30,6 +30,10 @@ jobs:
         run: python3 .github/scripts/api-cargo-cache-tests.py
       - name: Runtime image evidence and provenance regressions
         run: node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs
+      - name: Debian desktop fixture regressions
+        run: |
+          python3 .github/scripts/desktop-browser-input-tests.py
+          node --test .github/scripts/desktop-browser-page.test.cjs
 
   trigger-provider-smoke-contract:
     name: Trigger provider smoke contract

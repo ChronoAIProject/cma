@@ -1,5 +1,6 @@
 """Exercise live process ownership and clean browser closure in a fixture Pod."""
 import base64
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -70,16 +71,20 @@ finally:
 # The user can close a browser without losing the desktop. This also flushes
 # localStorage before the host restarts the container with the retained home.
 window = subprocess.check_output(["xdotool", "search", "--onlyvisible", "--class", "chromium"], text=True).splitlines()[0]
-# The input probe entered browser full screen. Leave it before saving the
-# window so the retained run starts from the same ordinary browser state.
-subprocess.run(["xdotool", "key", "--clearmodifiers", "F11"], check=True)
-time.sleep(0.2)
+# Observe normal browser geometry before saving its retained window state.
+spec = importlib.util.spec_from_file_location('browser_input', '/opt/desktop-browser-input.py')
+browser_input = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(browser_input)
+browser_input.windowed()
+pid = int(subprocess.check_output(['xdotool', 'getwindowpid', window], text=True))
+identity = browser_input.process_identity(pid)
+assert identity is not None, 'fixture browser process disappeared before closure'
 subprocess.run(["wmctrl", "-i", "-c", window], check=True)
 deadline = time.monotonic() + 10
 while subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "chromium"], stdout=subprocess.DEVNULL).returncode == 0:
     assert time.monotonic() < deadline, "Chromium did not close"
     time.sleep(0.1)
-time.sleep(0.3)
+browser_input.wait_process_exit(pid, identity)
 with socket.create_connection(("127.0.0.1", 5900), timeout=3) as stream:
     assert stream.recv(12).startswith(b"RFB ")
 assert m.validate_services(plan, m.inventory())
