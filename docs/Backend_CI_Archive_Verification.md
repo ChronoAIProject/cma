@@ -252,21 +252,29 @@ verified through
 `GET /repos/ChronoAIProject/cma/actions/caches?ref=refs/pull/1394/merge`.
 This confirms develop-push-only cache saves do not populate PR merge-ref caches.
 
-The remaining post-merge check is the first develop-push cache save. After a
-successful push run on develop, list every page of:
+## First develop push
 
-```text
-GET /repos/ChronoAIProject/cma/actions/caches?ref=refs/heads/develop&per_page=100
-```
+PR #1394 merged as `e71ed631d`. The first develop push run,
+[42380846070](https://github.com/ChronoAIProject/cma/actions/runs/42380846070),
+passed every job. Its `Backend` join finished 26.5 minutes after the run started,
+on cold caches, including capacity preparation in both compiling jobs.
 
-For example, using authenticated `gh`:
+Each compiling job saved its own develop cache under `refs/heads/develop`. The
+saved key matched the key that job's cache step printed:
+
+| Job | Saved key | Size | Created |
+| --- | --- | ---: | --- |
+| Backend lint | `v0-rust-backend-lint-Linux-x64-6bcd79e3-a8d22a7a` | 454 MiB | 2026-11-07T14:36:10Z |
+| Backend test build | `v0-rust-backend-test-build-Linux-x64-2e774008-a8d22a7a` | 348 MiB | 2026-11-07T14:30:43Z |
+
+Each creation time falls at the end of its job in that run. Later runs restored
+both entries. This verifies the two separate develop-only writers under the
+default job-ID configuration. To repeat the check after a later develop push:
 
 ```sh
 gh api --paginate 'repos/ChronoAIProject/cma/actions/caches?ref=refs/heads/develop&per_page=100' \
   --jq '.actions_caches[] | select(.key | test("^v0-rust-backend-(lint|test-build)-")) | {key, ref, created_at, last_accessed_at, size_in_bytes}'
 ```
 
-Confirm that both exact keys printed by that run's lint and producer cache steps
-appear with `ref: refs/heads/develop`, creation times matching the push run, and
-nonzero sizes. That verifies the two separate writers under the final default
-job-ID configuration.
+The repository cache is at its 10 GB limit, so Actions can still evict either
+entry; the next develop push then saves it again.
