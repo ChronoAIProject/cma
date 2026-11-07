@@ -4,6 +4,7 @@ use layer2_core::sandbox::{AgentLogEntry, RecordedToolOutput};
 use mongodb::bson::{doc, serialize_to_bson, Document};
 use mongodb::Client;
 
+mod cpu_profile;
 mod removal_retry_tests;
 mod settlement_tests;
 
