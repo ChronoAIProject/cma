@@ -83,18 +83,21 @@ def old_libtest(args, suites):
 
 
 def mongo_filters(source):
-    """Read the literal filter template and its three modes without running fixtures."""
+    """Read corpus modes and the optional CPU profile without running fixtures."""
     template = shlex.split(next(line.strip() for line in source.splitlines()
                                 if line.strip().startswith("-E ")))[1]
     scale_name = shlex.split(next(line for line in source.splitlines()
                                  if line.startswith("readonly scale_test=")))[1].split("=", 1)[1]
     predicates = {"all": "all()"}
-    for mode in ("scale", "ordinary"):
-        line = next(line.strip() for line in source.splitlines() if line.strip().startswith(f"{mode})"))
-        predicate = re.search(r'selection_filter="([^"]+)"', line).group(1)
+    for mode in ("scale", "ordinary", "cpu-profile"):
+        line = next((line.strip() for line in source.splitlines()
+                     if line.strip().startswith(f"{mode})")), None)
+        if mode == "cpu-profile" and line is None:
+            continue
+        predicate = re.search(r'''selection_filter=(["'])(.*?)\1''', line).group(2)
         # The pre-split source selected cma during compilation; reuse must
         # express the same package restriction in the filter instead.
-        if mode == "scale" and "packages=(-p cma)" in line:
+        if "packages=(-p cma)" in line:
             predicate = "package(=cma) and " + predicate
         predicates[mode] = predicate.replace("$scale_test", scale_name)
     filters = {mode: template.replace("$selection_filter", predicate)
@@ -157,6 +160,14 @@ def main():
     if len(mongo_sets["scale"]) != 1 or mongo_sets["scale"] & mongo_sets["ordinary"]:
         raise AssertionError("Mongo scale must run exactly once outside ordinary partitions")
     compare("mongo-split-union", mongo_sets["all"], mongo_sets["scale"] | mongo_sets["ordinary"])
+    if "cpu-profile" in after_filters:
+        profiles = list_tests(["-E", after_filters["cpu-profile"], "--run-ignored", "only"])[0]
+        expected = {(binary, name) for binary, name in mongo_sets["ordinary"]
+                    if suites[binary]["package-name"] == "cma" and "::cpu_profile::" in name}
+        compare("mongo-cpu-profile", expected, profiles)
+        if "cpu-profile" in before_filters:
+            compare("mongo-cpu-profile-preserved", list_tests([
+                "-E", before_filters["cpu-profile"], "--run-ignored", "only"])[0], profiles)
     compare("cmaeg-latency", old_nextest(["-p", "cmaeg", "-E", "test(latency_budget)", "--run-ignored", "ignored-only"]),
             list_tests(["-E", "package(=cmaeg) and test(~latency_budget)", "--run-ignored", "only"])[0])
     (output / "summary.json").write_text(json.dumps({"selections": reports, "shards": [len(s) for s in shards], "duplicates": 0}, indent=2) + "\n")
