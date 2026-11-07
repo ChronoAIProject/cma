@@ -164,8 +164,8 @@ fn scan_stops_at_the_directory_entry_bound() {
         .unwrap();
     }
     let error = validate_all(&config).unwrap_err();
-    assert_eq!(error.code, "mutation_journal_corrupt");
-    assert!(error.detail.contains("too many entries"));
+    assert_eq!(error.code, "mutation_ledger_capacity");
+    assert_eq!(error.detail, crate::mutation_capacity::DETAIL);
     cleanup(&config);
 }
 
