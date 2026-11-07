@@ -39,6 +39,7 @@ pub(crate) struct AuthorityGuard {
 pub enum RecordError {
     NotFound,
     Conflict { expected: u64, actual: Option<u64> },
+    GuardConflict { scope: &'static str, expected: u64 },
     Rejected(String),
     Unavailable(String),
     Malformed(String),
@@ -52,6 +53,12 @@ impl fmt::Display for RecordError {
                 write!(
                     formatter,
                     "channel record version conflict: expected {expected}, actual {actual:?}"
+                )
+            }
+            Self::GuardConflict { scope, expected } => {
+                write!(
+                    formatter,
+                    "guarded {scope} version changed; expected {expected}"
                 )
             }
             Self::Rejected(detail) => {
