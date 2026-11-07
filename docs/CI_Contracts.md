@@ -26,17 +26,24 @@ inventory validation, and local browser guard mechanics. It uses no provider,
 NyxID, staging fixture, or deployment credential. Neither local mechanics nor
 discovery is evidence that a remote journey ran.
 
-The normal Backend job also runs a disposable, pinned MongoDB replica set.
-Only that new container's loopback address is used. Caller Mongo URIs are
+The required `Backend` aggregate includes a separate Mongo contracts job,
+which runs disposable, pinned MongoDB replica sets from the shared test archive.
+The parallel graph, artifact paths, cache policy and local script modes are
+documented in [Backend CI archive](Backend_CI_Archive.md).
+Each partition uses only its own container's loopback address. Caller Mongo URIs are
 discarded. The selected ignored tests cover legacy schema custody, durable
 Launch admission/progress, checkpoint publication/deletion ambiguity, and
-writer-capture authority; failpoint cases run serially against the same
+writer-capture authority; failpoint cases run serially within each
 disposable replica set. The test runner fails on an empty selection, and
 cleanup removes only containers carrying the generated exact run label.
 
 The 20,001-Sandbox report-generation scale contract runs once in an exclusive
-fresh fixture before ordinary partitions. Options and owner-allocation scale
-contracts retain their ordinary partition placement and all original assertions.
+fresh fixture before ordinary partitions in `Backend Mongo contracts`. Its
+`--scale` invocation uses `package(=cma) and test(=full_test_name)` with the same
+ignored-only corpus as the ordinary partition filter, which excludes that exact
+test. Both source and extracted-archive modes use these filters. The wrapper
+supplies `--no-tests fail` once per run; no invocation can silently pass empty.
+Options and owner-allocation scale contracts retain their ordinary partition placement and all original assertions.
 Their shared test-only capture starts before connection/initialization and names
 the cohort, setup/read phase and one-based page. A failure preserves the observed
 opening phase/page, circuit reason and event duration separately from the later
@@ -54,10 +61,13 @@ query prototype, automatic retry or extra isolation is part of these diagnostics
 
 ## Backend Capacity Preparation
 
-`Prepare Backend capacity` runs immediately after checkout, before toolchain
-installation, cache restore, or compilation. This isolated CI policy change
-addresses measured capacity: #1425/#1426 observed about 263 MiB available disk
-late in Backend and 117 MiB free of 3 GiB swap during test compilation; #1424
+`Prepare Backend capacity` runs in `Backend lint` and `Backend test build`,
+immediately after checkout and before toolchain installation, cache restore or
+compilation. These are the two jobs that compile. Archive consumers do not run
+it: their disk and memory footprint is smaller, there is no measured consumer
+need, and repeating the roughly 119-second preparation would add about two
+minutes to their critical path. Capacity preparation addresses measured capacity:
+#1425/#1426 observed about 263 MiB available disk late in Backend and 117 MiB free of 3 GiB swap during test compilation; #1424
 separately failed with ENOSPC. It is **not a fix for the unexplained runner
 shutdowns**. Runner size, Cargo concurrency, existing gate commands, assertions,
 thresholds and relative order are unchanged. The separately authorized Image
@@ -103,20 +113,26 @@ Regressions cover absent/unsafe paths, measured accounting, budget bounds,
 exclusive allocation, activation failures and non-gating failures. Compare
 per-step telemetry minima and whole-job elapsed time including preparation;
 different cache/source/runner conditions limit causal timing comparisons.
-Draft #1394 can rehome this single step/helper to its compilation jobs without
-duplicating its job restructuring. No public API contract changes here.
+The exact split-job contract requires capacity preparation only in the two
+compiling jobs and rejects it in consumers. No public API contract changes here.
 
 ## Backend Shutdown Evidence
 
-Backend Bash steps source `backend-resource-env.sh` through `BASH_ENV`.
+The lint, test-build, three test shards, timing, Mongo and Image Manager jobs
+set `BASH_ENV` at job scope to
+`${{ github.workspace }}/.github/scripts/backend-resource-env.sh`. Their Bash
+steps source the hook, including the isolated timing budgets, as the former
+Backend job did. `CMAEG latency budget` and the `Backend` join have no hook.
+No step-level `shell` or `BASH_ENV` override and no `defaults.run.shell` override
+is permitted in the sampled jobs.
 The hook starts one optional sampler per step; descendant shells inherit its
 marker. It disowns that child so a caller's bare `wait` cannot wait for telemetry.
 Disowning retains the shell as the process parent. It does not wrap commands,
 install traps, change shell options, wait
 for telemetry, or change gate order, timeouts, assertions or exit status.
 The provider contract checks the hook and runs its failure-path regressions.
-This dedicated CI change diagnoses unexplained runner shutdowns; it does not
-change resource limits or duplicate the archive/job split proposed in #1394.
+Sampling diagnoses unexplained runner shutdowns without changing resource
+limits. The hook is diagnostic only and does not wrap any gate.
 
 `[backend-resource]` JSON lines are offered directly to the current step log at
 startup and about every ten seconds. They include UTC and elapsed step time,
@@ -164,9 +180,12 @@ eight-test success summary preceded the timeout error by 0.60 seconds, despite
 cancellation began, but does confirm that disk reclamation alone does not
 address the step's deadline margin.
 
-The 15-minute limit preserves hang protection. Commands, tests, assertions,
-concurrency and gate order are unchanged. The executable contract and mutation
-regressions reject removing the deadline, restoring 10 minutes, or silently
+The split Image Manager job retains the 15-minute limit for fixture setup and
+cleanup, all 14 archived selection groups and the browser contract, with
+headroom and finite hang protection. This contract step no longer compiles;
+the compilation timings above describe the former monolithic job. Test
+assertions and serial group order are retained. The executable contract and
+mutation regressions reject removing the deadline, restoring 10 minutes, or silently
 extending it to 30. No reporting-circuit threshold or retry behavior changes.
 
 ## Historical Guarantee Mapping
