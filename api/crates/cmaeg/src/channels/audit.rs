@@ -147,9 +147,10 @@ impl From<RecordError> for AuditError {
         match error {
             RecordError::Unavailable(_) => Self::RecordStoreUnavailable,
             RecordError::Malformed(_) => Self::RecordStoreMalformed,
-            RecordError::NotFound | RecordError::Conflict { .. } | RecordError::Rejected(_) => {
-                Self::RecordStoreRejected
-            }
+            RecordError::NotFound
+            | RecordError::Conflict { .. }
+            | RecordError::GuardConflict { .. }
+            | RecordError::Rejected(_) => Self::RecordStoreRejected,
         }
     }
 }

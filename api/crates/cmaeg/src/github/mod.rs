@@ -32,6 +32,7 @@ pub struct Gateway {
     store: store::Store,
     ingress: Option<Arc<crate::ingress::IngressState>>,
     activity: Option<Arc<crate::activity::ActivityStore>>,
+    recovery_cursor: Arc<tokio::sync::Mutex<Option<(String, String)>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -77,9 +78,7 @@ impl std::fmt::Display for Error {
                 "GitHub delivery retention expired; use a fresh authorized reconciliation"
             }
             Self::Retired => "GitHub integration is retired",
-            Self::DispatchUnavailable => {
-                "GitHub durable business dispatch is not available in this release"
-            }
+            Self::DispatchUnavailable => "GitHub durable routed dispatch is unavailable",
             Self::Retry => {
                 "GitHub authority changed during receipt commitment; retry the original delivery"
             }
@@ -96,6 +95,73 @@ impl std::error::Error for Error {}
 struct Delivery {
     receipt: Receipt,
     raw_body_records: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dispatch: Option<DispatchState>,
+}
+
+/// The only GitHub data allowed to cross the gateway/provider boundary.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GithubProjection {
+    delivery_id: String,
+    event: String,
+    action: Option<String>,
+    installation_id: u64,
+    repository: GithubRepository,
+    number: u64,
+    html_url: String,
+    sender: GithubSender,
+    state: Option<String>,
+    merged: Option<bool>,
+    draft: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GithubRepository {
+    id: u64,
+    full_name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GithubSender {
+    login: String,
+    r#type: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DispatchState {
+    schema_version: u8,
+    projection: GithubProjection,
+    channels: Vec<DispatchChannel>,
+    #[serde(default)]
+    lease: Option<DispatchLease>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DispatchChannel {
+    channel_id: String,
+    record_id: String,
+    channel_version: u64,
+    status: String,
+    #[serde(default)]
+    reason: Option<String>,
+    #[serde(default)]
+    admission_id: Option<String>,
+    #[serde(default)]
+    attempts: u32,
+    #[serde(default)]
+    next_attempt_at: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DispatchLease {
+    owner: String,
+    until: i64,
 }
 
 struct LifecycleDelivery<'a> {
@@ -124,6 +190,7 @@ impl Gateway {
             store: store::Store::open(database, keys).await?,
             ingress: None,
             activity: None,
+            recovery_cursor: Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 
