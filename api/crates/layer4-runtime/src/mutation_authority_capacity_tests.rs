@@ -188,3 +188,6 @@ fn failure_to_sync_a_survivor_never_deletes_a_predecessor() {
     assert!(predecessor.exists());
     std::fs::remove_dir_all(&config.state_root).unwrap();
 }
+
+#[path = "mutation_authority_durability_tests.rs"]
+mod durability_tests;
