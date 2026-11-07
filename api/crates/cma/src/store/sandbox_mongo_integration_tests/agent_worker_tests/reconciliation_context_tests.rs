@@ -13,6 +13,8 @@ use crate::sandbox::binding_lifecycle_test_support::{
 };
 use crate::sandbox::LiveAgentRegistry;
 
+mod eligibility_tests;
+
 // These attached streams emit no updates. Keep their asynchronous checkpoint
 // restoration separate from the reconciliation reads measured by this test.
 struct IdleRecorder;
