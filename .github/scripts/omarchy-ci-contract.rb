@@ -51,6 +51,8 @@ module OmarchyCIContract
       SH
       { "name" => "Verify Omarchy runtime contract",
         "run" => 'node .github/scripts/omarchy-contract.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/runtime-contract.json"' },
+      { "name" => "Qualify exact Omarchy ledger storage",
+        "run" => 'node .github/scripts/runtime-ledger-evidence.mjs cma-runtime-omarchy:ci "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/ledger-storage.json"' },
       { "name" => "Prepare native Chromium namespaces", "run" => "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0" },
       { "name" => "Verify device-free Omarchy desktop",
         "run" => 'node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/device-free"' },

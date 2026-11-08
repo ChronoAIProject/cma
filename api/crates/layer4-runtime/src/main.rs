@@ -25,6 +25,8 @@ mod install;
 mod install_state;
 mod install_state_validation;
 mod lanes;
+mod ledger_format;
+mod ledger_storage;
 mod link;
 mod mutation_authority;
 #[cfg(test)]
@@ -33,7 +35,9 @@ mod mutation_authority;
 mod mutation_authority_v1;
 mod mutation_capacity;
 mod mutation_journal;
+mod mutation_ledger;
 mod mutation_scope;
+mod mutation_store;
 mod paths;
 mod persistent_home;
 mod pool_bootstrap;
@@ -81,6 +85,11 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments.len() == 2 && arguments[0] == "--verify-ledger-storage" {
+        return ledger_storage::probe(std::path::Path::new(&arguments[1]))
+            .await
+            .map_err(|error| error.to_string());
+    }
     if arguments.len() == 2
         && (arguments[0] == "--initialize-home" || arguments[0] == "--initialize-home-tree")
     {

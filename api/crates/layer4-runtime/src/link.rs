@@ -165,6 +165,19 @@ async fn control(
         status.agent_resource_preparation =
             accepts(layer3_adapter::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE);
         status.agent_browser = accepts(layer3_adapter::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE);
+        if accepts(layer3_adapter::RUNTIME_LEDGER_STATUS_MEDIA_TYPE) {
+            return match supervisor.ledger_observation(status.clone()).await {
+                Ok(observation) => (
+                    [(
+                        header::CONTENT_TYPE,
+                        layer3_adapter::RUNTIME_LEDGER_STATUS_MEDIA_TYPE,
+                    )],
+                    Json(observation),
+                )
+                    .into_response(),
+                Err(error) => Json(error.response(operation)).into_response(),
+            };
+        }
     }
     Json(response).into_response()
 }
