@@ -1,6 +1,10 @@
 //! Indexed authority, private to the runtime. Serving integration is explicit.
 mod authority;
 mod budget;
+#[cfg(test)]
+mod crash_tests;
+#[cfg(test)]
+mod fault_tests;
 mod fence;
 mod journal;
 #[cfg(test)]
