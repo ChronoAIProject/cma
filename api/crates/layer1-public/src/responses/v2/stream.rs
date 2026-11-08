@@ -103,7 +103,8 @@ pub(super) async fn open(
                 Ok((response, bound)) => {
                     open.terminal = response.terminal();
                     open.pending = projection::events(&response, bound).into();
-                    poll.complete(open.pending.iter().any(|event| {
+                    // Projection sequences increase monotonically; inspect only the tail.
+                    poll.complete(open.pending.back().is_some_and(|event| {
                         event["sequence_number"]
                             .as_u64()
                             .is_some_and(|seq| seq >= open.next)
