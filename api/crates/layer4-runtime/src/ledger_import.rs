@@ -15,6 +15,13 @@ use std::time::{Duration, Instant};
 
 use crate::failure::{Result, RuntimeError};
 
+pub(crate) fn cutover_command() -> Result<()> {
+    Err(RuntimeError::rejected(
+        "mutation_ledger_import_held",
+        "live ledger cutover is unavailable until the reviewed maintenance-admission and release-authority protocol in #1461",
+    ))
+}
+
 pub(crate) async fn inspect_command() -> std::result::Result<(), String> {
     let config = crate::config::RuntimeConfig::from_environment()
         .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;

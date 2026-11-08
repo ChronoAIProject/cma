@@ -65,6 +65,14 @@ managed replacements.
 
 ## Legacy imports
 
+Running any importer command against a real home requires the reviewed
+exhausted-ledger repair runbook and explicit consent from both the platform
+owner and the affected Sandbox owner. This implementation includes no
+production run. Before authorizing even offline preparation, preserve wanted
+files and history and settle the disposition of pending destructive child work
+under every parent, including Active Sandboxes. A detached backup is not a
+full home backup and does not satisfy that preservation gate by itself.
+
 No serving path releases an imported ledger. Imported provenance is durably
 held before generation advancement, mutation recovery or lifecycle resumption.
 This includes pending RemoveHome and RemoveWorktree operations under every
@@ -147,6 +155,14 @@ An artifact that is ready is still **held**, including all Started and pending
 destructive work. Do not copy it over a live store or manufacture source-root
 format markers. Source-root cutover requires the separately reviewed old-writer
 exclusion and maintenance authority; a detached artifact supplies neither.
+
+`cma-runtime --cutover-ledger-v1` always refuses with the nonretryable typed
+hold `mutation_ledger_import_held`, explicitly naming #1461. It refuses before
+reading configuration or source files, including when additional arguments are
+supplied. There is no live apply or release implementation behind this command.
+Startup never discovers or selects a detached import. The separate #1461
+protocol must establish old-writer exclusion, maintenance admission and release
+authority before any future cutover or lifecycle resumption can be offered.
 
 ## Read-only diagnostics
 
