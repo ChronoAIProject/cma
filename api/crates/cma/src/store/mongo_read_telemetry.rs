@@ -104,7 +104,7 @@ fn add(counter: &AtomicU64, delta: u64) {
     }
 }
 pub(crate) fn emit() {
-    COUNTERS.emit();
+    counters().emit();
 }
 impl Counters {
     fn emit(&self) {
