@@ -84,13 +84,8 @@ pub(super) fn reconcile(files: Vec<JournalFile>, apply: bool) -> Result<Vec<Jour
         let current = canonical
             .get_mut(&target)
             .ok_or_else(|| corrupt("runtime mutation replacement has no canonical record"))?;
-        if replacements.iter().any(|candidate| {
-            candidate.record.status == Status::Started
-                || !same_operation(&candidate.record, &current.record)
-        }) {
-            return Err(corrupt(
-                "runtime mutation replacement does not follow its canonical record",
-            ));
+        for candidate in &replacements {
+            validate_replacement(&current.record, &candidate.record)?;
         }
         let replacement = replacements
             .pop()
@@ -134,6 +129,15 @@ fn same_operation(left: &Record, right: &Record) -> bool {
         && left.request_sha256 == right.request_sha256
         && left.payload_sha256 == right.payload_sha256
         && left.subject == right.subject
+}
+
+pub(super) fn validate_replacement(current: &Record, candidate: &Record) -> Result<()> {
+    if candidate.status == Status::Started || !same_operation(candidate, current) {
+        return Err(corrupt(
+            "runtime mutation replacement does not follow its canonical record",
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn has_replacements(state_root: &Path, count: &mut usize) -> Result<bool> {

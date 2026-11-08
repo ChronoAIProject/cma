@@ -18,34 +18,7 @@ pub(super) fn open_guarded(
     guard: Option<&crate::ledger_format::Guard>,
 ) -> Result<()> {
     if create {
-        let transaction = db.transaction().map_err(|_| storage_error())?;
-        transaction
-            .execute_batch(include_str!("schema.sql"))
-            .map_err(|_| storage_error())?;
-        transaction
-            .pragma_update(None, "application_id", APPLICATION_ID)
-            .map_err(|_| storage_error())?;
-        transaction
-            .pragma_update(None, "user_version", VERSION)
-            .map_err(|_| storage_error())?;
-        transaction
-            .execute(
-                "INSERT INTO metadata VALUES (1, ?, ?, ?, ?, ?, ?, ?, 'fresh')",
-                params![
-                    config.sandbox_id,
-                    config.home_identity.clone().unwrap_or_default(),
-                    fence::encode(config.generation).as_slice(),
-                    config.state_root.to_str().ok_or_else(invalid)?,
-                    config.home.to_str().ok_or_else(invalid)?,
-                    config.checkpoint_root.to_str().ok_or_else(invalid)?,
-                    uuid::Uuid::new_v4().as_bytes().as_slice()
-                ],
-            )
-            .map_err(|_| storage_error())?;
-        transaction
-            .execute("INSERT INTO accounting VALUES (1,0,0,0,0,0)", [])
-            .map_err(|_| storage_error())?;
-        transaction.commit().map_err(|_| storage_error())?;
+        initialize(db, config, "fresh")?;
     }
     let read = |name| {
         db.pragma_query_value(None, name, |row| row.get::<_, i64>(0))
@@ -136,4 +109,41 @@ fn definitions(db: &Connection) -> Result<Vec<(String, String)>> {
         return Err(invalid());
     }
     Ok(rows)
+}
+
+fn initialize(db: &mut Connection, config: &RuntimeConfig, admission: &str) -> Result<()> {
+    let transaction = db.transaction().map_err(|_| storage_error())?;
+    transaction
+        .execute_batch(include_str!("schema.sql"))
+        .map_err(|_| storage_error())?;
+    transaction
+        .pragma_update(None, "application_id", APPLICATION_ID)
+        .map_err(|_| storage_error())?;
+    transaction
+        .pragma_update(None, "user_version", VERSION)
+        .map_err(|_| storage_error())?;
+    transaction
+        .execute(
+            "INSERT INTO metadata VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                config.sandbox_id,
+                config.home_identity.clone().unwrap_or_default(),
+                fence::encode(config.generation).as_slice(),
+                config.state_root.to_str().ok_or_else(invalid)?,
+                config.home.to_str().ok_or_else(invalid)?,
+                config.checkpoint_root.to_str().ok_or_else(invalid)?,
+                uuid::Uuid::new_v4().as_bytes().as_slice(),
+                admission
+            ],
+        )
+        .map_err(|_| storage_error())?;
+    transaction
+        .execute("INSERT INTO accounting VALUES (1,0,0,0,0,0)", [])
+        .map_err(|_| storage_error())?;
+    transaction.commit().map_err(|_| storage_error())?;
+    Ok(())
+}
+
+pub(super) fn initialize_held(db: &mut Connection, config: &RuntimeConfig) -> Result<()> {
+    initialize(db, config, "import_held")
 }
