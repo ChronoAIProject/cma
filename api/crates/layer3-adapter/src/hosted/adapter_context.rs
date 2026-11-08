@@ -1,5 +1,9 @@
 //! Shared fresh authority is local to this adoption/status call, never a drain.
-use super::{runtime_lifecycle::validate_inventory, HostedAdapter};
+use super::{
+    runtime_identity::{exact_identity_predicate, identity_rejection},
+    runtime_lifecycle::validate_inventory,
+    HostedAdapter,
+};
 use crate::hosted::inspection_timing;
 use crate::{AdapterError, RuntimeAdoptionRequest, RuntimeInspection};
 
@@ -42,18 +46,13 @@ impl HostedAdapter {
             .await?
             {
                 let observed = &inspection.observation;
-                validate_inventory(std::slice::from_ref(observed))?;
-                if observed.handle != adoption.handle
-                    || observed.sandbox_id != expected.sandbox_id
-                    || observed.generation != expected.generation
-                    || observed.image_sha256 != expected.image_sha256
-                    || observed.spec_fingerprint != expected.spec_fingerprint
-                    || observed.runtime_contract != expected.runtime_contract
-                    || !observed.lifecycle.is_running()
+                if validate_inventory(std::slice::from_ref(observed)).is_err() {
+                    return Err(identity_rejection("inventory"));
+                }
+                if let Some(predicate) =
+                    exact_identity_predicate(observed, &adoption.handle, &expected)
                 {
-                    return Err(AdapterError::Rejected(
-                        "provider did not prove the exact running runtime identity".into(),
-                    ));
+                    return Err(identity_rejection(predicate));
                 }
                 let status = inspection.status.as_ref().ok_or_else(|| {
                     AdapterError::Rejected("native runtime status missing".into())
@@ -70,7 +69,7 @@ impl HostedAdapter {
                     self.verify_home(home),
                 )
                 .await?;
-                self.attach_state(adoption.handle.clone(), &adoption.spec, expected)
+                self.attach_adopted_state(adoption.handle.clone(), &adoption.spec, expected)
                     .await?;
                 return Ok(Some(inspection));
             }
