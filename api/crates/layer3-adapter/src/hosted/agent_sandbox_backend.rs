@@ -231,11 +231,14 @@ impl HostedBackend for AgentSandboxBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> Result<Option<RuntimeObservation>> {
-        let Some(object) = self.client.validate_request(handle, request).await? else {
+        let Some(_) = self.client.validate_request(handle, request).await? else {
             return Ok(None);
         };
-        self.bind_adopted(handle, request, &object).await?;
-        Ok(Some(observation(&object)?))
+        self.bind_adopted(handle, request).await?;
+        // The first object authorized binding, but readiness and assignment can
+        // change while that operation waits. Revalidate the exact provider
+        // object before exposing a current Running observation.
+        self.refreshed_adoption_observation(handle, request).await
     }
     async fn inspect_native_runtime(
         &self,
