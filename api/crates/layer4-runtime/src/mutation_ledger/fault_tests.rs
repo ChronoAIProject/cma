@@ -17,6 +17,7 @@ async fn open(fixture: &Fixture, vfs: &Vfs, create: bool) -> Ledger {
         storage,
         config: Arc::new(fixture.config.clone()),
         directory: fixture.database(),
+        guard: None,
     }
 }
 fn receipt() -> AgentCloseReceipt {

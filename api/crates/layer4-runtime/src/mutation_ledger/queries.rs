@@ -34,6 +34,7 @@ pub(crate) struct Snapshot {
 
 impl Ledger {
     pub(crate) async fn admitted(&self, operation: Operation) -> Result<bool> {
+        self.verify()?;
         crate::mutation_journal::validate_operation(&self.config, &operation)?;
         let config = Arc::clone(&self.config);
         self.storage
@@ -45,6 +46,7 @@ impl Ledger {
     }
 
     pub(crate) async fn recovery_fence(&self, operation: Operation) -> Result<Option<u64>> {
+        self.verify()?;
         crate::mutation_journal::validate_operation(&self.config, &operation)?;
         let config = Arc::clone(&self.config);
         self.storage
@@ -76,6 +78,7 @@ impl Ledger {
     }
 
     pub(crate) async fn started_page(&self, generation: u64, after: String) -> Result<Vec<Record>> {
+        self.verify()?;
         if (generation != 0
             && (self.config.home_identity.is_none() || generation != self.config.generation))
             || after.len() > 256
@@ -122,6 +125,7 @@ impl Ledger {
     }
 
     pub(crate) async fn active(&self, filter: ProcessFilter) -> Result<bool> {
+        self.verify()?;
         let scope = self
             .config
             .home_identity
@@ -146,6 +150,7 @@ impl Ledger {
     }
 
     pub(crate) async fn snapshot(&self) -> Result<Snapshot> {
+        self.verify()?;
         let generation = self.config.generation.to_be_bytes();
         let directory = self.directory.clone();
         self.storage.call(move |db| {
