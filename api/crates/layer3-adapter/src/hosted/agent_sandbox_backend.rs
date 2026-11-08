@@ -235,7 +235,10 @@ impl HostedBackend for AgentSandboxBackend {
             return Ok(None);
         };
         self.bind_adopted(handle, request, &object).await?;
-        Ok(Some(observation(&object)?))
+        // The first object authorized binding, but readiness and assignment can
+        // change while that operation waits. Revalidate the exact provider
+        // object before exposing a current Running observation.
+        self.refreshed_adoption_observation(handle, request).await
     }
     async fn inspect_native_runtime(
         &self,
