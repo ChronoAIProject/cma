@@ -65,7 +65,18 @@ impl From<AdapterError> for AgentFileError {
                 Self::Conflict
             }
             AdapterError::Rejected(_) | AdapterError::OperationIdentityConflict(_) => Self::Invalid,
-            _ => Self::Unavailable,
+            error => {
+                use crate::dependency_diagnostics::{Dependency, Failure, Reason};
+                let reason = match error {
+                    AdapterError::AtCapacity(_) => Reason::Capacity,
+                    AdapterError::RuntimeLedgerHold(_) => Reason::RuntimeLedgerHold,
+                    AdapterError::InputAuthorityUnavailable(_) => Reason::InputAuthority,
+                    AdapterError::PromptNotWritten(_) => Reason::PromptNotWritten,
+                    _ => Reason::Unavailable,
+                };
+                Failure::new(Dependency::Runtime, reason).record();
+                Self::Unavailable
+            }
         }
     }
 }
