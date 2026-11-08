@@ -29,7 +29,8 @@ CREATE TABLE accounting (
 
 CREATE TABLE scope_budget (
     scope BLOB PRIMARY KEY NOT NULL CHECK(length(scope) = 8),
-    pending INTEGER NOT NULL CHECK(pending >= 0)
+    pending INTEGER NOT NULL CHECK(pending >= 0),
+    processes INTEGER NOT NULL CHECK(processes >= 0)
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE cleanup_budget (
