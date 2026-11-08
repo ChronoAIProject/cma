@@ -1,3 +1,6 @@
+#[path = "telemetry_tests.rs"]
+mod telemetry_tests;
+
 use axum::{
     body::to_bytes,
     http::{Method, StatusCode},
