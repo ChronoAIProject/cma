@@ -36,7 +36,7 @@ pub(super) fn open(
     Ok((connection, lock))
 }
 
-fn configure(connection: &Connection, pages: u32) -> Result<()> {
+pub(super) fn configure(connection: &Connection, pages: u32) -> Result<()> {
     let configure = || -> rusqlite::Result<()> {
         connection.busy_timeout(Duration::from_millis(250))?;
         connection.set_limit(Limit::SQLITE_LIMIT_LENGTH, MAX_VALUE_BYTES)?;
