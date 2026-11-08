@@ -12,6 +12,9 @@ use axum::{
 use layer1_public::{AuthenticatedSubject, DelegatedCredential};
 
 use super::AuthState;
+use layer2_core::dependency_diagnostics::{
+    self as diagnostics, Dependency, Failure, Operation, Reason,
+};
 
 pub async fn attach_subject(
     State(auth): State<Arc<AuthState>>,
@@ -33,13 +36,19 @@ pub async fn attach_subject(
     let allow_fallback = auth
         .fallback_policy
         .permits(request.method(), request.uri().path());
-    let resolved = match auth
-        .resolve_request_with_policy(request.headers(), allow_fallback)
-        .await
-    {
+    let (resolved, failure) =
+        diagnostics::capture(auth.resolve_request_with_policy(request.headers(), allow_fallback))
+            .await;
+    let resolved = match resolved {
         Ok(resolved) => resolved,
         Err(error) => {
-            tracing::error!(error = %error, "authentication store lookup failed");
+            diagnostics::report(
+                Operation::Authentication,
+                failure.or(Some(Failure::new(
+                    Dependency::AuthenticationAuthority,
+                    Reason::Unknown,
+                ))),
+            );
             if request.uri().path() == "/auth/session"
                 && matches!(&error, layer2_core::StoreError::Unavailable(detail) if detail == "identity_provider_unavailable")
             {
