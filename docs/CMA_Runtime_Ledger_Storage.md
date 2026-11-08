@@ -78,11 +78,13 @@ reports as unsupported, never as zero counts.
 
 V1 observation reports `legacy_migration_required` with unknown counts and does
 not scan or reconcile its journals. V2 observation reads a single committed
-transaction revision. History totals cover all generations; outstanding and
+transaction revision. History totals cover all generations; normal-outstanding and
 logical-process counts cover the persistent and current process scopes. Page
 usage, reserved outcomes/cleanup bytes, shared transaction headroom and remaining
 emergency reserve are reported separately. These reads do not wait for the
-supervisor's external-effect gate or trigger recovery. Worker saturation or
+supervisor's external-effect gate or trigger recovery. Covered cleanup does
+not consume normal-outstanding slots; zero normal-outstanding is not evidence
+of quiescence or permission to release a maintenance hold. Worker saturation or
 invalid storage returns an explicit hold instead of invented counters.
 
 Treat 70% and 85% of the page or outstanding budget as warning thresholds and
