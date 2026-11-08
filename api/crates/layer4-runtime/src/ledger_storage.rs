@@ -1,6 +1,8 @@
 //! Bounded SQLite ownership. The worker owns the connection and lifetime lock.
 //! No database error or path is exposed through operational diagnostics.
 mod connection;
+#[cfg(test)]
+pub(crate) mod fault_vfs;
 mod paths;
 mod probe;
 pub(crate) mod reserve;
@@ -34,19 +36,39 @@ pub(crate) struct Storage {
 
 impl Storage {
     pub(crate) async fn open(path: PathBuf, create: bool, pages: u32) -> Result<Self> {
+        Self::open_named(path, create, pages, None).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn open_fault_vfs(
+        path: PathBuf,
+        create: bool,
+        pages: u32,
+        name: String,
+    ) -> Result<Self> {
+        Self::open_named(path, create, pages, Some(name)).await
+    }
+
+    async fn open_named(
+        path: PathBuf,
+        create: bool,
+        pages: u32,
+        vfs: Option<String>,
+    ) -> Result<Self> {
         let (sender, receiver) = sync_channel(QUEUE_LIMIT);
         let (opened, ready) = oneshot::channel();
         let directory = path.clone();
         std::thread::Builder::new()
             .name("runtime-ledger".into())
             .spawn(move || {
-                let (mut connection, lock) = match connection::open(&path, create, pages) {
-                    Ok(opened) => opened,
-                    Err(error) => {
-                        let _ = opened.send(Err(error));
-                        return;
-                    }
-                };
+                let (mut connection, lock) =
+                    match connection::open(&path, create, pages, vfs.as_deref()) {
+                        Ok(opened) => opened,
+                        Err(error) => {
+                            let _ = opened.send(Err(error));
+                            return;
+                        }
+                    };
                 if opened.send(Ok(())).is_err() {
                     return;
                 }
