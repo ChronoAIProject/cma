@@ -7,17 +7,24 @@ use rusqlite::{limits::Limit, Connection, OpenFlags};
 use super::{invalid, paths, storage_error, MAX_VALUE_BYTES};
 use crate::failure::Result;
 
-pub(super) fn open(directory: &Path, create: bool, pages: u32) -> Result<(Connection, File)> {
+pub(super) fn open(
+    directory: &Path,
+    create: bool,
+    pages: u32,
+    vfs: Option<&str>,
+) -> Result<(Connection, File)> {
     if pages < 16 || pages > i32::MAX as u32 {
         return Err(invalid());
     }
     let lock = paths::prepare(directory, create)?;
-    let connection = Connection::open_with_flags(
-        directory.join("ledger.sqlite3"),
-        OpenFlags::SQLITE_OPEN_READ_WRITE
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX
-            | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-    )
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+    let database = directory.join("ledger.sqlite3");
+    let connection = match vfs {
+        Some(name) => Connection::open_with_flags_and_vfs(database, flags, name),
+        None => Connection::open_with_flags(database, flags),
+    }
     .map_err(|_| storage_error())?;
     configure(&connection, pages)?;
     // Hot-journal recovery may run while SQLite first opens the schema. Establish
