@@ -45,10 +45,11 @@ pub(super) struct Root {
     pub(super) scope: u64,
 }
 
+#[derive(Serialize)]
 pub(super) struct Inventory {
     pub(super) roots: Vec<Root>,
     pub(super) entries: Vec<Entry>,
-    digest: String,
+    pub(super) digest: String,
     examined: usize,
     bytes: u64,
 }

@@ -90,6 +90,29 @@ and writer exclusion unproved. A stable hash is not proof of an atomic snapshot
 or an absent legacy writer, and this command does not authorize migration or
 release. The new V2 lock cannot fence a V1 supervisor that never takes it.
 
+`cma-runtime --validate-ledger-v1` additionally validates every mutation record
+before selecting authority survivors or interpreting terminal replacements.
+It preserves the source bytes, including unpublished temporary files, and
+does not qualify auxiliary workspace/installation recovery or writer exclusion.
+
+`cma-runtime --plan-ledger-v1 /absolute/new/private-directory` makes a separate
+byte-for-byte ledger backup and source manifest after that validation. The
+destination must not already exist or overlap the home, state or transfer
+roots; symlinked ancestors are refused. The directory is mode 0700 and completed
+files are mode 0400. The private manifest contains source identities and paths;
+raw records may contain receipt data. Keep the whole artifact in protected
+storage. Only counts, fixed hold reasons and digests appear in command output.
+
+The planner copies and syncs each source file, writes and syncs `plan.json`,
+rescans the original input, then publishes `sealed.json` with the plan digest.
+Any failed step leaves an incomplete artifact for inspection; a retry requires
+a new destination and never overwrites a prior plan. A missing, malformed or
+mismatched seal is not a completed backup. Preserve the reported plan digest
+independently of the artifact for later exact-plan verification. These files
+are a ledger backup, not a full home/history backup or permission to delete
+anything. Even a sealed plan records writer exclusion as unproved: it supplies
+no cutover, release or recovery authority and changes no source-root format.
+
 ## Read-only diagnostics
 
 An authenticated RuntimeStatus request may opt in with the exact Accept value

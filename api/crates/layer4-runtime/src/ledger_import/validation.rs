@@ -55,8 +55,15 @@ impl Analysis {
 }
 
 pub(super) fn analyze(config: &RuntimeConfig, inventory: &Inventory) -> Result<Analysis> {
+    analyze_budget(config, inventory, Budget::new(Limits::default()))
+}
+
+pub(super) fn analyze_budget(
+    config: &RuntimeConfig,
+    inventory: &Inventory,
+    mut budget: Budget,
+) -> Result<Analysis> {
     let mut result = Analysis::default();
-    let mut budget = Budget::new(Limits::default());
     let mut binding = false;
     for (index, entry) in inventory.entries.iter().enumerate() {
         budget.check()?;
