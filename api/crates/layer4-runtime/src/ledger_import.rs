@@ -3,6 +3,8 @@
 mod inventory;
 mod io;
 mod json;
+mod plan;
+mod plan_io;
 #[cfg(test)]
 mod tests;
 mod validation;
@@ -34,6 +36,19 @@ pub(crate) async fn validate_command() -> std::result::Result<(), String> {
     .await
     .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
     .map_err(|error| error.to_string())?;
+    println!("{summary}");
+    Ok(())
+}
+
+pub(crate) async fn plan_command(
+    destination: std::path::PathBuf,
+) -> std::result::Result<(), String> {
+    let config = crate::config::RuntimeConfig::from_environment()
+        .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
+    let summary = tokio::task::spawn_blocking(move || plan::create(&config, &destination))
+        .await
+        .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
+        .map_err(|error| error.to_string())?;
     println!("{summary}");
     Ok(())
 }
@@ -82,6 +97,13 @@ impl Budget {
             return Err(capacity());
         }
         Ok(())
+    }
+    fn remaining_limits(&self) -> Result<Limits> {
+        self.check()?;
+        Ok(Limits {
+            deadline: self.limits.deadline.saturating_sub(self.start.elapsed()),
+            ..self.limits
+        })
     }
     fn entry(&mut self, name_bytes: usize) -> Result<()> {
         self.check()?;

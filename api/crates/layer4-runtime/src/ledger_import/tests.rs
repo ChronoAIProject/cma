@@ -1,6 +1,8 @@
 use super::*;
 use crate::config::RuntimeConfig;
 use std::path::{Path, PathBuf};
+#[path = "plan_tests.rs"]
+mod plans;
 #[path = "validation_tests.rs"]
 mod semantic;
 
