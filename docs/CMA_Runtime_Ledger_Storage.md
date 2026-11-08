@@ -90,6 +90,11 @@ and writer exclusion unproved. A stable hash is not proof of an atomic snapshot
 or an absent legacy writer, and this command does not authorize migration or
 release. The new V2 lock cannot fence a V1 supervisor that never takes it.
 
+A migration-budget refusal reports a numeric lower bound for the exhausted
+budget, without identities or record contents. Requested-read accounting
+includes repeated reads within a validation pass; it is not a claim of unique
+physical disk usage. A refusal never raises a limit or discards an input file.
+
 `cma-runtime --validate-ledger-v1` additionally validates every mutation record
 before selecting authority survivors or interpreting terminal replacements.
 It preserves the source bytes, including unpublished temporary files, and

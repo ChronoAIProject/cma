@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use super::io::Directory;
-use super::{capacity, changed, invalid};
+use super::{capacity_at_least, changed, invalid};
 use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
 
@@ -134,7 +134,7 @@ impl Archive {
             )
             .map_err(|error| {
                 if error.io_error_kind() == Some(std::io::ErrorKind::FileTooLarge) {
-                    capacity()
+                    capacity_at_least("manifest_bytes", u128::from(maximum) + 1)
                 } else {
                     storage()
                 }

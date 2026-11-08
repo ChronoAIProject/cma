@@ -131,7 +131,10 @@ impl Budget {
     }
     fn check(&self) -> Result<()> {
         if self.start.elapsed() > self.limits.deadline {
-            return Err(capacity());
+            return Err(capacity_at_least(
+                "elapsed_nanoseconds",
+                self.start.elapsed().as_nanos(),
+            ));
         }
         Ok(())
     }
@@ -149,8 +152,14 @@ impl Budget {
             .metadata_bytes
             .checked_add(name_bytes * 2 + 512)
             .ok_or_else(capacity)?;
-        if self.entries > self.limits.entries || self.metadata_bytes > self.limits.metadata_bytes {
-            return Err(capacity());
+        if self.entries > self.limits.entries {
+            return Err(capacity_at_least("examined_entries", self.entries as u128));
+        }
+        if self.metadata_bytes > self.limits.metadata_bytes {
+            return Err(capacity_at_least(
+                "metadata_bytes",
+                self.metadata_bytes as u128,
+            ));
         }
         Ok(())
     }
@@ -160,7 +169,10 @@ impl Budget {
             .checked_add(bytes * 2 + 512)
             .ok_or_else(capacity)?;
         if self.metadata_bytes > self.limits.metadata_bytes {
-            return Err(capacity());
+            return Err(capacity_at_least(
+                "metadata_bytes",
+                self.metadata_bytes as u128,
+            ));
         }
         self.check()
     }
@@ -168,7 +180,10 @@ impl Budget {
         self.check()?;
         self.bytes = self.bytes.checked_add(bytes).ok_or_else(capacity)?;
         if self.bytes > self.limits.bytes {
-            return Err(capacity());
+            return Err(capacity_at_least(
+                "requested_read_bytes",
+                self.bytes as u128,
+            ));
         }
         Ok(())
     }
@@ -178,6 +193,13 @@ fn capacity() -> RuntimeError {
     RuntimeError::rejected(
         "mutation_ledger_migration_capacity",
         "runtime mutation ledger migration budget is exhausted",
+    )
+}
+
+fn capacity_at_least(budget: &'static str, lower_bound: u128) -> RuntimeError {
+    RuntimeError::rejected(
+        "mutation_ledger_migration_capacity",
+        format!("runtime mutation ledger migration budget is exhausted; {budget}_at_least={lower_bound}"),
     )
 }
 
