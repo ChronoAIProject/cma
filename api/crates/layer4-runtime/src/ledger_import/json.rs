@@ -1,7 +1,7 @@
 //! Bound JSON topology before the V1 decoder allocates receipt/request trees.
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 
-use super::{capacity, invalid};
+use super::{capacity_at_least, invalid};
 use crate::failure::Result;
 
 pub(super) fn check(bytes: &[u8]) -> Result<()> {
@@ -14,7 +14,7 @@ pub(super) fn check(bytes: &[u8]) -> Result<()> {
     }
     .deserialize(&mut decoder);
     if exceeded {
-        return Err(capacity());
+        return Err(capacity_at_least("json_nodes", 4097));
     }
     result.map_err(|_| invalid())?;
     decoder.end().map_err(|_| invalid())

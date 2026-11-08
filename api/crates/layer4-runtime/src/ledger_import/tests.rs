@@ -124,8 +124,45 @@ fn separate_budgets_stop_inspection_without_changing_input() {
     ] {
         let error = inventory::scan(&fixture.config, limits).err().unwrap();
         assert_eq!(error.code, "mutation_ledger_migration_capacity");
+        assert!(!error.retryable);
+        assert!(error.detail.contains("_at_least="));
+        assert!(!error.detail.contains(fixture.root.to_str().unwrap()));
         assert_eq!(std::fs::read(&source).unwrap(), b"unchanged");
     }
+}
+
+#[test]
+fn refusal_lower_bounds_report_only_the_exhausted_budget() {
+    let mut budget = Budget::new(Limits {
+        entries: 1,
+        bytes: 3,
+        metadata_bytes: 4096,
+        ..Limits::default()
+    });
+    budget.entry(1).unwrap();
+    assert!(budget
+        .entry(1)
+        .unwrap_err()
+        .detail
+        .ends_with("examined_entries_at_least=2"));
+    assert!(budget
+        .file(4)
+        .unwrap_err()
+        .detail
+        .ends_with("requested_read_bytes_at_least=4"));
+    let mut metadata = Budget::new(Limits {
+        metadata_bytes: 1,
+        ..Limits::default()
+    });
+    assert!(metadata
+        .path(3)
+        .unwrap_err()
+        .detail
+        .ends_with("metadata_bytes_at_least=518"));
+    assert!(json::check(&serde_json::to_vec(&vec![0; 4096]).unwrap())
+        .unwrap_err()
+        .detail
+        .ends_with("json_nodes_at_least=4097"));
 }
 
 #[test]
