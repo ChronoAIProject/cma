@@ -330,3 +330,34 @@ async fn capacity_is_bounded_and_completed_flight_cannot_replace_new_pending_wor
     flights.release(&key, &retained[0]).await;
     assert!(Arc::ptr_eq(&replacement, &flights.acquire(&key).await));
 }
+
+#[tokio::test]
+async fn every_single_flight_waiter_keeps_its_final_failure_reason() {
+    use layer2_core::dependency_diagnostics::{capture, Dependency, Failure, Reason};
+    let f = Fixture::new().await;
+    f.control.status.store(429, Ordering::SeqCst);
+    let gate = f.block().await;
+    let requests: Vec<_> = (0..3)
+        .map(|_| {
+            let auth = f.auth.clone();
+            tokio::spawn(async move {
+                capture(identity::request_for_bearer(&auth, "fixture-access".into())).await
+            })
+        })
+        .collect();
+    f.arrived(1).await;
+    f.callers("fixture-access", 3).await;
+    gate.release.add_permits(3);
+    for request in requests {
+        let (result, failure) = request.await.unwrap();
+        assert!(result.is_err());
+        assert_eq!(
+            failure,
+            Some(Failure::new(
+                Dependency::IdentityProvider,
+                Reason::InvalidEvidence
+            ))
+        );
+    }
+    assert_eq!(f.control.introspection_calls.load(Ordering::SeqCst), 1);
+}
