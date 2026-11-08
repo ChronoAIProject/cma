@@ -1,5 +1,6 @@
 //! Test-only SQLite VFS forwarding to the real filesystem. Each named wrapper
 //! owns its fault state until every connection is explicitly closed.
+mod durable;
 mod io;
 
 use rusqlite::ffi;
@@ -19,6 +20,7 @@ pub(crate) struct State {
     parent: usize,
     fault: Mutex<Option<Event>>,
     events: Mutex<Vec<Event>>,
+    namespace: Mutex<Option<durable::Namespace>>,
 }
 impl State {
     pub(crate) fn arm(&self, event: Event) {
@@ -69,6 +71,7 @@ impl Vfs {
                 parent: parent as usize,
                 fault: Mutex::new(None),
                 events: Mutex::new(Vec::new()),
+                namespace: Mutex::new(None),
             });
             STATES
                 .lock()
@@ -129,6 +132,7 @@ unsafe extern "C" fn delete(vfs: *mut ffi::sqlite3_vfs, name: *const c_char, syn
     unsafe {
         let state = Arc::clone(STATES.lock().unwrap().get(&(vfs as usize)).unwrap());
         let parent = state.parent as *mut ffi::sqlite3_vfs;
+        state.before_unlink(name);
         if state.observe(Event::Delete(sync != 0)) {
             // Model deletion succeeding but its directory sync failing. The
             // transaction may be visible: callers must inspect, never re-effect.
@@ -139,7 +143,11 @@ unsafe extern "C" fn delete(vfs: *mut ffi::sqlite3_vfs, name: *const c_char, syn
                 result
             }
         } else {
-            (*parent).xDelete.unwrap()(parent, name, sync)
+            let result = (*parent).xDelete.unwrap()(parent, name, sync);
+            if result == ffi::SQLITE_OK && sync != 0 {
+                state.directory_synced();
+            }
+            result
         }
     }
 }
