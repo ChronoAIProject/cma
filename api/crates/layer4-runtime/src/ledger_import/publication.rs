@@ -1,4 +1,5 @@
-//! Final names never expose unsynced contents. Failed publication is withdrawn.
+//! Final names never expose unsynced contents. Failed publication is neutralized
+//! through the owned descriptor; cleanup never deletes an untrusted entry.
 use std::ffi::CString;
 use std::fs::File;
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -14,7 +15,8 @@ pub(super) enum Step {
     FinalSync,
     DirectorySync,
     Verify,
-    CleanupUnlink,
+    Neutralize,
+    NeutralizeSync,
 }
 
 pub(super) fn write(
@@ -43,7 +45,6 @@ pub(super) fn write(
         return Err(storage());
     }
     let mut file = unsafe { File::from_raw_fd(fd) };
-    let mut published = false;
     let result = (|| {
         write(&mut file)?;
         file.set_permissions(std::fs::Permissions::from_mode(0o400))
@@ -52,7 +53,6 @@ pub(super) fn write(
         file.sync_all().map_err(|_| storage())?;
         step(Step::Rename)?;
         rename(directory, &temp, &name)?;
-        published = true;
         step(Step::FinalSync)?;
         file.sync_all().map_err(|_| storage())?;
         step(Step::DirectorySync)?;
@@ -61,25 +61,20 @@ pub(super) fn write(
         verify()
     })();
     if let Err(original) = result {
-        let cleanup_name = if published { &name } else { &temp };
-        let removed = step(Step::CleanupUnlink).and_then(|()| {
-            if unsafe { libc::unlinkat(directory.as_raw_fd(), cleanup_name.as_ptr(), 0) } == 0 {
-                Ok(())
-            } else {
-                Err(storage())
-            }
-        });
-        if let Err(error) = removed {
-            tracing::error!(code = %error.code, phase = "withdraw_descriptor", "ledger publication cleanup failed");
-            // The still-owned writable fd permits neutralizing even a mode-0400
-            // file when its directory cannot be changed. Never delete a prior
-            // destination whose no-replace rename was refused.
-            if file.set_len(0).and_then(|()| file.sync_all()).is_err() {
-                tracing::error!(
-                    phase = "neutralize_descriptor",
-                    "ledger publication cleanup failed"
-                );
-            }
+        // No portable unlink-if-inode operation exists. Even a fresh entry
+        // identity check followed by unlinkat could delete a replacement. The
+        // writable fd still owns our inode after any rename/unlink, including
+        // once chmod made it read-only. Leave its empty, invalid artifact in
+        // place rather than mutate a name whose current ownership is uncertain.
+        if let Err(error) =
+            step(Step::Neutralize).and_then(|()| file.set_len(0).map_err(|_| storage()))
+        {
+            tracing::error!(code = %error.code, phase = "neutralize_descriptor", "ledger publication cleanup failed");
+        }
+        if let Err(error) =
+            step(Step::NeutralizeSync).and_then(|()| file.sync_all().map_err(|_| storage()))
+        {
+            tracing::error!(code = %error.code, phase = "persist_neutralization", "ledger publication cleanup failed");
         }
         if directory.sync_all().is_err() {
             tracing::error!(

@@ -55,7 +55,7 @@ fn sealed_plan_requires_the_independent_digest_and_exact_source_binding() {
 
 #[test]
 fn sealed_plan_refuses_incomplete_tampered_extra_linked_or_writable_bytes() {
-    for mode in 0..9 {
+    for mode in 0..10 {
         let (fixture, path, digest) = plan();
         let record = path.join("00000000.record");
         match mode {
@@ -71,7 +71,8 @@ fn sealed_plan_refuses_incomplete_tampered_extra_linked_or_writable_bytes() {
                 symlink(outside, &record).unwrap();
             }
             7 => std::fs::hard_link(&record, fixture.root.join("linked")).unwrap(),
-            _ => std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o600)).unwrap(),
+            8 => std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o600)).unwrap(),
+            _ => replace(&path.join("sealed.json"), b""),
         }
         assert!(
             sealed::open(&fixture.config, &path, &digest).is_err(),
