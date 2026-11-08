@@ -67,7 +67,7 @@ pub(super) fn analyze_budget(
     let mut binding = false;
     for (index, entry) in inventory.entries.iter().enumerate() {
         budget.check()?;
-        let root = &inventory.roots[entry.directory];
+        let root = inventory.roots.get(entry.directory).ok_or_else(invalid)?;
         let bytes = inventory.read(index, &mut budget)?;
         let path = root.path.join(&entry.name);
         let mut scoped = config.clone();

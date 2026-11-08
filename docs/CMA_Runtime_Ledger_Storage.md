@@ -113,6 +113,15 @@ are a ledger backup, not a full home/history backup or permission to delete
 anything. Even a sealed plan records writer exclusion as unproved: it supplies
 no cutover, release or recovery authority and changes no source-root format.
 
+`cma-runtime --verify-ledger-plan /absolute/private-directory <plan-sha256>`
+reopens that exact artifact using the independently retained digest and the
+original assigned runtime configuration. It reads only the archived ledger
+bytes, so the original source can remain offline. A different source identity
+or generation, changed record, missing/extra file, writable or linked copy,
+or invalid seal holds. The manifest is streamed with a 24 MiB input ceiling
+and bounded metadata collections. Verification does not establish that the
+live source still matches the plan or that an old writer has been excluded.
+
 ## Read-only diagnostics
 
 An authenticated RuntimeStatus request may opt in with the exact Accept value

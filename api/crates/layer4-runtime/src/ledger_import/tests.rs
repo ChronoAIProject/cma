@@ -3,6 +3,8 @@ use crate::config::RuntimeConfig;
 use std::path::{Path, PathBuf};
 #[path = "plan_tests.rs"]
 mod plans;
+#[path = "sealed_tests.rs"]
+mod sealed_plans;
 #[path = "validation_tests.rs"]
 mod semantic;
 

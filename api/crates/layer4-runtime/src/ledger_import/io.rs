@@ -11,7 +11,8 @@ use crate::failure::Result;
 
 pub(super) struct Directory(pub(super) File);
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Identity {
     pub(super) device: u64,
     pub(super) inode: u64,
@@ -36,7 +37,60 @@ impl From<Metadata> for Identity {
     }
 }
 
+impl Identity {
+    pub(super) fn sealed_file(&self) -> bool {
+        self.mode & 0o777 == 0o400 && self.links == 1
+    }
+}
+
 impl Directory {
+    pub(super) fn deserialize<T: serde::de::DeserializeOwned>(
+        &self,
+        name: &str,
+        maximum: u64,
+        budget: &mut Budget,
+    ) -> Result<(T, String)> {
+        use sha2::{Digest, Sha256};
+        let file = self.open_at(name, 0)?.ok_or_else(changed)?;
+        let metadata = file.metadata().map_err(|_| invalid())?;
+        if !metadata.is_file()
+            || metadata.len() > maximum
+            || metadata.uid() != unsafe { libc::geteuid() }
+        {
+            return Err(invalid());
+        }
+        let before: Identity = metadata.into();
+        if !before.sealed_file() {
+            return Err(invalid());
+        }
+        budget.file(before.bytes)?;
+        struct HashReader<R> {
+            reader: R,
+            hash: Sha256,
+        }
+        impl<R: Read> Read for HashReader<R> {
+            fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+                let read = self.reader.read(bytes)?;
+                self.hash.update(&bytes[..read]);
+                Ok(read)
+            }
+        }
+        let mut reader = HashReader {
+            reader: std::io::BufReader::new((&file).take(maximum + 1)),
+            hash: Sha256::new(),
+        };
+        // Stream decoding: never retain a second manifest-sized byte buffer.
+        let value = serde_json::from_reader(&mut reader).map_err(|_| invalid())?;
+        let current = self.open_at(name, 0)?.ok_or_else(changed)?;
+        if Identity::from(file.metadata().map_err(|_| invalid())?) != before
+            || Identity::from(current.metadata().map_err(|_| invalid())?) != before
+        {
+            return Err(changed());
+        }
+        budget.check()?;
+        Ok((value, crate::command::hex(&reader.hash.finalize())))
+    }
+
     pub(super) fn open(path: &Path) -> Result<Self> {
         if !path.is_absolute() {
             return Err(invalid());

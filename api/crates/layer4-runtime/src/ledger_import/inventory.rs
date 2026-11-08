@@ -1,5 +1,5 @@
 //! Bounded structural inventory only. Semantic import validation is separate.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::io::{Directory, Identity};
@@ -7,7 +7,7 @@ use super::{changed, invalid, Budget, Limits};
 use crate::config::RuntimeConfig;
 use crate::failure::Result;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum Kind {
     Authority,
     Journal,
@@ -28,7 +28,8 @@ impl Kind {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Entry {
     pub(super) directory: usize,
     pub(super) name: String,
@@ -37,7 +38,8 @@ pub(super) struct Entry {
     pub(super) temporary: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Root {
     pub(super) path: std::path::PathBuf,
     pub(super) identity: Option<Identity>,
@@ -45,19 +47,70 @@ pub(super) struct Root {
     pub(super) scope: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Inventory {
+    #[serde(deserialize_with = "bounded_metadata")]
     pub(super) roots: Vec<Root>,
+    #[serde(deserialize_with = "bounded_metadata")]
     pub(super) entries: Vec<Entry>,
     pub(super) digest: String,
     examined: usize,
     bytes: u64,
+    #[serde(skip)]
+    pub(super) archive: Option<(std::path::PathBuf, Identity)>,
+}
+
+fn bounded_metadata<'de, D, T>(deserializer: D) -> std::result::Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct Rows<T>(std::marker::PhantomData<T>);
+    impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for Rows<T> {
+        type Value = Vec<T>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("bounded ledger inventory")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut rows: A,
+        ) -> std::result::Result<Vec<T>, A::Error> {
+            let mut result = Vec::new();
+            while let Some(row) = rows.next_element()? {
+                // Every captured entry/root already costs at least 512 bytes
+                // in the planner's metadata budget. Bound allocations on input
+                // too, before a forged manifest can grow a history-sized vector.
+                if result.len() >= Limits::default().metadata_bytes / 512 {
+                    return Err(serde::de::Error::custom("ledger metadata budget"));
+                }
+                result.push(row);
+            }
+            Ok(result)
+        }
+    }
+    deserializer.deserialize_seq(Rows(std::marker::PhantomData))
 }
 
 impl Inventory {
     pub(super) fn read(&self, index: usize, budget: &mut Budget) -> Result<Vec<u8>> {
         let entry = self.entries.get(index).ok_or_else(invalid)?;
         let root = self.roots.get(entry.directory).ok_or_else(invalid)?;
+        if let Some((path, expected)) = &self.archive {
+            let directory = Directory::open(path)?;
+            if directory.identity()? != *expected {
+                return Err(changed());
+            }
+            let (identity, bytes) =
+                directory.read(&format!("{index:08}.record"), root.kind.maximum(), budget)?;
+            if !identity.sealed_file()
+                || identity.bytes != entry.identity.bytes
+                || crate::command::hex(&Sha256::digest(&bytes)) != entry.sha256
+            {
+                return Err(changed());
+            }
+            return Ok(bytes);
+        }
         let directory = Directory::open(&root.path)?;
         if Some(directory.identity()?) != root.identity {
             return Err(changed());
@@ -99,6 +152,7 @@ pub(super) fn scan(config: &RuntimeConfig, limits: Limits) -> Result<Inventory> 
         digest: String::new(),
         examined: 0,
         bytes: 0,
+        archive: None,
     };
     // Count every state-root entry, including unrelated helper directories;
     // never scan home files, native conversation data or credential directories.
