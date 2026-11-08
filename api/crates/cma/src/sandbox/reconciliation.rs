@@ -218,9 +218,11 @@ impl SandboxReconciler {
                 // The durable row is the only absence proof on this path. Take
                 // its boundary immediately before the optional diagnostic and
                 // carry that exact evidence into the CAS.
-                return self
-                    .recover_missing(sandbox, fresh_recovery_boundary(sandbox, now))
-                    .await;
+                let boundary = fresh_recovery_boundary(sandbox, now);
+                if boundary.stale {
+                    return Ok(false);
+                }
+                return self.recover_missing(sandbox, boundary.observed_at).await;
             }
             return Ok(true);
         };
@@ -237,7 +239,7 @@ impl SandboxReconciler {
         // Capture the boundary before that provider read: an Agent update
         // arriving while it is in flight must supersede this evidence rather
         // than being hidden by a later wall-clock timestamp.
-        let observed_at = fresh_recovery_boundary(sandbox, now);
+        let boundary = fresh_recovery_boundary(sandbox, now);
         let fresh = self
             .adapter
             .runtime_inventory()
@@ -261,8 +263,14 @@ impl SandboxReconciler {
                 return Ok(true);
             }
         }
+        if boundary.stale {
+            // A durable writer or caller floor is ahead of the provider read.
+            // That read cannot authorize recovery; retain the hold and retry
+            // after a new boundary instead of dating it in the future.
+            return Ok(false);
+        }
         if sandbox.requires_runtime_loss_recovery() {
-            return self.recover_missing(sandbox, observed_at).await;
+            return self.recover_missing(sandbox, boundary.observed_at).await;
         }
         Ok(true)
     }
@@ -399,11 +407,21 @@ impl SandboxReconciler {
     }
 }
 
-fn fresh_recovery_boundary(sandbox: &Sandbox, floor: SystemTime) -> SystemTime {
+#[derive(Clone, Copy)]
+struct RecoveryBoundary {
+    observed_at: SystemTime,
+    stale: bool,
+}
+
+fn fresh_recovery_boundary(sandbox: &Sandbox, floor: SystemTime) -> RecoveryBoundary {
+    let observed_at = SystemTime::now();
     let durable = seconds_from_rfc3339(&sandbox.updated_at)
         .map(|seconds| UNIX_EPOCH + Duration::from_secs(seconds))
         .unwrap_or(UNIX_EPOCH);
-    floor.max(durable).max(SystemTime::now())
+    RecoveryBoundary {
+        observed_at,
+        stale: floor > observed_at || durable > observed_at,
+    }
 }
 
 fn provider_error(error: layer3_adapter::AdapterError) -> SandboxStoreError {
