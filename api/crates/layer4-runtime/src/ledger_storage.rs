@@ -133,6 +133,21 @@ impl Storage {
         result.await.map_err(|_| storage_error())?
     }
 
+    /// A rejected open must release its writer before the refusal is observable.
+    /// Dropping only the sender lets a subsequent open race worker shutdown.
+    pub(crate) async fn validate(
+        self,
+        work: impl FnOnce(&mut Connection) -> Result<()> + Send + 'static,
+    ) -> Result<Self> {
+        if let Err(original) = self.call(work).await {
+            if let Err(close) = self.close().await {
+                tracing::error!(code = %close.code, "ledger close failed after open validation refusal");
+            }
+            return Err(original);
+        }
+        Ok(self)
+    }
+
     fn send(&self, message: Message) -> Result<()> {
         self.sender.try_send(message).map_err(|error| match error {
             TrySendError::Full(_) => RuntimeError::rejected(
