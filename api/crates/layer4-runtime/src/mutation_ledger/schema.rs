@@ -21,11 +21,15 @@ pub(super) fn open(db: &mut Connection, config: &RuntimeConfig, create: bool) ->
             .map_err(|_| storage_error())?;
         transaction
             .execute(
-                "INSERT INTO metadata VALUES (1, ?, ?, ?)",
+                "INSERT INTO metadata VALUES (1, ?, ?, ?, ?, ?, ?, ?, 'fresh')",
                 params![
                     config.sandbox_id,
                     config.home_identity.clone().unwrap_or_default(),
-                    fence::encode(config.generation).as_slice()
+                    fence::encode(config.generation).as_slice(),
+                    config.state_root.to_str().ok_or_else(invalid)?,
+                    config.home.to_str().ok_or_else(invalid)?,
+                    config.checkpoint_root.to_str().ok_or_else(invalid)?,
+                    uuid::Uuid::new_v4().as_bytes().as_slice()
                 ],
             )
             .map_err(|_| storage_error())?;
@@ -39,19 +43,6 @@ pub(super) fn open(db: &mut Connection, config: &RuntimeConfig, create: bool) ->
             .map_err(|_| storage_error())
     };
     if read("application_id")? != APPLICATION_ID || read("user_version")? != VERSION {
-        return Err(invalid());
-    }
-    let (sandbox, home, generation): (String, String, Vec<u8>) = db
-        .query_row(
-            "SELECT sandbox, home, generation FROM metadata WHERE singleton = 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .map_err(|_| invalid())?;
-    if sandbox != config.sandbox_id
-        || home != config.home_identity.clone().unwrap_or_default()
-        || fence::decode(&generation)? > config.generation
-    {
         return Err(invalid());
     }
     // Compare the complete private schema, including constraints and indexes.
@@ -70,6 +61,38 @@ pub(super) fn open(db: &mut Connection, config: &RuntimeConfig, create: bool) ->
     if definitions(db)? != expected {
         return Err(invalid());
     }
+    let (sandbox, home, generation): (String, String, Vec<u8>) = db
+        .query_row(
+            "SELECT sandbox, home, generation FROM metadata WHERE singleton = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|_| invalid())?;
+    if sandbox != config.sandbox_id
+        || home != config.home_identity.clone().unwrap_or_default()
+        || fence::decode(&generation)? > config.generation
+    {
+        return Err(invalid());
+    }
+    let (state, home, transfer, admission): (String, String, String, String) = db
+        .query_row(
+            "SELECT state_root,home_root,transfer_root,admission FROM metadata WHERE singleton=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| invalid())?;
+    if std::path::Path::new(&state) != config.state_root
+        || std::path::Path::new(&home) != config.home
+        || std::path::Path::new(&transfer) != config.checkpoint_root
+    {
+        return Err(invalid());
+    }
+    if admission != "fresh" {
+        return Err(crate::failure::RuntimeError::rejected(
+            "mutation_ledger_import_held",
+            "imported runtime mutation ledger requires reviewed release authority",
+        ));
+    }
     db.execute(
         "UPDATE metadata SET generation=? WHERE singleton=1",
         [fence::encode(config.generation).as_slice()],
@@ -86,7 +109,11 @@ fn definitions(db: &Connection) -> Result<Vec<(String, String)>> {
         .map_err(|_| invalid())?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|_| invalid())?;
-    if rows.len() > 16 {
+    if rows.len() > 16
+        || rows
+            .iter()
+            .any(|(name, sql): &(String, String)| name.len() > 256 || sql.len() > 65536)
+    {
         return Err(invalid());
     }
     Ok(rows)

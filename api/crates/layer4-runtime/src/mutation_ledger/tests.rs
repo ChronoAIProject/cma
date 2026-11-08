@@ -353,3 +353,45 @@ async fn parent_home_tombstone_blocks_skills_without_erasing_other_authority() {
     ledger.admit(3, vec![add(0)]).await.unwrap();
     ledger.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn roots_are_bound_and_imported_state_cannot_open_a_serving_ledger() {
+    let fixture = Fixture::new();
+    let ledger = fixture.open(true).await;
+    ledger.admit(1, vec![close()]).await.unwrap();
+    ledger.close().await.unwrap();
+    for kind in ["state", "home", "transfer"] {
+        let mut wrong = fixture.config.clone();
+        match kind {
+            "state" => wrong.state_root = wrong.state_root.with_extension("other"),
+            "home" => wrong.home = wrong.home.with_extension("other"),
+            _ => wrong.checkpoint_root = wrong.checkpoint_root.with_extension("other"),
+        }
+        assert!(Ledger::open(fixture.database(), wrong, false, 32_768)
+            .await
+            .is_err());
+    }
+    let ledger = fixture.open(false).await;
+    ledger
+        .storage
+        .call(|db| {
+            assert!(db
+                .execute("UPDATE metadata SET store_id=x'00'", [])
+                .is_err());
+            assert!(db
+                .execute("UPDATE metadata SET admission='released'", [])
+                .is_err());
+            db.execute("UPDATE metadata SET admission='import_held'", [])
+                .unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
+    ledger.close().await.unwrap();
+    let error = Ledger::open(fixture.database(), fixture.config.clone(), false, 32_768)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.code, "mutation_ledger_import_held");
+    assert!(!error.retryable);
+}
