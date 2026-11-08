@@ -3,7 +3,8 @@ use layer3_adapter::{WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt, Worktr
 
 use super::{agent_validation, Supervisor};
 use crate::failure::Result;
-use crate::mutation_journal::{self, Begin, Operation, Subject, Ticket};
+use crate::mutation_journal::{Operation, Subject};
+use crate::mutation_store::{finish, Begin, Cursor, Ticket};
 
 impl Supervisor {
     pub(super) async fn authorize_mutation(&self, request: &RequestFrame) -> Result<()> {
@@ -66,7 +67,7 @@ impl Supervisor {
             return Ok(());
         };
         self.authorize_preparation(request).await?;
-        crate::mutation_authority::admit(&self.config, authority_fence, &operation)
+        self.mutations.admit(authority_fence, &[operation]).await
     }
 
     pub(super) async fn add_worktree(
@@ -76,7 +77,7 @@ impl Supervisor {
     ) -> Result<ResponseFrame> {
         crate::worktree::validate_add_request(&request)?;
         let operation = Operation::add_worktree(&request);
-        if !mutation_journal::admitted(&self.config, &operation)? {
+        if !self.mutations.admitted(&operation).await? {
             crate::worktree::preflight_add(
                 &self.config.home,
                 self.config.allow_local_git,
@@ -84,7 +85,7 @@ impl Supervisor {
             )
             .await?;
         }
-        match mutation_journal::begin::<WorktreeReceipt>(&self.config, &operation)? {
+        match self.mutations.begin::<WorktreeReceipt>(&operation).await? {
             Begin::Completed(receipt) => Ok(add_response(authority_fence, receipt)),
             Begin::Failed(error) | Begin::Indeterminate(error) => Err(error),
             Begin::New(ticket) | Begin::Started(ticket) => {
@@ -103,16 +104,22 @@ impl Supervisor {
         match crate::worktree::inspect_add(&self.config.home, self.config.allow_local_git, &request)
             .await
         {
-            Ok(Some(receipt)) => finish(ticket, Ok(receipt), |receipt| {
-                add_response(authority_fence, receipt)
-            }),
+            Ok(Some(receipt)) => {
+                finish(ticket, Ok(receipt), |receipt| {
+                    add_response(authority_fence, receipt)
+                })
+                .await
+            }
             Ok(None) => {
                 match crate::worktree::add(&self.config.home, self.config.allow_local_git, &request)
                     .await
                 {
-                    Ok(receipt) => finish(ticket, Ok(receipt), |receipt| {
-                        add_response(authority_fence, receipt)
-                    }),
+                    Ok(receipt) => {
+                        finish(ticket, Ok(receipt), |receipt| {
+                            add_response(authority_fence, receipt)
+                        })
+                        .await
+                    }
                     Err(error) => {
                         self.finish_failed_add_worktree(authority_fence, &request, ticket, error)
                             .await
@@ -124,7 +131,7 @@ impl Supervisor {
                 tracing::warn!(detail = %error, "worktree addition recovery failed closed");
                 Err(ticket.indeterminate(
                     "worktree addition left partial or mismatched Git state; explicit recovery is required",
-                )?)
+                ).await?)
             }
         }
     }
@@ -139,12 +146,15 @@ impl Supervisor {
         match crate::worktree::inspect_add(&self.config.home, self.config.allow_local_git, request)
             .await
         {
-            Ok(Some(receipt)) => finish(ticket, Ok(receipt), |receipt| {
-                add_response(authority_fence, receipt)
-            }),
+            Ok(Some(receipt)) => {
+                finish(ticket, Ok(receipt), |receipt| {
+                    add_response(authority_fence, receipt)
+                })
+                .await
+            }
             Ok(None) if error.retryable => Err(error),
             Ok(None) => {
-                ticket.fail(&error)?;
+                ticket.fail(&error).await?;
                 Err(error)
             }
             Err(observation) if observation.retryable => Err(observation),
@@ -156,7 +166,7 @@ impl Supervisor {
                 );
                 Err(ticket.indeterminate(
                     "worktree addition left partial or mismatched Git state; explicit recovery is required",
-                )?)
+                ).await?)
             }
         }
     }
@@ -171,7 +181,7 @@ impl Supervisor {
         let path =
             crate::worktree::expected_path(&self.config.home, &request.workspace, &request.name);
         self.ensure_worktree_idle(&path).await?;
-        if !mutation_journal::admitted(&self.config, &operation)? {
+        if !self.mutations.admitted(&operation).await? {
             crate::worktree::preflight_remove(
                 &self.config.home,
                 self.config.allow_local_git,
@@ -179,7 +189,11 @@ impl Supervisor {
             )
             .await?;
         }
-        match mutation_journal::begin::<WorktreeRemoveReceipt>(&self.config, &operation)? {
+        match self
+            .mutations
+            .begin::<WorktreeRemoveReceipt>(&operation)
+            .await?
+        {
             Begin::Completed(receipt) => Ok(remove_response(authority_fence, receipt)),
             Begin::Failed(error) | Begin::Indeterminate(error) => Err(error),
             Begin::New(ticket) | Begin::Started(ticket) => {
@@ -198,16 +212,19 @@ impl Supervisor {
         match crate::worktree::remove(&self.config.home, self.config.allow_local_git, &request)
             .await
         {
-            Ok(()) => finish(
-                ticket,
-                Ok(WorktreeRemoveReceipt {
-                    operation_id: request.operation_id,
-                    request_sha256: request.request_sha256,
-                    workspace: request.workspace,
-                    name: request.name,
-                }),
-                |receipt| remove_response(authority_fence, receipt),
-            ),
+            Ok(()) => {
+                finish(
+                    ticket,
+                    Ok(WorktreeRemoveReceipt {
+                        operation_id: request.operation_id,
+                        request_sha256: request.request_sha256,
+                        workspace: request.workspace,
+                        name: request.name,
+                    }),
+                    |receipt| remove_response(authority_fence, receipt),
+                )
+                .await
+            }
             Err(error) => Err(crate::failure::RuntimeError::unavailable(
                 "worktree_remove_incomplete",
                 format!("worktree removal has not converged: {error}"),
@@ -216,77 +233,71 @@ impl Supervisor {
     }
 
     pub(super) async fn recover_mutations_locked(&self) -> Result<()> {
-        for pending in mutation_journal::started(&self.config)? {
-            let Some(authority_fence) =
-                crate::mutation_authority::recovery_fence(&self.config, &pending.operation)?
-            else {
-                pending.ticket.supersede()?;
-                continue;
-            };
-            match pending.operation.subject.clone() {
-                Subject::AddWorktree {
-                    workspace,
-                    name,
-                    base,
-                } => {
-                    let request = WorktreeRequest {
-                        operation_id: pending.operation.operation_id.clone(),
-                        request_sha256: pending.operation.request_sha256.clone(),
+        let mut cursor = Cursor::default();
+        loop {
+            let page = self.mutations.started(&mut cursor).await?;
+            if page.is_empty() {
+                break;
+            }
+            for pending in page {
+                let Some(authority_fence) =
+                    self.mutations.recovery_fence(&pending.operation).await?
+                else {
+                    pending.ticket.supersede().await?;
+                    continue;
+                };
+                match pending.operation.subject.clone() {
+                    Subject::AddWorktree {
                         workspace,
                         name,
                         base,
-                    };
-                    absorb_recovery(
-                        self.execute_add_worktree(authority_fence, request, pending.ticket)
+                    } => {
+                        let request = WorktreeRequest {
+                            operation_id: pending.operation.operation_id.clone(),
+                            request_sha256: pending.operation.request_sha256.clone(),
+                            workspace,
+                            name,
+                            base,
+                        };
+                        absorb_recovery(
+                            self.execute_add_worktree(authority_fence, request, pending.ticket)
+                                .await,
+                        )?;
+                    }
+                    Subject::RemoveWorktree { workspace, name } => {
+                        let request = WorktreeRef {
+                            operation_id: pending.operation.operation_id.clone(),
+                            request_sha256: pending.operation.request_sha256.clone(),
+                            workspace,
+                            name,
+                        };
+                        absorb_recovery(
+                            self.execute_remove_worktree(authority_fence, request, pending.ticket)
+                                .await,
+                        )?;
+                    }
+                    Subject::InstallAgentSkill { request } => {
+                        absorb_recovery(
+                            self.execute_install_agent_skill(
+                                authority_fence,
+                                request,
+                                pending.ticket,
+                            )
                             .await,
-                    )?;
+                        )?;
+                    }
+                    Subject::CreateAgentHome { .. } => self.recover_agent_home(pending).await?,
+                    Subject::OpenAgent { .. } => self.recover_agent_open(pending).await?,
+                    Subject::CloseAgent { .. } => {
+                        self.recover_agent_close(authority_fence, pending).await?
+                    }
+                    Subject::RemoveAgentHome { .. } => {
+                        self.recover_agent_home_removal(pending).await?
+                    }
                 }
-                Subject::RemoveWorktree { workspace, name } => {
-                    let request = WorktreeRef {
-                        operation_id: pending.operation.operation_id.clone(),
-                        request_sha256: pending.operation.request_sha256.clone(),
-                        workspace,
-                        name,
-                    };
-                    absorb_recovery(
-                        self.execute_remove_worktree(authority_fence, request, pending.ticket)
-                            .await,
-                    )?;
-                }
-                Subject::InstallAgentSkill { request } => {
-                    absorb_recovery(
-                        self.execute_install_agent_skill(authority_fence, request, pending.ticket)
-                            .await,
-                    )?;
-                }
-                Subject::CreateAgentHome { .. } => self.recover_agent_home(pending)?,
-                Subject::OpenAgent { .. } => self.recover_agent_open(pending).await?,
-                Subject::CloseAgent { .. } => {
-                    self.recover_agent_close(authority_fence, pending).await?
-                }
-                Subject::RemoveAgentHome { .. } => self.recover_agent_home_removal(pending)?,
             }
         }
         Ok(())
-    }
-}
-
-fn finish<T: serde::Serialize>(
-    ticket: Ticket,
-    result: Result<T>,
-    response: impl FnOnce(T) -> ResponseFrame,
-) -> Result<ResponseFrame> {
-    match result {
-        Ok(receipt) => {
-            ticket.complete(&receipt)?;
-            Ok(response(receipt))
-        }
-        Err(error) => {
-            if !error.retryable {
-                ticket.fail(&error)?;
-            }
-            Err(error)
-        }
     }
 }
 
