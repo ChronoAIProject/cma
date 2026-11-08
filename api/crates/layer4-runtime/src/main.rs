@@ -95,6 +95,11 @@ async fn run() -> Result<(), String> {
     if arguments.len() == 2 && arguments[0] == "--plan-ledger-v1" {
         return ledger_import::plan_command(std::path::PathBuf::from(&arguments[1])).await;
     }
+    if arguments.len() == 3 && arguments[0] == "--verify-ledger-plan" {
+        let digest = arguments[2].to_str().ok_or("invalid ledger plan digest")?;
+        return ledger_import::verify_plan_command(arguments[1].clone().into(), digest.into())
+            .await;
+    }
     if arguments.len() == 2 && arguments[0] == "--verify-ledger-storage" {
         return ledger_storage::probe(std::path::Path::new(&arguments[1]))
             .await

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use super::io::Directory;
-use super::{changed, invalid};
+use super::{capacity, changed, invalid};
 use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
 
@@ -94,15 +94,29 @@ impl Archive {
     }
 
     pub(super) fn json(&self, name: &str, value: &impl serde::Serialize) -> Result<String> {
+        self.json_bounded(name, value, 24 * 1024 * 1024)
+    }
+
+    pub(super) fn json_bounded(
+        &self,
+        name: &str,
+        value: &impl serde::Serialize,
+        maximum: u64,
+    ) -> Result<String> {
         let mut digest = Sha256::new();
         struct HashWriter<'a> {
             file: &'a mut File,
             digest: &'a mut Sha256,
+            remaining: u64,
         }
         impl Write for HashWriter<'_> {
             fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if bytes.len() as u64 > self.remaining {
+                    return Err(std::io::Error::from(std::io::ErrorKind::FileTooLarge));
+                }
                 let length = self.file.write(bytes)?;
                 self.digest.update(&bytes[..length]);
+                self.remaining -= length as u64;
                 Ok(length)
             }
             fn flush(&mut self) -> std::io::Result<()> {
@@ -114,10 +128,17 @@ impl Archive {
                 HashWriter {
                     file,
                     digest: &mut digest,
+                    remaining: maximum,
                 },
                 value,
             )
-            .map_err(|_| storage())
+            .map_err(|error| {
+                if error.io_error_kind() == Some(std::io::ErrorKind::FileTooLarge) {
+                    capacity()
+                } else {
+                    storage()
+                }
+            })
         })?;
         Ok(crate::command::hex(&digest.finalize()))
     }
