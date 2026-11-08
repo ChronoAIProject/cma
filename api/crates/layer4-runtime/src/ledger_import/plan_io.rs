@@ -66,9 +66,18 @@ impl Archive {
         if name.is_empty() || name == "." || name == ".." || name.contains('/') {
             return Err(invalid());
         }
+        if matches!(name, "ready.json" | "sealed.json") {
+            return super::publication::write(
+                &self.directory.0,
+                name,
+                write,
+                || self.verify(),
+                |_| Ok(()),
+            );
+        }
         let name = CString::new(name).map_err(|_| invalid())?;
-        // SAFETY: create a new file under the owned directory, never following
-        // or replacing any existing name. The returned descriptor is owned.
+        // Ordinary copies/manifests remain inspectable after failure; only the
+        // independently published completion descriptors qualify the artifact.
         let fd = unsafe {
             libc::openat(
                 self.directory.0.as_raw_fd(),

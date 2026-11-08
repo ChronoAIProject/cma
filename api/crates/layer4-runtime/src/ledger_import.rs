@@ -5,6 +5,7 @@ mod io;
 mod json;
 mod plan;
 mod plan_io;
+mod publication;
 mod sealed;
 mod stage;
 #[cfg(test)]
