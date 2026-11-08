@@ -3,9 +3,9 @@ use std::path::PathBuf;
 
 use super::{connection, invalid, probe, storage_error, Storage};
 
-struct Fixture(PathBuf);
+pub(super) struct Fixture(pub(super) PathBuf);
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let root = std::env::temp_dir()
             .canonicalize()
             .unwrap()
@@ -14,7 +14,7 @@ impl Fixture {
         Self(root)
     }
 
-    fn database(&self) -> PathBuf {
+    pub(super) fn database(&self) -> PathBuf {
         self.0.join("database")
     }
 }
@@ -161,7 +161,12 @@ async fn unsafe_paths_unknown_files_and_invalid_limits_refuse() {
 
 #[tokio::test]
 async fn symlinked_or_hardlinked_database_and_journal_are_not_opened() {
-    for name in ["ledger.sqlite3", "ledger.sqlite3-journal", "writer.lock"] {
+    for name in [
+        "ledger.sqlite3",
+        "ledger.sqlite3-journal",
+        "writer.lock",
+        "emergency.reserve",
+    ] {
         let fixture = Fixture::new();
         probe(&fixture.database()).await.unwrap();
         let destination = fixture.database().join(name);

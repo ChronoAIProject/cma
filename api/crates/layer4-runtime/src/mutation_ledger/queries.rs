@@ -29,6 +29,7 @@ pub(crate) struct Snapshot {
     pub(crate) processes: i64,
     pub(crate) allocated_bytes: i64,
     pub(crate) maximum_bytes: i64,
+    pub(crate) emergency_remaining_bytes: u64,
 }
 
 impl Ledger {
@@ -146,12 +147,14 @@ impl Ledger {
 
     pub(crate) async fn snapshot(&self) -> Result<Snapshot> {
         let generation = self.config.generation.to_be_bytes();
+        let directory = self.directory.clone();
         self.storage.call(move |db| {
             let tx=db.unchecked_transaction().map_err(|_|storage_error())?;
             let mut snapshot=tx.query_row("SELECT revision,operations,terminal,authority,reserved FROM accounting WHERE singleton=1",[],|r|Ok(Snapshot {
-                revision:r.get(0)?,operations:r.get(1)?,terminal:r.get(2)?,authority:r.get(3)?,reserved_bytes:r.get(4)?,pending:0,processes:0,allocated_bytes:0,maximum_bytes:0,
+                revision:r.get(0)?,operations:r.get(1)?,terminal:r.get(2)?,authority:r.get(3)?,reserved_bytes:r.get(4)?,pending:0,processes:0,allocated_bytes:0,maximum_bytes:0,emergency_remaining_bytes:0,
             })).map_err(|_|storage_error())?;
             (snapshot.pending,snapshot.processes)=tx.query_row("SELECT coalesce(sum(pending),0),coalesce(sum(processes),0) FROM scope_budget WHERE scope IN (zeroblob(8),?)",[generation.as_slice()],|r|Ok((r.get(0)?,r.get(1)?))).map_err(|_|storage_error())?;
+            snapshot.emergency_remaining_bytes=crate::ledger_storage::reserve::remaining(&directory)?;
             snapshot.allocated_bytes=pragma(&tx,"page_count")?*4096;
             snapshot.maximum_bytes=pragma(&tx,"max_page_count")?*4096;
             tx.commit().map_err(|_|storage_error())?;
