@@ -35,6 +35,9 @@ mod resource_command_tests;
 #[path = "cookie_authorization_tests/session_routes_tests.rs"]
 mod session_routes_tests;
 
+#[path = "cookie_authorization_tests/diagnostic_tests.rs"]
+mod diagnostic_tests;
+
 #[derive(Default)]
 struct Gate {
     reached: Notify,

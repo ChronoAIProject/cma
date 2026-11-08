@@ -87,4 +87,5 @@ pub use pressure::{
 pub use pressure_service::{PressureEdges, PressureMonitor};
 pub use sequence::Sequences;
 
+pub mod dependency_diagnostics;
 pub mod event_workers;
