@@ -47,10 +47,16 @@ pub(super) async fn request_for_bearer(
             tracing::debug!(error = %error, "bearer credential was not accepted");
             Ok(None)
         }
-        Err(ProviderVerificationError::Transient(_)) => Err(super::identity_retry::unavailable()),
-        Err(ProviderVerificationError::Unavailable(_)) => Err(StoreError::Unavailable(
-            "bearer authorization could not be verified".into(),
-        )),
+        Err(error @ ProviderVerificationError::Transient(_)) => {
+            error.record_unavailable();
+            Err(super::identity_retry::unavailable())
+        }
+        Err(error @ ProviderVerificationError::Unavailable(_)) => {
+            error.record_unavailable();
+            Err(StoreError::Unavailable(
+                "bearer authorization could not be verified".into(),
+            ))
+        }
     }
 }
 

@@ -105,6 +105,7 @@ impl InstanceProblem {
 
 impl From<AgentReadError> for InstanceProblem {
     fn from(error: AgentReadError) -> Self {
+        super::dependency_diagnostics::read_failure(&error);
         match error {
             AgentReadError::Access(error) => Self::ResourceAccess(error),
             AgentReadError::Forbidden => Self::Forbidden,
