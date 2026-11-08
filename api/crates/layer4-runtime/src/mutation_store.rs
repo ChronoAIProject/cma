@@ -37,6 +37,12 @@ impl Store {
     pub(crate) fn new(config: RuntimeConfig, ledger: Option<Arc<Ledger>>) -> Self {
         Self { config, ledger }
     }
+    pub(crate) fn verify(&self) -> Result<()> {
+        if let Some(ledger) = &self.ledger {
+            ledger.verify()?;
+        }
+        Ok(())
+    }
     pub(crate) async fn admit(&self, fence: u64, operations: &[Operation]) -> Result<()> {
         match &self.ledger {
             Some(ledger) => {

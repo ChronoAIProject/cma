@@ -36,7 +36,7 @@ pub(crate) struct Storage {
 
 impl Storage {
     pub(crate) async fn open(path: PathBuf, create: bool, pages: u32) -> Result<Self> {
-        Self::open_named(path, create, pages, None).await
+        Self::open_named(path, create, pages, None, None).await
     }
 
     #[cfg(test)]
@@ -46,7 +46,15 @@ impl Storage {
         pages: u32,
         name: String,
     ) -> Result<Self> {
-        Self::open_named(path, create, pages, Some(name)).await
+        Self::open_named(path, create, pages, Some(name), None).await
+    }
+
+    pub(crate) async fn open_with_lock(
+        path: PathBuf,
+        pages: u32,
+        lock: std::sync::Arc<std::fs::File>,
+    ) -> Result<Self> {
+        Self::open_named(path, false, pages, None, Some(lock)).await
     }
 
     async fn open_named(
@@ -54,6 +62,7 @@ impl Storage {
         create: bool,
         pages: u32,
         vfs: Option<String>,
+        outer_lock: Option<std::sync::Arc<std::fs::File>>,
     ) -> Result<Self> {
         let (sender, receiver) = sync_channel(QUEUE_LIMIT);
         let (opened, ready) = oneshot::channel();
@@ -61,6 +70,7 @@ impl Storage {
         std::thread::Builder::new()
             .name("runtime-ledger".into())
             .spawn(move || {
+                let outer_lock = outer_lock;
                 let (mut connection, lock) =
                     match connection::open(&path, create, pages, vfs.as_deref()) {
                         Ok(opened) => opened,
@@ -78,6 +88,7 @@ impl Storage {
                         Message::Close(reply) => {
                             let result = connection.close().map_err(|_| storage_error());
                             drop(lock);
+                            drop(outer_lock);
                             let _ = reply.send(result);
                             return;
                         }

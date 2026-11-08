@@ -8,6 +8,15 @@ const APPLICATION_ID: i64 = 0x434d4132;
 const VERSION: i64 = 2;
 
 pub(super) fn open(db: &mut Connection, config: &RuntimeConfig, create: bool) -> Result<()> {
+    open_guarded(db, config, create, None)
+}
+
+pub(super) fn open_guarded(
+    db: &mut Connection,
+    config: &RuntimeConfig,
+    create: bool,
+    guard: Option<&crate::ledger_format::Guard>,
+) -> Result<()> {
     if create {
         let transaction = db.transaction().map_err(|_| storage_error())?;
         transaction
@@ -92,6 +101,16 @@ pub(super) fn open(db: &mut Connection, config: &RuntimeConfig, create: bool) ->
             "mutation_ledger_import_held",
             "imported runtime mutation ledger requires reviewed release authority",
         ));
+    }
+    if let Some(guard) = guard {
+        let store: Vec<u8> = db
+            .query_row(
+                "SELECT store_id FROM metadata WHERE singleton=1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|_| invalid())?;
+        guard.opening(&store, fence::decode(&generation)?)?;
     }
     db.execute(
         "UPDATE metadata SET generation=? WHERE singleton=1",

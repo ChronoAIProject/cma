@@ -34,6 +34,7 @@ pub(crate) struct Ledger {
     storage: Storage,
     config: Arc<RuntimeConfig>,
     directory: PathBuf,
+    guard: Option<Arc<crate::ledger_format::Guard>>,
 }
 
 impl Ledger {
@@ -51,11 +52,58 @@ impl Ledger {
         Ok(Self {
             storage,
             directory: path,
+            guard: None,
             config: Arc::new(config),
         })
     }
 
+    pub(crate) async fn open_guarded(
+        path: PathBuf,
+        config: RuntimeConfig,
+        pages: u32,
+        guard: Arc<crate::ledger_format::Guard>,
+    ) -> Result<Self> {
+        let storage =
+            Storage::open_with_lock(path.clone(), pages, Arc::clone(&guard.writer)).await?;
+        let expected = config.clone();
+        let proof = Arc::clone(&guard);
+        storage
+            .call(move |db| schema::open_guarded(db, &expected, false, Some(&proof)))
+            .await?;
+        Ok(Self {
+            storage,
+            directory: path,
+            config: Arc::new(config),
+            guard: Some(guard),
+        })
+    }
+
+    pub(crate) fn verify(&self) -> Result<()> {
+        if let Some(guard) = &self.guard {
+            guard.verify()?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn store_id(&self) -> Result<String> {
+        self.storage
+            .call(|db| {
+                let bytes: Vec<u8> = db
+                    .query_row(
+                        "SELECT store_id FROM metadata WHERE singleton=1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|_| invalid())?;
+                uuid::Uuid::from_slice(&bytes)
+                    .map(|id| id.to_string())
+                    .map_err(|_| invalid())
+            })
+            .await
+    }
+
     pub(crate) async fn admit(&self, fence: u64, operations: Vec<Operation>) -> Result<()> {
+        self.verify()?;
         if operations.is_empty() || operations.len() > 2 || fence == 0 {
             return Err(invalid());
         }
@@ -87,6 +135,7 @@ impl Ledger {
     }
 
     pub(crate) async fn begin(&self, operation: Operation) -> Result<journal::Entry> {
+        self.verify()?;
         crate::mutation_journal::validate_operation(&self.config, &operation)?;
         let config = Arc::clone(&self.config);
         self.storage
@@ -101,6 +150,7 @@ impl Ledger {
     }
 
     pub(crate) async fn finish(&self, record: crate::mutation_journal::Record) -> Result<()> {
+        self.verify()?;
         let config = Arc::clone(&self.config);
         self.storage
             .call(move |db| {
