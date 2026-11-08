@@ -5,6 +5,7 @@ mod io;
 mod json;
 mod plan;
 mod plan_io;
+mod sealed;
 #[cfg(test)]
 mod tests;
 mod validation;
@@ -49,6 +50,23 @@ pub(crate) async fn plan_command(
         .await
         .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
         .map_err(|error| error.to_string())?;
+    println!("{summary}");
+    Ok(())
+}
+
+pub(crate) async fn verify_plan_command(
+    path: std::path::PathBuf,
+    expected: String,
+) -> std::result::Result<(), String> {
+    let config = crate::config::RuntimeConfig::from_environment()
+        .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
+    let summary = tokio::task::spawn_blocking(move || {
+        let (plan, analysis) = sealed::open(&config, &path, &expected)?;
+        Ok::<_, RuntimeError>(analysis.summary(&plan.inventory))
+    })
+    .await
+    .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
+    .map_err(|error| error.to_string())?;
     println!("{summary}");
     Ok(())
 }

@@ -4,7 +4,7 @@ use layer3_adapter::WorktreeRequest;
 use sha2::{Digest, Sha256};
 use std::os::unix::fs::{symlink, MetadataExt};
 
-fn fixture() -> Fixture {
+pub(super) fn fixture() -> Fixture {
     let mut fixture = Fixture::new();
     fixture.config.home_identity = Some("a".repeat(43));
     crate::persistent_home::initialize(&fixture.config).unwrap();
