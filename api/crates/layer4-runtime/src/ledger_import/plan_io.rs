@@ -1,0 +1,211 @@
+//! Create-only, descriptor-relative output. Never open a source file for writing.
+use std::ffi::CString;
+use std::fs::File;
+use std::io::Write;
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha256};
+
+use super::io::Directory;
+use super::{capacity_at_least, changed, invalid};
+use crate::config::RuntimeConfig;
+use crate::failure::{Result, RuntimeError};
+
+pub(super) struct Archive {
+    directory: Directory,
+    parent: Directory,
+    path: PathBuf,
+    identity: (u64, u64),
+    isolation: super::isolation::Proof,
+}
+
+impl Archive {
+    pub(super) fn create(config: &RuntimeConfig, path: &Path) -> Result<Self> {
+        Self::create_protected(config, path, None)
+    }
+
+    pub(super) fn create_protected(
+        config: &RuntimeConfig,
+        path: &Path,
+        plan: Option<&Path>,
+    ) -> Result<Self> {
+        let mut roots = vec![
+            config.home.as_path(),
+            config.state_root.as_path(),
+            config.checkpoint_root.as_path(),
+        ];
+        roots.extend(plan);
+        let isolation = super::isolation::Proof::new(&roots)?;
+        let parent = isolation.parent(path)?;
+        let name = path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .ok_or_else(invalid)?;
+        let name_c = CString::new(name).map_err(|_| invalid())?;
+        // SAFETY: the parent fd and one NUL-terminated component are live.
+        if unsafe { libc::mkdirat(parent.0.as_raw_fd(), name_c.as_ptr(), 0o700) } != 0 {
+            return Err(storage());
+        }
+        parent.0.sync_all().map_err(|_| storage())?;
+        let directory = parent.child(name)?.ok_or_else(changed)?;
+        let metadata = directory.0.metadata().map_err(|_| storage())?;
+        if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0 {
+            return Err(invalid());
+        }
+        let identity = (metadata.dev(), metadata.ino());
+        let result = Self {
+            directory,
+            parent,
+            path: path.into(),
+            identity,
+            isolation,
+        };
+        result.verify()?;
+        Ok(result)
+    }
+
+    pub(super) fn database(&self) -> Result<Directory> {
+        self.verify()?;
+        if unsafe { libc::mkdirat(self.directory.0.as_raw_fd(), c"database".as_ptr(), 0o700) } != 0
+        {
+            return Err(storage());
+        }
+        self.directory.0.sync_all().map_err(|_| storage())?;
+        let directory = self.directory.child("database")?.ok_or_else(changed)?;
+        self.verify()?;
+        Ok(directory)
+    }
+
+    pub(super) fn verify_database(&self, expected: &Directory) -> Result<()> {
+        self.verify()?;
+        let actual = self
+            .directory
+            .child("database")?
+            .ok_or_else(changed)?
+            .identity()?;
+        let expected = expected.identity()?;
+        if (actual.device, actual.inode) != (expected.device, expected.inode) {
+            return Err(changed());
+        }
+        Ok(())
+    }
+
+    pub(super) fn write(
+        &self,
+        name: &str,
+        write: impl FnOnce(&mut File) -> Result<()>,
+    ) -> Result<()> {
+        self.verify()?;
+        if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+            return Err(invalid());
+        }
+        if matches!(name, "ready.json" | "sealed.json") {
+            return super::publication::write(
+                &self.directory.0,
+                name,
+                write,
+                || self.verify(),
+                |_| Ok(()),
+            );
+        }
+        let name = CString::new(name).map_err(|_| invalid())?;
+        // Ordinary copies/manifests remain inspectable after failure; only the
+        // independently published completion descriptors qualify the artifact.
+        let fd = unsafe {
+            libc::openat(
+                self.directory.0.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if fd < 0 {
+            return Err(storage());
+        }
+        let mut file = unsafe { File::from_raw_fd(fd) };
+        write(&mut file)?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o400))
+            .map_err(|_| storage())?;
+        file.sync_all().map_err(|_| storage())?;
+        self.directory.0.sync_all().map_err(|_| storage())?;
+        self.verify()
+    }
+
+    pub(super) fn bytes(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        self.write(name, |file| file.write_all(bytes).map_err(|_| storage()))
+    }
+
+    pub(super) fn json(&self, name: &str, value: &impl serde::Serialize) -> Result<String> {
+        self.json_bounded(name, value, 24 * 1024 * 1024)
+    }
+
+    pub(super) fn json_bounded(
+        &self,
+        name: &str,
+        value: &impl serde::Serialize,
+        maximum: u64,
+    ) -> Result<String> {
+        let mut digest = Sha256::new();
+        struct HashWriter<'a> {
+            file: &'a mut File,
+            digest: &'a mut Sha256,
+            remaining: u64,
+        }
+        impl Write for HashWriter<'_> {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if bytes.len() as u64 > self.remaining {
+                    return Err(std::io::Error::from(std::io::ErrorKind::FileTooLarge));
+                }
+                let length = self.file.write(bytes)?;
+                self.digest.update(&bytes[..length]);
+                self.remaining -= length as u64;
+                Ok(length)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.file.flush()
+            }
+        }
+        self.write(name, |file| {
+            serde_json::to_writer(
+                HashWriter {
+                    file,
+                    digest: &mut digest,
+                    remaining: maximum,
+                },
+                value,
+            )
+            .map_err(|error| {
+                if error.io_error_kind() == Some(std::io::ErrorKind::FileTooLarge) {
+                    capacity_at_least("manifest_bytes", u128::from(maximum) + 1)
+                } else {
+                    storage()
+                }
+            })
+        })?;
+        Ok(crate::command::hex(&digest.finalize()))
+    }
+
+    pub(super) fn verify(&self) -> Result<()> {
+        let directory = Directory::open(&self.path)?;
+        let metadata = directory.0.metadata().map_err(|_| storage())?;
+        if (metadata.dev(), metadata.ino()) != self.identity {
+            return Err(changed());
+        }
+        let parent = self.isolation.parent(&self.path)?;
+        let original = self.parent.identity()?;
+        let current = parent.identity()?;
+        if (original.device, original.inode) != (current.device, current.inode) {
+            return Err(changed());
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn storage() -> RuntimeError {
+    RuntimeError::rejected(
+        "mutation_ledger_storage_hold",
+        "runtime mutation ledger storage requires verification",
+    )
+}
