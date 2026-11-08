@@ -103,6 +103,7 @@ async fn read_agents(
     store: &MongoSandboxStore,
     id: &SandboxId,
 ) -> Result<Vec<AgentAdminSummary>, SandboxStoreError> {
+    let mut read = super::mongo_read_telemetry::Read::find(store.agents.name());
     let mut cursor = store
         .agents
         .find(doc! { "sandbox_id": id.as_str() })
@@ -110,13 +111,14 @@ async fn read_agents(
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
     let mut rows = Vec::new();
-    while let Some(document) = cursor
-        .try_next()
+    while let Some(document) = read
+        .next(&mut cursor)
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
     {
         rows.push(AgentAdminSummary::from(&read_agent(&document)?));
     }
+    read.complete();
     Ok(rows)
 }
 

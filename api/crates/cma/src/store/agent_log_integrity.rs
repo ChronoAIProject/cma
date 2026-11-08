@@ -88,6 +88,7 @@ pub(super) async fn scan_collection<F>(
 where
     F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
 {
+    let mut observation = super::agent_log_telemetry::Scan::new();
     if last_seq > PHYSICAL_AGENT_LOG_ENTRIES {
         tracing::warn!(
             limit_kind = "physical_entries",
@@ -97,6 +98,7 @@ where
         );
         return Err(capacity_error().into());
     }
+    let mut read = super::mongo_read_telemetry::Read::find(collection.name());
     let raw_log = collection.clone_with_type::<RawDocumentBuf>();
     let find = raw_log
         .find(mongodb::bson::doc! { "agent_id": agent_id.as_str() })
@@ -119,6 +121,9 @@ where
         .await
         .map_err(TransactionLogError::Driver)?
     {
+        let document_bytes = raw.as_bytes().len();
+        observation.document(document_bytes);
+        read.document(document_bytes);
         let document = Document::try_from(&raw).map_err(|error| {
             TransactionLogError::Domain(SandboxStoreError::Corrupt(error.to_string()))
         })?;
@@ -129,7 +134,6 @@ where
                 SandboxStoreError::SequenceConflict,
             ));
         }
-        let document_bytes = raw.as_bytes().len();
         encoded_bytes = encoded_bytes
             .checked_add(document_bytes)
             .filter(|total| *total <= PHYSICAL_AGENT_LOG_BYTES)
@@ -153,6 +157,8 @@ where
             SandboxStoreError::SequenceConflict,
         ));
     }
+    observation.complete();
+    read.complete();
     Ok(LogSummary {
         entry_count,
         encoded_bytes,

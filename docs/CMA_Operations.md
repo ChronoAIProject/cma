@@ -2075,6 +2075,102 @@ four-connection Mongo pool, 2-second indexed-read budget, and a 30-second circui
 on failed/slow (>250 ms) checkout or reads exceeding their budget. Reporting
 pressure returns Retry-After without changing conversation/lifecycle pools.
 
+## API read and stream diagnostics
+
+The API emits content-free structured log metrics every ten seconds and once
+on graceful worker shutdown. These are process-local cumulative counters; use
+differences within one process lifetime and handle resets across deployments.
+The timer emits zero gauges too, so a quiet or disconnected stream does not
+leave a stale active count. This uses the same API log path as reporting and
+runtime hold diagnostics, with no public metrics endpoint.
+
+| Metric | Fixed labels | Meaning |
+| --- | --- | --- |
+| `cma_public_streams_active` | `stream_kind` | Gauge of successful SSE response bodies still open, including bodies waiting for consumer reads. Ends at EOF or drop. |
+| `cma_public_stream_polls_total` | `stream_kind`, `outcome` | Refreshes of stream state; `quiet` has no new projected frames, `output` queues new frames, `failed` includes failed or cancelled refreshes. |
+| `cma_agent_log_scans_total` | `outcome` | Attempts to validate a complete captured Agent log, classified as `success` or `failed` (including cancellation). |
+| `cma_agent_log_scan_documents_total` | `outcome` | Documents consumed by those validation attempts, including the offending document on validation failure. |
+| `cma_agent_log_scan_bytes_total` | `outcome` | Encoded BSON document bytes consumed by those validation attempts, excluding reply/batch envelopes. |
+
+`stream_kind` is one of `agui`, `agent_events_v2`, `responses`, `responses_v2`,
+and `launch_events`. Initial buffered replay and SSE keepalives do not count as
+polls; Responses v1 reads its initial replay inside its first poll. Replayed
+Responses v2 frames before the caller's cursor do not count as new output.
+An output poll counts queued frames, which may subsequently be withheld by a
+fresh authorization check. The counters never change that authorization or the
+stream's outcome. No identities, contents or inherited request span fields are
+included in these metric events. The numeric sample is the `value` field.
+
+Complete-log scan observations count the raw lengths already used by integrity
+validation. They add no serialization, decode, query or validation shortcut.
+Counters update when each scan ends; failed scans retain partial document and
+byte totals, and pre-read refusals have zero documents/bytes. They describe
+validation work, not extra traffic to add to Mongo consumed-read totals: an abandoned
+cursor may have received more documents than the validator consumed.
+
+Mongo consumed-read counters use only BSON lengths already available in the
+store. The measured paths are:
+
+| Collection | Measured store paths |
+| --- | --- |
+| `agent_log` | `agent_log_integrity::scan_collection`: complete read-side and transaction/publication validation, including quiet log range reads. |
+| `agents` | `agents::list_agents`, `agent_reads::list_owned_agents`, `lifecycle_execution::sandbox_agents` and shared `load_sandbox_agents`, `agent_worker_store::live_agent_connections` and `due_agent_work`, and `operator_sandboxes::read_agents`. |
+| `sandbox_events` | `sandbox_events::validate_in_transaction` and `sandbox_events::sandbox_events`, including the admin event reader that delegates to it. |
+
+The shared transactional Agent loader covers recovery, maintenance, lifecycle
+and checkpoint callers. Projected queries count the encoded projection they
+consume, not the full stored record. Page lookahead rows count because the store
+consumes them even when it omits them from the returned page.
+
+The complete-log scanner uses its existing raw BSON buffer. The other listed
+cursors use the registry driver's public `advance`, `current` and
+`deserialize_current` methods: borrow the length, then perform the same single
+decode as before. The shared helpers are `mongo_read_telemetry::Read::next` and
+`next_in_session`. Query filters, sorting, limits, projections, sessions and
+validation remain unchanged. Telemetry accumulates local document/byte totals and
+publishes atomic totals when the traversal ends; it never walks
+fields, re-serializes records, copies BSON or adds a database round trip.
+
+| Metric | Fixed labels | Meaning |
+| --- | --- | --- |
+| `cma_mongo_read_operations_total` | `collection`, `operation` | Measured store find traversals that ended, including failure or cancellation. |
+| `cma_mongo_read_failures_total` | `collection`, `operation` | Those traversals that failed or were cancelled, including store validation failures. |
+| `cma_mongo_read_documents_total` | `collection`, `operation` | Documents consumed at the measured raw BSON boundaries, including a document whose decoding or validation fails. |
+| `cma_mongo_read_document_bytes_total` | `collection`, `operation` | Encoded BSON lengths of those consumed documents, including fields beyond the logical record. |
+
+`collection` comes only from the static schema-authority `COLLECTIONS` allow-list
+in `store/isolation.rs`; unknown names become `other`. `operation` is currently
+only `find`. A find includes documents consumed from subsequent `getMore`
+batches; these are not per-command or per-batch counters. Totals update when
+that store traversal ends, retaining partial work on failure. No query values,
+identities, contents or inherited request span fields are emitted.
+
+Rows emit only when the fixed label pair changes. Carry forward the previous
+cumulative value across quiet windows, and handle process restarts as resets.
+Complete-log scan counters overlap these consumed-read counters; do not add
+them together. The scan counters additionally distinguish validation outcomes.
+
+### Unmeasured Mongo traffic
+
+These counters are a lower bound on consumed document bytes, not a measurement
+of total API receive traffic. Reply envelopes, errors without documents,
+unconsumed/pre-fetched batches, driver retry traffic, command counts, separate
+`getMore` counts, compression, TLS and wire framing are unmeasured. The metrics
+`cma_mongo_read_bytes_total`, `cma_mongo_read_responses_total` and
+`cma_mongo_read_incomplete_summaries_total` are not emitted: the store cannot
+observe whole-reply metadata at this boundary.
+
+Collection labels do not imply complete collection coverage. Typed point
+lookups (including `get_agent`, `agent_log_entry`, log head/tail probes and the
+shared `agent_admission_records::find_at_snapshot` helper) are unmeasured: those
+boundaries expose decoded documents, not borrowed raw lengths. Other Agent
+cursors, such as title/provenance discovery, removal/purge and admission/capacity
+checks, remain uninstrumented. Aggregates, other collections, reporting and
+runtime-routing pools are also unmeasured unless explicitly listed above. The
+registry MongoDB driver and its lockfile are unchanged; no command monitoring,
+profiling query, database privilege or dependency fork is required. Do not
+re-serialize decoded documents merely to fill these coverage gaps.
+
 ## Immutable web build identity
 
 The account menu's **Copy build version** copies the running bundle's own version
