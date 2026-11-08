@@ -259,8 +259,9 @@ impl Supervisor {
                             name,
                             base,
                         };
-                        absorb_recovery(
-                            self.execute_add_worktree(authority_fence, request, pending.ticket)
+                        let (ticket, terminal) = pending.ticket.track_terminal();
+                        terminal.absorb(
+                            self.execute_add_worktree(authority_fence, request, ticket)
                                 .await,
                         )?;
                     }
@@ -271,19 +272,17 @@ impl Supervisor {
                             workspace,
                             name,
                         };
-                        absorb_recovery(
-                            self.execute_remove_worktree(authority_fence, request, pending.ticket)
+                        let (ticket, terminal) = pending.ticket.track_terminal();
+                        terminal.absorb(
+                            self.execute_remove_worktree(authority_fence, request, ticket)
                                 .await,
                         )?;
                     }
                     Subject::InstallAgentSkill { request } => {
-                        absorb_recovery(
-                            self.execute_install_agent_skill(
-                                authority_fence,
-                                request,
-                                pending.ticket,
-                            )
-                            .await,
+                        let (ticket, terminal) = pending.ticket.track_terminal();
+                        terminal.absorb(
+                            self.execute_install_agent_skill(authority_fence, request, ticket)
+                                .await,
                         )?;
                     }
                     Subject::CreateAgentHome { .. } => self.recover_agent_home(pending).await?,
@@ -298,14 +297,6 @@ impl Supervisor {
             }
         }
         Ok(())
-    }
-}
-
-fn absorb_recovery(result: Result<ResponseFrame>) -> Result<()> {
-    match result {
-        Ok(_) => Ok(()),
-        Err(error) if !error.retryable => Ok(()),
-        Err(error) => Err(error),
     }
 }
 
