@@ -179,3 +179,92 @@ async fn directory_sync_failure_after_unlink_never_becomes_an_acknowledged_termi
     );
     ledger.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn extra_survives_namespace_loss_while_full_control_loses_acknowledged_receipt() {
+    for extra in [false, true] {
+        let fixture = Fixture::new();
+        let vfs = Vfs::new();
+        let ledger = open(&fixture, &vfs, true).await;
+        ledger.admit(1, vec![close()]).await.unwrap();
+        let terminal = ledger
+            .begin(close())
+            .await
+            .unwrap()
+            .record
+            .completed(&receipt())
+            .unwrap();
+        if !extra {
+            // Deliberate negative control, never used by a serving connection.
+            ledger
+                .storage
+                .call(|db| {
+                    db.pragma_update(None, "synchronous", "FULL").unwrap();
+                    Ok(())
+                })
+                .await
+                .unwrap();
+        }
+        vfs.state.model_namespace_loss();
+        ledger.finish(terminal).await.unwrap(); // Acknowledged transaction.
+        ledger.close().await.unwrap();
+        assert_eq!(vfs.state.lose_unsynced_namespace(), !extra);
+        let ledger = open(&fixture, &vfs, false).await;
+        let record = ledger.begin(close()).await.unwrap().record;
+        let snapshot = ledger.snapshot().await.unwrap();
+        if extra {
+            assert_eq!(record.receipt::<AgentCloseReceipt>().unwrap(), receipt());
+            assert_eq!((snapshot.terminal, snapshot.pending), (1, 0));
+        } else {
+            assert_eq!(record.status(), Status::Started);
+            assert_eq!((snapshot.terminal, snapshot.pending), (0, 1));
+        }
+        ledger.close().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn failed_extra_barrier_then_namespace_loss_recovers_started_without_repeating_effect() {
+    let fixture = Fixture::new();
+    let vfs = Vfs::new();
+    let ledger = open(&fixture, &vfs, true).await;
+    ledger.admit(1, vec![close()]).await.unwrap();
+    let terminal = ledger
+        .begin(close())
+        .await
+        .unwrap()
+        .record
+        .completed(&receipt())
+        .unwrap();
+    vfs.state.model_namespace_loss();
+    vfs.state.arm(Event::Delete(true));
+    assert_eq!(
+        ledger.finish(terminal.clone()).await.unwrap_err().code,
+        "mutation_ledger_storage_hold"
+    );
+    ledger.close().await.unwrap();
+    assert!(vfs.state.lose_unsynced_namespace());
+    let ledger = open(&fixture, &vfs, false).await;
+    let recovered = ledger.begin(close()).await.unwrap();
+    assert!(!recovered.new);
+    assert_eq!(recovered.record.status(), Status::Started);
+    assert_eq!(ledger.snapshot().await.unwrap().terminal, 0);
+    // The parent reconciles the already-completed effect. Recommit only its
+    // receipt; a lost terminal transaction never authorizes another effect.
+    ledger.finish(terminal).await.unwrap();
+    assert_eq!(
+        ledger
+            .begin(close())
+            .await
+            .unwrap()
+            .record
+            .receipt::<AgentCloseReceipt>()
+            .unwrap(),
+        receipt()
+    );
+    assert_eq!(
+        ledger.snapshot().await.unwrap().emergency_remaining_bytes,
+        0
+    );
+    ledger.close().await.unwrap();
+}
