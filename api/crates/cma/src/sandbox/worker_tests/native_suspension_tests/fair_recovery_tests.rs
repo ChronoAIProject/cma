@@ -112,6 +112,7 @@ async fn permanently_failed_early_binding_does_not_starve_a_real_native_boot_rep
     .await
     .unwrap();
     let agent = lifecycle_recovery_tests::prepare_agent(&fixture.harness, &active, now, 1).await;
+    now = super::after_durable_boundary(&active).await;
     let mut early = created.clone();
     early.id = SandboxId("sbx_000_held".into());
     assert!(early.id < active.id);
@@ -263,6 +264,7 @@ async fn an_ordinary_binding_detects_later_boot_loss_behind_a_persistent_pause_f
     .await
     .unwrap();
     let agent = lifecycle_recovery_tests::prepare_agent(&fixture.harness, &active, now, 1).await;
+    now = super::after_durable_boundary(&active).await;
     let store = Arc::new(FailingStore {
         inner: fixture.harness.store.clone(),
         held: SandboxId("sbx_not_present".into()),
