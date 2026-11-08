@@ -86,6 +86,13 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments
+        .first()
+        .is_some_and(|arg| arg == "--cutover-ledger-v1")
+    {
+        return ledger_import::cutover_command()
+            .map_err(|error| format!("{}: {error}", error.code));
+    }
     if arguments.len() == 1 && arguments[0] == "--inspect-ledger-v1" {
         return ledger_import::inspect_command().await;
     }
