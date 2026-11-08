@@ -6,6 +6,7 @@ mod crash_tests;
 #[cfg(test)]
 mod fault_tests;
 mod fence;
+pub(crate) mod import;
 mod journal;
 #[cfg(test)]
 mod journal_tests;
@@ -47,8 +48,8 @@ impl Ledger {
     ) -> Result<Self> {
         let storage = Storage::open(path.clone(), create, pages).await?;
         let expected = config.clone();
-        storage
-            .call(move |db| schema::open(db, &expected, create))
+        let storage = storage
+            .validate(move |db| schema::open(db, &expected, create))
             .await?;
         Ok(Self {
             storage,
@@ -68,8 +69,8 @@ impl Ledger {
             Storage::open_with_lock(path.clone(), pages, Arc::clone(&guard.writer)).await?;
         let expected = config.clone();
         let proof = Arc::clone(&guard);
-        storage
-            .call(move |db| schema::open_guarded(db, &expected, false, Some(&proof)))
+        let storage = storage
+            .validate(move |db| schema::open_guarded(db, &expected, false, Some(&proof)))
             .await?;
         Ok(Self {
             storage,
@@ -191,8 +192,8 @@ impl Ledger {
     ) -> Result<Self> {
         let storage = Storage::open_fault_vfs(path.clone(), false, 32_768, name).await?;
         let expected = config.clone();
-        storage
-            .call(move |db| schema::open(db, &expected, false))
+        let storage = storage
+            .validate(move |db| schema::open(db, &expected, false))
             .await?;
         Ok(Self {
             storage,
