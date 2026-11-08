@@ -54,6 +54,22 @@ pub(super) struct Inventory {
 }
 
 impl Inventory {
+    pub(super) fn read(&self, index: usize, budget: &mut Budget) -> Result<Vec<u8>> {
+        let entry = self.entries.get(index).ok_or_else(invalid)?;
+        let root = self.roots.get(entry.directory).ok_or_else(invalid)?;
+        let directory = Directory::open(&root.path)?;
+        if Some(directory.identity()?) != root.identity {
+            return Err(changed());
+        }
+        let (identity, bytes) = directory.read(&entry.name, root.kind.maximum(), budget)?;
+        if identity != entry.identity
+            || crate::command::hex(&Sha256::digest(&bytes)) != entry.sha256
+        {
+            return Err(changed());
+        }
+        Ok(bytes)
+    }
+
     pub(super) fn summary(&self) -> serde_json::Value {
         serde_json::json!({
             "format": "runtime-ledger-inventory-v1", "admission": "held",

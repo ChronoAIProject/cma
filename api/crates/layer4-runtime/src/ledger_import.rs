@@ -2,8 +2,10 @@
 //! Inventory is evidence, not proof that a legacy writer has stopped.
 mod inventory;
 mod io;
+mod json;
 #[cfg(test)]
 mod tests;
+mod validation;
 
 use std::time::{Duration, Instant};
 
@@ -14,6 +16,20 @@ pub(crate) async fn inspect_command() -> std::result::Result<(), String> {
         .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
     let summary = tokio::task::spawn_blocking(move || {
         inventory::scan(&config, Limits::default()).map(|inventory| inventory.summary())
+    })
+    .await
+    .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
+    .map_err(|error| error.to_string())?;
+    println!("{summary}");
+    Ok(())
+}
+
+pub(crate) async fn validate_command() -> std::result::Result<(), String> {
+    let config = crate::config::RuntimeConfig::from_environment()
+        .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
+    let summary = tokio::task::spawn_blocking(move || {
+        let inventory = inventory::scan(&config, Limits::default())?;
+        validation::analyze(&config, &inventory).map(|analysis| analysis.summary(&inventory))
     })
     .await
     .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
