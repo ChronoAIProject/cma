@@ -210,7 +210,7 @@ pub(super) fn authorize(current_records: &[&Record], incoming: &Record) -> Resul
     }))
 }
 
-fn current<'a>(records: impl Iterator<Item = &'a Record>) -> Option<&'a Record> {
+pub(super) fn current<'a>(records: impl Iterator<Item = &'a Record>) -> Option<&'a Record> {
     records.max_by_key(|record| {
         (
             record.authority_fence,
