@@ -23,6 +23,7 @@ mod profile_policy;
 mod projections;
 mod provider_tool_relay;
 mod rate_limit;
+mod read_telemetry;
 mod sandbox;
 mod sandbox_metrics;
 mod shutdown;
@@ -128,6 +129,7 @@ async fn serve() -> Result<(), String> {
         "CMA listening"
     );
     let mut shutdown = ShutdownCoordinator::new();
+    shutdown.push(read_telemetry::spawn(shutdown.subscribe()));
     shutdown.push(
         composition
             .auth
