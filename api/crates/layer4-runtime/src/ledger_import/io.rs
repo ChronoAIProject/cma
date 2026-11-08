@@ -9,7 +9,7 @@ use std::path::{Component, Path};
 use super::{changed, invalid, Budget};
 use crate::failure::Result;
 
-pub(super) struct Directory(File);
+pub(super) struct Directory(pub(super) File);
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(super) struct Identity {
