@@ -100,6 +100,15 @@ async fn run() -> Result<(), String> {
         return ledger_import::verify_plan_command(arguments[1].clone().into(), digest.into())
             .await;
     }
+    if arguments.len() == 4 && arguments[0] == "--stage-ledger-v1" {
+        let digest = arguments[2].to_str().ok_or("invalid ledger plan digest")?;
+        return ledger_import::stage_command(
+            arguments[1].clone().into(),
+            digest.into(),
+            arguments[3].clone().into(),
+        )
+        .await;
+    }
     if arguments.len() == 2 && arguments[0] == "--verify-ledger-storage" {
         return ledger_storage::probe(std::path::Path::new(&arguments[1]))
             .await

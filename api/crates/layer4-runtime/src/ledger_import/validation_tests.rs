@@ -3,14 +3,14 @@ use crate::mutation_authority::Record as Authority;
 use crate::mutation_journal::{Operation, Record, Status};
 use layer3_adapter::{AgentCloseRequest, AgentSlot, WorktreeRef, WorktreeRequest};
 
-fn fixture() -> Fixture {
+pub(super) fn fixture() -> Fixture {
     let mut fixture = Fixture::new();
     fixture.config.home_identity = Some("a".repeat(43));
     crate::persistent_home::initialize(&fixture.config).unwrap();
     fixture
 }
 
-fn add() -> Operation {
+pub(super) fn add() -> Operation {
     Operation::add_worktree(&WorktreeRequest::new(
         "worktree:workspace:agent:add:v1",
         "workspace",
@@ -18,7 +18,7 @@ fn add() -> Operation {
         "a".repeat(40),
     ))
 }
-fn remove() -> Operation {
+pub(super) fn remove() -> Operation {
     Operation::remove_worktree(&WorktreeRef::new(
         "worktree:workspace:agent:remove:v1",
         "workspace",
@@ -37,13 +37,13 @@ fn write(path: &Path, bytes: &[u8]) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, bytes).unwrap();
 }
-fn authority(config: &RuntimeConfig, fence: u64, operation: &Operation) -> PathBuf {
+pub(super) fn authority(config: &RuntimeConfig, fence: u64, operation: &Operation) -> PathBuf {
     let record = Authority::new(config, fence, operation);
     let path = record.inventory_name(config);
     write(&path, &serde_json::to_vec(&record).unwrap());
     path
 }
-fn journal(config: &RuntimeConfig, record: &Record) -> PathBuf {
+pub(super) fn journal(config: &RuntimeConfig, record: &Record) -> PathBuf {
     let path = record.inventory_name(config);
     write(&path, &record.encode().unwrap());
     path
