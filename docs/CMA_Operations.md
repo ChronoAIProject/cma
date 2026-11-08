@@ -2075,6 +2075,29 @@ four-connection Mongo pool, 2-second indexed-read budget, and a 30-second circui
 on failed/slow (>250 ms) checkout or reads exceeding their budget. Reporting
 pressure returns Retry-After without changing conversation/lifecycle pools.
 
+## API read and stream diagnostics
+
+The API emits content-free structured log metrics every ten seconds and once
+on graceful worker shutdown. These are process-local cumulative counters; use
+differences within one process lifetime and handle resets across deployments.
+The timer emits zero gauges too, so a quiet or disconnected stream does not
+leave a stale active count. This uses the same API log path as reporting and
+runtime hold diagnostics, with no public metrics endpoint.
+
+| Metric | Fixed labels | Meaning |
+| --- | --- | --- |
+| `cma_public_streams_active` | `stream_kind` | Gauge of successful SSE response bodies still open, including bodies waiting for consumer reads. Ends at EOF or drop. |
+| `cma_public_stream_polls_total` | `stream_kind`, `outcome` | Refreshes of stream state; `quiet` has no new projected frames, `output` queues new frames, `failed` includes failed or cancelled refreshes. |
+
+`stream_kind` is one of `agui`, `agent_events_v2`, `responses`, `responses_v2`,
+and `launch_events`. Initial buffered replay and SSE keepalives do not count as
+polls; Responses v1 reads its initial replay inside its first poll. Replayed
+Responses v2 frames before the caller's cursor do not count as new output.
+An output poll counts queued frames, which may subsequently be withheld by a
+fresh authorization check. The counters never change that authorization or the
+stream's outcome. No identities, contents or inherited request span fields are
+included in these metric events. The numeric sample is the `value` field.
+
 ## Immutable web build identity
 
 The account menu's **Copy build version** copies the running bundle's own version
