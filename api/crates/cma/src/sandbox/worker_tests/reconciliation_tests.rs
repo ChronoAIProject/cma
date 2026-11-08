@@ -28,7 +28,7 @@ fn fresh_adapter(harness: &Harness, image: Option<&str>) -> Arc<dyn SandboxAdapt
     Arc::new(CodexAdapter::with_backend(harness.backend.clone(), spec))
 }
 
-async fn active_with_exact_image(harness: &Harness) -> (Sandbox, SystemTime) {
+pub(super) async fn active_with_exact_image(harness: &Harness) -> (Sandbox, SystemTime) {
     let created = harness.create().await;
     let now = start_time(&created);
     let mut active = harness.drive_active(&created.id, now).await;
@@ -166,9 +166,17 @@ async fn startup_during_install_continues_on_the_adopted_old_image() {
 #[tokio::test]
 async fn startup_missing_runtime_without_checkpoint_fails_atomically() {
     let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
-    let (active, now) = active_with_exact_image(&harness).await;
+    let (active, _initial_now) = active_with_exact_image(&harness).await;
     let runtime = RuntimeHandle(active.runtime.as_ref().unwrap().runtime_id.clone());
     harness.adapter.teardown(&runtime).await.unwrap();
+    let durable = stamp_time(&active.updated_at);
+    if let Ok(delay) = durable
+        .duration_since(SystemTime::now())
+        .map(|delay| delay + Duration::from_millis(10))
+    {
+        tokio::time::sleep(delay).await;
+    }
+    let now = SystemTime::now();
     let reconciler = reconciler(&harness, fresh_adapter(&harness, None));
     reconciler.initialize(now).await.unwrap();
     let failed = harness.stored(&active.id).await;
