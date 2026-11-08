@@ -24,6 +24,15 @@ pub(super) fn open(
     path: &Path,
     expected: &str,
 ) -> Result<(Plan, validation::Analysis)> {
+    open_with_limits(config, path, expected, Limits::default())
+}
+
+pub(super) fn open_with_limits(
+    config: &RuntimeConfig,
+    path: &Path,
+    expected: &str,
+    limits: Limits,
+) -> Result<(Plan, validation::Analysis)> {
     if expected.len() != 64
         || !expected
             .bytes()
@@ -37,7 +46,7 @@ pub(super) fn open(
         return Err(invalid());
     }
     let identity = directory.identity()?;
-    let mut budget = Budget::new(Limits::default());
+    let mut budget = Budget::new(limits);
     let (seal, _): (Seal, _) = directory.deserialize("sealed.json", 4096, &mut budget)?;
     if seal.format != "runtime-ledger-plan-seal-v1"
         || seal.admission != "import_held"

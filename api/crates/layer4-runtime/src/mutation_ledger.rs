@@ -6,6 +6,7 @@ mod crash_tests;
 #[cfg(test)]
 mod fault_tests;
 mod fence;
+pub(crate) mod import;
 mod journal;
 #[cfg(test)]
 mod journal_tests;
