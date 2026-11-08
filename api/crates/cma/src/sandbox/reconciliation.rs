@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{
-    SandboxMaintenanceStore, SandboxReconciliationStore, SandboxRuntimeLossRequest, SandboxStore,
-    SandboxStoreError,
+    SandboxMaintenanceStore, SandboxReconciliationStore, SandboxRuntimeLossOutcome,
+    SandboxRuntimeLossRequest, SandboxStore, SandboxStoreError,
 };
 use layer2_core::sandbox::{AgentService, Sandbox, SandboxPolicySource, SandboxStatus};
 use layer2_core::{rfc3339_at, SandboxId};
@@ -198,7 +198,7 @@ impl SandboxReconciler {
         sandbox: &Sandbox,
         inventory: &[RuntimeObservation],
         now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<bool, SandboxStoreError> {
         // A durable suspension intent may have stopped the Pod before its DB
         // acknowledgement. Let the same worker retry and verify Pod absence.
         if super::runtime_attachment::native_pause_teardown(sandbox)
@@ -211,20 +211,20 @@ impl SandboxReconciler {
         {
             // Native retirement also needs the original UID after CRD disappearance:
             // only its delete waiter can prove the last owned Pod has stopped.
-            return Ok(());
+            return Ok(true);
         }
         let Some(binding) = &sandbox.runtime else {
             if sandbox.requires_runtime_loss_recovery() {
-                self.recover_missing(sandbox, now).await?;
+                return self.recover_missing(sandbox, now).await;
             }
-            return Ok(());
+            return Ok(true);
         };
         if let Some(observation) = inventory
             .iter()
             .find(|item| item.handle.0 == binding.runtime_id)
         {
             if self.adopt(sandbox, observation, now).await? {
-                return Ok(());
+                return Ok(true);
             }
         }
         // The inventory can predate a concurrently persisted runtime binding.
@@ -242,20 +242,20 @@ impl SandboxReconciler {
         {
             // An unhealthy or terminating runtime can still own processes and
             // writers. Retirement may settle them only after provider absence.
-            return Ok(());
+            return Ok(true);
         }
         if let Some(observation) = fresh
             .iter()
             .find(|item| item.handle.0 == binding.runtime_id)
         {
             if self.adopt(sandbox, observation, now).await? {
-                return Ok(());
+                return Ok(true);
             }
         }
         if sandbox.requires_runtime_loss_recovery() {
-            self.recover_missing(sandbox, now).await?;
+            return self.recover_missing(sandbox, now).await;
         }
-        Ok(())
+        Ok(true)
     }
 
     async fn adopt(
@@ -339,24 +339,33 @@ impl SandboxReconciler {
     async fn recover_missing(
         &self,
         sandbox: &Sandbox,
-        now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        let interruption_cause = interruption::observe(self.adapter.as_ref(), sandbox, now).await;
-        self.store
-            .recover_runtime_loss(SandboxRuntimeLossRequest {
-                sandbox_id: sandbox.id.clone(),
-                expected_revision: sandbox.revision,
-                expected_runtime: sandbox.runtime.clone(),
-                retain_runtime: sandbox.lifecycle.home.is_some()
-                    && sandbox
-                        .runtime
-                        .as_ref()
-                        .is_some_and(|binding| binding.runtime_id.starts_with("agent-sandbox:")),
-                interruption_cause,
-                observed_at: rfc3339_at(now),
-            })
-            .await?;
-        Ok(())
+        observed_floor: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        // Inventory and authority pages are discovery evidence. Refresh the
+        // observation boundary immediately before the CAS so a concurrent
+        // Sandbox/Agent update is classified as a race, not runtime loss.
+        let observed_at = observed_floor.max(SystemTime::now());
+        let interruption_cause =
+            interruption::observe(self.adapter.as_ref(), sandbox, observed_at).await;
+        let outcome =
+            self.store
+                .recover_runtime_loss(SandboxRuntimeLossRequest {
+                    sandbox_id: sandbox.id.clone(),
+                    expected_revision: sandbox.revision,
+                    expected_runtime: sandbox.runtime.clone(),
+                    retain_runtime: sandbox.lifecycle.home.is_some()
+                        && sandbox.runtime.as_ref().is_some_and(|binding| {
+                            binding.runtime_id.starts_with("agent-sandbox:")
+                        }),
+                    interruption_cause,
+                    observed_at: rfc3339_at(observed_at),
+                })
+                .await?;
+        tracing::info!(outcome = ?outcome, "runtime loss reconciliation outcome");
+        Ok(matches!(
+            outcome,
+            SandboxRuntimeLossOutcome::RecoveryScheduled | SandboxRuntimeLossOutcome::Failed
+        ))
     }
 
     pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
