@@ -1,6 +1,25 @@
 use super::*;
 
 #[tokio::test(start_paused = true)]
+async fn raced_recovery_is_reported_separately_from_cancellation() {
+    let (_store, reconciler) = setup(1, Duration::ZERO).await;
+    let output = Output::default();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(output.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let row = sandbox(0);
+    let attempt = reconciler.binding_holds.begin(&row, &[]).unwrap();
+    attempt.raced();
+    drop(reconciler.binding_holds.report_on_drop());
+    let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+    assert!(logs.contains("reason=\"raced\""));
+    assert!(!logs.contains("reason=\"cancelled\""));
+}
+
+#[tokio::test(start_paused = true)]
 async fn binding_failures_back_off_across_sweeps_and_success_resets_attempts() {
     let (store, reconciler) = setup(2, Duration::ZERO).await;
     let output = Output::default();
