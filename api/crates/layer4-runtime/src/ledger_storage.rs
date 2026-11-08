@@ -3,6 +3,9 @@
 mod connection;
 mod paths;
 mod probe;
+pub(crate) mod reserve;
+#[cfg(test)]
+mod reserve_tests;
 #[cfg(test)]
 mod tests;
 
@@ -26,12 +29,14 @@ enum Message {
 
 pub(crate) struct Storage {
     sender: SyncSender<Message>,
+    path: PathBuf,
 }
 
 impl Storage {
     pub(crate) async fn open(path: PathBuf, create: bool, pages: u32) -> Result<Self> {
         let (sender, receiver) = sync_channel(QUEUE_LIMIT);
         let (opened, ready) = oneshot::channel();
+        let directory = path.clone();
         std::thread::Builder::new()
             .name("runtime-ledger".into())
             .spawn(move || {
@@ -59,7 +64,10 @@ impl Storage {
             })
             .map_err(|_| storage_error())?;
         ready.await.map_err(|_| storage_error())??;
-        Ok(Self { sender })
+        Ok(Self {
+            sender,
+            path: directory,
+        })
     }
 
     pub(crate) async fn call<T: Send + 'static>(
@@ -67,10 +75,20 @@ impl Storage {
         work: impl FnOnce(&mut Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
         let (reply, result) = oneshot::channel();
+        let directory = self.path.clone();
         self.send(Message::Work(Box::new(move |connection| {
             // Finish an admitted transaction even if its caller disconnects.
             // A cancelled wait never implies that the transaction did not commit.
             let outcome = work(connection);
+            if outcome
+                .as_ref()
+                .is_err_and(|error| error.code == "mutation_ledger_storage_hold")
+            {
+                // Do not retry the transaction or effect after an ambiguous error.
+                // Free physical headroom for a subsequent durable-state inspection.
+                // The zero-length reserve persists the new-admission hold on restart.
+                let _ = reserve::release(&directory);
+            }
             let _ = reply.send(outcome);
         })))?;
         result.await.map_err(|_| storage_error())?

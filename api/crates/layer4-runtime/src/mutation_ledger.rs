@@ -29,6 +29,7 @@ use crate::mutation_journal::Operation;
 pub(crate) struct Ledger {
     storage: Storage,
     config: Arc<RuntimeConfig>,
+    directory: PathBuf,
 }
 
 impl Ledger {
@@ -38,13 +39,14 @@ impl Ledger {
         create: bool,
         pages: u32,
     ) -> Result<Self> {
-        let storage = Storage::open(path, create, pages).await?;
+        let storage = Storage::open(path.clone(), create, pages).await?;
         let expected = config.clone();
         storage
             .call(move |db| schema::open(db, &expected, create))
             .await?;
         Ok(Self {
             storage,
+            directory: path,
             config: Arc::new(config),
         })
     }
@@ -57,6 +59,7 @@ impl Ledger {
             crate::mutation_journal::validate_operation(&self.config, operation)?;
         }
         let config = Arc::clone(&self.config);
+        let directory = self.directory.clone();
         self.storage
             .call(move |db| {
                 let transaction = db.transaction().map_err(|_| storage_error())?;
@@ -66,6 +69,7 @@ impl Ledger {
                     new_normal |= journal::reserve(&transaction, &config, operation)?;
                 }
                 if new_normal {
+                    crate::ledger_storage::reserve::require(&directory)?;
                     budget::check(&transaction, config.generation)?;
                 }
                 budget::revision(&transaction)?;

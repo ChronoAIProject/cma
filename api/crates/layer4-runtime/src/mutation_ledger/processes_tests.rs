@@ -160,6 +160,18 @@ async fn terminal_storage_failure_rolls_back_projection_and_outcome_together() {
     ledger.close().await.unwrap();
     let ledger = fixture.open(false).await;
     assert_eq!(count(&ledger).await, 1);
+    assert_eq!(
+        ledger.snapshot().await.unwrap().emergency_remaining_bytes,
+        0
+    );
+    let fresh = Operation::close_agent(&layer3_adapter::AgentCloseRequest::new(
+        "agent:new:close:v1",
+        AgentSlot::new("new"),
+    ));
+    assert_eq!(
+        ledger.admit(1, vec![fresh]).await.unwrap_err().code,
+        "mutation_ledger_storage_hold"
+    );
     ledger.finish(terminal).await.unwrap();
     assert_eq!(count(&ledger).await, 0);
     ledger.close().await.unwrap();
