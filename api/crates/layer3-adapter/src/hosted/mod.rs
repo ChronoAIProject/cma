@@ -19,6 +19,8 @@ mod deployment;
 mod home;
 #[cfg(test)]
 mod home_tests;
+#[cfg(test)]
+mod indexed_ledger_hold_tests;
 mod inspection_timing;
 #[cfg(test)]
 mod ledger_hold_tests;
