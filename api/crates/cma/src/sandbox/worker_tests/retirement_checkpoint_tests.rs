@@ -25,14 +25,17 @@ async fn missing_retiring_runtime_settles_real_agents_without_archive_cleanup() 
     let published = harness.stored(&active.id).await;
     assert!(published.lifecycle.checkpoints.latest.is_some());
     assert!(published.lifecycle.checkpoint_capture.is_some());
-    let mut agent = lifecycle_queue_tests::ready_agent(&active, now);
+    // The checkpoint fixture advances its synthetic clock to make capture due;
+    // the Agent and retirement observation must use a real boundary.
+    let retirement_at = SystemTime::now();
+    let mut agent = lifecycle_queue_tests::ready_agent(&active, retirement_at);
     agent.conversation.last_seq = 1;
     harness.store.create_agent(agent.clone()).await.unwrap();
     harness
         .store
         .append_agent_log(
             &agent.id,
-            rfc3339_at(now),
+            rfc3339_at(retirement_at),
             AgentLogKind::OwnerMessage {
                 content: "retained owner history".into(),
             },
@@ -40,8 +43,12 @@ async fn missing_retiring_runtime_settles_real_agents_without_archive_cleanup() 
         .await
         .unwrap();
     let history = harness.store.agent_log(&agent.id, 0, 100).await.unwrap();
+    // Retirement itself must use a real observation boundary so a provider
+    // absence read is never compared with a future durable timestamp.
     let mut retiring = published.clone();
-    retiring.begin_retirement(rfc3339_at(now)).unwrap();
+    retiring
+        .begin_retirement(rfc3339_at(retirement_at))
+        .unwrap();
     harness
         .store
         .save_sandbox(published.revision, retiring.clone())
@@ -62,7 +69,7 @@ async fn missing_retiring_runtime_settles_real_agents_without_archive_cleanup() 
         Arc::new(harness.policy.clone()),
         "test".into(),
     )
-    .initialize(now)
+    .initialize(retirement_at)
     .await
     .unwrap();
     assert_eq!(harness.stored(&active.id).await, retiring);
@@ -91,7 +98,7 @@ async fn missing_retiring_runtime_settles_real_agents_without_archive_cleanup() 
         Arc::new(harness.policy.clone()),
         "test".into()
     )
-    .initialize(now)
+    .initialize(retirement_at)
     .await
     .is_err());
     assert_eq!(harness.stored(&active.id).await, retiring);
@@ -106,7 +113,7 @@ async fn missing_retiring_runtime_settles_real_agents_without_archive_cleanup() 
         Arc::new(harness.policy.clone()),
         "test".into(),
     )
-    .initialize(now)
+    .initialize(retirement_at)
     .await
     .unwrap();
     let reconciled = harness.stored(&active.id).await;
