@@ -25,6 +25,7 @@ mod install;
 mod install_state;
 mod install_state_validation;
 mod lanes;
+mod ledger_format;
 mod ledger_storage;
 mod link;
 mod mutation_authority;
