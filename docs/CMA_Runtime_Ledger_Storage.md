@@ -136,14 +136,19 @@ create/commit/reopen results for every image.
 The planner copies and syncs each source file, writes and syncs `plan.json`,
 rescans the original input, then publishes `sealed.json` with the plan digest.
 Publication writes a temporary file, syncs it, renames without replacement,
-and syncs the final file and directory. A failed barrier withdraws the new
-descriptor; failed unlink falls back to truncating the still-owned file and
-reports cleanup errors. This applies to `ready.json` as well. If the filesystem
-cannot persist withdrawal or neutralization, even a final-name file is not
+and syncs the final file and directory. On failure, cleanup truncates and syncs
+only the still-owned writable file descriptor, even if its inode was renamed
+or unlinked. Cleanup never unlinks a temporary or final name: an identity check
+followed by unlink would still race replacement of that entry. This preserves
+any replacement and leaves the owned inode empty rather than treating deletion
+of an unrelated file as withdrawal. An empty temporary, `sealed.json` or
+`ready.json` can remain; it is an incomplete artifact, never a valid seal or
+readiness proof. Cleanup failures are reported without replacing the original
+error. If the filesystem cannot persist neutralization, even a final-name file is not
 proof of success: quarantine that failed artifact and require fresh
 qualification rather than trusting its presence or retrying in place.
 Any failed step leaves an incomplete artifact for inspection; a retry requires
-a new destination and never overwrites a prior plan. A missing, malformed or
+a new destination and never overwrites a prior plan. A missing, empty, malformed or
 mismatched seal is not a completed backup. Preserve the reported plan digest
 independently of the artifact for later exact-plan verification. These files
 are a ledger backup, not a full home/history backup or permission to delete
@@ -171,7 +176,7 @@ Staging imports one bounded authority group or operation per transaction,
 derives outcome/cleanup reservations and process projections, verifies the
 schema, counters, capacity and raw record round trips, then closes and syncs
 the database. Only after revalidating the complete backup does it publish
-`ready.json`, binding the plan digest and closed database digest. A missing
+`ready.json`, binding the plan digest and closed database digest. A missing or empty
 ready descriptor, changed backup, insufficient reservation budget or spent
 emergency reserve holds. Preserve the failure artifact for inspection; retry
 into a new destination, never overwrite or continue an ambiguous partial DB.
