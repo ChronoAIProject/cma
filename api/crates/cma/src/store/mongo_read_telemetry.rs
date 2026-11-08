@@ -59,6 +59,29 @@ impl Read {
         self.documents = self.documents.saturating_add(1);
         self.bytes = self.bytes.saturating_add(encoded_bytes as u64);
     }
+    /// Use the supported raw cursor view, then perform the same single decode
+    /// as TryStreamExt::try_next. Count before decoding so malformed rows count.
+    pub(super) async fn next<T: serde::de::DeserializeOwned>(
+        &mut self,
+        cursor: &mut mongodb::Cursor<T>,
+    ) -> mongodb::error::Result<Option<T>> {
+        if !cursor.advance().await? {
+            return Ok(None);
+        }
+        self.document(cursor.current().as_bytes().len());
+        cursor.deserialize_current().map(Some)
+    }
+    pub(super) async fn next_in_session<T: serde::de::DeserializeOwned>(
+        &mut self,
+        cursor: &mut mongodb::SessionCursor<T>,
+        session: &mut mongodb::ClientSession,
+    ) -> mongodb::error::Result<Option<T>> {
+        if !cursor.advance(session).await? {
+            return Ok(None);
+        }
+        self.document(cursor.current().as_bytes().len());
+        cursor.deserialize_current().map(Some)
+    }
     pub(super) fn complete(&mut self) {
         self.success = true;
     }
@@ -124,3 +147,7 @@ pub(in crate::store) fn snapshot(collection: &str) -> [u64; 4] {
 #[cfg(test)]
 #[path = "mongo_read_telemetry_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mongo_read_cursor_tests.rs"]
+mod cursor_tests;
