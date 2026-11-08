@@ -1,6 +1,13 @@
 //! Indexed authority, private to the runtime. Serving integration is explicit.
 mod authority;
+mod budget;
 mod fence;
+mod journal;
+#[cfg(test)]
+mod journal_tests;
+mod processes;
+#[cfg(test)]
+mod processes_tests;
 mod schema;
 #[cfg(test)]
 mod tests;
@@ -47,9 +54,15 @@ impl Ledger {
         self.storage
             .call(move |db| {
                 let transaction = db.transaction().map_err(|_| storage_error())?;
+                let mut new_normal = false;
                 for operation in &operations {
                     authority::admit(&transaction, &config, fence, operation)?;
+                    new_normal |= journal::reserve(&transaction, &config, operation)?;
                 }
+                if new_normal {
+                    budget::check(&transaction, config.generation)?;
+                }
+                budget::revision(&transaction)?;
                 transaction.commit().map_err(|_| storage_error())
             })
             .await
@@ -57,6 +70,32 @@ impl Ledger {
 
     pub(crate) async fn close(self) -> Result<()> {
         self.storage.close().await
+    }
+
+    pub(crate) async fn begin(&self, operation: Operation) -> Result<journal::Entry> {
+        crate::mutation_journal::validate_operation(&self.config, &operation)?;
+        let config = Arc::clone(&self.config);
+        self.storage
+            .call(move |db| {
+                let tx = db.transaction().map_err(|_| storage_error())?;
+                let entry = journal::begin(&tx, &config, &operation)?;
+                budget::revision(&tx)?;
+                tx.commit().map_err(|_| storage_error())?;
+                Ok(entry)
+            })
+            .await
+    }
+
+    pub(crate) async fn finish(&self, record: crate::mutation_journal::Record) -> Result<()> {
+        let config = Arc::clone(&self.config);
+        self.storage
+            .call(move |db| {
+                let tx = db.transaction().map_err(|_| storage_error())?;
+                journal::finish(&tx, &config, &record)?;
+                budget::revision(&tx)?;
+                tx.commit().map_err(|_| storage_error())
+            })
+            .await
     }
 }
 
@@ -77,11 +116,45 @@ pub(crate) async fn probe(directory: &Path) -> Result<()> {
         "agent:storage-probe:close:v1",
         layer3_adapter::AgentSlot::new("storage-probe"),
     ));
-    let ledger = Ledger::open(directory.to_owned(), config.clone(), true, 256).await?;
+    let ledger = Ledger::open(directory.to_owned(), config.clone(), true, 16_384).await?;
     ledger.admit(u64::MAX, vec![operation.clone()]).await?;
+    let entry = ledger.begin(operation.clone()).await?;
+    if !entry.new {
+        return Err(invalid());
+    }
+    let receipt = layer3_adapter::wire::AgentCloseReceipt {
+        operation_id: operation.operation_id.clone(),
+        request_sha256: operation.request_sha256.clone(),
+        agent_id: layer3_adapter::AgentSlot::new("storage-probe"),
+    };
+    ledger.finish(entry.record.completed(&receipt)?).await?;
     ledger.close().await?;
-    let ledger = Ledger::open(directory.to_owned(), config, false, 256).await?;
+    let ledger = Ledger::open(directory.to_owned(), config, false, 16_384).await?;
     ledger.admit(u64::MAX, vec![operation.clone()]).await?;
+    let replay = ledger.begin(operation.clone()).await?;
+    if replay.new
+        || replay
+            .record
+            .receipt::<layer3_adapter::wire::AgentCloseReceipt>()?
+            != receipt
+    {
+        return Err(invalid());
+    }
+    let failure_operation = Operation::close_agent(&layer3_adapter::AgentCloseRequest::new(
+        "agent:failure-probe:close:v1",
+        layer3_adapter::AgentSlot::new("failure-probe"),
+    ));
+    ledger.admit(1, vec![failure_operation.clone()]).await?;
+    let entry = ledger.begin(failure_operation.clone()).await?;
+    ledger
+        .finish(entry.record.failed(
+            &RuntimeError::rejected("probe_failure", "synthetic failure"),
+            false,
+        )?)
+        .await?;
+    if ledger.begin(failure_operation).await?.record.error()?.code != "probe_failure" {
+        return Err(invalid());
+    }
     let error = ledger
         .admit(u64::MAX - 1, vec![operation])
         .await

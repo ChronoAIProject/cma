@@ -27,6 +27,13 @@ pub(super) fn admit(
     if !v1::authorize(&records.iter().collect::<Vec<_>>(), &incoming)? {
         return Ok(());
     }
+    if records.is_empty() {
+        db.execute(
+            "UPDATE accounting SET authority=authority+1 WHERE singleton=1",
+            [],
+        )
+        .map_err(|_| storage_error())?;
+    }
     records.push(incoming);
     let present = records
         .iter()
@@ -57,7 +64,7 @@ pub(super) fn admit(
     Ok(())
 }
 
-fn key(resource: &ResourceKey) -> Result<String> {
+pub(super) fn key(resource: &ResourceKey) -> Result<String> {
     serde_json::to_string(resource).map_err(|_| invalid())
 }
 

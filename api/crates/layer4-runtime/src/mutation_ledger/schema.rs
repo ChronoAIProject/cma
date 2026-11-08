@@ -29,6 +29,9 @@ pub(super) fn open(db: &mut Connection, config: &RuntimeConfig, create: bool) ->
                 ],
             )
             .map_err(|_| storage_error())?;
+        transaction
+            .execute("INSERT INTO accounting VALUES (1,0,0,0,0,0)", [])
+            .map_err(|_| storage_error())?;
         transaction.commit().map_err(|_| storage_error())?;
     }
     let read = |name| {
