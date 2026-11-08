@@ -1,6 +1,7 @@
 use super::{
     cursor, error::Error, parse, projection, shapes::DurableEvent, snapshot, AgentV2State,
 };
+use crate::stream_telemetry::{self, Kind, Poll};
 use crate::AuthenticatedResourceCaller;
 use axum::{
     extract::{Path, RawQuery, State},
@@ -19,6 +20,9 @@ use layer2_core::{
     AgentId,
 };
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
+#[cfg(test)]
+#[path = "telemetry_tests.rs"]
+mod telemetry_tests;
 #[cfg(test)]
 #[path = "stream_tests.rs"]
 mod tests;
@@ -275,6 +279,7 @@ fn response(open: Following) -> Response {
                     .map_or(wake, |deadline| deadline.min(wake));
                 tokio::time::sleep_until(wake).await;
             }
+            let poll = Poll::new(Kind::AgentEventsV2);
             if let Err(error) = open.fill().await {
                 if open
                     .state
@@ -295,9 +300,10 @@ fn response(open: Following) -> Response {
                     open,
                 ));
             }
+            poll.complete(!open.pending.is_empty());
         }
     });
-    let mut response = Sse::new(stream)
+    let mut response = Sse::new(stream_telemetry::observe(stream, Kind::AgentEventsV2))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response();
     response
