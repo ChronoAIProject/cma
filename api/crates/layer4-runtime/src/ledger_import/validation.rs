@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use super::inventory::{Inventory, Kind};
-use super::{capacity, invalid, Budget, Limits};
+use super::{capacity, capacity_at_least, invalid, Budget, Limits};
 use crate::config::RuntimeConfig;
 use crate::failure::Result;
 use crate::mutation_authority::{self, Disposition, Record as Authority};
@@ -48,7 +48,10 @@ impl Analysis {
             .checked_add(512 + key.len() * 2)
             .ok_or_else(capacity)?;
         if self.metadata > 8 * 1024 * 1024 {
-            return Err(capacity());
+            return Err(capacity_at_least(
+                "index_metadata_bytes",
+                self.metadata as u128,
+            ));
         }
         Ok(())
     }
