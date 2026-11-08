@@ -97,3 +97,59 @@ fn emitted_rows_are_numeric_content_free_and_have_one_operation_label() {
     counters.emit();
     assert_eq!(output.0.lock().unwrap().len(), logs.len());
 }
+
+#[tokio::test(start_paused = true)]
+async fn final_sample_includes_completed_and_cancelled_worker_drain_reads() {
+    use tracing::instrument::WithSubscriber;
+
+    // Reproduce the review's late 137-byte read, then cover the total-deadline
+    // cancellation path too. Each scope has independent counters and log output.
+    for completes in [true, false] {
+        isolated_test(async {
+            let output = Output::default();
+            let subscriber = tracing_subscriber::fmt()
+                .without_time()
+                .with_ansi(false)
+                .with_writer(output.clone())
+                .finish();
+            let mut shutdown = crate::shutdown::ShutdownCoordinator::new();
+            let timer = crate::read_telemetry::spawn(shutdown.subscribe());
+            let signal = shutdown.subscribe();
+            let shared = counters();
+            let (started, ready) = tokio::sync::oneshot::channel();
+            shutdown.push(tokio::spawn(TEST_COUNTERS.scope(shared, async move {
+                let mut read = Read::find("agents");
+                read.document(137);
+                started.send(()).unwrap();
+                crate::shutdown::signalled(signal).await;
+                // The periodic exporter exits before this worker releases its
+                // guard, just as it does when an in-flight read is draining.
+                timer.await.unwrap();
+                if completes {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    read.complete();
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            })));
+            ready.await.unwrap();
+            assert_eq!(snapshot("agents"), [0; 4]);
+            let aborted = shutdown.drain().with_subscriber(subscriber).await;
+            assert_eq!(aborted, usize::from(!completes));
+            assert_eq!(snapshot("agents"), [1, u64::from(!completes), 1, 137]);
+            let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+            for (metric, value) in [
+                ("cma_mongo_read_operations_total", 1),
+                ("cma_mongo_read_failures_total", u64::from(!completes)),
+                ("cma_mongo_read_documents_total", 1),
+                ("cma_mongo_read_document_bytes_total", 137),
+            ] {
+                let rows: Vec<_> = logs.lines().filter(|line| line.contains(metric)).collect();
+                assert_eq!(rows.len(), 1, "{logs}");
+                assert!(rows[0].contains("collection=\"agents\""));
+                assert!(rows[0].ends_with(&format!("value={value}")), "{}", rows[0]);
+            }
+        })
+        .await;
+    }
+}
