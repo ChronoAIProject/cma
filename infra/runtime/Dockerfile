@@ -14,7 +14,7 @@ ARG TARGETARCH
 # Statically linked against musl, so it runs on any base the runtime stage uses.
 RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cma-runtime-target-${TARGETARCH},target=/build/target,sharing=locked \
-    cargo build --release --locked --bin layer4-runtime \
+    cargo build --jobs 2 --release --locked --bin layer4-runtime \
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
 
