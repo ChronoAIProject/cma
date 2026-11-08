@@ -48,23 +48,24 @@ pub(super) async fn create_checked(
     let archive = Archive::create(&config, destination)?;
     let database = destination.join("database");
     let store = HeldImport::create(database.clone(), config.clone(), pages).await?;
-    let original_directory = Directory::open(&database)?.identity()?;
-    let original_file = Directory::open(&database)?.file_identity("ledger.sqlite3")?;
-    let expected_processes = match fill(
-        &store,
-        &config,
-        &plan,
-        &analysis,
-        &mut budget,
-        &mut boundary,
-    )
-    .await
-    {
-        Ok(count) => count,
-        Err(error) => {
-            let _ = store.close().await;
-            return Err(error);
-        }
+    let initialized = async {
+        let original_directory = Directory::open(&database)?.identity()?;
+        let original_file = Directory::open(&database)?.file_identity("ledger.sqlite3")?;
+        let expected_processes = fill(
+            &store,
+            &config,
+            &plan,
+            &analysis,
+            &mut budget,
+            &mut boundary,
+        )
+        .await?;
+        Ok((original_directory, original_file, expected_processes))
+    }
+    .await;
+    let (original_directory, original_file, expected_processes) = match initialized {
+        Ok(verified) => verified,
+        Err(error) => return store.abort(error).await,
     };
     let mut summary = store.finish(expected_processes).await?;
     let inventory_digest = plan.inventory.digest.clone();

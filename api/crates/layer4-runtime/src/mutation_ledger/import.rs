@@ -1,4 +1,7 @@
 //! Detached import ownership has no admission, serving or recovery interface.
+#[path = "import_cleanup.rs"]
+mod cleanup;
+
 use std::path::PathBuf;
 
 use rusqlite::params;
@@ -24,8 +27,7 @@ impl HeldImport {
             .call(move |db| schema::initialize_held(db, &expected))
             .await
         {
-            let _ = storage.close().await;
-            return Err(error);
+            return cleanup::finish(Err(error), storage.close().await, "initialize");
         }
         Ok(Self {
             storage,
@@ -36,6 +38,10 @@ impl HeldImport {
 
     pub(crate) async fn close(self) -> Result<()> {
         self.storage.close().await
+    }
+
+    pub(crate) async fn abort<T>(self, error: crate::failure::RuntimeError) -> Result<T> {
+        cleanup::finish(Err(error), self.close().await, "stage")
     }
 
     fn scoped(&self, scope: u64) -> Result<RuntimeConfig> {
@@ -173,10 +179,7 @@ impl HeldImport {
                 "terminal":terminal,"authority_resources":authority,"reserved_bytes":reserved,
                 "logical_processes":expected_processes,"capacity":"covered"}))
         }).await;
-        let close = self.storage.close().await;
-        let summary = result?;
-        close?;
-        Ok(summary)
+        cleanup::finish(result, self.storage.close().await, "verify")
     }
 }
 
