@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["vendor/mongodb"]
 members = [
     "crates/layer1-public",
     "crates/layer2-core",
@@ -78,6 +79,7 @@ metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 # cache is needed, so the async runtime integration stays off.
 moka = { version = "0.12", default-features = false, features = ["sync"] }
 mongodb = { version = "3", default-features = false, features = [
+    "response-summary",
     "bson-3",
     "compat-3-3-0",
     "rustls-tls",
@@ -184,3 +186,8 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.zune-jpeg]
 opt-level = 3
+
+# Borrowed response summaries avoid the full BSON decode in command monitoring.
+# Pinned upstream package and exact delta: docs/Mongo_Read_Telemetry.md.
+[patch.crates-io]
+mongodb = { path = "vendor/mongodb" }

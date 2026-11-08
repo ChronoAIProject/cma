@@ -90,6 +90,7 @@ impl ReportingStore {
         options.server_selection_timeout = Some(DB_DEADLINE);
         let circuit = Arc::default();
         budget::observe(&mut options, Arc::clone(&circuit));
+        super::mongo_reads::observe(&mut options);
         let client = Client::with_options(options).map_err(unavailable)?;
         let store = Arc::new(Self {
             budgets,

@@ -57,6 +57,7 @@ const requiredPrefixes = [
   'sandbox::agent_worker::prepared_open_ready::',
   'store::mongo_latency::tests::',
   'store::agent_log_telemetry::tests::',
+  'store::mongo_reads::tests::',
   'store::agent_task_status::batch::tests::',
   'store::sandbox_mongo_integration_tests::agent_worker_tests::reconciliation_context_tests::',
   'store::sandbox_mongo_integration_tests::agent_transaction_tests::capacity_tests::',

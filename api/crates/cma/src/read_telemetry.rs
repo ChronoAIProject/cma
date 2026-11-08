@@ -21,4 +21,5 @@ pub(crate) fn spawn(signal: watch::Receiver<bool>) -> JoinHandle<()> {
 fn emit() {
     layer1_public::stream_telemetry::emit();
     crate::store::agent_log_telemetry::emit();
+    crate::store::mongo_reads::emit();
 }
