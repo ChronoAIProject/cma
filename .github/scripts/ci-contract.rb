@@ -2,6 +2,7 @@
 
 require "yaml"
 require_relative "backend-ci-contract"
+require_relative "ledger-ci-contract"
 
 module CIContract
   ROOT = File.expand_path("../..", __dir__)
@@ -106,6 +107,7 @@ module CIContract
   end
 
   def self.release(inputs)
+    ledger_images(inputs)
     ci = inputs.fetch("ci")
     publish = inputs.fetch("publish")
     gate = job(ci, "trigger-release-contract", "Trigger release contract")
