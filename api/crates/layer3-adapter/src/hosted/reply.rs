@@ -60,7 +60,7 @@ pub(super) fn response_operation(response: &ResponseFrame) -> WireOperation {
 
 pub(super) fn failure_error(failure: WireFailure) -> AdapterError {
     let detail = format!("{}: {}", failure.code, failure.detail);
-    if ledger_capacity(&failure) {
+    if ledger_hold(&failure) {
         AdapterError::RuntimeLedgerHold(detail)
     } else if failure.retryable {
         AdapterError::Unavailable(detail)
@@ -73,12 +73,27 @@ pub(super) fn failure_error(failure: WireFailure) -> AdapterError {
     }
 }
 
-// Only exact code/detail pairs prove capacity, including the explicit new code.
+// Only exact code/detail pairs prove a capacity, storage or format hold.
 // Do not normalize, trim or search details, or mask other corruption as a hold.
-pub(super) fn ledger_capacity(failure: &WireFailure) -> bool {
+pub(super) fn ledger_hold(failure: &WireFailure) -> bool {
     match failure.code.as_str() {
         "mutation_ledger_capacity" => {
             failure.detail == "runtime mutation ledger capacity is exhausted"
+        }
+        "mutation_ledger_storage_hold" => {
+            failure.detail == "runtime mutation ledger storage requires verification"
+        }
+        "mutation_ledger_busy" => {
+            failure.detail == "runtime mutation ledger worker capacity is exhausted"
+        }
+        "mutation_ledger_writer_held" => {
+            failure.detail == "runtime mutation ledger has another writer"
+        }
+        "mutation_ledger_format_hold" => {
+            failure.detail == "runtime mutation ledger format requires verification"
+        }
+        "mutation_ledger_import_held" => {
+            failure.detail == "imported runtime mutation ledger requires reviewed release authority"
         }
         "mutation_authority_corrupt" => matches!(
             failure.detail.as_str(),

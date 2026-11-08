@@ -321,6 +321,10 @@ fn scan(config: &RuntimeConfig) -> Result<Option<Vec<StateFile>>> {
             .file_name()
             .into_string()
             .map_err(|_| invalid("installation state filename is not UTF-8"))?;
+        if name == crate::ledger_format::BARRIER {
+            crate::ledger_format::installation_marker(config)?;
+            continue;
+        }
         let kind = classify(&name)?;
         files.push(StateFile {
             path: entry.path(),
