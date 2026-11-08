@@ -1,4 +1,3 @@
-use futures_util::TryStreamExt;
 use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{
     Page, PageRequest, SandboxCheckpointMutation, SandboxLifecycleExecutionStore,
@@ -44,6 +43,7 @@ impl SandboxLifecycleExecutionStore for MongoSandboxStore {
         if let Some(cursor) = &page.cursor {
             filter.insert("_id", doc! { "$gt": cursor });
         }
+        let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
         let mut cursor = self
             .agents
             .find(filter)
@@ -52,8 +52,8 @@ impl SandboxLifecycleExecutionStore for MongoSandboxStore {
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let mut items = Vec::new();
-        while let Some(document) = cursor
-            .try_next()
+        while let Some(document) = read
+            .next(&mut cursor)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         {
@@ -71,6 +71,7 @@ impl SandboxLifecycleExecutionStore for MongoSandboxStore {
                 .0
                 .clone()
         });
+        read.complete();
         Ok(Page { items, next })
     }
 
@@ -94,6 +95,7 @@ pub(super) async fn load_sandbox_agents(
     sandbox_id: &SandboxId,
     session: &mut mongodb::ClientSession,
 ) -> Result<Vec<Agent>, LifecycleLoadError> {
+    let mut read = super::mongo_read_telemetry::Read::find(store.agents.name());
     let mut cursor = store
         .agents
         .find(doc! { "sandbox_id": sandbox_id.as_str() })
@@ -101,14 +103,19 @@ pub(super) async fn load_sandbox_agents(
         .session(&mut *session)
         .await
         .map_err(LifecycleLoadError::Driver)?;
-    let documents = cursor
-        .stream(session)
-        .try_collect::<Vec<_>>()
+    let mut documents = Vec::new();
+    while let Some(document) = read
+        .next_in_session(&mut cursor, session)
         .await
-        .map_err(LifecycleLoadError::Driver)?;
-    documents
+        .map_err(LifecycleLoadError::Driver)?
+    {
+        documents.push(document);
+    }
+    let agents = documents
         .iter()
         .map(read_agent)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(LifecycleLoadError::Domain)
+        .map_err(LifecycleLoadError::Domain)?;
+    read.complete();
+    Ok(agents)
 }

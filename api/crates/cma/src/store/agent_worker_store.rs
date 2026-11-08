@@ -1,6 +1,5 @@
 //! Mongo work discovery and fenced lease claims for agents.
 
-use futures_util::TryStreamExt as _;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
@@ -67,6 +66,7 @@ impl AgentWorkerStore for MongoSandboxStore {
         if let Some(cursor) = page.cursor.as_ref() {
             filter.insert("_id", doc! { "$gt": cursor });
         }
+        let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
         let mut cursor = self
             .agents
             .find(filter)
@@ -75,8 +75,8 @@ impl AgentWorkerStore for MongoSandboxStore {
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let mut items = Vec::new();
-        while let Some(document) = cursor
-            .try_next()
+        while let Some(document) = read
+            .next(&mut cursor)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         {
@@ -100,6 +100,7 @@ impl AgentWorkerStore for MongoSandboxStore {
                 .agent_id
                 .to_string()
         });
+        read.complete();
         Ok(Page { items, next })
     }
 
@@ -142,6 +143,7 @@ impl AgentWorkerStore for MongoSandboxStore {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
+        let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
         let mut cursor = self
             .agents
             .find(doc! {
@@ -159,8 +161,8 @@ impl AgentWorkerStore for MongoSandboxStore {
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let mut ids = Vec::new();
-        while let Some(document) = cursor
-            .try_next()
+        while let Some(document) = read
+            .next(&mut cursor)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         {
@@ -171,6 +173,7 @@ impl AgentWorkerStore for MongoSandboxStore {
                     .to_string(),
             ));
         }
+        read.complete();
         Ok(ids)
     }
 
