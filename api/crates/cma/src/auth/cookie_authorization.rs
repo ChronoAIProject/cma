@@ -184,12 +184,16 @@ async fn verify_with_timeout(
                 .then(|| auth.identity_store.get(&token_hash, &epoch))
                 .flatten();
             let Some(verified) = cached else {
+                ProviderVerificationError::Transient(reason).record_unavailable();
                 return Err(super::identity_retry::unavailable());
             };
             fallback_reason = Some(reason);
             verified
         }
-        Err(ProviderVerificationError::Unavailable(_)) => return Err(unavailable()),
+        Err(error @ ProviderVerificationError::Unavailable(_)) => {
+            error.record_unavailable();
+            return Err(unavailable());
+        }
     };
     if &verified.subject != owner {
         auth.identity_store.invalidate(&token_hash);
