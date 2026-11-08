@@ -137,16 +137,20 @@ impl Sweep {
                     self.pending_binding = Some(id.clone());
                     // A retained page is discovery only. Reread before adoption
                     // or recovery so a previous attempt's write is replay-safe.
-                    if let Some(sandbox) = reconciler.store.get_sandbox(&id).await? {
+                    let complete = if let Some(sandbox) = reconciler.store.get_sandbox(&id).await? {
                         hold.observe(&sandbox, &self.inventory);
                         sandbox
                             .validate()
                             .map_err(|error| corrupt(&error.to_string()))?;
                         reconciler
                             .reconcile_binding(&sandbox, &self.inventory, now)
-                            .await?;
+                            .await?
+                    } else {
+                        true
+                    };
+                    if complete {
+                        hold.complete();
                     }
-                    hold.complete();
                     self.pending_binding = None;
                     return Ok(1);
                 }
