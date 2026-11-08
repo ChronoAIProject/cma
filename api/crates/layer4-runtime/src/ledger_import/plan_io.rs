@@ -18,19 +18,27 @@ pub(super) struct Archive {
     parent: Directory,
     path: PathBuf,
     identity: (u64, u64),
+    isolation: super::isolation::Proof,
 }
 
 impl Archive {
     pub(super) fn create(config: &RuntimeConfig, path: &Path) -> Result<Self> {
-        // A source root must not contain the archive, or vice versa. Opening
-        // each component below also rejects aliases through symbolic links.
-        if [&config.home, &config.state_root, &config.checkpoint_root]
-            .iter()
-            .any(|root| path.starts_with(root) || root.starts_with(path))
-        {
-            return Err(invalid());
-        }
-        let parent = Directory::open(path.parent().ok_or_else(invalid)?)?;
+        Self::create_protected(config, path, None)
+    }
+
+    pub(super) fn create_protected(
+        config: &RuntimeConfig,
+        path: &Path,
+        plan: Option<&Path>,
+    ) -> Result<Self> {
+        let mut roots = vec![
+            config.home.as_path(),
+            config.state_root.as_path(),
+            config.checkpoint_root.as_path(),
+        ];
+        roots.extend(plan);
+        let isolation = super::isolation::Proof::new(&roots)?;
+        let parent = isolation.parent(path)?;
         let name = path
             .file_name()
             .and_then(|v| v.to_str())
@@ -52,9 +60,36 @@ impl Archive {
             parent,
             path: path.into(),
             identity,
+            isolation,
         };
         result.verify()?;
         Ok(result)
+    }
+
+    pub(super) fn database(&self) -> Result<Directory> {
+        self.verify()?;
+        if unsafe { libc::mkdirat(self.directory.0.as_raw_fd(), c"database".as_ptr(), 0o700) } != 0
+        {
+            return Err(storage());
+        }
+        self.directory.0.sync_all().map_err(|_| storage())?;
+        let directory = self.directory.child("database")?.ok_or_else(changed)?;
+        self.verify()?;
+        Ok(directory)
+    }
+
+    pub(super) fn verify_database(&self, expected: &Directory) -> Result<()> {
+        self.verify()?;
+        let actual = self
+            .directory
+            .child("database")?
+            .ok_or_else(changed)?
+            .identity()?;
+        let expected = expected.identity()?;
+        if (actual.device, actual.inode) != (expected.device, expected.inode) {
+            return Err(changed());
+        }
+        Ok(())
     }
 
     pub(super) fn write(
@@ -158,7 +193,7 @@ impl Archive {
         if (metadata.dev(), metadata.ino()) != self.identity {
             return Err(changed());
         }
-        let parent = Directory::open(self.path.parent().ok_or_else(invalid)?)?;
+        let parent = self.isolation.parent(&self.path)?;
         let original = self.parent.identity()?;
         let current = parent.identity()?;
         if (original.device, original.inode) != (current.device, current.inode) {

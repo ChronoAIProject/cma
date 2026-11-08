@@ -31,6 +31,7 @@ async fn import_commit_faults_preserve_atomic_raw_results_and_never_clear_the_ho
                 storage,
                 config: fixture.config.clone(),
                 directory: fixture.database(),
+                anchor: None,
             };
             let started = Record::started(&fixture.config, &close()).unwrap();
             let record = match status {
@@ -96,6 +97,7 @@ async fn import_commit_faults_preserve_atomic_raw_results_and_never_clear_the_ho
                 storage,
                 config: fixture.config.clone(),
                 directory: fixture.database(),
+                anchor: None,
             };
             assert_eq!(
                 reopened.finish(0).await.unwrap_err().code,

@@ -44,6 +44,14 @@ impl Identity {
 }
 
 impl Directory {
+    pub(super) fn sync_file(&self, name: &str) -> Result<()> {
+        self.file_identity(name)?;
+        self.open_at(name, 0)?
+            .ok_or_else(changed)?
+            .sync_all()
+            .map_err(|_| super::plan_io::storage())
+    }
+
     pub(super) fn file_identity(&self, name: &str) -> Result<Identity> {
         let file = self.open_at(name, 0)?.ok_or_else(changed)?;
         let metadata = file.metadata().map_err(|_| invalid())?;

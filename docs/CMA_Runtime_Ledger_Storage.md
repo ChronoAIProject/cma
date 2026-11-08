@@ -116,6 +116,23 @@ files are mode 0400. The private manifest contains source identities and paths;
 raw records may contain receipt data. Keep the whole artifact in protected
 storage. Only counts, fixed hold reasons and digests appear in command output.
 
+Preparation proves separation using device/inode identities of the protected
+roots and destination ancestors before creating output. Staging also protects
+the sealed plan. Those roots must be available for this physical proof even
+though staging reads record contents from the backup. Verification alone can
+still run while original roots are offline. Linux preparation refuses ambiguous
+bind-mount/subtree views on the relevant filesystems and nested mounts that
+prevent proving separation; it does not mount or unmount anything to proceed.
+Unavailable identity/mount evidence is a refusal, never permission to create.
+
+Output files remain relative to retained directory descriptors. The detached
+writer uses a restricted SQLite VFS for its database and DELETE journal, with
+standard Unix byte locks, file/directory barriers and the same per-connection
+EXTRA contract. It cannot resolve other filenames or use WAL. The serving VFS
+is unchanged; qualification reopens the resulting database through that VFS.
+The exact-image probe requires both ordinary and descriptor-rooted
+create/commit/reopen results for every image.
+
 The planner copies and syncs each source file, writes and syncs `plan.json`,
 rescans the original input, then publishes `sealed.json` with the plan digest.
 Publication writes a temporary file, syncs it, renames without replacement,

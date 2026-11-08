@@ -2,6 +2,7 @@
 //! Inventory is evidence, not proof that a legacy writer has stopped.
 mod inventory;
 mod io;
+mod isolation;
 mod json;
 mod plan;
 mod plan_io;

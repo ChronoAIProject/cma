@@ -1,7 +1,6 @@
 //! Detached, create-only import. No source-root writes or release capability.
 use std::path::Path;
 
-use super::io::Directory;
 use super::plan_io::Archive;
 use super::{changed, invalid, sealed, Budget, Limits};
 use crate::config::RuntimeConfig;
@@ -45,12 +44,18 @@ pub(super) async fn create_checked(
     let (plan, analysis) =
         sealed::open_with_limits(&config, plan_path, expected, budget.remaining_limits()?)?;
     budget.check()?;
-    let archive = Archive::create(&config, destination)?;
-    let database = destination.join("database");
-    let store = HeldImport::create(database.clone(), config.clone(), pages).await?;
+    let archive = Archive::create_protected(&config, destination, Some(plan_path))?;
+    let database = archive.database()?;
+    let directory = std::sync::Arc::new(
+        database
+            .0
+            .try_clone()
+            .map_err(|_| super::plan_io::storage())?,
+    );
+    let store = HeldImport::create_anchored(directory, config.clone(), pages).await?;
     let initialized = async {
-        let original_directory = Directory::open(&database)?.identity()?;
-        let original_file = Directory::open(&database)?.file_identity("ledger.sqlite3")?;
+        let original_directory = database.identity()?;
+        let original_file = database.file_identity("ledger.sqlite3")?;
         let expected_processes = fill(
             &store,
             &config,
@@ -71,8 +76,9 @@ pub(super) async fn create_checked(
     let inventory_digest = plan.inventory.digest.clone();
     drop(analysis);
     drop(plan);
-    let closed_directory = Directory::open(&database)?.identity()?;
-    let closed_file = Directory::open(&database)?.file_identity("ledger.sqlite3")?;
+    archive.verify_database(&database)?;
+    let closed_directory = database.identity()?;
+    let closed_file = database.file_identity("ledger.sqlite3")?;
     if (original_directory.device, original_directory.inode)
         != (closed_directory.device, closed_directory.inode)
         || (original_file.device, original_file.inode) != (closed_file.device, closed_file.inode)
@@ -80,20 +86,24 @@ pub(super) async fn create_checked(
         return Err(changed());
     }
     boundary(Boundary::Closed)?;
-    crate::fs_durability::sync_tree(&database).map_err(|_| super::plan_io::storage())?;
+    for name in database.names(&mut budget)? {
+        database.sync_file(&name)?;
+    }
+    database
+        .0
+        .sync_all()
+        .map_err(|_| super::plan_io::storage())?;
     archive.verify()?;
     let mut verification = Budget::new(budget.remaining_limits()?);
-    let database_hash = Directory::open(&database)?.hash_file(
-        "ledger.sqlite3",
-        u64::from(pages) * 4096,
-        &mut verification,
-    )?;
+    let database_hash =
+        database.hash_file("ledger.sqlite3", u64::from(pages) * 4096, &mut verification)?;
     boundary(Boundary::Ready)?;
     // A ready artifact must still have its complete exact byte backup. This
     // revalidation is content proof only; it never grants live-source exclusion.
     sealed::open_with_limits(&config, plan_path, expected, budget.remaining_limits()?)?;
-    if Directory::open(&database)?.identity()? != closed_directory
-        || Directory::open(&database)?.file_identity("ledger.sqlite3")? != closed_file
+    archive.verify_database(&database)?;
+    if database.identity()? != closed_directory
+        || database.file_identity("ledger.sqlite3")? != closed_file
     {
         return Err(changed());
     }

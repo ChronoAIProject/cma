@@ -1,5 +1,6 @@
 //! Bounded SQLite ownership. The worker owns the connection and lifetime lock.
 //! No database error or path is exposed through operational diagnostics.
+pub(crate) mod anchored;
 mod connection;
 #[cfg(test)]
 pub(crate) mod fault_vfs;
@@ -29,14 +30,33 @@ enum Message {
     Close(oneshot::Sender<Result<()>>),
 }
 
+// Field order closes SQLite before unregistering its descriptor VFS even if a
+// work callback panics. Close acknowledgement follows destruction of all locks.
+struct WorkerConnection {
+    database: Option<Connection>,
+    _vfs: Option<anchored::Vfs>,
+    _lock: std::fs::File,
+    _outer: Option<std::sync::Arc<std::fs::File>>,
+}
+impl WorkerConnection {
+    fn close(mut self) -> Result<()> {
+        self.database
+            .take()
+            .ok_or_else(storage_error)?
+            .close()
+            .map_err(|_| storage_error())
+    }
+}
+
 pub(crate) struct Storage {
     sender: SyncSender<Message>,
     path: PathBuf,
+    anchor: Option<std::sync::Arc<std::fs::File>>,
 }
 
 impl Storage {
     pub(crate) async fn open(path: PathBuf, create: bool, pages: u32) -> Result<Self> {
-        Self::open_named(path, create, pages, None, None).await
+        Self::open_named(path, create, pages, None, None, None).await
     }
 
     #[cfg(test)]
@@ -46,7 +66,7 @@ impl Storage {
         pages: u32,
         name: String,
     ) -> Result<Self> {
-        Self::open_named(path, create, pages, Some(name), None).await
+        Self::open_named(path, create, pages, Some(name), None, None).await
     }
 
     pub(crate) async fn open_with_lock(
@@ -54,7 +74,14 @@ impl Storage {
         pages: u32,
         lock: std::sync::Arc<std::fs::File>,
     ) -> Result<Self> {
-        Self::open_named(path, false, pages, None, Some(lock)).await
+        Self::open_named(path, false, pages, None, Some(lock), None).await
+    }
+
+    pub(crate) async fn open_anchored(
+        directory: std::sync::Arc<std::fs::File>,
+        pages: u32,
+    ) -> Result<Self> {
+        Self::open_named(PathBuf::new(), true, pages, None, None, Some(directory)).await
     }
 
     async fn open_named(
@@ -63,43 +90,66 @@ impl Storage {
         pages: u32,
         vfs: Option<String>,
         outer_lock: Option<std::sync::Arc<std::fs::File>>,
+        anchor: Option<std::sync::Arc<std::fs::File>>,
     ) -> Result<Self> {
         let (sender, receiver) = sync_channel(QUEUE_LIMIT);
         let (opened, ready) = oneshot::channel();
         let directory = path.clone();
+        let retained_anchor = anchor.clone();
         std::thread::Builder::new()
             .name("runtime-ledger".into())
             .spawn(move || {
                 let outer_lock = outer_lock;
-                let (mut connection, lock) =
-                    match connection::open(&path, create, pages, vfs.as_deref()) {
-                        Ok(opened) => opened,
-                        Err(error) => {
-                            let _ = opened.send(Err(error));
-                            return;
+                let connection = match anchor {
+                    Some(directory) => anchored::open(directory, pages)
+                        .map(|(db, lock, vfs)| (db, lock, Some(vfs))),
+                    None => connection::open(&path, create, pages, vfs.as_deref())
+                        .map(|(db, lock)| (db, lock, None)),
+                };
+                let (database, lock, anchored_vfs) = match connection {
+                    Ok(opened) => opened,
+                    Err(error) => {
+                        if opened.send(Err(error)).is_err() {
+                            tracing::error!(
+                                phase = "open_reply",
+                                "ledger caller disconnected during open refusal"
+                            );
                         }
-                    };
+                        return;
+                    }
+                };
+                let mut connection = WorkerConnection {
+                    database: Some(database),
+                    _vfs: anchored_vfs,
+                    _lock: lock,
+                    _outer: outer_lock,
+                };
                 if opened.send(Ok(())).is_err() {
                     return;
                 }
                 while let Ok(message) = receiver.recv() {
                     match message {
-                        Message::Work(work) => work(&mut connection),
+                        Message::Work(work) => work(
+                            connection
+                                .database
+                                .as_mut()
+                                .expect("worker owns its connection"),
+                        ),
                         Message::Close(reply) => {
-                            let result = connection.close().map_err(|_| storage_error());
-                            drop(lock);
-                            drop(outer_lock);
+                            let result = connection.close();
                             let _ = reply.send(result);
                             return;
                         }
                     }
                 }
+                drop(connection);
             })
             .map_err(|_| storage_error())?;
         ready.await.map_err(|_| storage_error())??;
         Ok(Self {
             sender,
             path: directory,
+            anchor: retained_anchor,
         })
     }
 
@@ -109,6 +159,7 @@ impl Storage {
     ) -> Result<T> {
         let (reply, result) = oneshot::channel();
         let directory = self.path.clone();
+        let anchor = self.anchor.clone();
         self.send(Message::Work(Box::new(move |connection| {
             // Finish an admitted transaction even if its caller disconnects.
             // A cancelled wait never implies that the transaction did not commit.
@@ -120,7 +171,13 @@ impl Storage {
                 // Do not retry the transaction or effect after an ambiguous error.
                 // Free physical headroom for a subsequent durable-state inspection.
                 // The zero-length reserve persists the new-admission hold on restart.
-                let _ = reserve::release(&directory);
+                let released = match &anchor {
+                    Some(directory) => anchored::release(directory),
+                    None => reserve::release(&directory),
+                };
+                if let Err(error) = released {
+                    tracing::error!(code = %error.code, phase = "release_reserve", "ledger cleanup failed");
+                }
             }
             let _ = reply.send(outcome);
         })))?;

@@ -17,9 +17,11 @@ pub(crate) struct HeldImport {
     storage: Storage,
     config: RuntimeConfig,
     directory: PathBuf,
+    anchor: Option<std::sync::Arc<std::fs::File>>,
 }
 
 impl HeldImport {
+    #[cfg(test)]
     pub(crate) async fn create(path: PathBuf, config: RuntimeConfig, pages: u32) -> Result<Self> {
         let storage = Storage::open(path.clone(), true, pages).await?;
         let expected = config.clone();
@@ -33,6 +35,25 @@ impl HeldImport {
             storage,
             config,
             directory: path,
+            anchor: None,
+        })
+    }
+
+    pub(crate) async fn create_anchored(
+        directory: std::sync::Arc<std::fs::File>,
+        config: RuntimeConfig,
+        pages: u32,
+    ) -> Result<Self> {
+        let storage = Storage::open_anchored(directory.clone(), pages).await?;
+        let expected = config.clone();
+        let storage = storage
+            .validate(move |db| schema::initialize_held(db, &expected))
+            .await?;
+        Ok(Self {
+            storage,
+            config,
+            directory: PathBuf::new(),
+            anchor: Some(directory),
         })
     }
 
@@ -157,8 +178,12 @@ impl HeldImport {
     pub(crate) async fn finish(self, expected_processes: u64) -> Result<serde_json::Value> {
         let config = self.config;
         let directory = self.directory;
+        let anchor = self.anchor;
         let result = self.storage.call(move |db| {
-            crate::ledger_storage::reserve::require(&directory)?;
+            match &anchor {
+                Some(directory) => crate::ledger_storage::anchored::require(directory)?,
+                None => crate::ledger_storage::reserve::require(&directory)?,
+            }
             let (admission,generation): (String,Vec<u8>) = db.query_row("SELECT admission,generation FROM metadata WHERE singleton=1", [], |r| Ok((r.get(0)?,r.get(1)?)))
                 .map_err(|_| invalid())?;
             if admission != "import_held" || fence::decode(&generation)? != config.generation { return Err(invalid()); }
