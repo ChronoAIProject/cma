@@ -24,8 +24,9 @@ pub enum RuntimeLedgerStatus {
     },
 }
 
-/// History totals cover all retained generations. Outstanding/process totals
-/// cover the persistent and current-generation scopes identified by runtime.
+/// History totals cover all retained generations. Normal admission and process
+/// totals cover persistent/current-generation scopes. Reserved cleanup does not
+/// consume the normal-outstanding allowance; zero is not proof of quiescence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeLedgerCounters {
@@ -34,11 +35,11 @@ pub struct RuntimeLedgerCounters {
     pub terminal: u64,
     pub authority: u64,
     pub reserved_bytes: u64,
-    pub outstanding: u64,
+    pub normal_outstanding: u64,
     pub logical_processes: u64,
     pub allocated_bytes: u64,
     pub maximum_bytes: u64,
-    pub outstanding_limit: u64,
+    pub normal_outstanding_limit: u64,
     pub transaction_headroom_bytes: u64,
     pub emergency_remaining_bytes: u64,
     pub emergency_limit_bytes: u64,
@@ -49,9 +50,9 @@ impl RuntimeLedgerObservation {
         self.runtime.validate_for(request)?;
         if let RuntimeLedgerStatus::Indexed { counters: c } = &self.ledger {
             if c.terminal > c.operations
-                || c.outstanding > c.operations
-                || c.outstanding > c.outstanding_limit
-                || c.outstanding_limit == 0
+                || c.normal_outstanding > c.operations
+                || c.normal_outstanding > c.normal_outstanding_limit
+                || c.normal_outstanding_limit == 0
                 || c.allocated_bytes > c.maximum_bytes
                 || c.maximum_bytes == 0
                 || c.emergency_remaining_bytes > c.emergency_limit_bytes
@@ -131,11 +132,11 @@ mod tests {
                     terminal: 1,
                     authority: 1,
                     reserved_bytes: 0,
-                    outstanding: 0,
+                    normal_outstanding: 0,
                     logical_processes: 0,
                     allocated_bytes: 4096,
                     maximum_bytes: 65536,
-                    outstanding_limit: 1024,
+                    normal_outstanding_limit: 1024,
                     transaction_headroom_bytes: 4096,
                     emergency_remaining_bytes: 4096,
                     emergency_limit_bytes: 4096,

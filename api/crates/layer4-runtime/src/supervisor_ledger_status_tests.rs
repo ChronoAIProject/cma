@@ -99,7 +99,7 @@ async fn observation_is_negotiated_read_only_and_does_not_wait_for_the_effect_ga
             assert_eq!(counters.operations, 0);
             assert_eq!(counters.maximum_bytes, 1024 * 1024 * 1024);
             assert_eq!(counters.emergency_remaining_bytes, 16 * 1024 * 1024);
-            assert_eq!(counters.outstanding_limit, 1024);
+            assert_eq!(counters.normal_outstanding_limit, 1024);
         } else {
             assert!(!supported);
             if let Some(original) = &baseline {
