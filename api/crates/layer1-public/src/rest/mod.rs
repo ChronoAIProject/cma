@@ -51,6 +51,7 @@ mod agent_provider_associations_tests;
 mod agent_settings;
 mod agent_skills;
 mod agent_worktree_recovery;
+mod dependency_diagnostics;
 mod message_feedback;
 mod message_feedback_reasons;
 mod suggestion_shapes;

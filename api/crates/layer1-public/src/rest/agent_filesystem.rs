@@ -101,7 +101,12 @@ pub fn agent_filesystem_router(service: Arc<AgentFileService>) -> Router {
                 )),
         )
         .route("/api/v1/agents/{id}/files/tree", get(list))
-        .route("/api/v1/agents/{id}/files/content", get(read))
+        .route(
+            "/api/v1/agents/{id}/files/content",
+            get(read).layer(axum::middleware::from_fn(
+                super::dependency_diagnostics::file_content,
+            )),
+        )
         .route("/api/v1/agents/{id}/files/download", get(download))
         .layer(axum::middleware::from_fn(bounded_request))
         .layer(axum::middleware::from_fn(private_headers))

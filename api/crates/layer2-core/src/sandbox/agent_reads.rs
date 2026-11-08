@@ -461,7 +461,11 @@ fn store_error(error: SandboxStoreError) -> AgentReadError {
         SandboxStoreError::SequenceConflict => {
             corrupt("agent store reported an inconsistent sequence")
         }
-        other => AgentReadError::Unavailable(other.to_string()),
+        other => {
+            use crate::dependency_diagnostics::{Dependency, Failure, Reason};
+            Failure::new(Dependency::Storage, Reason::Unavailable).record();
+            AgentReadError::Unavailable(other.to_string())
+        }
     }
 }
 

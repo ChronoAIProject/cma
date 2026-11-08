@@ -20,6 +20,22 @@ impl ProviderVerificationError {
         }
     }
 
+    /// Preserve the final typed verification reason before the public projection.
+    /// This runs per caller, after single-flight fan-out and fallback decisions.
+    pub(super) fn record_unavailable(&self) {
+        use layer2_core::dependency_diagnostics::{Dependency, Failure, Reason};
+        let reason = match self.reason() {
+            "timeout" => Reason::Timeout,
+            "connection" => Reason::Connection,
+            "http_502" => Reason::BadGateway,
+            "http_503" => Reason::UpstreamUnavailable,
+            "deadline" => Reason::VerificationDeadline,
+            "invalid_evidence" => Reason::InvalidEvidence,
+            _ => Reason::Unknown,
+        };
+        Failure::new(Dependency::IdentityProvider, reason).record();
+    }
+
     pub(super) fn transport(error: reqwest::Error) -> Self {
         if error.is_timeout() {
             Self::Transient("timeout")
