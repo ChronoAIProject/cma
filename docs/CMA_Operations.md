@@ -2078,8 +2078,13 @@ pressure returns Retry-After without changing conversation/lifecycle pools.
 ## API read and stream diagnostics
 
 The API emits content-free structured log metrics every ten seconds and once
-on graceful worker shutdown. These are process-local cumulative counters; use
-differences within one process lifetime and handle resets across deployments.
+after the background-worker drain completes. The final sample follows all joined
+workers, including cancellation cleanup at the thirty-second worker deadline,
+so reads completed or cancelled during that drain are included. HTTP drains
+before the worker signal. Detached tasks and HTTP work surviving its drain
+deadline are outside this guarantee; abrupt process termination can prevent the
+final sample. These are process-local cumulative counters; use differences within
+one process lifetime and handle resets across deployments.
 The timer emits zero gauges too, so a quiet or disconnected stream does not
 leave a stale active count. This uses the same API log path as reporting and
 runtime hold diagnostics, with no public metrics endpoint.
