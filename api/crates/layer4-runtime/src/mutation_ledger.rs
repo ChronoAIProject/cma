@@ -5,14 +5,20 @@ mod fence;
 mod journal;
 #[cfg(test)]
 mod journal_tests;
+#[cfg(test)]
+mod lifecycle_tests;
 mod processes;
+mod queries;
+#[cfg(test)]
+mod queries_tests;
+pub(crate) use queries::ProcessFilter;
 #[cfg(test)]
 mod processes_tests;
 mod schema;
 #[cfg(test)]
 mod tests;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::config::RuntimeConfig;
@@ -99,72 +105,9 @@ impl Ledger {
     }
 }
 
-pub(crate) async fn probe(directory: &Path) -> Result<()> {
-    let config = RuntimeConfig::from_values(std::collections::BTreeMap::from([
-        ("CHRONO_SANDBOX_ID".into(), "ledger-storage-probe".into()),
-        (
-            "HOME".into(),
-            directory.with_extension("home").to_string_lossy().into(),
-        ),
-        (
-            "CHRONO_RUNTIME_STATE_ROOT".into(),
-            directory.to_string_lossy().into(),
-        ),
-    ]))
-    .map_err(|_| invalid())?;
-    let operation = Operation::close_agent(&layer3_adapter::AgentCloseRequest::new(
-        "agent:storage-probe:close:v1",
-        layer3_adapter::AgentSlot::new("storage-probe"),
-    ));
-    let ledger = Ledger::open(directory.to_owned(), config.clone(), true, 16_384).await?;
-    ledger.admit(u64::MAX, vec![operation.clone()]).await?;
-    let entry = ledger.begin(operation.clone()).await?;
-    if !entry.new {
-        return Err(invalid());
-    }
-    let receipt = layer3_adapter::wire::AgentCloseReceipt {
-        operation_id: operation.operation_id.clone(),
-        request_sha256: operation.request_sha256.clone(),
-        agent_id: layer3_adapter::AgentSlot::new("storage-probe"),
-    };
-    ledger.finish(entry.record.completed(&receipt)?).await?;
-    ledger.close().await?;
-    let ledger = Ledger::open(directory.to_owned(), config, false, 16_384).await?;
-    ledger.admit(u64::MAX, vec![operation.clone()]).await?;
-    let replay = ledger.begin(operation.clone()).await?;
-    if replay.new
-        || replay
-            .record
-            .receipt::<layer3_adapter::wire::AgentCloseReceipt>()?
-            != receipt
-    {
-        return Err(invalid());
-    }
-    let failure_operation = Operation::close_agent(&layer3_adapter::AgentCloseRequest::new(
-        "agent:failure-probe:close:v1",
-        layer3_adapter::AgentSlot::new("failure-probe"),
-    ));
-    ledger.admit(1, vec![failure_operation.clone()]).await?;
-    let entry = ledger.begin(failure_operation.clone()).await?;
-    ledger
-        .finish(entry.record.failed(
-            &RuntimeError::rejected("probe_failure", "synthetic failure"),
-            false,
-        )?)
-        .await?;
-    if ledger.begin(failure_operation).await?.record.error()?.code != "probe_failure" {
-        return Err(invalid());
-    }
-    let error = ledger
-        .admit(u64::MAX - 1, vec![operation])
-        .await
-        .err()
-        .ok_or_else(invalid)?;
-    if error.code != "mutation_authority_stale" {
-        return Err(invalid());
-    }
-    ledger.close().await
-}
+#[path = "mutation_ledger/probe.rs"]
+mod probe;
+pub(crate) use probe::run as probe;
 
 fn invalid() -> RuntimeError {
     RuntimeError::rejected(

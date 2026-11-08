@@ -61,7 +61,7 @@ pub(super) fn reserve(db: &Connection, scope: &[u8; 8], operation: &Operation) -
     )
     .map_err(|_| storage_error())?;
     if !covered {
-        db.execute("INSERT INTO scope_budget VALUES (?,1) ON CONFLICT(scope) DO UPDATE SET pending=pending+1", [scope.as_slice()]).map_err(|_| storage_error())?;
+        db.execute("INSERT INTO scope_budget VALUES (?,1,0) ON CONFLICT(scope) DO UPDATE SET pending=pending+1", [scope.as_slice()]).map_err(|_| storage_error())?;
     }
     Ok(!covered)
 }
