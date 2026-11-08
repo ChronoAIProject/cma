@@ -374,3 +374,7 @@ mod tool_proxy_tests;
 #[cfg(test)]
 #[path = "supervisor_hot_rotation_tests.rs"]
 mod hot_rotation_tests;
+
+#[cfg(test)]
+#[path = "supervisor_ledger_status_tests.rs"]
+mod ledger_status_tests;
