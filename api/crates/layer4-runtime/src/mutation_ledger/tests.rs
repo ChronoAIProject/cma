@@ -37,6 +37,32 @@ impl Drop for Fixture {
     }
 }
 
+#[tokio::test]
+async fn rejected_open_releases_writer_before_returning_the_original_hold() {
+    let fixture = Fixture::new();
+    fixture.open(true).await.close().await.unwrap();
+    for _ in 0..16 {
+        let mut wrong = fixture.config.clone();
+        wrong.sandbox_id = "different".into();
+        let error = Ledger::open(fixture.database(), wrong, false, 32_768)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error.code, "mutation_ledger_invalid");
+        assert!(!error.retryable);
+        // Check the actual OS lock immediately, without a delay or retry, then
+        // prove the correct schema can reopen. Shared paths cannot explain this.
+        let writer = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(fixture.database().join("writer.lock"))
+            .unwrap();
+        writer.try_lock().unwrap();
+        drop(writer);
+        fixture.open(false).await.close().await.unwrap();
+    }
+}
+
 pub(super) fn add(identity: u8) -> Operation {
     Operation::add_worktree(&WorktreeRequest::new(
         "worktree:workspace:agent:add:v1",

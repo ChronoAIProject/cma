@@ -6,6 +6,17 @@ use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
 
 impl Record {
+    pub(crate) fn inventory_name(&self, config: &RuntimeConfig) -> std::path::PathBuf {
+        super::io::journal_path(
+            &crate::mutation_scope::root(config, &self.subject),
+            &self.operation_id,
+        )
+    }
+
+    pub(crate) fn inventory_replacement(&self, replacement: &Self) -> Result<()> {
+        super::io::validate_replacement(self, replacement)
+    }
+
     pub(crate) fn started(config: &RuntimeConfig, operation: &Operation) -> Result<Self> {
         let record = Self {
             version: JOURNAL_VERSION,

@@ -26,6 +26,7 @@ mod install_state;
 mod install_state_validation;
 mod lanes;
 mod ledger_format;
+mod ledger_import;
 mod ledger_storage;
 mod link;
 mod mutation_authority;
@@ -85,6 +86,36 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments
+        .first()
+        .is_some_and(|arg| arg == "--cutover-ledger-v1")
+    {
+        return ledger_import::cutover_command()
+            .map_err(|error| format!("{}: {error}", error.code));
+    }
+    if arguments.len() == 1 && arguments[0] == "--inspect-ledger-v1" {
+        return ledger_import::inspect_command().await;
+    }
+    if arguments.len() == 1 && arguments[0] == "--validate-ledger-v1" {
+        return ledger_import::validate_command().await;
+    }
+    if arguments.len() == 2 && arguments[0] == "--plan-ledger-v1" {
+        return ledger_import::plan_command(std::path::PathBuf::from(&arguments[1])).await;
+    }
+    if arguments.len() == 3 && arguments[0] == "--verify-ledger-plan" {
+        let digest = arguments[2].to_str().ok_or("invalid ledger plan digest")?;
+        return ledger_import::verify_plan_command(arguments[1].clone().into(), digest.into())
+            .await;
+    }
+    if arguments.len() == 4 && arguments[0] == "--stage-ledger-v1" {
+        let digest = arguments[2].to_str().ok_or("invalid ledger plan digest")?;
+        return ledger_import::stage_command(
+            arguments[1].clone().into(),
+            digest.into(),
+            arguments[3].clone().into(),
+        )
+        .await;
+    }
     if arguments.len() == 2 && arguments[0] == "--verify-ledger-storage" {
         return ledger_storage::probe(std::path::Path::new(&arguments[1]))
             .await
