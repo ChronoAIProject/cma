@@ -48,6 +48,14 @@ pre-install ownership metadata can still be created. Keep the retained
 transfer mount unchanged across replacement: an ephemeral or different
 installation root cannot provide this downgrade protection.
 
+Before activation, qualify the refusal boundary against every exact older image
+still selectable for that home, or enforce its exclusion. A source-reader
+fixture or one prior-image result does not qualify other published binaries.
+CI separately retains the executable's SQLite source ID, compile options,
+create/commit/reopen result and ELF interpreter/dependency checks for each exact
+default, Debian desktop and Omarchy image. These checks do not replace native
+storage-driver durability or retained-home rollback qualification.
+
 Roll back a V2 home only to an independently tested V2-capable runtime image
 that retains every later fence, tombstone and receipt. Never remove format
 barriers or restore a pre-cutover snapshot to start an old image. Old images
