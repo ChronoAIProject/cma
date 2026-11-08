@@ -2088,6 +2088,9 @@ runtime hold diagnostics, with no public metrics endpoint.
 | --- | --- | --- |
 | `cma_public_streams_active` | `stream_kind` | Gauge of successful SSE response bodies still open, including bodies waiting for consumer reads. Ends at EOF or drop. |
 | `cma_public_stream_polls_total` | `stream_kind`, `outcome` | Refreshes of stream state; `quiet` has no new projected frames, `output` queues new frames, `failed` includes failed or cancelled refreshes. |
+| `cma_agent_log_scans_total` | `outcome` | Attempts to validate a complete captured Agent log, classified as `success` or `failed` (including cancellation). |
+| `cma_agent_log_scan_documents_total` | `outcome` | Documents consumed by those validation attempts, including the offending document on validation failure. |
+| `cma_agent_log_scan_bytes_total` | `outcome` | Encoded BSON document bytes consumed by those validation attempts, excluding reply/batch envelopes. |
 
 `stream_kind` is one of `agui`, `agent_events_v2`, `responses`, `responses_v2`,
 and `launch_events`. Initial buffered replay and SSE keepalives do not count as
@@ -2097,6 +2100,13 @@ An output poll counts queued frames, which may subsequently be withheld by a
 fresh authorization check. The counters never change that authorization or the
 stream's outcome. No identities, contents or inherited request span fields are
 included in these metric events. The numeric sample is the `value` field.
+
+Complete-log scan observations count the raw lengths already used by integrity
+validation. They add no serialization, decode, query or validation shortcut.
+Counters update when each scan ends; failed scans retain partial document and
+byte totals, and pre-read refusals have zero documents/bytes. They describe
+validation work, not extra traffic to add to Mongo response totals: an abandoned
+cursor may have received more documents than the validator consumed.
 
 ## Immutable web build identity
 
