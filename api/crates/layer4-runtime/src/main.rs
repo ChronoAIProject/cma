@@ -34,6 +34,7 @@ mod mutation_authority;
 mod mutation_authority_v1;
 mod mutation_capacity;
 mod mutation_journal;
+mod mutation_ledger;
 mod mutation_scope;
 mod paths;
 mod persistent_home;
