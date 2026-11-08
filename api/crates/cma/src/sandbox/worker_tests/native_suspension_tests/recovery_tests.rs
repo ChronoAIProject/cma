@@ -3,7 +3,7 @@ use layer2_core::sandbox::store::{
     SandboxReconciliationStore, SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };
 
-async fn active_fixture() -> (Fixture, Sandbox, SystemTime) {
+pub(super) async fn active_fixture() -> (Fixture, Sandbox, SystemTime) {
     let mut fixture = Fixture::new().await;
     let created = fixture.harness.create().await;
     let mut now = start_time(&created);
@@ -26,7 +26,7 @@ async fn active_fixture() -> (Fixture, Sandbox, SystemTime) {
     (fixture, active, now)
 }
 
-async fn reconcile(fixture: &Fixture, now: SystemTime) {
+pub(super) async fn reconcile(fixture: &Fixture, now: SystemTime) {
     SandboxReconciler::new(
         fixture.harness.store.clone(),
         fixture.adapter(&runtime_image()),
@@ -38,12 +38,24 @@ async fn reconcile(fixture: &Fixture, now: SystemTime) {
     .unwrap();
 }
 
+pub(super) async fn after_durable_boundary(sandbox: &Sandbox) -> SystemTime {
+    let durable = stamp_time(&sandbox.updated_at);
+    if let Ok(delay) = durable
+        .duration_since(SystemTime::now())
+        .map(|delay| delay + Duration::from_millis(10))
+    {
+        tokio::time::sleep(delay).await;
+    }
+    SystemTime::now()
+}
+
 #[tokio::test]
 async fn process_loss_retains_object_home_and_conversations_across_every_worker_restart() {
     let (fixture, active, mut now) = active_fixture().await;
     let agent = lifecycle_recovery_tests::prepare_agent(&fixture.harness, &active, now, 1).await;
     let original = fixture.backend.snapshot().await;
     fixture.backend.restart_process().await;
+    now = after_durable_boundary(&active).await;
     reconcile(&fixture, now).await;
     let recovering = fixture.harness.stored(&active.id).await;
     assert_eq!(recovering.status, SandboxStatus::Reviving);
@@ -166,8 +178,9 @@ async fn older_recovery_without_retained_binding_fails_without_reclaiming_origin
 
 #[tokio::test]
 async fn stale_loss_observation_and_worker_cannot_suspend_a_newer_recovery() {
-    let (fixture, active, now) = active_fixture().await;
+    let (fixture, active, _initial_now) = active_fixture().await;
     fixture.backend.restart_process().await;
+    let now = after_durable_boundary(&active).await;
     reconcile(&fixture, now).await;
     let stale_loss = SandboxRuntimeLossRequest {
         sandbox_id: active.id.clone(),
@@ -216,8 +229,9 @@ async fn stale_loss_observation_and_worker_cannot_suspend_a_newer_recovery() {
 #[tokio::test]
 async fn missing_original_home_or_provider_object_never_creates_an_empty_replacement() {
     for lose_home in [false, true] {
-        let (fixture, active, now) = active_fixture().await;
+        let (fixture, active, _initial_now) = active_fixture().await;
         fixture.backend.restart_process().await;
+        let now = after_durable_boundary(&active).await;
         reconcile(&fixture, now).await;
         if lose_home {
             fixture.homes.lose_disk();

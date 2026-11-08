@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use super::runtime_identity::{exact_identity_predicate, identity_rejection};
 use super::{HostedAdapter, RuntimeState};
 use crate::hosted::deployment::{provider_request_identity, ProviderIdentity};
 use crate::{AdapterError, RuntimeAdoptionRequest, RuntimeHandle, RuntimeObservation, SandboxSpec};
@@ -247,20 +248,14 @@ impl HostedAdapter {
         let Some(observation) = self.backend.adopt(&adoption.handle, &request).await? else {
             return Ok(None);
         };
-        if validate_inventory(std::slice::from_ref(&observation)).is_err()
-            || observation.handle != adoption.handle
-            || observation.sandbox_id != expected.sandbox_id
-            || observation.generation != expected.generation
-            || observation.image_sha256 != expected.image_sha256
-            || observation.spec_fingerprint != expected.spec_fingerprint
-            || observation.runtime_contract != expected.runtime_contract
-            || !observation.lifecycle.is_running()
-        {
-            return Err(AdapterError::Rejected(
-                "provider did not prove the exact running runtime identity".into(),
-            ));
+        if validate_inventory(std::slice::from_ref(&observation)).is_err() {
+            return Err(identity_rejection("inventory"));
         }
-        self.attach_state(adoption.handle.clone(), &adoption.spec, expected)
+        if let Some(predicate) = exact_identity_predicate(&observation, &adoption.handle, &expected)
+        {
+            return Err(identity_rejection(predicate));
+        }
+        self.attach_adopted_state(adoption.handle.clone(), &adoption.spec, expected)
             .await?;
         self.verify_spec_home(&adoption.spec).await?;
         Ok(Some(observation))
@@ -307,6 +302,44 @@ impl HostedAdapter {
         Ok(handle)
     }
 
+    /// Replace only an exact older generation after the provider has proved the
+    /// newer identity and rebound its transport. A same-generation or foreign
+    /// identity remains a hard conflict; the cache is never an authority source.
+    pub(super) async fn attach_adopted_state(
+        &self,
+        handle: RuntimeHandle,
+        spec: &SandboxSpec,
+        provision: ProviderIdentity,
+    ) -> crate::Result<RuntimeHandle> {
+        if invalid_handle(&handle) {
+            return Err(AdapterError::Rejected(
+                "provider returned an invalid runtime handle".into(),
+            ));
+        }
+        let candidate = RuntimeState {
+            own_credential: spec.own_credential,
+            home_directory: spec.home_directory.clone(),
+            provision,
+            home_volume: spec.home_volume.clone(),
+        };
+        let mut states = self.states.lock().await;
+        match states.get(&handle) {
+            None => {
+                states.insert(handle.clone(), candidate);
+                Ok(handle)
+            }
+            Some(current) if current == &candidate => Ok(handle),
+            Some(current) if supersedes(current, &candidate) => {
+                states.insert(handle.clone(), candidate);
+                Ok(handle)
+            }
+            Some(_) => Err(AdapterError::Rejected(format!(
+                "provider reused live runtime handle {}",
+                handle.0
+            ))),
+        }
+    }
+
     pub(super) fn verify_adoption_home_route(
         &self,
         request: &RuntimeAdoptionRequest,
@@ -346,6 +379,14 @@ impl HostedAdapter {
             .verify(home)
             .await
     }
+}
+
+fn supersedes(current: &RuntimeState, candidate: &RuntimeState) -> bool {
+    current.provision.sandbox_id == candidate.provision.sandbox_id
+        && current.provision.generation < candidate.provision.generation
+        && current.own_credential == candidate.own_credential
+        && current.home_directory == candidate.home_directory
+        && current.home_volume == candidate.home_volume
 }
 
 pub(super) fn validate_inventory(inventory: &[RuntimeObservation]) -> crate::Result<()> {
@@ -401,6 +442,10 @@ fn sha256_fingerprint(value: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
+
+#[cfg(test)]
+#[path = "adapter_runtime_tests.rs"]
+mod tests;
 
 impl HostedAdapter {
     pub(super) async fn deadline_exact(

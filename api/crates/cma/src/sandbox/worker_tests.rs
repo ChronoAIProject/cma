@@ -61,6 +61,8 @@ mod pause_cancellation_tests;
 mod provided_credential_tests;
 mod reconciliation_tests;
 mod retirement_checkpoint_tests;
+#[path = "worker_tests/reviewer_boundary_diagnostics.rs"]
+mod reviewer_boundary_diagnostics;
 mod runtime_attachment_tests;
 mod warmup_tests;
 mod workspace_adoption_tests;
