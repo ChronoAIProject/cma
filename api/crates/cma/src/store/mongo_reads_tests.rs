@@ -182,6 +182,7 @@ async fn real_driver_counts_received_batches_abandonment_getmore_and_failed_read
         .await
         .unwrap();
     options.response_observer = Some(observer.clone());
+    options.retry_reads = Some(false);
     assert!(options.command_event_handler.is_none());
     let client = Client::with_options(options).unwrap();
     let database = client.database(&format!("cma_reads_{}", uuid::Uuid::new_v4().simple()));
@@ -227,6 +228,22 @@ async fn real_driver_counts_received_batches_abandonment_getmore_and_failed_read
     assert_eq!(totals(&observer, "findAndModify", "agent_log")[2], 1);
     assert!(collection.find(doc! {"$invalid":1}).await.is_err());
     assert_eq!(totals(&observer, "find", "agent_log")[1], 1);
+    // The fixture enables failCommand. A single connection close exercises the
+    // driver's transport-error path; it must not invent received BSON bytes.
+    client
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint":"failCommand", "mode":{"times":1},
+            "data":{"failCommands":["find"],"closeConnection":true}
+        })
+        .await
+        .unwrap();
+    let before = totals(&observer, "find", "agent_log");
+    assert!(collection.find(doc! {}).await.is_err());
+    let after = totals(&observer, "find", "agent_log");
+    assert_eq!(after[0], before[0] + 1);
+    assert_eq!(after[1], before[1] + 1);
+    assert_eq!(&after[2..], &before[2..]);
     let unknown = database.collection::<Document>("unlisted_private_collection");
     unknown.insert_one(doc! {"_id":1}).await.unwrap();
     assert!(unknown.find_one(doc! {}).await.unwrap().is_some());
