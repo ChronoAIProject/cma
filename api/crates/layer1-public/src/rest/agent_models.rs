@@ -61,7 +61,12 @@ pub fn agent_models_router(
     support: Arc<dyn AgentModelRuntimeSupport>,
 ) -> Router {
     Router::new()
-        .route("/api/v1/agents/{id}/models", get(list))
+        .route(
+            "/api/v1/agents/{id}/models",
+            get(list).layer(axum::middleware::from_fn(
+                super::dependency_diagnostics::model_list,
+            )),
+        )
         .with_state(AgentModelsState {
             reads,
             catalog,
