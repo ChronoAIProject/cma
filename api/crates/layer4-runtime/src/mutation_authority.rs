@@ -49,6 +49,25 @@ pub(super) struct Record {
 }
 
 impl Record {
+    pub(crate) fn inventory_name(&self, config: &RuntimeConfig) -> std::path::PathBuf {
+        io::record_path(&crate::mutation_scope::root(config, &self.subject), self)
+    }
+
+    /// Validate a preserved V1 payload without invoking the mutating scanner.
+    pub(crate) fn decode_inventory(
+        bytes: &[u8],
+        config: &RuntimeConfig,
+        path: &Path,
+    ) -> Result<Self> {
+        if bytes.len() as u64 > MAX_AUTHORITY_BYTES {
+            return Err(corrupt("mutation authority record is oversized"));
+        }
+        let record = serde_json::from_slice(bytes)
+            .map_err(|_| corrupt("mutation authority record is invalid"))?;
+        validate_record(&record, config, path)?;
+        Ok(record)
+    }
+
     pub(super) fn new(config: &RuntimeConfig, authority_fence: u64, operation: &Operation) -> Self {
         let (resource, disposition) = resource_operation(operation);
         Self {
@@ -255,11 +274,7 @@ fn validate_record(record: &Record, config: &RuntimeConfig, path: &Path) -> Resu
         || record.resource != resource
         || record.disposition != disposition
         || mutation_journal::validate_operation(config, &operation).is_err()
-        || path
-            != io::record_path(
-                &crate::mutation_scope::root(config, &record.subject),
-                record,
-            )
+        || path != record.inventory_name(config)
     {
         return Err(corrupt("runtime mutation authority record is invalid"));
     }
