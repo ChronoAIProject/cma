@@ -23,7 +23,7 @@ pub(crate) async fn run(directory: &Path) -> Result<()> {
     storage.close().await?;
     crate::mutation_ledger::probe(&directory.with_extension("indexed")).await?;
     let storage = Storage::open(directory.to_owned(), false, 256).await?;
-    let version = storage
+    let qualification = storage
         .call(|connection| {
             connection::verify(connection, 256)?;
             let fence = connection
@@ -34,11 +34,19 @@ pub(crate) async fn run(directory: &Path) -> Result<()> {
             if fence != u64::MAX.to_be_bytes() {
                 return Err(super::invalid());
             }
-            Ok(rusqlite::version().to_owned())
+            let source_id: String = connection.query_row("SELECT sqlite_source_id()", [], |row| row.get(0)).map_err(|_| storage_error())?;
+            let mut query = connection.prepare("PRAGMA compile_options").map_err(|_| storage_error())?;
+            let compile_options = query.query_map([], |row| row.get::<_, String>(0)).map_err(|_| storage_error())?
+                .collect::<rusqlite::Result<Vec<_>>>().map_err(|_| storage_error())?;
+            if source_id.len() > 256 || compile_options.len() > 256 || compile_options.iter().any(|option| option.len() > 256) {
+                return Err(super::invalid());
+            }
+            Ok(serde_json::json!({"sqlite_version":rusqlite::version(), "sqlite_source_id":source_id, "compile_options":compile_options,
+                "journal_mode":"delete", "synchronous":"extra", "create_commit_reopen":"passed"}))
         })
         .await?;
     storage.close().await?;
     // Only library version and fixed predicates; never print paths or identities.
-    println!("sqlite={version} journal=delete synchronous=extra create_commit_reopen=passed");
+    println!("{qualification}");
     Ok(())
 }
