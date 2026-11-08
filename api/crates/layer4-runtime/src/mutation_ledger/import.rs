@@ -153,9 +153,9 @@ impl HeldImport {
         let directory = self.directory;
         let result = self.storage.call(move |db| {
             crate::ledger_storage::reserve::require(&directory)?;
-            let admission: String = db.query_row("SELECT admission FROM metadata WHERE singleton=1", [], |r| r.get(0))
+            let (admission,generation): (String,Vec<u8>) = db.query_row("SELECT admission,generation FROM metadata WHERE singleton=1", [], |r| Ok((r.get(0)?,r.get(1)?)))
                 .map_err(|_| invalid())?;
-            if admission != "import_held" { return Err(invalid()); }
+            if admission != "import_held" || fence::decode(&generation)? != config.generation { return Err(invalid()); }
             // This read performs complete schema/identity validation and must
             // refuse before any serving generation update or recovery.
             match schema::open(db, &config, false) {
