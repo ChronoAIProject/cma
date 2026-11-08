@@ -70,6 +70,7 @@ kube = { version = "4.2", default-features = false, features = [
     "ws",
 ] }
 libc = "0.2"
+rusqlite = { version = "=0.41.1", default-features = false, features = ["libsqlite3-sys", "bundled", "limits"] }
 # CMAEG's bounded metrics facade and pull-format renderer; the service owns its
 # private Axum listener, so the exporter's extra servers and push client stay off.
 metrics = "0.24.6"
