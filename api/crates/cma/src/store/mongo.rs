@@ -87,6 +87,7 @@ impl MongoStores {
             .await
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
         super::mongo_latency::observe(&mut options);
+        super::mongo_reads::observe(&mut options);
         let client = Client::with_options(options)
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
         super::isolation::verify_with_authority(&client.database(database), authority).await?;

@@ -2091,6 +2091,12 @@ runtime hold diagnostics, with no public metrics endpoint.
 | `cma_agent_log_scans_total` | `outcome` | Attempts to validate a complete captured Agent log, classified as `success` or `failed` (including cancellation). |
 | `cma_agent_log_scan_documents_total` | `outcome` | Documents consumed by those validation attempts, including the offending document on validation failure. |
 | `cma_agent_log_scan_bytes_total` | `outcome` | Encoded BSON document bytes consumed by those validation attempts, excluding reply/batch envelopes. |
+| `cma_mongo_read_responses_total` | `collection`, `operation` | Received command responses and transport failures after command I/O begins; each retry is counted separately. |
+| `cma_mongo_read_failures_total` | `collection`, `operation` | Server-reported command failures or transport failures at that boundary. |
+| `cma_mongo_read_documents_total` | `collection`, `operation` | All received cursor-batch documents and `findAndModify` result documents, including unconsumed batches. |
+| `cma_mongo_read_bytes_total` | `collection`, `operation` | Entire uncompressed BSON reply bytes, including metadata/envelopes and error replies. |
+| `cma_mongo_read_document_bytes_total` | `collection`, `operation` | Encoded bytes of the returned documents alone. |
+| `cma_mongo_read_incomplete_summaries_total` | `collection`, `operation` | Received replies whose result batch cannot be fully counted as BSON documents; their whole-reply byte length is still counted. |
 
 `stream_kind` is one of `agui`, `agent_events_v2`, `responses`, `responses_v2`,
 and `launch_events`. Initial buffered replay and SSE keepalives do not count as
@@ -2107,6 +2113,31 @@ Counters update when each scan ends; failed scans retain partial document and
 byte totals, and pre-read refusals have zero documents/bytes. They describe
 validation work, not extra traffic to add to Mongo response totals: an abandoned
 cursor may have received more documents than the validator consumed.
+
+Mongo observations cover the API's main, reporting and runtime-routing pools.
+`operation` is exactly `find`, `aggregate`, `getMore`, `findAndModify`, `count`,
+`distinct` or `other`. Collection labels come only from the static `COLLECTIONS`
+schema-authority allow-list in `store/isolation.rs`; all other names, absent collection names,
+and database-level commands become `other`. Aggregate results are attributed
+to the command's collection, without inspecting pipelines or joined sources.
+The `other` operation also includes write/control replies; authentication and
+driver heartbeat traffic are excluded. Errors before command I/O begins do not
+have a response observation. Domain validation failures are separate from a
+successful server command and are visible in the scan counters where applicable.
+
+Mongo rows emit only when that fixed collection/operation pair has changed
+since the last tick. Carry forward the previous cumulative value across quiet
+windows. Sum byte-counter differences by collection and operation over the same
+process/window to attribute BSON read traffic. Compare this with network receive
+rates while allowing for TLS, compression, wire headers and non-Mongo traffic;
+these counters are not exact socket byte counts. Scalar results contribute
+reply bytes without inventing cursor-document counts.
+
+The [borrowed response summary hook](Mongo_Read_Telemetry.md) counts existing
+encoded lengths without owned BSON conversion or reserialization. Normal Mongo
+command monitoring stays disabled. No diagnostic query or new database
+privilege is required. Incomplete-summary counts should remain zero; if they
+rise, use whole-reply byte totals and investigate before trusting document totals.
 
 ## Immutable web build identity
 

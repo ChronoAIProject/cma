@@ -82,6 +82,7 @@ mod marketplace_visibility;
 mod message_feedback;
 pub mod mongo;
 mod mongo_latency;
+pub(crate) mod mongo_reads;
 pub(crate) mod native_prepared;
 pub mod operation;
 mod operator_profiles;
