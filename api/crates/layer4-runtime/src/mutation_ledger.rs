@@ -11,6 +11,7 @@ mod journal;
 mod journal_tests;
 #[cfg(test)]
 mod lifecycle_tests;
+mod observation;
 mod processes;
 mod queries;
 #[cfg(test)]
