@@ -62,8 +62,8 @@ impl AgentSandboxBackend {
             self.assignments.lock().unwrap().get(handle) == Some(candidate)
         });
         if acknowledged {
-            // Template policy remains a live admission authority even though
-            // there is no need to resend the same bootstrap environment.
+            // Policy is a live admission authority. Check it before binding
+            // transport; the post-bind refresh cannot make an old bind safe.
             self.client.verify_explicit_runtime_policy(observed).await?;
             return self.bind_transport(handle, request).await;
         }
