@@ -122,6 +122,27 @@ or invalid seal holds. The manifest is streamed with a 24 MiB input ceiling
 and bounded metadata collections. Verification does not establish that the
 live source still matches the plan or that an old writer has been excluded.
 
+`cma-runtime --stage-ledger-v1 /absolute/private-plan <plan-sha256>
+/absolute/new/private-import` creates a detached SQLite artifact from the
+verified copies. It uses the original assigned configuration, preserves exact
+selected record bytes, and initializes `import_held` in the schema transaction.
+It never writes the source home, publishes its format manifest or executes
+recovery. The destination must be new and separate from both the plan and all
+source roots. The planner's private byte backup remains required alongside it.
+
+Staging imports one bounded authority group or operation per transaction,
+derives outcome/cleanup reservations and process projections, verifies the
+schema, counters, capacity and raw record round trips, then closes and syncs
+the database. Only after revalidating the complete backup does it publish
+`ready.json`, binding the plan digest and closed database digest. A missing
+ready descriptor, changed backup, insufficient reservation budget or spent
+emergency reserve holds. Preserve the failure artifact for inspection; retry
+into a new destination, never overwrite or continue an ambiguous partial DB.
+An artifact that is ready is still **held**, including all Started and pending
+destructive work. Do not copy it over a live store or manufacture source-root
+format markers. Source-root cutover requires the separately reviewed old-writer
+exclusion and maintenance authority; a detached artifact supplies neither.
+
 ## Read-only diagnostics
 
 An authenticated RuntimeStatus request may opt in with the exact Accept value

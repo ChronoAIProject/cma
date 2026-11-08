@@ -7,6 +7,8 @@ mod plans;
 mod sealed_plans;
 #[path = "validation_tests.rs"]
 mod semantic;
+#[path = "stage_tests.rs"]
+mod staging;
 
 struct Fixture {
     root: PathBuf,

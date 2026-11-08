@@ -6,6 +6,7 @@ mod json;
 mod plan;
 mod plan_io;
 mod sealed;
+mod stage;
 #[cfg(test)]
 mod tests;
 mod validation;
@@ -63,6 +64,24 @@ pub(crate) async fn verify_plan_command(
     let summary = tokio::task::spawn_blocking(move || {
         let (plan, analysis) = sealed::open(&config, &path, &expected)?;
         Ok::<_, RuntimeError>(analysis.summary(&plan.inventory))
+    })
+    .await
+    .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
+    .map_err(|error| error.to_string())?;
+    println!("{summary}");
+    Ok(())
+}
+
+pub(crate) async fn stage_command(
+    plan: std::path::PathBuf,
+    expected: String,
+    destination: std::path::PathBuf,
+) -> std::result::Result<(), String> {
+    let config = crate::config::RuntimeConfig::from_environment()
+        .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
+    let runtime = tokio::runtime::Handle::current();
+    let summary = tokio::task::spawn_blocking(move || {
+        runtime.block_on(stage::create(config, &plan, &expected, &destination))
     })
     .await
     .map_err(|_| "runtime ledger inspection worker failed".to_owned())?

@@ -159,7 +159,7 @@ impl Archive {
     }
 }
 
-fn storage() -> RuntimeError {
+pub(super) fn storage() -> RuntimeError {
     RuntimeError::rejected(
         "mutation_ledger_storage_hold",
         "runtime mutation ledger storage requires verification",
