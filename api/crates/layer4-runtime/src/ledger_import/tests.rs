@@ -1,4 +1,6 @@
 use super::*;
+#[path = "isolation_tests.rs"]
+mod output_isolation;
 use crate::config::RuntimeConfig;
 use std::path::{Path, PathBuf};
 #[path = "plan_tests.rs"]
