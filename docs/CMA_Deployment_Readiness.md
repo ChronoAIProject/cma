@@ -5,6 +5,16 @@ failures and receipt paths, see
 [CMA native Sandbox production verification](CMA_Native_Production_Verification.md).
 This document keeps operational instructions and dated infra diagnostics.
 
+For the November 8 durable Custom release, the Gateway ConfigMap enables
+`CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED=true`, matching the authenticated live
+discovery observation. The checked-in Gateway image pin lags production and is
+not this release's rollback image. Shining must pin compatible develop images
+at release promotion and retain the actual live reader for rollback; this flag
+change does not update image pins. See the [reader evidence, activation and
+rollback procedure](CMAEG_Custom_Durable_Execution.md#deployment-and-rollback).
+Existing channels keep their execution modes. Setting the flag false stops new
+opt-in authoring while retained marked channels keep their durable path.
+
 The current rolling-deployment implementation and its first-upgrade drain
 procedure are specified in [CMA rolling deployment](CMA_Rolling_Deployment.md).
 That procedure supersedes the process-local quota/Recreate restrictions in the
