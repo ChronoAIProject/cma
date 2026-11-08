@@ -12,8 +12,9 @@ data:
   # wait for predecessor Pods to drain, then apply these native messaging gates.
   CMAEG_MULTI_CONSUMER_WRITES_ENABLED: "true"
   # Explicit record IDs only. Empty preserves all existing ingress paths.
-  # Enable only after every serving and rollback reader supports durable_custom_execution.
-  CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED: "false"
+  # Every serving and rollback image must support durable_custom_execution; live reader verified 2026-11-08.
+  # Image pins lag production; see docs/CMAEG_Custom_Durable_Execution.md before promotion.
+  CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED: "true"
   CMAEG_ROUTED_CHANNEL_RECORDS: ""
   # Keep recovery and selected records after stopping admission, until retained work expires.
   CMAEG_ROUTED_RECOVERY_ENABLED: "true"
