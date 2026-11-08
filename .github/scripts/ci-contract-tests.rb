@@ -33,6 +33,8 @@ end
 
 guarded = mode == "release" ? [
   ["ci", "trigger-release-contract", "Debian desktop fixture regressions"],
+  ["ci", "trigger-release-contract", "Ledger image qualification regressions"],
+  ["ci", "images", "Qualify exact runtime ledger storage"],
   ["ci", "images", "Execute desktop image contract"],
   ["ci", "images", "Execute built runtime image contract"],
   ["ci", "images", "Require passing runtime image evidence"],
@@ -40,6 +42,7 @@ guarded = mode == "release" ? [
   ["publish", "runtime-image-gate", "Verify exact runtime artifact bytes and source"],
   ["publish", "runtime-image-gate", "Pull verified immutable runtime"],
   ["publish", "runtime-image-gate", "Execute published runtime image contract"],
+  ["publish", "runtime-image-gate", "Qualify published runtime ledger storage"],
 ] : [
   ["ci", "trigger-provider-smoke-contract", "Staging authority and evidence regressions"],
   ["ci", "trigger-provider-smoke-contract", "Backend capacity preparation regressions"],
@@ -100,6 +103,20 @@ if mode == "provider"
 end
 
 if mode == "release"
+  [["ci", "images"], ["publish", "runtime-image-gate"]].each do |workflow, id|
+    reject.call("#{id}: ledger evidence cannot be empty") do |value|
+      value[workflow]["jobs"][id]["steps"].find { |row| row["name"] == "Retain ledger storage evidence" }["with"]["if-no-files-found"] = "warn"
+    end
+    reject.call("#{id}: ledger proof cannot select another image") do |value|
+      value[workflow]["jobs"][id]["steps"].find { |row| row["name"].to_s.start_with?("Qualify") }["env"] = {}
+    end
+  end
+  reject.call("native export cannot precede ledger qualification") do |value|
+    rows = value["ci"]["jobs"]["images"]["steps"]
+    check = rows.find { |row| row["name"] == "Qualify exact runtime ledger storage" }
+    rows.delete(check)
+    rows << check
+  end
   cache_changes = {
     "fork cache access" => ["Prepare API Cargo cache identity", "if", "matrix.component == 'api'"],
     "unbounded cache transfer" => ["Inject API Cargo cache mounts", "timeout-minutes", 60],

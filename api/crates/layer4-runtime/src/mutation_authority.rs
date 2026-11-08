@@ -49,7 +49,7 @@ pub(super) struct Record {
 }
 
 impl Record {
-    fn new(config: &RuntimeConfig, authority_fence: u64, operation: &Operation) -> Self {
+    pub(super) fn new(config: &RuntimeConfig, authority_fence: u64, operation: &Operation) -> Self {
         let (resource, disposition) = resource_operation(operation);
         Self {
             version: AUTHORITY_VERSION,
@@ -166,7 +166,7 @@ pub(crate) fn recovery_fence(config: &RuntimeConfig, operation: &Operation) -> R
     )
 }
 
-fn authorize(current_records: &[&Record], incoming: &Record) -> Result<bool> {
+pub(super) fn authorize(current_records: &[&Record], incoming: &Record) -> Result<bool> {
     let Some(latest) = current(current_records.iter().copied()) else {
         return Ok(true);
     };
@@ -210,7 +210,7 @@ fn authorize(current_records: &[&Record], incoming: &Record) -> Result<bool> {
     }))
 }
 
-fn current<'a>(records: impl Iterator<Item = &'a Record>) -> Option<&'a Record> {
+pub(super) fn current<'a>(records: impl Iterator<Item = &'a Record>) -> Option<&'a Record> {
     records.max_by_key(|record| {
         (
             record.authority_fence,
@@ -266,7 +266,7 @@ fn validate_record(record: &Record, config: &RuntimeConfig, path: &Path) -> Resu
     Ok(())
 }
 
-fn validate_history(records: &[&Record]) -> Result<()> {
+pub(super) fn validate_history(records: &[&Record]) -> Result<()> {
     let present = records
         .iter()
         .filter(|record| record.disposition == Disposition::Present)
@@ -368,7 +368,7 @@ pub(super) fn io_error(operation: &'static str, error: std::io::Error) -> Runtim
 #[path = "mutation_authority_tests.rs"]
 mod tests;
 
-fn require_skill_parent(records: &[Record], operation: &Operation) -> Result<()> {
+pub(super) fn require_skill_parent(records: &[Record], operation: &Operation) -> Result<()> {
     let Subject::InstallAgentSkill { request } = &operation.subject else {
         return Ok(());
     };

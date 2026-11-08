@@ -50,7 +50,7 @@ pub(super) fn decode_control_bytes(
 
 pub(super) fn runtime_failure(failure: WireFailure) -> AdapterError {
     let detail = format!("{}: {}", failure.code, failure.detail);
-    if super::reply::ledger_capacity(&failure) {
+    if super::reply::ledger_hold(&failure) {
         AdapterError::RuntimeLedgerHold(detail)
     } else if failure.retryable {
         AdapterError::Unavailable(detail)
