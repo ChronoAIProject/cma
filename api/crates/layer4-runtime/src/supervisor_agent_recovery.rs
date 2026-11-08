@@ -95,8 +95,9 @@ impl Supervisor {
             request_sha256: pending.operation.request_sha256,
             agent_id: AgentSlot::new(agent_id),
         };
-        absorb(
-            self.execute_close_agent(authority_fence, request, pending.ticket)
+        let (ticket, terminal) = pending.ticket.track_terminal();
+        terminal.absorb(
+            self.execute_close_agent(authority_fence, request, ticket)
                 .await,
         )
     }
@@ -133,14 +134,6 @@ async fn finish_recovery<T: serde::Serialize + Sync>(
             ticket.fail(&error).await?;
             Ok(())
         }
-    }
-}
-
-fn absorb(result: Result<layer3_adapter::wire::ResponseFrame>) -> Result<()> {
-    match result {
-        Ok(_) => Ok(()),
-        Err(error) if !error.retryable => Ok(()),
-        Err(error) => Err(error),
     }
 }
 
