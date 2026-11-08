@@ -217,16 +217,23 @@ impl Directory {
         let stream = unsafe { libc::fdopendir(fd) };
         if stream.is_null() {
             // SAFETY: failure left fd owned here.
-            unsafe {
-                libc::close(fd);
+            if unsafe { libc::close(fd) } != 0 {
+                tracing::error!(
+                    phase = "open_directory_stream",
+                    "held ledger import descriptor cleanup failed"
+                );
             }
             return Err(invalid());
         }
         struct Stream(*mut libc::DIR);
         impl Drop for Stream {
             fn drop(&mut self) {
-                unsafe {
-                    libc::closedir(self.0);
+                // SAFETY: this stream is owned here and closed exactly once.
+                if unsafe { libc::closedir(self.0) } != 0 {
+                    tracing::error!(
+                        phase = "read_directory_stream",
+                        "held ledger import directory cleanup failed"
+                    );
                 }
             }
         }
