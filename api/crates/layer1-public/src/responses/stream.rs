@@ -1,3 +1,4 @@
+use crate::stream_telemetry::{self, Kind, Poll};
 use std::{
     collections::{HashMap, VecDeque},
     convert::Infallible,
@@ -89,6 +90,7 @@ fn open_inner(
             if open.ended {
                 return None;
             }
+            let poll = Poll::new(Kind::Responses);
             let (agent, history) = match open.read().await {
                 Ok(snapshot) => snapshot,
                 // Observation loss ends this connection. It cannot manufacture
@@ -98,6 +100,7 @@ fn open_inner(
             let Some(response) =
                 retrieve::project(&open.state.agent_page_origin, &agent, &history, open.turn)
             else {
+                poll.complete(false);
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             };
@@ -178,6 +181,7 @@ fn open_inner(
                     .map_or(0, |entry| entry.seq);
                 open.drain_live(&agent, committed);
             }
+            poll.complete(!open.pending.is_empty());
             if open.pending.is_empty() {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
@@ -315,7 +319,7 @@ fn sse_event(value: Value) -> Event {
 fn sse_response<S: Stream<Item = Result<Event, Infallible>> + Send + 'static>(
     stream: S,
 ) -> Response {
-    let mut response = Sse::new(stream)
+    let mut response = Sse::new(stream_telemetry::observe(stream, Kind::Responses))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response();
     response

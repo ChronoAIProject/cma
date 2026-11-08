@@ -1,6 +1,9 @@
 use layer2_core::{sandbox::agent_io::AgentCommand, AgentId};
 use serde_json::json;
 
+#[path = "telemetry_tests.rs"]
+mod telemetry_tests;
+
 #[path = "startup_failure_tests.rs"]
 mod startup_failure_tests;
 
