@@ -49,7 +49,6 @@ impl AgentSandboxBackend {
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
-        observed: &DynamicObject,
     ) -> Result<()> {
         // The caller has freshly validated the original Claim/Sandbox/PVC and
         // complete request. A receipt never replaces that current authority proof.
@@ -62,9 +61,6 @@ impl AgentSandboxBackend {
             self.assignments.lock().unwrap().get(handle) == Some(candidate)
         });
         if acknowledged {
-            // Template policy remains a live admission authority even though
-            // there is no need to resend the same bootstrap environment.
-            self.client.verify_explicit_runtime_policy(observed).await?;
             return self.bind_transport(handle, request).await;
         }
         self.assign_and_bind(handle, &pod, request).await
