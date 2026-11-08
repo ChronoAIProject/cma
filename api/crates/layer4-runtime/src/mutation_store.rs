@@ -37,6 +37,12 @@ impl Store {
     pub(crate) fn new(config: RuntimeConfig, ledger: Option<Arc<Ledger>>) -> Self {
         Self { config, ledger }
     }
+    pub(crate) async fn observation(&self) -> Result<layer3_adapter::RuntimeLedgerStatus> {
+        match &self.ledger {
+            Some(ledger) => ledger.observation().await,
+            None => Ok(layer3_adapter::RuntimeLedgerStatus::LegacyMigrationRequired),
+        }
+    }
     pub(crate) fn verify(&self) -> Result<()> {
         if let Some(ledger) = &self.ledger {
             ledger.verify()?;

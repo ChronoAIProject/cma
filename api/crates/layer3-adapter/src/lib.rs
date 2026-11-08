@@ -43,6 +43,7 @@ mod provider_finality;
 mod runtime;
 pub mod runtime_bootstrap;
 pub mod runtime_control_relay;
+mod runtime_ledger_status;
 mod runtime_output;
 mod runtime_recovery;
 mod runtime_status;
@@ -138,6 +139,10 @@ pub use runtime::{
     RuntimeObservation, RuntimeProvisionRequest, RuntimeTermination, SandboxCapacity, SandboxSpec,
     DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY,
     DEFAULT_SUPERVISOR_PROGRAM, DEFAULT_TOTAL_TIMEOUT_SECONDS,
+};
+pub use runtime_ledger_status::{
+    RuntimeLedgerCounters, RuntimeLedgerObservation, RuntimeLedgerStatus,
+    RUNTIME_LEDGER_STATUS_MEDIA_TYPE,
 };
 pub use runtime_output::{RuntimeOutputReceipt, RuntimeOutputSource};
 pub use runtime_recovery::{
