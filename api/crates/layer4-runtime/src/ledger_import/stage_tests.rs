@@ -294,3 +294,52 @@ async fn changed_backup_after_database_close_cannot_publish_ready() {
         .unwrap();
     assert_eq!(admission, "import_held");
 }
+
+#[tokio::test]
+async fn changed_database_between_verification_and_ready_publication_is_refused() {
+    for replace in [false, true] {
+        let fixture = fixture();
+        authority(&fixture.config, 1, &add());
+        let (plan, digest) = plan(&fixture);
+        let output = fixture.root.join("staged");
+        let result = stage::create_checked(
+            fixture.config.clone(),
+            &plan,
+            &digest,
+            &output,
+            stage::PAGES,
+            |boundary| {
+                let change = if replace {
+                    matches!(boundary, stage::Boundary::Closed)
+                } else {
+                    matches!(boundary, stage::Boundary::Ready)
+                };
+                if change {
+                    let database = output.join("database/ledger.sqlite3");
+                    if replace {
+                        std::fs::rename(&database, output.join("original-database")).unwrap();
+                        std::fs::write(&database, b"replacement").unwrap();
+                        use std::os::unix::fs::PermissionsExt;
+                        std::fs::set_permissions(&database, std::fs::Permissions::from_mode(0o600))
+                            .unwrap();
+                    } else {
+                        use std::io::Write;
+                        std::fs::OpenOptions::new()
+                            .append(true)
+                            .open(&database)
+                            .unwrap()
+                            .write_all(b"drift")
+                            .unwrap();
+                    }
+                }
+                Ok(())
+            },
+        )
+        .await;
+        assert_eq!(
+            result.unwrap_err().code,
+            "mutation_ledger_migration_changed"
+        );
+        assert!(!output.join("ready.json").exists());
+    }
+}
