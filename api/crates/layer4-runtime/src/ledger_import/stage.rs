@@ -3,7 +3,7 @@ use std::path::Path;
 
 use super::io::Directory;
 use super::plan_io::Archive;
-use super::{invalid, sealed, Budget, Limits};
+use super::{changed, invalid, sealed, Budget, Limits};
 use crate::config::RuntimeConfig;
 use crate::failure::Result;
 use crate::mutation_journal::{Record, Subject};
@@ -48,6 +48,8 @@ pub(super) async fn create_checked(
     let archive = Archive::create(&config, destination)?;
     let database = destination.join("database");
     let store = HeldImport::create(database.clone(), config.clone(), pages).await?;
+    let original_directory = Directory::open(&database)?.identity()?;
+    let original_file = Directory::open(&database)?.file_identity("ledger.sqlite3")?;
     let expected_processes = match fill(
         &store,
         &config,
@@ -68,6 +70,14 @@ pub(super) async fn create_checked(
     let inventory_digest = plan.inventory.digest.clone();
     drop(analysis);
     drop(plan);
+    let closed_directory = Directory::open(&database)?.identity()?;
+    let closed_file = Directory::open(&database)?.file_identity("ledger.sqlite3")?;
+    if (original_directory.device, original_directory.inode)
+        != (closed_directory.device, closed_directory.inode)
+        || (original_file.device, original_file.inode) != (closed_file.device, closed_file.inode)
+    {
+        return Err(changed());
+    }
     boundary(Boundary::Closed)?;
     crate::fs_durability::sync_tree(&database).map_err(|_| super::plan_io::storage())?;
     archive.verify()?;
@@ -81,6 +91,11 @@ pub(super) async fn create_checked(
     // A ready artifact must still have its complete exact byte backup. This
     // revalidation is content proof only; it never grants live-source exclusion.
     sealed::open_with_limits(&config, plan_path, expected, budget.remaining_limits()?)?;
+    if Directory::open(&database)?.identity()? != closed_directory
+        || Directory::open(&database)?.file_identity("ledger.sqlite3")? != closed_file
+    {
+        return Err(changed());
+    }
     budget.check()?;
     archive.json(
         "ready.json",

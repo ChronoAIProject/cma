@@ -126,3 +126,41 @@ async fn held_import_rejects_foreign_scopes_and_duplicate_journal_results() {
     assert_eq!(summary["operations"], 1);
     assert_eq!(summary["admission"], "import_held");
 }
+
+#[tokio::test]
+async fn held_import_cannot_qualify_a_different_captured_generation() {
+    let fixture = Fixture::new();
+    let mut config = fixture.config.clone();
+    config.generation = 7;
+    let store = HeldImport::create(fixture.database(), config, 32_768)
+        .await
+        .unwrap();
+    store
+        .storage
+        .call(|db| {
+            db.execute(
+                "UPDATE metadata SET generation=?",
+                [6u64.to_be_bytes().as_slice()],
+            )
+            .unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        store.finish(0).await.unwrap_err().code,
+        "mutation_ledger_invalid"
+    );
+    let db = rusqlite::Connection::open_with_flags(
+        fixture.database().join("ledger.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let (admission, generation): (String, Vec<u8>) = db
+        .query_row("SELECT admission,generation FROM metadata", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .unwrap();
+    assert_eq!(admission, "import_held");
+    assert_eq!(generation, 6u64.to_be_bytes());
+}

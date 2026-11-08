@@ -44,6 +44,19 @@ impl Identity {
 }
 
 impl Directory {
+    pub(super) fn file_identity(&self, name: &str) -> Result<Identity> {
+        let file = self.open_at(name, 0)?.ok_or_else(changed)?;
+        let metadata = file.metadata().map_err(|_| invalid())?;
+        if !metadata.is_file()
+            || metadata.nlink() != 1
+            || metadata.mode() & 0o077 != 0
+            || metadata.uid() != unsafe { libc::geteuid() }
+        {
+            return Err(invalid());
+        }
+        Ok(metadata.into())
+    }
+
     pub(super) fn hash_file(
         &self,
         name: &str,
