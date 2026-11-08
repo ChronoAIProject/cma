@@ -1,6 +1,5 @@
 //! Mongo persistence for agent aggregates.
 
-use futures_util::TryStreamExt;
 use layer2_core::ids::{AgentId, SubjectId};
 use layer2_core::sandbox::store::{
     AgentStore, Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE,
@@ -373,6 +372,7 @@ impl AgentStore for MongoSandboxStore {
         if let Some(cursor) = &page.cursor {
             filter.insert("_id", doc! { "$gt": cursor });
         }
+        let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
         let mut cursor = self
             .agents
             .find(filter)
@@ -381,8 +381,8 @@ impl AgentStore for MongoSandboxStore {
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let mut items = Vec::new();
-        while let Some(document) = cursor
-            .try_next()
+        while let Some(document) = read
+            .next(&mut cursor)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         {
@@ -400,6 +400,7 @@ impl AgentStore for MongoSandboxStore {
                 .0
                 .clone()
         });
+        read.complete();
         Ok(Page { items, next })
     }
 }
