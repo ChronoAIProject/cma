@@ -20,6 +20,12 @@ pub(super) fn open(directory: &Path, create: bool, pages: u32) -> Result<(Connec
     )
     .map_err(|_| storage_error())?;
     configure(&connection, pages)?;
+    // Hot-journal recovery may run while SQLite first opens the schema. Establish
+    // a file and directory barrier before any recovered state can authorize work.
+    File::open(directory.join("ledger.sqlite3"))
+        .and_then(|file| file.sync_all())
+        .map_err(|_| storage_error())?;
+    crate::fs_durability::sync_directory(directory).map_err(|_| storage_error())?;
     Ok((connection, lock))
 }
 
@@ -29,9 +35,9 @@ fn configure(connection: &Connection, pages: u32) -> Result<()> {
         connection.set_limit(Limit::SQLITE_LIMIT_LENGTH, MAX_VALUE_BYTES)?;
         connection.set_limit(Limit::SQLITE_LIMIT_SQL_LENGTH, 64 * 1024)?;
         connection.set_limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER, 128)?;
+        connection.pragma_update(None, "synchronous", "EXTRA")?;
         connection.pragma_update(None, "page_size", 4096)?;
         connection.pragma_update(None, "journal_mode", "DELETE")?;
-        connection.pragma_update(None, "synchronous", "EXTRA")?;
         connection.pragma_update(None, "foreign_keys", true)?;
         connection.pragma_update(None, "trusted_schema", false)?;
         connection.pragma_update(None, "secure_delete", true)?;
