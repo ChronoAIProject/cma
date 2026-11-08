@@ -5,13 +5,13 @@ use layer3_adapter::{AgentCloseRequest, AgentSlot, WorktreeRef, WorktreeRequest}
 use super::*;
 use crate::mutation_authority::{self as v1, Record};
 
-struct Fixture {
+pub(super) struct Fixture {
     root: PathBuf,
-    config: RuntimeConfig,
+    pub(super) config: RuntimeConfig,
 }
 
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let root = std::env::temp_dir()
             .canonicalize()
             .unwrap()
@@ -22,11 +22,11 @@ impl Fixture {
             root,
         }
     }
-    fn database(&self) -> PathBuf {
+    pub(super) fn database(&self) -> PathBuf {
         self.root.join("ledger")
     }
-    async fn open(&self, create: bool) -> Ledger {
-        Ledger::open(self.database(), self.config.clone(), create, 4096)
+    pub(super) async fn open(&self, create: bool) -> Ledger {
+        Ledger::open(self.database(), self.config.clone(), create, 32_768)
             .await
             .unwrap()
     }
@@ -37,7 +37,7 @@ impl Drop for Fixture {
     }
 }
 
-fn add(identity: u8) -> Operation {
+pub(super) fn add(identity: u8) -> Operation {
     Operation::add_worktree(&WorktreeRequest::new(
         "worktree:workspace:agent:add:v1",
         "workspace",
@@ -45,14 +45,14 @@ fn add(identity: u8) -> Operation {
         (if identity == 0 { "a" } else { "b" }).repeat(40),
     ))
 }
-fn remove() -> Operation {
+pub(super) fn remove() -> Operation {
     Operation::remove_worktree(&WorktreeRef::new(
         "worktree:workspace:agent:remove:v1",
         "workspace",
         "agent",
     ))
 }
-fn close() -> Operation {
+pub(super) fn close() -> Operation {
     Operation::close_agent(&AgentCloseRequest::new(
         "agent:agent:close:v1",
         AgentSlot::new("agent"),
@@ -268,7 +268,7 @@ async fn schema_identity_types_and_survivor_order_fail_closed() {
     ledger.close().await.unwrap();
     let mut wrong = fixture.config.clone();
     wrong.sandbox_id = "different".into();
-    assert!(Ledger::open(fixture.database(), wrong, false, 4096)
+    assert!(Ledger::open(fixture.database(), wrong, false, 32_768)
         .await
         .is_err());
     let ledger = fixture.open(false).await;
@@ -283,7 +283,7 @@ async fn schema_identity_types_and_survivor_order_fail_closed() {
         .unwrap();
     ledger.close().await.unwrap();
     assert!(
-        Ledger::open(fixture.database(), fixture.config.clone(), false, 4096)
+        Ledger::open(fixture.database(), fixture.config.clone(), false, 32_768)
             .await
             .is_err()
     );
@@ -313,14 +313,14 @@ async fn generation_roll_forward_preserves_filesystem_tombstones_and_isolates_pr
     ledger.close().await.unwrap();
     fixture.config.generation = 1;
     assert!(
-        Ledger::open(fixture.database(), fixture.config.clone(), false, 4096)
+        Ledger::open(fixture.database(), fixture.config.clone(), false, 32_768)
             .await
             .is_err()
     );
     fixture.config.generation = 2;
     fixture.config.home_identity = Some("b".repeat(64));
     assert!(
-        Ledger::open(fixture.database(), fixture.config.clone(), false, 4096)
+        Ledger::open(fixture.database(), fixture.config.clone(), false, 32_768)
             .await
             .is_err()
     );

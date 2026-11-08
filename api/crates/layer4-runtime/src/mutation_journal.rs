@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
 
+#[path = "mutation_journal_codec.rs"]
+mod codec;
+
 #[path = "mutation_journal_io.rs"]
 mod io;
 #[path = "mutation_journal_lookup.rs"]
@@ -59,7 +62,7 @@ pub(super) struct Record {
 }
 
 impl Record {
-    fn operation(&self) -> Operation {
+    pub(crate) fn operation(&self) -> Operation {
         Operation {
             operation_id: self.operation_id.clone(),
             request_sha256: self.request_sha256.clone(),
