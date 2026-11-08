@@ -44,6 +44,48 @@ impl Identity {
 }
 
 impl Directory {
+    pub(super) fn hash_file(
+        &self,
+        name: &str,
+        maximum: u64,
+        budget: &mut Budget,
+    ) -> Result<String> {
+        use sha2::{Digest, Sha256};
+        let mut file = self.open_at(name, 0)?.ok_or_else(changed)?;
+        let metadata = file.metadata().map_err(|_| invalid())?;
+        if !metadata.is_file()
+            || metadata.len() > maximum
+            || metadata.nlink() != 1
+            || metadata.mode() & 0o077 != 0
+            || metadata.uid() != unsafe { libc::geteuid() }
+        {
+            return Err(invalid());
+        }
+        let before: Identity = metadata.into();
+        budget.file(before.bytes)?;
+        let mut remaining = before.bytes;
+        let mut buffer = [0; 65536];
+        let mut hash = Sha256::new();
+        while remaining > 0 {
+            budget.check()?;
+            let size =
+                usize::try_from(remaining.min(buffer.len() as u64)).map_err(|_| invalid())?;
+            let count = file.read(&mut buffer[..size]).map_err(|_| invalid())?;
+            if count == 0 {
+                return Err(changed());
+            }
+            hash.update(&buffer[..count]);
+            remaining -= count as u64;
+        }
+        let current = self.open_at(name, 0)?.ok_or_else(changed)?;
+        if Identity::from(file.metadata().map_err(|_| invalid())?) != before
+            || Identity::from(current.metadata().map_err(|_| invalid())?) != before
+        {
+            return Err(changed());
+        }
+        Ok(crate::command::hex(&hash.finalize()))
+    }
+
     pub(super) fn deserialize<T: serde::de::DeserializeOwned>(
         &self,
         name: &str,
