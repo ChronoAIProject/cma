@@ -2109,10 +2109,27 @@ validation work, not extra traffic to add to Mongo consumed-read totals: an aban
 cursor may have received more documents than the validator consumed.
 
 Mongo consumed-read counters use only BSON lengths already available in the
-store. They currently cover `agent_log_integrity::scan_collection`, including
-complete read-side and transaction/publication scans. The scanner's existing
-raw BSON buffer supplies each document length; telemetry adds no serialization,
-decode or query and preserves all integrity and capacity checks.
+store. The measured paths are:
+
+| Collection | Measured store paths |
+| --- | --- |
+| `agent_log` | `agent_log_integrity::scan_collection`: complete read-side and transaction/publication validation, including quiet log range reads. |
+| `agents` | `agents::list_agents`, `agent_reads::list_owned_agents`, `lifecycle_execution::sandbox_agents` and shared `load_sandbox_agents`, `agent_worker_store::live_agent_connections` and `due_agent_work`, and `operator_sandboxes::read_agents`. |
+| `sandbox_events` | `sandbox_events::validate_in_transaction` and `sandbox_events::sandbox_events`, including the admin event reader that delegates to it. |
+
+The shared transactional Agent loader covers recovery, maintenance, lifecycle
+and checkpoint callers. Projected queries count the encoded projection they
+consume, not the full stored record. Page lookahead rows count because the store
+consumes them even when it omits them from the returned page.
+
+The complete-log scanner uses its existing raw BSON buffer. The other listed
+cursors use the registry driver's public `advance`, `current` and
+`deserialize_current` methods: borrow the length, then perform the same single
+decode as before. The shared helpers are `mongo_read_telemetry::Read::next` and
+`next_in_session`. Query filters, sorting, limits, projections, sessions and
+validation remain unchanged. Telemetry accumulates local document/byte totals and
+publishes atomic totals when the traversal ends; it never walks
+fields, re-serializes records, copies BSON or adds a database round trip.
 
 | Metric | Fixed labels | Meaning |
 | --- | --- | --- |
@@ -2143,8 +2160,13 @@ unconsumed/pre-fetched batches, driver retry traffic, command counts, separate
 `cma_mongo_read_incomplete_summaries_total` are not emitted: the store cannot
 observe whole-reply metadata at this boundary.
 
-Other store reads, including typed point lookups, aggregates, reporting and
-runtime-routing pools, remain unmeasured unless explicitly listed above. The
+Collection labels do not imply complete collection coverage. Typed point
+lookups (including `get_agent`, `agent_log_entry`, log head/tail probes and the
+shared `agent_admission_records::find_at_snapshot` helper) are unmeasured: those
+boundaries expose decoded documents, not borrowed raw lengths. Other Agent
+cursors, such as title/provenance discovery, removal/purge and admission/capacity
+checks, remain uninstrumented. Aggregates, other collections, reporting and
+runtime-routing pools are also unmeasured unless explicitly listed above. The
 registry MongoDB driver and its lockfile are unchanged; no command monitoring,
 profiling query, database privilege or dependency fork is required. Do not
 re-serialize decoded documents merely to fill these coverage gaps.
