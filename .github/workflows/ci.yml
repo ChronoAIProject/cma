@@ -30,6 +30,8 @@ jobs:
         run: python3 .github/scripts/api-cargo-cache-tests.py
       - name: Runtime image evidence and provenance regressions
         run: node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs
+      - name: Ledger image qualification regressions
+        run: node --test .github/scripts/runtime-ledger-evidence.test.mjs .github/scripts/runtime-ledger-downgrade.test.mjs
       - name: Debian desktop fixture regressions
         run: |
           python3 .github/scripts/desktop-browser-input-tests.py
@@ -143,6 +145,8 @@ jobs:
           df -h /
       - name: Verify Omarchy runtime contract
         run: node .github/scripts/omarchy-contract.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/runtime-contract.json"
+      - name: Qualify exact Omarchy ledger storage
+        run: node .github/scripts/runtime-ledger-evidence.mjs cma-runtime-omarchy:ci "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/ledger-storage.json"
       - name: Prepare native Chromium namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Verify device-free Omarchy desktop
@@ -1114,6 +1118,19 @@ jobs:
         with:
           name: desktop-runtime-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/desktop-runtime-evidence.json*
+          if-no-files-found: error
+          retention-days: 90
+      - name: Qualify exact runtime ledger storage
+        if: matrix.component == 'runtime' || matrix.component == 'runtime-desktop'
+        env:
+          IMAGE_COMPONENT: ${{ matrix.component }}
+        run: node .github/scripts/runtime-ledger-evidence.mjs "cma-${IMAGE_COMPONENT}:ci" "$GITHUB_SHA" "$RUNNER_TEMP/ledger-storage.json"
+      - name: Retain ledger storage evidence
+        if: always() && (matrix.component == 'runtime' || matrix.component == 'runtime-desktop')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ledger-storage-${{ matrix.component }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ledger-storage.json
           if-no-files-found: error
           retention-days: 90
       # Preserve the exact native bytes that passed this job. PR artifacts keep
