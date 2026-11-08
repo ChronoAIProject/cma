@@ -12,6 +12,8 @@ mod fixture;
 use crate::mutation_ledger::Ledger;
 use crate::mutation_store::{Begin as StoredBegin, Store};
 use fixture::*;
+#[path = "supervisor_ledger_recovery_tests.rs"]
+mod recovery_faults;
 
 fn indexed_config() -> RuntimeConfig {
     RuntimeConfig::for_test(
