@@ -68,6 +68,7 @@ pub(crate) struct HeldCheckpoint {
 
 pub(crate) struct Supervisor {
     config: RuntimeConfig,
+    mutations: crate::mutation_store::Store,
     boot_id: String,
     phase: RwLock<Phase>,
     // Only a fresh runtime may prepare unowned work. Recovered homes require
@@ -171,6 +172,7 @@ impl Supervisor {
             None
         };
         Ok(Arc::new(Self {
+            mutations: crate::mutation_store::Store::new(config.clone(), None),
             config,
             boot_id,
             phase: RwLock::new(phase),
@@ -447,6 +449,10 @@ mod checkpoint_http_tests;
 #[cfg(test)]
 #[path = "supervisor_filesystem_http_tests.rs"]
 mod filesystem_http_tests;
+#[cfg(test)]
+#[path = "supervisor_indexed_tests.rs"]
+mod indexed_tests;
+
 #[cfg(test)]
 #[path = "supervisor_mutation_tests.rs"]
 mod mutation_tests;

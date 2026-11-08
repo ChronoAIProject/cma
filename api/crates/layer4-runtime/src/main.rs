@@ -36,6 +36,7 @@ mod mutation_capacity;
 mod mutation_journal;
 mod mutation_ledger;
 mod mutation_scope;
+mod mutation_store;
 mod paths;
 mod persistent_home;
 mod pool_bootstrap;
