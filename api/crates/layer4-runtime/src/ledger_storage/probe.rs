@@ -21,6 +21,7 @@ pub(crate) async fn run(directory: &Path) -> Result<()> {
         })
         .await?;
     storage.close().await?;
+    crate::mutation_ledger::probe(&directory.with_extension("indexed")).await?;
     let storage = Storage::open(directory.to_owned(), false, 256).await?;
     let version = storage
         .call(|connection| {
