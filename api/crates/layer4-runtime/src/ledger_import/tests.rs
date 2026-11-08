@@ -1,6 +1,8 @@
 use super::*;
 use crate::config::RuntimeConfig;
 use std::path::{Path, PathBuf};
+#[path = "validation_tests.rs"]
+mod semantic;
 
 struct Fixture {
     root: PathBuf,

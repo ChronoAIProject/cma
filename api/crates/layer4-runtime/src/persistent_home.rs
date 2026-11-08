@@ -28,6 +28,18 @@ struct RestoreMarker {
 }
 
 impl Binding {
+    pub(crate) fn validate_inventory(bytes: &[u8], config: &RuntimeConfig) -> Result<()> {
+        let binding: Self =
+            serde_json::from_slice(bytes).map_err(|_| invalid("home binding is malformed"))?;
+        binding.validate(config)?;
+        if binding.runtime_generation != config.generation {
+            return Err(invalid(
+                "home binding generation does not match the inventory",
+            ));
+        }
+        Ok(())
+    }
+
     fn new(config: &RuntimeConfig) -> Result<Self> {
         let request = RuntimeStatusRequest {
             sandbox_id: config.sandbox_id.clone(),
