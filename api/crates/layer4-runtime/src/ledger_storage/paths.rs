@@ -7,6 +7,12 @@ use crate::failure::Result;
 use super::{invalid, storage_error};
 
 pub(super) fn prepare(directory: &Path, create: bool) -> Result<File> {
+    for ancestor in directory.ancestors().skip(usize::from(create)) {
+        let metadata = std::fs::symlink_metadata(ancestor).map_err(|_| storage_error())?;
+        if !metadata.is_dir() {
+            return Err(invalid());
+        }
+    }
     if create {
         std::fs::DirBuilder::new()
             .mode(0o700)
@@ -16,7 +22,10 @@ pub(super) fn prepare(directory: &Path, create: bool) -> Result<File> {
             .map_err(|_| storage_error())?;
     }
     let metadata = std::fs::symlink_metadata(directory).map_err(|_| storage_error())?;
-    if !metadata.is_dir() || metadata.mode() & 0o077 != 0 {
+    if !metadata.is_dir()
+        || metadata.mode() & 0o077 != 0
+        || metadata.uid() != unsafe { libc::geteuid() }
+    {
         return Err(invalid());
     }
     let lock = open_file(&directory.join("writer.lock"), create)?;
@@ -47,15 +56,16 @@ pub(super) fn prepare(directory: &Path, create: bool) -> Result<File> {
         let entry = entry.map_err(|_| storage_error())?;
         if !matches!(
             entry.file_name().to_str(),
-            Some("writer.lock" | "ledger.sqlite3" | "ledger.sqlite3-journal")
+            Some("writer.lock" | "ledger.sqlite3" | "ledger.sqlite3-journal" | "emergency.reserve")
         ) {
             return Err(invalid());
         }
     }
+    super::reserve::prepare(directory, create)?;
     Ok(lock)
 }
 
-fn open_file(path: &Path, create: bool) -> Result<File> {
+pub(super) fn open_file(path: &Path, create: bool) -> Result<File> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -65,7 +75,11 @@ fn open_file(path: &Path, create: bool) -> Result<File> {
         .open(path)
         .map_err(|_| storage_error())?;
     let metadata = file.metadata().map_err(|_| storage_error())?;
-    if !metadata.is_file() || metadata.nlink() != 1 || metadata.mode() & 0o077 != 0 {
+    if !metadata.is_file()
+        || metadata.nlink() != 1
+        || metadata.mode() & 0o077 != 0
+        || metadata.uid() != unsafe { libc::geteuid() }
+    {
         return Err(invalid());
     }
     Ok(file)
