@@ -31,7 +31,8 @@ pub(crate) enum Subject {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Operation {
     pub operation_id: String,
     pub request_sha256: String,
