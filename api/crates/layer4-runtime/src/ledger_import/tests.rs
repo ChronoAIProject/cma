@@ -247,3 +247,10 @@ fn digest_changes_for_input_change_and_preserves_ownership_evidence() {
     assert_ne!(before["inventory_sha256"], after["inventory_sha256"]);
     assert_eq!(std::fs::read(source).unwrap(), b"changed");
 }
+#[test]
+fn cutover_refusal_is_a_nonretryable_hold_naming_the_required_protocol() {
+    let error = super::cutover_command().unwrap_err();
+    assert_eq!(error.code, "mutation_ledger_import_held");
+    assert!(!error.retryable);
+    assert!(error.detail.contains("#1461"));
+}

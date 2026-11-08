@@ -73,6 +73,38 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn ledger_import_cli_cutover_refuses_before_configuration_or_source_access() {
+    let fixture = Fixture::new();
+    for configured in [true, false] {
+        for args in [
+            vec!["--cutover-ledger-v1"],
+            vec!["--cutover-ledger-v1", "/unused", "unused"],
+        ] {
+            let result = fixture.run(&args, configured);
+            assert_eq!(result.status.code(), Some(2));
+            assert!(result.stdout.is_empty());
+            let message = String::from_utf8(result.stderr).unwrap();
+            assert!(message.contains("mutation_ledger_import_held"));
+            assert!(message.contains("#1461"));
+            assert!(!message.contains("configuration is invalid"));
+            assert!(!message.contains(fixture.0.to_str().unwrap()));
+        }
+    }
+    assert_eq!(
+        std::fs::read(fixture.0.join("home/wanted-file")).unwrap(),
+        b"preserved home bytes"
+    );
+    assert_eq!(
+        std::fs::read(fixture.0.join("state/mutation-authority/.authority-1.tmp")).unwrap(),
+        b"unpublished authority"
+    );
+    assert!(!fixture
+        .0
+        .join("state/mutation-ledger-v2.current.json")
+        .exists());
+}
+
+#[test]
 fn ledger_import_cli_creates_only_a_detached_held_artifact_and_refuses_replays() {
     let fixture = Fixture::new();
     assert_eq!(
