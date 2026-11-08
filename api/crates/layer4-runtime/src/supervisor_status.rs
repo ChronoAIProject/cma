@@ -4,6 +4,23 @@ use super::{Phase, Supervisor};
 use crate::failure::{Result, RuntimeError};
 
 impl Supervisor {
+    pub(crate) async fn ledger_observation(
+        &self,
+        runtime: RuntimeStatus,
+    ) -> Result<layer3_adapter::RuntimeLedgerObservation> {
+        let request = RuntimeStatusRequest {
+            sandbox_id: self.config.sandbox_id.clone(),
+            generation: self.config.generation,
+            home_identity: self.config.home_identity.clone().ok_or_else(invalid)?,
+        };
+        let observation = layer3_adapter::RuntimeLedgerObservation {
+            runtime,
+            ledger: self.mutations.observation().await?,
+        };
+        observation.validate_for(&request).map_err(|_| invalid())?;
+        Ok(observation)
+    }
+
     pub(super) async fn tool_proxy_status(
         &self,
         request: layer3_adapter::ToolProxyRequest,

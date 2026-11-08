@@ -65,3 +65,29 @@ wanted files and history must be agreed and verified before any future
 maintenance release. The maintenance-admission and release-authority protocol
 is separate work tracked by #1461; this format does not provide an operator
 release switch or authorize interruption of an existing home.
+
+## Read-only diagnostics
+
+An authenticated RuntimeStatus request may opt in with the exact Accept value
+`application/vnd.cma.runtime-ledger-status.v1+json`. The response uses that media
+type and a `{runtime, ledger}` envelope. The runtime object provides the usual
+exact boot/home/generation attribution; ledger counters contain no identities
+or receipt contents. Requests without this opt-in keep the existing JSON.
+A retained runtime returns the baseline status frame, which the shared decoder
+reports as unsupported, never as zero counts.
+
+V1 observation reports `legacy_migration_required` with unknown counts and does
+not scan or reconcile its journals. V2 observation reads a single committed
+transaction revision. History totals cover all generations; outstanding and
+logical-process counts cover the persistent and current process scopes. Page
+usage, reserved outcomes/cleanup bytes, shared transaction headroom and remaining
+emergency reserve are reported separately. These reads do not wait for the
+supervisor's external-effect gate or trigger recovery. Worker saturation or
+invalid storage returns an explicit hold instead of invented counters.
+
+Treat 70% and 85% of the page or outstanding budget as warning thresholds and
+any spent emergency reserve or capacity refusal as requiring investigation.
+Headroom and reserved bytes must be included in byte-budget assessment. A
+snapshot does not promise that the next operation will fit: admission checks
+its actual outcome and cleanup reservations. Aggregate metrics must not use
+Sandbox, Agent, Workspace or owner identities as labels.
