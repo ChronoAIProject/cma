@@ -117,6 +117,7 @@ impl BindingHolds {
         let holds = self.0.lock().unwrap();
         for reason in [
             "cancelled",
+            "raced",
             "deadline",
             "unavailable",
             "corrupt",
@@ -150,6 +151,13 @@ impl BindingAttempt<'_> {
     }
     pub(super) fn complete(mut self) {
         self.holds.0.lock().unwrap().remove(&self.id);
+        self.complete = true;
+    }
+
+    /// Retain protection after a durable CAS race. This is retryable and is
+    /// reported separately from cancellation of the sweep operation.
+    pub(super) fn raced(mut self) {
+        self.holds.failed(&self.id, "raced");
         self.complete = true;
     }
 }
