@@ -1,0 +1,300 @@
+//! Bounded structural inventory only. Semantic import validation is separate.
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+
+use super::io::{Directory, Identity};
+use super::{changed, invalid, Budget, Limits};
+use crate::config::RuntimeConfig;
+use crate::failure::Result;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(super) enum Kind {
+    Authority,
+    Journal,
+    Workspace,
+    Installation,
+    Ownership,
+}
+
+impl Kind {
+    fn maximum(self) -> u64 {
+        match self {
+            Self::Authority => crate::mutation_authority::MAX_AUTHORITY_BYTES,
+            Self::Journal => crate::mutation_journal::MAX_JOURNAL_BYTES,
+            Self::Workspace => crate::workspace_journal::MAX_JOURNAL_BYTES,
+            Self::Installation => 2 * 1024 * 1024,
+            Self::Ownership => 4096,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub(super) struct Entry {
+    pub(super) directory: usize,
+    pub(super) name: String,
+    pub(super) identity: Identity,
+    pub(super) sha256: String,
+    pub(super) temporary: bool,
+}
+
+#[derive(Serialize)]
+pub(super) struct Root {
+    pub(super) path: std::path::PathBuf,
+    pub(super) identity: Option<Identity>,
+    pub(super) kind: Kind,
+    pub(super) scope: u64,
+}
+
+pub(super) struct Inventory {
+    pub(super) roots: Vec<Root>,
+    pub(super) entries: Vec<Entry>,
+    digest: String,
+    examined: usize,
+    bytes: u64,
+}
+
+impl Inventory {
+    pub(super) fn summary(&self) -> serde_json::Value {
+        serde_json::json!({
+            "format": "runtime-ledger-inventory-v1", "admission": "held",
+            "writer_exclusion": "unproved", "semantic_validation": "pending",
+            "directories": self.roots.len(), "examined_entries": self.examined,
+            "files": self.entries.len(), "input_bytes": self.bytes,
+            "temporary_files": self.entries.iter().filter(|entry| entry.temporary).count(),
+            "inventory_sha256": self.digest,
+        })
+    }
+}
+
+pub(super) fn scan(config: &RuntimeConfig, limits: Limits) -> Result<Inventory> {
+    if config.home_identity.is_none() || config.generation == 0 {
+        return Err(invalid());
+    }
+    let mut budget = Budget::new(limits);
+    let home = Directory::open(&config.home)?.identity()?;
+    let state = Directory::open(&config.state_root)?;
+    let transfer = Directory::open(&config.checkpoint_root)?;
+    let state_before = state.identity()?;
+    let transfer_before = transfer.identity()?;
+    let mut result = Inventory {
+        roots: Vec::new(),
+        entries: Vec::new(),
+        digest: String::new(),
+        examined: 0,
+        bytes: 0,
+    };
+    // Count every state-root entry, including unrelated helper directories;
+    // never scan home files, native conversation data or credential directories.
+    let names = state.names(&mut budget)?;
+    let mut scopes = vec![(0, config.state_root.clone())];
+    for name in &names {
+        if let Some(number) = name.strip_prefix("process-generation-") {
+            let generation = number.parse::<u64>().map_err(|_| invalid())?;
+            if generation == 0 || generation > config.generation || generation.to_string() != number
+            {
+                return Err(invalid());
+            }
+            budget.path(config.state_root.as_os_str().len() + name.len() + 1)?;
+            scopes.push((generation, config.state_root.join(name)));
+        }
+        if name.starts_with("mutation-ledger-v2") || name.starts_with(".mutation-ledger-v2") {
+            return Err(invalid());
+        }
+    }
+    scopes.sort();
+    for (scope, path) in scopes {
+        let directory = Directory::open(&path)?;
+        if scope != 0 {
+            let children = directory.names(&mut budget)?;
+            if children
+                .iter()
+                .any(|name| name != "mutation-authority" && name != "runtime-mutations")
+            {
+                return Err(invalid());
+            }
+        }
+        for (name, kind) in [
+            ("mutation-authority", Kind::Authority),
+            ("runtime-mutations", Kind::Journal),
+        ] {
+            result.collect(&directory, path.join(name), name, kind, scope, &mut budget)?;
+        }
+    }
+    for (name, kind) in [
+        ("workspace-operations", Kind::Workspace),
+        ("home-binding", Kind::Ownership),
+    ] {
+        result.collect(
+            &state,
+            config.state_root.join(name),
+            name,
+            kind,
+            0,
+            &mut budget,
+        )?;
+    }
+    result.collect(
+        &transfer,
+        config.checkpoint_root.join("runtime-state"),
+        "runtime-state",
+        Kind::Installation,
+        0,
+        &mut budget,
+    )?;
+    // Retain the current removal writer and its unpublished replacements as
+    // evidence. Neither their existence nor a released flock proves quiescence.
+    let root = result.roots.len();
+    budget.path(config.state_root.as_os_str().len())?;
+    result.roots.push(Root {
+        path: config.state_root.clone(),
+        identity: Some(state_before.clone()),
+        kind: Kind::Ownership,
+        scope: 0,
+    });
+    for name in &names {
+        if name == "workspace-removal-writer-v1.json"
+            || name == "workspace-removal-writer-v1.lock"
+            || temporary(name, ".workspace-removal-writer-", 128)
+        {
+            result.file(
+                &state,
+                root,
+                name,
+                Kind::Ownership,
+                name.ends_with(".tmp"),
+                &mut budget,
+            )?;
+        }
+        // The separate repair protocol has additional authority not represented
+        // by the V1 mutation store. Refuse to omit it from a purported inventory.
+        if name == "workspace-prepare-recovery" || name == "workspace-removal-current-v1" {
+            return Err(invalid());
+        }
+    }
+    if state.identity()? != state_before
+        || transfer.identity()? != transfer_before
+        || Directory::open(&config.state_root)?.identity()? != state_before
+        || Directory::open(&config.checkpoint_root)?.identity()? != transfer_before
+        || Directory::open(&config.home)?.identity()? != home
+    {
+        return Err(changed());
+    }
+    let mut digest = Sha256::new();
+    digest.update(b"chrono.runtime.ledger.inventory.v1\0");
+    // Stream serialization into the digest, avoiding a second history-sized buffer.
+    struct HashWriter<'a>(&'a mut Sha256);
+    impl std::io::Write for HashWriter<'_> {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    serde_json::to_writer(
+        HashWriter(&mut digest),
+        &(
+            &config.sandbox_id,
+            &config.home_identity,
+            config.generation,
+            &config.home,
+            home,
+            state_before,
+            transfer_before,
+            &result.roots,
+            &result.entries,
+        ),
+    )
+    .map_err(|_| invalid())?;
+    result.digest = crate::command::hex(&digest.finalize());
+    budget.check()?;
+    result.examined = budget.entries;
+    result.bytes = budget.bytes;
+    Ok(result)
+}
+
+impl Inventory {
+    fn collect(
+        &mut self,
+        parent: &Directory,
+        path: std::path::PathBuf,
+        name: &str,
+        kind: Kind,
+        scope: u64,
+        budget: &mut Budget,
+    ) -> Result<()> {
+        budget.path(path.as_os_str().len())?;
+        let directory = parent.child(name)?;
+        let identity = directory.as_ref().map(Directory::identity).transpose()?;
+        let index = self.roots.len();
+        self.roots.push(Root {
+            path,
+            identity: identity.clone(),
+            kind,
+            scope,
+        });
+        if let Some(directory) = directory {
+            for name in directory.names(budget)? {
+                let temporary = classify(&name, kind)?;
+                self.file(&directory, index, &name, kind, temporary, budget)?;
+            }
+            if Some(directory.identity()?) != identity {
+                return Err(changed());
+            }
+        }
+        Ok(())
+    }
+
+    fn file(
+        &mut self,
+        directory: &Directory,
+        index: usize,
+        name: &str,
+        kind: Kind,
+        temporary: bool,
+        budget: &mut Budget,
+    ) -> Result<()> {
+        let (identity, bytes) = directory.read(name, kind.maximum(), budget)?;
+        self.entries.push(Entry {
+            directory: index,
+            name: name.into(),
+            identity,
+            sha256: crate::command::hex(&Sha256::digest(&bytes)),
+            temporary,
+        });
+        Ok(())
+    }
+}
+
+fn classify(name: &str, kind: Kind) -> Result<bool> {
+    let canonical = name.strip_suffix(".json").is_some_and(|stem| {
+        stem.len() == 64
+            && stem
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    });
+    let (valid, prefix, bound) = match kind {
+        Kind::Authority => (canonical, ".authority-", 128),
+        Kind::Journal => (canonical, ".mutation-journal-", 240),
+        Kind::Workspace => (canonical, ".workspace-journal-", 240),
+        Kind::Installation => (name == "install-v2.json", ".install-", 128),
+        Kind::Ownership => (name == "binding.json", ".home-", 42),
+    };
+    if valid {
+        Ok(false)
+    } else if temporary(name, prefix, bound) {
+        Ok(true)
+    } else {
+        Err(invalid())
+    }
+}
+
+fn temporary(name: &str, prefix: &str, bound: usize) -> bool {
+    name.starts_with(prefix)
+        && name.ends_with(".tmp")
+        && name.len() <= bound
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+}

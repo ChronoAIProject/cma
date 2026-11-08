@@ -26,6 +26,7 @@ mod install_state;
 mod install_state_validation;
 mod lanes;
 mod ledger_format;
+mod ledger_import;
 mod ledger_storage;
 mod link;
 mod mutation_authority;
@@ -85,6 +86,9 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments.len() == 1 && arguments[0] == "--inspect-ledger-v1" {
+        return ledger_import::inspect_command().await;
+    }
     if arguments.len() == 2 && arguments[0] == "--verify-ledger-storage" {
         return ledger_storage::probe(std::path::Path::new(&arguments[1]))
             .await

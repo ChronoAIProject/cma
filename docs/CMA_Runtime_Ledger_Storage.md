@@ -74,6 +74,22 @@ maintenance release. The maintenance-admission and release-authority protocol
 is separate work tracked by #1461; this format does not provide an operator
 release switch or authorize interruption of an existing home.
 
+`cma-runtime --inspect-ledger-v1` reads the assigned runtime configuration from
+the environment and emits only bounded counts and an inventory digest. Run it
+only through a reviewed offline/read-only procedure; it does not start the
+supervisor, change generations, recover temporary files or run pending work.
+It includes persistent and historical process-scoped mutation files, workspace
+journal files, installation state and home/removal-writer metadata. It refuses
+V2 state and the separate workspace-repair authority layouts rather than
+silently omitting them. File names and payload contents are not printed.
+
+The structural inventory has separate limits of 65,536 examined directory
+entries, 2 GiB input, 24 MiB metadata accounting and five minutes; no online V1
+scan limit changes. Its summary explicitly reports semantic validation pending
+and writer exclusion unproved. A stable hash is not proof of an atomic snapshot
+or an absent legacy writer, and this command does not authorize migration or
+release. The new V2 lock cannot fence a V1 supervisor that never takes it.
+
 ## Read-only diagnostics
 
 An authenticated RuntimeStatus request may opt in with the exact Accept value
