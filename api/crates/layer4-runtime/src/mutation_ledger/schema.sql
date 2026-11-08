@@ -2,7 +2,12 @@ CREATE TABLE metadata (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
     sandbox TEXT NOT NULL CHECK(length(sandbox) BETWEEN 1 AND 256),
     home TEXT NOT NULL CHECK(length(home) <= 256),
-    generation BLOB NOT NULL CHECK(length(generation) = 8 AND generation > x'0000000000000000')
+    generation BLOB NOT NULL CHECK(length(generation) = 8 AND generation > x'0000000000000000'),
+    state_root TEXT NOT NULL CHECK(length(state_root) BETWEEN 1 AND 65536),
+    home_root TEXT NOT NULL CHECK(length(home_root) BETWEEN 1 AND 65536),
+    transfer_root TEXT NOT NULL CHECK(length(transfer_root) BETWEEN 1 AND 65536),
+    store_id BLOB NOT NULL CHECK(length(store_id) = 16),
+    admission TEXT NOT NULL CHECK(admission IN ('fresh','import_held'))
 ) STRICT;
 
 CREATE TABLE authority (
