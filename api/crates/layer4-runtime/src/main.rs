@@ -89,6 +89,9 @@ async fn run() -> Result<(), String> {
     if arguments.len() == 1 && arguments[0] == "--inspect-ledger-v1" {
         return ledger_import::inspect_command().await;
     }
+    if arguments.len() == 1 && arguments[0] == "--validate-ledger-v1" {
+        return ledger_import::validate_command().await;
+    }
     if arguments.len() == 2 && arguments[0] == "--verify-ledger-storage" {
         return ledger_storage::probe(std::path::Path::new(&arguments[1]))
             .await
