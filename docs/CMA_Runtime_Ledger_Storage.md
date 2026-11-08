@@ -118,6 +118,13 @@ storage. Only counts, fixed hold reasons and digests appear in command output.
 
 The planner copies and syncs each source file, writes and syncs `plan.json`,
 rescans the original input, then publishes `sealed.json` with the plan digest.
+Publication writes a temporary file, syncs it, renames without replacement,
+and syncs the final file and directory. A failed barrier withdraws the new
+descriptor; failed unlink falls back to truncating the still-owned file and
+reports cleanup errors. This applies to `ready.json` as well. If the filesystem
+cannot persist withdrawal or neutralization, even a final-name file is not
+proof of success: quarantine that failed artifact and require fresh
+qualification rather than trusting its presence or retrying in place.
 Any failed step leaves an incomplete artifact for inspection; a retry requires
 a new destination and never overwrites a prior plan. A missing, malformed or
 mismatched seal is not a completed backup. Preserve the reported plan digest
