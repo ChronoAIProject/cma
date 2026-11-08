@@ -181,3 +181,38 @@ fn storage_error() -> RuntimeError {
         "runtime mutation ledger storage requires verification",
     )
 }
+
+#[cfg(test)]
+impl Ledger {
+    pub(crate) async fn open_fault_vfs(
+        path: PathBuf,
+        config: RuntimeConfig,
+        name: String,
+    ) -> Result<Self> {
+        let storage = Storage::open_fault_vfs(path.clone(), false, 32_768, name).await?;
+        let expected = config.clone();
+        storage
+            .call(move |db| schema::open(db, &expected, false))
+            .await?;
+        Ok(Self {
+            storage,
+            config: Arc::new(config),
+            directory: path,
+            guard: None,
+        })
+    }
+
+    pub(crate) async fn test_record(
+        &self,
+        operation: Operation,
+    ) -> Result<crate::mutation_journal::Record> {
+        let config = Arc::clone(&self.config);
+        self.storage
+            .call(move |db| {
+                journal::load(db, &config, &operation)?
+                    .and_then(|stored| stored.record)
+                    .ok_or_else(invalid)
+            })
+            .await
+    }
+}

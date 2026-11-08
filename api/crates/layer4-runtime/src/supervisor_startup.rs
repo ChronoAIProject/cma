@@ -50,6 +50,10 @@ impl Supervisor {
             .open(&config)
             .await?;
         let supervisor = Self::from_prepared(config, writer_boundary, prepared, ledger)?;
+        Self::finish_startup(supervisor).await
+    }
+
+    pub(super) async fn finish_startup(supervisor: Arc<Self>) -> Result<Arc<Self>> {
         if supervisor.config.machine_included {
             let ready = async {
                 loop {
