@@ -22,14 +22,7 @@ async fn complete(reconciler: &SandboxReconciler) -> usize {
 #[tokio::test(start_paused = true)]
 async fn slow_sweep_refreshes_bindings_without_replaying_maintenance_candidates() {
     let (store, reconciler) = setup(8, Duration::from_secs(2)).await;
-    let reconciler = reconciler
-        .with_runtime_version("fixture-image".into())
-        .with_failed_runtime_recovery(std::sync::Arc::new(
-            layer2_core::sandbox::SandboxRuntimeUpdateService::new(
-                store.clone(),
-                "fixture-image".into(),
-            ),
-        ));
+    let reconciler = reconciler.with_runtime_version("fixture-image".into());
     let output = Output::default();
     let subscriber = tracing_subscriber::fmt()
         .without_time()
@@ -68,12 +61,11 @@ async fn slow_sweep_refreshes_bindings_without_replaying_maintenance_candidates(
         .collect::<Vec<_>>();
     let authority_passes = store.keys("authority").len() / 4;
     assert!(authority_passes >= 2);
-    // Initial and refresh binding passes plus the runtime-update reads each
-    // visit every row; the separate recovery-authority pass has no binding reads.
+    // Initial/refresh passes and runtime-update reads each visit every row.
     for id in &expected {
         assert_eq!(
             store.keys("get").iter().filter(|key| *key == id).count(),
-            authority_passes
+            authority_passes + 1
         );
     }
     assert_eq!(store.keys("pause"), expected);
@@ -104,8 +96,6 @@ async fn slow_sweep_refreshes_bindings_without_replaying_maintenance_candidates(
         "runtime_cleanup",
         "claim_cleanup",
         "home_cleanup",
-        "recovery_authority",
-        "failed_recovery",
         "profiles",
         "runtime_updates",
         "idle_pause",
@@ -394,40 +384,5 @@ mod opportunity_tests;
 #[path = "reconciliation_diagnostics_tests.rs"]
 mod diagnostics_tests;
 
-// Regress the reviewer's skipped Recovery probe, with absent/unheld controls.
-#[tokio::test(start_paused = true)]
-async fn recovery_progress_counts_attempted_candidates_only() {
-    for (present, held, expected) in [(false, false, 0), (true, true, 0), (true, false, 1)] {
-        let (store, reconciler) = setup(1, Duration::ZERO).await;
-        let reconciler = reconciler.with_failed_runtime_recovery(std::sync::Arc::new(
-            layer2_core::sandbox::SandboxRuntimeUpdateService::new(
-                store.clone(),
-                "fixture-image".into(),
-            ),
-        ));
-        let row = sandbox(0);
-        if held {
-            drop(reconciler.binding_holds.begin(&row, &[]).unwrap());
-        }
-        let mut sweep = Sweep {
-            phase: Phase::Recovery,
-            recovery_candidate: present.then(|| row.id.clone()),
-            ..Default::default()
-        };
-        sweep.authority.items.insert(row.id.clone(), row.clone());
-        assert_eq!(
-            sweep.step(&reconciler, SystemTime::now()).await.unwrap(),
-            expected
-        );
-        assert_eq!(sweep.phase, Phase::Policy);
-        assert!(sweep.authority.items.is_empty());
-        assert_eq!(reconciler.binding_holds.contains(row.id.as_str()), held);
-        // The unheld attempt rereads the row and retains its ordinary eligibility
-        // refusal. Neither skipped case calls the service or changes the row.
-        assert_eq!(store.keys("get").len(), expected as usize);
-        assert_eq!(
-            store.inner.get_sandbox(&row.id).await.unwrap().unwrap(),
-            row
-        );
-    }
-}
+#[path = "reconciliation_recovery_tests.rs"]
+mod recovery_tests;

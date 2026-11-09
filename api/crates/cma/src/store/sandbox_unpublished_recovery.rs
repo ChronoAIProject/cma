@@ -4,6 +4,7 @@ use layer2_core::sandbox::{
     Sandbox, SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoverySnapshot,
 };
 use layer2_core::SandboxId;
+use layer3_adapter::recovery_diagnostics::{Observation, Reason, Stage};
 
 use super::sandbox_mongo::{
     commit_transaction, is_transient, start_transaction, wait_for_reconciliation, CommitOutcome,
@@ -56,10 +57,20 @@ pub(super) async fn admit(
                 return Err(error.domain());
             }
         };
+        let mut commit = Observation::new(Stage::Commit);
+        commit.pending(Reason::UnknownCommit);
         match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => return Ok(receipt.sandbox),
-            CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
+            CommitOutcome::Committed => {
+                commit.finish(Reason::Success);
+                return Ok(receipt.sandbox);
+            }
+            CommitOutcome::Retry(error) => {
+                commit.finish(Reason::Unavailable);
+                last_transient = Some(error.to_string());
+            }
             CommitOutcome::Unknown(error) => {
+                commit.finish(Reason::UnknownCommit);
+                drop(commit);
                 let time = session.operation_time().ok_or_else(|| {
                     unavailable(format!(
                         "unpublished runtime recovery commit has no operation time: {error}"
@@ -69,7 +80,13 @@ pub(super) async fn admit(
                 return wait_for_reconciliation(
                     "unpublished runtime recovery commit",
                     async move {
-                        if transaction::reconcile(&store, &receipt, time).await? {
+                        let mut reconciliation = Observation::new(Stage::ReconcileCommit);
+                        let result = transaction::reconcile(&store, &receipt, time).await;
+                        reconciliation.finish(match &result {
+                            Ok(true) => Reason::Success,
+                            _ => Reason::UnresolvedCommit,
+                        });
+                        if result? {
                             Ok(receipt.sandbox)
                         } else {
                             Err(unavailable(
@@ -81,7 +98,10 @@ pub(super) async fn admit(
                 .await
                 .map_err(unavailable)?;
             }
-            CommitOutcome::Failed(error) => return Err(unavailable(error)),
+            CommitOutcome::Failed(error) => {
+                commit.finish(Reason::Unavailable);
+                return Err(unavailable(error));
+            }
         }
         tokio::task::yield_now().await;
     }
