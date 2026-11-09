@@ -404,6 +404,7 @@ dependencies = [
  "governor",
  "httpdate",
  "ipnet",
+ "kube",
  "layer1-public",
  "layer2-core",
  "layer3-adapter",

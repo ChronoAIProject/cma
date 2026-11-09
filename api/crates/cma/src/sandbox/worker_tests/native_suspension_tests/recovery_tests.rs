@@ -254,3 +254,9 @@ async fn missing_original_home_or_provider_object_never_creates_an_empty_replace
 
 #[path = "fair_recovery_tests.rs"]
 mod fair_recovery_tests;
+
+#[path = "binding_opportunity_tests.rs"]
+mod binding_opportunity_tests;
+
+#[path = "binding_authority_tests.rs"]
+mod binding_authority_tests;

@@ -388,6 +388,12 @@ mod binding_tests;
 #[path = "reconciliation_schedule_tests.rs"]
 mod schedule_tests;
 
+#[path = "reconciliation_opportunity_tests.rs"]
+mod opportunity_tests;
+
+#[path = "reconciliation_diagnostics_tests.rs"]
+mod diagnostics_tests;
+
 // Regress the reviewer's skipped Recovery probe, with absent/unheld controls.
 #[tokio::test(start_paused = true)]
 async fn recovery_progress_counts_attempted_candidates_only() {

@@ -3,7 +3,7 @@ use super::*;
 // Derived from the reviewer's two 100-minute starvation probes. Assert bounded
 // recovery while the tail remains faulty, without granting orphan reclamation.
 #[tokio::test(start_paused = true)]
-async fn due_binding_recovers_within_two_invocations_despite_a_persistent_tail_failure() {
+async fn due_binding_recovers_within_four_slices_despite_a_persistent_tail_failure() {
     for (phase, key, expected_phase) in [
         ("runtime_fence", "sbx_orphan_probe", Phase::Runtimes),
         ("pause", "sbx_001", Phase::IdlePause),
@@ -34,7 +34,7 @@ async fn due_binding_recovers_within_two_invocations_despite_a_persistent_tail_f
         for invocation in 1..=20 {
             tokio::time::advance(Duration::from_secs(300)).await;
             store.fail(phase, key, Failure::Unavailable);
-            assert!(reconciler.run_due(SystemTime::now()).await.is_err());
+            reach_tail_failure(&reconciler).await;
             assert_eq!(
                 reconciler
                     .progress
@@ -131,7 +131,7 @@ async fn cancellation_during_refresh_retains_both_cursors_and_binding_protection
     tokio::time::advance(Duration::from_secs(30)).await;
     for _ in 0..2 {
         store.fail("pause", "sbx_001", Failure::Unavailable);
-        assert!(reconciler.run_due(SystemTime::now()).await.is_err());
+        reach_tail_failure(&reconciler).await;
     }
     assert!(!reconciler.binding_holds.contains("sbx_000"));
     assert_eq!(
@@ -195,4 +195,20 @@ async fn a_refresh_that_exhausts_the_slice_still_gives_the_tail_its_next_opportu
         store.keys("authority"),
         ["start", "sbx_001", "sbx_003", "sbx_005"]
     );
+}
+
+// A due slow binding now reserves a separate empty slice before the retained
+// tail resumes. The same tail must still be reached within a fixed bound.
+async fn reach_tail_failure(reconciler: &SandboxReconciler) {
+    for _ in 0..4 {
+        let started = Instant::now();
+        let result = reconciler.run_due(SystemTime::now()).await;
+        assert!(started.elapsed() <= SLICE + OPERATION);
+        match result {
+            Err(_) => return,
+            Ok(false) => {}
+            Ok(true) => panic!("faulty tail completed"),
+        }
+    }
+    panic!("reserved binding starved retained cleanup");
 }
