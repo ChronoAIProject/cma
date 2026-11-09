@@ -11,9 +11,15 @@ async fn fresh_admission_refuses_new_child_message_and_stop_after_native_proof()
         let mut agent = request.snapshot.agents[0].clone();
         match change {
             "child" => {
-                agent.id = layer2_core::AgentId("agt_new_recovery_child".into());
-                agent.creation_key = "new-child".into();
+                agent = ready_agent(&request.snapshot.sandbox, "agt_new_recovery_child");
+                agent.status = AgentStatus::Paused;
                 insert_agent(&store, &agent, NOW).await;
+                store
+                    .unpublished_runtime_recovery_snapshot(&request.snapshot.sandbox.id)
+                    .await
+                    .unwrap()
+                    .validate()
+                    .unwrap();
             }
             "message" | "stop" => {
                 agent.revision += 1;
@@ -52,6 +58,14 @@ async fn fresh_admission_refuses_new_child_message_and_stop_after_native_proof()
             request.snapshot.sandbox
         );
         assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
+        for original in &request.snapshot.agents {
+            if original.id != agent.id {
+                assert_eq!(
+                    store.get_agent(&original.id).await.unwrap().as_ref(),
+                    Some(original)
+                );
+            }
+        }
         assert_eq!(
             store
                 .sandbox_events
@@ -110,6 +124,13 @@ async fn full_log_scan_refuses_publication_and_missing_or_corrupt_history() {
             }
             _ => unreachable!(),
         }
+        let output = Output::default();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(output.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
         assert!(
             store
                 .unpublished_runtime_recovery_snapshot(&request.snapshot.sandbox.id)
@@ -117,6 +138,26 @@ async fn full_log_scan_refuses_publication_and_missing_or_corrupt_history() {
                 .is_err(),
             "{change}"
         );
+        let reason = if change == "published" {
+            "PublishedGeneration"
+        } else {
+            "CorruptHistory"
+        };
+        let diagnostics = output.text();
+        assert!(
+            diagnostics
+                .lines()
+                .any(|line| line.contains("stage=PublicationLog")
+                    && line.contains(&format!("reason={reason}"))),
+            "{change}: {diagnostics}"
+        );
+        for line in diagnostics
+            .lines()
+            .filter(|line| line.contains("unpublished recovery stage"))
+        {
+            assert!(!line.contains(agent.id.as_str()));
+            assert!(!line.contains(request.snapshot.sandbox.id.as_str()));
+        }
         assert!(
             store
                 .admit_unpublished_runtime_recovery(request.clone())
@@ -139,13 +180,16 @@ async fn full_log_scan_refuses_publication_and_missing_or_corrupt_history() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn independent_api_services_admit_only_one_recovery_without_replay() {
-    struct Verify;
+    struct Verify(tokio::sync::Barrier);
     #[async_trait::async_trait]
     impl SandboxUnpublishedRecoveryVerifier for Verify {
         async fn verify(
             &self,
             snapshot: &SandboxUnpublishedRecoverySnapshot,
         ) -> Result<SandboxUnpublishedRecoveryProof, SandboxStoreError> {
+            // Both instances must capture the original snapshot before either
+            // can admit; serial observation of already-admitted work is weaker.
+            self.0.wait().await;
             let plan = serde_json::json!({ "fixture": "original" });
             Ok(SandboxUnpublishedRecoveryProof {
                 sandbox_id: snapshot.sandbox.id.clone(),
@@ -180,9 +224,10 @@ async fn independent_api_services_admit_only_one_recovery_without_replay() {
     }
     let (client, name, store) = database().await;
     let request = fixture(&store, "sbx_two_instances").await;
+    let verifier = std::sync::Arc::new(Verify(tokio::sync::Barrier::new(2)));
     let service = || {
         SandboxRuntimeUpdateService::new(std::sync::Arc::new(store.clone()), "image-v1".into())
-            .with_unpublished_recovery(std::sync::Arc::new(Verify))
+            .with_unpublished_recovery(verifier.clone())
     };
     let (a, b) = (service(), service());
     let id = &request.snapshot.sandbox.id;
