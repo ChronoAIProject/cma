@@ -21,6 +21,9 @@ pub(super) struct NativeBackend {
     pub lose_resume: Arc<AtomicBool>,
     pub lose_delete: Arc<AtomicBool>,
     pub reject_credential: Arc<AtomicBool>,
+    pub recovery_plan: Arc<Mutex<serde_json::Value>>,
+    pub recovery_code: Arc<Mutex<Option<&'static str>>>,
+    pub replace_after_history: Arc<AtomicBool>,
     pub status_override: Arc<Mutex<Option<layer3_adapter::RuntimeStatus>>>,
     pub nonexecuting: Arc<AtomicBool>,
     pub proof_revision: Arc<AtomicU64>,
@@ -78,6 +81,43 @@ fn absent() -> layer3_adapter::AdapterError {
 
 #[async_trait::async_trait]
 impl HostedBackend for NativeBackend {
+    async fn run_recovery_command(
+        &self,
+        _: &RuntimeHandle,
+        _command: &layer3_adapter::hosted::RuntimeRecoveryCommand,
+    ) -> layer3_adapter::Result<Vec<u8>> {
+        use serde_json::json;
+        self.calls.push("inspect-history");
+        let code = *self.recovery_code.lock().unwrap();
+        if code == Some("unavailable") {
+            return Err(layer3_adapter::AdapterError::Unavailable(
+                "private provider detail".into(),
+            ));
+        }
+        if let Some(code) = code {
+            return Ok(serde_json::to_vec(
+                &json!({"version": 1, "status": "refused", "code": code}),
+            )
+            .unwrap());
+        }
+        let plan = self.recovery_plan.lock().unwrap().clone();
+        if plan.is_null() {
+            return Err(layer3_adapter::AdapterError::Unsupported(
+                "fixture history not configured".into(),
+            ));
+        }
+        let digest =
+            layer2_core::sandbox::SandboxUnpublishedRecoveryProof::provider_plan_digest(&plan)
+                .unwrap();
+        if self.replace_after_history.swap(false, Ordering::SeqCst) {
+            self.restart_process().await;
+        }
+        Ok(serde_json::to_vec(
+            &json!({"version": 1, "status": "inspected", "plan": plan, "planSha256": digest}),
+        )
+        .unwrap())
+    }
+
     async fn suspend_nonexecuting_runtime(
         &self,
         handle: &RuntimeHandle,

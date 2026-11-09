@@ -3,6 +3,7 @@ use crate::sandbox::{
     apply_unpublished_runtime_recovery, SandboxUnpublishedRecoveryRequest,
     SandboxUnpublishedRecoverySnapshot,
 };
+use layer3_adapter::recovery_diagnostics::{Observation, Reason, Stage};
 
 pub(super) fn snapshot(
     state: &State,
@@ -42,6 +43,7 @@ pub(super) fn snapshot(
                 | AgentLogKind::RuntimeGenerationRetired { runtime_generation, .. }
                     if runtime_generation >= generation)
             {
+                Observation::new(Stage::PublicationLog).finish(Reason::PublishedGeneration);
                 return Err(SandboxStoreError::InvalidTransaction(
                     "runtime generation was already published",
                 ));

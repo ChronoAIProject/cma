@@ -5,6 +5,7 @@ use layer2_core::sandbox::{
     SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoverySnapshot,
 };
 use layer2_core::SandboxId;
+use layer3_adapter::recovery_diagnostics::{Observation, Reason, Stage};
 use mongodb::bson::{doc, Timestamp};
 use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
@@ -88,7 +89,9 @@ pub(super) async fn load(
         .and_then(|binding| binding.provision_generation)
         .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
     for agent in &agents {
-        scan_complete_log_with_session(
+        let mut observation = Observation::new(Stage::PublicationLog);
+        let mut published = false;
+        let result = scan_complete_log_with_session(
             store,
             &agent.id,
             agent.conversation.last_seq,
@@ -99,6 +102,7 @@ pub(super) async fn load(
                 | AgentLogKind::RuntimeGenerationRetired { runtime_generation, .. }
                     if runtime_generation >= generation)
                 {
+                    published = true;
                     return Err(SandboxStoreError::InvalidTransaction(
                         "runtime generation was already published",
                     ));
@@ -106,7 +110,14 @@ pub(super) async fn load(
                 Ok(())
             },
         )
-        .await?;
+        .await;
+        observation.finish(match &result {
+            Ok(_) => Reason::Success,
+            Err(TransactionLogError::Driver(_)) => Reason::Unavailable,
+            Err(_) if published => Reason::PublishedGeneration,
+            Err(_) => Reason::CorruptHistory,
+        });
+        result?;
     }
     let mut cursor = store
         .workspaces

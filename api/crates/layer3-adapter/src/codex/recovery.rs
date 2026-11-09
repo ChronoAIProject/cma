@@ -13,6 +13,7 @@ use crate::{
 };
 
 use super::CodexAdapter;
+use crate::recovery_diagnostics::{Observation, Reason, Stage};
 
 const LIMIT: usize = 64 * 1024;
 
@@ -73,7 +74,9 @@ impl RuntimeRecovery for CodexAdapter {
         if output["planSha256"] != digest {
             return Err(invalid());
         }
-        let histories = checked_histories(request, &plan["histories"])?;
+        let histories = checked_histories(request, &plan["histories"]).inspect_err(|_| {
+            Observation::new(Stage::History).finish(Reason::CorruptHistory);
+        })?;
         Ok(RuntimeRecoveryInspection {
             provider_plan: plan,
             provider_plan_sha256: digest,
@@ -148,7 +151,12 @@ impl CodexAdapter {
     ) -> Result<()> {
         let status = self.runtime_status(&request.runtime).await?;
         status.validate_for(&request.identity)?;
-        if status.boot_id != request.boot_id || status.restore_pending {
+        if status.boot_id != request.boot_id {
+            Observation::new(Stage::History).finish(Reason::BootMismatch);
+            return Err(invalid());
+        }
+        if status.restore_pending {
+            Observation::new(Stage::History).finish(Reason::RestorePending);
             return Err(invalid());
         }
         Ok(())
@@ -177,33 +185,26 @@ impl CodexAdapter {
             ],
             input,
         };
-        let output = self
-            .hosted
-            .run_recovery_command(&request.runtime, &command)
-            .await?;
-        let response: Value = serde_json::from_slice(&output).map_err(|_| invalid())?;
+        let mut observation = Observation::new(Stage::History);
+        let output = observation.adapter(
+            self.hosted
+                .run_recovery_command(&request.runtime, &command)
+                .await,
+            Reason::NativeChanged,
+        )?;
+        let response: Value = serde_json::from_slice(&output).map_err(|_| {
+            observation.finish(Reason::CorruptHistory);
+            invalid()
+        })?;
         if response["version"] != 1 {
+            observation.finish(Reason::CorruptHistory);
             return Err(invalid());
         }
         if response["status"] == "refused" {
-            let category = match response["code"].as_str().unwrap_or_default() {
-                "deadline" => "deadline",
-                "history_missing" | "history_incomplete" | "history_invalid" => {
-                    "history_unavailable"
-                }
-                "history_prefix_changed" | "history_replaced" => "history_changed",
-                "native_turn_unsettled" | "native_turn_restarted" => "turn_unsettled",
-                "boot_changed" | "home_changed" | "supervisor_changed" => "source_changed",
-                "pid_reused" | "untracked_process" | "process_reappeared" => "process_changed",
-                "bridge_unsupported" | "launcher_unsupported" | "native_unsupported" => {
-                    "unsupported_source"
-                }
-                "journal_mismatch" | "plan_mismatch" => "journal_mismatch",
-                _ => "evidence_unavailable",
-            };
-            tracing::warn!(sandbox_id = %request.identity.sandbox_id,
-                generation = request.identity.generation, category,
-                "original runtime recovery proof refused; source retained");
+            observation.finish(provider_refusal(
+                response["code"].as_str().unwrap_or_default(),
+            ));
+            return Err(invalid());
         }
         Ok(response)
     }
@@ -291,3 +292,20 @@ fn invalid() -> AdapterError {
 #[cfg(test)]
 #[path = "recovery_tests.rs"]
 mod tests;
+
+fn provider_refusal(code: &str) -> Reason {
+    match code {
+        "deadline" => Reason::Deadline,
+        "history_missing" => Reason::MissingHistory,
+        "history_incomplete"
+        | "history_invalid"
+        | "history_prefix_changed"
+        | "history_replaced" => Reason::CorruptHistory,
+        "boot_changed" => Reason::BootMismatch,
+        "home_changed" => Reason::HomeChanged,
+        "supervisor_changed" | "pid_reused" | "untracked_process" | "process_reappeared" => {
+            Reason::NativeChanged
+        }
+        _ => Reason::Ineligible,
+    }
+}
