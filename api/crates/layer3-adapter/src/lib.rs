@@ -41,6 +41,7 @@ mod inventory_cursor;
 pub use inventory_cursor::InventoryCursor;
 mod prompt_identity;
 mod provider_finality;
+pub mod recovery_diagnostics;
 mod runtime;
 pub mod runtime_bootstrap;
 pub mod runtime_control_relay;
