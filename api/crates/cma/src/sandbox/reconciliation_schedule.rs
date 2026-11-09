@@ -4,6 +4,14 @@ use super::*;
 impl SandboxReconciler {
     pub(crate) async fn run_due(&self, now: SystemTime) -> Result<bool, SandboxStoreError> {
         let mut progress = self.progress.lock().await;
+        // The progress lock serializes both lanes, including outer cancellation.
+        if self.failed_runtime_recovery.is_some() {
+            let mut recovery = self.recovery_schedule.lock().await;
+            if recovery.take_turn() {
+                recovery.run(self).await?;
+                return Ok(false);
+            }
+        }
         let Progress {
             sweep,
             binding_refresh,

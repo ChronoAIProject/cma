@@ -172,3 +172,6 @@ async fn changed_reservation_operation_and_high_water_refuse_before_provider_rea
         .unwrap()
         .is_empty());
 }
+
+#[path = "evidence_diagnostics_tests.rs"]
+mod evidence_diagnostics_tests;

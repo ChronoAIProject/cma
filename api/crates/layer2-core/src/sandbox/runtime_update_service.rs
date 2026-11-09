@@ -1,3 +1,4 @@
+use layer3_adapter::recovery_diagnostics::{Observation, Reason, Stage};
 use std::sync::Arc;
 
 use super::store::{SandboxStore, SandboxStoreError};
@@ -135,24 +136,33 @@ impl SandboxRuntimeUpdateService {
             .ok_or(SandboxStoreError::InvalidTransaction(
                 "unpublished runtime recovery is unavailable",
             ))?;
-        let snapshot = self
-            .store
-            .unpublished_runtime_recovery_snapshot(&sandbox.id)
-            .await?;
+        let mut snapshot_observation = Observation::new(Stage::Snapshot);
+        let snapshot = observed(
+            &mut snapshot_observation,
+            self.store
+                .unpublished_runtime_recovery_snapshot(&sandbox.id)
+                .await,
+        )?;
         if snapshot.sandbox != *sandbox {
+            snapshot_observation.finish(Reason::StaleChildren);
             return Err(SandboxStoreError::Conflict);
         }
-        snapshot.validate()?;
+        observed(&mut snapshot_observation, snapshot.validate())?;
+        drop(snapshot_observation);
         let proof = verifier.verify(&snapshot).await?;
-        self.store
-            .admit_unpublished_runtime_recovery(SandboxUnpublishedRecoveryRequest {
-                snapshot,
-                proof,
-                target_runtime_version: target.into(),
-                automatic,
-                requested_at: crate::now_rfc3339(),
-            })
-            .await
+        let mut admission = Observation::new(Stage::Admission);
+        observed(
+            &mut admission,
+            self.store
+                .admit_unpublished_runtime_recovery(SandboxUnpublishedRecoveryRequest {
+                    snapshot,
+                    proof,
+                    target_runtime_version: target.into(),
+                    automatic,
+                    requested_at: crate::now_rfc3339(),
+                })
+                .await,
+        )
     }
 
     async fn queue(
@@ -211,4 +221,20 @@ fn store_error(error: SandboxStoreError) -> SandboxRuntimeUpdateError {
         SandboxStoreError::InvalidTransaction(_) => SandboxRuntimeUpdateError::NotAvailable,
         _ => SandboxRuntimeUpdateError::Unavailable,
     }
+}
+
+fn observed<T>(
+    observation: &mut Observation,
+    result: Result<T, SandboxStoreError>,
+) -> Result<T, SandboxStoreError> {
+    observation.finish(match &result {
+        Ok(_) => Reason::Success,
+        Err(SandboxStoreError::Unavailable(_)) => Reason::Unavailable,
+        Err(SandboxStoreError::Conflict) => Reason::StaleChildren,
+        Err(SandboxStoreError::Corrupt(_) | SandboxStoreError::SequenceConflict) => {
+            Reason::CorruptHistory
+        }
+        Err(_) => Reason::Ineligible,
+    });
+    result
 }
