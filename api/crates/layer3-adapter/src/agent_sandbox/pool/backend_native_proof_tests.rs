@@ -12,6 +12,9 @@ mod policy_reads;
 #[path = "backend_native_status_tests.rs"]
 mod native_status;
 
+#[path = "binding_race_tests.rs"]
+mod binding_races;
+
 struct StatusTransport {
     state: Arc<Mutex<State>>,
     client: AgentSandboxClient,
