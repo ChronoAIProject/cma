@@ -12,6 +12,9 @@ mod policy_reads;
 #[path = "backend_native_status_tests.rs"]
 mod native_status;
 
+#[path = "binding_race_tests.rs"]
+mod binding_races;
+
 struct StatusTransport {
     state: Arc<Mutex<State>>,
     client: AgentSandboxClient,
@@ -175,7 +178,7 @@ async fn native_proof_context_with_routed_home_accepts_only_configured_authority
     assert_eq!(inspected.observation.handle, fixture.bound.runtime);
     assert!(inspected.status.unwrap().credential_ready);
     assert_eq!(fixture.transport.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(read_count(&fixture), 9);
+    assert_eq!(read_count(&fixture), 13);
 
     let foreign = inspection_fixture_with_home_authority(false, "different-cluster").await;
     assert!(matches!(
@@ -187,7 +190,7 @@ async fn native_proof_context_with_routed_home_accepts_only_configured_authority
 }
 
 #[tokio::test]
-async fn native_proof_context_reduces_twenty_two_reads_to_nine_without_cross_call_reuse() {
+async fn native_proof_context_shares_dispatch_reads_but_revalidates_after_each_reply() {
     let fixture = inspection_fixture(false).await;
     fixture
         .adapter
@@ -204,8 +207,8 @@ async fn native_proof_context_reduces_twenty_two_reads_to_nine_without_cross_cal
     // rollback returns to the original pool image. The combined path shares that read.
     assert_eq!(
         read_count(&fixture),
-        28,
-        "adoption repeats the full exact authority proof after binding"
+        36,
+        "adoption and status each repeat exact authority after their response"
     );
     fixture.bound.fixture.state.lock().unwrap().calls.clear();
     let inspected = fixture
@@ -218,8 +221,8 @@ async fn native_proof_context_reduces_twenty_two_reads_to_nine_without_cross_cal
     assert!(inspected.status.unwrap().credential_ready);
     assert_eq!(
         read_count(&fixture),
-        9,
-        "4 authority + 2 fresh dispatch + 3 post-status home reads"
+        13,
+        "4 authority + 2 dispatch + 4 post-status authority + 3 home reads"
     );
     fixture.bound.fixture.state.lock().unwrap().calls.clear();
     fixture
@@ -230,7 +233,7 @@ async fn native_proof_context_reduces_twenty_two_reads_to_nine_without_cross_cal
         .unwrap();
     assert_eq!(
         read_count(&fixture),
-        9,
+        13,
         "next operation must acquire all fresh evidence again"
     );
     assert_eq!(fixture.transport.calls.load(Ordering::SeqCst), 3);
