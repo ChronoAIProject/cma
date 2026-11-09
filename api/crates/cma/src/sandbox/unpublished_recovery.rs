@@ -1,8 +1,13 @@
 //! Composition of model admission with exact retained-home/provider evidence.
+use layer3_adapter::recovery_diagnostics::{Observation, Reason, Stage};
 use std::sync::Arc;
 
+#[path = "unpublished_recovery_source.rs"]
+mod source;
+pub(crate) use source::verify_source;
+
 use layer2_core::sandbox::{
-    Sandbox, SandboxRecoveryConversationProof, SandboxStoreError, SandboxUnpublishedRecoveryProof,
+    SandboxRecoveryConversationProof, SandboxStoreError, SandboxUnpublishedRecoveryProof,
     SandboxUnpublishedRecoverySnapshot, SandboxUnpublishedRecoveryVerifier,
 };
 use layer3_adapter::{
@@ -27,6 +32,22 @@ impl UnpublishedRuntimeRecovery {
 #[async_trait::async_trait]
 impl SandboxUnpublishedRecoveryVerifier for UnpublishedRuntimeRecovery {
     async fn verify(
+        &self,
+        snapshot: &SandboxUnpublishedRecoverySnapshot,
+    ) -> Result<SandboxUnpublishedRecoveryProof, SandboxStoreError> {
+        let mut observation = Observation::new(Stage::Proof);
+        let result = self.verify_snapshot(snapshot).await;
+        observation.finish(match &result {
+            Ok(_) => Reason::Success,
+            Err(SandboxStoreError::Unavailable(_)) => Reason::Unavailable,
+            Err(_) => Reason::Ineligible,
+        });
+        result
+    }
+}
+
+impl UnpublishedRuntimeRecovery {
+    async fn verify_snapshot(
         &self,
         snapshot: &SandboxUnpublishedRecoverySnapshot,
     ) -> Result<SandboxUnpublishedRecoveryProof, SandboxStoreError> {
@@ -148,11 +169,12 @@ impl SandboxUnpublishedRecoveryVerifier for UnpublishedRuntimeRecovery {
             .inspect_recovery(&source)
             .await
             .map_err(store_failure)?;
-        verify_source(
+        source::verify_source_at(
             self.adapter.as_ref(),
             &snapshot.sandbox,
             &source,
             &self.deployment,
+            Stage::NativeAfter,
         )
         .await
         .map_err(store_failure)?;
@@ -175,57 +197,6 @@ impl SandboxUnpublishedRecoveryVerifier for UnpublishedRuntimeRecovery {
     }
 }
 
-pub(crate) async fn verify_source(
-    adapter: &dyn SandboxAdapter,
-    sandbox: &Sandbox,
-    source: &RuntimeRecoveryInspectionRequest,
-    deployment: &str,
-) -> layer3_adapter::Result<()> {
-    let binding = sandbox
-        .runtime
-        .as_ref()
-        .or(sandbox.lifecycle.suspended_runtime.as_deref())
-        .ok_or_else(invalid)?;
-    if binding.runtime_id != source.runtime.as_str()
-        || binding.provision_generation != Some(source.identity.generation)
-        || binding.boot_id.as_deref() != Some(source.boot_id.as_str())
-        || sandbox.id.as_str() != source.identity.sandbox_id
-    {
-        return Err(invalid());
-    }
-    let attachment = sandbox
-        .lifecycle
-        .home
-        .as_ref()
-        .filter(|home| !home.released)
-        .and_then(|home| home.attachment())
-        .ok_or_else(invalid)?;
-    if attachment.identity()? != source.identity.home_identity {
-        return Err(invalid());
-    }
-    let volumes = adapter.home_volumes().ok_or_else(invalid)?;
-    volumes.verify(&attachment).await?;
-    let request =
-        super::runtime_attachment::retained_runtime_request(sandbox, binding, deployment)?;
-    let inspection = adapter
-        .inspect_runtime(&request)
-        .await?
-        .ok_or_else(invalid)?;
-    if inspection.observation.handle != source.runtime
-        || inspection.observation.sandbox_id != source.identity.sandbox_id
-        || inspection.observation.generation != source.identity.generation
-        || !inspection.observation.lifecycle.is_running()
-    {
-        return Err(invalid());
-    }
-    let status = inspection.status.ok_or_else(invalid)?;
-    status.validate_for(&source.identity)?;
-    if status.boot_id != source.boot_id || status.restore_pending {
-        return Err(invalid());
-    }
-    volumes.verify(&attachment).await
-}
-
 pub(crate) fn histories(
     histories: Vec<RecoveryConversationHistory>,
 ) -> Result<Vec<SandboxRecoveryConversationProof>, SandboxStoreError> {
@@ -241,14 +212,10 @@ pub(crate) fn histories(
         .collect()
 }
 
-fn invalid() -> AdapterError {
-    AdapterError::Rejected("retained recovery runtime or home authority changed".into())
-}
-
 fn refused() -> SandboxStoreError {
     SandboxStoreError::InvalidTransaction("original recovery authority is incomplete")
 }
 
-fn store_failure(_: AdapterError) -> SandboxStoreError {
-    SandboxStoreError::Unavailable("original runtime recovery evidence is unavailable".into())
+fn store_failure(error: AdapterError) -> SandboxStoreError {
+    SandboxStoreError::Unavailable(error.to_string())
 }
