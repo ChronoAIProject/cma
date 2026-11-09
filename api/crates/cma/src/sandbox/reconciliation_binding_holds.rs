@@ -43,6 +43,15 @@ impl Hold {
 }
 
 impl BindingHolds {
+    /// Scheduling hint only: the same fresh authority checks still run on retry.
+    pub(super) fn reserved_retry_due(&self, id: &SandboxId) -> bool {
+        self.0.lock().unwrap().get(id).is_some_and(|hold| {
+            hold.attempts > 0
+                && Instant::now() >= hold.ready_at
+                && matches!(hold.reason, "deadline" | "cancelled")
+        })
+    }
+
     pub(super) fn begin<'a>(
         &'a self,
         sandbox: &Sandbox,

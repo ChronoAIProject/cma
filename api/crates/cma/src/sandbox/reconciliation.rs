@@ -10,6 +10,7 @@ use layer2_core::sandbox::store::{
 };
 use layer2_core::sandbox::{AgentService, Sandbox, SandboxPolicySource, SandboxStatus};
 use layer2_core::{rfc3339_at, seconds_from_rfc3339, SandboxId};
+use layer3_adapter::binding_diagnostics::{adapter_outcome, measure, Outcome, Stage};
 use layer3_adapter::{RuntimeAdoptionRequest, RuntimeObservation, SandboxAdapter};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -32,6 +33,8 @@ mod updates;
 mod authority;
 #[path = "reconciliation_binding_holds.rs"]
 mod binding_holds;
+#[path = "reconciliation_diagnostics.rs"]
+mod diagnostics;
 #[path = "reconciliation_sweep.rs"]
 mod sweep;
 #[path = "reconciliation_telemetry.rs"]
@@ -240,11 +243,13 @@ impl SandboxReconciler {
         // arriving while it is in flight must supersede this evidence rather
         // than being hidden by a later wall-clock timestamp.
         let boundary = fresh_recovery_boundary(sandbox, now);
-        let fresh = self
-            .adapter
-            .runtime_inventory()
-            .await
-            .map_err(provider_error)?;
+        let fresh = measure(
+            Stage::FinalLossObservation,
+            self.adapter.runtime_inventory(),
+            adapter_outcome,
+        )
+        .await
+        .map_err(provider_error)?;
         self.binding_holds.observe_inventory(sandbox, &fresh);
         if sandbox.status == SandboxStatus::Retiring
             && fresh.iter().any(|item| {
@@ -307,12 +312,17 @@ impl SandboxReconciler {
             sandbox_spec(sandbox, &self.deployment_id),
         )
         .with_expected_image(&binding.runtime_version);
-        if self
-            .adapter
-            .adopt_runtime(&request)
-            .await
-            .map_err(provider_error)?
-            .is_none()
+        if measure(
+            Stage::Adoption,
+            self.adapter.adopt_runtime(&request),
+            |result| match result {
+                Ok(None) => Outcome::Absent,
+                _ => adapter_outcome(result),
+            },
+        )
+        .await
+        .map_err(provider_error)?
+        .is_none()
         {
             return Ok(false);
         }
@@ -326,29 +336,49 @@ impl SandboxReconciler {
             .map_err(|error| corrupt(&error.to_string()))?;
         }
         if sandbox.lifecycle.home.is_some() {
-            let status = self
-                .adapter
-                .runtime_status(&observation.handle)
-                .await
-                .map_err(provider_error)?;
-            if !next
-                .runtime_process_matches(&status)
-                .map_err(|error| corrupt(&error.to_string()))?
-                || (matches!(
-                    sandbox.status,
-                    SandboxStatus::Active
-                        | SandboxStatus::CredentialRotating
-                        | SandboxStatus::Pausing
-                ) && (!status.installation_ready || !status.credential_ready))
-            {
+            let accepted = measure(
+                Stage::Status,
+                async {
+                    let status = self
+                        .adapter
+                        .runtime_status(&observation.handle)
+                        .await
+                        .map_err(provider_error)?;
+                    if !next
+                        .runtime_process_matches(&status)
+                        .map_err(|error| corrupt(&error.to_string()))?
+                        || (matches!(
+                            sandbox.status,
+                            SandboxStatus::Active
+                                | SandboxStatus::CredentialRotating
+                                | SandboxStatus::Pausing
+                        ) && (!status.installation_ready || !status.credential_ready))
+                    {
+                        return Ok(false);
+                    }
+                    let expected = next.runtime.clone().expect("adopted runtime is bound");
+                    next.record_runtime_boot(&expected, &status, rfc3339_at(now))
+                        .map_err(|error| corrupt(&error.to_string()))?;
+                    Ok(true)
+                },
+                |result| match result {
+                    Ok(false) => Outcome::Refused,
+                    _ => diagnostics::store_outcome(result),
+                },
+            )
+            .await?;
+            if !accepted {
                 return Ok(false);
             }
-            let expected = next.runtime.clone().expect("adopted runtime is bound");
-            next.record_runtime_boot(&expected, &status, rfc3339_at(now))
-                .map_err(|error| corrupt(&error.to_string()))?;
         }
+
         if next != *sandbox {
-            self.store.save_sandbox(sandbox.revision, next).await?;
+            measure(
+                Stage::Transaction,
+                self.store.save_sandbox(sandbox.revision, next),
+                diagnostics::store_outcome,
+            )
+            .await?;
         }
         Ok(true)
     }
@@ -363,20 +393,23 @@ impl SandboxReconciler {
         // Pending/absent observation authorize recovery over newer Agent work.
         let interruption_cause =
             interruption::observe(self.adapter.as_ref(), sandbox, observed_at).await;
-        let outcome =
-            self.store
-                .recover_runtime_loss(SandboxRuntimeLossRequest {
-                    sandbox_id: sandbox.id.clone(),
-                    expected_revision: sandbox.revision,
-                    expected_runtime: sandbox.runtime.clone(),
-                    retain_runtime: sandbox.lifecycle.home.is_some()
-                        && sandbox.runtime.as_ref().is_some_and(|binding| {
-                            binding.runtime_id.starts_with("agent-sandbox:")
-                        }),
-                    interruption_cause,
-                    observed_at: rfc3339_at(observed_at),
-                })
-                .await?;
+        let outcome = measure(
+            Stage::Transaction,
+            self.store.recover_runtime_loss(SandboxRuntimeLossRequest {
+                sandbox_id: sandbox.id.clone(),
+                expected_revision: sandbox.revision,
+                expected_runtime: sandbox.runtime.clone(),
+                retain_runtime: sandbox.lifecycle.home.is_some()
+                    && sandbox
+                        .runtime
+                        .as_ref()
+                        .is_some_and(|binding| binding.runtime_id.starts_with("agent-sandbox:")),
+                interruption_cause,
+                observed_at: rfc3339_at(observed_at),
+            }),
+            diagnostics::loss_outcome,
+        )
+        .await?;
         tracing::info!(outcome = ?outcome, "runtime loss reconciliation outcome");
         Ok(matches!(
             outcome,
