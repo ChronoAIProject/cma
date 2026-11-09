@@ -220,7 +220,7 @@ async fn native_status_reuses_only_call_local_proof_and_keeps_post_status_home_r
                 .unwrap();
             assert_eq!(result.observation.handle, fixture.bound.runtime);
             assert!(result.status.unwrap().credential_ready);
-            assert_eq!(reads(&fixture), if explicit_policy { 9 } else { 7 });
+            assert_eq!(reads(&fixture), if explicit_policy { 15 } else { 11 });
             assert_eq!(
                 fixture.stream.requests.load(Ordering::SeqCst),
                 expected_calls
@@ -238,7 +238,7 @@ async fn native_status_separate_client_keeps_original_dispatch_authority_reads()
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(reads(&fixture), 9);
+    assert_eq!(reads(&fixture), 13);
     assert_eq!(fixture.stream.requests.load(Ordering::SeqCst), 1);
 }
 
@@ -362,7 +362,7 @@ async fn native_status_post_reply_home_change_and_retirement_still_fail() {
         .inspect_runtime(&fixture.adoption)
         .await
         .is_err());
-    assert_eq!(reads(&fixture), 7);
+    assert_eq!(reads(&fixture), 8);
     assert_eq!(fixture.stream.requests.load(Ordering::SeqCst), 1);
 
     let other = self::fixture(false, true).await;
@@ -376,3 +376,6 @@ async fn native_status_post_reply_home_change_and_retirement_still_fail() {
     drop(held);
     assert_eq!(other.stream.requests.load(Ordering::SeqCst), 1);
 }
+
+#[path = "binding_inflight_tests.rs"]
+mod inflight;

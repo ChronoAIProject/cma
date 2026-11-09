@@ -4,9 +4,10 @@ use crate::agent_sandbox::PodBinding;
 
 const MAX_ASSIGNMENTS: usize = 1024;
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct Assignment {
-    pod: PodBinding,
+    pub(super) pod: PodBinding,
+    pub(super) request: ProviderSandboxRequest,
     request_sha256: String,
 }
 
@@ -22,6 +23,7 @@ impl Assignment {
         }
         Ok(Some(Self {
             pod: pod.clone(),
+            request: request.clone(),
             request_sha256: crate::provider_request_digest(request)?,
         }))
     }
