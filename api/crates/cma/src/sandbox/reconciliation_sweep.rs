@@ -37,7 +37,6 @@ struct Sweep {
     authority: Authority,
     binding_cursor: Option<SandboxId>,
     pending_binding: Option<SandboxId>,
-    recovery_candidate: Option<SandboxId>,
     runtime_index: usize,
     claim_inventory: Option<Box<dyn layer3_adapter::InventoryCursor<NativePoolClaim>>>,
     home_inventory: Option<Box<dyn layer3_adapter::InventoryCursor<HomeVolumeAttachment>>>,
@@ -56,7 +55,6 @@ impl Default for Sweep {
             authority: Authority::default(),
             binding_cursor: None,
             pending_binding: None,
-            recovery_candidate: None,
             runtime_index: 0,
             claim_inventory: None,
             home_inventory: None,
@@ -113,23 +111,17 @@ impl Sweep {
                     .map_err(provider_error)?;
                 self.phase = Phase::Authority;
             }
-            Phase::Authority | Phase::RecoveryAuthority => {
+            Phase::Authority => {
                 let page = reconciler
                     .store
                     .sandbox_runtime_authority(&self.authority.request)
                     .await?;
                 let items = page.items.len() as u64;
                 if self.authority.accept(page)? {
-                    self.phase = if self.phase == Phase::Authority {
-                        reconciler
-                            .binding_holds
-                            .retain_authority(&self.authority.items);
-                        Phase::Bindings
-                    } else {
-                        self.recovery_candidate =
-                            reconciler.failed_runtime_recovery_candidate(&self.authority.items);
-                        Phase::Recovery
-                    };
+                    reconciler
+                        .binding_holds
+                        .retain_authority(&self.authority.items);
+                    self.phase = Phase::Bindings;
                 }
                 return Ok(items);
             }
@@ -240,23 +232,7 @@ impl Sweep {
                     self.homes.pop_front();
                     return Ok(u64::from(!held));
                 }
-                self.phase = if reconciler.failed_runtime_recovery.is_some() {
-                    Phase::RecoveryAuthority
-                } else {
-                    Phase::Policy
-                };
-            }
-            Phase::Recovery => {
-                let items = match &self.recovery_candidate {
-                    Some(id) if !reconciler.binding_holds.contains(id.as_str()) => {
-                        reconciler.recover_failed_unpublished_runtime(id).await;
-                        1
-                    }
-                    _ => 0,
-                };
-                self.authority = Authority::default();
                 self.phase = Phase::Policy;
-                return Ok(items);
             }
             Phase::Policy => {
                 self.phase = if reconciler.automatic_pause_threshold(now).await?.is_some() {

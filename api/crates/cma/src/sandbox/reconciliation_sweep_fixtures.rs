@@ -90,6 +90,21 @@ impl SandboxStore for Store {
     async fn save_sandbox(&self, revision: u64, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
         self.inner.save_sandbox(revision, sandbox).await
     }
+    async fn unpublished_runtime_recovery_snapshot(
+        &self,
+        id: &SandboxId,
+    ) -> Result<SandboxUnpublishedRecoverySnapshot, SandboxStoreError> {
+        self.observe("recovery_snapshot", id.as_str()).await?;
+        self.inner.unpublished_runtime_recovery_snapshot(id).await
+    }
+    async fn admit_unpublished_runtime_recovery(
+        &self,
+        request: SandboxUnpublishedRecoveryRequest,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        self.observe("recovery_admit", request.snapshot.sandbox.id.as_str())
+            .await?;
+        self.inner.admit_unpublished_runtime_recovery(request).await
+    }
     async fn list_sandboxes(
         &self,
         owner: &SubjectId,

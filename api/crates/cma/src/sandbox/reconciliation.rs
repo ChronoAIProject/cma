@@ -29,6 +29,9 @@ mod homes;
 #[path = "reconciliation_updates.rs"]
 mod updates;
 
+#[path = "reconciliation_recovery.rs"]
+mod recovery;
+
 #[path = "reconciliation_authority.rs"]
 mod authority;
 #[path = "reconciliation_binding_holds.rs"]
@@ -58,7 +61,7 @@ pub(crate) struct SandboxReconciler {
     profile_agents: Option<Arc<AgentService>>,
     runtime_version: Option<String>,
     failed_runtime_recovery: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
-    recovery_schedule_cursor: std::sync::atomic::AtomicUsize,
+    recovery_schedule: tokio::sync::Mutex<recovery::Schedule>,
     progress: tokio::sync::Mutex<Option<sweep::Progress>>,
     binding_holds: binding_holds::BindingHolds,
 }
@@ -83,7 +86,7 @@ impl SandboxReconciler {
             profile_agents: None,
             runtime_version: None,
             failed_runtime_recovery: None,
-            recovery_schedule_cursor: std::sync::atomic::AtomicUsize::new(0),
+            recovery_schedule: tokio::sync::Mutex::new(recovery::Schedule::default()),
             progress: tokio::sync::Mutex::new(None),
             binding_holds: Default::default(),
         }
