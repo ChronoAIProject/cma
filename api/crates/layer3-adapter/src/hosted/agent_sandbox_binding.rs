@@ -4,9 +4,10 @@ use crate::agent_sandbox::PodBinding;
 
 const MAX_ASSIGNMENTS: usize = 1024;
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct Assignment {
-    pod: PodBinding,
+    pub(super) pod: PodBinding,
+    pub(super) request: ProviderSandboxRequest,
     request_sha256: String,
 }
 
@@ -22,6 +23,7 @@ impl Assignment {
         }
         Ok(Some(Self {
             pod: pod.clone(),
+            request: request.clone(),
             request_sha256: crate::provider_request_digest(request)?,
         }))
     }
@@ -53,10 +55,11 @@ impl AgentSandboxBackend {
     ) -> Result<()> {
         // The caller has freshly validated the original Claim/Sandbox/PVC and
         // complete request. A receipt never replaces that current authority proof.
-        let pod = self
-            .client
-            .wait_ready(handle, Duration::from_secs(180))
-            .await?;
+        let pod = timed(
+            Stage::NativeReadiness,
+            self.client.wait_ready(handle, Duration::from_secs(180)),
+        )
+        .await?;
         let candidate = Assignment::for_request(&pod, request)?;
         let acknowledged = candidate.as_ref().is_some_and(|candidate| {
             self.assignments.lock().unwrap().get(handle) == Some(candidate)
@@ -77,10 +80,11 @@ impl AgentSandboxBackend {
         request: &ProviderSandboxRequest,
     ) -> Result<()> {
         self.forget_assignment(handle);
-        let assigned = self
-            .client
-            .assign_pool_runtime(handle, pod, request)
-            .await?;
+        let assigned = timed(
+            Stage::NativeAssignment,
+            self.client.assign_pool_runtime(handle, pod, request),
+        )
+        .await?;
         if assigned.is_some() {
             if let Some(candidate) = Assignment::for_request(pod, request)? {
                 let mut assignments = self.assignments.lock().unwrap();
