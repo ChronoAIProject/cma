@@ -21,6 +21,7 @@ use std::{
 // fresh ownership checks + cleanup. No pending I/O survives a yielded attempt.
 const SLICE: Duration = Duration::from_secs(20);
 const OPERATION: Duration = Duration::from_secs(5);
+const BINDING_OPPORTUNITY: Duration = Duration::from_secs(20);
 
 #[derive(Default)]
 pub(super) struct Progress {
@@ -72,6 +73,25 @@ impl Default for Sweep {
 mod schedule;
 
 impl Sweep {
+    fn next_binding(&self) -> Option<SandboxId> {
+        use std::ops::Bound::{Excluded, Unbounded};
+        self.authority
+            .items
+            .range((
+                self.binding_cursor.as_ref().map_or(Unbounded, Excluded),
+                Unbounded,
+            ))
+            .next()
+            .map(|(id, _)| id.clone())
+    }
+
+    fn reserved_binding_due(&self, reconciler: &SandboxReconciler) -> bool {
+        self.phase == Phase::Bindings
+            && self
+                .next_binding()
+                .is_some_and(|id| reconciler.binding_holds.reserved_retry_due(&id))
+    }
+
     fn is_binding_phase(&self) -> bool {
         matches!(
             self.phase,
@@ -114,16 +134,7 @@ impl Sweep {
                 return Ok(items);
             }
             Phase::Bindings => {
-                use std::ops::Bound::{Excluded, Unbounded};
-                let next = self
-                    .authority
-                    .items
-                    .range((
-                        self.binding_cursor.as_ref().map_or(Unbounded, Excluded),
-                        Unbounded,
-                    ))
-                    .next()
-                    .map(|(id, _)| id.clone());
+                let next = self.next_binding();
                 if let Some(id) = next {
                     // Advance before I/O: cancellation must not pin this cursor.
                     // The guard retains protection until a successful fresh check.
@@ -137,7 +148,13 @@ impl Sweep {
                     self.pending_binding = Some(id.clone());
                     // A retained page is discovery only. Reread before adoption
                     // or recovery so a previous attempt's write is replay-safe.
-                    let complete = if let Some(sandbox) = reconciler.store.get_sandbox(&id).await? {
+                    let read = layer3_adapter::binding_diagnostics::measure(
+                        layer3_adapter::binding_diagnostics::Stage::DurableRead,
+                        reconciler.store.get_sandbox(&id),
+                        super::diagnostics::store_outcome,
+                    )
+                    .await?;
+                    let complete = if let Some(sandbox) = read {
                         hold.observe(&sandbox, &self.inventory);
                         sandbox
                             .validate()

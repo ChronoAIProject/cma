@@ -1,4 +1,5 @@
 use super::{HostedAgentOpenSettings, HostedBackend, HostedControlTransport};
+use crate::binding_diagnostics::{adapter as timed, Stage};
 use crate::{
     agent_sandbox::AgentSandboxClient,
     provider::ProviderSandboxRequest,
@@ -19,6 +20,8 @@ pub struct AgentSandboxBackend {
 mod binding;
 #[path = "agent_sandbox_context.rs"]
 mod context;
+#[path = "agent_sandbox_status.rs"]
+mod status;
 use context::observation;
 pub use context::NativeStatusInspection;
 
@@ -231,14 +234,23 @@ impl HostedBackend for AgentSandboxBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> Result<Option<RuntimeObservation>> {
-        let Some(object) = self.client.validate_request(handle, request).await? else {
+        let Some(object) = timed(
+            Stage::NativeIdentity,
+            self.client.validate_request(handle, request),
+        )
+        .await?
+        else {
             return Ok(None);
         };
         self.bind_adopted(handle, request, &object).await?;
         // The first object authorized binding, but readiness and assignment can
         // change while that operation waits. Revalidate the exact provider
         // object before exposing a current Running observation.
-        self.refreshed_adoption_observation(handle, request).await
+        timed(
+            Stage::NativeIdentity,
+            self.refreshed_adoption_observation(handle, request),
+        )
+        .await
     }
     async fn inspect_native_runtime(
         &self,
@@ -296,6 +308,9 @@ impl HostedBackend for AgentSandboxBackend {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> Result<ResponseFrame> {
+        if let RequestFrame::RuntimeStatus(status) = request {
+            return self.exchange_bound_status(handle, status).await;
+        }
         self.transport.exchange(handle, request).await
     }
 
