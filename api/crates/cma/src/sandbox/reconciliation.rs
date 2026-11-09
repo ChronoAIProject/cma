@@ -64,6 +64,11 @@ pub(crate) struct SandboxReconciler {
 }
 
 impl SandboxReconciler {
+    #[cfg(test)]
+    pub(crate) fn binding_is_held(&self, id: &SandboxId) -> bool {
+        self.binding_holds.contains(id.as_str())
+    }
+
     pub(crate) fn new(
         store: Arc<dyn ReconciliationStore>,
         adapter: Arc<dyn SandboxAdapter>,
@@ -376,6 +381,21 @@ impl SandboxReconciler {
             measure(
                 Stage::Transaction,
                 self.store.save_sandbox(sandbox.revision, next),
+                diagnostics::store_outcome,
+            )
+            .await?;
+        } else {
+            // An already recorded boot needs no write CAS. Still fence the
+            // current attempt before releasing its hold: status may have
+            // completed after another durable writer changed the parent.
+            measure(
+                Stage::DurableRead,
+                async {
+                    if self.store.get_sandbox(&sandbox.id).await?.as_ref() != Some(sandbox) {
+                        return Err(SandboxStoreError::Conflict);
+                    }
+                    Ok(())
+                },
                 diagnostics::store_outcome,
             )
             .await?;
