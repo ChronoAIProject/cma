@@ -63,28 +63,10 @@ impl RuntimeRecovery for CodexAdapter {
         let input = recovery_input(request)?;
         let output = self.provider_recovery_command(request, &input).await?;
         self.verify_recovery_identity(request).await?;
-        let plan = output.get("plan").ok_or_else(invalid)?.clone();
-        if output["status"] != "inspected"
-            || plan["runtime"] != input["runtime"]
-            || plan["agents"] != input["agents"]
-        {
-            return Err(invalid());
-        }
-        let digest = plan_digest(&plan)?;
-        if output["planSha256"] != digest {
-            return Err(invalid());
-        }
-        let histories = checked_histories(request, &plan["histories"]).inspect_err(|_| {
-            Observation::new(Stage::History).finish(Reason::CorruptHistory);
-        })?;
-        Ok(RuntimeRecoveryInspection {
-            provider_plan: plan,
-            provider_plan_sha256: digest,
-            histories,
-            // A live supervisor is present. Empty pending Workspace recovery
-            // needs separate provider absence evidence and must not use this.
-            runtime_process_absent: false,
-        })
+        Observation::new(Stage::History).adapter(
+            checked_inspection(request, &input, output),
+            Reason::CorruptHistory,
+        )
     }
 
     async fn quiesce_recovery(
@@ -149,14 +131,21 @@ impl CodexAdapter {
         &self,
         request: &RuntimeRecoveryInspectionRequest,
     ) -> Result<()> {
-        let status = self.runtime_status(&request.runtime).await?;
-        status.validate_for(&request.identity)?;
+        let mut observation = Observation::new(Stage::History);
+        let status = observation.adapter(
+            self.runtime_status(&request.runtime).await,
+            Reason::NativeChanged,
+        )?;
+        observation.adapter(
+            status.validate_for(&request.identity),
+            Reason::NativeChanged,
+        )?;
         if status.boot_id != request.boot_id {
-            Observation::new(Stage::History).finish(Reason::BootMismatch);
+            observation.finish(Reason::BootMismatch);
             return Err(invalid());
         }
         if status.restore_pending {
-            Observation::new(Stage::History).finish(Reason::RestorePending);
+            observation.finish(Reason::RestorePending);
             return Err(invalid());
         }
         Ok(())
@@ -208,6 +197,33 @@ impl CodexAdapter {
         }
         Ok(response)
     }
+}
+
+fn checked_inspection(
+    request: &RuntimeRecoveryInspectionRequest,
+    input: &Value,
+    output: Value,
+) -> Result<RuntimeRecoveryInspection> {
+    let plan = output.get("plan").ok_or_else(invalid)?.clone();
+    if output["status"] != "inspected"
+        || plan["runtime"] != input["runtime"]
+        || plan["agents"] != input["agents"]
+    {
+        return Err(invalid());
+    }
+    let digest = plan_digest(&plan)?;
+    if output["planSha256"] != digest {
+        return Err(invalid());
+    }
+    let histories = checked_histories(request, &plan["histories"])?;
+    Ok(RuntimeRecoveryInspection {
+        provider_plan: plan,
+        provider_plan_sha256: digest,
+        histories,
+        // A live supervisor is present. Empty pending Workspace recovery
+        // needs separate provider absence evidence and must not use this.
+        runtime_process_absent: false,
+    })
 }
 
 fn recovery_input(request: &RuntimeRecoveryInspectionRequest) -> Result<Value> {
