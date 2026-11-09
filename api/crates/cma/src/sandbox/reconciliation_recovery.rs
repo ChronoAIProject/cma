@@ -81,11 +81,15 @@ impl Schedule {
                 break;
             }
             observation.finish(Reason::Success);
-            if self.pending.is_none() {
-                self.request = page_authority.request;
-                if complete {
-                    return Ok(());
-                }
+            if self.pending.is_some() {
+                // Discovery cannot spend a selected candidate's proof budget.
+                // Retain only its ID; the next recovery turn starts an empty
+                // bounded slice and rereads all authority before any proof.
+                return Ok(());
+            }
+            self.request = page_authority.request;
+            if complete {
+                return Ok(());
             }
             if Instant::now() >= deadline {
                 Observation::new(Stage::Discovery).finish(Reason::IncompleteAuthority);
