@@ -23,16 +23,41 @@ impl SandboxReconciler {
         let _holds_report = self.binding_holds.report_on_drop();
         let mut attempt = telemetry.attempt();
         let started = tokio::time::Instant::now();
+        let mut dispatched = false;
         let complete = loop {
             let refreshing = binding_refresh.is_some();
             let current = binding_refresh.as_mut().unwrap_or(&mut *sweep);
+            let reserved = current.reserved_binding_due(self);
+            // Reserve before cursor advancement or I/O. Even a fast preceding
+            // step uses this slice; a slow retry starts in the next empty one.
+            if reserved && dispatched {
+                break false;
+            }
+            let budget = if reserved {
+                BINDING_OPPORTUNITY
+            } else {
+                OPERATION
+            };
+            let deadline = if reserved {
+                (tokio::time::Instant::now() + budget).min(started + SLICE)
+            } else {
+                tokio::time::Instant::now() + budget
+            };
             if !refreshing && !current.is_binding_phase() {
                 // Set before awaiting, so errors, deadlines and outer cancellation
                 // cannot strand future binding work behind this retained item.
                 *refresh_required = true;
             }
             attempt.start(current.phase);
-            match tokio::time::timeout(OPERATION, current.step(self, now)).await {
+            dispatched = true;
+            let binding_step = current.phase == Phase::Bindings;
+            let operation = tokio::time::timeout_at(deadline, current.step(self, now));
+            let result = if binding_step {
+                layer3_adapter::binding_diagnostics::scope(deadline, operation).await
+            } else {
+                operation.await
+            };
+            match result {
                 Ok(Ok(items)) => attempt.record(items),
                 Ok(Err(error)) if current.pending_binding.is_some() => {
                     let reason = match error {
@@ -71,7 +96,7 @@ impl SandboxReconciler {
             if binding_refresh.is_none() && sweep.phase == Phase::Complete {
                 break true;
             }
-            if started.elapsed() >= SLICE {
+            if reserved || started.elapsed() >= SLICE {
                 break false;
             }
             tokio::task::yield_now().await;
