@@ -98,9 +98,14 @@ async fn original_evidence_keeps_typed_refusals_and_never_weakens_boot_or_home_p
         ("boot", "BootMismatch"),
         ("home", "HomeChanged"),
         ("restore", "RestorePending"),
+        ("invalid_restore", "NativeChanged"),
         ("history_missing", "MissingHistory"),
         ("history_invalid", "CorruptHistory"),
         ("history_incomplete", "CorruptHistory"),
+        ("plan_missing", "CorruptHistory"),
+        ("plan_mismatch", "CorruptHistory"),
+        ("digest_mismatch", "CorruptHistory"),
+        ("history_set", "CorruptHistory"),
         ("deadline", "Deadline"),
         ("replaced_after", "BootMismatch"),
     ] {
@@ -109,7 +114,20 @@ async fn original_evidence_keeps_typed_refusals_and_never_weakens_boot_or_home_p
         match case {
             "boot" => current.boot_id = "a".repeat(32),
             "home" => {}
-            "restore" => current.restore_pending = true,
+            "restore" => {
+                current.restore_pending = true;
+                current.installation_ready = false;
+                current.agent_processes = 0;
+                current
+                    .validate_for(&layer3_adapter::RuntimeStatusRequest {
+                        sandbox_id: current.sandbox_id.clone(),
+                        generation: current.generation,
+                        home_identity: current.home_identity.clone(),
+                    })
+                    .unwrap();
+            }
+            // Contradictory status is rejected before it can be restore proof.
+            "invalid_restore" => current.restore_pending = true,
             "valid" => {}
             "replaced_after" => {
                 fixture
