@@ -6,6 +6,9 @@ use std::sync::{Arc, Mutex};
 mod support;
 use support::{candidate, recovery_setup, Verify};
 
+#[path = "reconciliation_recovery_opportunity_tests.rs"]
+mod opportunity_tests;
+
 // Preserve PR1's absent/held/attempted accounting regression on the separate lane.
 #[tokio::test(start_paused = true)]
 async fn recovery_progress_counts_attempted_candidates_only() {
@@ -29,6 +32,13 @@ async fn recovery_progress_counts_attempted_candidates_only() {
             .finish();
         let _guard = tracing::subscriber::set_default(subscriber);
         let mut lane = super::super::super::recovery::Schedule::default();
+        lane.run(&reconciler).await.unwrap();
+        assert!(verifier.calls.lock().unwrap().is_empty());
+        assert!(store.keys("get").is_empty());
+        assert!(!String::from_utf8(output.0.lock().unwrap().clone())
+            .unwrap()
+            .lines()
+            .any(|line| line.contains("stage=Opportunity") && line.contains("attempted=1")));
         lane.run(&reconciler).await.unwrap();
         let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
         assert_eq!(
@@ -105,6 +115,14 @@ async fn denied_background_slot_does_not_poll_or_advance_a_due_recovery_turn() {
             .unwrap(),
         Some(false)
     );
+    assert!(verifier.calls.lock().unwrap().is_empty());
+    // Ordinary work still separates discovery from the reserved proof turn.
+    work.run_resumable(|| reconciler.run_due(SystemTime::now()))
+        .await
+        .unwrap();
+    work.run_resumable(|| reconciler.run_due(SystemTime::now()))
+        .await
+        .unwrap();
     assert_eq!(*verifier.calls.lock().unwrap(), [sandbox(0).id.clone()]);
 }
 
@@ -118,6 +136,7 @@ async fn cancellation_after_proof_does_not_reuse_proof_or_pin_selection() {
         .unwrap()
         .unwrap();
     let mut lane = super::super::super::recovery::Schedule::default();
+    lane.run(&reconciler).await.unwrap();
     store.fail("recovery_admit", "sbx_000", Failure::Deadline);
     assert!(
         tokio::time::timeout(Duration::from_secs(1), lane.run(&reconciler))
@@ -133,6 +152,8 @@ async fn cancellation_after_proof_does_not_reuse_proof_or_pin_selection() {
             .unwrap(),
         before
     );
+    lane.run(&reconciler).await.unwrap();
+    lane.run(&reconciler).await.unwrap();
     lane.run(&reconciler).await.unwrap();
     lane.run(&reconciler).await.unwrap();
     assert_eq!(
@@ -162,6 +183,8 @@ async fn discovery_yields_at_slice_bound_and_resumes_from_validated_page() {
     let started = Instant::now();
     lane.run(&reconciler).await.unwrap();
     assert_eq!(started.elapsed(), Duration::from_secs(20));
+    assert!(verifier.calls.lock().unwrap().is_empty());
+    lane.run(&reconciler).await.unwrap();
     assert!(verifier.calls.lock().unwrap().is_empty());
     lane.run(&reconciler).await.unwrap();
     assert_eq!(*verifier.calls.lock().unwrap(), [sandbox(22).id.clone()]);
@@ -195,10 +218,15 @@ async fn six_candidates_progress_past_refusing_first_with_an_unending_cleanup_ta
         .await
         .unwrap();
     for index in 0..7 {
-        store.fail("runtime_fence", "sbx_orphan", Failure::Unavailable);
-        assert!(reconciler.run_due(SystemTime::now()).await.is_err());
-        assert!(!reconciler.run_due(SystemTime::now()).await.unwrap());
-        assert_eq!(verifier.calls.lock().unwrap().len(), index + 1);
+        for dispatch in [false, true] {
+            store.fail("runtime_fence", "sbx_orphan", Failure::Unavailable);
+            assert!(reconciler.run_due(SystemTime::now()).await.is_err());
+            assert!(!reconciler.run_due(SystemTime::now()).await.unwrap());
+            assert_eq!(
+                verifier.calls.lock().unwrap().len(),
+                index + usize::from(dispatch)
+            );
+        }
         assert!(reconciler
             .adapter
             .runtime_inventory()
@@ -239,9 +267,11 @@ async fn six_candidates_progress_past_refusing_first_with_an_unending_cleanup_ta
     );
     assert!(store.keys("authority").iter().any(|key| key == "sbx_005"));
     // Another refused attempt still rotates; it cannot monopolize binding work.
-    store.fail("runtime_fence", "sbx_orphan", Failure::Unavailable);
-    assert!(reconciler.run_due(SystemTime::now()).await.is_err());
-    reconciler.run_due(SystemTime::now()).await.unwrap();
+    for _ in 0..2 {
+        store.fail("runtime_fence", "sbx_orphan", Failure::Unavailable);
+        assert!(reconciler.run_due(SystemTime::now()).await.is_err());
+        reconciler.run_due(SystemTime::now()).await.unwrap();
+    }
     assert_eq!(verifier.calls.lock().unwrap().last(), Some(&sandbox(0).id));
 }
 
@@ -258,12 +288,14 @@ async fn held_candidates_advance_without_admission_or_retiring_any_hold() {
     // The discovery lane never completes/retains the ordinary authority scan.
     let mut lane = super::super::super::recovery::Schedule::default();
     lane.run(&reconciler).await.unwrap();
+    lane.run(&reconciler).await.unwrap();
     assert_eq!(*verifier.calls.lock().unwrap(), [sandbox(1).id.clone()]);
     assert!(reconciler.binding_holds.contains(held.id.as_str()));
     assert_eq!(
         store.inner.get_sandbox(&held.id).await.unwrap().unwrap(),
         held
     );
+    lane.run(&reconciler).await.unwrap();
     lane.run(&reconciler).await.unwrap();
     assert_eq!(
         *verifier.calls.lock().unwrap(),
@@ -276,13 +308,17 @@ async fn timeout_advances_and_restart_rereads_without_rearming_admitted_work() {
     let (store, reconciler, verifier) = recovery_setup(3, None).await;
     let mut lane = super::super::super::recovery::Schedule::default();
     store.fail("recovery_snapshot", "sbx_000", Failure::Deadline);
+    lane.run(&reconciler).await.unwrap();
     let started = Instant::now();
     lane.run(&reconciler).await.unwrap();
     assert_eq!(started.elapsed(), Duration::from_secs(20));
     lane.run(&reconciler).await.unwrap();
+    lane.run(&reconciler).await.unwrap();
     assert_eq!(*verifier.calls.lock().unwrap(), [sandbox(1).id.clone()]);
     // Restart loses scheduling hints only; fresh discovery excludes committed work.
     let mut restarted = super::super::super::recovery::Schedule::default();
+    restarted.run(&reconciler).await.unwrap();
+    restarted.run(&reconciler).await.unwrap();
     restarted.run(&reconciler).await.unwrap();
     restarted.run(&reconciler).await.unwrap();
     assert_eq!(
