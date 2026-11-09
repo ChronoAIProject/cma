@@ -3,6 +3,9 @@ use layer2_core::sandbox::{
     SandboxUnpublishedRecoverySnapshot, SandboxUnpublishedRecoveryVerifier, TypedFailure,
 };
 
+#[path = "evidence_refusal_cases.rs"]
+mod refusal_cases;
+
 #[derive(Clone, Default)]
 struct Output(Arc<Mutex<Vec<u8>>>);
 impl std::io::Write for Output {
@@ -92,7 +95,7 @@ async fn original_evidence_keeps_typed_refusals_and_never_weakens_boot_or_home_p
         adapter,
         "test".into(),
     );
-    for (case, reason) in [
+    for (case, reason, provider_response) in [
         ("valid", "Success"),
         ("unavailable", "Unavailable"),
         ("boot", "BootMismatch"),
@@ -107,10 +110,27 @@ async fn original_evidence_keeps_typed_refusals_and_never_weakens_boot_or_home_p
         ("digest_mismatch", "CorruptHistory"),
         ("history_set", "CorruptHistory"),
         ("deadline", "Deadline"),
-        ("replaced_after", "BootMismatch"),
-    ] {
+    ]
+    .into_iter()
+    .map(|(case, reason)| (case, reason, None))
+    .chain(refusal_cases::provider_refusal_cases())
+    .chain([("replaced_after", "BootMismatch", None)])
+    {
         let mut current = status.clone();
         *fixture.backend.recovery_code.lock().unwrap() = None;
+        *fixture.backend.recovery_response.lock().unwrap() = provider_response
+            .as_ref()
+            .map(|response| serde_json::to_vec(response).unwrap());
+        let history_calls = || {
+            fixture
+                .backend
+                .calls
+                .snapshot()
+                .iter()
+                .filter(|call| call.as_str() == "inspect-history")
+                .count()
+        };
+        let history_before = history_calls();
         match case {
             "boot" => current.boot_id = "a".repeat(32),
             "home" => {}
@@ -135,6 +155,7 @@ async fn original_evidence_keeps_typed_refusals_and_never_weakens_boot_or_home_p
                     .replace_after_history
                     .store(true, Ordering::SeqCst);
             }
+            _ if provider_response.is_some() => {}
             _ => *fixture.backend.recovery_code.lock().unwrap() = Some(case),
         }
         *fixture.backend.status_override.lock().unwrap() =
@@ -183,9 +204,18 @@ async fn original_evidence_keeps_typed_refusals_and_never_weakens_boot_or_home_p
         assert_eq!(result.is_ok(), case == "valid", "{case}: {result:?}");
         if case == "unavailable" {
             assert!(result
+                .as_ref()
                 .unwrap_err()
                 .to_string()
                 .contains("private provider detail"));
+        }
+        if provider_response.is_some() {
+            assert_eq!(history_calls(), history_before + 1, "{case}");
+            assert!(result
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains("original runtime recovery evidence is incomplete or changed"));
         }
         let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
         let diagnostics = logs
@@ -198,6 +228,13 @@ async fn original_evidence_keeps_typed_refusals_and_never_weakens_boot_or_home_p
                 .any(|line| line.contains(&format!("reason={reason}"))),
             "{case}: {logs}"
         );
+        if provider_response.is_some() {
+            assert!(
+                diagnostics.iter().any(|line| line.contains("stage=History")
+                    && line.contains(&format!("reason={reason}"))),
+                "{case}: {logs}"
+            );
+        }
         for line in diagnostics {
             assert!(
                 line.contains("elapsed_ms=")
@@ -211,6 +248,9 @@ async fn original_evidence_keeps_typed_refusals_and_never_weakens_boot_or_home_p
                 "private provider detail",
             ] {
                 assert!(!line.contains(secret), "{line}");
+            }
+            if let Some(code) = provider_response.as_ref().and_then(|r| r["code"].as_str()) {
+                assert!(!line.contains(code), "raw provider code leaked: {line}");
             }
         }
         assert_eq!(fixture.harness.stored(&active.id).await, active);

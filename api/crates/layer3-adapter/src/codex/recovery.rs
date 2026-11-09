@@ -310,18 +310,34 @@ fn invalid() -> AdapterError {
 mod tests;
 
 fn provider_refusal(code: &str) -> Reason {
+    // Exact codes from the pinned recovery.py/recovery_io.py response only.
+    // Never infer a category from error text or expose an arbitrary code label.
     match code {
         "deadline" => Reason::Deadline,
+        "evidence_unavailable" => Reason::Unavailable,
         "history_missing" => Reason::MissingHistory,
+        // history_identity combines absent, malformed and duplicate identity.
+        // Keep the shared incomplete/unverifiable-history category truthful.
         "history_incomplete"
         | "history_invalid"
         | "history_prefix_changed"
-        | "history_replaced" => Reason::CorruptHistory,
+        | "history_replaced"
+        | "history_identity"
+        | "history_descriptor"
+        | "history_symlink"
+        | "history_path"
+        | "history_limit"
+        | "turn_identity"
+        | "turn_limit"
+        | "native_turn_unsettled"
+        | "native_turn_restarted" => Reason::CorruptHistory,
         "boot_changed" => Reason::BootMismatch,
         "home_changed" => Reason::HomeChanged,
         "supervisor_changed" | "pid_reused" | "untracked_process" | "process_reappeared" => {
             Reason::NativeChanged
         }
+        // Request/unsupported-topology and shared path/journal guards are not
+        // necessarily history failures. Unknown codes retain this fixed refusal.
         _ => Reason::Ineligible,
     }
 }

@@ -23,6 +23,7 @@ pub(super) struct NativeBackend {
     pub reject_credential: Arc<AtomicBool>,
     pub recovery_plan: Arc<Mutex<serde_json::Value>>,
     pub recovery_code: Arc<Mutex<Option<&'static str>>>,
+    pub recovery_response: Arc<Mutex<Option<Vec<u8>>>>,
     pub replace_after_history: Arc<AtomicBool>,
     pub status_override: Arc<Mutex<Option<layer3_adapter::RuntimeStatus>>>,
     pub nonexecuting: Arc<AtomicBool>,
@@ -88,6 +89,9 @@ impl HostedBackend for NativeBackend {
     ) -> layer3_adapter::Result<Vec<u8>> {
         use serde_json::json;
         self.calls.push("inspect-history");
+        if let Some(response) = self.recovery_response.lock().unwrap().clone() {
+            return Ok(response);
+        }
         let code = *self.recovery_code.lock().unwrap();
         if code == Some("unavailable") {
             return Err(layer3_adapter::AdapterError::Unavailable(
