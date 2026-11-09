@@ -94,17 +94,27 @@ impl HostedBackend for NativeBackend {
                 "private provider detail".into(),
             ));
         }
-        if let Some(code) = code {
+        let malformed = matches!(
+            code,
+            Some("plan_missing" | "plan_mismatch" | "digest_mismatch" | "history_set")
+        );
+        if let Some(code) = code.filter(|_| !malformed) {
             return Ok(serde_json::to_vec(
                 &json!({"version": 1, "status": "refused", "code": code}),
             )
             .unwrap());
         }
-        let plan = self.recovery_plan.lock().unwrap().clone();
+        let mut plan = self.recovery_plan.lock().unwrap().clone();
         if plan.is_null() {
             return Err(layer3_adapter::AdapterError::Unsupported(
                 "fixture history not configured".into(),
             ));
+        }
+        if code == Some("plan_mismatch") {
+            plan["runtime"]["generation"] = json!(42);
+        }
+        if code == Some("history_set") {
+            plan["histories"] = json!([]);
         }
         let digest =
             layer2_core::sandbox::SandboxUnpublishedRecoveryProof::provider_plan_digest(&plan)
@@ -112,10 +122,15 @@ impl HostedBackend for NativeBackend {
         if self.replace_after_history.swap(false, Ordering::SeqCst) {
             self.restart_process().await;
         }
-        Ok(serde_json::to_vec(
-            &json!({"version": 1, "status": "inspected", "plan": plan, "planSha256": digest}),
-        )
-        .unwrap())
+        let mut output =
+            json!({"version": 1, "status": "inspected", "plan": plan, "planSha256": digest});
+        if code == Some("plan_missing") {
+            output.as_object_mut().unwrap().remove("plan");
+        }
+        if code == Some("digest_mismatch") {
+            output["planSha256"] = json!("0".repeat(64));
+        }
+        Ok(serde_json::to_vec(&output).unwrap())
     }
 
     async fn suspend_nonexecuting_runtime(
