@@ -25,3 +25,19 @@ impl ProviderHostedControlTransport {
         server
     }
 }
+
+tokio::task_local! {
+    static STATUS_BOUNDARY_HOOK: Box<dyn Fn(bool) + Send + Sync>;
+}
+
+impl ProviderHostedControlTransport {
+    pub(crate) async fn with_status_hook<F: std::future::Future>(
+        hook: impl Fn(bool) + Send + Sync + 'static,
+        operation: F,
+    ) -> F::Output {
+        STATUS_BOUNDARY_HOOK.scope(Box::new(hook), operation).await
+    }
+    pub(crate) fn test_status_boundary(response_captured: bool) {
+        let _ = STATUS_BOUNDARY_HOOK.try_with(|hook| hook(response_captured));
+    }
+}

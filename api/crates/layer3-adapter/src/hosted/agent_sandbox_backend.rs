@@ -20,6 +20,8 @@ pub struct AgentSandboxBackend {
 mod binding;
 #[path = "agent_sandbox_context.rs"]
 mod context;
+#[path = "agent_sandbox_status.rs"]
+mod status;
 use context::observation;
 pub use context::NativeStatusInspection;
 
@@ -306,6 +308,9 @@ impl HostedBackend for AgentSandboxBackend {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> Result<ResponseFrame> {
+        if let RequestFrame::RuntimeStatus(status) = request {
+            return self.exchange_bound_status(handle, status).await;
+        }
         self.transport.exchange(handle, request).await
     }
 

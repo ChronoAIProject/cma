@@ -130,7 +130,7 @@ impl AgentSandboxBackend {
                 .exchange(handle, RequestFrame::RuntimeStatus(proof.request().clone())),
         )
         .await?;
-        proof.complete(response).map(Some)
+        inspection.complete(proof, response).await.map(Some)
     }
 }
 
@@ -151,6 +151,35 @@ pub(crate) struct NativeStatusProof {
 }
 
 impl NativeStatusInspection<'_> {
+    pub(crate) async fn complete(
+        &self,
+        proof: NativeStatusProof,
+        response: ResponseFrame,
+    ) -> Result<RuntimeInspection> {
+        let (backend, handle, request, home) = (self.backend, self.handle, self.request, self.home);
+        // The captured reply must still belong to the exact graph and process
+        // that authorized dispatch. These reads cannot bootstrap or rebind it.
+        let current = timed(
+            Stage::NativeIdentity,
+            backend.client.native_runtime_proof(handle, request, home),
+        )
+        .await?;
+        backend
+            .client
+            .verify_explicit_runtime_policy(current.member())
+            .await?;
+        if !current.matches(request, home)?
+            || current.pod() != proof.pod()
+            || observation(current.member())? != proof.observation
+            || !backend.acknowledged_assignment(handle, current.pod(), request)?
+        {
+            return Err(AdapterError::Rejected(
+                "native authority changed during status exchange".into(),
+            ));
+        }
+        proof.complete(response)
+    }
+
     pub(crate) fn shares_client(&self, client: &AgentSandboxClient) -> bool {
         self.backend.client.shares_runtime_authority(client)
     }
