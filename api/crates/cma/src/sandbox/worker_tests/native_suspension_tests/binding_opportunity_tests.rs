@@ -6,11 +6,17 @@ use layer3_adapter::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, Respo
 use layer3_adapter::{AgentLaunch, ConversationChannel, ConversationUpdate, RuntimeObservation};
 use tokio::sync::Semaphore;
 
+#[path = "binding_parent_race_tests.rs"]
+mod parent_races;
+
+type StatusHook = Arc<dyn Fn(bool) -> futures_util::future::BoxFuture<'static, ()> + Send + Sync>;
+
 struct SlowBackend {
     inner: NativeBackend,
     adoption: Duration,
     status: Duration,
     permits: Arc<Semaphore>,
+    status_hook: Option<StatusHook>,
 }
 
 #[async_trait::async_trait]
@@ -42,10 +48,20 @@ impl HostedBackend for SlowBackend {
         request: RequestFrame,
     ) -> layer3_adapter::Result<ResponseFrame> {
         let _permit = self.permits.clone().acquire_owned().await.unwrap();
-        if matches!(request, RequestFrame::RuntimeStatus(_)) {
+        let status = matches!(request, RequestFrame::RuntimeStatus(_));
+        if status {
             tokio::time::sleep(self.status).await;
+            if let Some(hook) = &self.status_hook {
+                hook(false).await;
+            }
         }
-        self.inner.exchange(handle, request).await
+        let response = self.inner.exchange(handle, request).await;
+        if status && response.is_ok() {
+            if let Some(hook) = &self.status_hook {
+                hook(true).await;
+            }
+        }
+        response
     }
     async fn open_agent(
         &self,
@@ -74,6 +90,7 @@ async fn due_reserved_composite_adoption_finishes_in_six_to_nineteen_seconds_wit
             adoption: Duration::from_secs(seconds / 2),
             status: Duration::from_secs(seconds - seconds / 2),
             permits: permits.clone(),
+            status_hook: None,
         };
         let mut config = CodexSandboxSpec::default();
         config.deployment.image.uri = runtime_image();
