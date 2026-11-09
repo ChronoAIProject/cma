@@ -41,6 +41,7 @@ uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+kube = { workspace = true }
 cmaeg-core = { path = "../cmaeg-core" }
 cmaeg = { path = "../cmaeg" }
 layer2-core = { workspace = true, features = ["test-support"] }

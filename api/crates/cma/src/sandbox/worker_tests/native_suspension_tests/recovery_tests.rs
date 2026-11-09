@@ -257,3 +257,6 @@ mod fair_recovery_tests;
 
 #[path = "binding_opportunity_tests.rs"]
 mod binding_opportunity_tests;
+
+#[path = "binding_authority_tests.rs"]
+mod binding_authority_tests;
