@@ -54,8 +54,13 @@
             },
             "marketplace": {
               "enabled": true
+            },
+            "model_budget": {
+              "enabled": false,
+              "owners": []
             }
-          }
+          },
+          "model_budget_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -122,8 +127,13 @@
             },
             "marketplace": {
               "enabled": false
+            },
+            "model_budget": {
+              "enabled": false,
+              "owners": []
             }
-          }
+          },
+          "model_budget_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -255,8 +265,13 @@
             },
             "marketplace": {
               "enabled": false
+            },
+            "model_budget": {
+              "enabled": false,
+              "owners": []
             }
-          }
+          },
+          "model_budget_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -320,8 +335,13 @@
             },
             "marketplace": {
               "enabled": true
+            },
+            "model_budget": {
+              "enabled": false,
+              "owners": []
             }
-          }
+          },
+          "model_budget_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -450,8 +470,13 @@
             },
             "marketplace": {
               "enabled": true
+            },
+            "model_budget": {
+              "enabled": false,
+              "owners": []
             }
-          }
+          },
+          "model_budget_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -510,8 +535,13 @@
             },
             "marketplace": {
               "enabled": true
+            },
+            "model_budget": {
+              "enabled": false,
+              "owners": []
             }
-          }
+          },
+          "model_budget_writes_available": false
         },
         "bodyKind": "json"
       },
