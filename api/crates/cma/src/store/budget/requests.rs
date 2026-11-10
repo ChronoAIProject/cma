@@ -32,6 +32,7 @@ struct RequestRecord {
 struct RequestTurnLedger {
     spent: u64,
     reserved: u64,
+    calls: u64,
     bound_violated: bool,
 }
 

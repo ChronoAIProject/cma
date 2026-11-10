@@ -35,6 +35,17 @@ async fn completed(
         )
         .await
         .unwrap();
+    // Fixture for the future authoritative gateway settlement contract. CMA's
+    // ordinary runtime terminal events never assert these finality fields.
+    store
+        .model_budget
+        .update_one(
+            doc! {"_id": format!("turn:{}:{turn}", agent.id.as_str())},
+            doc! {"$set": {"record.reservation.final_usage_known": true,
+            "record.reservation.final_model_calls": 1_i64}},
+        )
+        .await
+        .unwrap();
     let scope = RequestScope {
         agent_id: agent.id,
         turn_sequence: turn,
@@ -47,6 +58,135 @@ async fn completed(
         fingerprint: "b".repeat(64),
     };
     (store, scope, request)
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn uncertain_parent_usage_or_call_count_cannot_admit_auxiliary_spend() {
+    let (client, name) = database("request_parent_uncertain").await;
+    let (store, scope, request) = completed(&client, &name).await;
+    let key = format!("turn:{}:{}", scope.agent_id.as_str(), scope.turn_sequence);
+    store
+        .model_budget
+        .update_one(
+            doc! {"_id": &key},
+            doc! {"$set": {"record.reservation.final_usage_known": false}},
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.reserve_request(&scope, &request).await,
+        Err(BudgetError::TurnExhausted)
+    );
+    store
+        .model_budget
+        .update_one(
+            doc! {"_id": &key},
+            doc! {
+                "$set": {"record.reservation.final_usage_known": true},
+                "$unset": {"record.reservation.final_model_calls": ""}
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.reserve_request(&scope, &request).await,
+        Err(BudgetError::Unavailable)
+    );
+    assert_eq!(
+        store
+            .model_budget
+            .count_documents(doc! {"_id": {"$regex": "^request:"}})
+            .await
+            .unwrap(),
+        0
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn request_call_limit_includes_parent_and_survives_settlement_and_restart() {
+    let (client, name) = database("request_call_limit").await;
+    let (store, scope, mut request) = completed(&client, &name).await;
+    request.input_bytes = 1;
+    store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {"$set": {
+                "settings.model_budget.owners.0.policy.max_calls_per_turn": 3_i64
+            }},
+        )
+        .await
+        .unwrap();
+    let mut second = scope.clone();
+    second.request_id = "second-counted-call".into();
+    let peer = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (first, second) = tokio::join!(
+        store.reserve_request(&scope, &request),
+        peer.reserve_request(&second, &request)
+    );
+    for hold in [first.unwrap().unwrap(), second.unwrap().unwrap()] {
+        store
+            .settle_request(
+                &hold,
+                RequestUsage {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                },
+            )
+            .await
+            .unwrap();
+    }
+    let mut next = scope;
+    next.request_id = "excess-counted-call".into();
+    let restarted = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(
+        restarted.reserve_request(&next, &request).await,
+        Err(BudgetError::TurnExhausted)
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
+async fn unknown_request_commit_never_returns_another_send_permit() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let name = format!("cma_request_commit_{suffix}");
+    let app = format!("cma-request-commit-{suffix}");
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.app_name = Some(app.clone());
+    let client = Client::with_options(options).unwrap();
+    let (store, scope, request) = completed(&client, &name).await;
+    admin.database("admin").run_command(doc! {
+        "configureFailPoint":"failCommand", "mode":{"times":5_i32},
+        "data":{"failCommands":["commitTransaction"], "appName":&app,
+            "writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired","errmsg":"injected request commit ambiguity"}}
+    }).await.unwrap();
+    let result = store.reserve_request(&scope, &request).await;
+    admin
+        .database("admin")
+        .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
+        .await
+        .unwrap();
+    assert_eq!(result, Err(BudgetError::Unavailable));
+    let reopened = MongoSandboxStore::open(&admin, &name).await.unwrap();
+    assert_eq!(
+        reopened.reserve_request(&scope, &request).await,
+        Err(BudgetError::Unavailable)
+    );
+    assert_eq!(
+        reopened
+            .model_budget
+            .count_documents(doc! {"_id":{"$regex":"^request:"}})
+            .await
+            .unwrap(),
+        1
+    );
+    admin.database(&name).drop().await.unwrap();
 }
 
 #[tokio::test]

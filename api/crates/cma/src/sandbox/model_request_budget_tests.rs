@@ -236,3 +236,26 @@ async fn missing_final_usage_preserves_every_brokered_request_hold() {
     assert!(budget.settled.lock().unwrap().is_empty());
     task.abort();
 }
+
+#[tokio::test]
+async fn usage_without_matching_model_or_finality_retains_the_request_hold() {
+    for response in [
+        serde_json::json!({"status":"completed", "usage":{"input_tokens":1,"output_tokens":1}}),
+        serde_json::json!({"status":"completed", "model":"different", "usage":{"input_tokens":1,"output_tokens":1}}),
+        serde_json::json!({"status":"incomplete", "model":"budget-model", "usage":{"input_tokens":1,"output_tokens":1}}),
+        serde_json::json!({"status":"completed", "model":"budget-model", "usage":{"input_tokens":1}}),
+    ] {
+        let budget = budget(None);
+        let context = context(budget.clone(), "uncertain-response");
+        let permit = context
+            .reserve("budget-model", b"bounded body", 1024)
+            .await
+            .unwrap()
+            .unwrap();
+        permit
+            .settle(&serde_json::to_vec(&response).unwrap())
+            .await
+            .unwrap();
+        assert!(budget.settled.lock().unwrap().is_empty());
+    }
+}
