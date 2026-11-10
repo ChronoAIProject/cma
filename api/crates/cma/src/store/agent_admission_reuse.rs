@@ -142,7 +142,8 @@ pub(super) async fn reuse_profile_agent(
     }
     let prior_revision = agent.revision;
     let prior_semantic =
-        SemanticCheckpoint::from_entries(&agent, &entries).map_err(ApplyError::Domain)?;
+        crate::store::agent_log_integrity::audit_checkpoint(store, &agent, &entries, session)
+            .await?;
     let kind = admission
         .initialize_reused_agent(&mut agent, has_input)
         .map_err(ApplyError::Domain)?;

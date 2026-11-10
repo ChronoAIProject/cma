@@ -26,6 +26,8 @@ use super::sandbox_mongo::{
 mod receipt;
 use receipt::reconcile_append_after_unknown;
 mod latest_turn;
+#[cfg(test)]
+mod receipt_tests;
 
 pub(super) fn agent_log_indexes() -> Vec<IndexModel> {
     vec![IndexModel::builder()
@@ -166,8 +168,10 @@ pub(in crate::store) async fn append_in_transaction(
                 },
             )
             .await?;
-            let semantic = SemanticCheckpoint::from_entries(&agent, &entries)
-                .map_err(TransactionLogError::Domain)?;
+            let semantic = crate::store::agent_log_integrity::audit_checkpoint(
+                store, &agent, &entries, session,
+            )
+            .await?;
             (summary, semantic)
         }
     };
