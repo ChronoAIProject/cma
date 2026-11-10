@@ -14,6 +14,9 @@ use tokio::sync::{RwLock, Semaphore};
 use super::*;
 use crate::auth::{permissions::PermissionEvidence, AuthMode};
 
+#[path = "bearer_authorization_tests/budget_tests.rs"]
+mod budget_tests;
+
 struct Gate {
     release: Semaphore,
 }
