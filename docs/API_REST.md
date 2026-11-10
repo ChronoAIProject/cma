@@ -645,7 +645,8 @@ cannot forge it. Turns without that context receive no prefix. Commands persist
 ordinary text using the existing ledger schema. Exact retries compare the full
 request rendered under either policy state. Matching the prefixed form requires
 re-attestation; an exact match to the original undecorated request stays unchanged.
-Policy toggles never rewrite admitted bytes or fingerprints. Changed requests
+A failed re-attestation carries the original response ID so the gateway preserves
+recovery of admitted work. Policy toggles never rewrite admitted bytes or fingerprints. Changed requests
 under the same idempotency key still conflict. With the extension disabled,
 new input bytes and fingerprints retain their previous behavior.
 

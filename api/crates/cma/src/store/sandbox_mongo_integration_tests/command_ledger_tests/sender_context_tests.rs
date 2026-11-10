@@ -683,6 +683,23 @@ async fn sender_context_http_refuses_unverified_owner_forgery_and_times_out_befo
             .unwrap(),
         1
     );
+    for mode in [1, 2] {
+        f.mode.store(mode, Ordering::SeqCst);
+        let replay = f.submit("retry", body.clone(), true).await;
+        assert_eq!(replay.status().as_u16(), if mode == 1 { 403 } else { 503 });
+        assert_eq!(
+            replay.headers()["x-cma-response-id"].to_str().unwrap(),
+            one.receipt.response_id.as_ref().unwrap().as_str()
+        );
+        assert_eq!(
+            f.store
+                .get_response_command(one.receipt.response_id.as_ref().unwrap())
+                .await
+                .unwrap(),
+            Some(one.clone())
+        );
+    }
+    f.mode.store(0, Ordering::SeqCst);
     let forged = f.submit("owner", body, false).await;
     assert_eq!(forged.status(), StatusCode::FORBIDDEN);
     assert_eq!(
