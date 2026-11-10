@@ -402,7 +402,6 @@ export function useAgentController(
     setState(agentId === undefined ? { status: 'idle' } : { status: 'loading' });
     setRevision((value) => value + 1);
   }, [agentId, setState]);
-
   const { run, command, recoverPending } = useAgentActions({
     agentId: suspended ? undefined : agentId,
     client,
@@ -425,7 +424,6 @@ export function useAgentController(
     onIdentityChange,
     options,
   });
-
   const displayedStatus =
     state.status === 'ready'
       ? currentAgentStatus(state.detail, state.conversation, summary)
@@ -436,8 +434,9 @@ export function useAgentController(
     v2,
     !historyIncomplete && !suspended,
     activeTurn,
-    `${state.status === 'ready' ? state.conversation.cursor : 0}:${requestRevision}`,
+    String(state.status === 'ready' ? state.conversation.cursor : 0),
     onIdentityChange,
+    requestRevision,
   );
   const interruptTurn = (strict: boolean) =>
     command(
