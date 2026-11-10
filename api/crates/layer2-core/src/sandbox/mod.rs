@@ -64,6 +64,7 @@ pub use conversation_observation::{
 mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;
+mod ledger_retirement;
 mod lifecycle_bootstrap;
 mod provenance;
 mod provenance_inventory;
