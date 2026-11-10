@@ -80,7 +80,7 @@ async fn single_append_receipt_refuses_absent_mismatched_and_uncommitted_rows() 
             expected.kind.clone(),
         )
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("append transaction must prepare successfully"));
         assert_eq!(pending, expected);
         assert!(reconcile_append_after_unknown(&store, &expected, at)
             .await
