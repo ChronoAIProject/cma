@@ -10,6 +10,8 @@ pub struct NativeDiscordActivation {
     pub detail: String,
     pub capacity: usize,
     pub selected_records: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connection: Option<super::status::NativeDiscordConnectionStatus>,
 }
 pub(crate) fn view(
     state: &ManagementState,
@@ -76,5 +78,9 @@ pub(crate) fn view(
         detail: detail.into(),
         capacity: super::selection::MAX_RECORDS,
         selected_records: records.len(),
+        connection: Some(selection.status().view(
+            definition.record_id.as_str(),
+            super::native_source_revision(definition).as_deref(),
+        )),
     })
 }
