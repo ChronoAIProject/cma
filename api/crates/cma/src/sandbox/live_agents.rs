@@ -11,6 +11,7 @@ use layer3_adapter::{ConversationInputSender, ConversationUpdate};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
 
+mod budget;
 mod publication;
 mod recovery;
 mod updates;
