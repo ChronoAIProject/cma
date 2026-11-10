@@ -55,6 +55,8 @@ pub(super) const WARM_SANDBOXES: &str = "warm_sandboxes";
 pub(super) const SANDBOX_BILLING: &str = "sandbox_billing_state";
 
 const SANDBOX_COLLECTIONS: &[&str] = &[
+    super::settings::SETTINGS,
+    super::budget::COLLECTION,
     "sandbox_retained_availability",
     SANDBOXES,
     SANDBOX_SESSIONS,
@@ -91,6 +93,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) bounded_admission_agents: std::collections::BTreeSet<layer2_core::AgentId>,
     pub(crate) writer_policy:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub(super) bindings: super::bindings::BindingCollections,
@@ -111,6 +114,8 @@ pub struct MongoSandboxStore {
     pub(super) agent_channel_usage: Collection<Document>,
     pub(super) channel_usage_events: Collection<Document>,
     pub(super) agent_commands: Collection<Document>,
+    pub(super) model_budget: Collection<Document>,
+    pub(super) budget_settings: Collection<Document>,
     pub(super) agent_artifacts: Collection<Document>,
     pub(super) media_uploads: Collection<Document>,
     pub(super) sandbox_controls: Collection<Document>,
@@ -174,6 +179,7 @@ impl MongoSandboxStore {
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            bounded_admission_agents: Default::default(),
             writer_policy: Default::default(),
             bindings: super::bindings::BindingCollections::open(&database).await?,
             client: client.clone(),
@@ -199,6 +205,8 @@ impl MongoSandboxStore {
             agent_channel_usage: majority_collection(&database, "agent_channel_usage"),
             channel_usage_events: majority_collection(&database, "channel_usage_events"),
             agent_commands: majority_collection(&database, AGENT_COMMANDS),
+            model_budget: majority_collection(&database, super::budget::COLLECTION),
+            budget_settings: majority_collection(&database, "platform_settings"),
             agent_artifacts: majority_collection(&database, AGENT_ARTIFACTS),
             media_uploads: majority_collection(&database, super::media_uploads::COLLECTION),
             sandbox_controls: majority_collection(&database, SANDBOX_CONTROLS),
@@ -235,6 +243,7 @@ impl MongoSandboxStore {
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
+        super::budget::initialize_settings(&store).await?;
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;
         super::sandbox_usage::ensure_indexes(&store).await?;
