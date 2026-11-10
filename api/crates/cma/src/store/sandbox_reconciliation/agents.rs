@@ -7,8 +7,10 @@ use layer2_core::SandboxId;
 use mongodb::bson::{doc, Document};
 use mongodb::ClientSession;
 
-use super::super::agent_log::{log_document, scan_complete_log_with_session};
-use super::super::agent_log_integrity::{ensure_append_capacity, AppendCapacity, LogSummary};
+use super::super::agent_log::scan_complete_log_with_session;
+use super::super::agent_log_integrity::{
+    prepare_append, AppendCapacity, LogSummary, SemanticCheckpoint,
+};
 use super::super::agents::agent_replacement_fields;
 use super::super::lifecycle_execution::load_sandbox_agents;
 use super::super::sandbox_mongo::{
@@ -24,16 +26,22 @@ pub(super) async fn load_agents(
     let agents = load_sandbox_agents(store, id, session).await?;
     let mut rows = Vec::with_capacity(agents.len());
     for agent in agents {
+        let mut entries = Vec::new();
         let complete = scan_complete_log_with_session(
             ScanCaller::RuntimeReconciliation,
             store,
             &agent.id,
             agent.conversation.last_seq,
             session,
-            |_| Ok(()),
+            |entry| {
+                entries.push(entry);
+                Ok(())
+            },
         )
         .await?;
-        rows.push((agent, complete));
+        let semantic =
+            SemanticCheckpoint::from_entries(&agent, &entries).map_err(ApplyError::Domain)?;
+        rows.push((agent, complete.with_semantic(semantic)));
     }
     Ok(rows)
 }
@@ -51,15 +59,33 @@ pub(super) async fn publish_agents(
         .collect::<BTreeMap<_, _>>();
     let mut agents = Vec::with_capacity(rows.len());
     let mut logs = Vec::new();
+    let mut encoded_logs = Vec::new();
     for (current, complete) in rows {
         let filter = agent_filter(&current)?;
         let update = match changes.get(&current.id) {
             Some(change) => {
                 let batch = materialize_logs(change, at)?;
-                ensure_append_capacity(&complete, &batch, AppendCapacity::StopOrFailure)
-                    .map_err(ApplyError::Domain)?;
+
                 let mut fields =
                     agent_replacement_fields(&change.agent).map_err(ApplyError::Domain)?;
+                let semantic = complete.semantic().cloned().ok_or(ApplyError::Domain(
+                    SandboxStoreError::Corrupt(
+                        "runtime reconciliation scan did not produce semantic checkpoint".into(),
+                    ),
+                ))?;
+                let integrity = prepare_append(
+                    &current,
+                    &complete,
+                    &batch,
+                    change.agent.revision,
+                    semantic
+                        .after_append(&batch, &change.agent)
+                        .map_err(ApplyError::Domain)?,
+                    AppendCapacity::StopOrFailure,
+                )
+                .map_err(ApplyError::Domain)?;
+                encoded_logs.extend(integrity.documents);
+                fields.insert("agent_log_integrity_v1", integrity.integrity);
                 fields.insert(
                     "last_seq",
                     signed(
@@ -88,10 +114,11 @@ pub(super) async fn publish_agents(
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
     }
-    for entry in &logs {
+    for entry in &encoded_logs {
         store
             .agent_log
-            .insert_one(log_document(entry).map_err(ApplyError::Domain)?)
+            .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+            .insert_one(entry)
             .session(&mut *session)
             .await
             .map_err(|error| {
