@@ -60,6 +60,7 @@ mod state_cases;
 mod suggestion_cases;
 mod symbols;
 mod task_experience_cases;
+mod tenant_isolation;
 mod trigger_cases;
 mod usage_cases;
 mod warm_pool_cases;
@@ -322,9 +323,14 @@ async fn scenario(name: &str) -> Scenario {
 
 #[tokio::test]
 async fn shared_public_contract_matches_real_backend() {
+    run_contracts(false).await;
+}
+
+async fn run_contracts(isolation: bool) {
     let record = ["CMA_RECORD_PUBLIC_CONTRACT", "CMA_UPDATE_PUBLIC_CONTRACT"]
         .iter()
         .any(|key| std::env::var_os(key).is_some_and(|value| value == "1"));
+    assert!(!isolation || !record, "isolation proof must compare immutable expected results");
     let selected = std::env::var("CMA_PUBLIC_CONTRACT_FILE").ok();
     let mut total = 0;
     for path in paths() {
@@ -344,6 +350,9 @@ async fn shared_public_contract_matches_real_backend() {
         }
         let mut corpus: Corpus = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(corpus.version, 1);
+        if isolation && !corpus.cases.iter().any(tenant_isolation::included) {
+            continue;
+        }
         let mut canonical: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
         for case in &corpus.cases {
             for (name, header) in &case.header_captures {
@@ -399,6 +408,9 @@ async fn shared_public_contract_matches_real_backend() {
                 scenarios.insert(case.scenario.clone(), (scene, symbols));
             }
             let (scenario, symbols) = scenarios.get_mut(&case.scenario).unwrap();
+            if isolation && tenant_isolation::selected(case) {
+                tenant_isolation::probe(scenario, symbols, case).await;
+            }
             replay::run(scenario, symbols, case, record).await;
             total += 1;
         }
