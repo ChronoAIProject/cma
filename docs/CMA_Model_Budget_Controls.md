@@ -33,21 +33,36 @@ accept a `model_budget` section. Use the existing settings revision CAS and
 `ConfigurePlatform` authority. No new environment variable, price, allowance or
 currency default is introduced. The owner supplies all values privately.
 
-The section contains `owners` (explicit owner policies) and an optional
-`default_policy`. An owner entry overrides the default. An absent section, or
-an empty owner list without a default, disables new admission reservations.
+The section contains an explicit `enabled` switch, optional `platform` policy,
+`owners` (explicit owner policies) and an optional `default_policy`. Only disabled
+is an implicit activation value. An owner entry overrides the default. An absent
+section or `enabled: false` disables new admission reservations. Disabled settings
+can retain explicitly configured values for later activation.
 Outstanding reservations and recorded stop decisions remain effective.
 
-Each policy contains `owner_day_limit`, `turn_limit`, `input_token_units`,
+Each owner policy contains `owner_day_limit`, `turn_limit`, `max_calls_per_turn`,
+`day_timezone`, `input_token_units`,
 `output_token_units`, `max_unobserved_units` and `usage_timeout_seconds`. Units
 must use the same exact private valuation. Integer inputs must be representable
 exactly in browser clients. Policy validation rejects zero/overflowing inputs,
 an oversized turn allowance, duplicate owners and unusable timeout/headroom.
-The daily window is UTC. Audit events contain the settings operation and
+The daily window follows the configured IANA timezone, including DST; no timezone
+is supplied implicitly. Changing a nonempty ledger's timezone requires liability
+reconciliation. Audit events contain the settings operation and
 revision, not policy values or owner scope.
 
+The platform policy contains `period_cap`, inclusive `period_start`, exclusive
+`period_end`, `warning_percent`, `stop_percent`, `protected_reserve` and
+`lag_allowance`. The interval uses explicit RFC3339 instants. Every value is
+required when the platform policy is supplied. Percentages must be ordered,
+and protected reserve plus lag allowance must fit below the stop threshold.
+Enabling requires a complete platform policy and at least one applicable owner
+policy. Platform metering/actions consume this contract through #1496; request
+call-count enforcement belongs to the following broker/gateway integration.
+Persisted configuration alone is not evidence those integrations are active.
+
 Legacy full PUT requests that omit this section preserve the current policy.
-An explicit empty policy disables new reservations. PATCH replaces the complete
+An explicitly disabled policy disables new reservations. PATCH replaces the complete
 section. The explicit settings-reset endpoint resets this section too. Existing
 SDK readers retain the additive section on full replacement; direct REST is the
 current typed PATCH surface for this section.
@@ -68,8 +83,8 @@ Runtime usage and interruption capabilities are required for enabled owners.
 
 A queued command transfers its reservation to the bound turn. A terminal
 command that provably never dispatched releases its reservation. Elapsed time
-alone cannot release a possibly executed reservation. UTC rollover clears
-settled daily usage while retaining every unresolved reservation.
+alone cannot release a possibly executed reservation. Local-day rollover clears
+settled daily usage at the configured local midnight while retaining every unresolved reservation.
 
 The initial owner baseline conservatively values all retained cumulative Agent
 usage; it is not an authoritative reconstruction of historical daily spend.
