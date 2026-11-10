@@ -11,6 +11,11 @@ for (const admin of [false, true]) {
       baseURL,
       request,
     }, info) => {
+      const settledAssets = async () => {
+        await expect(page.locator('.character-avatar').first()).toBeVisible();
+        await expect(page.locator('.character-avatar[data-status="loading"]')).toHaveCount(0);
+        await page.evaluate(() => window.document.fonts.ready.then(() => undefined));
+      };
       const boundary = new LocalStartup();
       const metrics = new LocalUsageMetrics();
       const errors: string[] = [];
@@ -56,21 +61,22 @@ for (const admin of [false, true]) {
           .first(),
       ).toBeVisible();
       // Re-execute the bundle, then revisit through browser history with the same assets mount.
-      await page.evaluate(() => window.document.fonts.ready.then(() => undefined));
+      await settledAssets();
       await page.reload();
       await expect(surface).toBeVisible();
       await expect(
         surface.getByRole('button', { name: 'Research Sandbox', exact: true }),
       ).toBeVisible();
-      await page.evaluate(() => window.document.fonts.ready.then(() => undefined));
+      await settledAssets();
       await page.goto('/agent-manager');
       await expect(page.getByRole('button', { name: /Account menu for/ })).toBeVisible();
-      await page.evaluate(() => window.document.fonts.ready.then(() => undefined));
+      await settledAssets();
       await page.goBack();
       await expect(surface).toBeVisible();
       await expect(
         surface.getByRole('button', { name: 'Research Sandbox', exact: true }),
       ).toBeVisible();
+      await settledAssets();
       await page.screenshot({ path: info.outputPath('overview.png'), animations: 'disabled' });
       expect(failedAssets).toEqual([]);
       expect(errors).toEqual([]);
