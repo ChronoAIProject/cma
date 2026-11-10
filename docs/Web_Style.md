@@ -6091,3 +6091,29 @@ data. Picker failures use the same error semantics and **Retry choices** action.
 No error or missing measurement is an empty result or a zero resource total.
 
 | 2026-11-10 | Honor usage Retry-After across report selections and bounded discovery, retaining distinct busy, unavailable, expired and denied states. |
+
+
+## Admin Spend controls (2026-11-11)
+
+Operations → Platform settings includes a Spend controls section only for accounts
+with ConfigurePlatform. Use the existing operator form, Input, checkbox and Button
+patterns, two-column settings grid and single-column mobile layout. Subheadings
+reuse the strong small text token, with 24px top and 16px bottom spacing.
+
+Show configured exact accounting units explicitly; never infer currency or create
+policy defaults. Absent policies begin with blank required fields after an explicit
+Configure action. A disabled policy retains its configured values. Explain the
+current enforcement scope at the enable control and distinguish unavailable API
+capabilities from settings that are off. Decimal, exponent and unsafe integer input
+remains editable text until corrected; do not round a cap.
+
+The existing settings revision, save and conflict/uncertain-write recovery apply
+to spend edits. Explicit review preserves newer owner overrides and unedited
+settings. Server rejection keeps the draft and never produces a saved notice.
+Show the current revision's last platform-settings operation when its bounded
+activity lookup is permitted; unavailable names, permission, missing records and
+lookup errors remain explicit. Do not claim the audit identifies individual edits.
+
+| Date | Change |
+| --- | --- |
+| 2026-11-11 | Add admin Spend controls using existing settings primitives, exact accounting-unit inputs, revision recovery and permission-aware audit attribution. |
