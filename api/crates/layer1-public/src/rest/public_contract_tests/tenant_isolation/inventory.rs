@@ -21,6 +21,22 @@ fn entries() -> &'static [Entry] {
         .unwrap()
     })
 }
+pub(super) fn documented_denial(operation: &str, code: &str) -> bool {
+    static INVENTORY: OnceLock<serde_json::Value> = OnceLock::new();
+    let inventory = INVENTORY.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/public-contract-inventory.json"
+        ))
+        .unwrap()
+    });
+    code.ends_with("_not_found")
+        && inventory["operations"][operation]["required_problems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|expected| expected == code)
+}
+
 pub(super) fn included(case: &Case) -> bool {
     entries()
         .iter()

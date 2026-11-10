@@ -9,22 +9,38 @@ use layer2_core::{
     OperationClaim, OperationReservation, OperationStore, StoreError,
 };
 
-struct NoOperations;
+struct DenialReceipts;
 
 #[async_trait::async_trait]
-impl OperationStore for NoOperations {
-    async fn reserve(&self, _: &OperationClaim) -> Result<OperationReservation, StoreError> {
-        panic!("foreign writes must be denied before operation reservation")
+impl OperationStore for DenialReceipts {
+    async fn reserve(&self, claim: &OperationClaim) -> Result<OperationReservation, StoreError> {
+        assert_eq!(claim.subject().as_str(), "visitor");
+        Ok(OperationReservation::Acquired)
     }
 
-    async fn complete(&self, _: &OperationClaim, _: Vec<u8>) -> Result<(), StoreError> {
-        panic!("foreign writes must never complete an operation")
+    async fn complete(&self, claim: &OperationClaim, outcome: Vec<u8>) -> Result<(), StoreError> {
+        // A caller may retain its own denial receipt, never a successful foreign effect.
+        assert_eq!(claim.subject().as_str(), "visitor");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&outcome).unwrap()["status"],
+            404
+        );
+        Ok(())
     }
 }
 
 #[tokio::test]
 async fn tenant_isolation_delegated_targets_and_revoked_grants_are_checked_before_dispatch() {
-    let f = Fixture::new().await;
+    use crate::permissions::{capabilities_from_permissions, permission};
+    let f = Fixture::with_permissions(&[
+        permission::SANDBOX_CREATE,
+        permission::SANDBOX_USE,
+        permission::SANDBOX_DELETE,
+    ])
+    .await;
+    let authority = capabilities_from_permissions(&f.peer.permissions);
+    assert!(!authority.allows(layer2_core::Capability::ReadAllSandboxes));
+    assert!(!authority.allows(layer2_core::Capability::ControlAnySandbox));
     let notification = f.activate().await;
     let own = crate::auth::test_resources::sandbox("sbx_visitor", "visitor");
     f.store.create_sandbox(own.clone()).await.unwrap();
@@ -42,7 +58,7 @@ async fn tenant_isolation_delegated_targets_and_revoked_grants_are_checked_befor
         ),
         WorkspaceService::new(f.store.clone(), profiles),
         HierarchyReadService::new(f.store.clone()).with_resource_access(access),
-        Arc::new(NoOperations),
+        Arc::new(DenialReceipts),
     );
     let calls = Arc::new(AtomicUsize::new(0));
     let observed = calls.clone();
@@ -74,7 +90,7 @@ async fn tenant_isolation_delegated_targets_and_revoked_grants_are_checked_befor
             .await;
             assert_eq!(response.status(), StatusCode::OK);
             let result = json_body(response).await;
-            assert_eq!(result["status"], 404);
+            assert_eq!(result["status"], 404, "{method} {suffix}");
             assert_eq!(result["body"]["code"], "sandbox_not_found");
             if let Some(previous) = &denied {
                 assert_eq!(previous, &result);
