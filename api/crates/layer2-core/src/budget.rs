@@ -10,9 +10,9 @@ mod request;
 pub use request::{
     ModelRequest, RequestBudget, RequestHold, RequestModelPolicy, RequestScope, RequestUsage,
 };
+mod platform;
 #[cfg(test)]
 mod request_tests;
-mod platform;
 pub use platform::PlatformBudgetPolicy;
 #[cfg(test)]
 mod controls_tests;
