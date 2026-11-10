@@ -130,6 +130,13 @@ async fn approval_refuses_a_gapped_log_without_any_reservation_effect() {
         store.reserve_targeted_control(request).await.unwrap_err(),
         CommandLedgerError::Corrupt
     );
-    assert_eq!(snapshot(&store).await, before);
+    let mut after = snapshot(&store).await;
+    assert!(after[0][0]
+        .remove(crate::store::agent_log_integrity::QUARANTINE_FIELD)
+        .is_some());
+    assert_eq!(
+        after, before,
+        "only durable integrity quarantine may change"
+    );
     client.database(&name).drop().await.unwrap();
 }

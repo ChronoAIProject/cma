@@ -1,10 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::{require_granted, AgentOperationService, MAX_OPERATION_COMMIT_RETRIES};
-use crate::sandbox::store::{AgentLogStore, MAX_PAGE_SIZE};
-use crate::sandbox::{
-    Agent, AgentLogKind, AgentOperationError, AgentOperationReceipt, AgentStatus,
-};
+use crate::sandbox::{Agent, AgentOperationError, AgentOperationReceipt, AgentStatus};
 use crate::{AgentId, Caller, RuntimeCapability};
 
 impl AgentOperationService {
@@ -57,36 +54,10 @@ impl AgentOperationService {
     }
 
     async fn latest_turn(&self, agent: &Agent) -> Result<Option<u64>, AgentOperationError> {
-        let mut after = 0;
-        let mut latest = None;
-        while after < agent.conversation.last_seq {
-            let limit = (agent.conversation.last_seq - after).min(u64::from(MAX_PAGE_SIZE)) as u16;
-            let entries = AgentLogStore::agent_log(self.store.as_ref(), &agent.id, after, limit)
-                .await
-                .map_err(super::operation_store_error)?;
-            if entries.len() != usize::from(limit) {
-                return Err(AgentOperationError::Corrupt(
-                    "agent log ended before its high-water mark".into(),
-                ));
-            }
-            for entry in entries {
-                after += 1;
-                if entry.agent_id != agent.id || entry.seq != after {
-                    return Err(AgentOperationError::Corrupt(
-                        "agent log sequence is invalid".into(),
-                    ));
-                }
-                if let AgentLogKind::TurnStarted { turn_sequence, .. } = entry.kind {
-                    if turn_sequence != entry.seq {
-                        return Err(AgentOperationError::Corrupt(
-                            "agent turn sequence is invalid".into(),
-                        ));
-                    }
-                    latest = Some(turn_sequence);
-                }
-            }
-        }
-        Ok(latest)
+        self.store
+            .agent_latest_started_turn(agent)
+            .await
+            .map_err(super::operation_store_error)
     }
 }
 
