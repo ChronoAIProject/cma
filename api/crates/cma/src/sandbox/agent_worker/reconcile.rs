@@ -71,10 +71,6 @@ impl AgentWorker {
                             context_deferred += 1;
                             continue;
                         }
-                        if !self.maintenance.should_check(&candidate, desired_revision) {
-                            context_throttled += 1;
-                            continue;
-                        }
                         let runtime_target = layer2_core::sandbox::AgentRuntimeTarget {
                             agent_id: candidate.agent_id.clone(),
                             conversation_id: candidate.conversation_id.clone(),
@@ -93,6 +89,13 @@ impl AgentWorker {
                                 context_runtime_deferred += 1;
                                 continue;
                             }
+                        }
+                        // Do not record a maintenance throttle for a local
+                        // refusal: the attachment may become ready before the
+                        // retry interval, and the next sweep must observe it.
+                        if !self.maintenance.should_check(&candidate, desired_revision) {
+                            context_throttled += 1;
+                            continue;
                         }
                         context_checks += 1;
                         let result = self
