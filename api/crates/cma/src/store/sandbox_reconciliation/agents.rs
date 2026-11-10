@@ -8,9 +8,7 @@ use mongodb::bson::{doc, Document};
 use mongodb::ClientSession;
 
 use super::super::agent_log::scan_complete_log_with_session;
-use super::super::agent_log_integrity::{
-    prepare_append, AppendCapacity, LogSummary, SemanticCheckpoint,
-};
+use super::super::agent_log_integrity::{prepare_append, AppendCapacity, LogSummary};
 use super::super::agents::agent_replacement_fields;
 use super::super::lifecycle_execution::load_sandbox_agents;
 use super::super::sandbox_mongo::{
@@ -40,7 +38,8 @@ pub(super) async fn load_agents(
         )
         .await?;
         let semantic =
-            SemanticCheckpoint::from_entries(&agent, &entries).map_err(ApplyError::Domain)?;
+            crate::store::agent_log_integrity::audit_checkpoint(store, &agent, &entries, session)
+                .await?;
         rows.push((agent, complete.with_semantic(semantic)));
     }
     Ok(rows)

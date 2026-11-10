@@ -5,6 +5,7 @@ use crate::seconds_from_rfc3339;
 use sha2::{Digest, Sha256};
 const SEMANTIC_FORMAT: u32 = 1;
 use serde::{Deserialize, Serialize};
+mod audit;
 mod reduce;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -12,9 +12,7 @@ use mongodb::bson::{doc, Bson, Document, Timestamp};
 use mongodb::options::ReadConcern;
 
 use super::agent_log::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
-use super::agent_log_integrity::{
-    prepare_append, AppendCapacity, LogSummary, SemanticCheckpoint, TransactionLogError,
-};
+use super::agent_log_integrity::{prepare_append, AppendCapacity, LogSummary, TransactionLogError};
 use super::agent_title_claims::current_agent_filter;
 use super::agent_title_state::{
     automatic_completion_fields, lease_filter, read_title_state, user_completion_fields,
