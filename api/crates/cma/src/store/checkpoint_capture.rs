@@ -1,5 +1,6 @@
 //! Complete writer eligibility and row fences for checkpoint capture admission.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::store::checkpoint_capture::{
     validate_checkpoint_capture_quiet, validate_checkpoint_capture_work,
@@ -50,6 +51,7 @@ pub(super) async fn validate_and_fence_begin(
     for agent in agents {
         let mut newest = None;
         scan_complete_log_with_session(
+            ScanCaller::Checkpoint,
             store,
             &agent.id,
             agent.conversation.last_seq,

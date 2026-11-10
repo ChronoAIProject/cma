@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::agent_log_telemetry::ScanCaller;
 
 pub(super) async fn reuse_profile_agent(
     store: &MongoSandboxStore,
@@ -108,6 +109,7 @@ pub(super) async fn reuse_profile_agent(
     let mut initial_log = None;
     let mut has_input = false;
     let summary = scan_complete_log_with_session(
+        ScanCaller::CommandAdmission,
         store,
         &agent.id,
         agent.conversation.last_seq,

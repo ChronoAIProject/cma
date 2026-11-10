@@ -1,5 +1,6 @@
 //! Bounded, complete-snapshot validation for Mongo agent logs.
 
+use super::agent_log_telemetry::ScanCaller;
 use futures_util::TryStreamExt;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{SandboxStoreError, MAX_AGENT_LOG_BATCH_SIZE};
@@ -55,7 +56,36 @@ impl LogSummary {
     }
 }
 
+pub(super) async fn scan_complete_log_with_session<F>(
+    caller: ScanCaller,
+    store: &MongoSandboxStore,
+    agent_id: &AgentId,
+    last_seq: u64,
+    session: &mut mongodb::ClientSession,
+    visit: F,
+) -> Result<LogSummary, TransactionLogError>
+where
+    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
+{
+    scan_complete_log(caller, store, agent_id, last_seq, session, false, visit).await
+}
+
+pub(super) async fn scan_complete_log_with_snapshot_session<F>(
+    caller: ScanCaller,
+    store: &MongoSandboxStore,
+    agent_id: &AgentId,
+    last_seq: u64,
+    session: &mut mongodb::ClientSession,
+    visit: F,
+) -> Result<LogSummary, TransactionLogError>
+where
+    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
+{
+    scan_complete_log(caller, store, agent_id, last_seq, session, true, visit).await
+}
+
 pub(super) async fn scan_complete_log<F>(
+    caller: ScanCaller,
     store: &MongoSandboxStore,
     agent_id: &AgentId,
     last_seq: u64,
@@ -67,6 +97,7 @@ where
     F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
 {
     scan_collection(
+        caller,
         &store.agent_log,
         agent_id,
         last_seq,
@@ -78,6 +109,7 @@ where
 }
 
 pub(super) async fn scan_collection<F>(
+    caller: ScanCaller,
     collection: &mongodb::Collection<Document>,
     agent_id: &AgentId,
     last_seq: u64,
@@ -88,7 +120,7 @@ pub(super) async fn scan_collection<F>(
 where
     F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
 {
-    let mut observation = super::agent_log_telemetry::Scan::new();
+    let mut observation = super::agent_log_telemetry::Scan::new(caller);
     if last_seq > PHYSICAL_AGENT_LOG_ENTRIES {
         tracing::warn!(
             limit_kind = "physical_entries",
