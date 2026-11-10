@@ -8,16 +8,16 @@ metadata:
     app.kubernetes.io/part-of: cma
   annotations:
     cma.chronoai.dev/build-mode: "github-ci-artifact"
-    cma.chronoai.dev/candidate: "0d1772cfcbda4b55edba6f872495413ec9d6e72d"
-    cma.chronoai.dev/ci-archive-sha256: "sha256:f1d2a86df0b89e39dbf14ae3b4ab4efa71b21cc167f1dd34a358f5a27d1a4ea1"
-    cma.chronoai.dev/ci-artifact: "12821784343"
+    cma.chronoai.dev/candidate: "4f03c35a80322673ec00df7a3b6b9399015f5a68"
+    cma.chronoai.dev/ci-archive-sha256: "sha256:9414524cd09fd430eb8906b1527071c2b955a5704483375d1b640b62cf8d98b2"
+    cma.chronoai.dev/ci-artifact: "13635949764"
     cma.chronoai.dev/ci-attempt: "1"
-    cma.chronoai.dev/ci-head: "615c6f23bbf3b9ea250bc77d72888aa19727b8b7"
-    cma.chronoai.dev/ci-publication-sha256: "sha256:023e22a19c42cf9736bbc1c8dc21f7727da75cfdebaad61b77a5ecf975bf6baa"
-    cma.chronoai.dev/ci-run: "40699201203"
-    cma.chronoai.dev/image-digest: "sha256:03df804694cd5f43f637a44ebaa6002c988c4dbaaeb37beeee5e906943b79130"
-    cma.chronoai.dev/image-source: "615c6f23bbf3b9ea250bc77d72888aa19727b8b7"
-    cma.chronoai.dev/source-tree: "674ab5a55000aa49433715f0668df743488fe2fb"
+    cma.chronoai.dev/ci-head: "4f03c35a80322673ec00df7a3b6b9399015f5a68"
+    cma.chronoai.dev/ci-publication-sha256: "sha256:86f7fa7b7860f836f21d37e97e60ee963018ef37eb368768563548c71695d2b4"
+    cma.chronoai.dev/ci-run: "42526770281"
+    cma.chronoai.dev/image-digest: "sha256:2400d8b818527e2352ae0a25f44a4f5e01f3d027702f0768c562df07ab9d31c9"
+    cma.chronoai.dev/image-source: "4f03c35a80322673ec00df7a3b6b9399015f5a68"
+    cma.chronoai.dev/source-tree: "9ef67d581d98201ae6c3a7fbe831da4d013476aa"
 spec:
   replicas: 1
   minReadySeconds: 30
@@ -36,18 +36,18 @@ spec:
         cma.chronoai.dev/operator-config-reload: "cmaeg-four-platform-4db8af3b-40699201203"
         cma.chronoai.dev/authoring-activation: "76bcae97d-20261026"
         cma.chronoai.dev/build-mode: "github-ci-artifact"
-        cma.chronoai.dev/candidate: "0d1772cfcbda4b55edba6f872495413ec9d6e72d"
-        cma.chronoai.dev/image-digest: "sha256:03df804694cd5f43f637a44ebaa6002c988c4dbaaeb37beeee5e906943b79130"
-        cma.chronoai.dev/ci-archive-sha256: "sha256:f1d2a86df0b89e39dbf14ae3b4ab4efa71b21cc167f1dd34a358f5a27d1a4ea1"
-        cma.chronoai.dev/image-source: "615c6f23bbf3b9ea250bc77d72888aa19727b8b7"
+        cma.chronoai.dev/candidate: "4f03c35a80322673ec00df7a3b6b9399015f5a68"
+        cma.chronoai.dev/image-digest: "sha256:2400d8b818527e2352ae0a25f44a4f5e01f3d027702f0768c562df07ab9d31c9"
+        cma.chronoai.dev/ci-archive-sha256: "sha256:9414524cd09fd430eb8906b1527071c2b955a5704483375d1b640b62cf8d98b2"
+        cma.chronoai.dev/image-source: "4f03c35a80322673ec00df7a3b6b9399015f5a68"
         cma.chronoai.dev/portal-auth: "agent-manager-shared-login"
-        cma.chronoai.dev/ci-artifact: "12821784343"
+        cma.chronoai.dev/ci-artifact: "13635949764"
         cma.chronoai.dev/ci-attempt: "1"
-        cma.chronoai.dev/ci-head: "615c6f23bbf3b9ea250bc77d72888aa19727b8b7"
-        cma.chronoai.dev/ci-publication-sha256: "sha256:023e22a19c42cf9736bbc1c8dc21f7727da75cfdebaad61b77a5ecf975bf6baa"
-        cma.chronoai.dev/ci-run: "40699201203"
+        cma.chronoai.dev/ci-head: "4f03c35a80322673ec00df7a3b6b9399015f5a68"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:86f7fa7b7860f836f21d37e97e60ee963018ef37eb368768563548c71695d2b4"
+        cma.chronoai.dev/ci-run: "42526770281"
         cma.chronoai.dev/gateway-domain-phase: "eg-canonical"
-        cma.chronoai.dev/source-tree: "674ab5a55000aa49433715f0668df743488fe2fb"
+        cma.chronoai.dev/source-tree: "9ef67d581d98201ae6c3a7fbe831da4d013476aa"
       labels:
         app.kubernetes.io/name: cma-event-gateway
         app.kubernetes.io/part-of: cma
@@ -74,7 +74,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cmaeg
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-cmaeg@sha256:03df804694cd5f43f637a44ebaa6002c988c4dbaaeb37beeee5e906943b79130
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-cmaeg@sha256:2400d8b818527e2352ae0a25f44a4f5e01f3d027702f0768c562df07ab9d31c9
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
