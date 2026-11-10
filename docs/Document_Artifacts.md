@@ -75,6 +75,44 @@ source revisions, 128 direct shares, 32 share links and 256 comments per
 document. Metadata receipts and aggregate size are separately bounded. These
 limits are enforced by the service, not only the editor.
 
+All writes default to the original 1024-receipt and 12 MiB aggregate metadata
+limits, including owner revocation. The reader unconditionally accepts expanded
+bounded aggregates so this image can become a safe rollback target before any
+writer uses the reserve. Creation and mutations explicitly check the byte-write
+limit; relaxing reader validation never enables expanded writes implicitly.
+
+`CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED` is a strict boolean, default `false`
+in code and the API ConfigMap. With it enabled, owner revocation can spend a
+separate bounded reserve: each removed direct grant or link permits one extra
+receipt and up to 4 KiB of metadata. With at most 128 grants and 32 links, the
+absolute limits are 1184 receipts and 12.625 MiB. Other mutations always retain
+the old limits. All receipts remain durable, so replaying a grant after revocation
+cannot restore access. Exact retries return the original receipt even with the
+flag off. New removals of absent grants, links or comments do not write receipts.
+
+The rollout is an expand/contract sequence; only cma-web-hotfix changes production:
+
+1. Merge the compatible reader by Wed 2026-11-11 14:00 SGT and deploy it on the
+   evening train with the flag **false**. Verify all serving workers have that
+   reader, older workers have drained, and existing allowed/denied reads work.
+   This stage preserves rollback to the preceding image because no expanded
+   aggregates can be written. Saturated revocation still returns capacity.
+2. Pin this verified compatible-reader image/digest as the one-image rollback
+   target. In the separate Thu 2026-11-12 evening train, the release owner may
+   activate the flag as a fenced environment change after verifying candidate
+   inclusion, fully green develop CI, replica convergence and the rollback pin.
+   Record image/config revisions and aggregate allowed/denied results. Do not
+   activate while any serving or designated rollback image lacks this reader.
+3. For rollback after activation, turn the flag off and restore the pinned
+   compatible-reader image. Expanded documents remain readable, revoked access
+   remains denied, and exact retries work. New mutations that exceed the old
+   bounds return capacity. Disabling the flag does not shrink persisted records
+   or make pre-reader images safe. Never trim receipts or restore grants.
+
+The activation is separate from this PR's default-off deployment. #1593 and
+#1472 remain open until activation and production verification are relayed;
+shipping the reader alone does not complete full-capacity revocation.
+
 ## Sharing and comments
 
 New documents are private. Owners may grant an identified user read or comment
