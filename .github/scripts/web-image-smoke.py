@@ -55,7 +55,8 @@ def verify_image(reference):
                 cwd=root / "web", env={**os.environ, "CMA_WEB_IMAGE_URL": url,
                                       "CMA_EXPECTED_WEB_REVISION": revision,
                                       "CMA_EXPECTED_WEB_VERSION": version},
-                check=True, timeout=180,
+                check=True,
+                timeout=180 * min(3, len(os.environ.get("CMA_E2E_BROWSERS", "chromium").split(","))),
             )
             print(json.dumps({"image": image_id, "revision": revision, "version": version,
                               "browsers": os.environ.get("CMA_E2E_BROWSERS", "chromium"),
