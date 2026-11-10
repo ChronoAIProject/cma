@@ -1,5 +1,6 @@
 //! Whole-read profiler budgets include the real proof, not just the window.
 use super::*;
+use futures_util::TryStreamExt;
 use std::collections::BTreeMap;
 
 #[tokio::test]
