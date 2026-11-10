@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { commandIsTerminal, type V2CommandStatus } from '@chronoai/cma-sdk';
 import type { AgentV2Session } from './client';
 import { transientReadFailure } from '../loadAgent';
+import { observeRead } from './readObserver';
 
 function notice(command: V2CommandStatus, interruption: boolean): string | undefined {
   // Successful delivery is reflected by the conversation; keep only actionable status.
@@ -55,14 +56,13 @@ export function useControlStatus(
   }
   useEffect(() => {
     if (session === undefined || commandId === undefined) return;
-    const request = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
     let retry = 1000;
-    const poll = async () => {
+    let previous: string | undefined;
+    const observer = observeRead(async (signal) => {
       try {
-        await session.authorize(request.signal);
-        const command = await session.responses.readCommand(commandId, { signal: request.signal });
-        await session.authorize(request.signal);
+        await session.authorize(signal);
+        const command = await session.responses.readCommand(commandId, { signal });
+        await session.authorize(signal);
         const intent = retainedAction(session);
         if (intent?.commandId !== commandId) return;
         if (
@@ -73,23 +73,28 @@ export function useControlStatus(
           throw new Error('The action receipt changed its conversation target.');
         setResult({ id: commandId, text: notice(command, intent.interruption) });
         if (commandIsTerminal(command)) return;
-        retry = 1000;
+        const progress = JSON.stringify([
+          command.status,
+          command.delivery,
+          command.observed_cursor,
+          command.turn_sequence,
+        ]);
+        retry = previous === progress ? Math.min(retry * 2, 10000) : 1000;
+        previous = progress;
+        return { next: retry, cooldown: retry };
       } catch (error) {
-        if (request.signal.aborted || onIdentityChange(error)) return;
+        if (signal.aborted || onIdentityChange(error)) return;
         setResult({
           id: commandId,
           text: 'Your response action status is unavailable. Its original receipt is retained.',
         });
         if (!transientReadFailure(error)) return;
+        previous = undefined;
         retry = Math.min(retry * 2, 10000);
+        return { next: retry, cooldown: retry, failed: true };
       }
-      timer = setTimeout(() => void poll(), retry);
-    };
-    void poll();
-    return () => {
-      request.abort();
-      clearTimeout(timer);
-    };
+    });
+    return () => observer.dispose();
   }, [session, commandId, onIdentityChange]);
   return result?.id === commandId ? result?.text : undefined;
 }
