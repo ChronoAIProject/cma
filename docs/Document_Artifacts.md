@@ -47,6 +47,15 @@ expiry, with one retry after a rejected token. Credentials and source are not
 logged. No new infrastructure, NyxID deployment or runtime storage credential
 is required.
 
+Each object read or write has a 30-second total deadline, including waiting for
+the token-refresh mutex, token acquisition, the single 401 refresh/replay and
+response-body validation. Individual HTTP requests remain bounded to 12 seconds
+with a 3-second connection limit. Expiry returns typed `DocumentError::Unavailable`
+and drops the local operation; it cannot undo a write already accepted by the
+storage service. Content addressing and generation fencing remain mandatory,
+and no background retry is spawned. See [the dependency contract ledger](Dependency_Contracts.md)
+for deterministic coverage and the remaining provider acceptance evidence.
+
 Without a configured bucket, storage-dependent requests return an explicit
 unavailable response and the document tools are omitted from discovery. There
 is no memory-backed production fallback. Failed metadata commits can leave an
