@@ -67,6 +67,16 @@ impl StatusAttempt {
             e.touch();
         });
     }
+    /// Re-observing a terminal revision is not a new connection failure.
+    pub(crate) fn restore_terminal(&self, snapshot: &super::NativeDiscordConnectionStatus) {
+        self.update(|e| {
+            e.value = snapshot.clone();
+            e.failed = true;
+            e.finished = true;
+            e.disconnect();
+            e.touch();
+        });
+    }
     pub(crate) fn stopped(&self) {
         self.update(|e| {
             e.finished = true;
