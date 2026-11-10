@@ -221,6 +221,8 @@ data:
   CHRONO_PLATFORM_BASE_URL: "https://nyx-api.chrono-ai.fun"
   # Durable personal documents use the existing S3-backed storage service.
   # Objects live only under documents/<owner-hash>/<document-id>/<source-hash>.md.
+  # Activate in a later train only after compatible readers are the rollback floor.
+  CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED: "false"
   CHRONO_DOCUMENT_BUCKET: "chrono-platform-bot"
   CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
   # Agent model calls use the scoped AgentKey through this platform proxy.
