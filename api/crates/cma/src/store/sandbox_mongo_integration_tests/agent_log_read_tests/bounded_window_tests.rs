@@ -91,9 +91,7 @@ impl Fixture {
         }));
         options.command_event_handler = Some(EventHandler::callback(move |event| {
             if let CommandEvent::Started(event) = event {
-                if matches!(event.command_name.as_str(), "find" | "getMore") {
-                    captured_commands.lock().unwrap().push(event.command);
-                }
+                captured_commands.lock().unwrap().push(event.command);
             }
         }));
         let client = Client::with_options(options).unwrap();
@@ -282,3 +280,5 @@ async fn public_window_uses_the_proof_snapshot_across_concurrent_append() {
     assert_eq!(next.last().unwrap().seq, 201);
     fixture.cleanup().await;
 }
+
+mod prepared;

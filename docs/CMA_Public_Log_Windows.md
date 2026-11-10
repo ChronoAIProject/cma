@@ -1,6 +1,6 @@
 # Public Agent-log windows and integrity proof
 
-Related: #1320, #1543, #1591. This is the prepared public-window consumer. Production still uses complete validation until the metadata owner supplies the reader adapter and the combined integration gates pass. No metadata format, writer or preparation path is duplicated here.
+Related: #1320, #1543, #1591. This is the public-window consumer integrated against published #1591 provider commit `7c1e9608d`. The branch is not merged or deployed; combined gates and provider/consumer review remain required. No metadata format, writer or preparation path is duplicated here.
 
 ## Reader interface required from #1591
 
@@ -17,6 +17,8 @@ async fn read_head(
 struct ReadHead {
     last_seq: u64,
     trusted: bool,
+    workspace_id: WorkspaceId,
+    creation_worktree_id: WorktreeId,
 }
 ```
 
@@ -24,11 +26,21 @@ The consumer opens a Mongo snapshot session. The adapter reads the Agent envelop
 
 `trusted=true` requires the same accepted #1591 proof: supported metadata; current envelope/record head and Agent revision agreement; immutable creation/history identity; exact count and encoded-byte physical bounds; raw tail identity/sequence/hash; no extra tail; no quarantine; prepared and activated cohort. A retained zero head requires an unfiltered indexed existence check, including malformed rows without a valid sequence. Disabled cohort, missing metadata and supported stale/legacy evidence return an untrusted current head. Unsupported-version classification follows #1591's explicit policy and must never grant trust. Ahead/head/hash/identity contradictions and quarantine propagate errors; dependency and cancellation errors are never converted to missing/empty history.
 
-The admission owner's in-progress files now expose `agent_log_integrity::read::read_head(store, agent_id, session)` with the same fields, backed by shared `proof::read_only_summary(..., snapshot=true)`. Inspection confirms the reader performs no transaction lifecycle operation, audit or quarantine write. This adapter is not yet on the integration branch's committed head; require its published/reviewable commit and combined gates before wiring it. Reuse that proof/parser through the consumer trait; do not copy or weaken it.
+The published provider supplies `read_head` with a shared read-only proof. Integration found that its complete-scan wrapper rereads the Agent/proof and may quarantine on corruption. The consumer therefore needs the already-validated Agent as well as the trust decision, with this additive adapter contract:
+
+```rust
+async fn read_proven_agent(
+    store: &MongoSandboxStore,
+    agent_id: &AgentId,
+    session: &mut ClientSession,
+) -> Result<Option<(Agent, bool)>, SandboxStoreError>;
+```
+
+The consumer branch implements this small extension in `agent_log_integrity/read.rs`; the provider's two-field `read_head` remains a test wrapper around it. The public reader copies the captured head and immutable creation lineage, then uses the same read-only `scan_collection` on fallback. It validates Created-event lineage without rereading the Agent, repeating the metadata proof or invoking the quarantine/audit wrapper. Errors still refuse the read. This preserves explicit audit/quarantine ownership and needs convergence with the admission owner before merge. No metadata parser, writer or preparation logic is duplicated.
 
 The current adapter still evaluates tail/extra-tail proof before checking whether the Agent is in the activated cohort. Measure disabled/unprepared metadata-present Agents as well as enabled Agents: those may pay the two proof queries and then the complete fallback scan. Preserve corruption/quarantine semantics while resolving this cost; do not silently bypass the proof to manufacture a checkout saving.
 
-Do not use metadata presence or a head integer alone as authorization. The existing default adapter always returns `trusted=false` and retains the previous projected Agent read and complete scan. Wiring a real adapter and confirming rollout/cohort semantics are mandatory before this branch can be described as a production optimization.
+Do not use metadata presence or a head integer alone as authorization. Production code on this unmerged branch calls the shared proof through `PreparedIntegrity`; `LegacyIntegrity` is test-only for paired baseline measurements. Activated/prepared cohort trust is still required. Combined gates and checkout crossover evidence are mandatory before the branch can be described as a production improvement.
 
 ## Consumer behavior
 
@@ -43,7 +55,7 @@ Existing complete-scan telemetry remains authoritative for fallbacks. Bounded re
 - Preserve the original legacy prefix regression, including out-of-window gaps, malformed tail identity, extra tail, missing Agent and zero-length prefix behavior.
 - Exercise the consumer with an explicitly injected fixture proof at histories of 1,000 and 10,000 entries: equal output, 200 consumed documents for a 200-entry page, indexed `executionStats.totalDocsExamined=200`, empty-page no-log-read behavior, and measured CMAP commands/checkouts.
 - The current writer proof uses separate tail and extra-tail point reads. If the reader adapter retains both, a nonempty page needs four checkouts (Agent + tail + extra-tail + window), while a complete scan fitting its first batch and one getMore needs three (Agent + find + getMore). Measure this crossover with the real adapter; do not claim a checkout reduction from the injected proof or activate solely on its two-checkout result. Bounded decoding can improve CPU even when that count does not improve.
-- The injected proof does not measure the real metadata proof overhead. Record that separately once the adapter lands; aggregate + tail + extra-tail + page must fit the full page budget of at most 250 examined documents. A decrease in decoded documents does not guarantee fewer checkouts on every small history.
+- The injected proof does not measure the real metadata proof overhead. The prepared-provider tests measure enabled and disabled states separately; aggregate + tail + extra-tail + page must fit the full page budget of at most 250 examined documents. A decrease in decoded documents does not guarantee fewer checkouts on every small history.
 - Preserve a single session and snapshot across head/proof/window; a writer advancing after the captured head cannot leak a later row into the page. Refuse requested gaps, malformed rows and proof errors.
 - Before activation, run actual #1591 proof tests for missing/stale/mixed writers, unknown version, quarantine, zero-head orphans, tail hash/identity conflict, concurrent writers and rollback/re-upgrade. Demonstrate that the public read issues no metadata or quarantine write and does not perform preparation inside the request.
-- Add the actual provider and run targeted formatting, clippy, consumer tests, legacy tests and real-Mongo combined metadata/window tests before opening the implementation PR. The prepared consumer alone does not satisfy #1320 or TC-046.
+- Run targeted formatting, clippy, consumer tests, legacy tests and real-Mongo combined metadata/window tests before opening the implementation PR. The prepared consumer alone does not satisfy #1320 or TC-046.
