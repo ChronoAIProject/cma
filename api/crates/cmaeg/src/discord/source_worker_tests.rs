@@ -26,6 +26,7 @@ impl SourcePort for Port {
         &'a self,
         _: &'a str,
         mut stop: watch::Receiver<bool>,
+        _: super::super::status::StatusAttempt,
     ) -> BoxFuture<'a, Attempt> {
         Box::pin(async move {
             let n = self.connects.fetch_add(1, Ordering::SeqCst) + 1;
@@ -79,7 +80,13 @@ async fn next(rx: &mut mpsc::UnboundedReceiver<usize>) -> usize {
 async fn reconnect_reacquires_and_shutdown_stops_the_owned_connection() {
     let (port, mut rx) = fixture(Some(EndReason::Reconnect));
     let (stop, stopped) = watch::channel(false);
-    let task = tokio::spawn(run(port.clone(), "record".into(), stopped, timing()));
+    let task = tokio::spawn(run(
+        port.clone(),
+        "record".into(),
+        stopped,
+        timing(),
+        super::super::status::StatusRegistry::default(),
+    ));
     assert_eq!(next(&mut rx).await, 1);
     assert_eq!(next(&mut rx).await, 2);
     stop.send(true).unwrap();
@@ -93,7 +100,13 @@ async fn reconnect_reacquires_and_shutdown_stops_the_owned_connection() {
 async fn source_revision_change_stops_old_socket_and_starts_current_revision() {
     let (port, mut rx) = fixture(None);
     let (stop, stopped) = watch::channel(false);
-    let task = tokio::spawn(run(port.clone(), "record".into(), stopped, timing()));
+    let task = tokio::spawn(run(
+        port.clone(),
+        "record".into(),
+        stopped,
+        timing(),
+        super::super::status::StatusRegistry::default(),
+    ));
     assert_eq!(next(&mut rx).await, 1);
     *port.revision.lock().unwrap() = Some("rotated".into());
     assert_eq!(next(&mut rx).await, 2);
@@ -109,12 +122,44 @@ async fn source_revision_change_stops_old_socket_and_starts_current_revision() {
 async fn terminal_authentication_error_requires_a_new_source_revision() {
     let (port, mut rx) = fixture(Some(EndReason::AuthenticationFailed));
     let (stop, stopped) = watch::channel(false);
-    let task = tokio::spawn(run(port.clone(), "record".into(), stopped, timing()));
+    let registry = super::super::status::StatusRegistry::default();
+    let task = tokio::spawn(run(
+        port.clone(),
+        "record".into(),
+        stopped,
+        timing(),
+        registry.clone(),
+    ));
     assert_eq!(next(&mut rx).await, 1);
     tokio::time::sleep(Duration::from_millis(25)).await;
     assert_eq!(port.connects.load(Ordering::SeqCst), 1);
+    let view = registry.view("record", Some("initial"));
+    assert_eq!(
+        view.last_failure_code,
+        Some(FailureCode::AuthenticationFailed)
+    );
+    assert_eq!(view.outcome, super::super::status::Outcome::Blocked);
+    *port.revision.lock().unwrap() = None;
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert_eq!(
+        registry.view("record", None).last_failure_code,
+        Some(FailureCode::AuthorityRefused)
+    );
+    *port.revision.lock().unwrap() = Some("initial".into());
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert_eq!(port.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        registry.view("record", Some("initial")).last_failure_code,
+        Some(FailureCode::AuthenticationFailed)
+    );
     *port.revision.lock().unwrap() = Some("fixed-credential".into());
     assert_eq!(next(&mut rx).await, 2);
+    assert_eq!(
+        registry
+            .view("record", Some("fixed-credential"))
+            .last_failure_code,
+        None
+    );
     stop.send(true).unwrap();
     task.await.unwrap();
 }
