@@ -1,3 +1,4 @@
+use crate::store::agent_log_telemetry::ScanCaller;
 use std::collections::BTreeMap;
 
 use layer2_core::sandbox::store::{SandboxRuntimeLossAgentMutation, SandboxStoreError};
@@ -24,6 +25,7 @@ pub(super) async fn load_agents(
     let mut rows = Vec::with_capacity(agents.len());
     for agent in agents {
         let complete = scan_complete_log_with_session(
+            ScanCaller::RuntimeReconciliation,
             store,
             &agent.id,
             agent.conversation.last_seq,
