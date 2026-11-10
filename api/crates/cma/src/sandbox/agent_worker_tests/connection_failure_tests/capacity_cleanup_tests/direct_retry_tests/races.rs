@@ -204,8 +204,16 @@ async fn selected_retry_still_checks_gaps_schema_extra_tail_and_physical_limits(
         let result = f.h.store.commit_agent_work(proposal.clone()).await;
         assert!(result.is_err(), "variant {variant}");
         match variant {
-            0 | 2 => assert_eq!(result, Err(SandboxStoreError::SequenceConflict)),
+            0 => assert_eq!(result, Err(SandboxStoreError::SequenceConflict)),
             1 => assert!(matches!(result, Err(SandboxStoreError::Corrupt(_)))),
+            // The trusted-prefix proof rejects an extra tail before the
+            // complete scan can classify it as a sequence conflict.
+            2 => assert_eq!(
+                result,
+                Err(SandboxStoreError::Corrupt(
+                    "Agent log has rows beyond its trusted head".into()
+                ))
+            ),
             _ => assert_eq!(result, Err(SandboxStoreError::AgentLogCapacityExceeded)),
         }
         assert_eq!(
