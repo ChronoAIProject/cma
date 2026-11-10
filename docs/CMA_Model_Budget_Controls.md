@@ -101,7 +101,9 @@ Grant it the same scoped runtime/migrator operations as the other Agent Manager
 collections before rollout in isolated mode. There is no TTL on unresolved
 liability or stop evidence. Do not delete the collection to reset a budget.
 Queued budget failure precision is stored in an additive command-document
-sidecar; the strict historical command record retains `execution_failed`.
+sidecar; the strict historical command record and command-status wire enum
+retain `execution_failed`. HTTP refusals and the Response error preserve the
+precise budget type and recovery guidance for existing SDK readers.
 
 The default deployment leaves the section absent. Before activation, all serving
 and rollback readers must understand the settings section and reservation
