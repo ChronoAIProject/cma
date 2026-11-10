@@ -15,6 +15,7 @@ const requiredPrefixes = [
   'store::request_limits::tests::',
   'store::sandbox_mongo_integration_tests::sandbox_usage_tests::',
   'document_artifacts::mongo_integration_tests::',
+  'agent_access::tests::tenant_isolation::',
   'store::message_feedback::tests::',
   'store::sandbox_colors::tests::',
   'agent_lifecycle::workspace::tests::mongo::',
