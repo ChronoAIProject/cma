@@ -109,6 +109,17 @@ for (const theme of ['light', 'dark']) {
     await scroll.focus();
     await page.keyboard.press('PageDown');
     await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    // Native PageDown can keep animating after its first scroll event in WebKit.
+    let lastTop = -1;
+    let stable = 0;
+    await expect
+      .poll(async () => {
+        const top = await scroll.evaluate((element) => element.scrollTop);
+        stable = top === lastTop ? stable + 1 : 0;
+        lastTop = top;
+        return stable;
+      })
+      .toBeGreaterThanOrEqual(2);
     expect(await page.evaluate(() => window.scrollY)).toBe(before);
     await page.screenshot({ path: info.outputPath(`scrolled-${theme}.png`) });
     expect(await labels.getByRole('listitem').count()).toBeLessThanOrEqual(12);
