@@ -406,7 +406,6 @@ for (const reuse of [false, true]) {
     }
   });
 
-
   test(`${mode}: larger suites use bounded fresh fixtures, with at most two running and all partitions attempted after failure`, () => {
     for (const scenario of ['batches', 'batches-error']) {
       const f = fixture(scenario, reuse);
