@@ -150,7 +150,8 @@ async fn tenant_isolation_warm_sessions_cannot_read_or_write_after_revocation() 
             }
             _ => unreachable!(),
         }
-        let expected = if cause == "scope" { 403 } else { 401 };
+        // DocumentService conceals resources when UseOwnSandboxes is absent.
+        let expected = if cause == "scope" { 404 } else { 401 };
         for suffix in [
             "",
             "/source",
@@ -171,7 +172,7 @@ async fn tenant_isolation_warm_sessions_cannot_read_or_write_after_revocation() 
             assert_eq!(
                 body["code"],
                 if cause == "scope" {
-                    "forbidden"
+                    "document_not_found"
                 } else {
                     "not_authenticated"
                 }
