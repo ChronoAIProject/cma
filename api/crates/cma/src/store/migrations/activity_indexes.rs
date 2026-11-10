@@ -30,15 +30,15 @@ pub(super) fn missing(existing: &[Document]) -> Result<Vec<Document>> {
     }
     let mut pending = Vec::new();
     for desired in indexes() {
-        let mut matches = existing.iter().filter(|index| {
-            index.get("name") == desired.get("name") || index.get("key") == desired.get("key")
-        });
+        let mut matches = existing
+            .iter()
+            .filter(|index| index.get("name") == desired.get("name") || same_keys(index, &desired));
         match matches.next() {
             None => pending.push(desired),
             Some(index) => {
                 if matches.next().is_some()
                     || index.get("name") != desired.get("name")
-                    || index.get("key") != desired.get("key")
+                    || !same_keys(index, &desired)
                     || ["unique", "sparse", "hidden"]
                         .iter()
                         .any(|key| !matches!(index.get(*key), None | Some(Bson::Boolean(false))))
@@ -62,6 +62,14 @@ pub(super) fn missing(existing: &[Document]) -> Result<Vec<Document>> {
         }
     }
     Ok(pending)
+}
+
+fn same_keys(left: &Document, right: &Document) -> bool {
+    match (left.get_document("key"), right.get_document("key")) {
+        // BSON Document equality ignores field order; compound indexes do not.
+        (Ok(left), Ok(right)) => left.iter().eq(right.iter()),
+        _ => false,
+    }
 }
 
 pub(super) async fn inspect(database: &mongodb::Database) -> Result<Vec<Document>> {
