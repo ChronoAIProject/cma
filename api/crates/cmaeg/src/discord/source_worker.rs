@@ -1,6 +1,6 @@
 //! One source's reconnect loop. A fresh lease is acquired for every attempt.
 use super::{
-    status::{FailureCode, StatusAttempt, StatusRegistry},
+    status::{FailureCode, NativeDiscordConnectionStatus, StatusAttempt, StatusRegistry},
     EndReason, GatewayEnd, GatewayError,
 };
 use futures_util::future::BoxFuture;
@@ -44,7 +44,7 @@ pub(super) async fn run(
     statuses: StatusRegistry,
 ) {
     let mut status = statuses.begin(&record, None);
-    let mut terminal_revision: Option<(String, super::status::Stage, FailureCode)> = None;
+    let mut terminal_revision: Option<(String, NativeDiscordConnectionStatus)> = None;
     let mut status_revision = None;
     let mut failures = 0u32;
     loop {
@@ -67,14 +67,13 @@ pub(super) async fn run(
                 continue;
             }
         };
-        if let Some((_, stage, code)) = terminal_revision
+        if let Some((_, snapshot)) = terminal_revision
             .as_ref()
-            .filter(|(saved, _, _)| saved == &revision)
+            .filter(|(saved, _)| saved == &revision)
         {
             if status_revision.as_ref() != Some(&revision) {
                 status = statuses.begin(&record, Some(&revision));
-                status.step(*stage);
-                status.finish(*code, true, Duration::ZERO);
+                status.restore_terminal(snapshot);
                 status_revision = Some(revision.clone());
             }
             status.poll();
@@ -142,11 +141,7 @@ pub(super) async fn run(
         status.finish(code, terminal, delay);
         if terminal {
             let snapshot = statuses.view(&record, Some(&revision));
-            terminal_revision = Some((
-                revision.clone(),
-                snapshot.stage,
-                snapshot.last_failure_code.unwrap_or(code),
-            ));
+            terminal_revision = Some((revision.clone(), snapshot));
         }
         if stopped(&mut shutdown, delay).await {
             break;
