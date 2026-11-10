@@ -21,6 +21,9 @@ mod resource_execution;
 #[path = "capacity_execution_tests.rs"]
 mod capacity_execution;
 
+#[path = "request_budget_tests.rs"]
+mod request_budget;
+
 struct Authority(Mutex<Result<Caller, CommandAuthorizationError>>);
 #[async_trait::async_trait]
 impl AgentCommandAuthorizer for Authority {
