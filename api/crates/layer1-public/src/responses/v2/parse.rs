@@ -127,18 +127,27 @@ pub(super) fn parse(
             "metadata allows 16 pairs with at most 64 characters per key and 512 per value.",
         ));
     }
-    let mut input = text_input(body.remove("input").unwrap_or(Value::Null))?;
+    let mut input = text_input(
+        body.remove("input").unwrap_or(Value::Null),
+        body.contains_key("event_context"),
+    )?;
     if let Some(value) = body.remove("event_context") {
         input.content.push(AgentContent::ExternalEvent {
             context: super::event_context::parse(value)?,
         });
-        input = input.canonical().map_err(|_| {
-            refusal(
-                "event_context",
-                "invalid_event_context",
-                "Input and event reference exceed the runtime input limit.",
-            )
-        })?;
+        if input
+            .content
+            .iter()
+            .any(|item| matches!(item, AgentContent::Text { text } if !text.trim().is_empty()))
+        {
+            input = input.canonical().map_err(|_| {
+                refusal(
+                    "event_context",
+                    "invalid_event_context",
+                    "Input and event reference exceed the runtime input limit.",
+                )
+            })?;
+        }
     }
     let mut command = AgentCommand::Message {
         input,
@@ -164,7 +173,7 @@ pub(super) fn parse(
         requested_model,
     })
 }
-fn text_input(value: Value) -> Result<AgentInput, Box<Response>> {
+fn text_input(value: Value, allow_empty: bool) -> Result<AgentInput, Box<Response>> {
     let invalid = || {
         refusal("input", "invalid_response_input", "input must be non-empty text or exactly one user message containing text/input_text parts.")
     };
@@ -206,5 +215,13 @@ fn text_input(value: Value) -> Result<AgentInput, Box<Response>> {
         }
         _ => return Err(invalid()),
     };
+    if allow_empty
+        && content.len() <= 31
+        && content
+            .iter()
+            .all(|item| matches!(item, AgentContent::Text { text } if text.trim().is_empty()))
+    {
+        return Ok(AgentInput { content });
+    }
     AgentInput { content }.canonical().map_err(|_| invalid())
 }
