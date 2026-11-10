@@ -13,6 +13,12 @@ longer retry delay. Transient failures
 retain their exponential backoff, capped at ten seconds, even while new events
 arrive. Errors remain visible with retained content.
 
+A compatibility 404 from an older serving instance leaves discovery idle and
+recoverable. Later stream hints, focus/visibility or explicit refresh can retry
+without remounting the Agent. Ordinary hints retain the two-second cooldown;
+there is no periodic retry solely because the optional feature is unavailable.
+Previously retained rows and real error text remain until a successful refresh.
+
 Retained action status starts with a one-second retry. An unchanged result backs
 off through two, four, eight and ten seconds; observed progress resets the delay.
 Terminal receipts stop observation. Hidden documents suspend these background
