@@ -204,7 +204,7 @@ async fn submit(
         {
             Ok(Ok(revision)) => revision,
             Ok(Err(error)) => return *error,
-            Err(_) => return super::routing::error(super::BindingRouteError::SenderUnavailable),
+            Err(_) => return error::unavailable(),
         }
     } else {
         None

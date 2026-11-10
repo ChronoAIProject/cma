@@ -16,7 +16,7 @@ impl ResponsesV2State {
         if submission.command.external_event().is_none() {
             return Ok(None);
         }
-        let unavailable = || Box::new(routing::error(BindingRouteError::SenderUnavailable));
+        let unavailable = || Box::new(error::unavailable());
         let bindings = self.bindings.as_ref().ok_or_else(unavailable)?;
         let principal = bindings
             .authenticate(&auth.context.credential.credential_id)
@@ -28,7 +28,7 @@ impl ResponsesV2State {
             .await
             .map_err(|_| unavailable())?;
         let credential = auth.credential.as_ref().ok_or_else(unavailable)?;
-        let stored = self
+        let retained = self
             .commands
             .retained_binding_message(
                 &auth.context,
@@ -38,6 +38,21 @@ impl ResponsesV2State {
             )
             .await
             .map_err(|e| Box::new(error::binding_admission(e)))?;
+        let (stored, response_id) = retained.map_or((None, None), |(command, receipt)| {
+            (Some(command), receipt.response_id)
+        });
+        let sender_error = |error| {
+            let mut response = routing::error(error);
+            if let Some(id) = &response_id {
+                // This key already admitted work. A verification failure must
+                // preserve recovery, never assert an unstarted provider request.
+                response.headers_mut().insert(
+                    "x-cma-response-id",
+                    id.as_str().parse().expect("generated response ID"),
+                );
+            }
+            Box::new(response)
+        };
         // Compare the complete original command, never strip a prefix from user
         // text. This also preserves historical off-policy admissions verbatim.
         if stored
@@ -58,12 +73,15 @@ impl ResponsesV2State {
         } else if !proof.binding.profile.verified_sender_context_enabled() {
             return Ok(Some(proof.binding.revision));
         }
-        let router = self.event_router.as_ref().ok_or_else(unavailable)?;
+        let router = self
+            .event_router
+            .as_ref()
+            .ok_or_else(|| sender_error(BindingRouteError::SenderUnavailable))?;
         let event = submission.command.external_event().expect("event checked");
         let prefix = router
             .verified_sender_line(auth, event, generation)
             .await
-            .map_err(|e| Box::new(routing::error(e)))?;
+            .map_err(sender_error)?;
         let AgentCommand::Message { input, .. } = &mut submission.command else {
             return Err(conflict());
         };
@@ -71,7 +89,7 @@ impl ResponsesV2State {
         submission.command = submission
             .command
             .canonical()
-            .map_err(|_| Box::new(routing::error(BindingRouteError::SenderUnsupported)))?;
+            .map_err(|_| sender_error(BindingRouteError::SenderUnsupported))?;
         if let Some(stored) = stored {
             if submission.command != stored {
                 return Err(conflict());
