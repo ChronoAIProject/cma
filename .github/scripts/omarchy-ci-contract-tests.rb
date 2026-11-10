@@ -30,7 +30,8 @@ module OmarchyCIContractTests
         end
       end
     end
-    ["python3 .github/scripts/omarchy-close-browser-tests.py",
+    ["python3 -B .github/scripts/omarchy-cache-key-tests.py",
+     "python3 .github/scripts/omarchy-close-browser-tests.py",
      "python3 .github/scripts/omarchy-browser-input-tests.py",
      "node --test .github/scripts/omarchy-browser-page.test.cjs"].each do |command|
       reject.call("Omarchy omits regression #{command}") do |value|
@@ -48,6 +49,21 @@ module OmarchyCIContractTests
       reject.call("Omarchy build #{key}") do |value|
         value["ci"]["jobs"]["omarchy"]["steps"].find { |step| step["id"] == "build" }["with"][key] = changed
       end
+    end
+    {
+      "target" => "omarchy", "platforms" => "linux/arm64", "push" => true,
+      "load" => true, "cache-to" => "type=gha,mode=max,scope=runtime-omarchy",
+    }.each do |key, changed|
+      reject.call("Omarchy dependency cache #{key}") do |value|
+        row = value["ci"]["jobs"]["omarchy"]["steps"].find { |entry| entry["name"] == "Retain pinned Omarchy dependency layers" }
+        row["with"][key] = changed
+      end
+    end
+    reject.call("Omarchy dependency export serializes the cold build") do |value|
+      steps = value["ci"]["jobs"]["omarchy"]["steps"]
+      row = steps.find { |entry| entry["name"] == "Retain pinned Omarchy dependency layers" }
+      steps.delete(row)
+      steps.insert(steps.index { |entry| entry["id"] == "build" }, row)
     end
     reject.call("Omarchy exports before scan") do |value|
       steps = value["ci"]["jobs"]["omarchy"]["steps"]
