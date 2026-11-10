@@ -119,3 +119,10 @@ no Feishu reply. Channel Activity displays the named refusal reason. Temporary
 verification outages retry at five-second intervals within original event
 expiry; successful recovery admits once and uses the original chat for the
 normal automatic reply. See the [CMA Responses v2 dialect](CMAEG_Protocol.md#verified-sender-context-cma-responses-v2-dialect).
+
+Exact replay uses the retained command and local Activity rendering, so it works
+while gateway attestation is unavailable or the reference has expired. Only new
+admissions attest. Blank input remains invalid; media-only messages carry the
+gateway's non-empty attachments block. An older CMA binary ignores the policy
+and may deliver new `event_ref` inputs without the line. The Q&A consumer must
+refuse those inputs without reading board data during rollback.

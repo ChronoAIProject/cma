@@ -12,24 +12,64 @@ impl ResponsesV2State {
         auth: &AuthenticatedResourceCaller,
         submission: &mut CommandSubmission,
         generation: u64,
-    ) -> Result<Option<u64>, Box<Response>> {
-        if submission.command.external_event().is_none() {
-            return Ok(None);
+    ) -> Result<(), Box<Response>> {
+        let stored = self.retained_sender_command(auth, submission).await?;
+        if let Some(stored) = stored {
+            if submission.command.canonical().as_ref() == Ok(&stored) {
+                return Ok(());
+            }
+            let candidate = self.locally_prefixed(submission);
+            if candidate
+                .as_ref()
+                .is_some_and(|candidate| candidate.command == stored)
+            {
+                *submission = candidate.expect("matched candidate");
+                return Ok(());
+            }
+            return Err(conflict());
         }
-        let unavailable = || Box::new(error::unavailable());
-        let bindings = self.bindings.as_ref().ok_or_else(unavailable)?;
-        let principal = bindings
-            .authenticate(&auth.context.credential.credential_id)
+        let router = self
+            .event_router
+            .as_ref()
+            .ok_or_else(|| Box::new(routing::error(BindingRouteError::SenderUnavailable)))?;
+        let event = submission
+            .command
+            .external_event()
+            .expect("event checked by caller");
+        let line = router
+            .verified_sender_line(auth, event, generation)
             .await
-            .map_err(|_| unavailable())?
-            .ok_or_else(unavailable)?;
-        let proof = bindings
-            .resolve(&principal, submission.agent_id.as_str())
-            .await
-            .map_err(|_| unavailable())?;
-        let credential = auth.credential.as_ref().ok_or_else(unavailable)?;
-        let retained = self
-            .commands
+            .map_err(|error| Box::new(routing::error(error)))?;
+        prefix(submission, line)
+            .map_err(|_| Box::new(routing::error(BindingRouteError::SenderUnsupported)))
+    }
+
+    /// Disabled policies reach this only after the ordinary ledger reports a
+    /// key conflict. Complete equality grants replay of existing work only.
+    pub(super) async fn replay_sender_context(
+        &self,
+        auth: &AuthenticatedResourceCaller,
+        submission: &CommandSubmission,
+    ) -> Result<Option<CommandSubmission>, Box<Response>> {
+        let Some(candidate) = self.locally_prefixed(submission) else {
+            return Ok(None);
+        };
+        let stored = self.retained_sender_command(auth, submission).await?;
+        Ok(stored
+            .filter(|stored| *stored == candidate.command)
+            .map(|_| candidate))
+    }
+
+    async fn retained_sender_command(
+        &self,
+        auth: &AuthenticatedResourceCaller,
+        submission: &CommandSubmission,
+    ) -> Result<Option<AgentCommand>, Box<Response>> {
+        let credential = auth
+            .credential
+            .as_ref()
+            .ok_or_else(|| Box::new(error::unauthenticated()))?;
+        self.commands
             .retained_binding_message(
                 &auth.context,
                 credential.value(),
@@ -37,70 +77,31 @@ impl ResponsesV2State {
                 &submission.idempotency_key,
             )
             .await
-            .map_err(|e| Box::new(error::binding_admission(e)))?;
-        let (stored, response_id) = retained.map_or((None, None), |(command, receipt)| {
-            (Some(command), receipt.response_id)
-        });
-        let sender_error = |error| {
-            let mut response = routing::error(error);
-            if let Some(id) = &response_id {
-                // This key already admitted work. A verification failure must
-                // preserve recovery, never assert an unstarted provider request.
-                response.headers_mut().insert(
-                    "x-cma-response-id",
-                    id.as_str().parse().expect("generated response ID"),
-                );
-            }
-            Box::new(response)
-        };
-        // Compare the complete original command, never strip a prefix from user
-        // text. This also preserves historical off-policy admissions verbatim.
-        if stored
-            .as_ref()
-            .is_some_and(|stored| submission.command.canonical().as_ref() == Ok(stored))
-        {
-            return Ok(None);
-        }
-        let conflict = || {
-            Box::new(error::binding_admission(
-                CommandLedgerError::IdempotencyConflict.into(),
-            ))
-        };
-        if let Some(stored) = &stored {
-            if !has_prefix(stored) {
-                return Err(conflict());
-            }
-        } else if !proof.binding.profile.verified_sender_context_enabled() {
-            return Ok(Some(proof.binding.revision));
-        }
-        let router = self
+            .map_err(|error| Box::new(super::error::binding_admission(error)))
+    }
+
+    fn locally_prefixed(&self, submission: &CommandSubmission) -> Option<CommandSubmission> {
+        let line = self
             .event_router
-            .as_ref()
-            .ok_or_else(|| sender_error(BindingRouteError::SenderUnavailable))?;
-        let event = submission.command.external_event().expect("event checked");
-        let prefix = router
-            .verified_sender_line(auth, event, generation)
-            .await
-            .map_err(sender_error)?;
-        let AgentCommand::Message { input, .. } = &mut submission.command else {
-            return Err(conflict());
-        };
-        input.content.insert(0, AgentContent::Text { text: prefix });
-        submission.command = submission
-            .command
-            .canonical()
-            .map_err(|_| sender_error(BindingRouteError::SenderUnsupported))?;
-        if let Some(stored) = stored {
-            if submission.command != stored {
-                return Err(conflict());
-            }
-            return Ok(None);
-        }
-        Ok(Some(proof.binding.revision))
+            .as_ref()?
+            .sender_line(submission.command.external_event()?)
+            .ok()?;
+        let mut candidate = submission.clone();
+        prefix(&mut candidate, line).ok()?;
+        Some(candidate)
     }
 }
 
-fn has_prefix(command: &AgentCommand) -> bool {
-    matches!(command, AgentCommand::Message { input, .. }
-        if matches!(input.content.first(), Some(AgentContent::Text { text }) if text.starts_with("cma_verified_sender: ")))
+fn conflict() -> Box<Response> {
+    Box::new(error::binding_admission(
+        CommandLedgerError::IdempotencyConflict.into(),
+    ))
+}
+fn prefix(submission: &mut CommandSubmission, line: String) -> Result<(), ()> {
+    let AgentCommand::Message { input, .. } = &mut submission.command else {
+        return Err(());
+    };
+    input.content.insert(0, AgentContent::Text { text: line });
+    submission.command = submission.command.canonical().map_err(|_| ())?;
+    Ok(())
 }
