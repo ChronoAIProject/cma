@@ -54,20 +54,21 @@ module OmarchyCIContractTests
         value["ci"]["jobs"]["omarchy"]["steps"].find { |step| step["id"] == "build" }["with"][key] = changed
       end
     end
-    {
-      "target" => "omarchy", "platforms" => "linux/arm64", "push" => true,
-      "load" => true, "cache-to" => "type=gha,mode=max,scope=runtime-omarchy",
-    }.each do |key, changed|
-      reject.call("Omarchy dependency cache #{key}") do |value|
-        row = value["ci"]["jobs"]["omarchy"]["steps"].find { |entry| entry["name"] == "Retain pinned Omarchy dependency layers" }
-        row["with"][key] = changed
+    [nil, "", "type=gha,mode=max,scope=${{ steps.cache.outputs.scope }}"].each do |changed|
+      reject.call("Omarchy omits cache retention or exports intermediate build layers") do |value|
+        row = value["ci"]["jobs"]["omarchy"]["steps"].find { |entry| entry["id"] == "build" }
+        row["with"]["cache-to"] = changed
       end
     end
-    reject.call("Omarchy dependency export serializes the cold build") do |value|
+    reject.call("Omarchy dependency export requires a second solve") do |value|
       steps = value["ci"]["jobs"]["omarchy"]["steps"]
-      row = steps.find { |entry| entry["name"] == "Retain pinned Omarchy dependency layers" }
-      steps.delete(row)
-      steps.insert(steps.index { |entry| entry["id"] == "build" }, row)
+      build = steps.find { |entry| entry["id"] == "build" }
+      export = { "uses" => build["uses"], "with" => {
+        "context" => ".", "file" => "infra/runtime/Dockerfile", "target" => "omarchy-dependencies",
+        "platforms" => "linux/amd64", "push" => false, "load" => false,
+        "cache-to" => build["with"].delete("cache-to"),
+      } }
+      steps.insert(steps.index(build) + 1, export)
     end
     reject.call("Omarchy exports before scan") do |value|
       steps = value["ci"]["jobs"]["omarchy"]["steps"]
