@@ -232,13 +232,15 @@ impl From<MarketplaceSettingsBody> for MarketplaceSettings {
 pub(crate) struct SettingsView {
     revision: u64,
     settings: PlatformSettingsBody,
+    model_budget_writes_available: bool,
 }
 
-impl From<StoredPlatformSettings> for SettingsView {
-    fn from(value: StoredPlatformSettings) -> Self {
+impl SettingsView {
+    pub(crate) fn new(value: StoredPlatformSettings, model_budget_writes_available: bool) -> Self {
         Self {
             revision: value.revision,
             settings: value.settings.into(),
+            model_budget_writes_available,
         }
     }
 }

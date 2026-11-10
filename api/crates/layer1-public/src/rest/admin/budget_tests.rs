@@ -2,6 +2,8 @@ use super::super::*;
 
 #[path = "budget_controls_tests.rs"]
 mod controls;
+#[path = "budget_rollout_tests.rs"]
+mod rollout;
 
 const PATH: &str = "/api/v1/admin/settings";
 const ADMIN: [Capability; 1] = [Capability::ConfigurePlatform];
@@ -22,7 +24,7 @@ fn scoped_policy() -> Value {
 
 #[tokio::test]
 async fn model_budget_settings_require_admin_cas_and_keep_values_out_of_audit() {
-    let fixture = fixture(false);
+    let fixture = budget_fixture(true);
     let body = json!({"expected_revision": 0, "model_budget": scoped_policy()});
     for grants in [
         vec![],
@@ -61,7 +63,7 @@ async fn model_budget_settings_require_admin_cas_and_keep_values_out_of_audit() 
 
 #[tokio::test]
 async fn legacy_replace_preserves_caps_and_explicit_empty_scope_disables_them() {
-    let fixture = fixture(false);
+    let fixture = budget_fixture(true);
     let saved = response_json(
         send(
             &fixture.app,
@@ -105,7 +107,7 @@ async fn legacy_replace_preserves_caps_and_explicit_empty_scope_disables_them() 
 
 #[tokio::test]
 async fn malformed_budget_policies_are_confidential_and_never_saved() {
-    let fixture = fixture(false);
+    let fixture = budget_fixture(true);
     let mut duplicate = scoped_policy();
     let owner = duplicate["owners"][0].clone();
     duplicate["owners"].as_array_mut().unwrap().push(owner);
@@ -131,4 +133,35 @@ async fn malformed_budget_policies_are_confidential_and_never_saved() {
     }
     let current = response_json(send(&fixture.app, Method::GET, PATH, None, ADMIN).await).await;
     assert_eq!(current["revision"], 0);
+}
+
+struct BudgetFixture {
+    app: Router,
+    activity: Arc<MemoryActivity>,
+}
+
+fn budget_fixture(writes_enabled: bool) -> BudgetFixture {
+    budget_fixture_with_store(writes_enabled, Arc::new(MemorySettings::default()))
+}
+
+fn budget_fixture_with_store(writes_enabled: bool, store: Arc<MemorySettings>) -> BudgetFixture {
+    let activity = Arc::new(MemoryActivity::default());
+    let activity_service = ActivityService::new(activity.clone());
+    let settings = Arc::new(
+        PlatformSettingsService::new(store, activity_service.clone())
+            .with_model_budget_writes_enabled(writes_enabled),
+    );
+    let sandboxes = Arc::new(InMemorySandboxStore::default());
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let retirement = Arc::new(StoredSandboxRetirement::new(sandboxes.clone()));
+    let operators = Arc::new(layer2_core::sandbox::SandboxOperatorService::new(
+        sandboxes,
+        profiles,
+        retirement,
+        activity_service.clone(),
+    ));
+    BudgetFixture {
+        app: router(AdminState::new(settings, operators, activity_service)),
+        activity,
+    }
 }
