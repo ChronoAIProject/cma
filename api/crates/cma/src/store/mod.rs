@@ -46,6 +46,7 @@ pub(crate) mod bot_setups;
 pub(crate) mod bots;
 #[cfg(test)]
 mod bots_mongo_integration_tests;
+mod budget;
 mod channel_storage_retention;
 mod checkpoint_capture;
 mod checkpoint_objects;
