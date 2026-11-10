@@ -145,6 +145,7 @@ pub(super) fn complete_first_message(
 
 pub(super) fn fail_first_message(
     agent: &mut Agent,
+    class: &str,
     detail: &str,
     at: &str,
     logs: &mut Vec<AgentLogKind>,
@@ -161,13 +162,13 @@ pub(super) fn fail_first_message(
     ) {
         return Ok(());
     }
-    let failure = FirstMessageFailure::new(
-        "agent_turn_failed",
-        bounded(detail.to_owned(), 4 * 1024),
-        false,
-        at,
-    )
-    .map_err(|_| AgentConversationError::InvalidState("first-message failure was invalid"))?;
+    let class = if class.trim().is_empty() || class.len() > 128 {
+        "agent_turn_failed"
+    } else {
+        class
+    };
+    let failure = FirstMessageFailure::new(class, bounded(detail.to_owned(), 4 * 1024), false, at)
+        .map_err(|_| AgentConversationError::InvalidState("first-message failure was invalid"))?;
     record
         .fail(failure)
         .map_err(|_| AgentConversationError::InvalidState("first-message failure was refused"))?;

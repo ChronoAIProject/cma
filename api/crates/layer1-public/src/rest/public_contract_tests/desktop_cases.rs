@@ -74,6 +74,8 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             vec![
                 "https://cma.example".into(),
                 "https://legacy.example".into(),
+                "https://cma.nyxid.ai".into(),
+                "https://bot.chrono-ai.fun".into(),
             ],
         )
         .layer(Extension(Arc::new(Mutex::new(held)))),
