@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use super::{require_granted, AgentOperationService, MAX_OPERATION_COMMIT_RETRIES};
-use crate::sandbox::store::AgentLogStore;
 use crate::sandbox::{Agent, AgentOperationError, AgentOperationReceipt, AgentStatus};
 use crate::{AgentId, Caller, RuntimeCapability};
 

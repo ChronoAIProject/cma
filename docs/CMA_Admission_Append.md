@@ -150,7 +150,11 @@ O(history) operations.
 
 The Mongo tests profile all collections during answer-context reservation,
 same-key response-loss replay, real command-worker execution, publication and
-settlement. Separate cases cover concurrent append, transaction abort, raw byte
+settlement. The disabled-cohort comparison uses this candidate's complete
+fallback, including one preflight scan, rather than an executed old binary.
+A separate failpoint test forces five ambiguous single-append commit replies,
+proves one insert and a single pinned reconciliation snapshot, and verifies the
+next append sequence with acceleration both enabled and disabled. Separate cases cover concurrent append, transaction abort, raw byte
 accounting, old revision-only writes, stale repair, restart, tail corruption,
 middle-gap audit quarantine, legacy-zero orphans and normal capacity refusal.
 Partition tests serialize/reload reducer state at every boundary and compare
