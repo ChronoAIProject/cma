@@ -50,6 +50,18 @@ const snapshot = (state: 'queued' | 'produced' = 'queued'): ActivityPage => ({
     },
   ],
 });
+
+it('shows the recorded refusal reason without claiming a chat reply', () => {
+  vi.stubGlobal('EventSource', Feed);
+  render(<ChannelActivity owner="owner" channelId="channel" active />);
+  const page = snapshot();
+  page.items[0]!.consumers[0]!.state = 'refused';
+  page.items[0]!.consumers[0]!.refusal_code = 'verified_sender_context_invalid';
+  act(() => Feed.instances[0]!.snapshot(page));
+  expect(screen.getByText('Refusal reason')).toBeVisible();
+  expect(screen.getByText('verified_sender_context_invalid')).toBeVisible();
+  expect(screen.getByText('No recipient delivery receipt recorded.')).toBeVisible();
+});
 afterEach(() => {
   vi.unstubAllGlobals();
   Feed.instances = [];

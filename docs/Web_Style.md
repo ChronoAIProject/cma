@@ -6076,3 +6076,13 @@ saving. Use existing form spacing, labels and validation; introduce no new token
 | 2026-11-06 | Preserve the owner’s existing keyboard focus when the conversation becomes ready; computer Home/End/Arrow navigation keeps focus on its selected tab while initial composer focus remains available on an otherwise unfocused page. |
 
 | 2026-11-07 | Integrate Workspace v3 with stable streaming recovery, retained sidebar status, deterministic desktop reconnection, mounted identity retries and complete-cohort resource usage; preserve channel queue policy independently of composer follow-ups. |
+
+### Channel activity refusal reasons (2026-11-10)
+
+A consumer's optional public `refusal_code` appears as **Refusal reason** in
+its existing Activity definition list. Use the existing row typography and
+spacing. A pre-admission refusal means no Agent turn and no automatic chat
+reply; never present it as a delivered response. Older snapshots without the
+field retain their existing presentation.
+
+| 2026-11-10 | Show recorded pre-admission refusal reasons in the existing Channel Activity detail rows. |

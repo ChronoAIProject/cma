@@ -2580,6 +2580,52 @@ received, not as a projection of it.
 Synthetic management tests omit this extension. Unsupported/unavailable reads
 must fail explicitly; the gateway does not invent a context from the sealed ref.
 
+### Verified sender context (CMA Responses v2 dialect)
+
+CMA's opaque `profile.environment.verified_sender_context:true` extension is
+supported for existing-Agent bindings. The provider lists the enabled extension
+in `honoured`; omitted/false disables it. Profile targets refuse it by name.
+Other existing-Agent profile settings remain unapplied as before. Policy-only
+PUTs preserve the borrowed Agent, credentials, binding generation and history.
+See [the CMA binding API](API_REST.md) for the exact first-line format and replay
+contract. CMAEG forwards the profile and full Activity without interpreting this
+policy or any product workflow.
+
+These precise refusals precede **durable turn admission**, including input
+rendering and prefix-size validation:
+
+| HTTP | `error.code` | Meaning |
+| --- | --- | --- |
+| 403 | `verified_sender_context_invalid` | The original Activity/reference was not attested for this binding, or proof identity did not match. Definite, non-retryable. |
+| 422 | `verified_sender_context_unsupported` | Attested identity cannot be represented safely, or the complete prefixed input exceeds the input limit. Definite, non-retryable. |
+| 503 | `verified_sender_context_unavailable` | Attestation or its prerequisite reads timed out or were unavailable. No turn was admitted. Retry with the same frozen body/key after `Retry-After: 5`. |
+
+CMAEG recognizes only the matching status, `application/json` content type,
+exact nested error code and error type (`invalid_request_error` for 403/422,
+`server_error` for 503), with no `x-cma-response-id`. Other 403/422/503 responses,
+malformed/truncated bodies and contradictory admission headers remain `Unknown`
+and use existing uncertain-submission recovery; they never authorize a blind
+transport retry. The provider transport itself never retries a POST.
+
+Attestation has a **2-second** deadline; the complete sender-context preflight
+has a **5-second** deadline and holds no Mongo transaction, binding lock or
+worker lease across the HTTP call. The deployed provider request timeout is
+30 seconds, capped at **20 seconds** for frozen submission. Operators using
+this dialect must keep that POST budget above the 5-second preflight budget
+(with transport headroom; at least 10 seconds). An attestation timeout returns
+the named 503 before this submission budget expires.
+
+The scheduler retries proven non-admissions with its existing **5-second**
+cooldown, rechecking original event expiry and current authority. Definite
+failures settle as `Refused`. An expired, proven-unadmitted prepared request
+settles with `event_expired_before_start`; an uncertain/accepted request is never
+misclassified as unstarted. Terminal activity records include optional
+`refusal_code` and a completion timestamp, including after recovery. The Feishu
+user receives **no reply** for these refusals or expiry: no Agent ran, and no
+platform failure message is invented. Channel Activity shows the recorded reason.
+If a temporary outage recovers before expiry, the original turn admits once and
+normal automatic-final reply delivery resumes.
+
 ### Verify a fresh activity before admitting a workflow
 
 Providers that run a deterministic workflow before creating any model turn can

@@ -85,6 +85,9 @@ pub enum ConsumerState {
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct ActivityConsumer {
+    /// Named terminal refusal before a provider admitted a turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal_code: Option<String>,
     pub consumer_id: String,
     pub display_name: Option<String>,
     pub agent_id: Option<String>,
@@ -116,6 +119,7 @@ impl ActivityConsumer {
     pub(crate) fn new(id: &str) -> Self {
         Self {
             consumer_id: id.into(),
+            refusal_code: None,
             display_name: None,
             agent_id: None,
             provider: None,
@@ -154,6 +158,7 @@ pub struct ActivityRecipient {
 
 #[derive(Clone)]
 pub struct Change {
+    pub refusal_code: Option<String>,
     pub consumer: String,
     pub state: Option<ConsumerState>,
     pub at: String,
@@ -170,6 +175,7 @@ impl Change {
     pub fn state(consumer: &str, state: ConsumerState, response_id: Option<String>) -> Self {
         Self {
             consumer: consumer.into(),
+            refusal_code: None,
             state: Some(state),
             at: super::now(),
             response_id,
@@ -181,6 +187,11 @@ impl Change {
             processing_completed: false,
             media_response: None,
         }
+    }
+    pub fn refused(consumer: &str, code: &str) -> Self {
+        let mut change = Self::state(consumer, ConsumerState::Refused, None);
+        change.refusal_code = Some(code.into());
+        change
     }
     /// Processing completion does not prove a successful provider response.
     pub fn settled(consumer: &str, response_id: String) -> Self {
@@ -201,6 +212,10 @@ impl Change {
             .iter_mut()
             .find(|c| c.consumer_id == self.consumer)
             .unwrap();
+        if let Some(code) = &self.refusal_code {
+            consumer.refusal_code = Some(code.clone());
+            consumer.completed_at.get_or_insert_with(|| self.at.clone());
+        }
         if let Some(state) = &self.state {
             let timestamp = match state {
                 ConsumerState::Dispatching => Some(&mut consumer.dispatched_at),
