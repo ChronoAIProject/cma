@@ -73,6 +73,29 @@ expiration/revocation is an authority change, not an elapsed-turn allowance.
 
 ## Clock-advanced evidence
 
+Provider SSE frames remain bounded at 1 MiB by the decoder. Routed delivery
+hashes the full decoded JSON for replay identity and acknowledgement; only the
+digest is persisted. The 256 KiB serialized delivery-effect limit, 256 KiB
+automatic text limit and 1 MiB projection storage limit are separate and
+unchanged. A terminal snapshot exceeding 256 KiB does not by itself prevent
+settlement, even with empty sinks or an expired Custom EventRef.
+
+An execution retained in `Accepted` by the former raw-frame guard needs no
+resubmission or record migration. After deployment, the manifest scan finds it
+again, a fenced worker claims it, and recovery GETs the original response after
+its last acknowledged cursor. If the terminal projection was already saved,
+the replay must match its recorded hash and reuses its bounded pending effect.
+Delivery then acknowledges the terminal cursor and completes the journal and
+activity. Original reply expiry and current authority checks still apply, as
+does the seven-day admission retention horizon; expired retention does not
+authorize another provider POST.
+
+The [oversized-frame regressions](../api/crates/cmaeg/src/turns/routed/oversized_frame_tests.rs)
+exercise the real executor, delivery engine, authority and frozen-turn builder
+against provider and record HTTP fixtures. They cover empty sinks, expired
+Custom references, recovery of a pending terminal projection, changed replay
+body rejection, idempotent completion, and the unchanged SSE decoder limit.
+
 [`routed_existing_agent_queued_nearly_a_day_then_runs_thirty_minutes_completes_once`](../api/crates/cmaeg/src/turns/routed/long_queue_tests.rs)
 uses the real routed planner, encrypted admission/journal records over HTTP,
 `HttpExecutionPort`, provider HTTP snapshot/replay, and `RoutedTargetExecutor`.
