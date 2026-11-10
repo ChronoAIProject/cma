@@ -91,6 +91,8 @@ pub use documents::documents_router;
 mod embed;
 #[cfg(test)]
 mod embed_tests;
+#[cfg(test)]
+mod history_export_tests;
 pub mod openapi;
 mod openapi_shapes;
 mod organizations;
