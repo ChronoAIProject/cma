@@ -207,6 +207,9 @@ module CIContract
     require!(workflow.dig("concurrency", "cancel-in-progress") == false, "remote writers cannot be cancelled by a newer run")
     triggers = workflow["on"] || workflow[true]
     require!(triggers.keys.sort == %w[schedule workflow_dispatch], "remote campaign cannot execute on PR code")
+    require!(workflow.dig("jobs", "smoke", "env", "CMA_E2E_PUBLIC_ID") ==
+      "${{ vars.CMA_E2E_PUBLIC_ID == secrets.CMA_E2E_PUBLIC_ID && secrets.CMA_E2E_PUBLIC_ID || '' }}",
+      "smoke public ID must match its referenced redaction mirror")
     %w[smoke journeys].each do |id|
       row = workflow.fetch("jobs").fetch(id)
       require!(!row.fetch("env").key?("CMA_E2E_OUTPUT_DIR"), "runner evidence path must be initialized at step runtime")
