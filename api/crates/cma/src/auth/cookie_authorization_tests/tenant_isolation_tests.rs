@@ -1,5 +1,6 @@
 //! Real auth middleware + real document handlers; only NyxID transport is doubled.
 use super::*;
+use crate::auth::persistence;
 use axum::body::{to_bytes, Body};
 use axum::http::Request;
 use layer2_core::{document_artifacts::*, Caller};
