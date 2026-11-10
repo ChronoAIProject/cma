@@ -51,7 +51,7 @@ automation duration are not evidence of available staffing.
 - [CLAUDE.md](../CLAUDE.md): ownership, structure, compatibility and CI rules.
 - [Deployment readiness](CMA_Deployment_Readiness.md): capability and evidence
   boundaries; no unverified public promises.
-- [Release runbook](RELEASE.md) and [rolling deployment](CMA_Rolling_Deployment.md):
+- [Release runbook](Release.md) and [rolling deployment](CMA_Rolling_Deployment.md):
   approved promotion, retained assets and continuity constraints.
 - [Native production verification](CMA_Native_Production_Verification.md):
   candidate-specific verification; an index does not replace its required proof.
