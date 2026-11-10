@@ -170,6 +170,7 @@ pub(super) fn fold_update(
             if interrupted {
                 fail_first_message(
                     &mut agent,
+                    "agent_turn_failed",
                     "the first-message turn was interrupted",
                     appended_at,
                     &mut logs,
@@ -205,11 +206,12 @@ pub(super) fn fold_update(
             let mut agent = current.clone();
             let mut logs = flush_message(assembly);
             observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
-            fail_first_message(&mut agent, &message, appended_at, &mut logs)?;
+            let class = capability.unwrap_or_else(|| "agent_turn_failed".into());
+            fail_first_message(&mut agent, &class, &message, appended_at, &mut logs)?;
             logs.push(AgentLogKind::TurnFailed {
                 turn_sequence: turn,
                 failure: super::TypedFailure {
-                    class: capability.unwrap_or_else(|| "agent_turn_failed".into()),
+                    class,
                     detail: bounded(message, 4 * 1024),
                 },
             });
