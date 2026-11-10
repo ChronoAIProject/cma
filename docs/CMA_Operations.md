@@ -1123,16 +1123,21 @@ checkpoint writer hold; they cannot create new holds or transfer archives.
 configuration field. Log level changes never authorize credential-value output.
 Keep model/service/provider configuration out of ad hoc frontend build flags.
 
-The API Deployment sets `TOKIO_WORKER_THREADS=2`, consumed by Tokio's existing
-multithread runtime before CMA starts. Its one-CPU quota would otherwise select
-one worker. Production desktop measurements found CPU work occupying that sole
-worker for about a second, delaying both desktop frames and liveness responses.
-Two workers let the operating system schedule interactive IO while one task is
-busy. This does not increase the CPU quota or replace profiling and moving
+The API Deployment supplies `TOKIO_WORKER_THREADS` through the downward API:
+`resourceFieldRef` names container `api`, resource `limits.cpu`, and divisor `"1"`.
+The current eight-core limit therefore supplies eight workers to Tokio's existing
+multithread runtime before CMA starts. Requests are four CPU cores and 256Mi;
+limits are eight CPU cores and 8Gi. The worker setting follows the container limit
+on Pod creation; it is not a live runtime resize. Production desktop measurements
+previously found CPU work occupying a sole worker and delaying frames and
+liveness responses. Additional workers do not replace profiling and moving
 expensive work off async workers; simultaneous CPU work can still delay IO.
 Apply this as an API-only rollout, preserving live Sandbox Pods and conversation
 history. Verify the worker count and public desktop input-to-pixel latency after
-the rollout. Rollback restores the previous worker setting on the same API image.
+the rollout. Any owner-approved rollback restores the recorded previous worker
+setting on the same API image. The namespace's `sandbox-limits` LimitRange permits
+Container max CPU `8` and memory `8Gi`; it is managed outside this repository's
+fixed `infra/` manifest list. Its defaults are unchanged by this parity update.
 
 Execution policy is pinned before each effect and participates in its operation
 fingerprint. A changed timeout or clone-depth environment value must not change

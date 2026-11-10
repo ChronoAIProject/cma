@@ -158,9 +158,13 @@ spec:
                 name: cma-agent-manager
           env:
             # Keep interactive IO schedulable alongside reconciliation and BSON
-            # decoding. Match workers to the four-core burst limit below.
+            # decoding. Derive workers from this container's CPU limit.
             - name: TOKIO_WORKER_THREADS
-              value: "4"
+              valueFrom:
+                resourceFieldRef:
+                  containerName: api
+                  divisor: "1"
+                  resource: limits.cpu
             - name: CHRONO_AGENT_SANDBOX_API_SERVER
               valueFrom:
                 configMapKeyRef:
