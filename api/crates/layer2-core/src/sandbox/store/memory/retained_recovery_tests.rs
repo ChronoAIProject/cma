@@ -2,8 +2,9 @@ use super::*;
 use crate::sandbox::lifecycle_test_support::{agent, log, NOW};
 use crate::sandbox::runtime_update_test_support::native;
 use crate::sandbox::{
-    RetainedRecoveryDisposition as D, RetainedRecoveryError, RetainedRecoveryInspector,
-    RetainedRecoveryService, RetainedRecoverySnapshot, TypedFailure,
+    AgentStatus, RetainedRecoveryDisposition as D, RetainedRecoveryError,
+    RetainedRecoveryInspector, RetainedRecoveryService, RetainedRecoverySnapshot, SandboxWorkStep,
+    TypedFailure,
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
