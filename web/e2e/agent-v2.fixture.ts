@@ -107,12 +107,12 @@ export class LocalAgentV2 {
       this.frame(stream, 'cma.agent.event', { ...item, agent_id: agent, incarnation }, item.cursor);
   }
 
-  live(kind: 'text_delta' | 'reasoning_summary_delta', delta: string) {
+  live(kind: 'text_delta' | 'reasoning_summary_delta', delta: string, turnSequence = 1) {
     for (const stream of this.streams)
       this.frame(stream, 'cma.agent.live', {
         agent_id: agent,
         incarnation,
-        turn_sequence: 1,
+        turn_sequence: turnSequence,
         after_sequence: this.items.length,
         message_id: kind === 'text_delta' ? 'live_text' : 'live_reasoning',
         kind,
@@ -175,7 +175,7 @@ export class LocalAgentV2 {
     response.setHeader('Access-Control-Allow-Credentials', 'true');
     response.setHeader(
       'Access-Control-Allow-Headers',
-      'content-type, x-request-id, last-event-id, idempotency-key',
+      'content-type, x-request-id, last-event-id, idempotency-key, prefer',
     );
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     response.setHeader('Access-Control-Expose-Headers', 'x-cma-response-id, x-cma-command-id');
@@ -235,6 +235,26 @@ export class LocalAgentV2 {
       }
     } else if (request.method === 'GET') {
       this.reads.push(`${path}${url.search}`);
+      // Older boundary cases deliberately exercise optional capability fallback.
+      if (path === '/api/v2/ui/task-experience')
+        return this.json(
+          response,
+          { code: 'not_found', detail: 'Optional capability unavailable.' },
+          404,
+        );
+      if (path === `/api/v2/agents/${agent}/events/head`)
+        return this.json(
+          response,
+          {
+            error: {
+              type: 'server_error',
+              code: 'agent_read_unavailable',
+              message: 'Optional live head unavailable.',
+              param: null,
+            },
+          },
+          503,
+        );
       if (this.queued.handle('GET', path, response)) return;
       if (path === `/api/v2/agents/${agent}/queued-inputs`)
         return this.json(response, {
