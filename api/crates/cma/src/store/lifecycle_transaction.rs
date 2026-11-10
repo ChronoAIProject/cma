@@ -1,5 +1,6 @@
 //! Atomic Mongo publication for one sandbox lifecycle phase.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use std::collections::BTreeMap;
 
 use layer2_core::sandbox::store::{
@@ -186,6 +187,7 @@ async fn apply_lifecycle(
             .copied()
             .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
         let complete = scan_complete_log_with_session(
+            ScanCaller::CommandAdmission,
             store,
             &stored.id,
             stored.conversation.last_seq,

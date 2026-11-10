@@ -1,5 +1,6 @@
 //! Mongo adapter for durable agent-title reads and coordination.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use futures_util::TryStreamExt;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE};
@@ -159,6 +160,7 @@ async fn transcript_at_snapshot(
 ) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
     let mut logs = Vec::new();
     scan_complete_log_with_snapshot_session(
+        ScanCaller::TitleDiscovery,
         store,
         &agent.id,
         agent.conversation.last_seq,

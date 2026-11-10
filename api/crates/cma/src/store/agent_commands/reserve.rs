@@ -1,3 +1,4 @@
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::agent_io::{
     validate_command_reservation, CommandLedgerError, CommandReservation, CommandReservationResult,
 };
@@ -158,6 +159,7 @@ pub(in crate::store) async fn apply(
         }
         let mut entries = Vec::new();
         super::super::agent_log::scan_complete_log_with_session(
+            ScanCaller::CommandAdmission,
             store,
             &agent.id,
             agent.conversation.last_seq,

@@ -1,3 +1,4 @@
+use crate::store::agent_log_telemetry::ScanCaller;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
@@ -92,6 +93,7 @@ pub(super) async fn load(
         let mut observation = Observation::new(Stage::PublicationLog);
         let mut published = false;
         let result = scan_complete_log_with_session(
+            ScanCaller::RecoveryProof,
             store,
             &agent.id,
             agent.conversation.last_seq,

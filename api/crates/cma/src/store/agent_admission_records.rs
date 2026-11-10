@@ -1,5 +1,6 @@
 //! Replay loading and commit reconciliation for Mongo agent admission.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::{
     AgentAdmission, AgentAdmissionResult, AgentCreation, SandboxStoreError,
 };
@@ -159,21 +160,35 @@ async fn load_replay_with_session(
     let mut initial_log = None;
     match read {
         ReplayRead::Transaction => {
-            scan_complete_log_with_session(store, &agent.id, last_seq, session, |entry| {
-                if initial_log.is_none() {
-                    initial_log = Some(entry);
-                }
-                Ok(())
-            })
+            scan_complete_log_with_session(
+                ScanCaller::CommandAdmission,
+                store,
+                &agent.id,
+                last_seq,
+                session,
+                |entry| {
+                    if initial_log.is_none() {
+                        initial_log = Some(entry);
+                    }
+                    Ok(())
+                },
+            )
             .await?;
         }
         ReplayRead::Snapshot => {
-            scan_complete_log_with_snapshot_session(store, &agent.id, last_seq, session, |entry| {
-                if initial_log.is_none() {
-                    initial_log = Some(entry);
-                }
-                Ok(())
-            })
+            scan_complete_log_with_snapshot_session(
+                ScanCaller::CommandAdmission,
+                store,
+                &agent.id,
+                last_seq,
+                session,
+                |entry| {
+                    if initial_log.is_none() {
+                        initial_log = Some(entry);
+                    }
+                    Ok(())
+                },
+            )
             .await?;
         }
     }
@@ -322,6 +337,7 @@ pub(super) async fn reconcile_created(
     let provenance_matches = exact_artifact_matches(provenance.as_ref(), &receipt.provenance)?;
     let mut initial_log = None;
     scan_complete_log_with_snapshot_session(
+        ScanCaller::UnknownCommitProof,
         store,
         &receipt.creation.agent.id,
         receipt.creation.agent.conversation.last_seq,
