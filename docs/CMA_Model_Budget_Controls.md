@@ -34,14 +34,18 @@ interface; an authoritative source must integrate at that boundary too.
 
 The existing authorized `/api/v1/admin/settings` GET, PUT and PATCH operations
 accept a `model_budget` section. Use the existing settings revision CAS and
-`ConfigurePlatform` authority. No new environment variable, price, allowance or
-currency default is introduced. The owner supplies all values privately.
+`ConfigurePlatform` authority. The owner supplies all policy values privately.
+A separate deployment compatibility gate, `CHRONO_MODEL_BUDGET_WRITES_ENABLED`,
+defaults to false; it is not a spend-control value or an admin-editable policy.
 
 The section contains an explicit `enabled` switch, optional `platform` policy,
 `owners` (explicit owner policies) and an optional `default_policy`. Only disabled
 is an implicit activation value. An owner entry overrides the default. An absent
 section or `enabled: false` disables new admission reservations. Disabled settings
-can retain explicitly configured values for later activation.
+can retain explicitly configured values for later activation **only after the
+compatible-reader save gate is enabled**. Saving values with enforcement disabled
+already changes the stored schema. Until the gate opens, keep the section absent
+or completely empty and disabled.
 Outstanding reservations and recorded stop decisions remain effective.
 
 Each owner policy contains `owner_day_limit`, `turn_limit`, `max_calls_per_turn`,
@@ -124,11 +128,45 @@ sidecar; the strict historical command record and command-status wire enum
 retain `execution_failed`. HTTP refusals and the Response error preserve the
 precise budget type and recovery guidance for existing SDK readers.
 
-The default deployment leaves the section absent. Before activation, all serving
-and rollback readers must understand the settings section and reservation
-schema. Funding and actual configured values stay outside GitHub. Production
-verification belongs to the release operator using a test owner; never change a
-platform-wide policy to exercise a threshold.
+The rollout is expand/contract, with a reader stage before the first nonempty
+save, including disabled drafts:
+
+1. Ship this compatible reader with `CHRONO_MODEL_BUDGET_WRITES_ENABLED=false`.
+   The strict boolean accepts only true/false and invalid values fail startup
+   without echoing the value. Empty disabled settings are omitted from persisted
+   `PlatformSettings`; ordinary settings saves remain readable by pre-budget
+   images. Any nonempty budget save returns HTTP 503
+   `model_budget_writes_unavailable`, without changing the settings revision.
+2. The release operator verifies that all serving readers and the designated
+   one-image rollback target understand this exact settings and reservation
+   schema, drains older workers, and records the verified image/digest as the
+   rollback baseline. Only then, in a separate fenced release/configuration step,
+   may cma-web-hotfix set `CHRONO_MODEL_BUDGET_WRITES_ENABLED=true`. This PR keeps
+   the flag false in the ConfigMap and does not enable production writes.
+3. Admins may now save privately supplied values, including disabled drafts,
+   through the existing revision CAS and confidential audit. Enabling budget
+   enforcement is a later, separate decision requiring the request-level proof
+   described above and the lead's private activation direction.
+4. After saves exist, rollback uses the verified compatible reader. Turning the
+   write gate off retains readable settings, reservations and stop evidence;
+   it refuses further nonempty settings saves. Setting policy `enabled:false`
+   while retaining values does **not** restore pre-budget reader compatibility.
+   Never clear policy or delete liability/stop records to justify an older image.
+
+GET `/api/v1/admin/settings` exposes the read-only top-level boolean
+`model_budget_writes_available`. It also accompanies settings mutation responses.
+The Operations UI must treat false or missing as **saving not yet available**,
+keep values out of logs, and handle the typed 503 if a write reaches a closed
+reader during rollout. This signal is not persisted policy and cannot be changed
+through PUT/PATCH. Existing SDK readers ignore the additive response metadata.
+
+Train target: merge the compatible reader by Wed 2026-11-11 14:00 SGT for the
+evening train; establish the rollback baseline before a later Thursday write-gate
+step. If the reader first rides Thu morning, retain Thu evening/Fri morning for
+the separate step, with verification complete by Fri 2026-11-13 15:00 SGT.
+Production changes and verification belong to cma-web-hotfix and the lead relay.
+Use an isolated test owner; never change platform-wide values to exercise a
+threshold. Funding and actual configured values stay outside GitHub.
 
 Evidence should include source revision, release artifact, policy revision,
 scenario result and retained receipt/event evidence, with no policy amounts,
