@@ -288,6 +288,9 @@ pub(super) fn turn_outcome(frame: serde_json::Value) -> Outcome {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("agent refused the prompt without saying why")
             .to_string();
+        if let Some(failure) = super::acp_credit_failure::classify(&message) {
+            return failure;
+        }
         return Outcome::Failed {
             message,
             capability: error
@@ -307,6 +310,13 @@ pub(super) fn turn_outcome(frame: serde_json::Value) -> Outcome {
         if !failure.is_null()
             && failure.get("severity").and_then(serde_json::Value::as_str) != Some("warning")
         {
+            if let Some(failure) = failure
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .and_then(super::acp_credit_failure::classify)
+            {
+                return failure;
+            }
             return Outcome::Failed {
                 message: failure
                     .get("title")
