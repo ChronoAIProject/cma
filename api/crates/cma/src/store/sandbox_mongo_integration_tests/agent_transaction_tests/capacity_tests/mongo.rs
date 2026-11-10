@@ -4,6 +4,7 @@ use futures_util::TryStreamExt;
 use sha2::{Digest, Sha256};
 
 mod retry_tests;
+mod telemetry_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
