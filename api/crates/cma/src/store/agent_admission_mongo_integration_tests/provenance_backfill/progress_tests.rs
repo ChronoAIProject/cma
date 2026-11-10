@@ -1,4 +1,7 @@
 use super::*;
+
+#[path = "progress_tests/receipts.rs"]
+mod receipts;
 use crate::store::provenance_progress::{initialize, status, COLLECTION};
 use layer2_core::sandbox::store::ProvenanceBackfillProgress;
 
@@ -27,89 +30,6 @@ async fn expire(store: &MongoSandboxStore) {
         )
         .await
         .unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn progress_requires_explicit_activation_and_retains_original_facts() {
-    let (client, name, store, _, _, request) = legacy_fixture("progress_activation").await;
-    let db = client.database(&name);
-    let owner = worker();
-    let before = store
-        .agent_provenance_snapshot(&request.agent_id)
-        .await
-        .unwrap();
-    assert_eq!(
-        store
-            .durable_provenance_backfill_step(&owner)
-            .await
-            .unwrap(),
-        None
-    );
-    assert_eq!(status(&db).await.unwrap()["phase"], "inactive");
-    initialize(&db).await.unwrap();
-    let ready = counts(&store).await;
-    initialize(&db).await.unwrap();
-    assert_eq!(counts(&store).await, ready);
-    assert_eq!(
-        store
-            .durable_provenance_backfill_step(&owner)
-            .await
-            .unwrap(),
-        Some(ProvenanceBackfillProgress::Advanced)
-    );
-    let progress = counts(&store).await;
-    assert_eq!(
-        progress.get_document("counts").unwrap(),
-        &doc! {"scanned":1_i64,"recorded":1_i64,"retained":0_i64,"skipped":0_i64,"errors":0_i64}
-    );
-    let after = store
-        .agent_provenance_snapshot(&request.agent_id)
-        .await
-        .unwrap();
-    assert_eq!(before.resource, after.resource);
-    assert_eq!(before.first_log, after.first_log);
-    assert_eq!(
-        after.creation.unwrap(),
-        before.creation_provenance(&request.agent_id).unwrap()
-    );
-    assert_eq!(
-        store
-            .durable_provenance_backfill_step(&owner)
-            .await
-            .unwrap(),
-        Some(ProvenanceBackfillProgress::SweepFinished)
-    );
-    let completed = counts(&store).await;
-    let receipt_id = completed.get_str("last_receipt").unwrap();
-    let receipt = db
-        .collection::<Document>(COLLECTION)
-        .find_one(doc! {"_id":receipt_id})
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(receipt.get_str("phase").unwrap(), "sweep_finished");
-    assert_eq!(status(&db).await.unwrap()["global_completion"], false);
-    assert_eq!(
-        store
-            .durable_provenance_backfill_step(&worker())
-            .await
-            .unwrap(),
-        Some(ProvenanceBackfillProgress::Busy)
-    );
-    initialize(&db).await.unwrap();
-    assert_eq!(
-        db.collection::<Document>(COLLECTION)
-            .find_one(doc! {"_id":receipt_id})
-            .await
-            .unwrap(),
-        Some(receipt)
-    );
-    assert_eq!(counts(&store).await, completed);
-    let public = status(&db).await.unwrap().to_string();
-    assert!(!public.contains(request.agent_id.as_str()));
-    assert!(!public.contains(&owner));
-    db.drop().await.unwrap();
 }
 
 #[tokio::test]

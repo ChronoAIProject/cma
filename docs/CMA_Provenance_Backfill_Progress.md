@@ -90,6 +90,9 @@ represent only this durable sweep's observations.
 
 An empty next scan atomically inserts an immutable `sweep_finished` receipt and
 settles the control pointer. Receipts and exceptions have no TTL or deletion path.
+Completion receipts clear the private Agent cursor and worker identity before
+serialization. The live control retains both for lease ownership and resume;
+restricted exception observations separately retain their repair target.
 The status command performs bounded reads of the control and its last completion
 receipt and returns aggregate counts, phase, sweep identity, revision/fence and
 timestamps. It omits cursor/Agent identities, worker identity and raw driver

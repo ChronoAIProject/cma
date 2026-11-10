@@ -174,10 +174,14 @@ async fn execute(
         control.last_receipt = Some(receipt_id.clone());
         control.next_sweep_at =
             mongodb::bson::DateTime::from_millis(control.updated_at.timestamp_millis() + 300_000);
-        let mut receipt = control.document()?;
-        receipt.insert("_id", receipt_id);
+        // Permanent sweep evidence must not retain the private resume cursor
+        // or lease-holder identity. Keep both on the live control row.
+        let mut receipt = control.clone();
+        receipt.id = receipt_id;
+        receipt.cursor = None;
+        receipt.owner = None;
         rows(database)
-            .insert_one(receipt)
+            .insert_one(receipt.document()?)
             .session(&mut *session)
             .await?;
         persist(database, &before, &control, owner, session).await?;
