@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::{AgentLogEntry, AgentLogKind, FirstMessageDelivery};
 
 /// Terminal refusal before dispatch still closes the preserved first-message
@@ -52,6 +53,7 @@ pub(in crate::store) async fn project_terminal(
     let previous_revision = agent.revision;
     let previous_seq = agent.conversation.last_seq;
     let summary = super::super::agent_log::scan_complete_log_with_session(
+        ScanCaller::ConversationPublication,
         store,
         &agent.id,
         previous_seq,

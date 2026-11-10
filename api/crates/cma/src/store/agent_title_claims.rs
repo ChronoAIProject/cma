@@ -1,5 +1,6 @@
 //! Single-writer Mongo claims for automatic agent-title generation.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use std::time::SystemTime;
 
 use layer2_core::sandbox::store::SandboxStoreError;
@@ -194,6 +195,7 @@ async fn title_transcript(
 ) -> Result<Option<AgentTitleTranscript>, ApplyError> {
     let mut logs = Vec::new();
     scan_complete_log_with_session(
+        ScanCaller::TitleDiscovery,
         store,
         &agent.id,
         agent.conversation.last_seq,
@@ -235,6 +237,7 @@ async fn reconcile_claim(
     }
     let mut logs = Vec::new();
     scan_complete_log_with_snapshot_session(
+        ScanCaller::UnknownCommitProof,
         store,
         &agent.id,
         agent.conversation.last_seq,

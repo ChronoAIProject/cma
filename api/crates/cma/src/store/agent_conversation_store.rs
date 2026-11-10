@@ -1,5 +1,6 @@
 //! Atomic Mongo persistence for runtime conversation updates.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{
     AgentConversationMutation, AgentConversationStore, SandboxStoreError,
@@ -82,7 +83,14 @@ async fn commit_conversation(
             }
             return Err(SandboxStoreError::Unavailable(error.to_string()));
         }
-        let receipt = match apply_mutation(store, &mutation, &mut session).await {
+        let receipt = match apply_mutation(
+            ScanCaller::ConversationPublication,
+            store,
+            &mutation,
+            &mut session,
+        )
+        .await
+        {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
@@ -136,6 +144,7 @@ async fn commit_conversation(
 }
 
 async fn apply_mutation(
+    caller: ScanCaller,
     store: &MongoSandboxStore,
     mutation: &AgentConversationMutation,
     session: &mut mongodb::ClientSession,
@@ -161,6 +170,7 @@ async fn apply_mutation(
     let mut actual_last_seq = 0;
     let mut latest_turn = None;
     let log_summary = scan_complete_log_with_session(
+        caller,
         store,
         &mutation.agent.id,
         current.conversation.last_seq,
@@ -399,6 +409,7 @@ pub(super) async fn reconcile_conversation_snapshot(
     };
     let mut logs = Vec::with_capacity(receipt.logs.len());
     scan_complete_log_with_snapshot_session(
+        ScanCaller::UnknownCommitProof,
         store,
         &receipt.agent.id,
         receipt.agent.conversation.last_seq,
@@ -444,56 +455,5 @@ async fn pending_approvals(
     pending_approvals_snapshot(store, id, &mut session).await
 }
 
-async fn pending_approvals_snapshot(
-    store: &MongoSandboxStore,
-    id: &AgentId,
-    session: &mut mongodb::ClientSession,
-) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
-    let agent = store
-        .agents
-        .find_one(doc! { "_id": id.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut *session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_agent)
-        .transpose()?
-        .ok_or(SandboxStoreError::NotFound)?;
-    let mut pending = PendingAgentApprovals::default();
-    scan_complete_log_with_snapshot_session(
-        store,
-        id,
-        agent.conversation.last_seq,
-        session,
-        |entry| {
-            pending.observe(&entry);
-            Ok(())
-        },
-    )
-    .await
-    .map_err(|error| snapshot_error(error.into()))?;
-    Ok(pending.into_entries())
-}
-
-async fn snapshot_session(
-    store: &MongoSandboxStore,
-    snapshot_time: Option<mongodb::bson::Timestamp>,
-) -> Result<mongodb::ClientSession, SandboxStoreError> {
-    let session = store.client.start_session().snapshot(true);
-    let session = match snapshot_time {
-        Some(snapshot_time) => session.snapshot_time(snapshot_time),
-        None => session,
-    };
-    let session = session
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    Ok(session)
-}
-
-fn snapshot_error(error: ApplyError) -> SandboxStoreError {
-    match error {
-        ApplyError::Domain(error) => error,
-        ApplyError::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
-    }
-}
+mod reads;
+use reads::{pending_approvals_snapshot, snapshot_error, snapshot_session};

@@ -1,5 +1,6 @@
 //! Gap-free Mongo log for agent conversation and tool events.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{AgentLogStore, SandboxStoreError, MAX_PAGE_SIZE};
 use layer2_core::sandbox::{AgentLogEntry, AgentLogKind};
@@ -7,8 +8,9 @@ use mongodb::bson::{doc, Document};
 use mongodb::options::{IndexOptions, ReadConcern};
 use mongodb::{Collection, IndexModel};
 
-use super::agent_log_integrity::{
-    ensure_append_capacity, scan_complete_log, AppendCapacity, LogSummary, TransactionLogError,
+use super::agent_log_integrity::{ensure_append_capacity, AppendCapacity, TransactionLogError};
+pub(super) use super::agent_log_integrity::{
+    scan_complete_log_with_session, scan_complete_log_with_snapshot_session,
 };
 use super::agent_log_reads::scan_read_log;
 use super::agents::read_agent;
@@ -71,32 +73,6 @@ pub(super) fn read_entry(document: &Document) -> Result<AgentLogEntry, SandboxSt
     Ok(entry)
 }
 
-pub(super) async fn scan_complete_log_with_session<F>(
-    store: &MongoSandboxStore,
-    agent_id: &AgentId,
-    last_seq: u64,
-    session: &mut mongodb::ClientSession,
-    visit: F,
-) -> Result<LogSummary, TransactionLogError>
-where
-    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
-{
-    scan_complete_log(store, agent_id, last_seq, session, false, visit).await
-}
-
-pub(super) async fn scan_complete_log_with_snapshot_session<F>(
-    store: &MongoSandboxStore,
-    agent_id: &AgentId,
-    last_seq: u64,
-    session: &mut mongodb::ClientSession,
-    visit: F,
-) -> Result<LogSummary, TransactionLogError>
-where
-    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
-{
-    scan_complete_log(store, agent_id, last_seq, session, true, visit).await
-}
-
 #[cfg(test)]
 pub(super) fn verify_complete_log(
     agent_id: &AgentId,
@@ -156,8 +132,15 @@ async fn append_in_transaction(
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
         .and_then(|seq| unsigned(seq, "agent log sequence").map_err(SandboxStoreError::Corrupt))
         .map_err(TransactionLogError::Domain)?;
-    let complete =
-        scan_complete_log_with_session(store, agent_id, previous, session, |_| Ok(())).await?;
+    let complete = scan_complete_log_with_session(
+        ScanCaller::Other,
+        store,
+        agent_id,
+        previous,
+        session,
+        |_| Ok(()),
+    )
+    .await?;
     let seq = previous.checked_add(1).ok_or(TransactionLogError::Domain(
         SandboxStoreError::SequenceConflict,
     ))?;
@@ -260,6 +243,7 @@ async fn reconcile_append_after_unknown(
     }
     let mut found = None;
     scan_complete_log_with_snapshot_session(
+        ScanCaller::UnknownCommitProof,
         store,
         &expected.agent_id,
         agent.conversation.last_seq,

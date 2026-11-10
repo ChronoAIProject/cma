@@ -1,5 +1,6 @@
 //! Exact reconciliation for an ambiguous agent-work transaction commit.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::bson::doc;
 use mongodb::options::ReadConcern;
@@ -101,6 +102,7 @@ async fn reconcile_publication_snapshot(
     let first_receipt_seq = receipt.logs.first().map(|entry| entry.seq);
     let mut receipt_offset = 0;
     scan_complete_log_with_snapshot_session(
+        ScanCaller::UnknownCommitProof,
         store,
         &receipt.agent.id,
         receipt.agent.conversation.last_seq,
