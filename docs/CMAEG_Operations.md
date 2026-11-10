@@ -1,5 +1,43 @@
 # CMA Event Gateway operations
 
+## Guarded ConfigMap and Deployment apply
+
+Use the guarded operator path for every application of the checked-in CMAEG
+ConfigMap and Deployment. Merge and image publication do not deploy them.
+The existing release approval, serialization lock, STOP marker, observation
+and rollback requirements still apply; the guard does not authorize a rollout.
+
+```sh
+python3 .github/scripts/apply-cmaeg.py --context "$KUBE_CONTEXT" --check
+python3 .github/scripts/apply-cmaeg.py --context "$KUBE_CONTEXT" --dry-run=server
+# Only after the operator's release approval and successful dry-run:
+python3 .github/scripts/apply-cmaeg.py --context "$KUBE_CONTEXT" --apply
+```
+
+The fixed targets are `infra/cmaeg/configmap.yaml` and
+`infra/cmaeg/deployment.yaml`, both named `cma-event-gateway` in `chrono-bot`.
+The read-only `--check` fetches bounded identity and presence projections.
+Kubernetes returns only booleans for `CMAEG_OWNER_KEY_SERVICE_ID` and
+`CMAEG_OWNER_KEY_CUTOVER_ID`; their live values are never printed, downloaded
+or written to an evidence file. Empty or whitespace-only local placeholders
+are refused if the corresponding live key is nonempty. Missing keys, failed
+reads, malformed presence evidence and unexpected object identities also
+refuse the operation before either manifest is applied.
+
+Every dry-run or actual apply repeats the check. The wrapper holds the parsed
+local manifests in memory and includes the captured UID/resourceVersion in
+each server-side apply, so a concurrent replacement or edit fails closed.
+It does not force field-ownership conflicts; stop and review a conflict.
+The ConfigMap is applied before the Deployment, and the pair is not atomic:
+if the second operation fails, stop, preserve the first result and reassess.
+Subprocess output is suppressed to avoid exposing values in error messages.
+
+The current repository placeholders intentionally block a full production
+apply. Do not copy live values into files, bypass the wrapper or clear the
+live fields to make it pass. [Follow-up #1588](https://github.com/ChronoAIProject/cma/issues/1588)
+tracks moving these keys to Secret references. An image-only release still
+uses its separately approved fenced image patch, not a full manifest apply.
+
 ## Native GitHub startup initialization
 
 `CMAEG_GITHUB_ENABLED` is the deployment-wide feature flag, default `false` when unset.
@@ -900,7 +938,9 @@ is never used as a provider credential.
 The deployment permits a rolling replacement with one surge pod and zero
 unavailable pods. Its 615-second termination grace covers the five-second
 load-balancer propagation delay, the 600-second application drain, and teardown.
-Apply ConfigMap and populated Secrets before starting the Deployment. Confirm
+Apply populated Secrets through the separately approved secret procedure;
+use the [guarded ConfigMap and Deployment path](#guarded-configmap-and-deployment-apply)
+before starting the Deployment. Confirm
 `/healthz`, `/readyz`, accepted HTTPRoute/health policy status, authenticated CMA
 record access, and the public HTTPS route after rollout. A ready gateway alone
 does not prove a deployed Telegram round trip.
@@ -1758,8 +1798,9 @@ Linux/amd64 Pod in the authorized cluster, with no secrets or service-account
 token and the gateway's restricted security context. Require a successful
 `--media-sandbox-check` and compare `--print-openapi` with the committed JSON.
 These probes establish executable/ABI compatibility, not the full Linux or
-transformer suite. Then dry-run and apply the locally committed ConfigMap and
-Deployment together, verify live digest/readiness, console sign-in and media
+transformer suite. Then use the
+[guarded ConfigMap and Deployment path](#guarded-configmap-and-deployment-apply)
+for the dry-run and approved apply, verify live digest/readiness, console sign-in and media
 attachment behavior, and record any unperformed acceptance probes explicitly.
 
 ### FFmpeg in the gateway image
