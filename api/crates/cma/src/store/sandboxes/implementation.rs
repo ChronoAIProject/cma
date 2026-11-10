@@ -2,6 +2,13 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxStore for MongoSandboxStore {
+    async fn retained_runtime_recovery_snapshot(
+        &self,
+        id: &SandboxId,
+    ) -> Result<layer2_core::sandbox::RetainedRecoverySnapshot, SandboxStoreError> {
+        super::super::sandbox_unpublished_recovery::retained_snapshot(self, id).await
+    }
+
     fn managed_runtime_version(&self) -> Option<&str> {
         self.managed_runtime_version.as_deref()
     }

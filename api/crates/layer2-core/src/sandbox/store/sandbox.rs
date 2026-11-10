@@ -9,6 +9,17 @@ use crate::{SandboxId, SubjectId};
 
 #[async_trait]
 pub trait SandboxStore: Send + Sync {
+    /// Read-only complete retained recovery evidence, including published logs.
+    /// This endpoint never grants the unpublished admission's stronger predicate.
+    async fn retained_runtime_recovery_snapshot(
+        &self,
+        _id: &SandboxId,
+    ) -> Result<crate::sandbox::RetainedRecoverySnapshot, SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "retained recovery inspection is unavailable",
+        ))
+    }
+
     /// Current server-managed runtime; custom images and lost-runtime recovery stay pinned.
     fn managed_runtime_version(&self) -> Option<&str> {
         None

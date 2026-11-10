@@ -160,6 +160,7 @@ mod sandbox_colors;
 mod sandbox_commands;
 #[cfg(test)]
 mod sandbox_commands_tests;
+mod sandbox_retained_recovery;
 mod sandbox_runtime_update;
 mod sandbox_service_access;
 pub use sandbox_commands::sandbox_commands_router;

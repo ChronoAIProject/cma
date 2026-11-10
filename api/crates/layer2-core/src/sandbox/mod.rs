@@ -107,11 +107,17 @@ mod pending_approvals;
 mod provision;
 mod queued_message;
 mod restored_connection;
+mod retained_recovery;
 mod revive;
 mod rotate;
 mod runtime_generation;
 mod runtime_health;
 mod runtime_recovery;
+pub use retained_recovery::{
+    RetainedRecoveryAssessment, RetainedRecoveryDisposition, RetainedRecoveryError,
+    RetainedRecoveryInspector, RetainedRecoveryService, RetainedRecoverySnapshot,
+    RetainedRecoverySource,
+};
 mod runtime_update;
 mod runtime_update_resume;
 pub use runtime_update::{
