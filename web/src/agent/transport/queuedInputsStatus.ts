@@ -145,8 +145,9 @@ export function useQueuedInputs(
         return { next: items.length > 0 || active.current ? retry : undefined, cooldown: retry };
       } catch (error) {
         if (signal.aborted || onIdentityChange(error)) return;
-        // Retained older deployments do not have editable queue discovery.
-        if (error instanceof ApiError && error.status === 404) return;
+        // An older serving instance may lack discovery during a rolling deploy.
+        // Stay idle but recover on later hints/focus/refresh without remounting.
+        if (error instanceof ApiError && error.status === 404) return { cooldown: 2000 };
         setStored((previous) => ({
           session,
           items: previous?.session === session ? previous.items : [],
