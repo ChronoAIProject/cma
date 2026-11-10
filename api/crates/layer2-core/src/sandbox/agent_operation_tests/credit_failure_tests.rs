@@ -3,8 +3,8 @@ use layer3_adapter::{
     ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, TurnStopReason,
 };
 
-use super::command_work_tests::{admit, fixture, request};
-use super::fixtures::*;
+use super::super::command_work_tests::{admit, fixture, request};
+use super::super::fixtures::*;
 use crate::sandbox::agent_io::*;
 use crate::sandbox::conversation_fold::{fold_update, FoldedConversationUpdate};
 use crate::sandbox::store::{AgentLogStore, AgentStore, SandboxStore};
