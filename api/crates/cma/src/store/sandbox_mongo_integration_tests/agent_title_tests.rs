@@ -139,10 +139,20 @@ async fn concurrent_claim_takeover_and_completion_are_fenced_once() {
     let stale = acquired.pop().unwrap();
     assert_eq!(stale.mode(), AgentTitleClaimMode::Generate);
 
+    // Lease expiry does not bypass the durable model-attempt retry schedule.
+    assert!(store
+        .acquire_agent_title_claim(
+            &AgentTitleClaimRequest::new(id.clone(), "premature-takeover"),
+            stale.expires_at(),
+        )
+        .await
+        .unwrap()
+        .is_none());
+
     let successor = store
         .acquire_agent_title_claim(
             &AgentTitleClaimRequest::new(id.clone(), "takeover"),
-            claim_time() + Duration::from_secs(45),
+            stale.expires_at().max(stale.next_attempt_at()),
         )
         .await
         .unwrap()
