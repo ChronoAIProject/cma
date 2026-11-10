@@ -69,7 +69,9 @@ jobs:
     env:
       CMA_E2E_MODE: smoke
       CMA_E2E_BASE_URL: ${{ vars.CMA_E2E_BASE_URL }}
-      CMA_E2E_PUBLIC_ID: ${{ vars.CMA_E2E_PUBLIC_ID }}
+      # Reference the public ID's secret mirror so Actions masks job diagnostics.
+      # A missing or mismatched mirror fails the normal prerequisite check.
+      CMA_E2E_PUBLIC_ID: ${{ vars.CMA_E2E_PUBLIC_ID == secrets.CMA_E2E_PUBLIC_ID && secrets.CMA_E2E_PUBLIC_ID || '' }}
     steps:
       # Run trusted develop code, never the dispatcher's arbitrary branch with fixture credentials.
       - uses: actions/checkout@v5
