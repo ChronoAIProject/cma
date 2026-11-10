@@ -11,6 +11,10 @@ module OmarchyCIContractTests
     }.each do |key, changed|
       reject.call("Omarchy job #{key}") { |value| value["ci"]["jobs"]["omarchy"][key] = changed }
     end
+    reject.call("Omarchy missing timeout") { |value| value["ci"]["jobs"]["omarchy"].delete("timeout-minutes") }
+    reject.call("Omarchy insufficient build and qualification budget") do |value|
+      value["ci"]["jobs"]["omarchy"]["timeout-minutes"] = 90
+    end
     reject.call("Omarchy no develop push") do |value|
       workflow = value["ci"]
       (workflow["on"] || workflow[true])["push"]["branches"] = ["prototype"]
