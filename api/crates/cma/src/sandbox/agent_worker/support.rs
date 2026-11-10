@@ -159,6 +159,9 @@ impl AgentWorker {
         if failure.is_ledger_hold() {
             return self.retry_ledger_hold_at(agent, now, ready_at).await;
         }
+        if self.retry_marked_capacity_at(&agent, now, ready_at).await? {
+            return Ok(());
+        }
         let expected = agent.revision;
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let step = agent.work.step;

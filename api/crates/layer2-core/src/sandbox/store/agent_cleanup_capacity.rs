@@ -6,6 +6,9 @@ use crate::sandbox::{
 };
 use crate::seconds_from_rfc3339;
 
+/// Normal retained-entry budget; stop and deletion reserves remain store-enforced.
+pub const NORMAL_AGENT_LOG_ENTRIES: u64 = 10_000;
+
 pub const AGENT_RUNTIME_LEDGER_HOLD: &str = "agent_runtime_ledger_hold";
 pub const AGENT_RUNTIME_LEDGER_HOLD_DETAIL: &str = "Runtime mutation ledger capacity requires recovery. The original work remains pending; no runtime loss or resource removal is confirmed.";
 
@@ -67,6 +70,32 @@ pub fn plan_agent_cleanup_capacity_retry(
     ready_at: &str,
 ) -> Result<AgentWorkMutation, SandboxStoreError> {
     plan_retry(current, last_log, holder, fence, at, ready_at, false)
+}
+
+/// Cheap selection hint for an unchanged failed cleanup retry. This is never
+/// authority to publish: the store must validate the complete log and claim.
+pub fn agent_cleanup_capacity_retry_hint(current: &Agent) -> bool {
+    cleanup_step(current) && current.conversation.last_seq > NORMAL_AGENT_LOG_ENTRIES
+}
+
+/// Select an already-marked failed cleanup retry without first attempting the
+/// predictably rejected normal append. Unlike first-marker admission, this
+/// requires an exact retained marker and returns only a metadata-only proposal.
+/// The caller must have observed a failed work attempt; successful effects use
+/// their ordinary completion path. The store revalidates this proposal, the
+/// complete log, exact tail and unchanged revision/identity/lease in one snapshot.
+pub fn plan_agent_marked_cleanup_capacity_retry(
+    current: &Agent,
+    last_log: Option<&AgentLogEntry>,
+    holder: &str,
+    fence: u64,
+    at: &str,
+    ready_at: &str,
+) -> Result<Option<AgentWorkMutation>, SandboxStoreError> {
+    if !agent_cleanup_capacity_retry_hint(current) || !retained_marker(current, last_log, false) {
+        return Ok(None);
+    }
+    plan_retry(current, last_log, holder, fence, at, ready_at, false).map(Some)
 }
 
 /// Keep a reachable runtime's refused work pending, including at the normal

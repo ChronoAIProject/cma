@@ -1,8 +1,9 @@
-//! Settle known-aborted capacity failures without waiting for the work lease.
+//! Settle capacity failures and exact marked cleanup retries under the same fences.
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{
-    plan_agent_cleanup_capacity_retry, plan_agent_log_capacity_failure, SandboxStoreError,
+    agent_cleanup_capacity_retry_hint, plan_agent_cleanup_capacity_retry,
+    plan_agent_log_capacity_failure, plan_agent_marked_cleanup_capacity_retry, SandboxStoreError,
 };
 use layer2_core::sandbox::{Agent, AgentWorkStep};
 use layer2_core::{rfc3339_at, seconds_from_rfc3339};
@@ -10,6 +11,42 @@ use layer2_core::{rfc3339_at, seconds_from_rfc3339};
 use super::AgentWorker;
 
 impl AgentWorker {
+    /// Select only from a failed-work retry. A point-tail observation is a hint;
+    /// commit_agent_work still validates the complete history in its transaction.
+    pub(super) async fn retry_marked_capacity_at(
+        &self,
+        agent: &Agent,
+        now: SystemTime,
+        ready_at: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        if !agent_cleanup_capacity_retry_hint(agent) {
+            return Ok(false);
+        }
+        let started = tokio::time::Instant::now();
+        let fence = super::support::claimed_fence(agent, &self.config.holder)?;
+        let last = self
+            .dependencies
+            .store
+            .agent_log_entry(&agent.id, agent.conversation.last_seq)
+            .await?;
+        let elapsed = started.elapsed();
+        let Some(mutation) = plan_agent_marked_cleanup_capacity_retry(
+            agent,
+            last.as_ref(),
+            &self.config.holder,
+            fence,
+            &rfc3339_at(now + elapsed),
+            &rfc3339_at(ready_at + elapsed),
+        )?
+        else {
+            return Ok(false);
+        };
+        // Propagate conflicts and unknown commits unchanged. Neither authorizes
+        // another proposal or replay of the failed external operation.
+        self.dependencies.store.commit_agent_work(mutation).await?;
+        Ok(true)
+    }
+
     pub(in crate::sandbox) async fn finish_capacity_attempt(
         &self,
         claimed: &Agent,

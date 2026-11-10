@@ -134,6 +134,48 @@ per-document and 64-entry per-batch checks remain independent.
    Surface an actionable remediation instead of presenting repeated retries as
    recovery. Describe any changed persisted semantic shape and reader floor.
 
+### Selecting an already-marked cleanup retry (#1583)
+
+Related to #1421 and #1321. The failed-work retry path may select the existing
+metadata-only settlement directly when the claimed Agent is still in an eligible
+cleanup status/step, its head is strictly above the 10,000-entry normal budget,
+and an exact point-tail observation matches the retained capacity marker for
+that Agent and step. A normal failure append adds an entry, so it cannot fit that
+head. Skipping that predictably rejected proposal removes one complete traversal
+from an eligible, uncontended retry. It does not eliminate validation.
+
+`agent_cleanup_capacity_retry_hint` only avoids an unnecessary point read for
+ineligible work. `plan_agent_marked_cleanup_capacity_retry` selects only an empty-log
+proposal; it cannot admit a first marker. The original
+`plan_agent_cleanup_capacity_retry` keeps its known-aborted-capacity contract for
+first markers and the fallback. This distinction deliberately preserves the
+#1321 contract while allowing the narrower direct selection.
+
+The point read is never authorization. `commit_agent_work` starts a fresh
+transaction, validates the complete captured history and physical limits, checks
+its exact tail, reconstructs the only permitted retry, and validates the expected
+revision, identity, status/work, holder/fence and lease. A changed observation,
+gap, invalid schema or extra tail cannot turn the hint into a publication.
+Transaction conflicts use the existing retry budget and revalidate each snapshot.
+Unknown commits keep exact receipt reconciliation and refusal; they never grant
+permission for a normal append, another settlement or an external effect replay.
+
+Successful effects retain their ordinary completion path and finite reserves.
+First-marker admission, byte-only exhaustion, ledger holds and other ineligible
+cases retain their prior paths. Direct retries preserve the same retry-delay
+policy, including RemoveWorktree backoff, increment the durable attempt count
+once, release the claim and retain status, step, receipts, cleanup debt and log
+head. The next due time remains the selected publication time plus that policy's
+delay. No capacity, event schema, retained history or recovery eligibility changes.
+
+Real-Mongo regressions count actual scanner `find` commands through worker/store
+paths: two traversals for a first marker and the known-abort control, one for an
+eligible repeat, and fresh traversals on transaction retries. They retain full
+validation while exercising changed observations, authority/lease refusals,
+corruption and physical limits, committed/uncommitted unknown outcomes, seventy
+unchanged failed closes, and successful cleanup continuation. These tests prove
+work reduction; CPU-core savings require the lead's later measured deployment.
+
 The existing finite reserve is a safety mechanism, not a second conversation
 budget. Reconnect success events and ordinary retry events must not borrow it.
 If physical capacity is exhausted or history is corrupt, the reserved failure
