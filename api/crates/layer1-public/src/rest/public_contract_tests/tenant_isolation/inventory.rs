@@ -32,7 +32,7 @@ pub(super) fn known_not_found(code: &str) -> bool {
     // required_problems lists mandatory examples, not every legal refusal of
     // each route. Require a known public concealment code; the probe separately
     // requires exact status/body equivalence for foreign and absent resources.
-    code.ends_with("_not_found")
+    (code == "not_found" || code.ends_with("_not_found"))
         && inventory["operations"]
             .as_object()
             .unwrap()
