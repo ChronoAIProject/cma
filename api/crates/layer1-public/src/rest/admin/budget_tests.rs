@@ -124,3 +124,36 @@ async fn malformed_budget_policies_are_confidential_and_never_saved() {
     let current = response_json(send(&fixture.app, Method::GET, PATH, None, ADMIN).await).await;
     assert_eq!(current["revision"], 0);
 }
+
+#[tokio::test]
+async fn request_model_bounds_use_the_same_private_admin_validation_and_roundtrip() {
+    let fixture = fixture(false);
+    let mut policy = scoped_policy();
+    policy["request_models"] = json!([{"model":"approved", "input_overhead_tokens": 1}]);
+    let saved = send(
+        &fixture.app,
+        Method::PATCH,
+        PATH,
+        Some(json!({"expected_revision":0,"model_budget":policy})),
+        ADMIN,
+    )
+    .await;
+    assert_eq!(saved.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(saved).await["settings"]["model_budget"],
+        policy
+    );
+    policy["request_models"][0]["input_overhead_tokens"] = json!(0);
+    assert_eq!(
+        send(
+            &fixture.app,
+            Method::PATCH,
+            PATH,
+            Some(json!({"expected_revision":1,"model_budget":policy})),
+            ADMIN
+        )
+        .await
+        .status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+}
