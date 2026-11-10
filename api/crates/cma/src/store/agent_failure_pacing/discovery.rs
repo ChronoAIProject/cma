@@ -41,12 +41,20 @@ pub(in crate::store) fn pipeline(
     paced.insert("$expr", candidate);
     let mut wake = vec![
         doc! {"$match": paced},
-        doc! {"$project": {"_id": 1, "revision": 1, FIELD: 1,
+        doc! {"$project": {"_id": 1, "revision": 1, FIELD: 1, "agent_command_admission_fence": 1,
         "record.sandbox_id": 1, "record.workspace_id": 1, "record.worktree_id": 1}},
     ];
-    let mut holds = vec![Bson::Document(doc! {
-        "$eq": [format!("{hint}.agent_revision"), "$revision"]
-    })];
+    let mut holds = vec![
+        Bson::Document(doc! {
+            "$eq": [format!("{hint}.agent_revision"), "$revision"]
+        }),
+        Bson::Document(doc! {
+            "$eq": [
+                {"$ifNull": [format!("{hint}.command_admission_generation"), 0_i64]},
+                {"$ifNull": ["$agent_command_admission_fence", 0_i64]},
+            ]
+        }),
+    ];
     for (name, collection) in [
         ("sandbox", &store.sandboxes),
         ("workspace", &store.workspaces),

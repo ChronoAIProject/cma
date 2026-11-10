@@ -3,6 +3,7 @@ use super::*;
 use layer2_core::sandbox::store::AgentRetryObservation;
 use std::time::{Duration, SystemTime};
 
+mod admission_tests;
 mod helpers;
 mod wake_tests;
 mod worker_tests;

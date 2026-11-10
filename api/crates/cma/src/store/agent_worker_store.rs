@@ -14,6 +14,22 @@ use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTI
 
 #[async_trait::async_trait]
 impl AgentWorkerStore for MongoSandboxStore {
+    async fn agent_command_admission_generation(
+        &self,
+        id: &AgentId,
+    ) -> Result<Option<u64>, SandboxStoreError> {
+        let row = self
+            .agents
+            .find_one(doc! {"_id": id.as_str(),
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION})
+            .projection(doc! {"agent_command_admission_fence": 1})
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        Ok(row
+            .as_ref()
+            .and_then(super::agent_failure_pacing::command_generation))
+    }
+
     async fn commit_agent_work_retry(
         &self,
         mutation: AgentWorkMutation,
