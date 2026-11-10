@@ -39,6 +39,7 @@ module OmarchyCIContract
         "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
         "with" => { "context" => ".", "file" => "infra/runtime/Dockerfile", "target" => "omarchy",
           "platforms" => "linux/amd64", "push" => false, "load" => true, "tags" => "cma-runtime-omarchy:ci",
+          "cache-to" => "type=gha,mode=min,scope=${{ steps.cache.outputs.scope }}",
           "build-args" => <<~'ARGS', "cache-from" => <<~'CACHE' } },
             OMARCHY_CMA_BASE=runtime
             RUNTIME_DESKTOP=1
@@ -51,11 +52,6 @@ module OmarchyCIContract
             type=gha,scope=runtime
             type=gha,scope=runtime-omarchy
           CACHE
-      { "name" => "Retain pinned Omarchy dependency layers",
-        "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
-        "with" => { "context" => ".", "file" => "infra/runtime/Dockerfile", "target" => "omarchy-dependencies",
-          "platforms" => "linux/amd64", "push" => false, "load" => false,
-          "cache-to" => "type=gha,mode=min,scope=${{ steps.cache.outputs.scope }}" } },
       { "name" => "Release Omarchy build cache before image checks", "run" => <<~'SH' },
         image_id=$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')
         docker buildx prune --all --force
