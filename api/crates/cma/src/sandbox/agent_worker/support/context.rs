@@ -83,7 +83,22 @@ impl AgentWorker {
             succeeded = attached.is_ok(),
             "Agent runtime inspection completed"
         );
-        let (attached, status) = attached.map_err(adapter_failure)?;
+        let (attached, status) = attached.map_err(|error| {
+            // Inspection is read-only. A timeout here cannot hide an uncertain
+            // mutation outcome. Other operation failures retain their cadence.
+            let eligible = agent.work.step == AgentWorkStep::PublishConnection
+                && matches!(error, AdapterError::Unavailable(_));
+            let mut failure = adapter_failure(error);
+            if eligible {
+                failure.observation = Some(AgentRetryObservation {
+                    agent_revision: agent.revision,
+                    sandbox_revision: sandbox.revision,
+                    workspace_revision: workspace.revision,
+                    worktree_revision: worktree.revision,
+                });
+            }
+            failure
+        })?;
         Ok(AgentContext {
             sandbox,
             workspace,
