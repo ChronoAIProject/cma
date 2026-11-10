@@ -52,6 +52,15 @@ struct VerifiedContext {
 
 #[async_trait::async_trait]
 impl BindingEventRouter for CmaEventRouter {
+    fn sender_line(&self, event: &ExternalEventContext) -> Result<String, BindingRouteError> {
+        let activity = event
+            .payload
+            .get("activity")
+            .ok_or(BindingRouteError::SenderUnsupported)?;
+        let identity: ActivityIdentity = serde_json::from_value(activity.clone())
+            .map_err(|_| BindingRouteError::SenderUnsupported)?;
+        sender::line(&identity)
+    }
     async fn verified_sender_line(
         &self,
         caller: &AuthenticatedResourceCaller,

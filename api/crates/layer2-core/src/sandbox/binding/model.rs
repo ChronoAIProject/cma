@@ -270,8 +270,7 @@ impl ProviderBinding {
             && (self.profile.configuration_digest() != profile.configuration_digest()
                 || (self.profile.queue_lifetime_seconds == profile.queue_lifetime_seconds
                     && self.profile.verified_sender_context_enabled()
-                        == profile.verified_sender_context_enabled()
-                    && self.profile_digest == profile.profile_digest)))
+                        == profile.verified_sender_context_enabled())))
             || self.state != BindingState::Ready
             || self.work != BindingWork::Idle
             || self.previous.is_some()
