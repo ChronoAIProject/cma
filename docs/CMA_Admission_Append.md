@@ -102,9 +102,12 @@ work, so its aggregate production share is not the ordinary-message scan count.
 
 ## Read-only proof adapter
 
-`store::agent_log_integrity::read::read_head(store, agent_id, session)` is the
-adapter for the dependent #1320 public-window consumer. It returns `None` only
-for an absent Agent; otherwise it returns the current `last_seq` and `trusted`.
+`store::agent_log_integrity::read::read_proven_agent(store, agent_id, session)` is
+the adapter agreed with the dependent #1320 public-window consumer. It returns
+`None` only for an absent Agent; otherwise it returns `(Agent, trusted)`, retaining
+the validated aggregate for captured head, immutable creation lineage and counted
+read-only fallback without repeating the envelope/proof query. `read_head` is a
+test wrapper exposing the current `last_seq` and `trusted`.
 It shares the writer's exact metadata parser and bounded proof, including the
 activation cohort, zero-head probe, tail hash and immutable lineage checks.
 Every query explicitly uses snapshot read concern and the caller's supplied
