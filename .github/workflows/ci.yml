@@ -212,6 +212,8 @@ jobs:
         run: .github/scripts/check-file-size.sh
       - name: Deployment configuration matches code
         run: .github/scripts/check-config-keys.sh
+      - name: Owner-key Secret cutover contracts
+        run: python3 .github/scripts/cmaeg-owner-key-cutover-tests.py
       - name: Configuration key validator regressions
         run: .github/scripts/check-config-keys-tests.sh
       - uses: actions/setup-node@v6
@@ -307,8 +309,6 @@ jobs:
         run: |
           node --test .github/scripts/agent-sandbox-preflight.test.mjs
           ruby .github/scripts/agent-sandbox-manifest-contract.rb
-      - name: CMAEG guarded apply regressions
-        run: python3 .github/scripts/apply-cmaeg-tests.py
       - name: docs/ contains only markdown
         run: |
           bad=$(find docs -type f ! -name '*.md' || true)

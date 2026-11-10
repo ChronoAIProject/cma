@@ -92,30 +92,6 @@ impl AgentReadService {
         Ok(transcript)
     }
 
-    /// Authorize access to the runtime-owned history and retain the exact
-    /// Agent/Sandbox lineage needed to reach that runtime.
-    pub async fn history_lineage_authorized(
-        &self,
-        context: &CallerContext,
-        credential: Option<&str>,
-        id: &AgentId,
-    ) -> Result<AgentLineage, AgentReadError> {
-        let authorized = self
-            .authorized(context, credential, id, ResourceCapability::ViewHistory)
-            .await?;
-        let agent = authorized
-            .snapshot
-            .lineage
-            .agent
-            .as_ref()
-            .ok_or_else(|| corrupt("authorized Agent snapshot has no Agent"))?;
-        require_granted(agent, crate::RuntimeCapability::Conversation)?;
-        let lineage = super::authorized::lineage(authorized.snapshot.lineage.clone())?;
-        self.finish_read(&authorized, id, ResourceCapability::ViewHistory)
-            .await?;
-        Ok(lineage)
-    }
-
     pub async fn log_authorized(
         &self,
         context: &CallerContext,
