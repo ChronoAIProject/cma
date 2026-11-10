@@ -59,6 +59,30 @@ async fn save<T: Serialize>(
     Ok(())
 }
 
+/// Initialize outside admission transactions: concurrent first admissions must
+/// not contend on implicit collection creation or the singleton's first insert.
+pub(super) async fn initialize_settings(
+    store: &MongoSandboxStore,
+) -> Result<(), layer2_core::StoreError> {
+    let settings = mongodb::bson::serialize_to_bson(&layer2_core::PlatformSettings::default())
+        .map_err(|_| layer2_core::StoreError::Malformed("default budget settings".into()))?;
+    store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {"$setOnInsert": {
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION, "revision": 0_i64,
+                "settings": settings
+            }},
+        )
+        .upsert(true)
+        .await
+        .map_err(|_| {
+            layer2_core::StoreError::Unavailable("initialize budget settings fence".into())
+        })?;
+    Ok(())
+}
+
 async fn policy(
     store: &MongoSandboxStore,
     owner: &layer2_core::SubjectId,
@@ -66,14 +90,18 @@ async fn policy(
 ) -> Result<Option<BudgetPolicy>, ApplyError> {
     // A real write also fences activation against previously disabled admissions.
     // The additive fence is outside the strict settings record.
-    store.budget_settings.update_one(
-        doc! {"_id": "platform"},
-        doc! {"$inc": {"model_budget_admission_fence": 1_i64}, "$setOnInsert": {
-            "revision": 0_i64, "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-            "settings": mongodb::bson::serialize_to_bson(&layer2_core::PlatformSettings::default())
-                .map_err(|_| domain(BudgetError::Unavailable))?
-        }},
-    ).upsert(true).session(&mut *session).await.map_err(ApplyError::Driver)?;
+    let result = store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform", "document_schema_version": DOCUMENT_SCHEMA_VERSION},
+            doc! {"$inc": {"model_budget_admission_fence": 1_i64}},
+        )
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    if result.matched_count != 1 {
+        return Err(domain(BudgetError::Unavailable));
+    }
     let document = store
         .budget_settings
         .find_one(doc! {"_id": "platform"})
