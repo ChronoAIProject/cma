@@ -193,6 +193,7 @@ async fn apply_mutation(
         .map_err(ApplyError::Domain)?;
 
     admission::validate_and_fence(store, &current, mutation, session).await?;
+    super::budget::apply(store, &current, mutation, session).await?;
     let command_dispatch =
         super::agent_commands::binding::bind(store, &current, latest_turn, mutation, session)
             .await
