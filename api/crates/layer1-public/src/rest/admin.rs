@@ -139,7 +139,8 @@ impl From<CoreError> for CollectionProblem {
                 Self::InvalidRequest
             }
             CoreError::InvalidState(_) => Self::Conflict,
-            CoreError::RuntimeUnavailable(_)
+            CoreError::ModelBudgetWritesUnavailable
+            | CoreError::RuntimeUnavailable(_)
             | CoreError::RuntimeRefused(_)
             | CoreError::ServiceCatalogUnavailable(_)
             | CoreError::SkillCatalogUnavailable(_) => Self::Unavailable,
