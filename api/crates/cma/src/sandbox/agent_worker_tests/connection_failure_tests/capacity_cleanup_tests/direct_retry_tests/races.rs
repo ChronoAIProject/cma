@@ -1,6 +1,22 @@
 //! A selection observation cannot authorize changed authority or corrupt history.
 use super::*;
 
+fn refusal_envelope(mut expected: Document, quarantined: bool) -> Document {
+    if quarantined {
+        let head = expected.get_i64("last_seq").unwrap();
+        // A failed transaction must preserve the complete domain envelope, but
+        // proven retained-history corruption durably revokes its checkpoint.
+        assert!(expected
+            .insert(
+                "agent_log_integrity_quarantine_v1",
+                doc! {"format": 1_i64, "reason": "integrity_validation_failed",
+                "observed_head": head},
+            )
+            .is_none());
+    }
+    expected
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn selected_retry_revalidates_revision_identity_work_lease_head_and_tail() {
@@ -108,7 +124,7 @@ async fn selected_retry_revalidates_revision_identity_work_lease_head_and_tail()
                 .await
                 .unwrap()
                 .unwrap(),
-            expected,
+            refusal_envelope(expected, matches!(variant, 7 | 8)),
             "variant {variant}"
         );
         agents
@@ -200,8 +216,14 @@ async fn selected_retry_still_checks_gaps_schema_extra_tail_and_physical_limits(
         let result = f.h.store.commit_agent_work(proposal.clone()).await;
         assert!(result.is_err(), "variant {variant}");
         match variant {
-            0 | 2 => assert_eq!(result, Err(SandboxStoreError::SequenceConflict)),
+            0 => assert_eq!(result, Err(SandboxStoreError::SequenceConflict)),
             1 => assert!(matches!(result, Err(SandboxStoreError::Corrupt(_)))),
+            2 => assert_eq!(
+                result,
+                Err(SandboxStoreError::Corrupt(
+                    "Agent log has rows beyond its trusted head".into()
+                ))
+            ),
             _ => assert_eq!(result, Err(SandboxStoreError::AgentLogCapacityExceeded)),
         }
         assert_eq!(
@@ -210,7 +232,10 @@ async fn selected_retry_still_checks_gaps_schema_extra_tail_and_physical_limits(
                 .await
                 .unwrap()
                 .unwrap(),
-            expected
+            // Gaps, schema/extra-tail contradictions and retained physical
+            // overflow all invalidate the checkpoint, without settling work.
+            refusal_envelope(expected, true),
+            "variant {variant}"
         );
         agents
             .replace_one(agent_filter.clone(), original.clone())
