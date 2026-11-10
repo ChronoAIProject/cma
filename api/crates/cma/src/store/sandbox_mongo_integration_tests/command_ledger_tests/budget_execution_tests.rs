@@ -118,6 +118,7 @@ async fn budget_usage_stop_settles_once_and_top_up_accepts_only_new_input() {
         .await
         .unwrap();
     assert_eq!(sends.load(Ordering::SeqCst), 2);
+    let now = layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339()).unwrap();
     assert!(store
         .stop_requested(&agent.id, generation, now)
         .await
