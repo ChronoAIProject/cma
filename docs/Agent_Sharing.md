@@ -30,6 +30,13 @@ or owner credential custody. Runtime-managed credential/control files must be
 excluded from filesystem access for shared recipients. Existing owner and legacy
 organization sharing behavior remains unchanged.
 
+Raw native history downloads (`GET /api/v1/agents/{id}/history`) are restricted
+to the personal owner because the native format can contain private metadata.
+Shared readers continue to use the projected transcript and event endpoints.
+Downloads retain the initial authorization across provider I/O and recheck the
+policy, authority lifetime, ancestry, native conversation and runtime binding
+before releasing buffered bytes. Changed or unavailable authority fails closed.
+
 Production acceptance checks: owner creates independent view and view/write
 links; wrong token and wrong recipient fail; view permits history/files but no
 interaction or mutation; write permits interaction and supported configuration/

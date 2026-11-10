@@ -6085,6 +6085,21 @@ saving. Use existing form spacing, labels and validation; introduce no new token
 
 | 2026-11-07 | Integrate Workspace v3 with stable streaming recovery, retained sidebar status, deterministic desktop reconnection, mounted identity retries and complete-cohort resource usage; preserve channel queue policy independently of composer follow-ups. |
 
+### 2026-11-10 — Usage reporting backoff
+
+Usage reports, chart/table/detail reads and filter discovery share a server-directed
+429 cooldown within the same account/API scope. Changing filters, closing/reopening
+a picker or dialog, and pressing Refresh must not bypass Retry-After. Preserve the
+selection and display **Usage reporting is busy**, with **Waiting to retry** disabled
+until the deadline; then offer an explicit retry. Background report refresh keeps
+its existing visible-only, at-most-once-per-minute cadence. Do not queue a burst of
+requests when a cooldown ends. A 503 remains **Usage reporting is unavailable**;
+authorization refusals and expired reports remain distinct and clear inaccessible
+data. Picker failures use the same error semantics and **Retry choices** action.
+No error or missing measurement is an empty result or a zero resource total.
+
+| 2026-11-10 | Honor usage Retry-After across report selections and bounded discovery, retaining distinct busy, unavailable, expired and denied states. |
+
 | 2026-11-10 | Show recorded pre-admission refusal reasons in the existing Channel Activity detail rows. |
 
 | 2026-11-11 | Retain the last precise provider admission refusal beside the terminal expiry reason in Channel Activity. |

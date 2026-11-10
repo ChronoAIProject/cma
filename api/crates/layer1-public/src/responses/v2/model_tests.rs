@@ -14,6 +14,41 @@ use layer2_core::{
 
 const AT: &str = "2026-10-15T00:00:00Z";
 
+#[test]
+fn insufficient_credit_failure_survives_v2_retrieval_and_stream_projection() {
+    let mut value = reading(Some(1));
+    value.command.status = AgentResponseStatus::Failed;
+    let history = snapshot(vec![
+        start(1, Some("selected-model")),
+        AgentLogKind::TurnFailed {
+            turn_sequence: 1,
+            failure: layer2_core::sandbox::TypedFailure {
+                class: "insufficient_credits".into(),
+                detail: "HTTP 402: top up the model account, then send a new message.".into(),
+            },
+        },
+    ]);
+    let projected = project(value, &history).unwrap();
+    assert_eq!(projected.status, super::V2ResponseStatus::Failed);
+    assert_eq!(
+        projected.error.as_ref().unwrap().code,
+        "insufficient_credits"
+    );
+    let frames = events(&projected, true);
+    let terminal = frames
+        .iter()
+        .find(|frame| frame["type"] == "response.failed")
+        .unwrap();
+    assert_eq!(
+        terminal["response"]["error"]["code"],
+        "insufficient_credits"
+    );
+    assert_eq!(terminal["response"]["id"], projected.id);
+    assert!(!frames
+        .iter()
+        .any(|frame| frame["type"] == "response.completed"));
+}
+
 fn project(
     reading: AgentResponseReading,
     snapshot: &AgentEventStreamSnapshot,
