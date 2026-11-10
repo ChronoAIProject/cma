@@ -6,8 +6,21 @@ use layer2_core::{
         store::SandboxStore, FixedSandboxCredentialPrerequisite, HierarchyReadService,
         SandboxPolicy, SandboxService, WorkspaceService,
     },
-    MemoryOperationStore,
+    OperationClaim, OperationReservation, OperationStore, StoreError,
 };
+
+struct NoOperations;
+
+#[async_trait::async_trait]
+impl OperationStore for NoOperations {
+    async fn reserve(&self, _: &OperationClaim) -> Result<OperationReservation, StoreError> {
+        panic!("foreign writes must be denied before operation reservation")
+    }
+
+    async fn complete(&self, _: &OperationClaim, _: Vec<u8>) -> Result<(), StoreError> {
+        panic!("foreign writes must never complete an operation")
+    }
+}
 
 #[tokio::test]
 async fn tenant_isolation_delegated_targets_and_revoked_grants_are_checked_before_dispatch() {
@@ -25,7 +38,7 @@ async fn tenant_isolation_delegated_targets_and_revoked_grants_are_checked_befor
         ),
         WorkspaceService::new(f.store.clone(), profiles),
         HierarchyReadService::new(f.store.clone()),
-        Arc::new(MemoryOperationStore::default()),
+        Arc::new(NoOperations),
     );
     let calls = Arc::new(AtomicUsize::new(0));
     let observed = calls.clone();
