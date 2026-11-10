@@ -8,6 +8,7 @@ mod plan;
 mod plan_io;
 mod publication;
 mod retirement;
+mod retirement_artifact;
 mod retirement_stage;
 mod sealed;
 mod stage;
@@ -97,6 +98,21 @@ pub(crate) async fn retirement_stage_command(
     .await
     .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
     .map_err(|error| error.to_string())?;
+    println!("{summary}");
+    Ok(())
+}
+
+pub(crate) async fn retirement_verify_command(
+    path: std::path::PathBuf,
+    expected: String,
+) -> std::result::Result<(), String> {
+    let config = crate::config::RuntimeConfig::from_environment()
+        .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
+    let summary =
+        tokio::task::spawn_blocking(move || retirement_artifact::verify(&config, &path, &expected))
+            .await
+            .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
+            .map_err(|error| error.to_string())?;
     println!("{summary}");
     Ok(())
 }

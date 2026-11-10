@@ -1,10 +1,11 @@
-# Runtime ledger retirement preflight
+# Runtime ledger retirement evidence and archives
 
 This read-only preflight compares V1 runtime journal and authority files with a
 consistent observation of the API's retained hierarchy. It reports occupancy and
-conservative candidate counts. It does not archive, remove, compact, reconcile,
-restore, start, stop or update a Sandbox. The output is not maintenance authority
-or proof that an old runtime writer has stopped.
+conservative candidate counts. A separate command builds a detached archive from
+an independently pinned byte backup and observation. These tools do not remove
+source records, reconcile, restore, start, stop or update a Sandbox. Their output
+is not maintenance authority or proof that an old runtime writer has stopped.
 
 ## Export authoritative observations
 
@@ -98,6 +99,7 @@ independently pinned API observation:
 cma-runtime --plan-ledger-v1 /absolute/private/new-plan
 cma-runtime --verify-ledger-plan /absolute/private/new-plan PLAN_SHA256
 cma-runtime --stage-ledger-retirement /absolute/private/new-plan PLAN_SHA256 /absolute/private/new-observation.json SNAPSHOT_SHA256 /absolute/private/new-retirement-archive
+cma-runtime --verify-ledger-retirement /absolute/private/new-retirement-archive READY_SHA256
 ```
 
 Both output directories must be new, private and outside the retained runtime
@@ -110,7 +112,11 @@ opening the sealed plan; the original runtime can therefore change independently
 without making this artifact permission to reclaim its newer state.
 
 The output reports only fixed fields, counts and hashes, including
-`ready_sha256` and `database_sha256`. Each group remains pending. The report says
+`ready_sha256` and `database_sha256`. Retain the ready hash independently. The
+verification command reads and hashes the detached archive and observation,
+checks their private file shapes and home/generation binding, and emits fresh
+counts/hashes without opening SQLite for writing or echoing arbitrary metadata.
+Each group remains pending. The report says
 `admission: retirement_held`, `writer_exclusion: unproved`, and
 `source_deactivated: false`. Zero candidates is a valid empty archive. A rerun
 at the same destination refuses without overwriting it. An interrupted output
@@ -121,7 +127,8 @@ into source state or another directory.
 This command supplies retained bytes for later reviewed maintenance. It does
 not stop a runtime, publish activation metadata, free active-ledger capacity,
 complete a retirement receipt, or supply restore/production execution authority.
-Keep these private artifacts under the release owner's retained-backup policy.
+Keep these private artifacts under the release owner's retained-backup policy,
+independently of any PVC that may be released when its Sandbox finishes retiring.
 
 ## Activation and restore boundary
 
