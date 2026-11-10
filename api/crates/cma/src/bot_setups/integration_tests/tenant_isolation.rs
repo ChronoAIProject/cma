@@ -29,6 +29,10 @@ async fn tenant_isolation_delegated_targets_and_revoked_grants_are_checked_befor
     let own = crate::auth::test_resources::sandbox("sbx_visitor", "visitor");
     f.store.create_sandbox(own.clone()).await.unwrap();
     let profiles = Arc::new(InMemoryProfileStore::default());
+    let access = Arc::new(layer2_core::resource_access::ResourceAccessService::new(
+        f.store.clone(),
+        f.authority.auth.clone(),
+    ));
     let state = layer1_public::rest::HierarchyState::new(
         SandboxService::new(
             f.store.clone(),
@@ -37,7 +41,7 @@ async fn tenant_isolation_delegated_targets_and_revoked_grants_are_checked_befor
             Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         ),
         WorkspaceService::new(f.store.clone(), profiles),
-        HierarchyReadService::new(f.store.clone()),
+        HierarchyReadService::new(f.store.clone()).with_resource_access(access),
         Arc::new(NoOperations),
     );
     let calls = Arc::new(AtomicUsize::new(0));

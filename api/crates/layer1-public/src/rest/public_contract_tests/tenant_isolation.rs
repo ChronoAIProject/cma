@@ -113,7 +113,9 @@ pub(super) async fn probe(scene: &Scenario, symbols: &Symbols, case: &Case) {
                 body["code"]
             );
             if method != "HEAD" {
-                let code = if case.operation.contains("/launches/") {
+                let code = if case.operation.ends_with("/attachments") {
+                    "resource_not_found"
+                } else if case.operation.contains("/launches/") {
                     "launch_not_found"
                 } else if case.operation.contains("/documents/") {
                     "document_not_found"
