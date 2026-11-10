@@ -106,7 +106,7 @@ impl HttpSuggestionGenerator {
         bearer.set_sensitive(true);
         let permit = match &self.request_budget {
             Some(budget) => budget
-                .reserve(&self.model, &body, 1024)
+                .reserve(&body)
                 .await
                 .map_err(|_| SuggestionFailure::Unavailable)?,
             None => None,
