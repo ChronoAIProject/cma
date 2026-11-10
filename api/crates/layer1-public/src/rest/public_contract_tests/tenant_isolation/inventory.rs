@@ -33,11 +33,17 @@ fn in_scope(path: &str) -> bool {
     let Some(path) = path else {
         return false;
     };
+    if path.starts_with("cmaeg/bindings/") && path.contains("/conversations/") {
+        return true;
+    }
     let path = path.strip_prefix("admin/").unwrap_or(path);
     matches!(
         path.split('/').next().unwrap(),
         "agents"
             | "sandboxes"
+            | "sandbox-commands"
+            | "commands"
+            | "agent-delegations"
             | "workspaces"
             | "worktrees"
             | "documents"
@@ -120,6 +126,9 @@ fn every_scoped_operation_has_an_explicit_executable_isolation_contract() {
             entry.proof.as_str(),
             "probe"
                 | "contract"
+                | "receipt-contract"
+                | "delegation"
+                | "binding-contract"
                 | "operator"
                 | "filtered-inventory"
                 | "mongo-report"
@@ -141,25 +150,46 @@ fn mounted_resource_paths_cannot_hide_outside_the_openapi_inventory() {
     fn walk(directory: &std::path::Path, sources: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(directory).unwrap() {
             let path = entry.unwrap().path();
-            if path.to_string_lossy().contains("tests") { continue; }
-            if path.is_dir() { walk(&path, sources); }
-            else if path.extension().is_some_and(|e| e == "rs") { sources.push(path); }
+            if path.to_string_lossy().contains("tests") {
+                continue;
+            }
+            if path.is_dir() {
+                walk(&path, sources);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                sources.push(path);
+            }
         }
     }
-    let known: BTreeSet<_> = entries().iter()
-        .map(|e| e.operation.split_once(' ').unwrap().1).chain([
-            "/api/v1/agents/{id}/history",
-        ]).collect();
+    let known: BTreeSet<_> = entries()
+        .iter()
+        .map(|e| e.operation.split_once(' ').unwrap().1)
+        .chain(["/api/v1/agents/{id}/history"])
+        .collect();
     let mut sources = Vec::new();
-    walk(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut sources);
+    walk(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut sources,
+    );
+    walk(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../cma/src/bot_setups"),
+        &mut sources,
+    );
     for source in sources {
         let text = std::fs::read_to_string(&source).unwrap();
         for mounted in text.split(".route(").skip(1) {
-            let Some(literal) = mounted.trim_start().strip_prefix('"') else { continue; };
+            let Some(literal) = mounted.trim_start().strip_prefix('"') else {
+                continue;
+            };
             let path = literal.split('"').next().unwrap();
             // Nested relative routes are covered by the full OpenAPI operation
             // comparison above. This finds absolute supplemental/alias mounts.
-            if in_scope(path) { assert!(known.contains(path), "unclassified mount {path} in {}", source.display()); }
+            if in_scope(path) {
+                assert!(
+                    known.contains(path),
+                    "unclassified mount {path} in {}",
+                    source.display()
+                );
+            }
         }
     }
 }

@@ -8,6 +8,7 @@ use serde_json::Value;
 use tower::ServiceExt;
 mod context;
 mod inventory;
+mod receipts;
 pub(super) fn included(case: &Case) -> bool {
     inventory::included(case)
 }
