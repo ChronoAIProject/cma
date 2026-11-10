@@ -1,7 +1,8 @@
 # Friday application authorization proof (Part of #1549)
 
-Status: work in progress, resumed after the #1421 PR handoff.
-Compilation and executable security gates have not run; no passing result is claimed.
+This document defines the Friday application proof and its explicit limits.
+Local results, source revision and reproduction commands belong in the proof PR;
+production qualification additionally requires candidate-bound release evidence.
 
 This is application-contract evidence, not certification of the complete gate.
 The executable route matrix is `api/crates/layer1-public/tests/fixtures/tenant-isolation-matrix.json`.
@@ -69,6 +70,25 @@ Mongo tests exercise the real database contracts, not deployed storage or produc
 configuration. Read-only production smoke cannot prove a new full-capacity revoke
 or a controlled export race. Candidate SHA/digests/configuration/window/N and relayed
 release-owner evidence are still required. No `/measure ... green` is asserted.
+
+## Running the proof
+
+Run the `tenant_isolation` tests in `cma`, `layer1-public` and `layer2-core`, then
+the existing `rest::history_export_tests`, `document_artifacts`, sharing, command
+admission, authorization and expensive-read regressions. The shared replay keeps
+every setup/capture dependency and compares immutable expected owner responses.
+The new generic probes cover 73 allowed requests across 52 operations, issuing
+208 foreign/absent requests including implicit HEAD; the route matrix also names
+the separate receipt, delegation, runtime, inventory and database contracts.
+
+The ignored Mongo tests require an owned disposable replica set at the repository's
+pinned MongoDB 8.0.13 image. Run the `tenant_isolation`, document artifact,
+resource-access, runtime capability and lifecycle Mongo contracts against it.
+`.github/scripts/mongo-contract-tests.sh` includes the new tests in CI and owns
+fixture creation/cleanup; it never accepts an existing production database.
+Keep the local heavy-build lock, two-job limit and disk floor from the sprint
+contract. Format, warnings-denied Clippy and the runner's selection self-tests
+are additional gates. Local success does not replace exact production evidence.
 
 ## Route matrix
 
