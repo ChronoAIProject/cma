@@ -6,19 +6,22 @@ metadata:
   labels:
     app.kubernetes.io/name: cma-web
     app.kubernetes.io/part-of: cma
+  # Captured live annotations retain earlier builds after image-only rollouts.
+  # The container digest below identifies the running artifact.
   annotations:
     cma.chronoai.dev/build-mode: "github-ci-artifact"
-    cma.chronoai.dev/candidate: "4f03c35a80322673ec00df7a3b6b9399015f5a68"
-    cma.chronoai.dev/ci-archive-sha256: "sha256:4db31e804465b09ac6339b275cfe5b83db71ad2382a0031196d1d2708cf42ac4"
-    cma.chronoai.dev/ci-artifact: "13636177087"
+    cma.chronoai.dev/candidate: "0c6186dd6f15258d166c60ee85b5fb2136f5ea4c"
+    cma.chronoai.dev/ci-accepted-attempt: "2"
+    cma.chronoai.dev/ci-archive-sha256: "sha256:b513b4a68b35aa13673a85df0500eef65926c2888235bff499d3e24ed9a10400"
+    cma.chronoai.dev/ci-artifact: "13477038103"
     cma.chronoai.dev/ci-attempt: "1"
-    cma.chronoai.dev/ci-head: "4f03c35a80322673ec00df7a3b6b9399015f5a68"
-    cma.chronoai.dev/ci-publication-sha256: "sha256:cc33650aabfca06b9539621f6cb55e746b1b0fd0893632a2a36542b0e3cd34e5"
-    cma.chronoai.dev/ci-run: "42526770281"
-    cma.chronoai.dev/image-digest: "sha256:f85b24cea3bb0ed96d9caa34db37d2d0fd43472d74ef9f98872d0f6ccff6952c"
-    cma.chronoai.dev/image-source: "4f03c35a80322673ec00df7a3b6b9399015f5a68"
-    cma.chronoai.dev/source-tree: "9ef67d581d98201ae6c3a7fbe831da4d013476aa"
-    cma.chronoai.dev/web-image-digest: "sha256:f85b24cea3bb0ed96d9caa34db37d2d0fd43472d74ef9f98872d0f6ccff6952c"
+    cma.chronoai.dev/ci-head: "0c6186dd6f15258d166c60ee85b5fb2136f5ea4c"
+    cma.chronoai.dev/ci-run: "42160518999"
+    cma.chronoai.dev/domain-migration-stage: "canonical-web-assets-2"
+    cma.chronoai.dev/image-digest: "sha256:70798f3782a1fd5457fd690c71738c253142a16e0ab9af37d4399f4858b08344"
+    cma.chronoai.dev/image-source: "0c6186dd6f15258d166c60ee85b5fb2136f5ea4c"
+    cma.chronoai.dev/source-tree: "8c3c95b74b88f3e3e492c8878ae4aa96ce85e6d7"
+    cma.chronoai.dev/web-image-digest: "sha256:70798f3782a1fd5457fd690c71738c253142a16e0ab9af37d4399f4858b08344"
 spec:
   replicas: 1
   minReadySeconds: 30
@@ -34,17 +37,18 @@ spec:
     metadata:
       annotations:
         cma.chronoai.dev/build-mode: "github-ci-artifact"
-        cma.chronoai.dev/candidate: "4f03c35a80322673ec00df7a3b6b9399015f5a68"
-        cma.chronoai.dev/ci-archive-sha256: "sha256:4db31e804465b09ac6339b275cfe5b83db71ad2382a0031196d1d2708cf42ac4"
-        cma.chronoai.dev/ci-artifact: "13636177087"
+        cma.chronoai.dev/candidate: "0c6186dd6f15258d166c60ee85b5fb2136f5ea4c"
+        cma.chronoai.dev/ci-accepted-attempt: "2"
+        cma.chronoai.dev/ci-archive-sha256: "sha256:b513b4a68b35aa13673a85df0500eef65926c2888235bff499d3e24ed9a10400"
+        cma.chronoai.dev/ci-artifact: "13477038103"
         cma.chronoai.dev/ci-attempt: "1"
-        cma.chronoai.dev/ci-head: "4f03c35a80322673ec00df7a3b6b9399015f5a68"
-        cma.chronoai.dev/ci-publication-sha256: "sha256:cc33650aabfca06b9539621f6cb55e746b1b0fd0893632a2a36542b0e3cd34e5"
-        cma.chronoai.dev/ci-run: "42526770281"
-        cma.chronoai.dev/image-digest: "sha256:f85b24cea3bb0ed96d9caa34db37d2d0fd43472d74ef9f98872d0f6ccff6952c"
-        cma.chronoai.dev/image-source: "4f03c35a80322673ec00df7a3b6b9399015f5a68"
-        cma.chronoai.dev/source-tree: "9ef67d581d98201ae6c3a7fbe831da4d013476aa"
-        cma.chronoai.dev/web-image-digest: "sha256:f85b24cea3bb0ed96d9caa34db37d2d0fd43472d74ef9f98872d0f6ccff6952c"
+        cma.chronoai.dev/ci-head: "0c6186dd6f15258d166c60ee85b5fb2136f5ea4c"
+        cma.chronoai.dev/ci-run: "42160518999"
+        cma.chronoai.dev/domain-migration-stage: "canonical-web-assets-2"
+        cma.chronoai.dev/image-digest: "sha256:70798f3782a1fd5457fd690c71738c253142a16e0ab9af37d4399f4858b08344"
+        cma.chronoai.dev/image-source: "0c6186dd6f15258d166c60ee85b5fb2136f5ea4c"
+        cma.chronoai.dev/source-tree: "8c3c95b74b88f3e3e492c8878ae4aa96ce85e6d7"
+        cma.chronoai.dev/web-image-digest: "sha256:70798f3782a1fd5457fd690c71738c253142a16e0ab9af37d4399f4858b08344"
       labels:
         app.kubernetes.io/name: cma-web
         app.kubernetes.io/part-of: cma
