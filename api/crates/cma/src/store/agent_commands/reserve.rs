@@ -5,6 +5,9 @@ use layer2_core::sandbox::agent_io::{
 use mongodb::bson::doc;
 use mongodb::ClientSession;
 
+use super::super::agent_log_integrity::{
+    integrity_document, trusted_summary, SemanticCheckpoint, TransactionLogError,
+};
 use super::super::agents::read_agent;
 use super::super::sandbox_mongo::{
     require_version, signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
@@ -157,33 +160,70 @@ pub(in crate::store) async fn apply(
         {
             return Err(CommandLedgerError::NotAdmissible.into());
         }
-        let mut entries = Vec::new();
-        super::super::agent_log::scan_complete_log_with_session(
-            ScanCaller::CommandAdmission,
+        let answer = match trusted_summary(
             store,
-            &agent.id,
-            agent.conversation.last_seq,
+            &agent,
+            &agent_row,
+            ScanCaller::CommandAdmission,
             session,
-            |entry| {
-                entries.push(entry);
-                Ok(())
-            },
+            false,
         )
         .await
-        .map_err(|error| match error {
-            super::super::agent_log_integrity::TransactionLogError::Driver(error) => {
-                ApplyError::Driver(error)
+        .map_err(map_integrity_error)?
+        {
+            Some(summary) => summary
+                .semantic()
+                .and_then(SemanticCheckpoint::answer_context),
+            None => {
+                let mut entries = Vec::new();
+                let summary = super::super::agent_log::scan_complete_log_with_session(
+                    ScanCaller::CommandAdmission,
+                    store,
+                    &agent.id,
+                    agent.conversation.last_seq,
+                    session,
+                    |entry| {
+                        entries.push(entry);
+                        Ok(())
+                    },
+                )
+                .await
+                .map_err(map_integrity_error)?;
+                let semantic = crate::store::agent_log_integrity::audit_checkpoint(
+                    store, &agent, &entries, session,
+                )
+                .await
+                .map_err(map_integrity_error)?;
+                if !semantic.valid {
+                    return Err(ApplyError::Domain(CommandLedgerError::Corrupt));
+                }
+                let integrity =
+                    integrity_document(&agent, &summary, agent.revision, semantic.clone())
+                        .map_err(|_| ApplyError::Domain(CommandLedgerError::Corrupt))?;
+                let revision = signed(agent.revision, "Agent revision")
+                    .map_err(|_| CommandLedgerError::Corrupt)?;
+                let head = signed(agent.conversation.last_seq, "Agent log sequence")
+                    .map_err(|_| CommandLedgerError::Corrupt)?;
+                let repaired = store
+                    .agents
+                    .update_one(
+                        doc! {
+                            "_id": agent.id.as_str(),
+                            "revision": revision,
+                            "last_seq": head,
+                            "record.conversation.last_seq": head,
+                        },
+                        doc! { "$set": { "agent_log_integrity_v1": integrity } },
+                    )
+                    .session(&mut *session)
+                    .await?;
+                if repaired.matched_count != 1 {
+                    return Err(CommandLedgerError::Conflict.into());
+                }
+                semantic.answer_context()
             }
-            super::super::agent_log_integrity::TransactionLogError::Domain(_) => {
-                ApplyError::Domain(CommandLedgerError::Corrupt)
-            }
-        })?;
-        layer2_core::sandbox::agent_io::require_answer_context(
-            request,
-            &agent,
-            waiting,
-            layer2_core::sandbox::agent_io::answer_context_for_log(&agent, &entries)?,
-        )?;
+        };
+        layer2_core::sandbox::agent_io::require_answer_context(request, &agent, waiting, answer)?;
     }
     if store
         .agent_commands
@@ -250,4 +290,11 @@ pub(in crate::store) async fn apply(
         .session(session)
         .await?;
     Ok(CommandReservationResult::Created(Box::new(record)))
+}
+
+fn map_integrity_error(error: TransactionLogError) -> ApplyError {
+    match error {
+        TransactionLogError::Driver(error) => ApplyError::Driver(error),
+        TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
+    }
 }
