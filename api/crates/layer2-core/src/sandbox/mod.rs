@@ -25,12 +25,14 @@ pub use agent_settings_authority::{AgentSettingsAuthorization, AgentSettingsFenc
 mod agent_settings_recovery;
 mod agent_settings_validation;
 pub use agent_settings::AgentSettings;
+mod admission_checkpoint;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
 mod agent_operation_service;
 mod agent_operation_settlement;
 mod agent_read_types;
 mod agent_reads;
+pub use admission_checkpoint::AgentLogCheckpoint;
 mod agent_reads_fold;
 mod agent_reads_usage;
 mod agent_runtime;

@@ -74,7 +74,10 @@ pub(super) async fn measure(store: &Arc<MongoSandboxStore>, original: &Agent, me
         .agents
         .update_one(
             doc! {"_id":agent.id.as_str()},
-            doc! {"$set":{"last_seq":5_000_i64,"record.conversation.last_seq":5_000_i64}},
+            // This synthetic replacement is a legacy/unprepared history; the
+            // previous fixture's tail hash cannot describe these new rows.
+            doc! {"$set":{"last_seq":5_000_i64,"record.conversation.last_seq":5_000_i64},
+            "$unset": {crate::store::agent_log_integrity::INTEGRITY_FIELD: ""}},
         )
         .await
         .unwrap();
