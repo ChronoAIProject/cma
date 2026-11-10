@@ -93,7 +93,7 @@ branch. Preserve published history: no rebase or force push. Update only the PR
 assigned to this task and follow the active coordination policy for pushes and
 re-review. Record the new head when the reviewer needs a delta review.
 
-Follow [CLAUDE.md](../CLAUDE.md) and [RELEASE.md](RELEASE.md) for normal merge and
+Follow [CLAUDE.md](../CLAUDE.md) and [Release.md](Release.md) for normal merge and
 release rules. Any temporary sprint exception must be explicitly authorized for
 the PR and retain independent review, the required validation and exact commit
 matching. Restore and verify any temporarily changed protection immediately.
