@@ -1,4 +1,5 @@
 import { ApiError } from '@chronoai/cma-sdk';
+import { UsageBackoff } from './request';
 
 export interface MetricsFailure {
   readonly title: string;
@@ -9,6 +10,13 @@ export interface MetricsFailure {
 }
 export function metricsFailure(error: unknown): MetricsFailure {
   const base = { denied: false, expired: false };
+  if (error instanceof UsageBackoff)
+    return {
+      ...base,
+      title: 'Usage reporting is busy',
+      message: 'Wait before retrying. Your selection is preserved.',
+      retryAt: error.retryAt,
+    };
   if (error instanceof ApiError) {
     if (error.status === 401 || error.status === 403 || error.status === 404)
       return {
