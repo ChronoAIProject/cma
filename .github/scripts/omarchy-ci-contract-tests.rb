@@ -39,6 +39,8 @@ module OmarchyCIContractTests
       end
     end
     {
+      "cache-to" => "type=gha,mode=max,scope=runtime-omarchy",
+      "cache-from" => "type=gha,scope=other",
       "target" => "default-runtime", "platforms" => "linux/arm64", "push" => true,
       "context" => "https://example.invalid/old-source.git", "load" => false,
       "build-args" => "OMARCHY_CMA_BASE=old-donor\nRUNTIME_DESKTOP=0\n",
