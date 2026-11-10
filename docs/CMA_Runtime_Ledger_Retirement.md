@@ -25,6 +25,9 @@ then aborts even on success. Both projected and authoritative Sandbox lineage
 are queried and checked, together with retained Workspace/Worktree parent
 references so inconsistent child lineage cannot hide behind corrupt Sandbox fields. Malformed records, mismatched projections, duplicate
 resource names or incomplete parent lineage refuse the observation.
+An Agent log quarantine marker also refuses the observation, even on a Deleted
+Agent or when the marker has a malformed or future format. The exporter retains
+that integrity evidence and does not treat terminal status as overriding it.
 
 The destination must be a new file in an operator-controlled private directory.
 It is created with mode 0600, synced with its parent, and never overwrites an
