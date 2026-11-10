@@ -96,7 +96,8 @@ jobs:
   omarchy:
     name: Images (runtime-omarchy)
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    # Measured 71-80 minute builds need headroom for qualification, scan and export.
+    timeout-minutes: 150
     permissions:
       contents: read
     steps:
