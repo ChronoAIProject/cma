@@ -606,6 +606,55 @@ Capacity remains 64. Expiry before dispatch produces the definite failure
 `agent_command_queue_timeout` without starting an Agent turn. Ordinary chat/UI and
 Trigger messages retain their existing 300-second wait.
 
+CMA also accepts `profile.environment.verified_sender_context: true` for an
+`existing_agent` target. The gateway forwards this opaque provider extension.
+Only this input policy is applied: all other supplied environment/model/tool
+settings retain their existing refusal and leave the borrowed Agent unchanged.
+An extension-only environment is supported. Omitted or `false` disables the
+policy; `honoured` contains `environment.verified_sender_context` exactly while
+enabled. Profile targets explicitly list this field in `refused`.
+
+Enable/disable through the same binding PUT with the current profile, digest and
+worker key. This policy update preserves the binding generation, Agent,
+configuration, credential and conversation. Queue policy can change in the same
+PUT; unrelated profile changes remain conflicts. Unchanged legacy profiles,
+including omitted/null and previously supported environment settings, still
+support exact PUT replay and separate worker-key renewal.
+
+For a new Responses v2 admission with `event_context`, CMA attests the complete
+original Activity with the gateway, then prefixes the input with this exact
+versioned format (fixed field order, compact JSON, followed by one LF):
+
+```text
+cma_verified_sender: {"v":1,"source_kind":"native_lark","platform":"feishu","actor_id":"ou_example","actor_kind":"human","conversation_kind":"private","human_sender":true}
+```
+
+Native Lark uses `source.region` (`feishu` or `lark`); Telegram and NyxID relay
+use their attested `platform`. WhatsApp, Discord and GitHub use `whatsapp`,
+`discord` and `github`; custom sources use JSON `null`. Actor kind is `human`,
+`bot`, `system` or `unknown`; conversation kind is `private`, `group`, `channel`,
+`thread` or `custom`. Non-human actors retain their attested ID/kind and carry
+`human_sender:false`, explicitly indicating no human sender. String values use
+JSON escaping, including escaped Unicode line separators. User text follows the
+line verbatim; a supplied lookalike cannot precede the verified prefix. The
+complete prefix counts against the existing input-byte limit; overflow is a
+named refusal, never truncation. Empty text/media-only events can carry the line.
+
+Only a current binding credential may submit `event_context`; owner/API callers
+cannot forge it. Turns without that context receive no prefix. Commands persist
+ordinary text using the existing ledger schema. Exact retries compare the full
+request rendered under either policy state. Matching the prefixed form requires
+re-attestation; an exact match to the original undecorated request stays unchanged.
+Policy toggles never rewrite admitted bytes or fingerprints. Changed requests
+under the same idempotency key still conflict. With the extension disabled,
+new input bytes and fingerprints retain their previous behavior.
+
+The CMA Responses v2 dialect defines `403 verified_sender_context_invalid`,
+`422 verified_sender_context_unsupported`, and retryable
+`503 verified_sender_context_unavailable` (`Retry-After: 5`) before durable
+admission. See [provider failure handling](CMAEG_Protocol.md#verified-sender-context-cma-responses-v2-dialect)
+for exact classification, time budgets, bounded retries and activity reporting.
+
 CMA's optional profile extension `environment.session_affinity:"source_user"`
 changes provider selection without changing gateway partitioning. CMA verifies
 the original human Activity with the gateway, then maps binding generation,

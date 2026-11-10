@@ -258,7 +258,7 @@ impl ProviderBinding {
             })
     }
 
-    /// Metadata changes retain the original generation. Runtime configuration
+    /// Metadata and input policy updates retain the generation. Runtime configuration
     /// updates require a separately proved continuity-preserving operation.
     pub fn reconfigure(
         &self,
@@ -268,7 +268,10 @@ impl ProviderBinding {
     ) -> Result<Self, String> {
         if (self.existing_agent.is_some()
             && (self.profile.configuration_digest() != profile.configuration_digest()
-                || self.profile.queue_lifetime_seconds == profile.queue_lifetime_seconds))
+                || (self.profile.queue_lifetime_seconds == profile.queue_lifetime_seconds
+                    && self.profile.verified_sender_context_enabled()
+                        == profile.verified_sender_context_enabled()
+                    && self.profile_digest == profile.profile_digest)))
             || self.state != BindingState::Ready
             || self.work != BindingWork::Idle
             || self.previous.is_some()
