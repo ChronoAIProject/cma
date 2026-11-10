@@ -201,6 +201,10 @@ data:
   CHRONO_MONGODB_DATABASE: "chrono-bot"
   # Shared database deployment; each service retains its own schema and collections.
   CHRONO_MONGODB_AUTHORITY_MODE: "shared-schema"
+  # Agent Manager also owns model_budget_reservations. Isolated deployments must
+  # include it in scoped schema/runtime grants before this image is activated.
+  # Private model_budget settings have no manifest defaults; keep general rollout
+  # disabled pending request-level enforcement. See CMA_Model_Budget_Controls.md.
   # TTL applies to existing Activity records; lowering it can remove history.
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
   # Canonical platform origin for scoped runtime service proxying.
