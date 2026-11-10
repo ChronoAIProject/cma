@@ -119,6 +119,13 @@ async fn tenant_isolation_warm_sessions_cannot_read_or_write_after_revocation() 
                 200
             );
         }
+        let warm_write = json!({"expected_revision":1,"title":"Allowed warm update"});
+        assert_eq!(
+            send(&app, &headers, "PATCH", &base, warm_write.clone())
+                .await
+                .0,
+            200
+        );
         let before = serde_json::to_value(rows.get(&document.id).await.unwrap().unwrap()).unwrap();
         match cause {
             "provider-cookie" | "provider-bearer" => {
@@ -177,11 +184,7 @@ async fn tenant_isolation_warm_sessions_cannot_read_or_write_after_revocation() 
             expected
         );
         let writes = [
-            (
-                "PATCH",
-                base.clone(),
-                json!({"expected_revision":1,"title":"unauthorized"}),
-            ),
+            ("PATCH", base.clone(), warm_write),
             (
                 "POST",
                 format!("{base}/comments"),
