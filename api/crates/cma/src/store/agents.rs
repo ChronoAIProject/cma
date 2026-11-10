@@ -66,6 +66,21 @@ pub(super) fn agent_indexes() -> Vec<IndexModel> {
                     .build(),
             )
             .build(),
+        // Changed parents can wake a paced retry before its ordinary ready_at.
+        IndexModel::builder()
+            .keys(
+                doc! { "work_pending": 1, "worker_failure_pacing_v1.until": 1,
+                "work_lease_expires_at": 1, "_id": 1 },
+            )
+            .options(
+                IndexOptions::builder()
+                    .name("agents_paced_work".to_string())
+                    .partial_filter_expression(
+                        doc! {"worker_failure_pacing_v1.until": {"$exists": true}},
+                    )
+                    .build(),
+            )
+            .build(),
         IndexModel::builder()
             .keys(doc! { "status": 1, "_id": 1 })
             .options(
