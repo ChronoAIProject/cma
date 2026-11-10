@@ -1,8 +1,8 @@
 # Public Agent-log windows and integrity proof
 
-Related: #1320, #1543, #1591. This is the public-window consumer integrated against published #1591 provider commit `03fb3984a`. The branch is not merged or deployed; combined gates passed at `c8e59f689`; provider/consumer contract convergence and review remain required. No metadata format, writer or preparation path is duplicated here.
+Related: #1320, #1543, #1591. This public-window consumer depends on the trusted admission checkpoint implementation in PR #1633, integrated at provider commit `5567c5c5b`. The shared reader contract has converged. Merge the provider first; deploying the consumer does not prepare or activate histories. No metadata format, writer or preparation path is duplicated here.
 
-## Reader interface required from #1591
+## Shared reader interface
 
 The consumer boundary is `store::agent_log_reads::integrity::LogReadIntegrity`:
 
@@ -26,7 +26,7 @@ The consumer opens a Mongo snapshot session. The adapter reads the Agent envelop
 
 `trusted=true` requires the same accepted #1591 proof: supported metadata; current envelope/record head and Agent revision agreement; immutable creation/history identity; exact count and encoded-byte physical bounds; raw tail identity/sequence/hash; no extra tail; no quarantine; prepared and activated cohort. A retained zero head requires an unfiltered indexed existence check, including malformed rows without a valid sequence. Disabled cohort, missing metadata and supported stale/legacy evidence return an untrusted current head. Unsupported-version classification follows #1591's explicit policy and must never grant trust. Ahead/head/hash/identity contradictions and quarantine propagate errors; dependency and cancellation errors are never converted to missing/empty history.
 
-The published provider supplies `read_head` with a shared read-only proof. Integration found that its complete-scan wrapper rereads the Agent/proof and may quarantine on corruption. The consumer therefore needs the already-validated Agent as well as the trust decision, with this additive adapter contract:
+The published provider supplies a shared read-only proof that returns the already-validated Agent and the trust decision:
 
 ```rust
 async fn read_proven_agent(
@@ -36,7 +36,7 @@ async fn read_proven_agent(
 ) -> Result<Option<(Agent, bool)>, SandboxStoreError>;
 ```
 
-The consumer branch implements this small extension in `agent_log_integrity/read.rs`; the provider's two-field `read_head` remains a test wrapper around it. The public reader copies the captured head and immutable creation lineage, then uses the same read-only `scan_collection` on fallback. It validates Created-event lineage without rereading the Agent, repeating the metadata proof or invoking the quarantine/audit wrapper. Errors still refuse the read. This preserves explicit audit/quarantine ownership and needs convergence with the admission owner before merge. No metadata parser, writer or preparation logic is duplicated.
+PR #1633 owns this interface in `agent_log_integrity/read.rs`; its two-field `read_head` remains a test wrapper around it. The public reader copies the captured head and immutable creation lineage, then uses the same read-only `scan_collection` on fallback. It validates Created-event lineage without rereading the Agent, repeating the metadata proof or invoking the quarantine/audit wrapper. Errors still refuse the read. This preserves explicit audit/quarantine ownership. No metadata parser, writer or preparation logic is duplicated.
 
 The current adapter still evaluates tail/extra-tail proof before checking whether the Agent is in the activated cohort. Measure disabled/unprepared metadata-present Agents as well as enabled Agents: those may pay the two proof queries and then the complete fallback scan. Preserve corruption/quarantine semantics while resolving this cost; do not silently bypass the proof to manufacture a checkout saving.
 
@@ -62,9 +62,9 @@ Existing complete-scan telemetry remains authoritative for fallbacks. Bounded re
 
 ## Measured combined gate
 
-At `c8e59f68956756925f35bf7266cc8ac572eaa201`, formatting, targeted cma clippy (tests/all features), six consumer/integrity unit tests, nine public-window Mongo tests, three shared-proof Mongo tests and three semantic-audit Mongo tests passed. The owned Mongo 8.0.13 container and volume were removed. Four affected runner contracts passed for source and archive selection; all consumer handwritten source files are below 500 lines. The integrated provider receipt test needed a `Debug` derive on `TransactionLogError` to compile; that isolated correction is included on this consumer branch for provider handoff.
+At source `5289b6663`, formatting, targeted cma clippy (tests/all features), six consumer/integrity unit tests, ten public-window Mongo tests, three legacy integrity Mongo tests, three shared-proof Mongo tests and three semantic-audit Mongo tests passed. The run held the sprint heavy-1 lock with at most two Cargo jobs. The owned Mongo 8.0.13 container and volume were removed. Four affected runner contracts passed for source and archive selection; all consumer handwritten source files are below 500 lines.
 
-The paired comparator preserves provider `03fb3984a`'s projected Agent head read and calls its actual `scan_complete_log_with_snapshot_session`, including the shared proof and driver cursor batches. It checks identical returned rows and measures CMAP checkouts with the pinned Mongo driver. These are observed totals, replacing the earlier source-derived estimates.
+The paired comparator preserves the provider's projected Agent head read and calls its actual `scan_complete_log_with_snapshot_session`, including the shared proof and driver cursor batches. That reader shape is unchanged between `03fb3984a` and `5567c5c5b`. It checks identical returned rows and measures CMAP checkouts with the pinned Mongo driver. These are observed totals, replacing the earlier source-derived estimates.
 
 For a 200-row page with approximately 4 KiB message records:
 
@@ -79,6 +79,8 @@ For a 200-row page with approximately 4 KiB message records:
 
 The historical pre-metadata complete-reader comparison remains separate: three checkouts at 1,000 rows and five at 10,000. The enabled consumer therefore adds one checkout at 1,000 rows and saves one at 10,000 versus that older shape. Prepared-but-disabled fallback still pays two proof reads versus that older baseline. These rollout costs must remain visible; do not present the post-#1591 savings as a blanket reduction from the production baseline.
 
-The real enabled reader consumes 201 log documents (one proof tail plus 200 window rows), plus its Agent envelope; the extra-tail probe returns no document. The injected-proof test separately confirms that the indexed window examines exactly 200 documents. Empty enabled windows require the three proof checkouts and no window query. The two-checkout injected proof result is only a consumer fixture.
+The real enabled reader consumes 201 log documents (one proof tail plus 200 window rows), plus its Agent envelope; the extra-tail probe returns no document. The whole-read Mongo profiler regression includes every proof and window command and rejects collection scans. At both 1,000 and 10,000 retained rows, each 200-row tail page, frozen range and bounded prefix examines exactly 202 documents across all collections and uses four checkouts. Empty pages examine two documents and use three proof checkouts with no window query. These satisfy the respective 250- and 20-document budgets. The injected-proof test separately confirms that the window itself examines exactly 200 documents; its two-checkout result is only a consumer fixture.
 
-Single local unoptimized historical/enabled timings were 172.067/16.454 ms at 1,000 rows and 1,792.812/22.544 ms at 10,000 rows. These are not production latency forecasts. CPU/decoding opportunity and checkout savings must be reported separately. Full-prefix semantic consumers still read their entire requested prefix. A new regression confirms that an explicit semantic audit revokes trust after same-length middle-history damage and that the public reader refuses without changing the quarantine marker. Production activation, contract convergence and broad #1320 closure remain pending.
+Single local unoptimized historical/enabled timings were 178.795/22.555 ms at 1,000 rows and 1,842.761/27.556 ms at 10,000 rows. These are not production latency forecasts. CPU/decoding opportunity and checkout savings must be reported separately. Full-prefix semantic consumers still read their entire requested prefix. A regression confirms that an explicit semantic audit revokes trust after same-length middle-history damage and that the public reader refuses without changing the quarantine marker. Production activation and broad #1320 closure remain pending.
+
+The page budget does not establish TC-046's per-Agent head-refresh rate, aggregate observer command budget, zero idle complete scans or paired idle checkout reduction. Poll scheduling, fresh policy checks, complete pending-approval folds and full Responses reconstruction remain separate caller work. An empty enabled read still requires three proof checkouts; deployment verification must measure these broader targets independently.
