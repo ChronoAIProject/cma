@@ -210,7 +210,7 @@ async fn submit(
         {
             Ok(Ok(())) => {}
             Ok(Err(error)) => return *error,
-            Err(_) => return error::unavailable(),
+            Err(_) => return super::routing::error(super::BindingRouteError::SenderUnavailable),
         }
     }
     let admitted = match state
