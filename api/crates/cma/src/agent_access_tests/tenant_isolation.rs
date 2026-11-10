@@ -4,8 +4,10 @@ use axum::{
     http::Request,
     Router,
 };
+use futures_util::TryStreamExt;
 use layer2_core::resource_access::CredentialContext;
 use layer2_core::sandbox::store::SandboxStore;
+use mongodb::bson::{doc, Document};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -72,12 +74,28 @@ async fn call(app: &Router, method: &str, path: &str, body: &Value, subject: &st
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
+async fn requests(client: &mongodb::Client, name: &str) -> Vec<Document> {
+    client
+        .database(name)
+        .collection::<Document>(crate::store::agent_access_requests::COLLECTION)
+        .find(doc! {})
+        .sort(doc! {"_id": 1})
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn tenant_isolation_service_access_routes_check_owner_before_receipt_replay() {
     for action in ["list", "approve", "deny", "scope"] {
-        let (client, name, store, first) =
-            crate::store::agent_access_requests::tests::approved_fixture().await;
+        let (client, name, store, first) = if action == "scope" {
+            crate::store::agent_access_requests::tests::approved_scoped_fixture().await
+        } else {
+            crate::store::agent_access_requests::tests::approved_fixture().await
+        };
         store
             .fail_access_request(first.lease.as_ref().unwrap(), "fixture_complete")
             .await
@@ -135,28 +153,26 @@ async fn tenant_isolation_service_access_routes_check_owner_before_receipt_repla
             }),
         );
         let app = layer1_public::rest::agent_access_requests_router(service);
-        let before =
-            serde_json::to_value(store.read_access_request(&record.id).await.unwrap()).unwrap();
+        let before = requests(&client, &name).await;
         let denied = call(&app, method, &path, &body, "foreign").await;
         assert_eq!(denied.0, 404, "{action}");
         assert_eq!(denied.1["code"], "agent_access_not_found");
+        assert_eq!(requests(&client, &name).await, before);
         assert_eq!(
-            serde_json::to_value(store.read_access_request(&record.id).await.unwrap()).unwrap(),
-            before
+            store.get_sandbox(&current.id).await.unwrap(),
+            Some(current.clone())
         );
         let owned = call(&app, method, &path, &body, record.requester.owner.as_str()).await;
         assert_eq!(owned.0, expected, "owner {action}: {}", owned.1["code"]);
-        let after =
-            serde_json::to_value(store.read_access_request(&record.id).await.unwrap()).unwrap();
+        let after = requests(&client, &name).await;
+        let after_sandbox = store.get_sandbox(&current.id).await.unwrap();
         assert_eq!(
             call(&app, method, &path, &body, "foreign").await,
             denied,
             "foreign receipt replay"
         );
-        assert_eq!(
-            serde_json::to_value(store.read_access_request(&record.id).await.unwrap()).unwrap(),
-            after
-        );
+        assert_eq!(requests(&client, &name).await, after);
+        assert_eq!(store.get_sandbox(&current.id).await.unwrap(), after_sandbox);
         client.database(&name).drop().await.unwrap();
     }
 }
