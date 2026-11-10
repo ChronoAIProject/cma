@@ -336,3 +336,5 @@ async fn prepared_window_keeps_snapshot_after_a_real_writer_advances() {
     assert_eq!(next.last().unwrap().seq, 201);
     fixture.cleanup().await;
 }
+
+mod baseline;
