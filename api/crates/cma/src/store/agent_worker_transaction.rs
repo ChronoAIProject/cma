@@ -1,5 +1,6 @@
 //! Atomic Mongo publication for one fenced agent work step.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::{
     agent_cleanup_capacity_retry, validate_agent_cleanup_capacity_log,
     validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox, AgentWorkMutation,
@@ -131,6 +132,13 @@ async fn apply_publication_observed(
     let needs_capacity_marker = agent_cleanup_capacity_retry(&current, mutation);
     let mut last_log = None;
     let complete_log = scan_complete_log_with_session(
+        if needs_capacity_marker
+            || super::agent_worker_capacity::capacity_failure_evidence_matches(&current, mutation)
+        {
+            ScanCaller::CapacitySettlement(current.work.step)
+        } else {
+            ScanCaller::WorkerPublication(current.work.step)
+        },
         store,
         &current.id,
         current.conversation.last_seq,
