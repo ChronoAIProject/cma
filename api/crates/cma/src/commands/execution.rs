@@ -184,6 +184,7 @@ pub(super) fn classify(error: AgentOperationError) -> CommandAttempt {
     // The driver rereads binding state before acting on any classification.
     // Errors after an unknown commit therefore only lead to reconciliation.
     match error {
+        Budget(reason) => CommandAttempt::Reject(Failure::from_budget(reason)),
         Connection(layer2_core::sandbox::SandboxCredentialPrerequisiteError::SetupRequired) => {
             CommandAttempt::Reject(Failure::CredentialSetupRequired)
         }
