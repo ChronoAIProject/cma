@@ -204,8 +204,8 @@ export function Composer({
     const observer = new ResizeObserver(() => {
       if (field.clientWidth === width) return;
       width = field.clientWidth;
-      // Changing height during resize delivery can cause a WebKit layout loop.
-      frame ??= requestAnimationFrame(() => {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => {
         frame = undefined;
         fit(field);
       });
