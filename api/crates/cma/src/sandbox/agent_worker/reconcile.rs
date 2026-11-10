@@ -85,7 +85,12 @@ impl AgentWorker {
                             // A local refusal grants no authority and performs no
                             // runtime IO. Recheck it every sweep; a positive hint
                             // still takes the ordinary fresh admission/write path.
-                            if !connection.input.managed_context_may_be_ready().await {
+                            // Explicit transport migration can prove native-goal
+                            // absence after reattachment without a replayed goal
+                            // snapshot. Leave that proof behind fresh admission.
+                            if migration.is_none()
+                                && !connection.input.managed_context_may_be_ready().await
+                            {
                                 context_runtime_deferred += 1;
                                 continue;
                             }

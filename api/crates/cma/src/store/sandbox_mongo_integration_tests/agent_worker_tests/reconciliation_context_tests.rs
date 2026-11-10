@@ -16,6 +16,7 @@ use crate::sandbox::LiveAgentRegistry;
 
 mod cpu_profile;
 mod eligibility_tests;
+mod transport_migration_tests;
 
 // These attached streams emit no updates. Keep their asynchronous checkpoint
 // restoration separate from the reconciliation reads measured by this test.
