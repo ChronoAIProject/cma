@@ -12,6 +12,11 @@ pub use request::{
 };
 #[cfg(test)]
 mod request_tests;
+mod platform;
+pub use platform::PlatformBudgetPolicy;
+#[cfg(test)]
+mod controls_tests;
+
 #[cfg(test)]
 mod tests;
 
@@ -22,6 +27,8 @@ mod tests;
 pub struct BudgetPolicy {
     pub owner_day_limit: u64,
     pub turn_limit: u64,
+    pub max_calls_per_turn: u64,
+    pub day_timezone: String,
     pub input_token_units: u64,
     pub output_token_units: u64,
     pub max_unobserved_units: u64,
@@ -43,10 +50,32 @@ impl BudgetPolicy {
             || self.turn_limit > self.owner_day_limit
             || self.max_unobserved_units >= self.turn_limit
             || !(1..=300).contains(&self.usage_timeout_seconds)
+            || self.max_calls_per_turn == 0
+            || self.max_calls_per_turn > u64::from(u32::MAX)
+            || self.day_timezone.len() > 128
+            || jiff::tz::TimeZone::get(&self.day_timezone).is_err()
         {
             return Err(BudgetError::InvalidPolicy);
         }
         Ok(())
+    }
+
+    pub fn day(&self, now: u64) -> Result<u64, BudgetError> {
+        let zone =
+            jiff::tz::TimeZone::get(&self.day_timezone).map_err(|_| BudgetError::Unavailable)?;
+        let date =
+            jiff::Timestamp::from_second(i64::try_from(now).map_err(|_| BudgetError::Unavailable)?)
+                .map_err(|_| BudgetError::Unavailable)?
+                .to_zoned(zone)
+                .date();
+        let month =
+            time::Month::try_from(date.month() as u8).map_err(|_| BudgetError::Unavailable)?;
+        let date = time::Date::from_calendar_date(i32::from(date.year()), month, date.day() as u8)
+            .map_err(|_| BudgetError::Unavailable)?;
+        let epoch = time::Date::from_calendar_date(1970, time::Month::January, 1)
+            .map_err(|_| BudgetError::Unavailable)?;
+        u64::try_from(date.to_julian_day() - epoch.to_julian_day())
+            .map_err(|_| BudgetError::Unavailable)
     }
 
     pub fn value_usage(&self, input: u64, output: u64) -> Result<u64, BudgetError> {
@@ -74,6 +103,10 @@ impl BudgetPolicy {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BudgetSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<PlatformBudgetPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_policy: Option<BudgetPolicy>,
     pub owners: Vec<OwnerBudgetPolicy>,
@@ -90,7 +123,11 @@ pub struct OwnerBudgetPolicy {
 
 impl BudgetSettings {
     pub fn is_disabled(&self) -> bool {
-        self.default_policy.is_none() && self.owners.is_empty() && self.request_models.is_empty()
+        !self.enabled
+            && self.platform.is_none()
+            && self.default_policy.is_none()
+            && self.owners.is_empty()
+            && self.request_models.is_empty()
     }
 
     pub fn validate(&self) -> Result<(), BudgetError> {
@@ -103,6 +140,15 @@ impl BudgetSettings {
             if !models.insert(&model.model) {
                 return Err(BudgetError::InvalidPolicy);
             }
+        }
+        if let Some(platform) = &self.platform {
+            platform.validate()?;
+        }
+        if self.enabled
+            && (self.platform.is_none()
+                || (self.default_policy.is_none() && self.owners.is_empty()))
+        {
+            return Err(BudgetError::InvalidPolicy);
         }
         if let Some(policy) = &self.default_policy {
             policy.validate()?;
@@ -121,6 +167,9 @@ impl BudgetSettings {
     }
 
     pub fn for_owner(&self, owner: &SubjectId) -> Option<&BudgetPolicy> {
+        if !self.enabled {
+            return None;
+        }
         self.owners
             .iter()
             .find(|entry| &entry.owner == owner)
