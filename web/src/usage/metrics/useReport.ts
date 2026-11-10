@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, type UsageMetricReport } from '@chronoai/cma-sdk';
 import { metricQuery, type MetricsClient, type Selection } from './model';
 import { metricsFailure, type MetricsFailure } from './failure';
+import { usageRequest } from './request';
 
 export function useUsageVisible(active = true): boolean {
   const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden');
@@ -92,7 +93,9 @@ export function useUsageReport(
         let report =
           pending?.api === api && pending.key === key && pending.revision === revision
             ? pending.report
-            : await api.create(metricQuery(input, admin), { signal });
+            : await usageRequest(api, signal, () =>
+                api.create(metricQuery(input, admin), { signal }),
+              );
         while (!signal.aborted && report.status === 'pending') {
           pendingRequest.current = { api, key, revision, report };
           setState((previous) => ({
@@ -108,7 +111,7 @@ export function useUsageReport(
             signal,
           );
           if (Date.now() / 1000 >= Number(report.expires_at)) throw new ApiError(410, 'Expired');
-          report = await api.report(report.report_id, { signal });
+          report = await usageRequest(api, signal, () => api.report(report.report_id, { signal }));
         }
         if (signal.aborted) return;
         pendingRequest.current = undefined;
@@ -164,7 +167,11 @@ export function useUsageReport(
 }
 
 /** Cancellable report member read, reused for pages, charts and drilldowns. */
-export function useUsageRead<T>(load: (signal: AbortSignal) => Promise<T>, active: boolean) {
+export function useUsageRead<T>(
+  load: (signal: AbortSignal) => Promise<T>,
+  active: boolean,
+  scope: object,
+) {
   const [revision, setRevision] = useState(0);
   const [stored, setStored] = useState<{
     load: typeof load;
@@ -175,7 +182,7 @@ export function useUsageRead<T>(load: (signal: AbortSignal) => Promise<T>, activ
   useEffect(() => {
     if (!active) return;
     const controller = new AbortController();
-    void load(controller.signal).then(
+    void usageRequest(scope, controller.signal, load).then(
       (data) => {
         if (!controller.signal.aborted) setStored({ load, revision, data });
       },
@@ -184,7 +191,7 @@ export function useUsageRead<T>(load: (signal: AbortSignal) => Promise<T>, activ
       },
     );
     return () => controller.abort();
-  }, [load, active, revision]);
+  }, [load, active, revision, scope]);
   const result = stored?.load === load && stored.revision === revision ? stored : undefined;
   return {
     data: result?.data,
