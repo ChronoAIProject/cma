@@ -1,5 +1,9 @@
 //! Read-only Discord bot discovery. Credentials never leave the fixed API origin.
-use super::{protocol::endpoint, DiscordRest, GatewayError, RestError};
+use super::{
+    protocol::endpoint,
+    status::{FailureCode, Stage, StatusAttempt},
+    DiscordRest, GatewayError, RestError,
+};
 use cmaeg_core::channel::Secret;
 use reqwest::{Client, Url};
 use serde::Deserialize;
@@ -25,6 +29,7 @@ pub struct DiscordApi {
     pub(super) origin: Url,
     pub(super) components: Option<std::sync::Arc<super::components::Runtime>>,
     limits: DiscordRest,
+    status: StatusAttempt,
     pub(super) thread_metadata: bool,
     pub(super) message_events: bool,
     pub(super) quoted_context: bool,
@@ -46,6 +51,7 @@ impl DiscordApi {
             origin: Url::parse("https://discord.com/api/v10/")
                 .map_err(|_| GatewayError::InvalidConfiguration)?,
             limits: DiscordRest::new().map_err(|_| GatewayError::Unavailable)?,
+            status: Default::default(),
             thread_metadata: false,
             message_events: false,
             quoted_context: false,
@@ -53,6 +59,10 @@ impl DiscordApi {
             forwards: false,
             reactions: false,
         })
+    }
+    pub(super) fn with_status(mut self, status: StatusAttempt) -> Self {
+        self.status = status;
+        self
     }
     pub(super) fn with_reactions(mut self, enabled: bool) -> Self {
         self.reactions = enabled;
@@ -89,6 +99,15 @@ impl DiscordApi {
         token: &Secret,
         expected_bot: &str,
     ) -> Result<Discovery, GatewayError> {
+        self.status.step(Stage::Discovery);
+        self.status
+            .result(self.discover_inner(token, expected_bot).await)
+    }
+    async fn discover_inner(
+        &self,
+        token: &Secret,
+        expected_bot: &str,
+    ) -> Result<Discovery, GatewayError> {
         #[derive(Deserialize)]
         struct User {
             id: String,
@@ -97,6 +116,7 @@ impl DiscordApi {
         }
         let user: User = self.get("users/@me", token).await?;
         if !user.bot || user.id != expected_bot {
+            self.status.failure(FailureCode::BotIdentityMismatch);
             return Err(GatewayError::Authority);
         }
         let discovery: Discovery = self.get("gateway/bot", token).await?;
@@ -104,13 +124,17 @@ impl DiscordApi {
         let limit = &discovery.session_start_limit;
         // This transport is deliberately one shard. Discord may require sharding
         // for larger bots; refusing is safer than missing guilds silently.
-        if discovery.shards != 1
-            || limit.total == 0
+        if discovery.shards != 1 {
+            self.status.failure(FailureCode::ShardingUnsupported);
+            return Err(GatewayError::InvalidConfiguration);
+        }
+        if limit.total == 0
             || limit.remaining > limit.total
             || limit.max_concurrency == 0
             || limit.reset_after == 0
             || limit.reset_after > 7 * 86_400_000
         {
+            self.status.failure(FailureCode::SessionLimitInvalid);
             return Err(GatewayError::InvalidConfiguration);
         }
         Ok(discovery)
@@ -159,6 +183,9 @@ impl DiscordApi {
             self.limits.cooldown(token, retry.unwrap_or(60.0));
         }
         if matches!(status, 401 | 403) {
+            if matches!(path, "users/@me" | "gateway/bot") {
+                self.status.failure(FailureCode::DiscoveryUnauthorized);
+            }
             return Err(GatewayError::Authority);
         }
         if status != 429 && !response.status().is_success() {
