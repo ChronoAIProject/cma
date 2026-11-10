@@ -70,12 +70,12 @@ async fn default_writer_refuses_all_mutations_past_either_old_limit() {
             mutation::Command::RemoveComment(comment.id, revision),
         ];
         for command in commands {
-            assert_eq!(
+            assert!(matches!(
                 rollback
                     .mutate_guarded(&owner, &id, None, "new-operation", command, None)
                     .await,
                 Err(DocumentError::Capacity)
-            );
+            ));
         }
         assert_eq!(
             serde_json::to_vec(&rows.get(&id).await.unwrap().unwrap()).unwrap(),
