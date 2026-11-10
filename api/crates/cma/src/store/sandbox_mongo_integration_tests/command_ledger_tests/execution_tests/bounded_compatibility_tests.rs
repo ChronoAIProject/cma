@@ -1,4 +1,4 @@
-use super::bounded_admission_tests::prepare_history;
+use super::bounded_fixtures::prepare_history;
 use super::*;
 use crate::store::agent_log_integrity::{parse_integrity, INTEGRITY_FIELD, QUARANTINE_FIELD};
 use crate::store::agent_log_telemetry::{isolated_test as isolated, snapshot, ScanCaller};
