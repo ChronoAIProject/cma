@@ -55,6 +55,7 @@ pub(super) const WARM_SANDBOXES: &str = "warm_sandboxes";
 pub(super) const SANDBOX_BILLING: &str = "sandbox_billing_state";
 
 const SANDBOX_COLLECTIONS: &[&str] = &[
+    super::settings::SETTINGS,
     super::budget::COLLECTION,
     "sandbox_retained_availability",
     SANDBOXES,
@@ -240,6 +241,7 @@ impl MongoSandboxStore {
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
+        super::budget::initialize_settings(&store).await?;
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;
         super::sandbox_usage::ensure_indexes(&store).await?;
