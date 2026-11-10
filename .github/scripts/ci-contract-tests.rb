@@ -441,6 +441,11 @@ else
       steps.push(initialize)
     end
   end
+  ["${{ vars.CMA_E2E_PUBLIC_ID }}", "${{ secrets.CMA_E2E_PUBLIC_ID }}"].each do |expression|
+    reject.call("unmasked or unsynchronized smoke public ID") do |value|
+      value["nightly-staging"]["jobs"]["smoke"]["env"]["CMA_E2E_PUBLIC_ID"] = expression
+    end
+  end
   reject.call("unprotected mutation") { |value| value["nightly-staging"]["jobs"]["journeys"].delete("environment") }
   reject.call("mutable checkout") do |value|
     value["nightly-staging"]["jobs"]["journeys"]["steps"].find { |row| row["uses"].to_s.start_with?("actions/checkout@") }["with"]["ref"] = "develop"

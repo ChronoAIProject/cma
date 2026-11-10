@@ -17,6 +17,7 @@ export default defineConfig({
     'owner-chart-image.check.ts',
     'build-identity.check.ts',
     'usage-backoff.check.ts',
+    'agent-polling.check.ts',
   ],
   workers: 1,
   retries: 0,
