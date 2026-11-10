@@ -263,3 +263,68 @@ async fn budget_activation_stop_survives_disable_and_restart_without_a_reservati
         .is_none());
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn lower_usage_timeout_stops_an_already_running_turn() {
+    let (client, name) = database("budget_timeout_edit").await;
+    let (store, agent, parent, execution, _, _) = composed(&client, &name).await;
+    let policy = configure(&store, &agent.owner).await;
+    let admitted = record(
+        store
+            .reserve_command(live_request(&agent, &parent, "running"))
+            .await
+            .unwrap(),
+    );
+    AgentCommandWorker::new(store.clone(), execution, "budget-worker".into())
+        .unwrap()
+        .run_one(&admitted.receipt.envelope.command_id)
+        .await
+        .unwrap();
+    let working = store.get_agent(&agent.id).await.unwrap().unwrap();
+    let generation = working.conversation.runtime_generation.unwrap();
+    let turn = working.conversation.active_turn.unwrap();
+    let raw = store
+        .model_budget
+        .find_one(doc! {"_id": format!("turn:{}:{turn}", agent.id.as_str())})
+        .await
+        .unwrap()
+        .unwrap();
+    let recorded_at = raw
+        .get_document("record")
+        .unwrap()
+        .get_document("reservation")
+        .unwrap()
+        .get_i64("last_usage_at")
+        .unwrap() as u64;
+    let now = recorded_at + policy.usage_timeout_seconds;
+    assert!(store
+        .stop_requested(&agent.id, generation, now)
+        .await
+        .unwrap()
+        .is_none());
+    store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {"$set": {
+                "settings.model_budget.owners.0.policy.usage_timeout_seconds":
+                    (policy.usage_timeout_seconds / 2) as i64
+            }},
+        )
+        .await
+        .unwrap();
+    let stop = store
+        .stop_requested(&agent.id, generation, now)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stop.reason, BudgetError::Unavailable);
+    assert_eq!(stop.turn_sequence, turn);
+    assert_eq!(
+        store.get_agent(&agent.id).await.unwrap().unwrap().status,
+        AgentStatus::Working
+    );
+    assert!(read_owner(&store, &agent).await.reserved > 0);
+    client.database(&name).drop().await.unwrap();
+}
