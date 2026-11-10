@@ -71,6 +71,28 @@ async fn failure_pacing_worker_records_only_read_only_inspection_observations() 
         .run_one(&agent.id, as_time(&saved.work.ready_at))
         .await
         .unwrap());
+    use layer2_core::sandbox::agent_io::AgentCommandStore;
+    let parent = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
+    store
+        .reserve_command(
+            crate::store::sandbox_mongo_integration_tests::command_ledger_tests::request(
+                &saved,
+                &parent,
+                "worker-wake",
+            ),
+        )
+        .await
+        .unwrap();
+    // The actual worker must capture generation 1 before inspection, then
+    // start a fresh streak instead of continually waking on generation 0.
+    let wake_at = as_time(&saved.updated_at) + Duration::from_secs(1);
+    assert!(worker.run_one(&agent.id, wake_at).await.unwrap());
+    let reset = store.get_agent(&agent.id).await.unwrap().unwrap();
+    assert_eq!(until(&store, &agent.id).await, reset.work.ready_at);
+    assert!(!worker
+        .run_one(&agent.id, wake_at + Duration::from_secs(1))
+        .await
+        .unwrap());
     client.database(&name).drop().await.unwrap();
 }
 

@@ -22,6 +22,11 @@ pub(super) fn scans() -> u64 {
 pub(super) async fn observation(store: &MongoSandboxStore, agent: &Agent) -> AgentRetryObservation {
     AgentRetryObservation {
         agent_revision: agent.revision + 1,
+        command_admission_generation: store
+            .agent_command_admission_generation(&agent.id)
+            .await
+            .unwrap()
+            .unwrap(),
         sandbox_revision: store
             .get_sandbox(&agent.sandbox_id)
             .await
