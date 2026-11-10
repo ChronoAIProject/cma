@@ -1,6 +1,5 @@
 //! Atomic Mongo admission for an agent and its owned worktree.
 
-use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, SandboxStoreError,
 };
@@ -11,8 +10,10 @@ use super::agent_admission_records::{
     reconcile_created, replay_after_duplicate, replay_in_transaction, AdmissionReceipt,
     CreatedReceipt, LoadError,
 };
-use super::agent_log::{log_document, scan_complete_log_with_session};
-use super::agent_log_integrity::{ensure_append_capacity, AppendCapacity, TransactionLogError};
+use super::agent_log::scan_complete_log_with_session;
+use super::agent_log_integrity::{
+    integrity_document, prepare_append, AppendCapacity, SemanticCheckpoint, TransactionLogError,
+};
 use super::agents::{agent_document, LIVE_STATUSES};
 use super::sandbox_events::{append_in_transaction, TransactionEventError};
 use super::sandbox_mongo::{
@@ -22,6 +23,9 @@ use super::sandbox_mongo::{
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::workspaces::{read_workspace, workspace_replacement_fields};
 use super::worktrees::worktree_document;
+
+mod initial_integrity;
+use initial_integrity::initial_integrity;
 
 mod attribution;
 mod parent_fences;
@@ -309,6 +313,7 @@ async fn apply_admission(
                     .map_err(ApplyError::Domain)?
             }
         };
+    creation.validate_replay().map_err(ApplyError::Domain)?;
     let provenance = super::agent_provenance::record_creation(
         store,
         admission,
@@ -324,21 +329,18 @@ async fn apply_admission(
             ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string()))
         }
     })?;
-    let log_summary = scan_complete_log_with_session(
-        ScanCaller::CommandAdmission,
-        store,
-        &creation.agent.id,
-        0,
-        session,
-        |_| Ok(()),
-    )
-    .await?;
-    ensure_append_capacity(
-        &log_summary,
-        std::slice::from_ref(&creation.initial_log),
-        AppendCapacity::Normal,
-    )
-    .map_err(ApplyError::Domain)?;
+    if store
+        .agent_log
+        .find_one(doc! { "agent_id": creation.agent.id.as_str() })
+        .projection(doc! { "_id": 1 })
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .is_some()
+    {
+        return Err(ApplyError::Domain(SandboxStoreError::SequenceConflict));
+    }
+    let integrity = initial_integrity(&creation).map_err(ApplyError::Domain)?;
     let next_workspace = next_workspace(&workspace)?;
     let mut next_sandbox = sandbox.clone();
     next_sandbox
@@ -368,15 +370,18 @@ async fn apply_admission(
         .session(&mut *session)
         .await
         .map_err(classify_aggregate_insert)?;
+    let mut agent_document = agent_document(&creation.agent).map_err(ApplyError::Domain)?;
+    agent_document.insert("agent_log_integrity_v1", integrity.integrity);
     store
         .agents
-        .insert_one(agent_document(&creation.agent).map_err(ApplyError::Domain)?)
+        .insert_one(agent_document)
         .session(&mut *session)
         .await
         .map_err(classify_agent_insert)?;
     store
         .agent_log
-        .insert_one(log_document(&creation.initial_log).map_err(ApplyError::Domain)?)
+        .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+        .insert_one(&integrity.documents[0])
         .session(&mut *session)
         .await
         .map_err(classify_log_insert)?;
