@@ -131,6 +131,8 @@ mod executor_tests;
 #[cfg(test)]
 mod expiry_tests;
 #[cfg(test)]
+mod oversized_frame_tests;
+#[cfg(test)]
 mod projection_store_tests;
 #[cfg(test)]
 mod tool_reply_tests;
