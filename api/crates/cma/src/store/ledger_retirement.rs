@@ -2,7 +2,7 @@
 //! through startup initialization or writes Mongo lifecycle state.
 use std::{io::Write, os::unix::fs::OpenOptionsExt, path::Path, time::Duration};
 
-use layer2_core::sandbox::{store::SandboxStoreError, SandboxHierarchyRecord};
+use layer2_core::sandbox::{store::SandboxStoreError, Agent, SandboxHierarchyRecord};
 use layer3_adapter::runtime_ledger_retirement::{
     RuntimeLedgerRetirementSnapshot, MAX_LEDGER_RETIREMENT_RESOURCES,
     MAX_LEDGER_RETIREMENT_SNAPSHOT_BYTES,
@@ -133,7 +133,7 @@ async fn read(
         scope_filter(sandbox, Some(("worktree_id", worktree_ids))),
         session,
         &mut evidence,
-        read_agent,
+        read_retirement_agent,
     )
     .await?;
     let snapshot = SandboxHierarchyRecord {
@@ -148,6 +148,18 @@ async fn read(
             format!("{:x}", evidence.digest.finalize()),
         )
         .map_err(|_| INVALID)
+}
+
+fn read_retirement_agent(document: &Document) -> std::result::Result<Agent, SandboxStoreError> {
+    // A terminal aggregate cannot override an unresolved integrity finding.
+    // Presence also holds for malformed or future marker formats; observing
+    // retirement must never clear or reinterpret that evidence as eligibility.
+    if document.contains_key(super::agent_log_integrity::QUARANTINE_FIELD) {
+        return Err(SandboxStoreError::Corrupt(
+            "Agent log integrity is quarantined".into(),
+        ));
+    }
+    read_agent(document)
 }
 
 struct Evidence {
