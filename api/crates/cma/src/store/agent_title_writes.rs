@@ -11,11 +11,9 @@ use layer2_core::seconds_from_rfc3339;
 use mongodb::bson::{doc, Bson, Document, Timestamp};
 use mongodb::options::ReadConcern;
 
-use super::agent_log::{
-    log_document, scan_complete_log_with_session, scan_complete_log_with_snapshot_session,
-};
+use super::agent_log::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
 use super::agent_log_integrity::{
-    ensure_append_capacity, AppendCapacity, LogSummary, TransactionLogError,
+    prepare_append, AppendCapacity, LogSummary, SemanticCheckpoint, TransactionLogError,
 };
 use super::agent_title_claims::current_agent_filter;
 use super::agent_title_state::{
@@ -229,13 +227,24 @@ async fn apply_title(
 
     let summary = transaction_log(store, &current, session).await?;
     let (next, entry, stored) = next_title_state(&current, mutation)?;
-    ensure_append_capacity(
+
+    let mut fields = agent_replacement_fields(&next).map_err(map_domain)?;
+    let semantic = summary
+        .semantic()
+        .cloned()
+        .ok_or(ApplyError::Domain(AgentTitleStoreError::Unavailable))?;
+    let integrity = prepare_append(
+        &current,
         &summary,
         std::slice::from_ref(&entry),
+        next.revision,
+        semantic
+            .after_append(std::slice::from_ref(&entry), &next)
+            .map_err(map_domain)?,
         AppendCapacity::Normal,
     )
     .map_err(map_domain)?;
-    let mut fields = agent_replacement_fields(&next).map_err(map_domain)?;
+    fields.insert("agent_log_integrity_v1", integrity.integrity);
     fields.insert(
         "last_seq",
         signed(next.conversation.last_seq, "agent log sequence")
@@ -273,7 +282,8 @@ async fn apply_title(
     }
     store
         .agent_log
-        .insert_one(log_document(&entry).map_err(map_domain)?)
+        .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+        .insert_one(&integrity.documents[0])
         .session(session)
         .await
         .map_err(|error| {
@@ -408,24 +418,6 @@ async fn load_agent(
     Ok(Some((agent, state)))
 }
 
-async fn transaction_log(
-    store: &MongoSandboxStore,
-    agent: &Agent,
-    session: &mut mongodb::ClientSession,
-) -> Result<LogSummary, ApplyError> {
-    let summary = scan_complete_log_with_session(
-        ScanCaller::TitleDiscovery,
-        store,
-        &agent.id,
-        agent.conversation.last_seq,
-        session,
-        |_| Ok(()),
-    )
-    .await
-    .map_err(map_transaction_log)?;
-    Ok(summary)
-}
-
 async fn reconcile_title(
     store: &MongoSandboxStore,
     receipt: &TitleReceipt,
@@ -481,6 +473,9 @@ impl CompletionProof {
         }
     }
 }
+
+mod integrity;
+use integrity::transaction_log;
 
 mod errors;
 use errors::{map_domain, map_reconciliation_log, map_transaction_log};
