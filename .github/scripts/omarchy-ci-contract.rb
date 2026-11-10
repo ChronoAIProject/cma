@@ -36,7 +36,7 @@ module OmarchyCIContract
         "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
         "with" => { "context" => ".", "file" => "infra/runtime/Dockerfile", "target" => "omarchy",
           "platforms" => "linux/amd64", "push" => false, "load" => true, "tags" => "cma-runtime-omarchy:ci",
-          "build-args" => <<~'ARGS', "cache-from" => "type=gha,scope=runtime-omarchy", "cache-to" => "type=gha,mode=max,scope=runtime-omarchy" } },
+          "build-args" => <<~'ARGS', "cache-from" => "type=gha,scope=runtime-omarchy", "cache-to" => "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'type=gha,mode=max,scope=runtime-omarchy' || '' }}" } },
             OMARCHY_CMA_BASE=runtime
             RUNTIME_DESKTOP=1
             CHRONO_BUILD=${{ steps.identity.outputs.version }}
