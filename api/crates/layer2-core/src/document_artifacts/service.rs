@@ -6,10 +6,23 @@ use std::time::Duration;
 pub struct DocumentService {
     pub(super) store: Arc<dyn DocumentStore>,
     pub(super) blobs: Arc<dyn DocumentBlobStore>,
+    pub(super) revocation_reserve_enabled: bool,
 }
 impl DocumentService {
     pub fn new(store: Arc<dyn DocumentStore>, blobs: Arc<dyn DocumentBlobStore>) -> Arc<Self> {
-        Arc::new(Self { store, blobs })
+        Self::with_revocation_reserve(store, blobs, false)
+    }
+    /// Enable only after this compatible reader is the deployed rollback target.
+    pub fn with_revocation_reserve(
+        store: Arc<dyn DocumentStore>,
+        blobs: Arc<dyn DocumentBlobStore>,
+        enabled: bool,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            store,
+            blobs,
+            revocation_reserve_enabled: enabled,
+        })
     }
     pub async fn create(
         &self,
@@ -87,6 +100,7 @@ impl DocumentService {
         if let Some(guard) = guard {
             guard.validate(Some(&record)).await?;
         }
+        self.validate_write(&record, false)?;
         if self.store.insert(&record).await? {
             return Ok(metadata);
         }
