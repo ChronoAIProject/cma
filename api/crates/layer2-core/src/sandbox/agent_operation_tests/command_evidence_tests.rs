@@ -9,6 +9,9 @@ use crate::sandbox::agent_io::*;
 use crate::sandbox::store::{AgentLogStore, AgentStore};
 use crate::sandbox::*;
 
+#[path = "credit_failure_tests.rs"]
+mod credit_failure_tests;
+
 async fn claimed(store: &InMemorySandboxStore, agent: &Agent) -> AdmittedAgentCommand {
     store
         .claim_next_command(request(agent, "worker", &crate::now_rfc3339()))
