@@ -122,6 +122,8 @@ if mode == "release"
     "unbounded cache transfer" => ["Inject API Cargo cache mounts", "timeout-minutes", 60],
     "mutable cache action" => ["Restore API Cargo cache archive", "uses", "actions/cache/restore@v4"],
     "cache other paths" => ["Restore API Cargo cache archive", "with", { "path" => "~/.cargo" }],
+    "extract PR cache" => ["Extract API Cargo cache before pruning", "if", "matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'"],
+    "save PR cache" => ["Save accepted API Cargo cache archive", "if", "success() && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'"],
     "save failed image cache" => ["Save accepted API Cargo cache archive", "if", "always()"],
     "skip build on cache hit" => ["Build image for all target platforms", "if", "steps.api-cargo-cache-restore.outputs.cache-hit != 'true'"],
     "skip scan on cache hit" => ["Vulnerability scan", "if", "steps.api-cargo-cache-restore.outputs.cache-hit != 'true'"],
@@ -130,6 +132,11 @@ if mode == "release"
   cache_changes.each do |label, (name, field, changed)|
     reject.call(label) do |value|
       value["ci"]["jobs"]["images"]["steps"].find { |row| row["name"] == name }[field] = changed
+    end
+  end
+  { "cache-from" => "type=gha,scope=shared", "cache-to" => "type=gha,mode=max,scope=${{ matrix.component }}" }.each do |field, changed|
+    reject.call("image #{field} loses component isolation or develop-only saves") do |value|
+      value["ci"]["jobs"]["images"]["steps"].find { |row| row["name"] == "Build image for all target platforms" }["with"][field] = changed
     end
   end
   reject.call("extract after prune") do |value|
