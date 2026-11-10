@@ -34,15 +34,20 @@ if (
 ) {
   try {
     const root = fileURLToPath(new URL("../../", import.meta.url));
-    for (const [crate, doc] of [["cma", "CMA_Operations"], ["cmaeg", "CMAEG_Operations"]]) {
+    for (const [crate, docs] of [
+      ["cma", ["CMA_Operations", "CMA_Admission_Append"]],
+      ["cmaeg", ["CMAEG_Operations"]],
+    ]) {
       const sources = [
         readFileSync(join(root, `api/crates/${crate}/src/config.rs`), "utf8"),
         ...sourcesIn(join(root, `api/crates/${crate}/src/config`)),
       ];
-      const markdown = readFileSync(join(root, `docs/${doc}.md`), "utf8");
+      const markdown = docs
+        .map((doc) => readFileSync(join(root, `docs/${doc}.md`), "utf8"))
+        .join("\n");
       const missing = missingConfiguration(sources, markdown);
       if (missing.length > 0)
-        throw new Error(`Undocumented configuration keys in ${doc}:\n${missing.join("\n")}`);
+        throw new Error(`Undocumented configuration keys for ${crate}:\n${missing.join("\n")}`);
     }
     console.log(
       "Operations documentation covers every quoted deployment configuration key.",
