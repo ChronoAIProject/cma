@@ -53,29 +53,10 @@ impl AgentArtifactStore for MongoSandboxStore {
         let stored = self
             .agent_artifacts
             .find_one(filter)
-            .projection(doc! {
-                "_id":1, "agent_id":1, "binding":1, "document_schema_version":1,
-                "record.metadata":1, "record.binding":1, "record.authorization":1,
-            })
+            .projection(metadata_projection())
             .await
             .map_err(|_| ResourceAccessStoreError::Unavailable)?;
-        stored
-            .map(|stored| {
-                let record: StoredAgentArtifactMetadata =
-                    read_record(&stored).map_err(|_| ResourceAccessStoreError::Corrupt)?;
-                record.validate()?;
-                let mut expected = binding_filter(&record.binding)?;
-                expected.insert("_id", &record.metadata.id);
-                expected.insert("document_schema_version", DOCUMENT_SCHEMA_VERSION);
-                if expected
-                    .iter()
-                    .any(|(key, value)| stored.get(key) != Some(value))
-                {
-                    return Err(ResourceAccessStoreError::Corrupt);
-                }
-                Ok(record)
-            })
-            .transpose()
+        stored.as_ref().map(read_metadata).transpose()
     }
 
     async fn publish_artifact(
@@ -127,7 +108,7 @@ impl AgentArtifactStore for MongoSandboxStore {
         &self,
         binding: &ArtifactBinding,
         page: &ArtifactPageRequest,
-    ) -> Result<Vec<StoredAgentArtifact>, ResourceAccessStoreError> {
+    ) -> Result<Vec<StoredAgentArtifactMetadata>, ResourceAccessStoreError> {
         page.validate()?;
         let mut filter = binding_filter(binding)?;
         if let Some(cursor) = &page.cursor {
@@ -136,6 +117,7 @@ impl AgentArtifactStore for MongoSandboxStore {
         let documents: Vec<Document> = self
             .agent_artifacts
             .find(filter)
+            .projection(metadata_projection())
             .sort(doc! {"_id":1})
             .limit(i64::from(page.limit) + 1)
             .await
@@ -143,7 +125,7 @@ impl AgentArtifactStore for MongoSandboxStore {
             .try_collect()
             .await
             .map_err(|_| ResourceAccessStoreError::Unavailable)?;
-        documents.iter().map(read).collect()
+        documents.iter().map(read_metadata).collect()
     }
     async fn agent_artifact(
         &self,
@@ -202,6 +184,31 @@ async fn publish(
         .session(&mut *session)
         .await?;
     Ok(request.record().clone())
+}
+
+fn metadata_projection() -> Document {
+    doc! {
+        "_id":1, "agent_id":1, "binding":1, "document_schema_version":1,
+        "record.metadata":1, "record.binding":1, "record.authorization":1,
+    }
+}
+
+fn read_metadata(
+    stored: &Document,
+) -> Result<StoredAgentArtifactMetadata, ResourceAccessStoreError> {
+    let record: StoredAgentArtifactMetadata =
+        read_record(stored).map_err(|_| ResourceAccessStoreError::Corrupt)?;
+    record.validate()?;
+    let mut expected = binding_filter(&record.binding)?;
+    expected.insert("_id", &record.metadata.id);
+    expected.insert("document_schema_version", DOCUMENT_SCHEMA_VERSION);
+    if expected
+        .iter()
+        .any(|(key, value)| stored.get(key) != Some(value))
+    {
+        return Err(ResourceAccessStoreError::Corrupt);
+    }
+    Ok(record)
 }
 
 fn binding_filter(binding: &ArtifactBinding) -> Result<Document, ResourceAccessStoreError> {

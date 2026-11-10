@@ -14,6 +14,7 @@ mod config;
 mod connections;
 mod document_artifacts;
 mod document_storage;
+mod expensive_reads;
 mod gateway;
 mod health;
 mod media_continuations;

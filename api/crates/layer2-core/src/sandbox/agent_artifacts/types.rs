@@ -271,12 +271,13 @@ pub trait AgentArtifactStore: Send + Sync {
         &self,
         request: &super::ArtifactPublication,
     ) -> Result<StoredAgentArtifact, crate::resource_access::ResourceAccessError>;
-    /// Ordered limit+1 objects for exactly one retained Agent binding.
+    /// Ordered limit+1 metadata records for one retained Agent binding.
+    /// Project out content at storage: list requests must never fetch or decode it.
     async fn agent_artifacts(
         &self,
         binding: &ArtifactBinding,
         page: &ArtifactPageRequest,
-    ) -> Result<Vec<StoredAgentArtifact>, ResourceAccessStoreError>;
+    ) -> Result<Vec<StoredAgentArtifactMetadata>, ResourceAccessStoreError>;
     async fn agent_artifact(
         &self,
         binding: &ArtifactBinding,
