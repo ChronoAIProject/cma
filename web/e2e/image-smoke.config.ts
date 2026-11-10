@@ -9,7 +9,12 @@ if (!baseURL || !['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname))
 
 export default defineConfig({
   testDir: '.',
-  testMatch: ['image-smoke.check.ts', 'usage-filters-image.check.ts', 'owner-chart-image.check.ts'],
+  testMatch: [
+    'image-smoke.check.ts',
+    'usage-filters-image.check.ts',
+    'owner-chart-image.check.ts',
+    'agent-polling.check.ts',
+  ],
   workers: 1,
   retries: 0,
   forbidOnly: true,
