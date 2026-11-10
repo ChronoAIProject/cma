@@ -1,5 +1,9 @@
 # CMA SDKs
 
+The [retained-client compatibility slice](Public_Client_Compatibility.md) records
+immutable core REST and desktop baselines, offline regression commands and the
+external-client and production acceptance cells that remain unmeasured for #1537.
+
 CMA's integration documentation lives with the repository-only SDKs:
 
 - [TypeScript SDK guide](../sdk/typescript/docs/README.md)
