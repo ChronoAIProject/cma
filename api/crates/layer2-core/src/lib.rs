@@ -11,6 +11,7 @@ pub mod activity_service;
 pub mod authz;
 pub mod bot_setups;
 pub mod bots;
+pub mod budget;
 pub mod capabilities;
 pub mod capacity_bounds;
 pub mod clock;
