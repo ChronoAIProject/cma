@@ -14,6 +14,7 @@ export default defineConfig({
     'usage-settings.check.ts',
     'usage-redesign.check.ts',
     'usage-backoff.check.ts',
+    'spend-controls.check.ts',
   ],
   workers: 1,
   retries: 0,
