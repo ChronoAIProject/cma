@@ -9,7 +9,9 @@
 # The Gateway probes readiness directly. GKE network endpoint groups can keep a
 # Kubernetes-unready pod attached, so a liveness-only load-balancer check could
 # continue routing external traffic after this instance loses its session
-# store. Kubelet liveness remains process-only in deployment.yaml.
+# store. /ready serves a cached result without a Mongo checkout per request;
+# its background check has a two-second deadline and a five-second freshness
+# bound. Kubelet liveness remains process-only in deployment.yaml.
 #
 # The neighbouring control planes each declare one of these; CMA simply
 # lacked it.
