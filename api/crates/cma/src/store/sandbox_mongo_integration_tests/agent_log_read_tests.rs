@@ -54,15 +54,14 @@ async fn agent_log_prefix_uses_one_complete_snapshot_scan_and_retains_integrity_
     let commands = trace.lock().unwrap().clone();
     assert_eq!(
         commands.len(),
-        2,
-        "one aggregate read and one complete log scan"
+        3,
+        "aggregate and integrity reads, followed by one complete log scan"
     );
-    assert!(command_uses_snapshot_read(&commands[0]));
-    assert_eq!(
-        commands[0].get_document("lsid").unwrap(),
-        commands[1].get_document("lsid").unwrap()
-    );
-    assert_eq!(commands[1].get_str("find").unwrap(), AGENT_LOG);
+    assert!(commands
+        .iter()
+        .all(|command| command_uses_snapshot_read(command)
+            && command.get("lsid") == commands[0].get("lsid")));
+    assert_eq!(commands[2].get_str("find").unwrap(), AGENT_LOG);
     assert_eq!(
         store.agent_log_prefix(&agent.id, 200).await.unwrap(),
         entries[..200]
@@ -102,6 +101,7 @@ async fn agent_log_prefix_uses_one_complete_snapshot_scan_and_retains_integrity_
         .await
         .unwrap();
 
+    reset_repaired_prefix(&store, &agent.id, 405).await;
     store
         .agent_log
         .update_one(
@@ -126,6 +126,7 @@ async fn agent_log_prefix_uses_one_complete_snapshot_scan_and_retains_integrity_
         .await
         .unwrap();
 
+    reset_repaired_prefix(&store, &agent.id, 405).await;
     let orphan = AgentLogEntry {
         seq: 406,
         ..last.clone()
@@ -145,9 +146,41 @@ async fn agent_log_prefix_uses_one_complete_snapshot_scan_and_retains_integrity_
         .delete_one(doc! { "agent_id": agent.id.as_str(), "seq": 406_i64 })
         .await
         .unwrap();
+    reset_repaired_prefix(&store, &agent.id, 405).await;
     assert_eq!(
         store.agent_log_prefix(&agent.id, 405).await.unwrap(),
         entries
     );
     admin.database(&name).drop().await.unwrap();
+}
+
+// Separate synthetic corruption cases share a fixture. Restoring row bytes
+// alone must not clear quarantine; explicitly audit and reset only this fixture.
+pub(super) async fn reset_repaired_prefix(store: &MongoSandboxStore, id: &AgentId, head: u64) {
+    use crate::store::agent_log_integrity::{scan_collection, QUARANTINE_FIELD};
+    use crate::store::agent_log_telemetry::ScanCaller;
+    assert!(matches!(
+        store.agent_log_prefix(id, head).await,
+        Err(SandboxStoreError::Corrupt(_))
+    ));
+    let mut session = store.client.start_session().snapshot(true).await.unwrap();
+    assert!(scan_collection(
+        ScanCaller::RecoveryProof,
+        &store.agent_log,
+        id,
+        head,
+        &mut session,
+        true,
+        |_| Ok(())
+    )
+    .await
+    .is_ok());
+    store
+        .agents
+        .update_one(
+            doc! { "_id": id.as_str() },
+            doc! { "$unset": { QUARANTINE_FIELD: "" } },
+        )
+        .await
+        .unwrap();
 }
