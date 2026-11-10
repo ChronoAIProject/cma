@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "budget_tests.rs"]
+mod budget_tests;
+
 const PATH: &str = "/api/v1/admin/settings";
 const ADMIN: [Capability; 1] = [Capability::ConfigurePlatform];
 
