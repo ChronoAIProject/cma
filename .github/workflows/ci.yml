@@ -307,6 +307,8 @@ jobs:
         run: |
           node --test .github/scripts/agent-sandbox-preflight.test.mjs
           ruby .github/scripts/agent-sandbox-manifest-contract.rb
+      - name: CMAEG guarded apply regressions
+        run: python3 .github/scripts/apply-cmaeg-tests.py
       - name: docs/ contains only markdown
         run: |
           bad=$(find docs -type f ! -name '*.md' || true)
