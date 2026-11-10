@@ -101,6 +101,7 @@ pub(super) async fn run<P: DiscoveryPort + 'static>(
     selection: Selection,
     pinned: BTreeSet<String>,
     mut stop: watch::Receiver<bool>,
+    statuses: super::status::StatusRegistry,
 ) {
     if *stop.borrow() {
         return;
@@ -134,8 +135,16 @@ pub(super) async fn run<P: DiscoveryPort + 'static>(
                     let (signal, stopped) = watch::channel(false);
                     workers.insert(record.clone(), signal);
                     let port = port.clone();
+                    let statuses = statuses.clone();
                     tasks.spawn(async move {
-                        source_worker::run(port, record.clone(), stopped, Timing::default()).await;
+                        source_worker::run(
+                            port,
+                            record.clone(),
+                            stopped,
+                            Timing::default(),
+                            statuses,
+                        )
+                        .await;
                         record
                     });
                 }
