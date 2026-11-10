@@ -456,8 +456,17 @@ The release that adds network admission limits also changes two Gateway
 contracts. App-origin API, auth, and discovery traffic must reach `cma-agent-manager`
 directly so the trusted GFE forwarding chain, rather than the web pod, supplies
 the client address used for anonymous and admission budgets. The load balancer
-must probe `/ready`, not `/livez`, so a process that has lost its session store
-is not externally routable merely because it is alive.
+must probe `/ready` so a process that has lost its session store becomes
+externally unhealthy. GKE L7 NEGs can retain Kubernetes-unready endpoints; the
+load balancer independently probes each Pod, so EndpointSlice readiness alone
+does not prove external exclusion. `/ready` reads a cached observation without
+waiting on Mongo or creating a checkout per HTTP request. Its single background
+check includes checkout and ping within a two-second deadline; stale success
+fails closed after five seconds. A slow check can use the recent successful
+observation while pending, but a failed check must make the edge probe fail.
+Kubelet liveness uses process-only `/livez` with a two-second timeout and three
+failures before restart. Verify the effective GCP health path and backend state
+on rollout and rollback; an image rollback alone does not restore the policy.
 
 The legacy web image still proxies `/api/` and `/auth/` through
 `Service/cma-agent-manager`, so the Service selector fence below covers both the legacy
