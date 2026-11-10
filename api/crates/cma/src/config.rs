@@ -12,6 +12,7 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 mod access_migration;
 mod access_origins;
+mod admission_log;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
@@ -148,6 +149,7 @@ impl TrustedProxyConfig {
 /// Complete process configuration for the temporary discovery boundary.
 #[derive(Clone)]
 pub struct Config {
+    pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
     pub bind: SocketAddr,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
@@ -403,6 +405,7 @@ impl Config {
             auth_mode,
             features,
             task_experience: task_experience::from_lookup(&mut lookup)?,
+            bounded_admission_agents: admission_log::from_lookup(&mut lookup)?,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
             usage_billing: UsageBillingConfig::from_lookup(&mut lookup)?,
             usage_metrics: MetricsConfig::from_lookup(&mut lookup)?,
