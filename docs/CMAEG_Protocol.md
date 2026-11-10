@@ -2619,9 +2619,9 @@ Attestation has a **2-second** deadline; opted-in sender preflight has a
 across HTTP. Disabled-policy admission has no new deadline. The deployed provider
 request timeout is 30 seconds, capped at **20 seconds** for frozen submission.
 Keep that POST budget above the opted-in preflight budget with transport headroom
-(at least 10 seconds). A new admission's attestation timeout returns the named
-503; failures before CMA can determine whether a key has retained admission use
-the existing generic unavailable response and uncertain-submission recovery.
+(at least 10 seconds). Both attestation and outer preflight timeouts return the
+named 503 with `Retry-After: 5`: preflight performs no admission writes. Other
+read failures retain their existing unavailable response and recovery semantics.
 
 Rollback readers can dispatch the existing text schema but ignore the new policy
 in `honoured`, so new gateway turns may lack the line. Consumers must refuse

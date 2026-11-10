@@ -7,10 +7,56 @@ use axum::{
     Json, Router,
 };
 use base64::Engine;
+use layer1_public::{
+    responses::v2::{BindingEventRouter, BindingRouteError},
+    AuthenticatedResourceCaller,
+};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
 struct Resources;
+
+struct StallableAttestation {
+    inner: Arc<crate::composition::event_routing::CmaEventRouter>,
+    mode: Arc<AtomicUsize>,
+}
+#[async_trait::async_trait]
+impl BindingEventRouter for StallableAttestation {
+    fn sender_line(&self, event: &ExternalEventContext) -> Result<String, BindingRouteError> {
+        self.inner.sender_line(event)
+    }
+    async fn verified_sender_line(
+        &self,
+        caller: &AuthenticatedResourceCaller,
+        event: &ExternalEventContext,
+        generation: u64,
+    ) -> Result<String, BindingRouteError> {
+        if self.mode.load(Ordering::SeqCst) == 6 {
+            self.mode.store(7, Ordering::SeqCst);
+            return std::future::pending().await;
+        }
+        self.inner
+            .verified_sender_line(caller, event, generation)
+            .await
+    }
+    async fn route(
+        &self,
+        caller: &AuthenticatedResourceCaller,
+        event: &mut ExternalEventContext,
+    ) -> Result<Option<AgentId>, BindingRouteError> {
+        self.inner.route(caller, event).await
+    }
+    async fn route_at_generation(
+        &self,
+        caller: &AuthenticatedResourceCaller,
+        event: &mut ExternalEventContext,
+        generation: u64,
+    ) -> Result<Option<AgentId>, BindingRouteError> {
+        self.inner
+            .route_at_generation(caller, event, generation)
+            .await
+    }
+}
 #[async_trait::async_trait]
 impl SandboxResourceReader for Resources {
     async fn sandbox_resources(
@@ -211,10 +257,15 @@ impl Fixture {
         )
         .with_bindings(bindings);
         let without_verifier = layer1_public::responses::v2::router(state.clone());
-        let state = state.with_event_router(
-            crate::composition::event_routing::CmaEventRouter::new(store.clone(), service, &url)
-                .unwrap(),
-        );
+        let state = state.with_event_router(Arc::new(StallableAttestation {
+            inner: crate::composition::event_routing::CmaEventRouter::new(
+                store.clone(),
+                service,
+                &url,
+            )
+            .unwrap(),
+            mode: mode.clone(),
+        }));
         let app = layer1_public::responses::v2::router(state);
         let key =
             ProvidedCredential::new(format!("nyx_{}", uuid::Uuid::new_v4().simple())).unwrap();
@@ -894,5 +945,48 @@ async fn sender_context_existing_agent_metadata_only_update_remains_refused() {
         f.store.get_agent(&f.agent.id).await.unwrap(),
         Some(f.agent.clone())
     );
+    f.finish().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn sender_context_outer_budget_proves_non_admission_when_attestation_stalls() {
+    let mut f = Fixture::new("sender_context_outer_budget").await;
+    f.policy(true).await;
+    f.mode.store(6, Ordering::SeqCst);
+    let started = tokio::time::Instant::now();
+    let response = f
+        .submit(
+            "outer-budget",
+            event("outer-budget", native(), "ou_one", "private", "question"),
+            true,
+        )
+        .await;
+    assert_eq!(
+        f.mode.load(Ordering::SeqCst),
+        7,
+        "the attestation seam was entered"
+    );
+    assert!(started.elapsed() >= Duration::from_secs(5));
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["retry-after"], "5");
+    assert_eq!(response.headers()["content-type"], "application/json");
+    assert!(!response.headers().contains_key("x-cma-response-id"));
+    let contract: Vec<Value> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../cmaeg/tests/fixtures/provider_sender_refusals.json"
+    )))
+    .unwrap();
+    assert_eq!(json_body(response).await, contract[2]["body"]);
+    assert_eq!(
+        f.store
+            .agent_commands
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(f.seen.lock().unwrap().is_empty());
     f.finish().await;
 }
