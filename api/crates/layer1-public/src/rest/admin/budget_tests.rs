@@ -2,6 +2,8 @@ use super::super::*;
 
 #[path = "budget_controls_tests.rs"]
 mod controls;
+#[path = "request_budget_rollout_tests.rs"]
+mod request_rollout;
 #[path = "budget_rollout_tests.rs"]
 mod rollout;
 
@@ -137,7 +139,7 @@ async fn malformed_budget_policies_are_confidential_and_never_saved() {
 
 #[tokio::test]
 async fn request_model_bounds_use_the_same_private_admin_validation_and_roundtrip() {
-    let fixture = budget_fixture(true);
+    let fixture = budget_fixture_with_gates(true, true, Arc::new(MemorySettings::default()));
     let mut policy = scoped_policy();
     policy["request_models"] = json!([{"model":"approved", "input_overhead_tokens": 1}]);
     let saved = send(
@@ -178,11 +180,20 @@ fn budget_fixture(writes_enabled: bool) -> BudgetFixture {
 }
 
 fn budget_fixture_with_store(writes_enabled: bool, store: Arc<MemorySettings>) -> BudgetFixture {
+    budget_fixture_with_gates(writes_enabled, false, store)
+}
+
+fn budget_fixture_with_gates(
+    writes_enabled: bool,
+    request_writes_enabled: bool,
+    store: Arc<MemorySettings>,
+) -> BudgetFixture {
     let activity = Arc::new(MemoryActivity::default());
     let activity_service = ActivityService::new(activity.clone());
     let settings = Arc::new(
         PlatformSettingsService::new(store, activity_service.clone())
-            .with_model_budget_writes_enabled(writes_enabled),
+            .with_model_budget_writes_enabled(writes_enabled)
+            .with_model_request_budget_writes_enabled(request_writes_enabled),
     );
     let sandboxes = Arc::new(InMemorySandboxStore::default());
     let profiles = Arc::new(InMemoryProfileStore::default());

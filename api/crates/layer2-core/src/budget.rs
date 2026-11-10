@@ -18,6 +18,8 @@ pub use platform::PlatformBudgetPolicy;
 mod controls_tests;
 
 #[cfg(test)]
+mod request_rollout_tests;
+#[cfg(test)]
 mod rollout_tests;
 #[cfg(test)]
 mod tests;
