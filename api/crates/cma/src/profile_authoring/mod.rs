@@ -134,3 +134,6 @@ impl ProfileAuthoringSource for CmaProfileAuthoringSource {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod dependency_contract_tests;
