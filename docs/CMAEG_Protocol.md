@@ -2607,27 +2607,39 @@ malformed/truncated bodies and contradictory admission headers remain `Unknown`
 and use existing uncertain-submission recovery; they never authorize a blind
 transport retry. The provider transport itself never retries a POST.
 
-A failed re-attestation of an already admitted request carries its original
-`x-cma-response-id`; it is never classified as an unstarted request. The gateway
-retains recovery of that response. Failures/timeouts before CMA can determine
-whether the key already has an admission use the existing generic unavailable
-response and preserve uncertain-submission recovery.
+Exact replay of admitted input never contacts the gateway. CMA compares the
+complete request, including its ExternalEvent, to the retained command using
+local deterministic prefix rendering. Only new admissions call attestation;
+reference expiry and gateway outages do not prevent exact replay. A changed
+request still conflicts. Disabled-policy turns retain ordinary admission;
+only a ledger conflict invokes the prefixed replay comparison.
 
+Attestation has a **2-second** deadline; opted-in sender preflight has a
+**5-second** deadline and holds no Mongo transaction, binding lock or worker lease
+across HTTP. Disabled-policy admission has no new deadline. The deployed provider
+request timeout is 30 seconds, capped at **20 seconds** for frozen submission.
+Keep that POST budget above the opted-in preflight budget with transport headroom
+(at least 10 seconds). A new admission's attestation timeout returns the named
+503; failures before CMA can determine whether a key has retained admission use
+the existing generic unavailable response and uncertain-submission recovery.
 
-Attestation has a **2-second** deadline; the complete sender-context preflight
-has a **5-second** deadline and holds no Mongo transaction, binding lock or
-worker lease across the HTTP call. The deployed provider request timeout is
-30 seconds, capped at **20 seconds** for frozen submission. Operators using
-this dialect must keep that POST budget above the 5-second preflight budget
-(with transport headroom; at least 10 seconds). An attestation timeout returns
-the named 503 before this submission budget expires.
+Rollback readers can dispatch the existing text schema but ignore the new policy
+in `honoured`, so new gateway turns may lack the line. Consumers must refuse
+`event_ref` inputs without a verified first line, including during rollback.
 
 The scheduler retries proven non-admissions with its existing **5-second**
 cooldown, rechecking original event expiry and current authority. Definite
 failures settle as `Refused`. An expired, proven-unadmitted prepared request
 settles with `event_expired_before_start`; an uncertain/accepted request is never
-misclassified as unstarted. Terminal activity records include optional
-`refusal_code` and a completion timestamp, including after recovery. The Feishu
+misclassified as unstarted. Prepared targets can retain media work; original
+expiry closes its effect guards before any upload, supplement or delivery. The
+media worker records refusal for every indexed obligation and removes its active
+head. A late derivative cannot recreate that head or send after expiry. See
+[binding queue deadlines](CMAEG_Binding_Queue_Deadlines.md). Terminal activity records include optional
+`refusal_code`, `last_non_admission_code` and a completion timestamp. The last
+precise retryable refusal (for example `verified_sender_context_unavailable` or
+`conversation_not_ready`) is retained in a separate sealed diagnostic receipt
+and restored to Activity on expiry, including after restart. The Feishu
 user receives **no reply** for these refusals or expiry: no Agent ran, and no
 platform failure message is invented. Channel Activity shows the recorded reason.
 If a temporary outage recovers before expiry, the original turn admits once and

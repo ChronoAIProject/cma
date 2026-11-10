@@ -430,7 +430,11 @@ The opaque profile `environment` preserves CMA's
 adds a gateway-attested first line to new event turns; omitted/false disables
 it, and profile targets refuse it by name. Exact retries retain admitted input
 across policy changes. Channel Activity's optional `refusal_code` reports named
-pre-admission failures; these failures produce no chat reply.
+pre-admission failures; `last_non_admission_code` retains the last precise
+retryable refusal, including after expiry. These failures produce no chat reply.
+Exact replay renders locally and does not require gateway availability. Older
+providers ignore the policy; consumers must refuse an `event_ref` input without
+the verified line during rollback.
 
 `client.providerBindings.inspectPreparation(bindingId, request)` inspects the
 generation for an authenticated, durably admitted event without changing resources.

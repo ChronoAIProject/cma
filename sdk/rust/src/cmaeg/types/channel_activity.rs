@@ -91,6 +91,9 @@ pub struct ActivityConsumer {
     /// Named terminal refusal before provider admission.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refusal_code: Option<String>,
+    /// Last precise retryable provider refusal, including after expiry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_non_admission_code: Option<String>,
     /// Stable consumer identity.
     pub consumer_id: String,
     /// Display name when known.

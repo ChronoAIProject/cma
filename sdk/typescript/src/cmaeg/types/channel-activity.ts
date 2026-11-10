@@ -78,6 +78,7 @@ export type MediaResponsePage = Output<typeof MediaResponsePageSchema>;
 
 export const ActivityConsumerSchema = object({
   refusal_code: optional(nullable(text)),
+  last_non_admission_code: optional(nullable(text)),
   consumer_id: text,
   display_name: optional(nullable(text)),
   agent_id: optional(nullable(text)),

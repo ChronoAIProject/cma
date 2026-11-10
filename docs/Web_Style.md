@@ -3864,6 +3864,14 @@ the shared quiet status treatment, with explicit retry for a disconnected feed.
 Changing channel or identity closes the previous subscription and rejects its
 late responses. Opening Activity never sends an event or starts agent work.
 
+A consumer's optional public `refusal_code` appears as **Refusal reason** in
+its existing Activity definition list. Use the existing row typography and
+spacing. A pre-admission refusal means no Agent turn and no automatic chat
+reply; never present it as a delivered response. Older snapshots without the
+field retain their existing presentation. When present, show
+`last_non_admission_code` as **Last admission refusal** in the same list, including
+after expiry, so the terminal reason and the last provider refusal remain distinct.
+
 | 2026-10-27 | Standardize Event Gateway on Agent Manager primitives; introduce a full-area accessible React Flow workspace, expandable resource navigation, illustrative entry screens, retained centered node configuration with section navigation, and evidence-based live Channel Activity. |
 
 ### Selected-channel Activity preview (2026-10-27)
@@ -6077,12 +6085,6 @@ saving. Use existing form spacing, labels and validation; introduce no new token
 
 | 2026-11-07 | Integrate Workspace v3 with stable streaming recovery, retained sidebar status, deterministic desktop reconnection, mounted identity retries and complete-cohort resource usage; preserve channel queue policy independently of composer follow-ups. |
 
-### Channel activity refusal reasons (2026-11-10)
-
-A consumer's optional public `refusal_code` appears as **Refusal reason** in
-its existing Activity definition list. Use the existing row typography and
-spacing. A pre-admission refusal means no Agent turn and no automatic chat
-reply; never present it as a delivered response. Older snapshots without the
-field retain their existing presentation.
-
 | 2026-11-10 | Show recorded pre-admission refusal reasons in the existing Channel Activity detail rows. |
+
+| 2026-11-11 | Retain the last precise provider admission refusal beside the terminal expiry reason in Channel Activity. |
