@@ -156,6 +156,7 @@ async fn public_window_metadata_fallback_and_refusal_never_write_or_repair() {
         "gap",
         "trusted_gap",
         "trusted_corrupt",
+        "trusted_creation",
         "lineage",
     ] {
         let fixture = Fixture::new(200).await.prepare().await;
@@ -215,6 +216,24 @@ async fn public_window_metadata_fallback_and_refusal_never_write_or_repair() {
                             "agent_id": fixture.id.as_str(), "seq": 198_i64
                         },
                         doc! { "$set": { "record.agent_id": "agt_foreign" } },
+                    )
+                    .await
+                    .unwrap();
+                None
+            }
+            "trusted_creation" => {
+                let agent = fixture.store.get_agent(&fixture.id).await.unwrap().unwrap();
+                fixture
+                    .store
+                    .agent_log
+                    .update_one(
+                        doc! {
+                            "agent_id": fixture.id.as_str(), "seq": 198_i64
+                        },
+                        doc! { "$set": { "record.kind": {
+                            "type": "created", "workspace_id": agent.workspace_id.as_str(),
+                            "worktree_id": agent.creation_worktree_id().as_str(),
+                        } } },
                     )
                     .await
                     .unwrap();
