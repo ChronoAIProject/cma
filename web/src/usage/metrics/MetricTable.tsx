@@ -52,7 +52,7 @@ export function MetricTable({
     (signal: AbortSignal) => api.sandboxes(reportId, { signal, limit: 50, cursor, sort, order }),
     [api, reportId, cursor, sort, order],
   );
-  const records = useUsageRead(load, active);
+  const records = useUsageRead(load, active, api);
   useEffect(() => {
     if (records.error?.denied || records.error?.expired) onFailure(records.error);
   }, [records.error, onFailure]);

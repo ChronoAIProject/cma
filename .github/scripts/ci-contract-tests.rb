@@ -34,6 +34,7 @@ end
 guarded = mode == "release" ? [
   ["ci", "trigger-release-contract", "Debian desktop fixture regressions"],
   ["ci", "trigger-release-contract", "Ledger image qualification regressions"],
+  ["ci", "trigger-release-contract", "Migration matrix evidence regressions"],
   ["ci", "images", "Qualify exact runtime ledger storage"],
   ["ci", "images", "Execute desktop image contract"],
   ["ci", "images", "Execute built runtime image contract"],
@@ -287,6 +288,26 @@ if mode == "release"
         raise "Gateway contract accepted unsafe Nyxid route: #{name}: #{mutation}"
       end
     end
+  end
+  browser = GatewaySourceContract.documents(File.expand_path("../../infra/api/configmap.yaml", __dir__)).first
+  GatewaySourceContract.validate_browser_origins(browser)
+  %w[missing-retained wildcard unexpected-origin wrong-public-origin duplicate].each do |mutation|
+    candidate = Marshal.load(Marshal.dump(browser))
+    data = candidate.fetch("data")
+    case mutation
+    when "missing-retained" then data["CHRONO_SERVER_CORS_ORIGIN"] = "https://cma.nyxid.ai"
+    when "wildcard" then data["CHRONO_SERVER_CORS_ORIGIN"] = "*"
+    when "unexpected-origin" then data["CHRONO_SERVER_CORS_ORIGIN"] += ",https://foreign.invalid"
+    when "wrong-public-origin" then data["CHRONO_SERVER_PUBLIC_URL"] = "https://foreign.invalid"
+    when "duplicate" then data["CHRONO_SERVER_CORS_ORIGIN"] += ",https://cma.nyxid.ai"
+    end
+    begin
+      GatewaySourceContract.validate_browser_origins(candidate)
+    rescue StandardError
+      tests += 1
+      next
+    end
+    raise "Gateway contract accepted unsafe browser origin configuration: #{mutation}"
   end
   config = GatewaySourceContract.documents(File.expand_path("../../infra/cmaeg/configmap.yaml", __dir__)).first
   GatewaySourceContract.validate_provider_origin(config)
