@@ -155,6 +155,8 @@ pub struct Page<T> {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxStoreError {
+    #[error(transparent)]
+    Budget(crate::budget::BudgetError),
     #[error("record not found")]
     NotFound,
     #[error("record already exists")]

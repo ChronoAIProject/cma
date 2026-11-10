@@ -1,6 +1,7 @@
 use futures_util::TryStreamExt;
 mod admission_tests;
 mod audit_tests;
+mod budget_tests;
 mod claim_observation_tests;
 mod contextual_suggestions;
 mod discovery_tests;
