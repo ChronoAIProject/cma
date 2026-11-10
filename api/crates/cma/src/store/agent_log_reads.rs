@@ -2,18 +2,18 @@
 
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{SandboxStoreError, MAX_PAGE_SIZE};
-use layer2_core::sandbox::AgentLogEntry;
+use layer2_core::sandbox::{AgentLogEntry, AgentLogKind};
 use mongodb::bson::doc;
 use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 
 use super::agent_log::read_entry;
-use super::agent_log_integrity::{scan_complete_log_with_snapshot_session, TransactionLogError};
+use super::agent_log_integrity::{scan_collection, TransactionLogError};
 use super::agent_log_telemetry::ScanCaller;
 use super::sandbox_mongo::{signed, MongoSandboxStore};
 
 pub(super) mod integrity;
-use integrity::{LegacyIntegrity, LogReadIntegrity};
+use integrity::{LogReadIntegrity, PreparedIntegrity};
 
 #[derive(Clone, Copy)]
 pub(super) enum Window {
@@ -87,9 +87,7 @@ pub(super) async fn read_window(
     agent_id: &AgentId,
     window: Window,
 ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
-    // The metadata owner plugs its snapshot-safe proof into this boundary.
-    // Until that contract lands, production keeps complete validation.
-    read_with_integrity(store, agent_id, window, &LegacyIntegrity).await
+    read_with_integrity(store, agent_id, window, &PreparedIntegrity).await
 }
 
 pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
@@ -114,13 +112,28 @@ pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
         read_bounded(store, agent_id, after, through, &mut session).await?
     } else {
         let mut entries = Vec::new();
-        scan_complete_log_with_snapshot_session(
+        scan_collection(
             ScanCaller::PublicWindowPrefix,
-            store,
+            &store.agent_log,
             agent_id,
             head.last_seq,
             &mut session,
+            true,
             |entry| {
+                if let AgentLogKind::Created {
+                    workspace_id,
+                    worktree_id,
+                } = &entry.kind
+                {
+                    if entry.seq != 1
+                        || workspace_id != &head.workspace_id
+                        || worktree_id != &head.creation_worktree_id
+                    {
+                        return Err(SandboxStoreError::Corrupt(
+                            "Agent creation log lineage does not match".into(),
+                        ));
+                    }
+                }
                 if window.contains(entry.seq) && (entries.len() as u64) < window.limit() {
                     entries.push(entry);
                 }

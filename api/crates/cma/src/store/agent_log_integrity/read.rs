@@ -3,13 +3,7 @@ use super::*;
 use mongodb::options::ReadConcern;
 
 #[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumer lands in the dependent #1320 public-window slice"
-    )
-)]
+#[cfg(test)]
 pub(in crate::store) struct ReadHead {
     pub(in crate::store) last_seq: u64,
     pub(in crate::store) trusted: bool,
@@ -18,18 +12,27 @@ pub(in crate::store) struct ReadHead {
 /// Use the supplied snapshot for every query. Absence is distinct from legacy
 /// or disabled evidence. Corruption remains an error but never initiates repair,
 /// quarantine, an audit, or a transaction operation from a public read.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumer lands in the dependent #1320 public-window slice"
-    )
-)]
+#[cfg(test)]
 pub(in crate::store) async fn read_head(
     store: &MongoSandboxStore,
     agent_id: &AgentId,
     session: &mut mongodb::ClientSession,
 ) -> Result<Option<ReadHead>, SandboxStoreError> {
+    Ok(read_proven_agent(store, agent_id, session)
+        .await?
+        .map(|(agent, trusted)| ReadHead {
+            last_seq: agent.conversation.last_seq,
+            trusted,
+        }))
+}
+
+/// Retain the validated Agent for a caller's read-only complete fallback. This
+/// avoids rereading the envelope or invoking the writer/audit quarantine path.
+pub(in crate::store) async fn read_proven_agent(
+    store: &MongoSandboxStore,
+    agent_id: &AgentId,
+    session: &mut mongodb::ClientSession,
+) -> Result<Option<(Agent, bool)>, SandboxStoreError> {
     let row = store
         .agents
         .find_one(doc! { "_id": agent_id.as_str() })
@@ -47,8 +50,6 @@ pub(in crate::store) async fn read_head(
             TransactionLogError::Domain(error) => error,
             TransactionLogError::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
         })?;
-    Ok(Some(ReadHead {
-        last_seq: agent.conversation.last_seq,
-        trusted: proof.is_some() && store.bounded_admission_agents.contains(agent_id),
-    }))
+    let trusted = proof.is_some() && store.bounded_admission_agents.contains(agent_id);
+    Ok(Some((agent, trusted)))
 }
