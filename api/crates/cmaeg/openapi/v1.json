@@ -120,6 +120,13 @@
               "null"
             ]
           },
+          "last_non_admission_code": {
+            "description": "Last precise retryable provider refusal, retained even after event expiry.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "media_responses": {
             "description": "Independent appended responses. URLs still require Agent Manager's\nnormal response authorization; this feed grants no conversation access.",
             "items": {
