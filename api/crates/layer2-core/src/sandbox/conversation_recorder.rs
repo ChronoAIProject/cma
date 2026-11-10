@@ -21,6 +21,9 @@ const MAX_CONVERSATION_COMMIT_RETRIES: usize = 8;
 #[path = "conversation_checkpoint.rs"]
 mod checkpoint;
 
+#[path = "conversation_budget.rs"]
+mod budget;
+
 #[path = "conversation_output.rs"]
 mod output;
 use output::{is_identity_terminal_for_current, output_replayed, output_source_for_checkpoint};
@@ -34,33 +37,18 @@ pub struct DurableAgentUpdateRecorder {
     store: Arc<dyn AgentConversationUpdateStore>,
     live: live::AgentLiveHub,
     writer_policy: Arc<super::task_experience::TaskExperiencePolicy>,
-}
-
-impl DurableAgentUpdateRecorder {
-    pub fn new<S>(store: Arc<S>) -> Arc<Self>
-    where
-        S: AgentConversationUpdateStore + 'static,
-    {
-        Self::with_writer_policy(store, Arc::default())
-    }
-
-    pub fn with_writer_policy<S>(
-        store: Arc<S>,
-        writer_policy: Arc<super::task_experience::TaskExperiencePolicy>,
-    ) -> Arc<Self>
-    where
-        S: AgentConversationUpdateStore + 'static,
-    {
-        Arc::new(Self {
-            store,
-            writer_policy,
-            live: live::AgentLiveHub::default(),
-        })
-    }
+    spend_source: Option<Arc<dyn crate::budget::SpendSource>>,
 }
 
 #[async_trait::async_trait]
 impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
+    async fn budget_stop(
+        &self,
+        id: &AgentId,
+        runtime_generation: u64,
+    ) -> Result<Option<crate::budget::BudgetStop>, AgentConversationError> {
+        budget::stop(self.spend_source.as_deref(), id, runtime_generation).await
+    }
     fn subscribe_live(&self, id: &AgentId) -> Option<AgentLiveSubscription> {
         Some(self.live.subscribe(id))
     }
@@ -358,7 +346,8 @@ impl DurableAgentUpdateRecorder {
                 Some(update) => fold_update(
                     &current,
                     &recovered,
-                    update.clone(),
+                    budget::terminal(self.spend_source.as_deref(), &current, update.clone())
+                        .await?,
                     &appended_at,
                     self.writer_policy.allows_writer(
                         &current.owner,
