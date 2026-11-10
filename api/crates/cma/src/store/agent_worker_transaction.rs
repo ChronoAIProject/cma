@@ -12,9 +12,7 @@ use layer2_core::sandbox::{
 use mongodb::bson::{doc, Bson, Document};
 
 use super::agent_log::scan_complete_log_with_session;
-use super::agent_log_integrity::{
-    ensure_append_batch_size, prepare_append, SemanticCheckpoint, TransactionLogError,
-};
+use super::agent_log_integrity::{ensure_append_batch_size, prepare_append, TransactionLogError};
 use super::agent_worker_capacity::publication_capacity;
 use super::agents::{agent_replacement_fields, read_agent};
 use super::sandbox_events::{append_in_transaction, TransactionEventError};
@@ -280,8 +278,13 @@ async fn apply_publication_observed(
     prepared_replay::fence(store, &current, &current_worktree, mutation, session).await?;
     let (final_agent, logs) = final_agent_and_logs(&current, mutation)?;
 
-    let prior_semantic =
-        SemanticCheckpoint::from_entries(&current, &prior_entries).map_err(ApplyError::Domain)?;
+    let prior_semantic = crate::store::agent_log_integrity::audit_checkpoint(
+        store,
+        &current,
+        &prior_entries,
+        session,
+    )
+    .await?;
     let next_semantic = prior_semantic
         .after_append(&logs, &final_agent)
         .map_err(ApplyError::Domain)?;

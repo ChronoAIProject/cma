@@ -61,7 +61,7 @@ async fn prepare(store: &MongoSandboxStore, id: &AgentId) -> Result<(), String> 
     )
     .await;
     let summary = result.map_err(|_| "preparation history validation failed")?;
-    let semantic = match SemanticCheckpoint::from_entries(&agent, &entries) {
+    let semantic = match audit_checkpoint(store, &agent, &entries, &mut session).await {
         Ok(semantic) if semantic.valid => semantic,
         _ => {
             let _ = session.abort_transaction().await;
