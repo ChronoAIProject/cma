@@ -3,6 +3,7 @@
 use std::fmt;
 use std::time::Duration;
 
+use super::model_request_budget::RequestBudgetContext;
 use async_trait::async_trait;
 use futures_util::StreamExt as _;
 use layer2_core::sandbox::{
@@ -30,6 +31,7 @@ pub(crate) struct HttpAgentTitleGenerator {
     client: reqwest::Client,
     maximum_response_body: usize,
     proxy_authorization: Option<HeaderValue>,
+    request_budget: Option<RequestBudgetContext>,
 }
 
 impl fmt::Debug for HttpAgentTitleGenerator {
@@ -67,6 +69,7 @@ impl HttpAgentTitleGenerator {
             return None;
         }
         let client = reqwest::Client::builder()
+            .retry(reqwest::retry::never())
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT.min(request_timeout))
             .timeout(request_timeout)
@@ -78,6 +81,7 @@ impl HttpAgentTitleGenerator {
             client,
             maximum_response_body,
             proxy_authorization: None,
+            request_budget: None,
         })
     }
 
@@ -86,6 +90,11 @@ impl HttpAgentTitleGenerator {
         value.set_sensitive(true);
         self.proxy_authorization = Some(value);
         Some(self)
+    }
+
+    pub(super) fn with_request_budget(mut self, context: RequestBudgetContext) -> Self {
+        self.request_budget = Some(context);
+        self
     }
 
     #[cfg(test)]
@@ -146,6 +155,14 @@ impl HttpAgentTitleGenerator {
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
 
+        let permit = match &self.request_budget {
+            Some(budget) => budget
+                .reserve(&self.deployment_model, &body, u64::from(MAX_OUTPUT_TOKENS))
+                .await
+                .map_err(AgentTitleGenerationError::budget)?,
+            None => None,
+        };
+
         let response = self
             .client
             .post(self.endpoint.clone())
@@ -201,6 +218,12 @@ impl HttpAgentTitleGenerator {
                 .is_some_and(|value| contains_bytes(&body, value.as_bytes()))
         {
             return Err(AgentTitleGenerationError::unavailable());
+        }
+        if let Some(permit) = permit {
+            permit
+                .settle(&body)
+                .await
+                .map_err(AgentTitleGenerationError::budget)?;
         }
         let title = response_title(&body).ok_or_else(AgentTitleGenerationError::unavailable)?;
         if contains_bytes(title.as_bytes(), request.bearer().as_bytes())
