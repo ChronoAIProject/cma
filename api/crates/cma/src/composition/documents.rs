@@ -14,8 +14,9 @@ pub(super) fn compose(
         Some(config) => StorageDocuments::new(config)?,
         None => Arc::new(UnavailableDocuments),
     };
-    Ok(DocumentService::new(
+    Ok(DocumentService::with_revocation_reserve(
         stores.document_artifacts.clone(),
         blobs,
+        config.features.document_revocation_reserve,
     ))
 }
