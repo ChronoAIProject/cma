@@ -85,6 +85,8 @@ data:
   # Saving any nonempty budget policy requires compatible serving/rollback readers.
   # Release operators enable writes only after establishing that reader baseline.
   CHRONO_MODEL_BUDGET_WRITES_ENABLED: "false"
+  # Request model policies need a later reader baseline even if foundation writes are on.
+  CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
   CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS: "600"
   CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS: "1800"

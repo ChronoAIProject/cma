@@ -16,6 +16,32 @@ model used by the broker. No model, rate, allowance or framing bound is enabled
 implicitly. The existing admin settings capability, revision CAS and audit
 contract applies to this section.
 
+## Reader baseline before request policy saves
+
+This extension has a separate strict deployment boolean,
+`CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED`, false in code and ConfigMap.
+An already-open foundation write gate does not authorize the new request-policy
+shape. Until both write gates are enabled, any nonempty `request_models` save is
+refused with HTTP 503 `model_budget_writes_unavailable`, including disabled drafts.
+Empty request model lists are omitted from storage for the foundation reader.
+
+First deploy this reader with request writes off. The release operator must
+verify all serving readers and pin a compatible rollback image/digest for this
+exact settings and reservation schema, including final request-count metadata.
+Drain older writers before a separate fenced rollout enables the request write
+flag. Closing either write gate retains compatible reads and existing liability;
+it does not restore an earlier reader's compatibility. Preserve every hold and
+stop record when rolling back. Production changes remain release-operator work.
+
+Admin settings responses expose read-only
+`model_request_budget_writes_available`, true only when both gates permit saves.
+The UI must treat false or missing as saving request model bounds not yet
+available. This capability cannot be supplied in a PUT/PATCH body. Revision CAS,
+authorization, validation and confidential audit apply after enablement. Budget
+enforcement activation still requires separate private owner/lead direction.
+
+## Certified request bounds
+
 Each model entry names `model` and `input_overhead_tokens`. Before approving a
 model, the operator must establish that its text tokenizer uses no more than
 one token per UTF-8 byte and that the configured overhead covers protocol
