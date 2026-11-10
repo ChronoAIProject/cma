@@ -6,6 +6,8 @@ fn policy() -> BudgetPolicy {
     BudgetPolicy {
         owner_day_limit: unit * unit,
         turn_limit: unit,
+        max_calls_per_turn: unit,
+        day_timezone: "UTC".into(),
         input_token_units: 1,
         output_token_units: 1,
         max_unobserved_units: 1,
@@ -31,11 +33,11 @@ fn rollover_preserves_every_unresolved_reservation() {
     let mut owner = OwnerBudget::default();
     owner.reserve(&policy, 0).unwrap();
     owner.spent = policy.turn_limit;
-    owner.advance(86_400).unwrap();
+    owner.advance(&policy, 86_400).unwrap();
     assert_eq!(owner.spent, 0);
     assert_eq!(owner.reserved, policy.turn_limit);
     let before = owner.clone();
-    assert_eq!(owner.advance(0), Err(BudgetError::Unavailable));
+    assert_eq!(owner.advance(&policy, 0), Err(BudgetError::Unavailable));
     assert_eq!(before, owner);
 }
 
@@ -105,6 +107,16 @@ fn policy_scope_is_explicit_and_invalid_settings_fail_closed() {
     let owner = SubjectId("budget-test-owner".into());
     let other = SubjectId("budget-other-owner".into());
     let mut settings = BudgetSettings {
+        enabled: true,
+        platform: Some(PlatformBudgetPolicy {
+            period_cap: u64::from(u32::MAX),
+            period_start: "2026-11-01T00:00:00Z".into(),
+            period_end: "2026-12-01T00:00:00Z".into(),
+            warning_percent: 80,
+            stop_percent: 100,
+            protected_reserve: 0,
+            lag_allowance: 0,
+        }),
         default_policy: None,
         request_models: Vec::new(),
         owners: vec![OwnerBudgetPolicy {
