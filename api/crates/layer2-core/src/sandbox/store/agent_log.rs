@@ -17,6 +17,37 @@ pub trait AgentLogStore: Send + Sync {
         limit: u16,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError>;
 
+    /// Prove the latest started turn through the captured Agent head. Stores
+    /// with a trusted checkpoint may supply the same fact in bounded work.
+    /// Dispatch must still recheck the predecessor in its append transaction.
+    async fn agent_latest_started_turn(
+        &self,
+        agent: &Agent,
+    ) -> Result<Option<u64>, SandboxStoreError> {
+        let mut after = 0;
+        let mut latest = None;
+        while after < agent.conversation.last_seq {
+            let limit = (agent.conversation.last_seq - after).min(u64::from(MAX_PAGE_SIZE)) as u16;
+            let entries = self.agent_log(&agent.id, after, limit).await?;
+            if entries.len() != usize::from(limit) {
+                return Err(SandboxStoreError::SequenceConflict);
+            }
+            for entry in entries {
+                after += 1;
+                if entry.agent_id != agent.id || entry.seq != after {
+                    return Err(SandboxStoreError::SequenceConflict);
+                }
+                if let AgentLogKind::TurnStarted { turn_sequence, .. } = entry.kind {
+                    if turn_sequence != entry.seq {
+                        return Err(SandboxStoreError::SequenceConflict);
+                    }
+                    latest = Some(turn_sequence);
+                }
+            }
+        }
+        Ok(latest)
+    }
+
     /// Read one bounded page from a frozen high-water range while validating
     /// the backing log in one store operation. Implementations must return
     /// exactly the available entries in `(after, through]`, up to `limit`, or
