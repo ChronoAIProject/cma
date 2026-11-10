@@ -11,6 +11,8 @@ use axum::{
 };
 use layer2_core::{Capability, CoreError, PlatformSettings};
 
+mod budget;
+
 use crate::AuthenticatedCaller;
 
 use super::{AdminState, NotAnOperator};
@@ -136,10 +138,21 @@ pub(crate) async fn replace(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     SettingsJson(body): SettingsJson<ReplaceRequest>,
 ) -> Result<Json<SettingsView>, Failure> {
+    caller.require(Capability::ConfigurePlatform)?;
+    let has_budget = body.settings.has_model_budget();
+    let mut settings: PlatformSettings = body.settings.into();
+    if !has_budget {
+        // A predecessor client editing another section must not disable caps.
+        let current = state.settings.current().await?;
+        if current.revision != body.expected_revision {
+            return Err(Failure::Conflict);
+        }
+        settings.model_budget = current.settings.model_budget;
+    }
     Ok(Json(
         state
             .settings
-            .configure_platform(&caller, body.expected_revision, &body.settings.into())
+            .configure_platform(&caller, body.expected_revision, &settings)
             .await?
             .into(),
     ))
