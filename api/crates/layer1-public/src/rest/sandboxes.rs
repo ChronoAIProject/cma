@@ -65,6 +65,10 @@ pub(super) fn routes() -> Router<HierarchyState> {
             post(super::sandbox_runtime_update::update),
         )
         .route(
+            "/api/v1/sandboxes/{id}/runtime-recovery",
+            get(super::sandbox_retained_recovery::inspect),
+        )
+        .route(
             "/api/v1/sandboxes/{id}/service-access",
             post(super::sandbox_service_access::grant),
         )

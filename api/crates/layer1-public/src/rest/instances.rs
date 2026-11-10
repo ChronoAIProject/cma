@@ -14,6 +14,7 @@ use super::BodyProblem;
 pub struct HierarchyState {
     pub(super) colors: Option<Arc<layer2_core::sandbox::colors::SandboxColorService>>,
     pub(super) runtime_updates: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
+    pub(super) retained_recovery: Option<Arc<layer2_core::sandbox::RetainedRecoveryService>>,
     pub(super) users: Option<Arc<layer2_core::UserDirectory>>,
     pub(super) sandboxes: Arc<SandboxService>,
     pub(super) workspaces: Arc<WorkspaceService>,
@@ -32,6 +33,7 @@ impl HierarchyState {
             colors: None,
             users: None,
             runtime_updates: None,
+            retained_recovery: None,
             sandboxes,
             workspaces,
             hierarchy,
@@ -44,6 +46,14 @@ impl HierarchyState {
         service: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
     ) -> Self {
         self.runtime_updates = Some(service);
+        self
+    }
+
+    pub fn with_retained_recovery(
+        mut self,
+        service: Arc<layer2_core::sandbox::RetainedRecoveryService>,
+    ) -> Self {
+        self.retained_recovery = Some(service);
         self
     }
 

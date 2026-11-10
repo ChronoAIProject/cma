@@ -12,6 +12,9 @@ use mongodb::bson::doc;
 
 const NOW: &str = "2026-09-05T00:30:00Z";
 
+#[path = "retained_mongo_tests.rs"]
+mod retained;
+
 async fn fixture(store: &MongoSandboxStore, id: &str) -> SandboxUnpublishedRecoveryRequest {
     let mut sandbox = active_sandbox(id);
     sandbox.status = SandboxStatus::Failed;
