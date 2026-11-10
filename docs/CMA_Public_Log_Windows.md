@@ -1,6 +1,6 @@
 # Public Agent-log windows and integrity proof
 
-Related: #1320, #1543, #1591. This is the public-window consumer integrated against published #1591 provider commit `7c1e9608d`. The branch is not merged or deployed; combined gates and provider/consumer review remain required. No metadata format, writer or preparation path is duplicated here.
+Related: #1320, #1543, #1591. This is the public-window consumer integrated against published #1591 provider commit `c9d234d31`. The branch is not merged or deployed; combined gates and provider/consumer review remain required. No metadata format, writer or preparation path is duplicated here.
 
 ## Reader interface required from #1591
 
@@ -44,7 +44,7 @@ Do not use metadata presence or a head integer alone as authorization. Productio
 
 ## Consumer behavior
 
-Pages, ranges and prefixes share the proof snapshot. With trusted evidence, the query uses the existing unique `(agent_id, seq)` index, exact lower/upper sequence bounds, ascending order, a result limit and a batch size matching the requested count. Every returned BSON record still passes `read_entry`, expected Agent identity, exact sequence and expected count checks. Missing or corrupt requested rows fail without a partial response. Empty windows still require the head proof and perform no window query. Range/prefix high-water errors and invalid page sizes preserve the existing API behavior.
+Pages, ranges and prefixes share the proof snapshot. With trusted evidence, the query uses the existing unique `(agent_id, seq)` index, exact lower/upper sequence bounds, ascending order, a result limit and a batch size matching the requested count. Every returned BSON record still passes `read_entry`, expected Agent identity, exact sequence, creation-event lineage and expected count checks. Missing or corrupt requested rows fail without a partial response. Empty windows still require the head proof and perform no window query. Range/prefix high-water errors and invalid page sizes preserve the existing API behavior.
 
 An untrusted head always runs the existing complete validator with `ScanCaller::PublicWindowPrefix`, including for empty windows. It can therefore still detect corruption beyond the requested page. Trusted windows rely on #1591's audited immutable-prefix model: corruption outside the requested range and validated tail is the explicit audit's responsibility. Full-history callers that request the entire prefix still read that entire prefix; their semantic folds are not removed by this slice.
 
