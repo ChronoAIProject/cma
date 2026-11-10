@@ -45,9 +45,10 @@ async fn concurrent_exact_revoke_retries_commit_once_at_capacity() {
         commits: AtomicUsize::new(0),
         barrier: tokio::sync::Barrier::new(2),
     });
-    let service = DocumentService::new(
+    let service = DocumentService::with_revocation_reserve(
         rows.clone(),
         Arc::new(memory::MemoryDocumentBlobs::default()),
+        true,
     );
     let owner = Caller::new(
         SubjectId::new("owner"),

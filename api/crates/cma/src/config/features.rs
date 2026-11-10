@@ -5,6 +5,7 @@ pub(crate) struct FeatureFlags {
     pub trigger_command_admission: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
+    pub document_revocation_reserve: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -25,6 +26,10 @@ impl FeatureFlags {
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
             nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
+            document_revocation_reserve: flag(
+                lookup,
+                "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
+            )?,
         })
     }
 }
