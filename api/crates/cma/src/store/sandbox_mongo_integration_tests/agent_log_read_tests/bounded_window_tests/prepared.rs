@@ -106,11 +106,15 @@ async fn prepared_windows_measure_total_proof_and_disabled_fallback_checkouts() 
         telemetry::isolated_test(async {
             let window = Window::Page { after: history - 200, limit: 200 };
             let before = fixture.reset_commands();
+            let started = std::time::Instant::now();
             let legacy = fixture.read(window, &LegacyIntegrity).await.unwrap();
+            let legacy_us = started.elapsed().as_micros();
             let legacy_checkouts = fixture.checkouts.load(Ordering::SeqCst) - before;
             assert_eq!(telemetry::snapshot(AGENT_LOG)[2], history);
             let before = fixture.reset_commands();
+            let started = std::time::Instant::now();
             let bounded = fixture.store.agent_log(&fixture.id, history - 200, 200).await.unwrap();
+            let enabled_us = started.elapsed().as_micros();
             let enabled_checkouts = fixture.checkouts.load(Ordering::SeqCst) - before;
             assert_eq!(bounded, legacy);
             assert_eq!(enabled_checkouts, 4, "Agent + tail + extra-tail + window");
@@ -133,7 +137,7 @@ async fn prepared_windows_measure_total_proof_and_disabled_fallback_checkouts() 
             let disabled_checkouts = fixture.checkouts.load(Ordering::SeqCst) - before;
             assert_eq!(disabled_checkouts, legacy_checkouts + 2, "disabled proof cost must remain visible");
             fixture.assert_read_only();
-            eprintln!("public_window_total history={history} page=200 legacy_checkouts={legacy_checkouts} enabled_checkouts={enabled_checkouts} disabled_prepared_checkouts={disabled_checkouts} enabled_log_documents=201");
+            eprintln!("public_window_total history={history} page=200 legacy_checkouts={legacy_checkouts} enabled_checkouts={enabled_checkouts} disabled_prepared_checkouts={disabled_checkouts} enabled_log_documents=201 legacy_us={legacy_us} enabled_us={enabled_us}; local unoptimized single sample, not a production latency forecast");
         }).await;
         fixture.cleanup().await;
     }
