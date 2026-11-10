@@ -114,6 +114,9 @@ pub(super) fn shared_transcript(transcript: &mut AgentTranscript) {
 
 fn redact_failure(failure: &mut crate::sandbox::TypedFailure) {
     failure.detail = match failure.class.as_str() {
+        "owner_budget_exhausted" => crate::budget::BudgetError::OwnerExhausted.guidance(),
+        "turn_budget_exhausted" => crate::budget::BudgetError::TurnExhausted.guidance(),
+        "budget_unavailable" => crate::budget::BudgetError::Unavailable.guidance(),
         "insufficient_credits" => "The model request failed with HTTP 402 because its billing account has insufficient credits. Ask the Sandbox owner to top up the account used for model requests, then send a new message to continue. This failed turn will not be replayed automatically.",
         _ => "This Agent turn failed.",
     }.into();
