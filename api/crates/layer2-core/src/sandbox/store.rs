@@ -45,7 +45,7 @@ mod provenance;
 mod provenance_inventory;
 pub use provenance::{
     AgentProvenanceBackfillStore, AgentProvenanceSnapshot, AgentProvenanceStore,
-    ProvenanceBackfillOutcome,
+    ProvenanceBackfillOutcome, ProvenanceBackfillProgress,
 };
 pub use provenance_inventory::AgentProvenanceInventoryStore;
 mod agent_admission;

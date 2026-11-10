@@ -58,6 +58,17 @@ collections use `im_`; gateway records use `eg_`. Migration must preserve IDs,
 versions, encrypted payloads, histories, unique indexes and retry identities.
 Legacy access is removed only after verified authority transfer.
 
+## Optional Agent provenance progress
+
+The explicit [provenance progress command](CMA_Provenance_Backfill_Progress.md)
+provisions Agent Manager's `agent_provenance_progress` collection. Normal startup
+creates no progress storage. The optional printed role permits only
+find/insert/update/createCollection/listIndexes there; it confers no delete,
+retention-change or foreign-service authority. Existing isolated runtime grants
+remain valid before activation. Provision authorized progress grants before the
+release operator activates the worker; a role declaration does not change live
+authority. Maintenance errors do not weaken API schema guards or claim completion.
+
 ## Frontend and infrastructure
 
 Existing web supplies `/event-gateway`, `/agent-manager`, `/image-manager`
