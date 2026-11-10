@@ -157,7 +157,7 @@ impl HttpAgentTitleGenerator {
 
         let permit = match &self.request_budget {
             Some(budget) => budget
-                .reserve(&self.deployment_model, &body, u64::from(MAX_OUTPUT_TOKENS))
+                .reserve(&body)
                 .await
                 .map_err(AgentTitleGenerationError::budget)?,
             None => None,
