@@ -372,8 +372,14 @@ const LIMITS: &[FieldSpec] = &[
 const TRIGGERS: &[FieldSpec] = &[leaf("enabled"), leaf("orchestration_paused")];
 const MARKETPLACE: &[FieldSpec] = &[leaf("enabled")];
 const USAGE_REPORTING: &[FieldSpec] = &[leaf("measured_visible")];
+const MODEL_BUDGET: &[FieldSpec] = &[
+    leaf("enabled"),
+    leaf("platform"),
+    leaf("owners"),
+    leaf("default_policy"),
+];
 const PLATFORM: &[FieldSpec] = &[
-    branch("model_budget", &[leaf("owners"), leaf("default_policy")]),
+    branch("model_budget", MODEL_BUDGET),
     branch("usage_reporting", USAGE_REPORTING),
     branch("defaults", DEFAULTS),
     branch("inactivity", INACTIVITY),
@@ -384,7 +390,7 @@ const PLATFORM: &[FieldSpec] = &[
 ];
 const REPLACE: &[FieldSpec] = &[leaf("expected_revision"), branch("settings", PLATFORM)];
 const PATCH: &[FieldSpec] = &[
-    branch("model_budget", &[leaf("owners"), leaf("default_policy")]),
+    branch("model_budget", MODEL_BUDGET),
     branch("usage_reporting", USAGE_REPORTING),
     leaf("expected_revision"),
     branch("defaults", DEFAULTS),

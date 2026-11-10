@@ -103,7 +103,7 @@ impl MongoSandboxStore {
                 .map_err(|_| BudgetError::Unavailable)?
                 .ok_or(BudgetError::Unavailable)?;
             let mut owner: OwnerBudget = decode(&document).map_err(|_| BudgetError::Unavailable)?;
-            owner.advance(now)?;
+            owner.advance(policy, now)?;
             if owner
                 .spent
                 .checked_add(owner.reserved)
