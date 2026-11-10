@@ -150,6 +150,8 @@ async fn public_window_metadata_fallback_and_refusal_never_write_or_repair() {
         "tail_hash",
         "extra_tail",
         "gap",
+        "trusted_gap",
+        "trusted_corrupt",
         "lineage",
     ] {
         let fixture = Fixture::new(200).await.prepare().await;
@@ -188,6 +190,31 @@ async fn public_window_metadata_fallback_and_refusal_never_write_or_repair() {
                     .await
                     .unwrap();
                 Some(doc! { "$unset": { INTEGRITY_FIELD: "" } })
+            }
+            "trusted_gap" => {
+                fixture
+                    .store
+                    .agent_log
+                    .delete_one(doc! {
+                        "agent_id": fixture.id.as_str(), "seq": 198_i64
+                    })
+                    .await
+                    .unwrap();
+                None
+            }
+            "trusted_corrupt" => {
+                fixture
+                    .store
+                    .agent_log
+                    .update_one(
+                        doc! {
+                            "agent_id": fixture.id.as_str(), "seq": 198_i64
+                        },
+                        doc! { "$set": { "record.agent_id": "agt_foreign" } },
+                    )
+                    .await
+                    .unwrap();
+                None
             }
             "lineage" => {
                 fixture
