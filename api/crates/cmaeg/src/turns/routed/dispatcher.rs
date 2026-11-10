@@ -79,6 +79,9 @@ pub enum StartResult {
     },
     /// Proved no work was accepted, so the exact request can be retried.
     NotAccepted,
+    NotAcceptedWithCode {
+        code: String,
+    },
     /// A terminal rejection proved by the provider, never a network/5xx guess.
     Rejected {
         code: String,
@@ -392,6 +395,18 @@ impl Dispatcher {
                 }
             }
             StartResult::NotAccepted => {
+                self.journal.transition(lease, Phase::Prepared).await?;
+                Ok(RunResult::Done(DispatchOutcome::Retry))
+            }
+            StartResult::NotAcceptedWithCode { code } => {
+                self.journal.record_non_admission(lease, &code).await?;
+                let mut change = crate::activity::Change::state(
+                    target.launch.consumer.as_str(),
+                    crate::activity::ConsumerState::Queued,
+                    None,
+                );
+                change.last_non_admission_code = Some(code);
+                self.journal.observe(&plan.identity, change).await;
                 self.journal.transition(lease, Phase::Prepared).await?;
                 Ok(RunResult::Done(DispatchOutcome::Retry))
             }

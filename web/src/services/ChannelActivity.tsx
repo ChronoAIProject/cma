@@ -77,6 +77,12 @@ export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFe
                           <dd>{consumer.refusal_code}</dd>
                         </div>
                       ) : null}
+                      {consumer.last_non_admission_code ? (
+                        <div>
+                          <dt>Last admission refusal</dt>
+                          <dd>{consumer.last_non_admission_code}</dd>
+                        </div>
+                      ) : null}
                       <div>
                         <dt>Dispatch started</dt>
                         <dd>
