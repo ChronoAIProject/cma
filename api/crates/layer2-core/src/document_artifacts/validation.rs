@@ -103,3 +103,20 @@ impl StoredDocument {
             .map_err(|_| DocumentError::Corrupt)
     }
 }
+
+impl DocumentService {
+    pub(super) fn validate_write(
+        &self,
+        record: &StoredDocument,
+        revocation: bool,
+    ) -> Result<(), DocumentError> {
+        // Reader compatibility must never implicitly activate expanded writes.
+        if !(self.revocation_reserve_enabled && revocation)
+            && (record.receipts.len() > MAX_RECEIPTS
+                || record.metadata_bytes()? > MAX_METADATA_BYTES)
+        {
+            return Err(DocumentError::Capacity);
+        }
+        record.validate()
+    }
+}

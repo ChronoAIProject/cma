@@ -21,3 +21,6 @@ mod revocation_tests;
 
 #[cfg(test)]
 mod revocation_race_tests;
+
+#[cfg(test)]
+mod rollout_tests;
