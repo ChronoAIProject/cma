@@ -213,7 +213,8 @@ impl DocumentService {
                 outcome.document.access = access(caller, token, &record)?;
                 return Ok(outcome);
             }
-            if !command.revokes_access() && record.receipts.len() >= MAX_RECEIPTS {
+            let reserve = self.revocation_reserve_enabled && command.revokes_access();
+            if !reserve && record.receipts.len() >= MAX_RECEIPTS {
                 return Err(DocumentError::Capacity);
             }
             let previous = record.metadata.revision;
@@ -237,10 +238,7 @@ impl DocumentService {
             // Ordinary mutations cannot consume the reserved count or bytes.
             // Revocation removes a live grant/link before recording its receipt;
             // it never evicts a receipt that could otherwise replay an old grant.
-            if !command.revokes_access() && record.metadata_bytes()? > MAX_METADATA_BYTES {
-                return Err(DocumentError::Capacity);
-            }
-            record.validate()?;
+            self.validate_write(&record, command.revokes_access())?;
             // This single aggregate CAS fences all concurrent revocations and
             // comment admission. Retry reloads policy before producing effects.
             if let Some(guard) = guard {

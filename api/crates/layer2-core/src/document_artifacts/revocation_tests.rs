@@ -2,18 +2,19 @@ use super::*;
 use crate::{Authorization, Caller, Capability, SubjectId};
 use std::sync::Arc;
 
-fn caller(subject: &str) -> Caller {
+pub(super) fn caller(subject: &str) -> Caller {
     Caller::new(
         SubjectId::new(subject),
         Authorization::new([Capability::UseOwnSandboxes]),
     )
 }
 
-async fn fixture() -> (Arc<DocumentService>, Arc<memory::MemoryDocuments>, String) {
+pub(super) async fn fixture() -> (Arc<DocumentService>, Arc<memory::MemoryDocuments>, String) {
     let rows = Arc::new(memory::MemoryDocuments::default());
-    let service = DocumentService::new(
+    let service = DocumentService::with_revocation_reserve(
         rows.clone(),
         Arc::new(memory::MemoryDocumentBlobs::default()),
+        true,
     );
     let doc = service
         .create(
@@ -43,7 +44,7 @@ async fn fixture() -> (Arc<DocumentService>, Arc<memory::MemoryDocuments>, Strin
     (service, rows, doc.id)
 }
 
-async fn fill_receipts(rows: &memory::MemoryDocuments, id: &str) -> u64 {
+pub(super) async fn fill_receipts(rows: &memory::MemoryDocuments, id: &str) -> u64 {
     let mut rows = rows.0.lock().await;
     let record = rows.get_mut(id).unwrap();
     let receipt = record.receipts.values().next().unwrap().clone();
@@ -240,47 +241,7 @@ async fn every_live_grant_and_link_can_be_revoked_after_receipts_fill() {
 async fn metadata_saturation_preserves_revoke_headroom_and_denies_normal_growth() {
     let (service, rows, id) = fixture().await;
     let revision = fill_receipts(&rows, &id).await;
-    {
-        let mut records = rows.0.lock().await;
-        let record = records.get_mut(&id).unwrap();
-        // Each historical comment fits its 8 KiB bound; escaping consumes
-        // aggregate bytes. Receipts may retain comments removed long ago.
-        record
-            .receipts
-            .remove(&format!("{:064x}", MAX_RECEIPTS - 1));
-        for receipt in record.receipts.values_mut() {
-            receipt.outcome.comment = Some(DocumentComment {
-                id: types::identity("dcm_", &["historical"]),
-                author_subject: "guest".into(),
-                body: "\n".repeat(8191) + "x",
-                document_revision: 1,
-                created_at: crate::now_rfc3339(),
-            });
-        }
-        let mut excess = record.metadata_bytes().unwrap() - MAX_METADATA_BYTES;
-        for receipt in record.receipts.values_mut() {
-            let body = &mut receipt.outcome.comment.as_mut().unwrap().body;
-            let remove = (excess / 2).min(body.len() - 1);
-            body.drain(..remove);
-            excess -= remove * 2;
-        }
-        // Leave at most one byte below the ordinary metadata ceiling.
-        if excess != 0 {
-            let body = &mut record
-                .receipts
-                .values_mut()
-                .find(|r| r.outcome.comment.as_ref().unwrap().body.len() > 1)
-                .unwrap()
-                .outcome
-                .comment
-                .as_mut()
-                .unwrap()
-                .body;
-            body.replace_range(..1, "x");
-        }
-        assert_eq!(record.metadata_bytes().unwrap(), MAX_METADATA_BYTES);
-        record.validate().unwrap();
-    }
+    fill_metadata(&rows, &id).await;
     // Count still has room: the independent metadata budget must stop growth.
     assert_eq!(
         service
@@ -363,4 +324,48 @@ async fn absent_removals_do_not_spend_receipts_or_advance_revision() {
     let after = rows.get(&id).await.unwrap().unwrap();
     assert_eq!(before.metadata, after.metadata);
     assert_eq!(before.receipts.len(), after.receipts.len());
+}
+
+pub(super) async fn fill_metadata(rows: &memory::MemoryDocuments, id: &str) {
+    {
+        let mut records = rows.0.lock().await;
+        let record = records.get_mut(id).unwrap();
+        // Each historical comment fits its 8 KiB bound; escaping consumes
+        // aggregate bytes. Receipts may retain comments removed long ago.
+        record
+            .receipts
+            .remove(&format!("{:064x}", MAX_RECEIPTS - 1));
+        for receipt in record.receipts.values_mut() {
+            receipt.outcome.comment = Some(DocumentComment {
+                id: types::identity("dcm_", &["historical"]),
+                author_subject: "guest".into(),
+                body: "\n".repeat(8191) + "x",
+                document_revision: 1,
+                created_at: crate::now_rfc3339(),
+            });
+        }
+        let mut excess = record.metadata_bytes().unwrap() - MAX_METADATA_BYTES;
+        for receipt in record.receipts.values_mut() {
+            let body = &mut receipt.outcome.comment.as_mut().unwrap().body;
+            let remove = (excess / 2).min(body.len() - 1);
+            body.drain(..remove);
+            excess -= remove * 2;
+        }
+        // Leave at most one byte below the ordinary metadata ceiling.
+        if excess != 0 {
+            let body = &mut record
+                .receipts
+                .values_mut()
+                .find(|r| r.outcome.comment.as_ref().unwrap().body.len() > 1)
+                .unwrap()
+                .outcome
+                .comment
+                .as_mut()
+                .unwrap()
+                .body;
+            body.replace_range(..1, "x");
+        }
+        assert_eq!(record.metadata_bytes().unwrap(), MAX_METADATA_BYTES);
+        record.validate().unwrap();
+    }
 }

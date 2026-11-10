@@ -392,10 +392,12 @@ fn interface_feature_flags_are_strict_independent_booleans() {
     assert!(!config.features.v2_ui_transport);
     assert!(!config.features.trigger_command_admission);
     assert!(!config.features.nyxid_resource_request);
+    assert!(!config.features.document_revocation_reserve);
     for key in [
         "CHRONO_V2_UI_TRANSPORT_ENABLED",
         "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
         "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED",
+        "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
     ] {
         let config = configured(&[(key, "true")]).unwrap();
         assert_eq!(
@@ -410,6 +412,11 @@ fn interface_feature_flags_are_strict_independent_booleans() {
             config.features.nyxid_resource_request,
             key == "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED"
         );
+        assert_eq!(
+            config.features.document_revocation_reserve,
+            key == "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED"
+        );
+        assert!(!configured(&[(key, "false")]).unwrap().features.document_revocation_reserve);
         assert_eq!(
             configured(&[(key, "enabled")]).unwrap_err(),
             format!("{key} must be true or false")
