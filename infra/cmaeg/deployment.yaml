@@ -100,6 +100,18 @@ spec:
             - name: media-jobs
               mountPath: /var/cmaeg/media
           env:
+            - name: CMAEG_OWNER_KEY_SERVICE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: cma-event-gateway-owner-keys
+                  key: CMAEG_OWNER_KEY_SERVICE_ID
+                  optional: true
+            - name: CMAEG_OWNER_KEY_CUTOVER_ID
+              valueFrom:
+                secretKeyRef:
+                  name: cma-event-gateway-owner-keys
+                  key: CMAEG_OWNER_KEY_CUTOVER_ID
+                  optional: true
             - name: CMAEG_MONGODB_URI
               valueFrom:
                 secretKeyRef:
