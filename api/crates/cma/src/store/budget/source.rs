@@ -93,6 +93,9 @@ impl MongoSandboxStore {
             if let Err(reason) = record.reservation.revalidate(policy) {
                 return Ok(Some(reason));
             }
+            if let Some(reason) = record.reservation.stop_reason(now) {
+                return Ok(Some(reason));
+            }
             let document = self
                 .model_budget
                 .find_one(doc! {"_id": owner_key(agent)})
