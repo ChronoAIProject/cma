@@ -71,6 +71,29 @@ pub(super) async fn load(
     id: &SandboxId,
     session: &mut ClientSession,
 ) -> Result<(SandboxUnpublishedRecoverySnapshot, u64), ApplyError> {
+    load_for_inspection(store, id, session, true).await
+}
+
+pub(super) async fn load_retained(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+    session: &mut ClientSession,
+) -> Result<layer2_core::sandbox::RetainedRecoverySnapshot, ApplyError> {
+    let (snapshot, last_seq) = load_for_inspection(store, id, session, false).await?;
+    validate_in_transaction(store, id, last_seq, session).await?;
+    Ok(layer2_core::sandbox::RetainedRecoverySnapshot {
+        sandbox: snapshot.sandbox,
+        agents: snapshot.agents,
+        workspaces: snapshot.workspaces,
+    })
+}
+
+async fn load_for_inspection(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+    session: &mut ClientSession,
+    require_unpublished: bool,
+) -> Result<(SandboxUnpublishedRecoverySnapshot, u64), ApplyError> {
     let document = store
         .sandboxes
         .find_one(doc! { "_id": id.as_str() })
@@ -87,8 +110,10 @@ pub(super) async fn load(
     let agents = load_sandbox_agents(store, id, session).await?;
     let generation = sandbox
         .unpublished_recovery_binding()
-        .and_then(|binding| binding.provision_generation)
-        .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
+        .and_then(|binding| binding.provision_generation);
+    if require_unpublished && generation.is_none() {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
     for agent in &agents {
         let mut observation = Observation::new(Stage::PublicationLog);
         let mut published = false;
@@ -99,10 +124,11 @@ pub(super) async fn load(
             agent.conversation.last_seq,
             session,
             |entry| {
-                if matches!(entry.kind,
+                if require_unpublished
+                    && matches!(entry.kind,
                 AgentLogKind::ConversationOpened { runtime_generation, .. }
                 | AgentLogKind::RuntimeGenerationRetired { runtime_generation, .. }
-                    if runtime_generation >= generation)
+                    if generation.is_some_and(|generation| runtime_generation >= generation))
                 {
                     published = true;
                     return Err(SandboxStoreError::InvalidTransaction(

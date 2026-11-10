@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 277,
+  "openapi_operations": 278,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3831,6 +3831,16 @@
         "reporting_budget_exceeded",
         "usage_unavailable",
         "report_expired"
+      ]
+    },
+    "GET /api/v1/sandboxes/{id}/runtime-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_retained_recovery.rs# Owner-only bounded assessment; recovery admission remains closed.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "sandbox_not_found",
+        "hierarchy_service_unavailable"
       ]
     }
   }

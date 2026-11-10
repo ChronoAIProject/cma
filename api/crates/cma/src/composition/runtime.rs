@@ -6,6 +6,7 @@ use crate::{config::Config, store::MongoStores, warm_pools::NativeWarmPools};
 pub(super) struct RuntimeServices {
     pub warm_pools: Arc<NativeWarmPools>,
     pub updates: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
+    pub recovery: Arc<layer2_core::sandbox::RetainedRecoveryService>,
 }
 
 impl RuntimeServices {
@@ -15,6 +16,15 @@ impl RuntimeServices {
         adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
     ) -> Self {
         Self {
+            recovery: Arc::new(layer2_core::sandbox::RetainedRecoveryService::new(
+                stores.sandbox_model.clone(),
+                Arc::new(
+                    crate::sandbox::retained_recovery::RetainedRuntimeInspector::new(
+                        adapter.clone(),
+                        config.deployment_id.clone(),
+                    ),
+                ),
+            )),
             warm_pools: NativeWarmPools::new(
                 stores.native_warm_pools.clone(),
                 adapter.clone(),

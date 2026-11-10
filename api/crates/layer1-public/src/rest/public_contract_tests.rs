@@ -47,6 +47,7 @@ mod replay;
 mod response_control_cases;
 mod responses_v2_cases;
 mod retained_clients;
+mod retained_recovery_cases;
 mod runtime_update_cases;
 mod sandbox_command_cases;
 mod sandbox_inventory_cases;
@@ -200,6 +201,9 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = suggestion_cases::scenario(name).await {
+        return scenario;
+    }
+    if let Some(scenario) = retained_recovery_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = runtime_update_cases::scenario(name).await {

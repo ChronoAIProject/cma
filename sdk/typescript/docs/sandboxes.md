@@ -299,3 +299,10 @@ Display `label`, and show `disambiguator` only as secondary duplicate-name conte
 `subject` is an opaque key and must not appear in chart text or tooltips. Respect
 partial `complete` flags, retain loaded/total counts on failures, and handle
 429/503 retries and 410 report expiry explicitly.
+
+## Retained runtime assessment
+
+`client.sandboxes.inspectRuntimeRecovery(id)` calls the owner-only
+`GET /api/v1/sandboxes/{id}/runtime-recovery` endpoint. It returns a bounded
+`disposition` and `admission_enabled: false`; it does not admit recovery,
+interrupt work or make a Failed Agent sendable.

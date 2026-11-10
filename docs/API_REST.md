@@ -2210,7 +2210,13 @@ conversation, and listing does not download file bodies. See
 | `POST /api/v1/sandboxes/{id}/revive` | -; key | - | 202 SandboxView |
 | `POST /api/v1/sandboxes/{id}/always-on` | AlwaysOnRequest | - | 200 SandboxView |
 | `POST /api/v1/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest; key | - | 202 SandboxView |
+| `GET /api/v1/sandboxes/{id}/runtime-recovery` | - | - | 200 RetainedRecoveryView |
 | `POST /api/v1/sandboxes/{id}/service-access` | GrantSandboxServiceAccessRequest; key | - | 200 SandboxView; new grants require fully Paused, existing grants replay without change |
+
+The read-only `runtime-recovery` assessment returns a fixed `disposition` and
+`admission_enabled: false`. It never schedules recovery. See
+[retained recovery assessment](CMA_Retained_Recovery.md) for authorization,
+bounds, refusal categories and the remaining admission work.
 
 `runtime-update` accepts `{ "target_version": "<exact image reference>" }`
 with `Idempotency-Key` from the Sandbox owner. Use the owner detail's
