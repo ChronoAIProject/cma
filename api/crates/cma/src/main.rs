@@ -12,6 +12,8 @@ mod commands;
 mod composition;
 mod config;
 mod connections;
+#[cfg(test)]
+mod dependency_test_support;
 mod document_artifacts;
 mod document_storage;
 mod expensive_reads;
