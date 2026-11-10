@@ -142,7 +142,7 @@ async fn concurrent_claim_takeover_and_completion_are_fenced_once() {
     let successor = store
         .acquire_agent_title_claim(
             &AgentTitleClaimRequest::new(id.clone(), "takeover"),
-            claim_time() + Duration::from_secs(45),
+            stale.next_attempt_at(),
         )
         .await
         .unwrap()
@@ -288,7 +288,7 @@ async fn corrupt_transcript_and_full_log_capacity_fail_without_partial_writes() 
                 claim_time(),
             )
             .await,
-        Err(AgentTitleStoreError::SequenceConflict)
+        Err(AgentTitleStoreError::Corrupt)
     );
     assert!(store
         .agents
@@ -454,13 +454,26 @@ fn assert_ambiguous_transaction(commands: &[(String, Document)]) {
         .skip(commit_positions.last().copied().unwrap() + 1)
         .filter_map(|(name, command)| (name == "find").then_some(command))
         .collect::<Vec<_>>();
-    assert_eq!(reconciliation.len(), 2);
+    assert_eq!(
+        reconciliation
+            .iter()
+            .map(|command| command.get_str("find").unwrap())
+            .collect::<Vec<_>>(),
+        vec!["agents", "agents", "agent_log", "agent_log", "agent_log"],
+        "receipt includes the aggregate, integrity envelope, tail, extra-row probe and full log"
+    );
+    let at = reconciliation[0]
+        .get_document("readConcern")
+        .unwrap()
+        .get_timestamp("atClusterTime")
+        .unwrap();
     assert!(reconciliation.iter().all(|command| {
         command_uses_snapshot_read(command)
+            && command.get("lsid") == reconciliation[0].get("lsid")
             && command
                 .get_document("readConcern")
                 .ok()
                 .and_then(|concern| concern.get_timestamp("atClusterTime").ok())
-                .is_some()
+                == Some(at)
     }));
 }

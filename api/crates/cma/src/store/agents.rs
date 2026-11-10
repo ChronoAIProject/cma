@@ -326,6 +326,20 @@ impl AgentStore for MongoSandboxStore {
         {
             return Err(SandboxStoreError::Conflict);
         }
+        let current_row = self
+            .agents
+            .find_one(doc! { "_id": agent.id.as_str() })
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+            .ok_or(SandboxStoreError::Conflict)?;
+        let current = read_agent(&current_row)?;
+        let mut fields = agent_replacement_fields(&agent)?;
+        super::agent_log_integrity::carry_integrity_for_revision(
+            &current_row,
+            &current,
+            &agent,
+            &mut fields,
+        )?;
         let result = self
             .agents
             .update_one(
@@ -358,7 +372,7 @@ impl AgentStore for MongoSandboxStore {
                         record_bson(&agent.work.live_skills).map_err(SandboxStoreError::Corrupt)?
                     },
                 },
-                doc! { "$set": agent_replacement_fields(&agent)? },
+                doc! { "$set": fields },
             )
             .await
             .map_err(|error| {
