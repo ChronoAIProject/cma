@@ -78,6 +78,16 @@ async fn main() {
         .init();
 
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if store::provenance_progress::is_command(&arguments) {
+        match store::provenance_progress::command(&arguments).await {
+            Ok(result) => println!("{result}"),
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if arguments == ["--print-runtime-role"] {
         match std::env::var("CHRONO_MONGODB_DATABASE") {
             Ok(database) => println!("{}", store::isolation::role(&database)),
