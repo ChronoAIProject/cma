@@ -69,6 +69,7 @@ pub(super) async fn reserve(
         || !parent.reservation.settled
         || parent.reservation.policy.input_token_units != policy.input_token_units
         || parent.reservation.policy.output_token_units != policy.output_token_units
+        || parent.reservation.policy.day_timezone != policy.day_timezone
     {
         return Err(domain(BudgetError::Unavailable));
     }
@@ -87,16 +88,41 @@ pub(super) async fn reserve(
     if ledger.bound_violated {
         return Err(domain(BudgetError::Unavailable));
     }
+    // A terminal event is not final settlement. Preserve the complete parent
+    // allowance until the authoritative source proves what was actually spent.
+    let parent_spent = if parent.reservation.final_usage_known {
+        parent.reservation.observed
+    } else {
+        parent
+            .reservation
+            .observed
+            .max(parent.reservation.reserved_units)
+    };
     let next_reserved = ledger
         .reserved
         .checked_add(liability)
         .ok_or_else(|| domain(BudgetError::Unavailable))?;
-    if parent
-        .reservation
-        .observed
+    if parent_spent
         .checked_add(ledger.spent)
         .and_then(|spent| spent.checked_add(next_reserved))
         .is_none_or(|total| total > limit)
+    {
+        return Err(domain(BudgetError::TurnExhausted));
+    }
+    let parent_calls = parent
+        .reservation
+        .final_model_calls
+        .ok_or_else(|| domain(BudgetError::Unavailable))?;
+    let next_calls = ledger
+        .calls
+        .checked_add(1)
+        .ok_or_else(|| domain(BudgetError::Unavailable))?;
+    let call_limit = policy
+        .max_calls_per_turn
+        .min(parent.reservation.policy.max_calls_per_turn);
+    if parent_calls
+        .checked_add(next_calls)
+        .is_none_or(|calls| calls > call_limit)
     {
         return Err(domain(BudgetError::TurnExhausted));
     }
@@ -106,6 +132,8 @@ pub(super) async fn reserve(
         .reserve_liability(&policy, liability, timestamp)
         .map_err(domain)?;
     ledger.reserved = next_reserved;
+    // Every granted permit counts, including uncertain dispatch and settlement.
+    ledger.calls = next_calls;
     let hold = RequestHold {
         scope: scope.clone(),
         request: request.clone(),
