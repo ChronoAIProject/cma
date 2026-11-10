@@ -126,9 +126,30 @@ impl AgentCommandService {
         source: CommandSubmissionSource,
         submission: CommandSubmission,
     ) -> Result<CommandStatusView, CommandAdmissionError> {
+        self.admit_at_binding_revision(context, credential, source, submission, None)
+            .await
+    }
+
+    /// Fence an interface's independent input-policy observation at reservation.
+    pub async fn admit_at_binding_revision(
+        &self,
+        context: &CallerContext,
+        credential: &str,
+        source: CommandSubmissionSource,
+        submission: CommandSubmission,
+        binding_revision: Option<u64>,
+    ) -> Result<CommandStatusView, CommandAdmissionError> {
         let (mut authorized, mut request) = self
             .prepare(context, credential, source, submission.clone())
             .await?;
+        if binding_revision.is_some_and(|revision| {
+            request
+                .binding
+                .as_ref()
+                .is_none_or(|proof| proof.binding.revision != revision)
+        }) {
+            return Err(CommandLedgerError::Conflict.into());
+        }
         let target = ResourceTarget::Agent {
             agent_id: request.envelope.agent_id.clone(),
         };

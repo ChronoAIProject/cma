@@ -195,13 +195,28 @@ async fn submit(
             }
         }
     }
+    let policy_revision = if let Some(generation) = binding_generation {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            state.apply_sender_context(&auth, &mut submission, generation),
+        )
+        .await
+        {
+            Ok(Ok(revision)) => revision,
+            Ok(Err(error)) => return *error,
+            Err(_) => return super::routing::error(super::BindingRouteError::SenderUnavailable),
+        }
+    } else {
+        None
+    };
     let admitted = match state
         .commands
-        .admit(
+        .admit_at_binding_revision(
             &auth.context,
             credential.value(),
             CommandSubmissionSource::Api,
             submission,
+            policy_revision,
         )
         .await
     {

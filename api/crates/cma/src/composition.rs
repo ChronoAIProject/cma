@@ -7,7 +7,7 @@ mod bots;
 mod credentials;
 mod desktop;
 mod documents;
-mod event_routing;
+pub(crate) mod event_routing;
 mod media;
 mod profiles;
 mod routes;
