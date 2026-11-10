@@ -4,6 +4,7 @@ import type { AgentV2Session } from './client';
 import type { QueuedInputIntent } from './queuedInputJournal';
 import { sendQueuedInputIntent } from './queuedInputs';
 import { recoverQueuedCancellation } from './queuedCancellation';
+import { observeRead } from './readObserver';
 
 export interface QueuedInputRow {
   readonly responseId: string;
@@ -30,6 +31,7 @@ export function useQueuedInputs(
   activeTurn: boolean,
   eventRevision: string,
   onIdentityChange: (error: unknown) => boolean,
+  requestRevision = 0,
 ): QueuedInputsControl {
   const [stored, setStored] = useState<{
     session: AgentV2Session;
@@ -50,8 +52,9 @@ export function useQueuedInputs(
   useLayoutEffect(() => {
     active.current = activeTurn;
   }, [activeTurn]);
-  const schedule = useRef<(() => void) | undefined>(undefined);
-  const refresh = useCallback(() => schedule.current?.(), []);
+  const schedule = useRef<ReturnType<typeof observeRead> | undefined>(undefined);
+  const refresh = useCallback(() => schedule.current?.refresh(), []);
+  const observed = useRef({ session, eventRevision, activeTurn, requestRevision });
   const current = stored?.session === session ? stored : undefined;
   const bump = useCallback(
     () =>
@@ -85,30 +88,18 @@ export function useQueuedInputs(
 
   useEffect(() => {
     if (!session || !enabled) return;
-    const request = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let reading = false;
-    let again = false;
     let retry = 1000;
-    const read = async () => {
-      if (request.signal.aborted || document.visibilityState === 'hidden') return;
-      if (reading) {
-        again = true;
-        return;
-      }
-      reading = true;
+    const observer = observeRead(async (signal) => {
       const observedGeneration = generation.current;
-      clearTimeout(timer);
-      let follow = false;
       try {
-        await session.authorize(request.signal);
+        await session.authorize(signal);
         const page = await session.responses.listQueuedInputs(session.journal.agentId, {
-          signal: request.signal,
+          signal,
         });
-        await session.authorize(request.signal);
+        await session.authorize(signal);
         if (observedGeneration !== generation.current) {
-          again = true;
-          return;
+          observer.refresh();
+          return { cooldown: 2000 };
         }
         const items = page.data.map((item): QueuedInputRow => ({
           responseId: item.response.receipt.response_id!,
@@ -128,9 +119,9 @@ export function useQueuedInputs(
           if (managed.current.has(receipt.commandId)) continue;
           try {
             const status = await session.responses.readCommand(receipt.commandId, {
-              signal: request.signal,
+              signal,
             });
-            await session.authorize(request.signal);
+            await session.authorize(signal);
             if (
               status.receipt.agent_id === session.journal.agentId &&
               status.receipt.response_id === receipt.responseId &&
@@ -141,19 +132,19 @@ export function useQueuedInputs(
               session.journal.queuedInputs.remember([receipt.commandId]);
             }
           } catch (error) {
-            if (request.signal.aborted || onIdentityChange(error)) return;
+            if (signal.aborted || onIdentityChange(error)) return;
           }
         }
         if (observedGeneration !== generation.current) {
-          again = true;
-          return;
+          observer.refresh();
+          return { cooldown: 2000 };
         }
         setStored({ session, items });
         bump();
         retry = 2000;
-        follow = items.length > 0 || active.current;
+        return { next: items.length > 0 || active.current ? retry : undefined, cooldown: retry };
       } catch (error) {
-        if (request.signal.aborted || onIdentityChange(error)) return;
+        if (signal.aborted || onIdentityChange(error)) return;
         // Retained older deployments do not have editable queue discovery.
         if (error instanceof ApiError && error.status === 404) return;
         setStored((previous) => ({
@@ -161,37 +152,25 @@ export function useQueuedInputs(
           items: previous?.session === session ? previous.items : [],
           error: 'The message queue could not be refreshed. Your messages are retained.',
         }));
-        follow = true;
         retry = Math.min(retry * 2, 10000);
-      } finally {
-        reading = false;
-        if (!request.signal.aborted) {
-          if (again) {
-            again = false;
-            timer = setTimeout(() => void read(), 100);
-          } else if (follow) timer = setTimeout(() => void read(), retry);
-        }
+        return { next: retry, cooldown: retry, failed: true };
       }
-    };
-    const invalidate = () => {
-      clearTimeout(timer);
-      if (reading) again = true;
-      else timer = setTimeout(() => void read(), 100);
-    };
-    schedule.current = invalidate;
-    document.addEventListener('visibilitychange', invalidate);
-    window.addEventListener('focus', invalidate);
-    void read();
+    });
+    schedule.current = observer;
     return () => {
-      request.abort();
-      clearTimeout(timer);
-      if (schedule.current === invalidate) schedule.current = undefined;
-      document.removeEventListener('visibilitychange', invalidate);
-      window.removeEventListener('focus', invalidate);
+      observer.dispose();
+      if (schedule.current === observer) schedule.current = undefined;
     };
   }, [session, enabled, onIdentityChange, bump]);
 
-  useEffect(refresh, [refresh, eventRevision, activeTurn]);
+  useEffect(() => {
+    const previous = observed.current;
+    observed.current = { session, eventRevision, activeTurn, requestRevision };
+    if (previous.session !== session) return;
+    if (previous.requestRevision !== requestRevision || previous.activeTurn !== activeTurn)
+      schedule.current?.refresh();
+    else if (previous.eventRevision !== eventRevision) schedule.current?.hint();
+  }, [session, eventRevision, activeTurn, requestRevision]);
 
   let intents: readonly QueuedInputIntent[] = [];
   let storageError: string | undefined;
