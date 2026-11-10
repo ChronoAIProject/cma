@@ -192,3 +192,33 @@ async fn snapshot_preserves_live_and_missing_agents() {
         db.drop().await.unwrap();
     }
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn snapshot_refuses_quarantined_deletion_without_changing_evidence() {
+    let (client, name) = database("retirement_quarantine").await;
+    for (case, marker) in [
+        Bson::Document(doc! {
+            "format": 1_i64,
+            "reason": "integrity_validation_failed",
+            "observed_head": 0_i64,
+        }),
+        Bson::Null,
+        Bson::Document(doc! {"format": 99_i64}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let db = client.database(&format!("{name}_{case}"));
+        let mut documents = documents();
+        documents[3]
+            .1
+            .insert(crate::store::agent_log_integrity::QUARANTINE_FIELD, marker);
+        install(&db, &documents).await;
+        assert!(observe(&client, &db, "sbx_retirement_fixture")
+            .await
+            .is_err());
+        unchanged(&db, &documents).await;
+        db.drop().await.unwrap();
+    }
+}
