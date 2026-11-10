@@ -3,6 +3,9 @@
 # Keep Omarchy independent of the Backend graph, including its archive split.
 module OmarchyCIContract
   EXPORT_IF = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+  CACHE_MISS = "steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true'"
+  CACHE_PATH = "${{ runner.temp }}/omarchy-layer-cache"
+  CACHE_KEY = "omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}"
 
   def self.validate(ci)
     contract = CIContract
@@ -35,11 +38,16 @@ module OmarchyCIContract
         "run" => 'echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"' },
       { "name" => "Identify pinned Omarchy dependency cache", "id" => "cache",
         "run" => 'python3 .github/scripts/omarchy-cache-key.py "$RUNNER_TEMP/omarchy-evidence/cache-inputs.json" >> "$GITHUB_OUTPUT"' },
+      { "name" => "Restore complete Omarchy layer cache", "id" => "omarchy-cache-restore",
+        "uses" => "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830", "timeout-minutes" => 5,
+        "continue-on-error" => true, "with" => { "path" => CACHE_PATH, "key" => CACHE_KEY, "fail-on-cache-miss" => false } },
+      { "name" => "Discard incomplete Omarchy cache restore", "if" => CACHE_MISS,
+        "run" => 'rm -rf "$RUNNER_TEMP/omarchy-layer-cache"' },
       { "name" => "Build current-source Omarchy image", "id" => "build",
         "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
         "with" => { "context" => ".", "file" => "infra/runtime/Dockerfile", "target" => "omarchy",
           "platforms" => "linux/amd64", "push" => false, "load" => true, "tags" => "cma-runtime-omarchy:ci",
-          "cache-to" => "type=gha,mode=min,scope=${{ steps.cache.outputs.scope }}",
+          "cache-to" => "${{ (#{CACHE_MISS}) && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}",
           "build-args" => <<~'ARGS', "cache-from" => <<~'CACHE' } },
             OMARCHY_CMA_BASE=runtime
             RUNTIME_DESKTOP=1
@@ -47,10 +55,9 @@ module OmarchyCIContract
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           ARGS
-            type=gha,scope=${{ steps.cache.outputs.scope }}
+            ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
             type=gha,scope=runtime-desktop
             type=gha,scope=runtime
-            type=gha,scope=runtime-omarchy
           CACHE
       { "name" => "Release Omarchy build cache before image checks", "run" => <<~'SH' },
         image_id=$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')
@@ -86,6 +93,9 @@ module OmarchyCIContract
           "name" => "ci-native-image-runtime-omarchy-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
           "path" => "${{ runner.temp }}/ci-native-image/", "if-no-files-found" => "error",
           "compression-level" => 0, "retention-days" => 1 } },
+      { "name" => "Save qualified Omarchy layer cache", "if" => "#{EXPORT_IF} && (#{CACHE_MISS})",
+        "uses" => "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830", "timeout-minutes" => 5,
+        "continue-on-error" => true, "with" => { "path" => CACHE_PATH, "key" => CACHE_KEY } },
     ]
     contract.require!(row["steps"] == expected,
       "Omarchy build, native gates, evidence and success-only export must remain exact and ordered")

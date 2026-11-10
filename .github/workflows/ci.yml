@@ -123,6 +123,20 @@ jobs:
       - name: Identify pinned Omarchy dependency cache
         id: cache
         run: python3 .github/scripts/omarchy-cache-key.py "$RUNNER_TEMP/omarchy-evidence/cache-inputs.json" >> "$GITHUB_OUTPUT"
+      # Download one complete archive before the solve. Remote BuildKit indexes
+      # can outlive individual GHA blobs and force a late dependency rebuild.
+      - name: Restore complete Omarchy layer cache
+        id: omarchy-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/omarchy-layer-cache
+          key: omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}
+          fail-on-cache-miss: false
+      - name: Discard incomplete Omarchy cache restore
+        if: steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true'
+        run: rm -rf "$RUNNER_TEMP/omarchy-layer-cache"
       # Build the tool donor and supervisor from this checkout. The historical
       # prototype's expiring donor artifact cannot supply a develop release gate.
       - name: Build current-source Omarchy image
@@ -143,14 +157,12 @@ jobs:
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: |
-            type=gha,scope=${{ steps.cache.outputs.scope }}
+            ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
             type=gha,scope=runtime-desktop
             type=gha,scope=runtime
-            type=gha,scope=runtime-omarchy
-          # Keep final-image layers, including the pinned dependency stage, in
-          # this solve: a separate cache-only solve recompiled it in CI. Exclude
-          # donor/build intermediate layers; GHA keeps PR writes branch-scoped.
-          cache-to: type=gha,mode=min,scope=${{ steps.cache.outputs.scope }}
+          # Export final-image layers in this solve, only for a missing archive.
+          # A complete restored archive stays local throughout the build.
+          cache-to: ${{ (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true') && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}
       - name: Release Omarchy build cache before image checks
         run: |
           image_id=$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')
@@ -206,6 +218,14 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
+      - name: Save qualified Omarchy layer cache
+        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true')
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/omarchy-layer-cache
+          key: omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}
 
   structure:
     name: Repository structure

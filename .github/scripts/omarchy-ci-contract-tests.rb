@@ -21,14 +21,14 @@ module OmarchyCIContractTests
     end
     names = CIContract.load_inputs["ci"]["jobs"]["omarchy"]["steps"].map { |step| step["name"] }.compact
     names.each do |name|
-      %w[removed skipped optional fake-success].each do |mutation|
+      %w[removed skipped changed-failure-policy fake-success].each do |mutation|
         reject.call("Omarchy #{name}: #{mutation}") do |value|
           steps = value["ci"]["jobs"]["omarchy"]["steps"]
           entry = steps.find { |step| step["name"] == name }
           case mutation
           when "removed" then steps.delete(entry)
           when "skipped" then entry["if"] = "false"
-          when "optional" then entry["continue-on-error"] = true
+          when "changed-failure-policy" then entry["continue-on-error"] = entry["continue-on-error"] != true
           when "fake-success" then entry["run"] = "true"
           end
         end
@@ -54,11 +54,30 @@ module OmarchyCIContractTests
         value["ci"]["jobs"]["omarchy"]["steps"].find { |step| step["id"] == "build" }["with"][key] = changed
       end
     end
-    [nil, "", "type=gha,mode=max,scope=${{ steps.cache.outputs.scope }}"].each do |changed|
-      reject.call("Omarchy omits cache retention or exports intermediate build layers") do |value|
+    [nil, "", "type=gha,mode=min,scope=${{ steps.cache.outputs.scope }}",
+     "type=local,mode=max,dest=${{ runner.temp }}/omarchy-layer-cache"].each do |changed|
+      reject.call("Omarchy omits archive retention or changes cache storage") do |value|
         row = value["ci"]["jobs"]["omarchy"]["steps"].find { |entry| entry["id"] == "build" }
         row["with"]["cache-to"] = changed
       end
+    end
+    ["Restore complete Omarchy layer cache", "Save qualified Omarchy layer cache"].each do |name|
+      ["path", "key"].each do |key|
+        reject.call("Omarchy archive #{name} changes #{key}") do |value|
+          entry = value["ci"]["jobs"]["omarchy"]["steps"].find { |step| step["name"] == name }
+          entry["with"][key] = "unqualified-cache"
+        end
+      end
+    end
+    reject.call("Omarchy archive restores a different dependency identity") do |value|
+      entry = value["ci"]["jobs"]["omarchy"]["steps"].find { |step| step["id"] == "omarchy-cache-restore" }
+      entry["with"]["restore-keys"] = "omarchy-layer-archive-v1-"
+    end
+    reject.call("Omarchy cache becomes visible before qualification") do |value|
+      steps = value["ci"]["jobs"]["omarchy"]["steps"]
+      save = steps.find { |step| step["name"] == "Save qualified Omarchy layer cache" }
+      steps.delete(save)
+      steps.insert(steps.index { |step| step["name"] == "Scan tested Omarchy image" }, save)
     end
     reject.call("Omarchy dependency export requires a second solve") do |value|
       steps = value["ci"]["jobs"]["omarchy"]["steps"]
