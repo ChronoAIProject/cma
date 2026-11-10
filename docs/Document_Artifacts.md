@@ -75,6 +75,21 @@ source revisions, 128 direct shares, 32 share links and 256 comments per
 document. Metadata receipts and aggregate size are separately bounded. These
 limits are enforced by the service, not only the editor.
 
+Ordinary mutations stop at 1024 receipts or 12 MiB of aggregate metadata.
+Owner revocation retains a separate bounded reserve: each removed direct grant
+or link permits one additional receipt and up to 4 KiB of metadata. With at most
+128 grants and 32 links, the absolute limits are 1184 receipts and 12.625 MiB;
+ordinary writes cannot spend this reserve. All existing receipts remain durable,
+so replaying a grant after revocation cannot restore access. Exact revocation
+retries return their original receipt. A new removal of an absent grant, link or
+comment returns unavailable/not-found without recording a receipt.
+
+Older API binaries reject aggregates beyond their original count/size limits.
+Deploy the compatible reader before relying on the revocation reserve; rolling
+overlap may return a typed refusal from an older replica. Once the reserve has
+been used, rollback must retain this reader and its mutation rules. Do not trim
+receipts or restore sharing to make an older binary accept a document.
+
 ## Sharing and comments
 
 New documents are private. Owners may grant an identified user read or comment
