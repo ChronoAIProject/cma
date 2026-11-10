@@ -3,13 +3,6 @@ use super::*;
 use mongodb::options::ReadConcern;
 
 #[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumer lands in the dependent #1320 public-window slice"
-    )
-)]
 pub(in crate::store) struct ReadHead {
     pub(in crate::store) last_seq: u64,
     pub(in crate::store) trusted: bool,
