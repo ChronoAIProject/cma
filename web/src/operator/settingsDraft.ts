@@ -1,4 +1,5 @@
 import type { PlatformSettings } from '@chronoai/cma-sdk';
+import { budgetChanged, reviewSpendBudget } from './spendBudget';
 
 // Rebase only fields this editor changed; newer server fields and unedited values win.
 export function reviewSettingsDraft(
@@ -25,6 +26,15 @@ export function reviewSettingsDraft(
   };
   return {
     ...current,
+    ...(budgetChanged(base.model_budget, draft.model_budget)
+      ? {
+          model_budget: reviewSpendBudget(
+            base.model_budget,
+            draft.model_budget,
+            current.model_budget,
+          ),
+        }
+      : {}),
     defaults: {
       ...current.defaults,
       sandbox_profile: reference('sandbox_profile'),
