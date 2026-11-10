@@ -330,7 +330,10 @@ async fn run_contracts(isolation: bool) {
     let record = ["CMA_RECORD_PUBLIC_CONTRACT", "CMA_UPDATE_PUBLIC_CONTRACT"]
         .iter()
         .any(|key| std::env::var_os(key).is_some_and(|value| value == "1"));
-    assert!(!isolation || !record, "isolation proof must compare immutable expected results");
+    assert!(
+        !isolation || !record,
+        "isolation proof must compare immutable expected results"
+    );
     let selected = std::env::var("CMA_PUBLIC_CONTRACT_FILE").ok();
     let mut total = 0;
     for path in paths() {
