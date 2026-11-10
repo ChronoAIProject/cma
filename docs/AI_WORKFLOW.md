@@ -1,76 +1,120 @@
 # AI Task Workflow
 
-GitHub Issues are the single source of task state for CMA. A local branch, a worktree, a chat message, a stale document or an unmerged PR cannot replace the Issue's current status and acceptance evidence.
+GitHub Issues hold CMA task scope, ownership, decisions and acceptance evidence.
+A branch, worktree, chat report or unmerged PR is evidence of work, not a completed
+delivery. Use [PROJECT_STATE.md](PROJECT_STATE.md) to find the current coordination
+records; the linked issue remains authoritative.
 
-## Select a task
+## Select and understand the task
 
-1. List open Issues and select an Issue carrying the repository's existing `status:ready` label. Read the complete body, comments, linked PRs and related Issues.
-2. Confirm that the Issue describes one independently reviewable result. Its acceptance checklist must cover the problem, evidence, scope, verification, dependencies, delivery boundary and required permissions.
-3. Check that the Issue is not already `in-progress`, `blocked`, assigned through an active branch/PR, or covered by a merged change awaiting deployment acceptance. Search by key terms before claiming it.
-4. If any required fact is missing, leave the Issue open without `status:ready` and record the missing fact or blocker. Do not turn an old report, TODO or code preference into a ready task.
+1. Start from an explicit assignment or an issue carrying the existing
+   `status:ready` label. Read its complete body, comments, linked PRs, dependencies
+   and acceptance checklist. A label does not override a newer blocker.
+2. Identify one independently reviewable result, the affected layer, the required
+   permissions, and where delivery ends: repository documentation, merged code,
+   deployment, production verification, or a measured qualification window.
+3. Search existing issues and open or merged PRs before implementing. A merged
+   change awaiting deployment acceptance needs verification, not a duplicate fix.
+4. Record missing facts and the exact condition that resolves them. Do not infer
+   production state, available capacity or authorization from an old task list.
 
-The current task pool and evidence boundary are in [`PROJECT_STATE.md`](PROJECT_STATE.md). The linked Issue remains authoritative when the document and Issue differ.
+Read [CLAUDE.md](../CLAUDE.md) and any applicable directory instructions before
+editing. Keep changes in their owning layer and update `infra/` when deployment
+surface changes. Existing runbooks and interface contracts remain authoritative;
+this intake guide does not replace them.
 
-## Check conflicts and dependencies
+## Check ownership and workspace state
 
-Before editing, fetch the target baseline and inspect all local work:
+Verify the authorized GitHub account before GitHub or git work. Do not switch a
+shared account to resolve an identity mismatch; report it to the task lead.
 
 ```sh
-git fetch origin develop --prune
-git status --short
+gh auth status --active
+git status --short --branch
 git worktree list
-gh issue view <number> --repo ChronoAIProject/cma
+gh issue view <number> --repo ChronoAIProject/cma --comments
 gh pr list --repo ChronoAIProject/cma --state open
+git fetch origin
 ```
 
-Never reset, clean, stash, amend or overwrite a dirty worktree that was not created for the task. If a dirty file overlaps the Issue, stop and report the conflict or use a new worktree. A branch name, open PR or current diff is evidence of active work; do not start a duplicate implementation.
+Reuse the task's dedicated worktree when one is already assigned. Otherwise use
+an isolated worktree and the branch convention specified by the assignment,
+based on the current integration branch. Do not enter, clean, reset, stash or
+rewrite another task's worktree. Inspect overlapping branches and PRs; coordinate
+ownership on the issue before making conflicting edits.
 
-Check every dependency named by the Issue. External API behavior, a deployment image, an owner authorization, a production fixture or a missing credential is a real prerequisite. If it is unavailable, add the exact missing condition and its release condition to the Issue, apply `blocked`, and stop implementation.
+Comment on the issue with the accepted scope, branch or existing PR, dependencies
+and delivery boundary. Preserve unrelated labels and assignments. Use the
+repository's existing `in-progress`, `blocked` and `status:ready` labels when
+appropriate; do not treat a proposed owner as confirmed capacity.
 
-## Claim and implement
+## Implement and verify
 
-Claim only after the checks pass. Use a clean worktree and the repository branch convention:
+Keep commits single-purpose and explain why the change is needed. Reuse existing
+contracts and implementations; include meaningful success and failure checks for
+changed behavior. Run the affected checks required by the issue and repository,
+respect shared build limits, and leave full CI gates enabled. For documentation,
+check the changed links, claims, structure, file sizes, whitespace and secrets;
+do not describe unrun runtime tests as passing.
 
-```sh
-git worktree add /path/to/worktree -b codex/<issue-number>-<short-name> origin/develop
-```
+Keep the following evidence separate:
 
-Add `in-progress` to the Issue and comment with the branch or PR URL. Preserve the existing labels and assignments. Keep the implementation within the Issue's scope; put implementation, tests and documentation in one Issue checklist rather than creating step Issues.
+| Evidence | What it establishes |
+|---|---|
+| Source, unit, integration or contract checks | Behavior under the stated local or CI conditions |
+| Image, manifest and asset checks | Identity and consistency of the tested deployment artifact |
+| Deployed observation | Behavior of the named environment, revision and configuration |
+| Owner/provider acceptance | The specific permission or external contract that was verified |
+| Calendar-bound qualification | Only the elapsed, complete window required by the gate |
 
-Read `CLAUDE.md` and any deeper applicable instructions before editing. Keep each file in its owning layer, update `infra/` when deployment surface changes, and keep public interface claims tied to evidence. Do not add a root entry or weaken a CI gate.
+For runtime acceptance, record source SHA, CI run/attempt, image digests,
+configuration/flags, schema and reader floor, environment, time window, sample
+count and sanitized raw evidence. Keep first-attempt failures and distinguish
+PASS, FAIL, BLOCKED and NOT_RUN. Cancelled, skipped, missing or retry-only evidence
+does not qualify as a first-attempt pass.
 
-## Verify and submit
+An unavailable dependency blocks its dependent action. Continue independent,
+authorized work and record the blocker, responsible role and release condition.
+Do not invent credentials, targets, fixtures, provider behavior or measurements.
+Production mutation, data deletion and policy changes require their explicit
+scope and authorization; a documentation draft does not provide it.
 
-Start with the narrowest meaningful checks for the changed behavior, then run the repository checks required by the Issue and its affected layer. Distinguish these results:
+## Submit, review and release
 
-- source/unit or contract tests prove local behavior;
-- image and manifest checks prove build/deployment consistency;
-- a deployed environment check proves the named deployment and its exact revision;
-- owner or external-provider acceptance proves the authorization and provider boundary.
+Reuse an existing valid PR for the task; otherwise open one logical PR into
+`develop` after the required local checks. Link the issue with `Closes #N` only
+when the PR resolves its full delivery scope. Use `Part of #N` or `Refs #N` when
+production acceptance, external decisions or other implementation remains.
+State the final behavior, validation, evidence limits and remaining dependencies
+in the PR body, and link the PR from the issue.
 
-Do not describe one category as another. If a test is unavailable, state why and leave the corresponding acceptance item open.
+Before a push, fetch and merge the current integration branch into the task
+branch. Preserve published history: no rebase or force push. Update only the PR
+assigned to this task and follow the active coordination policy for pushes and
+re-review. Record the new head when the reviewer needs a delta review.
 
-Open one PR into `develop` with the Issue linked. The PR description must state the resulting behavior, the evidence used, the checks run and any remaining deployment or provider acceptance. Add the PR URL to the Issue. Keep the Issue `in-progress` until its stated delivery boundary is met.
+Follow [CLAUDE.md](../CLAUDE.md) and [RELEASE.md](RELEASE.md) for normal merge and
+release rules. Any temporary sprint exception must be explicitly authorized for
+the PR and retain independent review, the required validation and exact commit
+matching. Restore and verify any temporarily changed protection immediately.
+A merge exception does not authorize deployment or promotion of a red artifact.
 
-## Stop and report
+Deployment belongs to the designated release owner. Use the approved artifact
+and preserve retained assets, sessions, reader compatibility and rollback
+constraints. Implementation teams attach the relayed production evidence to the
+issue; a merged PR alone does not establish production acceptance.
 
-Stop implementation and update the Issue when:
+## Maintain the evidence map
 
-- the current behavior cannot be reproduced or the reported root cause is not established;
-- another branch, PR, dirty worktree or session owns overlapping work;
-- a dependency requires an unavailable API contract, credential, deployment, external service or owner decision;
-- validation would mutate production or a user-owned resource without the Issue's explicit acceptance boundary;
-- a test fails for an unrelated pre-existing reason and fixing it would expand scope;
-- the proposed fix would change a public contract, deployment surface or persisted schema without the required compatibility evidence.
+Update the issue when work starts, its PR is ready, it merges, and its required
+verification completes. Record scope changes and decisions with dated evidence;
+do not overwrite a failed observation with a later successful attempt.
 
-Record the observed command/result, the blocker, and the exact condition that unblocks it. Do not label a task ready merely because the blocker is inconvenient.
+Close only when the issue's acceptance and delivery boundary are met. A completed
+report can close while its linked engineering work remains open. A policy draft
+awaiting confirmation or an unfinished qualification window remains open.
 
-## Update state
-
-- Leave an unprepared candidate open without `status:ready`.
-- Use `status:ready` only when another AI can begin from the Issue without guessing.
-- Use `in-progress` only with an explicit claimant and a recorded branch or PR.
-- Use `blocked` with a concrete blocker and an unblocking condition.
-- Close only after every Issue acceptance item and its delivery boundary are satisfied. Merging code is not deployment acceptance unless the Issue explicitly says the result ends at merge.
-
-After a meaningful state change, update the Issue first, then update [`PROJECT_STATE.md`](PROJECT_STATE.md) with the evidence link. Keep the project document as a short evidence map; do not duplicate a full Issue task table there.
+Keep [PROJECT_STATE.md](PROJECT_STATE.md) as a short index of authoritative
+coordination and evidence records. Update links when responsibility moves; keep
+live assignments, decisions and checklists in GitHub rather than duplicating a
+backlog or naming a permanent "next task" in repository documentation.
