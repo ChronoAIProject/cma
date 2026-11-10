@@ -21,7 +21,7 @@ fn entries() -> &'static [Entry] {
         .unwrap()
     })
 }
-pub(super) fn documented_denial(operation: &str, code: &str) -> bool {
+pub(super) fn known_not_found(code: &str) -> bool {
     static INVENTORY: OnceLock<serde_json::Value> = OnceLock::new();
     let inventory = INVENTORY.get_or_init(|| {
         serde_json::from_str(include_str!(
@@ -29,12 +29,21 @@ pub(super) fn documented_denial(operation: &str, code: &str) -> bool {
         ))
         .unwrap()
     });
+    // required_problems lists mandatory examples, not every legal refusal of
+    // each route. Require a known public concealment code; the probe separately
+    // requires exact status/body equivalence for foreign and absent resources.
     code.ends_with("_not_found")
-        && inventory["operations"][operation]["required_problems"]
-            .as_array()
+        && inventory["operations"]
+            .as_object()
             .unwrap()
-            .iter()
-            .any(|expected| expected == code)
+            .values()
+            .any(|operation| {
+                operation["required_problems"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|expected| expected == code)
+            })
 }
 
 pub(super) fn included(case: &Case) -> bool {
