@@ -14,6 +14,7 @@ export default defineConfig({
     'usage-filters-image.check.ts',
     'owner-chart-image.check.ts',
     'spend-controls.check.ts',
+    'agent-polling.check.ts',
   ],
   workers: 1,
   retries: 0,
