@@ -82,6 +82,9 @@ data:
   # Independent placement rollout selections; these do not attest continuity.
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
   CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED: "false"
+  # Saving any nonempty budget policy requires compatible serving/rollback readers.
+  # Release operators enable writes only after establishing that reader baseline.
+  CHRONO_MODEL_BUDGET_WRITES_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
   CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS: "600"
   CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS: "1800"
@@ -205,6 +208,8 @@ data:
   # include it in scoped schema/runtime grants before this image is activated.
   # Private model_budget settings have no manifest defaults; keep general rollout
   # disabled pending request-level enforcement. See CMA_Model_Budget_Controls.md.
+  # Admin Operations settings supply all platform/owner/turn controls, including
+  # explicit period, thresholds, reserve, lag, call limit and IANA day timezone.
   # TTL applies to existing Activity records; lowering it can remove history.
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
   # Canonical platform origin for scoped runtime service proxying.

@@ -348,7 +348,7 @@ async fn start_turn(
     if let Some(policy) = &live_policy {
         record.reservation.revalidate(policy).map_err(domain)?;
         let mut owner = owner_budget(store, agent, policy, now, session).await?;
-        owner.advance(now).map_err(domain)?;
+        owner.advance(policy, now).map_err(domain)?;
         if owner
             .spent
             .checked_add(owner.reserved)
