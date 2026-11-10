@@ -115,8 +115,8 @@ pub(super) async fn probe(scene: &Scenario, symbols: &Symbols, case: &Case) {
             if method != "HEAD" {
                 let code = body["code"].as_str().expect("typed denial code");
                 assert!(
-                    inventory::documented_denial(&case.operation, code),
-                    "{} undocumented denial: {code}",
+                    inventory::known_not_found(code),
+                    "{} unknown concealment code: {code}",
                     case.id
                 );
                 assert!(
