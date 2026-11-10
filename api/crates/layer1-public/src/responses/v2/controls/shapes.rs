@@ -100,7 +100,10 @@ public_enum!(
         TargetTurnChanged,
         RuntimeUnavailable,
         RuntimeLost,
-        ExecutionFailed
+        ExecutionFailed,
+        OwnerBudgetExhausted,
+        TurnBudgetExhausted,
+        BudgetUnavailable
     ]
 );
 
@@ -147,7 +150,13 @@ impl From<CommandStatusView> for V2CommandStatus {
             turn_sequence: value.turn_sequence,
             observed_cursor: value.observed_cursor,
             delivery: value.delivery.map(Into::into),
-            failure: value.failure.map(|code| code.legacy_code().into()),
+            failure: value.failure.map(|code| {
+                if code.budget_error().is_some() {
+                    code.into()
+                } else {
+                    code.legacy_code().into()
+                }
+            }),
         }
     }
 }

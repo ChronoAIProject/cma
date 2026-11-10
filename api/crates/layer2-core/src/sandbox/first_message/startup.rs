@@ -1,6 +1,27 @@
 use super::{FirstMessageDelivery, FirstMessageFailure, FirstMessageRecord, SandboxModelError};
 
 impl FirstMessageRecord {
+    pub fn refuse_budget(
+        &mut self,
+        reason: crate::budget::BudgetError,
+        at: String,
+    ) -> Result<(), SandboxModelError> {
+        self.validate()?;
+        if self.state != FirstMessageDelivery::Queued || !self.unattempted() {
+            return Err(SandboxModelError::invalid_value(
+                "first_message.budget_refusal",
+            ));
+        }
+        self.state = FirstMessageDelivery::Failed;
+        self.failed_at = Some(at.clone());
+        self.failure = Some(FirstMessageFailure::new(
+            reason.code(),
+            reason.guidance(),
+            false,
+            at,
+        )?);
+        self.validate()
+    }
     /// Close a never-dispatched creation input when conversation startup ends.
     /// This does not authorize retry on the failed Agent or invent a turn.
     pub fn fail_startup(&mut self, at: String) -> Result<(), SandboxModelError> {
@@ -29,8 +50,13 @@ impl FirstMessageRecord {
     pub(super) fn unattempted_startup_failure(&self) -> bool {
         self.unattempted()
             && self.failure.as_ref().is_some_and(|failure| {
-                failure.code == "agent_startup_failed"
-                    && !failure.retryable
+                matches!(
+                    failure.code.as_str(),
+                    "agent_startup_failed"
+                        | "owner_budget_exhausted"
+                        | "turn_budget_exhausted"
+                        | "budget_unavailable"
+                ) && !failure.retryable
                     && self.failed_at.as_ref() == Some(&failure.occurred_at)
             })
     }
