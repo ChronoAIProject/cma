@@ -113,22 +113,12 @@ pub(super) async fn probe(scene: &Scenario, symbols: &Symbols, case: &Case) {
                 body["code"]
             );
             if method != "HEAD" {
-                let code = if case.operation.ends_with("/attachments") {
-                    "resource_not_found"
-                } else if case.operation.contains("/launches/") {
-                    "launch_not_found"
-                } else if case.operation.contains("/documents/") {
-                    "document_not_found"
-                } else if case.operation.contains("/workspaces/") {
-                    "workspace_not_found"
-                } else if case.operation.contains("/worktrees/") {
-                    "worktree_not_found"
-                } else if case.operation.contains("/sandboxes/") {
-                    "sandbox_not_found"
-                } else {
-                    "agent_not_found"
-                };
-                assert_eq!(body["code"], code, "{} exact denial", case.id);
+                let code = body["code"].as_str().expect("typed denial code");
+                assert!(
+                    inventory::documented_denial(&case.operation, code),
+                    "{} undocumented denial: {code}",
+                    case.id
+                );
                 assert!(
                     body.as_object()
                         .unwrap()
