@@ -35,7 +35,7 @@ spec:
         # directly rather than through the Service's cluster IP.
         port: 8080
         requestPath: /livez
-        checkIntervalSec: 5
-        timeoutSec: 2
-        healthyThreshold: 2
-        unhealthyThreshold: 3
+        # HealthCheckPolicy exposes the provider's bounded edge probe budget;
+        # its CRD does not accept interval, timeout, or threshold overrides.
+        # The kubelet liveness probe below has an explicit two-second timeout
+        # and three-failure budget so local process health remains bounded too.
