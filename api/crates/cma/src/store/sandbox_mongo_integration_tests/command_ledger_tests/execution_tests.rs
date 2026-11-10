@@ -439,3 +439,6 @@ async fn operation_command_lookup_is_exact_and_rejects_duplicate_bindings() {
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "budget_execution_tests.rs"]
+mod budget_execution;

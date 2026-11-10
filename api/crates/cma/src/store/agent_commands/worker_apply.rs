@@ -161,6 +161,14 @@ pub(super) async fn write(
     lane: &CommandLane,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
+    super::super::budget::release_unexecuted(store, command, session)
+        .await
+        .map_err(|error| match error {
+            super::super::agent_conversation_store::ApplyError::Driver(error) => {
+                ApplyError::Driver(error)
+            }
+            _ => ApplyError::Domain(CommandLedgerError::Unavailable),
+        })?;
     super::super::trigger_first_messages::project_terminal(store, command, session)
         .await
         .map_err(|_| CommandLedgerError::Conflict)?;
