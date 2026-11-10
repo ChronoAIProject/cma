@@ -5,6 +5,9 @@ use crate::InvalidPressurePolicy;
 /// A protocol-independent core refusal or dependency failure.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CoreError {
+    /// The compatible-reader rollout has not enabled model budget settings writes.
+    #[error("saving model budget settings is not available yet")]
+    ModelBudgetWritesUnavailable,
     /// The caller lacks the required authority.
     #[error("forbidden")]
     Forbidden,
@@ -38,6 +41,7 @@ impl CoreError {
     /// Stable machine-readable code for public-interface projections.
     pub fn code(&self) -> &'static str {
         match self {
+            Self::ModelBudgetWritesUnavailable => "model_budget_writes_unavailable",
             Self::Forbidden => "forbidden",
             Self::InvalidRequest(_) => "invalid_request",
             Self::InvalidState(_) => "invalid_state",

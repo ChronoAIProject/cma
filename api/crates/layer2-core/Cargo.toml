@@ -12,6 +12,7 @@ test-support = []
 async-trait = { workspace = true }
 base64 = { workspace = true }
 futures-util = { workspace = true }
+jiff = { workspace = true }
 layer3-adapter = { workspace = true }
 ring = { workspace = true }
 serde = { workspace = true }

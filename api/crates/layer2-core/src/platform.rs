@@ -150,7 +150,7 @@ impl UsageReportingSettings {
 pub struct PlatformSettings {
     #[serde(
         default,
-        skip_serializing_if = "crate::budget::BudgetSettings::is_disabled"
+        skip_serializing_if = "crate::budget::BudgetSettings::is_empty_disabled"
     )]
     pub model_budget: crate::budget::BudgetSettings,
     /// Presentation policy; omit the complete disabled section for strict predecessors.

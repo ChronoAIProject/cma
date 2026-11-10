@@ -232,13 +232,15 @@ impl From<MarketplaceSettingsBody> for MarketplaceSettings {
 pub(crate) struct SettingsView {
     revision: u64,
     settings: PlatformSettingsBody,
+    model_budget_writes_available: bool,
 }
 
-impl From<StoredPlatformSettings> for SettingsView {
-    fn from(value: StoredPlatformSettings) -> Self {
+impl SettingsView {
+    pub(crate) fn new(value: StoredPlatformSettings, model_budget_writes_available: bool) -> Self {
         Self {
             revision: value.revision,
             settings: value.settings.into(),
+            model_budget_writes_available,
         }
     }
 }
@@ -372,8 +374,14 @@ const LIMITS: &[FieldSpec] = &[
 const TRIGGERS: &[FieldSpec] = &[leaf("enabled"), leaf("orchestration_paused")];
 const MARKETPLACE: &[FieldSpec] = &[leaf("enabled")];
 const USAGE_REPORTING: &[FieldSpec] = &[leaf("measured_visible")];
+const MODEL_BUDGET: &[FieldSpec] = &[
+    leaf("enabled"),
+    leaf("platform"),
+    leaf("owners"),
+    leaf("default_policy"),
+];
 const PLATFORM: &[FieldSpec] = &[
-    branch("model_budget", &[leaf("owners"), leaf("default_policy")]),
+    branch("model_budget", MODEL_BUDGET),
     branch("usage_reporting", USAGE_REPORTING),
     branch("defaults", DEFAULTS),
     branch("inactivity", INACTIVITY),
@@ -384,7 +392,7 @@ const PLATFORM: &[FieldSpec] = &[
 ];
 const REPLACE: &[FieldSpec] = &[leaf("expected_revision"), branch("settings", PLATFORM)];
 const PATCH: &[FieldSpec] = &[
-    branch("model_budget", &[leaf("owners"), leaf("default_policy")]),
+    branch("model_budget", MODEL_BUDGET),
     branch("usage_reporting", USAGE_REPORTING),
     leaf("expected_revision"),
     branch("defaults", DEFAULTS),
