@@ -11,6 +11,7 @@ use super::agent_control_lineage::{
     fence_control_lineage, load_control_snapshot, ControlSnapshot, LineageError,
 };
 use super::agent_control_receipt::{ControlOperation, ControlRequest};
+use super::agent_log_integrity::carry_integrity_for_revision;
 use super::agents::agent_replacement_fields;
 use super::sandbox_mongo::{
     commit_transaction, is_transient, signed, start_transaction, wait_for_reconciliation,
@@ -260,6 +261,19 @@ async fn replace_agent(
     };
     filter.insert(operation.receipt_field(), doc! { "$exists": false });
     let mut fields = agent_replacement_fields(next)
+        .map_err(store_error)
+        .map_err(ApplyError::Domain)?;
+    let current_row = store
+        .agents
+        .find_one(doc! { "_id": agent.id.as_str() })
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .ok_or(ApplyError::Domain(AgentControlStoreError::NotFound))?;
+    let current_agent = super::agents::read_agent(&current_row)
+        .map_err(store_error)
+        .map_err(ApplyError::Domain)?;
+    carry_integrity_for_revision(&current_row, &current_agent, next, &mut fields)
         .map_err(store_error)
         .map_err(ApplyError::Domain)?;
     fields.extend(operation.receipt_update(next).map_err(ApplyError::Domain)?);
