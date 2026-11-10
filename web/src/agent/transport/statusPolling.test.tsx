@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AgentV2Session } from './client';
-import { harness, json } from './controller.fixture';
+import { harness, json, queuedPage } from './controller.fixture';
 import { agentTransportJournal } from './journal';
 import { useQueuedInputs } from './queuedInputsStatus';
 import { useControlStatus } from './controlStatus';
@@ -17,6 +17,11 @@ afterEach(() => {
 });
 const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 const unchangedIdentity = () => false;
+const unavailable = (status: number) =>
+  json(
+    { error: { type: 'server_error', code: 'unavailable', message: 'Unavailable', param: null } },
+    status,
+  );
 function fixture() {
   const h = harness();
   const journal = agentTransportJournal(sessionStorage, 'alice', 'agt_1');
@@ -27,6 +32,68 @@ function fixture() {
   });
   return { ...h, journal, session };
 }
+
+it.each(['hint', 'focus', 'visibility', 'refresh'])(
+  'recovers queue discovery after a compatibility 404 through %s without remounting',
+  async (trigger) => {
+    const h = fixture();
+    h.listQueued.mockImplementationOnce(async () => unavailable(404));
+    const hook = renderHook(
+      ({ revision }) => useQueuedInputs(h.session, true, true, revision, unchangedIdentity),
+      { initialProps: { revision: '0' } },
+    );
+    await advance(1000);
+    expect(h.listQueued).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.error).toBeUndefined();
+    h.listQueued.mockImplementation(async () => json(queuedPage('Discovered after deployment')));
+    if (trigger === 'hint') hook.rerender({ revision: '1' });
+    else if (trigger === 'refresh') act(() => hook.result.current.refresh());
+    else if (trigger === 'focus') act(() => window.dispatchEvent(new Event('focus')));
+    else {
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      visibility.mockReturnValue('visible');
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+    }
+    await advance(trigger === 'refresh' ? 100 : 1000);
+    expect(h.listQueued).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.items[0]?.input).toBe('Discovered after deployment');
+    expect(h.currentUser).toHaveBeenCalledTimes(3);
+    expect(h.post).not.toHaveBeenCalled();
+    hook.unmount();
+  },
+);
+
+it.each(['hint', 'refresh'])(
+  'retains a queue and real failure through a compatibility 404, then recovers on %s',
+  async (trigger) => {
+    const h = fixture();
+    h.listQueued
+      .mockImplementationOnce(async () => json(queuedPage('Retained message')))
+      .mockImplementationOnce(async () => unavailable(503))
+      .mockImplementationOnce(async () => unavailable(404))
+      .mockImplementation(async () => json(queuedPage('Current message')));
+    const hook = renderHook(
+      ({ revision }) => useQueuedInputs(h.session, true, true, revision, unchangedIdentity),
+      { initialProps: { revision: '0' } },
+    );
+    await advance(6000);
+    expect(h.listQueued).toHaveBeenCalledTimes(3);
+    expect(hook.result.current.items[0]?.input).toBe('Retained message');
+    expect(hook.result.current.error).toContain('could not be refreshed');
+    await advance(60000);
+    expect(h.listQueued).toHaveBeenCalledTimes(3);
+    if (trigger === 'hint') hook.rerender({ revision: '1' });
+    else act(() => hook.result.current.refresh());
+    await advance(trigger === 'refresh' ? 100 : 0);
+    expect(h.listQueued).toHaveBeenCalledTimes(4);
+    expect(hook.result.current.items[0]?.input).toBe('Current message');
+    expect(hook.result.current.error).toBeUndefined();
+    expect(h.currentUser).toHaveBeenCalledTimes(6);
+    expect(h.post).not.toHaveBeenCalled();
+    hook.unmount();
+  },
+);
 
 it('bounds stream-driven queue reads while preserving both fresh authorization checks', async () => {
   const h = fixture();

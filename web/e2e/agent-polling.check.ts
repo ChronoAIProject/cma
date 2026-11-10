@@ -2,6 +2,67 @@ import { test, expect } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import { binding, LocalAgentV2 } from './agent-v2.fixture';
 
+test('LOCAL queue discovery resumes after an older server returns 404', async ({
+  page,
+  baseURL,
+}, info) => {
+  const fixture = new LocalAgentV2();
+  fixture.append({ type: 'turn_started', turn_sequence: 1 }, binding);
+  let legacy = true;
+  let reads = 0;
+  try {
+    await fixture.route(page, baseURL!);
+    await page.route('**/api/v2/agents/agt_contract/queued-inputs', (route) => {
+      reads += 1;
+      return route.fulfill(
+        legacy
+          ? {
+              status: 404,
+              json: {
+                error: {
+                  type: 'invalid_request_error',
+                  code: 'not_found',
+                  message: 'Feature unavailable',
+                  param: null,
+                },
+              },
+            }
+          : {
+              json: {
+                object: 'cma.agent.queued_inputs',
+                agent_id: 'agt_contract',
+                data: [],
+                next_after: null,
+              },
+            },
+      );
+    });
+    await page.goto('/agents/agt_contract');
+    await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
+    await expect.poll(() => reads).toBeGreaterThan(0);
+    legacy = false;
+    fixture.append({
+      type: 'usage',
+      input_tokens: 1,
+      output_tokens: 1,
+      context_used: 2,
+      context_window: 100000,
+    });
+    await expect.poll(() => reads).toBeGreaterThanOrEqual(2);
+    expect(reads).toBeLessThanOrEqual(3);
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.errors).toEqual([]);
+    expect(fixture.boundary.errors).toEqual([]);
+    expect(fixture.boundary.unexpected).toEqual([]);
+    await info.attach('compatibility-recovery', {
+      body: JSON.stringify({ reads, remounted: false }),
+      contentType: 'application/json',
+    });
+  } finally {
+    await fixture.close(page);
+  }
+});
+
 for (const fail of [false, true]) {
   test(`LOCAL stream hints preserve queue ${fail ? 'failure backoff' : 'polling bounds'}`, async ({
     page,
