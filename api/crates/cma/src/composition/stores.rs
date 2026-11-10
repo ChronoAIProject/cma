@@ -23,6 +23,12 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .clone()
             .with_machine_runtime_version(config.runtime.machine_sandbox_image.clone()),
     );
+    stores.sandbox_model = Arc::new(
+        (*stores.sandbox_model)
+            .clone()
+            .prepare_bounded_admission(&config.bounded_admission_agents)
+            .await?,
+    );
     Ok(Arc::new(
         stores.with_writer_policy(config.task_experience.clone()),
     ))
