@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "reads/fences.rs"]
 mod fences;
+#[path = "reads/history.rs"]
+mod history_tests;
 #[path = "reads/stream.rs"]
 mod stream;
 #[path = "reads/window.rs"]
