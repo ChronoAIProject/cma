@@ -13,8 +13,17 @@ function setup() {
   budget.owners = [
     { owner: 'fixture-owner', policy: { ...budget.default_policy!, turn_limit: 60 } },
   ];
-  const initial = { ...stored, settings: { ...settings, model_budget: budget } };
+  const initial = {
+    ...stored,
+    model_budget_writes_available: true,
+    settings: { ...settings, model_budget: budget },
+  };
   client.admin.readSettings.mockResolvedValue(initial);
+  client.admin.replaceSettings.mockImplementation(async (body) => ({
+    revision: body.expected_revision + 1,
+    settings: body.settings,
+    model_budget_writes_available: true,
+  }));
   return { client, budget, initial, user: userEvent.setup() };
 }
 const change = (label: string, value: string) =>
@@ -69,6 +78,7 @@ describe('admin spend controls', () => {
     const { client, user } = setup();
     client.admin.readSettings.mockResolvedValue({
       ...stored,
+      model_budget_writes_available: true,
       settings: { ...settings, model_budget: { enabled: false, owners: [] } },
     });
     render(<PlatformSettings client={client} />);
@@ -93,6 +103,7 @@ describe('admin spend controls', () => {
       };
       const current = {
         revision: 8,
+        model_budget_writes_available: true,
         settings: {
           ...initial.settings,
           retention: { agent_log_days: 45 },
