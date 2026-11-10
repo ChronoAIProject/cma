@@ -40,6 +40,14 @@ export async function restorePlatformDefaults() {
 }
 ```
 
+Settings responses expose optional `model_budget_writes_available` separately
+from the stored policy. Only explicit `true` permits spend-control saves; false
+or missing means saving is unavailable. This response capability is not writable
+policy. A closed-gate refusal uses `model_budget_writes_unavailable` and retains
+the current revision. A full replacement that omits an unchanged `model_budget`
+preserves its stored value, so unrelated settings can still be updated. Never
+silently omit an edited policy or retry a refused save automatically.
+
 Settings replacement, patch and reset use `expected_revision`. Patches contain
 at least one complete section; omitted sections remain unchanged, while null
 sections and empty patches are refused. Reread after a conflict and review the

@@ -4,7 +4,12 @@ import { LocalUsageMetrics } from './usage-metrics.fixture';
 import { testBudget } from '../src/operator/spendTestFixtures';
 import type { PlatformSettings } from '@chronoai/cma-sdk';
 
-async function fixture(page: Page, baseURL: string) {
+async function fixture(
+  page: Page,
+  baseURL: string,
+  availability: { value?: boolean } = { value: true },
+) {
+  let available = availability.value;
   const boundary = new LocalStartup();
   const metrics = new LocalUsageMetrics();
   await boundary.route(page, baseURL);
@@ -34,21 +39,29 @@ async function fixture(page: Page, baseURL: string) {
     if (route.request().method() === 'PUT') {
       const body = route.request().postDataJSON() as (typeof writes)[number];
       writes.push(body);
-      if (failure)
+      const gateClosed = available !== true && body.settings.model_budget !== undefined;
+      if (failure || gateClosed)
         return route.fulfill({
-          status: failure,
+          status: gateClosed ? 503 : failure,
           json: {
-            status: failure,
+            status: gateClosed ? 503 : failure,
             title: 'Settings refused',
-            code: failure === 409 ? 'settings_conflict' : 'invalid_request',
+            code: gateClosed
+              ? 'model_budget_writes_unavailable'
+              : failure === 409
+                ? 'settings_conflict'
+                : 'invalid_request',
           },
         });
       expect(body.expected_revision).toBe(revision);
       expect(body.settings.future).toEqual(settings.future);
-      settings = body.settings;
+      settings = {
+        ...body.settings,
+        model_budget: body.settings.model_budget ?? settings.model_budget,
+      };
       revision += 1;
     } else expect(route.request().method()).toBe('GET');
-    await route.fulfill({ json: { revision, settings } });
+    await route.fulfill({ json: { revision, settings, model_budget_writes_available: available } });
   });
   await page.route('**/api/v1/admin/activity*', (route) =>
     route.fulfill({
@@ -72,6 +85,9 @@ async function fixture(page: Page, baseURL: string) {
   return {
     boundary,
     writes,
+    setAvailable: (value: boolean) => {
+      available = value;
+    },
     setFailure: (status: number) => {
       failure = status;
     },
@@ -146,5 +162,59 @@ test('LOCAL conflicts require review and server validation errors retain the dra
     default_policy: { turn_limit: 80 },
   });
   expect(local.boundary.writes).toEqual([]);
+  expect(local.boundary.errors).toEqual([]);
+});
+
+for (const available of [false, undefined]) {
+  test(`LOCAL spend writes stay disabled when availability is ${available}`, async ({
+    page,
+    baseURL,
+  }) => {
+    const local = await fixture(page, baseURL!, { value: available });
+    await page.goto('/operations?tab=settings');
+    await expect(page.getByText(/Saving spend controls is not available yet/)).toBeVisible();
+    await expect(page.getByLabel('Enable spend controls')).toBeDisabled();
+    await expect(
+      page.getByLabel('Per-turn cap (accounting units)', { exact: true }),
+    ).toBeDisabled();
+    await page.getByLabel('Agent log retention (days)').fill('45');
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await expect(page.getByText('Settings saved at revision 5.')).toBeVisible();
+    expect(local.writes[0]!.settings).not.toHaveProperty('model_budget');
+    await expect(page.getByLabel('Per-turn cap (accounting units)', { exact: true })).toHaveValue(
+      String(testBudget.default_policy!.turn_limit),
+    );
+    expect(local.boundary.errors).toEqual([]);
+  });
+}
+
+test('LOCAL a closed save gate retains the draft for explicit available-revision review', async ({
+  page,
+  baseURL,
+}) => {
+  const local = await fixture(page, baseURL!);
+  await page.goto('/operations?tab=settings');
+  const cap = page.getByLabel('Per-turn cap (accounting units)', { exact: true });
+  await cap.fill('80');
+  local.setAvailable(false);
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.getByRole('alert')).toContainText('Saving spend controls is not available yet');
+  await expect(page.getByText(/The current revision is 4/)).toBeVisible();
+  await expect(cap).toHaveValue('80');
+  await expect(cap).toBeDisabled();
+  await page.getByRole('button', { name: 'Review retained draft' }).click();
+  await expect(page.getByRole('button', { name: 'Save settings' })).toBeDisabled();
+  expect(local.writes).toHaveLength(1);
+  local.setAvailable(true);
+  await page.getByRole('button', { name: 'Refresh settings availability' }).click();
+  await expect(page.getByText(/The current revision is 4/)).toBeVisible();
+  await page.getByRole('button', { name: 'Review retained draft' }).click();
+  await expect(cap).toBeEnabled();
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.getByText('Settings saved at revision 5.')).toBeVisible();
+  expect(local.writes.at(-1)!.settings.model_budget).toMatchObject({
+    default_policy: { turn_limit: 80 },
+  });
+  expect(local.writes.at(-1)!).not.toHaveProperty('model_budget_writes_available');
   expect(local.boundary.errors).toEqual([]);
 });
