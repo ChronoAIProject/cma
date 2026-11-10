@@ -27,7 +27,6 @@ const SEMANTIC_FIELD: &str = "semantic_checkpoint_v1";
 const INTEGRITY_FORMAT: i64 = 1;
 const HASH_BYTES: usize = 32;
 
-#[derive(Debug)]
 pub(super) enum TransactionLogError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
