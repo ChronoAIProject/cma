@@ -39,13 +39,15 @@ pub(super) async fn configure(
         max_unobserved_units: 1,
         usage_timeout_seconds: 60,
     };
-    let mut settings = layer2_core::PlatformSettings::default();
-    settings.model_budget = BudgetSettings {
-        default_policy: None,
-        owners: vec![OwnerBudgetPolicy {
-            owner: owner.clone(),
-            policy: policy.clone(),
-        }],
+    let settings = layer2_core::PlatformSettings {
+        model_budget: BudgetSettings {
+            default_policy: None,
+            owners: vec![OwnerBudgetPolicy {
+                owner: owner.clone(),
+                policy: policy.clone(),
+            }],
+        },
+        ..Default::default()
     };
     store
         .budget_settings
