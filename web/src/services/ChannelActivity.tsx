@@ -71,6 +71,12 @@ export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFe
                       <span>{activityStateLabels[consumer.state] ?? consumer.state}</span>
                     </header>
                     <dl>
+                      {consumer.refusal_code ? (
+                        <div>
+                          <dt>Refusal reason</dt>
+                          <dd>{consumer.refusal_code}</dd>
+                        </div>
+                      ) : null}
                       <div>
                         <dt>Dispatch started</dt>
                         <dd>

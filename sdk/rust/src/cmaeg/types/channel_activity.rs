@@ -88,6 +88,9 @@ pub enum ConsumerState {
 /// Observations for one consumer of an event.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActivityConsumer {
+    /// Named terminal refusal before provider admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal_code: Option<String>,
     /// Stable consumer identity.
     pub consumer_id: String,
     /// Display name when known.

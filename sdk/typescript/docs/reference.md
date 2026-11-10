@@ -425,6 +425,13 @@ Legacy encrypted Gateway storage methods remain for older installations and migr
 
 Provider binding management uses `client.providerBindings.put/get/delete/ensureConversation/deleteConversation`. Supply the complete profile snapshot and digest for PUT. These gateway-only operations require both management capabilities; use the scoped binding credential for Responses and immutable event-context reads. Binding responses never contain the supplied credential.
 
+The opaque profile `environment` preserves CMA's
+`verified_sender_context:true` extension for an existing Agent. Enabling it
+adds a gateway-attested first line to new event turns; omitted/false disables
+it, and profile targets refuse it by name. Exact retries retain admitted input
+across policy changes. Channel Activity's optional `refusal_code` reports named
+pre-admission failures; these failures produce no chat reply.
+
 `client.providerBindings.inspectPreparation(bindingId, request)` inspects the
 generation for an authenticated, durably admitted event without changing resources.
 When it returns `state: 'pending'`, retain its exact intent and use
