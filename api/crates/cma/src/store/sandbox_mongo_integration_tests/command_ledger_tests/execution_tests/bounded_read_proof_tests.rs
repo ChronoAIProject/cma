@@ -44,7 +44,7 @@ async fn public_proof_retains_one_snapshot_when_a_writer_advances() {
         })
     );
     assert_eq!(
-        read_head(&store, &AgentId::new("agt_missing"), &mut fresh)
+        read_head(&store, &AgentId::generate(), &mut fresh)
             .await
             .unwrap(),
         None
