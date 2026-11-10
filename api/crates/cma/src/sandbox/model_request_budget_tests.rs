@@ -248,7 +248,7 @@ async fn usage_without_matching_model_or_finality_retains_the_request_hold() {
         let budget = budget(None);
         let context = context(budget.clone(), "uncertain-response");
         let permit = context
-            .reserve("budget-model", b"bounded body", 1024)
+            .reserve(br#"{"model":"budget-model","max_output_tokens":1024}"#)
             .await
             .unwrap()
             .unwrap();

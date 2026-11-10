@@ -17,16 +17,18 @@ pub(super) struct RequestPermit {
 }
 
 impl RequestBudgetContext {
-    pub async fn reserve(
-        &self,
-        model: &str,
-        body: &[u8],
-        max_output_tokens: u64,
-    ) -> Result<Option<RequestPermit>, BudgetError> {
+    pub async fn reserve(&self, body: &[u8]) -> Result<Option<RequestPermit>, BudgetError> {
+        let envelope: serde_json::Value =
+            serde_json::from_slice(body).map_err(|_| BudgetError::Unavailable)?;
         let request = ModelRequest {
-            model: model.into(),
+            model: envelope["model"]
+                .as_str()
+                .ok_or(BudgetError::Unavailable)?
+                .into(),
             input_bytes: body.len() as u64,
-            max_output_tokens,
+            max_output_tokens: envelope["max_output_tokens"]
+                .as_u64()
+                .ok_or(BudgetError::Unavailable)?,
             fingerprint: format!("{:x}", Sha256::digest(body)),
         };
         self.budget
