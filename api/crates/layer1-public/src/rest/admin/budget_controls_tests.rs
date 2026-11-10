@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn every_spend_control_roundtrips_with_revision_checks_and_confidential_audit() {
-    let fixture = fixture(false);
+    let fixture = budget_fixture(true);
     let mut settings = scoped_policy();
     settings["default_policy"] = settings["owners"][0]["policy"].clone();
     let saved = send(
@@ -48,7 +48,7 @@ async fn every_spend_control_roundtrips_with_revision_checks_and_confidential_au
 
 #[tokio::test]
 async fn invalid_or_incomplete_controls_never_mutate_the_settings_revision() {
-    let fixture = fixture(false);
+    let fixture = budget_fixture(true);
     let mut invalids = Vec::new();
     for (path, value) in [
         ("/platform/warning_percent", json!(100)),
@@ -96,7 +96,7 @@ async fn invalid_or_incomplete_controls_never_mutate_the_settings_revision() {
 
 #[tokio::test]
 async fn disabling_retains_explicit_values_without_enforcing_owner_policy() {
-    let fixture = fixture(false);
+    let fixture = budget_fixture(true);
     let mut policy = scoped_policy();
     policy["enabled"] = json!(false);
     let response = send(
