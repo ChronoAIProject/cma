@@ -1,5 +1,5 @@
 //! Measured comparator for #1591's public reader before the consumer lands.
-//! Its projected head read and shared full scanner match provider 03fb3984a;
+//! Its projected head read and shared full scanner match provider 5567c5c5b;
 //! the scanner itself is reused, including its proof queries and cursor batches.
 use super::*;
 use crate::store::agent_log_integrity::{
