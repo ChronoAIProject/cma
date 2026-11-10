@@ -12,8 +12,7 @@ use mongodb::options::ReadConcern;
 
 use super::agent_log::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
 use super::agent_log_integrity::{
-    ensure_append_batch_size, prepare_append, trusted_summary, AppendCapacity, SemanticCheckpoint,
-    TransactionLogError,
+    ensure_append_batch_size, prepare_append, trusted_summary, AppendCapacity, TransactionLogError,
 };
 use super::agents::{agent_replacement_fields, read_agent};
 use super::sandbox_mongo::{
@@ -195,8 +194,10 @@ async fn apply_mutation(
                     },
                 )
                 .await?;
-                let semantic = SemanticCheckpoint::from_entries(&current, &entries)
-                    .map_err(ApplyError::Domain)?;
+                let semantic = crate::store::agent_log_integrity::audit_checkpoint(
+                    store, &current, &entries, session,
+                )
+                .await?;
                 (
                     summary.entry_count(),
                     semantic.latest_turn(),

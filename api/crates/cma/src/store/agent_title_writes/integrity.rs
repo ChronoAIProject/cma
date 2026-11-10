@@ -20,6 +20,9 @@ pub(super) async fn transaction_log(
     )
     .await
     .map_err(map_transaction_log)?;
-    Ok(summary
-        .with_semantic(SemanticCheckpoint::from_entries(agent, &entries).map_err(map_domain)?))
+    Ok(summary.with_semantic(
+        crate::store::agent_log_integrity::audit_checkpoint(store, agent, &entries, session)
+            .await
+            .map_err(map_transaction_log)?,
+    ))
 }

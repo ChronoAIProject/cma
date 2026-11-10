@@ -189,8 +189,11 @@ pub(in crate::store) async fn apply(
                 )
                 .await
                 .map_err(map_integrity_error)?;
-                let semantic = SemanticCheckpoint::from_entries(&agent, &entries)
-                    .map_err(|_| ApplyError::Domain(CommandLedgerError::Corrupt))?;
+                let semantic = crate::store::agent_log_integrity::audit_checkpoint(
+                    store, &agent, &entries, session,
+                )
+                .await
+                .map_err(map_integrity_error)?;
                 if !semantic.valid {
                     return Err(ApplyError::Domain(CommandLedgerError::Corrupt));
                 }
