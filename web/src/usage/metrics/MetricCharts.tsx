@@ -30,7 +30,7 @@ export function MetricCharts({
       ),
     [api, report.report_id, group, metric],
   );
-  const charts = useUsageRead(load, active);
+  const charts = useUsageRead(load, active, api);
   useEffect(() => {
     if (charts.error?.denied || charts.error?.expired) onFailure(charts.error);
   }, [charts.error, onFailure]);

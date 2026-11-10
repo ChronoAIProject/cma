@@ -13,6 +13,7 @@ export default defineConfig({
     'operations-usage.check.ts',
     'usage-settings.check.ts',
     'usage-redesign.check.ts',
+    'usage-backoff.check.ts',
   ],
   workers: 1,
   retries: 0,
