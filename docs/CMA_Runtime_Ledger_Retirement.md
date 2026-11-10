@@ -88,7 +88,42 @@ in release evidence; never paste the private observation, raw receipts or
 resource identities into GitHub. Zero candidates means no proven candidate,
 not evidence that all remaining resources are live or that cleanup is impossible.
 
-## Archive and restore boundary
+## Build a detached retained archive
+
+After the preview, create and pin a complete byte backup with the existing
+offline planner. Then build a separate archive from that exact backup and the
+independently pinned API observation:
+
+```sh
+cma-runtime --plan-ledger-v1 /absolute/private/new-plan
+cma-runtime --verify-ledger-plan /absolute/private/new-plan PLAN_SHA256
+cma-runtime --stage-ledger-retirement /absolute/private/new-plan PLAN_SHA256 /absolute/private/new-observation.json SNAPSHOT_SHA256 /absolute/private/new-retirement-archive
+```
+
+Both output directories must be new, private and outside the retained runtime
+roots and input backup. Keep the original sealed plan and its digest as well as
+the resulting archive. The builder reuses the preview's conservative eligibility
+rules, copies the selected original journal/authority bytes into a durable
+archive, and retains the observation alongside it. Live, missing and uncertain
+groups stay outside the archive. It never rereads active source bytes after
+opening the sealed plan; the original runtime can therefore change independently
+without making this artifact permission to reclaim its newer state.
+
+The output reports only fixed fields, counts and hashes, including
+`ready_sha256` and `database_sha256`. Each group remains pending. The report says
+`admission: retirement_held`, `writer_exclusion: unproved`, and
+`source_deactivated: false`. Zero candidates is a valid empty archive. A rerun
+at the same destination refuses without overwriting it. An interrupted output
+without a valid `ready.json` is incomplete; use a new destination when rebuilding
+from the same pinned inputs. A replacement output pathname cannot redirect writes
+into source state or another directory.
+
+This command supplies retained bytes for later reviewed maintenance. It does
+not stop a runtime, publish activation metadata, free active-ledger capacity,
+complete a retirement receipt, or supply restore/production execution authority.
+Keep these private artifacts under the release owner's retained-backup policy.
+
+## Activation and restore boundary
 
 The runtime now understands a required retirement archive dependency. Its exact
 descriptor binds the archive UUID, retained home, roots, creation generation and
@@ -107,10 +142,10 @@ against the exact approved rollback/recovery images before activation.
 
 These are reader capabilities only. There is no supported activation publisher,
 source deactivation command or automatic collector yet. Do not manufacture the
-descriptor or marker to enable them. The synthetic storage probe and isolated
-tests are the only current publishers of test artifacts.
+descriptor or marker to enable them. Activation metadata is currently produced
+only by isolated tests.
 
-Archive/apply and restore are not implemented by this preflight. Retained exact
+Cleanup apply and restore are not implemented by these tools. Retained exact
 receipts and authority still protect against stale replay. Moving them out of
 the active lookup without permanent retirement refusal would make some old
 operations appear new. A future archive operation must publish and verify a

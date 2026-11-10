@@ -114,6 +114,20 @@ async fn run() -> Result<(), String> {
     if arguments.len() == 2 && arguments[0] == "--plan-ledger-v1" {
         return ledger_import::plan_command(std::path::PathBuf::from(&arguments[1])).await;
     }
+    if arguments.len() == 6 && arguments[0] == "--stage-ledger-retirement" {
+        let plan_digest = arguments[2].to_str().ok_or("invalid ledger plan digest")?;
+        let observation_digest = arguments[4]
+            .to_str()
+            .ok_or("invalid ledger snapshot digest")?;
+        return ledger_import::retirement_stage_command(
+            arguments[1].clone().into(),
+            plan_digest.into(),
+            arguments[3].clone().into(),
+            observation_digest.into(),
+            arguments[5].clone().into(),
+        )
+        .await;
+    }
     if arguments.len() == 3 && arguments[0] == "--verify-ledger-plan" {
         let digest = arguments[2].to_str().ok_or("invalid ledger plan digest")?;
         return ledger_import::verify_plan_command(arguments[1].clone().into(), digest.into())
