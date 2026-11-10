@@ -47,7 +47,7 @@ impl AgentArtifactStore for InMemorySandboxStore {
         &self,
         binding: &ArtifactBinding,
         page: &ArtifactPageRequest,
-    ) -> Result<Vec<StoredAgentArtifact>, ResourceAccessStoreError> {
+    ) -> Result<Vec<StoredAgentArtifactMetadata>, ResourceAccessStoreError> {
         page.validate()?;
         let state = self.lock();
         let mut rows: Vec<_> = state
@@ -60,7 +60,7 @@ impl AgentArtifactStore for InMemorySandboxStore {
                         .as_ref()
                         .is_none_or(|cursor| row.metadata.id > *cursor)
             })
-            .cloned()
+            .map(StoredAgentArtifact::metadata_record)
             .collect();
         rows.sort_by(|a, b| a.metadata.id.cmp(&b.metadata.id));
         rows.truncate(usize::from(page.limit) + 1);

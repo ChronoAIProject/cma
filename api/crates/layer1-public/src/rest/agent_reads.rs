@@ -140,8 +140,7 @@ pub(crate) async fn transcript(
         .map(Json)
 }
 
-/// Download the runtime's original session JSONL after applying the same
-/// Agent history authorization as the transcript projection.
+/// Download personal native history, retaining authority across the runtime IO.
 pub(crate) async fn history(
     State(state): State<AgentRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -149,32 +148,35 @@ pub(crate) async fn history(
     Path(id): Path<String>,
 ) -> Result<Response, InstanceProblem> {
     let id = AgentId(id);
-    let lineage = if let Some(resource) = resource {
+    let reading = if let Some(resource) = resource {
         state
             .reads
-            .history_lineage_authorized(
+            .begin_history_read_authorized(
                 &resource.context,
                 resource.credential.as_ref().map(DelegatedCredential::value),
                 &id,
             )
             .await
     } else {
-        state.reads.lineage(&caller, &id).await
+        state.reads.begin_history_read(&caller, &id).await
     }
     .map_err(InstanceProblem::from)?;
-    let runtime = lineage
-        .sandbox
-        .runtime
-        .as_ref()
-        .ok_or(InstanceProblem::Unavailable)?;
     let exporter = state
         .history_exporter
         .as_ref()
         .ok_or(InstanceProblem::Unavailable)?;
     let bytes = exporter
-        .export(&runtime.runtime_id, id.as_str())
+        .export(
+            reading.runtime_id().map_err(InstanceProblem::from)?,
+            id.as_str(),
+        )
+        .await;
+    state
+        .reads
+        .finish_history_read(reading)
         .await
-        .map_err(|_| InstanceProblem::Unavailable)?;
+        .map_err(InstanceProblem::from)?;
+    let bytes = bytes.map_err(|_| InstanceProblem::Unavailable)?;
     let mut response = Response::new(Body::from(bytes));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
