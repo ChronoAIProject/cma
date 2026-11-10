@@ -34,6 +34,8 @@ pub(super) async fn configure(
     let policy = BudgetPolicy {
         owner_day_limit: unit,
         turn_limit: unit,
+        max_calls_per_turn: unit,
+        day_timezone: "UTC".into(),
         input_token_units: 1,
         output_token_units: 1,
         max_unobserved_units: 1,
@@ -41,6 +43,16 @@ pub(super) async fn configure(
     };
     let settings = layer2_core::PlatformSettings {
         model_budget: BudgetSettings {
+            enabled: true,
+            platform: Some(layer2_core::budget::PlatformBudgetPolicy {
+                period_cap: u64::from(u32::MAX),
+                period_start: "2026-11-01T00:00:00Z".into(),
+                period_end: "2026-12-01T00:00:00Z".into(),
+                warning_percent: 80,
+                stop_percent: 100,
+                protected_reserve: 0,
+                lag_allowance: 0,
+            }),
             default_policy: None,
             owners: vec![OwnerBudgetPolicy {
                 owner: owner.clone(),
