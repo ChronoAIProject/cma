@@ -62,7 +62,7 @@ Mongo cannot atomically commit a PVC mutation, registry write or NyxID effect.
 | --- | --- | --- |
 | Agent Manager Mongo catalog, logs, commands, feedback, suggestions, profiles, settings, usage and provenance | Agent Manager; catalog in `api/crates/cma/src/store/isolation.rs`, initialization in `store/mongo.rs`, typed codecs and bespoke backfills | IDs, event order, command/retry identities, ownership, revisions, leases, reader semantics and unique constraints |
 | Agent Manager auth/custody and activity | Agent Manager; encrypted envelopes and TTL/index initialization | Encryption key identity/custody, deployment identity, token receipts, authorized retention and TTL effects |
-| Gateway `eg_*`, optional stores, sessions and sealed records | Event Gateway; explicit `cmaeg --migrate` and separately scoped optional commands in [Gateway Operations](CMAEG_Operations.md) | Exact sealed bytes, master keys/key IDs, CAS revisions, pointers, uncertain-effect fences, expiry and independent schema markers |
+| Gateway `eg_*`, optional stores, sessions and sealed records | Event Gateway; explicit `cmaeg --migrate`, optional commands and flag-controlled background GitHub initialization in [Gateway Operations](CMAEG_Operations.md#native-github-startup-initialization) | Exact sealed bytes, master keys/key IDs, CAS revisions, pointers, uncertain-effect fences, expiry and independent schema markers |
 | Image Manager `im_*` and build receipts | Image Manager; explicit `cma-image-manager --migrate`, startup verification | Catalog/shares, request identity, immutable successful image digests, schema/index expectations and auth custody |
 | Persistent Sandbox homes, file layouts, journals and browser/desktop profiles | Layer 4 owns supervisor formats; infrastructure controller owns native PVC/Claim/Sandbox resources; Agent Manager retains allocation authority | Same home/PVC UID, original claims, dirty work, native conversations, runtime pins, atomic publication and restart semantics |
 | Provider SQLite/conversation state inside homes | Pinned provider binary owns its formats; Layer 3 negotiates supported behavior | Provider version and same-home recovery; CMA does not rewrite provider databases through a generic SQL migration |
@@ -145,6 +145,15 @@ handoff, permission failures and exact retries after closure. A negative test
 showing a predecessor refuses new data excludes that predecessor from recovery;
 it does not certify it. Test semantic preservation as well as decoding.
 
+The matrix distinguishes historical, current, candidate and explicitly approved
+recovery executables. Each cell declares the fixture/cohort, writer policy,
+expected admission/refusal and recovery outcome, exact source SHA and artifact
+digest, environment, time window, sample count, configuration and raw-result
+location. Missing, cancelled or unexecuted cells remain unverified; a retry that
+passes does not erase the original failure. A model of an older decoder is useful
+regression coverage, but only execution of the pinned older artifact proves that
+artifact. Test refusal before traffic or writes, not just an eventual parse error.
+
 The [November 4 task-experience floor](plans/cma-ui-optimization/19-COMPATIBILITY.md)
 is a concrete example: tool output and expanded feedback crossed the predecessor
 API boundary outside task admission. The #1311 reader reference is API digest
@@ -153,6 +162,57 @@ it is not a blanket recovery certificate for later batches. Writer closure
 limits future changes; it never removes the floor imposed by retained data.
 Prefer a forward fix with compatible readers. Never delete/downgrade records,
 reset a database, clear journals or replace an active home to fit an old image.
+
+## Startup, strict readers and schema guards
+
+The November release lessons apply to every component:
+
+- **Optional initialization is still migration.** Gateway GitHub initialization
+  runs after the listener binds, with a 30-second bound and capability-specific
+  readiness. The base readiness probe succeeding does not prove that migration
+  or the GitHub capability is ready. Capture the schema/index postchecks and
+  capability result; preserve ordinary channel availability on optional failure.
+  A later startup may resume partial work. Shared-schema credentials do not grant
+  another service ownership or authorize new grants.
+- **Additive fields can raise the reader floor.** An older
+  `deny_unknown_fields` decoder can reject `guard_revision` or a sealed profile's
+  `queue_lifetime_seconds` even when the outer schema version is unchanged.
+  Disabling the producer does not remove retained fields or admitted work.
+  A metadata-only scan cannot prove absence inside encrypted profiles. Without
+  complete authorized evidence, that predecessor is ineligible; retain a
+  compatible forward-repair artifact. Never unset fields, rewrite sealed profiles,
+  drop indexes or run an older migrator to make its reader fit.
+- **Guards must match actual writer bytes.** The
+  [session schema audit](CMA_Session_Schema_Audit.md) records a retained lease
+  whose writer omitted the version required at the next boot. Exercise the real
+  serializer against the startup predicate, including integer BSON variants,
+  missing/wrong-type/unknown versions and retained known legacy shapes. Keep
+  compatibility exceptions exact and read-only; refuse corruption without
+  silently repairing it. Diagnostics contain aggregate counts and reason codes.
+
+Inventory startup collection creation, index builds/drops, validator changes,
+TTL changes and whole-collection scans. For each, name its service, trigger,
+expected prior state, maximum work/time, partial-failure recovery and receipt.
+Move nontrivial DDL into reviewed planned steps before replacing startup with
+bounded read-only checks. Keep the currently required schema until that cutover
+is proven. In particular, an activity TTL mismatch is a retention decision, not
+permission for an arbitrary create-index failure to trigger `collMod`.
+
+A lease around DDL is not by itself server-side fencing: an already submitted
+command may finish after its executor loses ownership. Declare which steps are
+safe under that overlap, verify exact prior/postconditions, and require exclusive
+execution or another proven boundary for destructive steps. An older migrator
+must refuse newer state before any write, not after replacing its validator.
+
+For [M-OPS-02](https://github.com/ChronoAIProject/cma/issues/1554), retain separate
+evidence for TC-089 (reader/writer matrix), TC-090 (bounded startup and migration
+resume) and TC-091 (compatible recovery). On the declared 90-day dataset, measure
+at least ten startups per migration stratum and require each maximum below 60
+seconds. Report p99 only with at least 1,000 samples in that same stratum. Record
+two compatible recovery drills, each at most 30 minutes from first failure to
+five minutes of stable probes. The qualification dates are November 19 and 20,
+2026, before the November 23 gate; later freeze rechecks do not replace them.
+Document/CI merge is not evidence that these production criteria have passed.
 
 ## Backup, dry-run and irreversible steps
 
