@@ -6,7 +6,10 @@ Compilation and executable security gates have not run; no passing result is cla
 This is application-contract evidence, not certification of the complete gate.
 The executable route matrix is `api/crates/layer1-public/tests/fixtures/tenant-isolation-matrix.json`.
 Its 171 documented operations are checked against OpenAPI; an additional source
-mount audit identifies undocumented absolute resource routes, including history export.
+mount audit identifies supplemental absolute resource routes, including history export
+and the runtime MCP tool endpoint. The scope covers the named resource families,
+command receipts and their delegated/binding transports; unrelated profile/catalog,
+Bot and Trigger management remain outside this proof slice.
 
 ## Proof layers
 
@@ -49,6 +52,11 @@ revocation, logout, expiry and removed permissions; the merged history test’s
 1,000 controlled provider-read/revoke interleavings; merged verification and
 expensive-read admission budgets. #1593 reserves remain default-off until the
 separate verified-reader activation train.
+
+Runtime MCP adds a paired publish/update control, foreign owner and same-owner
+foreign-Agent refusals, absent-ID equivalence, receipt replay and stale capability
+denial. Identity transport is doubled here; existing Mongo capability contracts
+separately check retained runtime identity, ownership and changed incarnation.
 
 ## Friday limits
 
@@ -241,3 +249,4 @@ above supplement ports that intentionally use HTTP projection doubles.
 | `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | `binding-conversation-put` | `binding-put-conversation-forbidden` | binding-contract |
 | `PUT /api/v1/documents/{id}/shares/{subject}` | `document-grant-success` | `document-grant-foreign` | probe |
 | `GET /api/v1/agents/{id}/history` | `raw_history_allows_owner_and_denies_shared_and_foreign_before_export` | Same test + 1,000 interleavings | Real exporter boundary |
+| `POST /api/v1/agent-tools` (`update_document`) | `publishes_large_private_document_replays_and_updates_with_cas` | `tenant_isolation_runtime_document_ids_and_old_receipts_never_expand_authority` | Real document service + runtime-auth double |
