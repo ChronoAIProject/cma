@@ -389,15 +389,25 @@ fn nyxid_browser_origin_is_canonical_https() {
 #[test]
 fn interface_feature_flags_are_strict_independent_booleans() {
     let config = configured(&[]).expect("existing configuration starts");
+    assert!(!config.features.model_budget_writes_enabled);
     assert!(!config.features.v2_ui_transport);
     assert!(!config.features.trigger_command_admission);
     assert!(!config.features.nyxid_resource_request);
     for key in [
+        "CHRONO_MODEL_BUDGET_WRITES_ENABLED",
         "CHRONO_V2_UI_TRANSPORT_ENABLED",
         "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
         "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED",
     ] {
         let config = configured(&[(key, "true")]).unwrap();
+        assert_eq!(
+            config.features.model_budget_writes_enabled,
+            key == "CHRONO_MODEL_BUDGET_WRITES_ENABLED"
+        );
+        assert!(!configured(&[(key, "false")])
+            .unwrap()
+            .features
+            .model_budget_writes_enabled);
         assert_eq!(
             config.features.v2_ui_transport,
             key == "CHRONO_V2_UI_TRANSPORT_ENABLED"
