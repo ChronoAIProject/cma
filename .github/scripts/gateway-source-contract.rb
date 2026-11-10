@@ -99,7 +99,7 @@ module GatewaySourceContract
     routes << nyxid_route(routes[2], "cma-nyxid-http-redirect", "http")
     health = object("HealthCheckPolicy", "cma-agent-manager", {
       "targetRef" => { "group" => "", "kind" => "Service", "name" => "cma-agent-manager" },
-      "default" => { "config" => { "type" => "HTTP", "httpHealthCheck" => { "port" => 8080, "requestPath" => "/ready" } } },
+      "default" => { "config" => { "type" => "HTTP", "httpHealthCheck" => { "port" => 8080, "requestPath" => "/livez", "checkIntervalSec" => 5, "timeoutSec" => 2, "healthyThreshold" => 2, "unhealthyThreshold" => 3 } } },
     })
     values = { "infra/api/httproute.yaml" => routes, "infra/api/healthcheckpolicy.yaml" => [health] }
     values["infra/cmaeg/httproute.yaml"] = [
