@@ -93,7 +93,7 @@ async fn selected_retry_revalidates_revision_identity_work_lease_head_and_tail()
         }
         // All races occur after the exact marker observation and before the
         // production commit's fresh snapshot, with real Mongo records.
-        let expected = agents
+        let mut expected = agents
             .find_one(agent_filter.clone())
             .await
             .unwrap()
@@ -102,6 +102,21 @@ async fn selected_retry_revalidates_revision_identity_work_lease_head_and_tail()
             f.h.store.commit_agent_work(request).await.is_err(),
             "variant {variant}"
         );
+        // Integrity refusals quarantine the observed history; authority,
+        // revision and lease refusals still leave the entire row unchanged.
+        if matches!(variant, 7 | 8) {
+            assert_eq!(
+                expected.insert(
+                    "agent_log_integrity_quarantine_v1",
+                    doc! {
+                        "format": 1_i64,
+                        "reason": "integrity_validation_failed",
+                        "observed_head": current.conversation.last_seq as i64,
+                    }
+                ),
+                None
+            );
+        }
         assert_eq!(
             agents
                 .find_one(agent_filter.clone())
@@ -192,7 +207,7 @@ async fn selected_retry_still_checks_gaps_schema_extra_tail_and_physical_limits(
                 }
             }
         }
-        let expected = agents
+        let mut expected = agents
             .find_one(agent_filter.clone())
             .await
             .unwrap()
@@ -200,17 +215,36 @@ async fn selected_retry_still_checks_gaps_schema_extra_tail_and_physical_limits(
         let result = f.h.store.commit_agent_work(proposal.clone()).await;
         assert!(result.is_err(), "variant {variant}");
         match variant {
-            0 | 2 => assert_eq!(result, Err(SandboxStoreError::SequenceConflict)),
+            0 => assert_eq!(result, Err(SandboxStoreError::SequenceConflict)),
+            2 => assert_eq!(
+                result,
+                Err(SandboxStoreError::Corrupt(
+                    "Agent log has rows beyond its trusted head".into()
+                ))
+            ),
             1 => assert!(matches!(result, Err(SandboxStoreError::Corrupt(_)))),
             _ => assert_eq!(result, Err(SandboxStoreError::AgentLogCapacityExceeded)),
         }
+        let observed_head = expected.get_i64("last_seq").unwrap();
+        assert_eq!(
+            expected.insert(
+                "agent_log_integrity_quarantine_v1",
+                doc! {
+                    "format": 1_i64,
+                    "reason": "integrity_validation_failed",
+                    "observed_head": observed_head,
+                }
+            ),
+            None
+        );
         assert_eq!(
             agents
                 .find_one(agent_filter.clone())
                 .await
                 .unwrap()
                 .unwrap(),
-            expected
+            expected,
+            "variant {variant}"
         );
         agents
             .replace_one(agent_filter.clone(), original.clone())
