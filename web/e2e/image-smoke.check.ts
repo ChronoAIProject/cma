@@ -54,6 +54,19 @@ for (const admin of [false, true]) {
           .locator('.recharts-bar-rectangle')
           .first(),
       ).toBeVisible();
+      // Re-execute the bundle, then revisit through browser history with the same assets mount.
+      await page.reload();
+      await expect(surface).toBeVisible();
+      await expect(
+        surface.getByRole('button', { name: 'Research Sandbox', exact: true }),
+      ).toBeVisible();
+      await page.goto('/agent-manager');
+      await expect(page.getByRole('button', { name: /Account menu for/ })).toBeVisible();
+      await page.goBack();
+      await expect(surface).toBeVisible();
+      await expect(
+        surface.getByRole('button', { name: 'Research Sandbox', exact: true }),
+      ).toBeVisible();
       await page.screenshot({ path: info.outputPath('overview.png'), animations: 'disabled' });
       expect(failedAssets).toEqual([]);
       expect(errors).toEqual([]);
