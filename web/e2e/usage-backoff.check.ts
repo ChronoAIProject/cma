@@ -63,7 +63,7 @@ for (const admin of [false, true]) {
       await expect(notice.getByText('Usage reporting is busy', { exact: true })).toBeVisible();
     }
     expect(attempts).toBe(2);
-    await page.clock.runFor(30000);
+    await page.clock.fastForward(30000);
     expect(attempts).toBe(2);
     failure = 503;
     await notice.getByRole('button', { name: 'Retry usage', exact: true }).click();
