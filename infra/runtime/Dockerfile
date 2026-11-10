@@ -444,7 +444,7 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.runtime-bootstrap="1" \
       dev.chrono.cma.home-layout="2"
 
-# Explicit target; cache pinned desktop dependencies separately from CMA tools.
+# Cache checksum-pinned desktop dependencies separately from verified CMA tools.
 FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
 FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-dependencies
 COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
