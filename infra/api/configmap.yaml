@@ -205,6 +205,8 @@ data:
   # include it in scoped schema/runtime grants before this image is activated.
   # Private model_budget settings have no manifest defaults; keep general rollout
   # disabled pending request-level enforcement. See CMA_Model_Budget_Controls.md.
+  # Admin Operations settings supply all platform/owner/turn controls, including
+  # explicit period, thresholds, reserve, lag, call limit and IANA day timezone.
   # TTL applies to existing Activity records; lowering it can remove history.
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
   # Canonical platform origin for scoped runtime service proxying.

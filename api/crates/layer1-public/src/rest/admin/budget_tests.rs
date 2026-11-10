@@ -1,12 +1,20 @@
 use super::super::*;
 
+#[path = "budget_controls_tests.rs"]
+mod controls;
+
 const PATH: &str = "/api/v1/admin/settings";
 const ADMIN: [Capability; 1] = [Capability::ConfigurePlatform];
 
 fn scoped_policy() -> Value {
     let unit = u64::from(u8::MAX);
-    json!({"owners": [{"owner": "budget-test-owner", "policy": {
+    json!({"enabled": true, "platform": {
+        "period_cap": unit * unit * unit,
+        "period_start":"2026-11-01T00:00:00Z", "period_end":"2026-12-01T00:00:00Z",
+        "warning_percent":80,"stop_percent":100,"protected_reserve":0,"lag_allowance":0
+    }, "owners": [{"owner": "budget-test-owner", "policy": {
         "owner_day_limit": unit * unit, "turn_limit": unit,
+        "max_calls_per_turn":unit,"day_timezone":"Asia/Singapore",
         "input_token_units": 1, "output_token_units": 1,
         "max_unobserved_units": 1, "usage_timeout_seconds": 60
     }}]})
@@ -91,7 +99,7 @@ async fn legacy_replace_preserves_caps_and_explicit_empty_scope_disables_them() 
     assert_eq!(disabled.status(), StatusCode::OK);
     assert_eq!(
         response_json(disabled).await["settings"]["model_budget"],
-        json!({"owners": []})
+        json!({"enabled": false, "owners": []})
     );
 }
 

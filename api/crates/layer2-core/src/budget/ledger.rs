@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{BudgetError, BudgetPolicy};
 
-const DAY_SECONDS: u64 = 86_400;
-
 /// Persisted with a real shared write in the same transaction as admission.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -12,11 +10,19 @@ pub struct OwnerBudget {
     pub spent: u64,
     pub reserved: u64,
     pub token_units: Option<[u64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub day_timezone: Option<String>,
 }
 
 impl OwnerBudget {
-    pub fn advance(&mut self, now_seconds: u64) -> Result<(), BudgetError> {
-        let day = now_seconds / DAY_SECONDS;
+    pub fn advance(&mut self, policy: &BudgetPolicy, now_seconds: u64) -> Result<(), BudgetError> {
+        let day = policy.day(now_seconds)?;
+        if self.day_timezone.as_deref() != Some(&policy.day_timezone) {
+            if self.spent != 0 || self.reserved != 0 {
+                return Err(BudgetError::Unavailable);
+            }
+            self.day = day;
+        }
         if day < self.day {
             return Err(BudgetError::Unavailable);
         }
@@ -25,13 +31,14 @@ impl OwnerBudget {
             self.spent = 0;
             // An unresolved turn never becomes free merely because a day ended.
         }
+        self.day_timezone = Some(policy.day_timezone.clone());
         Ok(())
     }
 
     pub fn reserve(&mut self, policy: &BudgetPolicy, now: u64) -> Result<(), BudgetError> {
         policy.validate()?;
         let mut next = self.clone();
-        next.advance(now)?;
+        next.advance(policy, now)?;
         let units = [policy.input_token_units, policy.output_token_units];
         if (next.spent != 0 || next.reserved != 0) && next.token_units != Some(units) {
             return Err(BudgetError::Unavailable);
@@ -55,7 +62,7 @@ impl OwnerBudget {
 
     pub fn settle(&mut self, reservation: &TurnReservation, now: u64) -> Result<(), BudgetError> {
         let mut next = self.clone();
-        next.advance(now)?;
+        next.advance(&reservation.policy, now)?;
         next.reserved = next
             .reserved
             .checked_sub(reservation.reserved_units)
@@ -141,10 +148,15 @@ impl TurnReservation {
         policy.validate()?;
         if self.policy.input_token_units != policy.input_token_units
             || self.policy.output_token_units != policy.output_token_units
+            || self.policy.day_timezone != policy.day_timezone
         {
             return Err(BudgetError::Unavailable);
         }
         self.policy.turn_limit = self.policy.turn_limit.min(policy.turn_limit);
+        self.policy.max_calls_per_turn = self
+            .policy
+            .max_calls_per_turn
+            .min(policy.max_calls_per_turn);
         self.policy.max_unobserved_units = self
             .policy
             .max_unobserved_units
