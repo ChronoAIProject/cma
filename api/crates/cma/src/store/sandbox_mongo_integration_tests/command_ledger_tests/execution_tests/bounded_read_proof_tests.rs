@@ -1,4 +1,4 @@
-use super::bounded_admission_tests::prepare_history;
+use super::bounded_fixtures::prepare_history;
 use super::*;
 use crate::store::agent_log_integrity::{
     read::{read_head, ReadHead},
