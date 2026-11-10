@@ -143,8 +143,6 @@ data:
   # Stage tracking first; enable owner keys only after the documented writer cutover.
   CMAEG_WORKER_CREDENTIAL_TRACKING_ENABLED: "true"
   CMAEG_OWNER_KEYS_ENABLED: "true"
-  CMAEG_OWNER_KEY_SERVICE_ID: ""
-  CMAEG_OWNER_KEY_CUTOVER_ID: ""
   CMAEG_MONGODB_DATABASE: "chrono-bot"
   CMAEG_MONGODB_AUTHORITY_MODE: "shared-schema"
   CMAEG_LISTEN: "0.0.0.0:8090"

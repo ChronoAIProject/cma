@@ -1,42 +1,30 @@
 # CMA Event Gateway operations
 
-## Guarded ConfigMap and Deployment apply
+## Secret-first CMAEG deployment
 
-Use the guarded operator path for every application of the checked-in CMAEG
-ConfigMap and Deployment. Merge and image publication do not deploy them.
-The existing release approval, serialization lock, STOP marker, observation
-and rollback requirements still apply; the guard does not authorize a rollout.
+The owner-key identifiers come from `cma-event-gateway-owner-keys`, not ConfigMap
+values or empty placeholders. With owner keys enabled, the Secret must exist and
+its two keys must be verified **before any CMAEG deployment from this revision**.
+Missing required identifiers fail startup. Merge and image publication do not
+authorize a rollout or a full application of the checked-in manifests.
 
-```sh
-python3 .github/scripts/apply-cmaeg.py --context "$KUBE_CONTEXT" --check
-python3 .github/scripts/apply-cmaeg.py --context "$KUBE_CONTEXT" --dry-run=server
-# Only after the operator's release approval and successful dry-run:
-python3 .github/scripts/apply-cmaeg.py --context "$KUBE_CONTEXT" --apply
-```
+Use the [owner-key Secret cutover runbook](CMAEG_Owner_Key_Secret_Cutover.md)
+and `.github/scripts/cmaeg-owner-key-cutover.py` under the current release GO,
+exclusive bridge lock and unchanged STOP marker. The required order is:
 
-The fixed targets are `infra/cmaeg/configmap.yaml` and
-`infra/cmaeg/deployment.yaml`, both named `cma-event-gateway` in `chrono-bot`.
-The read-only `--check` fetches bounded identity and presence projections.
-Kubernetes returns only booleans for `CMAEG_OWNER_KEY_SERVICE_ID` and
-`CMAEG_OWNER_KEY_CUTOVER_ID`; their live values are never printed, downloaded
-or written to an evidence file. Empty or whitespace-only local placeholders
-are refused if the corresponding live key is nonempty. Missing keys, failed
-reads, malformed presence evidence and unexpected object identities also
-refuse the operation before either manifest is applied.
+1. Capture current resource fences and the existing owner-key authorization baseline.
+2. Seed the dedicated Secret from the existing live values in memory and verify
+   the two keys without printing or retaining values. A mismatch is a hold.
+3. Apply the fenced env-only change, preserving the image and unrelated settings.
+4. Verify readiness, owner-key authority and existing channels; complete observation.
+5. Only then remove the two legacy ConfigMap fields and verify the final state.
 
-Every dry-run or actual apply repeats the check. The wrapper holds the parsed
-local manifests in memory and includes the captured UID/resourceVersion in
-each server-side apply, so a concurrent replacement or edit fails closed.
-It does not force field-ownership conflicts; stop and review a conflict.
-The ConfigMap is applied before the Deployment, and the pair is not atomic:
-if the second operation fails, stop, preserve the first result and reassess.
-Subprocess output is suppressed to avoid exposing values in error messages.
-
-The current repository placeholders intentionally block a full production
-apply. Do not copy live values into files, bypass the wrapper or clear the
-live fields to make it pass. [Follow-up #1588](https://github.com/ChronoAIProject/cma/issues/1588)
-tracks moving these keys to Secret references. An image-only release still
-uses its separately approved fenced image patch, not a full manifest apply.
+Do not apply an empty Secret declaration, remove the legacy fields first or copy
+values into a file. The obsolete empty-placeholder apply wrapper is removed;
+its former ConfigMap-before-Deployment order is not the Secret migration path.
+After cutover, retain the Secret references and use separately approved fenced
+image patches. Preserve the current forward-fix boundary, stored data and all
+unrelated live configuration, including the separately decided typing flag.
 
 ## Native GitHub startup initialization
 
@@ -367,8 +355,8 @@ applies with all media flags off.**
 | `CMAEG_NYXID_CLIENT_SECRET` | secret string | Required with the client ID | Reuses Agent Manager's client secret through a Secret reference; never put it in a ConfigMap. |
 | `CMAEG_WORKER_CREDENTIAL_TRACKING_ENABLED` | `true` or `false` | `false` | Registers permanent worker credential hashes before provider handoff and sealed Channel admission/import. Requires Gateway-owned Mongo replica-set storage and the additive worker-credential migration. Enable on every writer before owner-key cutover; after the durable cutover barrier, tracking-aware binaries refuse untracked startup/import. See [owner service-key rollout](CMAEG_Owner_Service_Keys.md). |
 | `CMAEG_OWNER_KEYS_ENABLED` | `true` or `false` | `false` | Enables personal owner Bearer keys only with tracking, matching durable cutover, configured service UUID, and fresh NyxID plus Manager/local worker classification on every request. Only parent keys issued strictly after cutover qualify. Legacy remote records are unsupported. Disable owner acceptance before any untracked rollback. See [owner service-key rollout](CMAEG_Owner_Service_Keys.md). |
-| `CMAEG_OWNER_KEY_SERVICE_ID` | canonical UUID | `""` | Exact NyxID Event Gateway catalog service UUID for confidential service-key introspection; required when owner keys are enabled. The existing client must be registered to introspect this service. This is not its public slug or an RFC 8707 resource URL. |
-| `CMAEG_OWNER_KEY_CUTOVER_ID` | canonical UUID | `""` | Exact attestation ID returned by the explicit `--attest-owner-key-cutover` command after all old writers have drained and retained Channels are backfilled. Required when owner keys are enabled and checked against the current durable attestation on every owner request. A retained-record scan does not reconstruct missing pre-cutover custody. |
+| `CMAEG_OWNER_KEY_SERVICE_ID` | Secret-backed canonical UUID | unset when disabled; required when enabled | Exact NyxID Event Gateway catalog service UUID for confidential service-key introspection; required when owner keys are enabled. The existing client must be registered to introspect this service. This is not its public slug or an RFC 8707 resource URL. |
+| `CMAEG_OWNER_KEY_CUTOVER_ID` | Secret-backed canonical UUID | unset when disabled; required when enabled | Exact attestation ID returned by the explicit `--attest-owner-key-cutover` command after all old writers have drained and retained Channels are backfilled. Required when owner keys are enabled and checked against the current durable attestation on every owner request. A retained-record scan does not reconstruct missing pre-cutover custody. |
 | `CMAEG_WEB_ORIGIN` | legacy name | Unused by the shared portal | Retained compatibility constant; exact-origin browser checks now run in Agent Manager's portal bridge. |
 | `CMAEG_COOKIE_KEY_FILE` | legacy name | Unused by the shared portal | Retained compatibility constant; the portal uses the existing CMA browser session and no separate Gateway cookie key. |
 | `CMAEG_TOOLS_NYXID_SLUG` | string | `cmaeg` | NyxID service slug in the provider tools advertisement, matching `[a-z0-9_]{1,32}`. |
@@ -900,6 +888,15 @@ Rollback must retain the additive routes, legacy host and CMA's dual-base
 validator once canonical callbacks have been issued. Reverting URL generation
 is safe within that compatibility floor; reverting to an older CMA binary that
 recognizes only the legacy base would reject retained canonical callbacks.
+
+Owner-key identifiers are injected from `cma-event-gateway-owner-keys` using
+explicit optional `secretKeyRef` entries. They are absent from the ConfigMap;
+empty placeholders are not a supported apply path. The references are optional
+only to preserve startup with owner keys disabled. Enabled mode still rejects
+missing, empty or invalid identifiers. Explicit env entries take precedence over
+legacy `envFrom` ConfigMap values during the staged cutover. Follow the
+[owner-key Secret cutover runbook](CMAEG_Owner_Key_Secret_Cutover.md); merging the
+manifests does not authorize applying the full, potentially stale Deployment.
 
 Use native Kubernetes Secrets, injected as environment variables through explicit
 `secretKeyRef` entries. `cmaeg-master-keys` supplies `CMAEG_MASTER_KEYS`, and
