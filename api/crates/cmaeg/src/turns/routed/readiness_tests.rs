@@ -181,11 +181,15 @@ async fn readiness_retry_rechecks_original_expiry_and_current_authority() {
 
 #[tokio::test]
 async fn sender_context_refusals_are_strict_and_expire_without_another_post() {
-    for (status, code) in [
-        (403, "verified_sender_context_invalid"),
-        (422, "verified_sender_context_unsupported"),
-        (503, "verified_sender_context_unavailable"),
-    ] {
+    let cases: Vec<Value> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/provider_sender_refusals.json"
+    )))
+    .unwrap();
+    assert_eq!(cases.len(), 3);
+    for case in cases {
+        let status = case["status"].as_u64().unwrap() as u16;
+        let code = case["body"]["error"]["code"].as_str().unwrap();
         for fault in [
             "none",
             "code",
@@ -210,7 +214,9 @@ async fn sender_context_refusals_are_strict_and_expire_without_another_post() {
                 } else {
                     status
                 };
-                let mut body = json!({"error":{"type":if status == 503 {"server_error"} else {"invalid_request_error"},"code":code,"message":"no admission","param":"event_context"}});
+                config.post_error_content_type = case["content_type"].as_str().unwrap().into();
+                config.post_error_retry_after = case["retry_after"].as_str().map(str::to_owned);
+                let mut body = case["body"].clone();
                 match fault {
                     "code" => body["error"]["code"] = "unrelated_failure".into(),
                     "content_type" => config.post_error_content_type = "text/plain".into(),

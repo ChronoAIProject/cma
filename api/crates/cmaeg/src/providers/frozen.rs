@@ -12,6 +12,7 @@ use std::{collections::BTreeMap, time::Duration};
 pub(crate) enum FrozenSubmission {
     Accepted(String),
     NotAccepted,
+    NotAcceptedWithCode(String),
     Rejected(String),
     Unknown,
 }
@@ -56,7 +57,7 @@ impl ProviderClient {
             };
             if observed.response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 return if conversation_not_ready(observed.response).await {
-                    FrozenSubmission::NotAccepted
+                    FrozenSubmission::NotAcceptedWithCode("conversation_not_ready".into())
                 } else {
                     FrozenSubmission::Unknown
                 };
@@ -172,7 +173,9 @@ async fn sender_context_refusal(response: reqwest::Response) -> FrozenSubmission
         | (422, Some("verified_sender_context_unsupported")) => {
             FrozenSubmission::Rejected(value["error"]["code"].as_str().unwrap().into())
         }
-        (503, Some("verified_sender_context_unavailable")) => FrozenSubmission::NotAccepted,
+        (503, Some("verified_sender_context_unavailable")) => {
+            FrozenSubmission::NotAcceptedWithCode("verified_sender_context_unavailable".into())
+        }
         _ => FrozenSubmission::Unknown,
     }
 }
