@@ -2591,14 +2591,14 @@ See [the CMA binding API](API_REST.md) for the exact first-line format and repla
 contract. CMAEG forwards the profile and full Activity without interpreting this
 policy or any product workflow.
 
-These precise refusals precede **durable turn admission**, including input
+These precise refusals without `x-cma-response-id` precede **durable turn admission**, including input
 rendering and prefix-size validation:
 
 | HTTP | `error.code` | Meaning |
 | --- | --- | --- |
 | 403 | `verified_sender_context_invalid` | The original Activity/reference was not attested for this binding, or proof identity did not match. Definite, non-retryable. |
 | 422 | `verified_sender_context_unsupported` | Attested identity cannot be represented safely, or the complete prefixed input exceeds the input limit. Definite, non-retryable. |
-| 503 | `verified_sender_context_unavailable` | Attestation or its prerequisite reads timed out or were unavailable. No turn was admitted. Retry with the same frozen body/key after `Retry-After: 5`. |
+| 503 | `verified_sender_context_unavailable` | Attestation timed out or was unavailable for a request with no retained admission. No turn was admitted. Retry with the same frozen body/key after `Retry-After: 5`. |
 
 CMAEG recognizes only the matching status, `application/json` content type,
 exact nested error code and error type (`invalid_request_error` for 403/422,
@@ -2606,6 +2606,13 @@ exact nested error code and error type (`invalid_request_error` for 403/422,
 malformed/truncated bodies and contradictory admission headers remain `Unknown`
 and use existing uncertain-submission recovery; they never authorize a blind
 transport retry. The provider transport itself never retries a POST.
+
+A failed re-attestation of an already admitted request carries its original
+`x-cma-response-id`; it is never classified as an unstarted request. The gateway
+retains recovery of that response. Failures/timeouts before CMA can determine
+whether the key already has an admission use the existing generic unavailable
+response and preserve uncertain-submission recovery.
+
 
 Attestation has a **2-second** deadline; the complete sender-context preflight
 has a **5-second** deadline and holds no Mongo transaction, binding lock or
