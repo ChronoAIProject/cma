@@ -297,3 +297,70 @@ async fn real_input_archive_crosses_both_legacy_limits_without_deactivating_sour
         .unwrap();
     assert_eq!(pending, groups as i64);
 }
+
+#[tokio::test]
+async fn detached_archive_verification_pins_bytes_and_never_repairs_or_echoes_content() {
+    use super::super::retirement_artifact;
+    use std::os::unix::fs::PermissionsExt;
+    for case in 0..7 {
+        let fixture = completed_fixture();
+        let inputs = Inputs::new(&fixture);
+        let output = fixture.root.join("retirement");
+        let report = retirement_stage::create(fixture.config.clone(), inputs.input(), &output)
+            .await
+            .unwrap();
+        let digest = report["ready_sha256"].as_str().unwrap();
+        let original = std::fs::read(output.join("database/ledger.sqlite3")).unwrap();
+        let verified = retirement_artifact::verify(&fixture.config, &output, digest).unwrap();
+        assert_eq!(verified["archived_records"], 2);
+        assert_eq!(verified["apply_authority"], false);
+        for value in [
+            fixture.config.sandbox_id.as_str(),
+            fixture.root.to_str().unwrap(),
+            "worktree:workspace",
+        ] {
+            assert!(!verified.to_string().contains(value));
+        }
+        assert_eq!(
+            std::fs::read(output.join("database/ledger.sqlite3")).unwrap(),
+            original
+        );
+        let mut config = fixture.config.clone();
+        let mut expected = digest.to_owned();
+        match case {
+            0 => expected = "f".repeat(64),
+            1 => {
+                let file = output.join("observation.json");
+                std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+                std::fs::write(file, b"changed private observation").unwrap();
+            }
+            2 => {
+                std::fs::write(output.join("database/ledger.sqlite3"), b"changed archive").unwrap()
+            }
+            3 => std::fs::write(output.join("unexpected"), b"unrecognized").unwrap(),
+            4 => {
+                std::fs::remove_file(output.join("database/ledger.sqlite3")).unwrap();
+                std::os::unix::fs::symlink(
+                    &inputs.observation,
+                    output.join("database/ledger.sqlite3"),
+                )
+                .unwrap();
+            }
+            5 => config.generation += 1,
+            _ => std::fs::set_permissions(
+                output.join("ready.json"),
+                std::fs::Permissions::from_mode(0o600),
+            )
+            .unwrap(),
+        }
+        let source_before = fixture.scan().unwrap().digest;
+        assert!(retirement_artifact::verify(&config, &output, &expected).is_err());
+        assert_eq!(fixture.scan().unwrap().digest, source_before);
+        if case == 2 {
+            assert_eq!(
+                std::fs::read(output.join("database/ledger.sqlite3")).unwrap(),
+                b"changed archive"
+            );
+        }
+    }
+}
