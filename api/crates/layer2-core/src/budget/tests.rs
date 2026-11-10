@@ -106,6 +106,7 @@ fn policy_scope_is_explicit_and_invalid_settings_fail_closed() {
     let other = SubjectId("budget-other-owner".into());
     let mut settings = BudgetSettings {
         default_policy: None,
+        request_models: Vec::new(),
         owners: vec![OwnerBudgetPolicy {
             owner: owner.clone(),
             policy: policy(),
