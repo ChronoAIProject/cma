@@ -116,7 +116,10 @@ impl RoutedDelivery {
         {
             return Err(ExecutionError::Invalid);
         }
-        let frame_hash = bounded_hash(&frame.raw)?;
+        // The SSE decoder bounds raw frames. Persist only their digest, using
+        // the same encoding as ReplayProjection, so every accepted frame can
+        // be acknowledged even when its snapshot exceeds the effect budget.
+        let frame_hash = storage::hash(&storage::bytes(&frame.raw)?);
         if parse_event(&SseFrame {
             event: None,
             id: Some(frame.sequence_number.to_string()),
@@ -129,7 +132,7 @@ impl RoutedDelivery {
         {
             return Err(ExecutionError::Invalid);
         }
-        let effect_hash = bounded_hash(&effect)?;
+        let effect_hash = bounded_effect_hash(&effect)?;
         let produced = matches!(frame.event, ResponsesEvent::OutputTextDone { .. })
             || (matches!(frame.event, ResponsesEvent::Completed { .. })
                 && matches!(
@@ -455,8 +458,8 @@ impl RoutedDelivery {
         self.journal.commit(lease, next).await
     }
 }
-fn bounded_hash(value: &impl Serialize) -> Result<String, ExecutionError> {
-    let bytes = storage::bytes(value)?;
+fn bounded_effect_hash(effect: &ReplayEffect) -> Result<String, ExecutionError> {
+    let bytes = storage::bytes(effect)?;
     if bytes.len() > 256 * 1024 {
         return Err(ExecutionError::Invalid);
     }
