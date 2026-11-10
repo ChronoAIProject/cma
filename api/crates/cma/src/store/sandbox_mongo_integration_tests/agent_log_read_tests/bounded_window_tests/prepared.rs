@@ -338,3 +338,4 @@ async fn prepared_window_keeps_snapshot_after_a_real_writer_advances() {
 }
 
 mod baseline;
+mod profile;
