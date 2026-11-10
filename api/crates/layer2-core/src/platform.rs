@@ -148,6 +148,11 @@ impl UsageReportingSettings {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlatformSettings {
+    #[serde(
+        default,
+        skip_serializing_if = "crate::budget::BudgetSettings::is_empty_disabled"
+    )]
+    pub model_budget: crate::budget::BudgetSettings,
     /// Presentation policy; omit the complete disabled section for strict predecessors.
     #[serde(default, skip_serializing_if = "UsageReportingSettings::is_disabled")]
     pub usage_reporting: UsageReportingSettings,
@@ -163,6 +168,9 @@ pub struct PlatformSettings {
 
 impl PlatformSettings {
     pub fn validate(&self) -> Result<(), CoreError> {
+        self.model_budget
+            .validate()
+            .map_err(|_| CoreError::InvalidRequest("model_budget policy is invalid".into()))?;
         if !(60..=86_400).contains(&self.checkpoints.interval_seconds) {
             return Err(CoreError::InvalidRequest(
                 "checkpoints.interval_seconds must be between 60 and 86400".into(),

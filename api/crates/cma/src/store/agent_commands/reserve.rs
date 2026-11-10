@@ -116,6 +116,31 @@ pub(in crate::store) async fn apply(
         policy.as_ref(),
     )?;
 
+    if matches!(
+        request.envelope.command,
+        layer2_core::sandbox::agent_io::AgentCommand::Message { .. }
+    ) {
+        let now = layer2_core::seconds_from_rfc3339(&request.admitted_at)
+            .ok_or(CommandLedgerError::Invalid)?;
+        super::super::budget::reserve_command(
+            store,
+            &agent,
+            request.envelope.command_id.as_str(),
+            now,
+            session,
+        )
+        .await
+        .map_err(|error| match error {
+            super::super::agent_conversation_store::ApplyError::Driver(error) => {
+                ApplyError::Driver(error)
+            }
+            super::super::agent_conversation_store::ApplyError::Domain(
+                layer2_core::sandbox::store::SandboxStoreError::Budget(reason),
+            ) => ApplyError::Domain(CommandLedgerError::Budget(reason)),
+            _ => ApplyError::Domain(CommandLedgerError::Unavailable),
+        })?;
+    }
+
     // Real writes serialize resource retirement and policy changes against the observation. These
     // additive top-level fences do not change the old aggregate wire records.
     let agent_revision =
