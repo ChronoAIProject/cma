@@ -70,9 +70,9 @@ fn native_lark_activated_intake_media_and_effects_follow_verified_rollout() {
 }
 
 #[test]
-fn native_typing_requires_explicit_release_activation() {
+fn native_typing_preserves_the_owner_approved_production_activation() {
     assert_eq!(
         configmap_value(CONFIGMAP, "CMAEG_NATIVE_TYPING_ENABLED"),
-        Some("false")
+        Some("true")
     );
 }
