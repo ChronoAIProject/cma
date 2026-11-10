@@ -44,6 +44,7 @@ fn in_scope(path: &str) -> bool {
             | "sandbox-commands"
             | "commands"
             | "agent-delegations"
+            | "agent-tools"
             | "workspaces"
             | "worktrees"
             | "documents"
@@ -163,7 +164,7 @@ fn mounted_resource_paths_cannot_hide_outside_the_openapi_inventory() {
     let known: BTreeSet<_> = entries()
         .iter()
         .map(|e| e.operation.split_once(' ').unwrap().1)
-        .chain(["/api/v1/agents/{id}/history"])
+        .chain(["/api/v1/agents/{id}/history", "/api/v1/agent-tools"])
         .collect();
     let mut sources = Vec::new();
     walk(
