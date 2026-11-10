@@ -73,7 +73,7 @@ fn shared_kind(kind: AgentLogKind) -> Option<AgentLogKind> {
             turn_sequence,
             mut failure,
         } => {
-            failure.detail = "This Agent turn failed.".into();
+            redact_failure(&mut failure);
             Some(TurnFailed {
                 turn_sequence,
                 failure,
@@ -107,7 +107,48 @@ pub(super) fn shared_transcript(transcript: &mut AgentTranscript) {
         turn.origin_key = None;
         turn.metadata.clear();
         if let AgentTurnOutcome::Failed { failure, .. } = &mut turn.outcome {
-            failure.detail = "This Agent turn failed.".into();
+            redact_failure(failure);
+        }
+    }
+}
+
+fn redact_failure(failure: &mut crate::sandbox::TypedFailure) {
+    failure.detail = match failure.class.as_str() {
+        "insufficient_credits" => "The model request failed with HTTP 402 because its billing account has insufficient credits. Ask the Sandbox owner to top up the account used for model requests, then send a new message to continue. This failed turn will not be replayed automatically.",
+        _ => "This Agent turn failed.",
+    }.into();
+}
+
+#[cfg(test)]
+mod credit_failure_tests {
+    use super::*;
+
+    #[test]
+    fn shared_credit_failure_exposes_static_guidance_and_never_private_diagnostics() {
+        for class in ["insufficient_credits", "agent_turn_failed"] {
+            let Some(AgentLogKind::TurnFailed {
+                failure,
+                turn_sequence,
+            }) = shared_kind(AgentLogKind::TurnFailed {
+                turn_sequence: 7,
+                failure: crate::sandbox::TypedFailure {
+                    class: class.into(),
+                    detail: "private billing owner and upstream diagnostics".into(),
+                },
+            })
+            else {
+                panic!("terminal failure must remain visible")
+            };
+            assert_eq!(turn_sequence, 7);
+            assert_eq!(failure.class, class);
+            assert!(!failure.detail.contains("private"));
+            if class == "insufficient_credits" {
+                assert!(failure.detail.contains("HTTP 402"));
+                assert!(failure.detail.contains("top up"));
+                assert!(failure.detail.contains("not be replayed automatically"));
+            } else {
+                assert_eq!(failure.detail, "This Agent turn failed.");
+            }
         }
     }
 }
