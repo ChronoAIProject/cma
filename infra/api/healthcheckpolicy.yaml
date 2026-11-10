@@ -6,11 +6,12 @@
 # unusually misleading: the deployment is Ready, the endpoints are Ready, the
 # routes are Accepted, and the service is still unreachable from outside.
 #
-# The Gateway probes the cheap process liveness path. A busy but healthy process
-# must stay registered while Mongo-backed readiness is waiting; otherwise a
-# short pool stall ejects the only backend and produces "no healthy upstream".
-# Kubelet readiness still gates the canonical endpoint and fails closed when the
-# cached dependency check is stale or unavailable.
+# The Gateway probes readiness directly. GKE network endpoint groups can keep a
+# Kubernetes-unready pod attached, so a liveness-only load-balancer check could
+# continue routing external traffic after this instance loses its session
+# store. /ready serves a cached result without a Mongo checkout per request;
+# its background check has a two-second deadline and a five-second freshness
+# bound. Kubelet liveness remains process-only in deployment.yaml.
 #
 # The neighbouring control planes each declare one of these; CMA simply
 # lacked it.
@@ -34,8 +35,4 @@ spec:
         # The container port, not the Service port: the balancer talks to pods
         # directly rather than through the Service's cluster IP.
         port: 8080
-        requestPath: /livez
-        # HealthCheckPolicy exposes the provider's bounded edge probe budget;
-        # its CRD does not accept interval, timeout, or threshold overrides.
-        # The kubelet liveness probe below has an explicit two-second timeout
-        # and three-failure budget so local process health remains bounded too.
+        requestPath: /ready

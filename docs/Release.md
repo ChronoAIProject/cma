@@ -456,9 +456,17 @@ The release that adds network admission limits also changes two Gateway
 contracts. App-origin API, auth, and discovery traffic must reach `cma-agent-manager`
 directly so the trusted GFE forwarding chain, rather than the web pod, supplies
 the client address used for anonymous and admission budgets. The load balancer
-must probe the cheap process endpoint `/livez`. A busy but healthy process must
-stay registered while Mongo-backed `/ready` is waiting; Kubernetes readiness
-still removes an endpoint when the session store is unavailable.
+must probe `/ready` so a process that has lost its session store becomes
+externally unhealthy. GKE L7 NEGs can retain Kubernetes-unready endpoints; the
+load balancer independently probes each Pod, so EndpointSlice readiness alone
+does not prove external exclusion. `/ready` reads a cached observation without
+waiting on Mongo or creating a checkout per HTTP request. Its single background
+check includes checkout and ping within a two-second deadline; stale success
+fails closed after five seconds. A slow check can use the recent successful
+observation while pending, but a failed check must make the edge probe fail.
+Kubelet liveness uses process-only `/livez` with a two-second timeout and three
+failures before restart. Verify the effective GCP health path and backend state
+on rollout and rollback; an image rollback alone does not restore the policy.
 
 The legacy web image still proxies `/api/` and `/auth/` through
 `Service/cma-agent-manager`, so the Service selector fence below covers both the legacy
@@ -736,7 +744,7 @@ Run the checked adoption program from a completely clean checkout whose `HEAD`
 is the exact reviewed 40-hex release commit. A branch, tag, abbreviated commit,
 or checkout with any tracked or untracked change is refused. Before reading or
 writing production, the program validates that the source bundle contains
-exactly the three owned routes and one `/livez` health policy, emits four
+exactly the three owned routes and one `/ready` health policy, emits four
 canonical desired objects, derives its source seal from the reviewed commit
 blobs, and refuses a final live aggregate that differs from that reviewed seal.
 It continues rechecking the reviewed source and emitted-object seals through the
@@ -813,8 +821,8 @@ authenticates its retained artifact; it is not a substitute for that artifact.
 Before its first write, the program accepts only the exact legacy or
 already-adopted source pair, proves all three route generations and the effective
 GCP health check/backend-to-NEG state, runs the complete old-image HTTP probe,
-including an exact `ok` response from the direct `/livez` endpoint, rechecks
-every live UID and allowed spec, and server-side dry-runs all
+including an exact `{"status":"ready"}` response from the direct `/ready`
+endpoint, rechecks every live UID and allowed spec, and server-side dry-runs all
 four desired replacements plus all four sealed rollback replacements. Missing
 Compute read permission, source drift, an unhealthy old image, or any preflight
 error therefore stops before mutation.
@@ -824,10 +832,10 @@ freshly read UID and `resourceVersion`, so a concurrent change fails its
 compare-and-swap instead of being overwritten. The fixed order is health policy,
 direct API route, app-origin route, then HTTP redirect. After the health-policy
 write and before the first route write, the program proves that the effective
-GCP health check has changed to `/livez` while every route still exactly matches
+GCP health check has changed to `/ready` while every route still exactly matches
 the sealed snapshot. After the route writes, it checks all three routes at their
 current generations, both effective 660-second backend timeouts, the generated
-`/livez` health check, byte-identical app/direct kernel responses, typed
+`/ready` health check, byte-identical app/direct kernel responses, typed
 anonymous auth, both discovery `404`s, and both HTTP to HTTPS redirects. A
 second effective-state read closes the verification window.
 
@@ -841,10 +849,10 @@ with fresh `resourceVersion` compare-and-swap reads. It restores the legacy heal
 only after the state checker proves all three routes and their identities back
 at the sealed snapshot, proves the health-policy and effective GCP paths are each
 within the closed legacy transition set `{/livez,/ready}`, and reruns the exact
-source-image probe. An adopted snapshot requires `/livez` for both paths. A
+source-image probe. An adopted snapshot requires `/ready` for both paths. A
 fresh health read then skips the health write if it already matches the sealed
 snapshot; otherwise the compare-and-swap restore proceeds. This handles a failed
-initial health write without inventing a `/livez` prerequisite, while refusing
+initial health write without inventing a `/ready` prerequisite, while refusing
 to change health over unproved routes or an unknown effective path. It then
 waits for the exact source specs and current route generations, proves the
 restored effective health check and backends, reruns the old-image probes, and
@@ -904,7 +912,7 @@ CMA_GATEWAY_TOOLCHAIN_TRUST_CONFIRM=reviewed-host-toolchain \
 ```
 
 Do not begin the database cutover unless `--adopt` reports that the route and
-`/livez` health check are effective. Keep them unchanged through the writer
+`/ready` health check are effective. Keep them unchanged through the writer
 drain and both recovery captures.
 
 Apply and verify the runtime ConfigMap before allowing the new API Deployment to start. Do not apply `infra/api/` as an unordered directory: Deployment pods consume the ConfigMap through `envFrom`, and a pod that starts with the previous value will not reload a later ConfigMap update. The observed value must exactly equal the verified runtime reference copied into the deployment registry before the Deployment is applied:
