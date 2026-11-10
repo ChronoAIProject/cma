@@ -40,6 +40,8 @@ mod output_tests;
 mod settings_tests;
 #[path = "acp_steering_tests.rs"]
 mod steering_tests;
+#[path = "acp_transport_refresh_tests.rs"]
+mod transport_refresh_tests;
 
 async fn socket_pair() -> (Socket, ServerSocket) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
