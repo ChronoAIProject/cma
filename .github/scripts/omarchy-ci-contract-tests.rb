@@ -59,5 +59,8 @@ module OmarchyCIContractTests
     reject.call("Omarchy unreviewed extra command") do |value|
       value["ci"]["jobs"]["omarchy"]["steps"] << { "run" => "docker push cma-runtime-omarchy:ci" }
     end
+    unless system("python3", File.join(__dir__, "omarchy-download-tests.py"))
+      raise "Omarchy pinned download failure contracts failed"
+    end
   end
 end
