@@ -34,6 +34,7 @@ end
 guarded = mode == "release" ? [
   ["ci", "trigger-release-contract", "Debian desktop fixture regressions"],
   ["ci", "trigger-release-contract", "Ledger image qualification regressions"],
+  ["ci", "trigger-release-contract", "Migration matrix evidence regressions"],
   ["ci", "images", "Qualify exact runtime ledger storage"],
   ["ci", "images", "Execute desktop image contract"],
   ["ci", "images", "Execute built runtime image contract"],
