@@ -16,11 +16,13 @@ import type { SpendErrors } from './spendValidation';
 export function SpendControls({
   value,
   disabled,
+  writesAvailable,
   errors,
   onChange,
 }: {
   readonly value: unknown;
   readonly disabled: boolean;
+  readonly writesAvailable: boolean;
   readonly errors: SpendErrors;
   readonly onChange: (budget: SpendBudget) => void;
 }) {
@@ -35,6 +37,11 @@ export function SpendControls({
         </p>
       ) : (
         <>
+          {!writesAvailable ? (
+            <p role="status" className="operator-notice">
+              Saving spend controls is not available yet. Current values remain readable.
+            </p>
+          ) : null}
           <p className="operator-notice">
             Amounts use exact accounting units from the platform policy. Currency and conversion
             metadata are not yet available.

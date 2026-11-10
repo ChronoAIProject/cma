@@ -6114,6 +6114,13 @@ Show the current revision's last platform-settings operation when its bounded
 activity lookup is permitted; unavailable names, permission, missing records and
 lookup errors remain explicit. Do not claim the audit identifies individual edits.
 
+Read-only save availability is separate from policy enablement. Missing or false
+availability shows “Saving spend controls is not available yet” and disables spend
+edits. Unchanged policy values remain visible and are preserved when other settings
+are saved. A refused edited draft stays visible and cannot be resubmitted until
+Refresh settings availability and explicit revision review permit the save.
+
 | Date | Change |
 | --- | --- |
 | 2026-11-11 | Add admin Spend controls using existing settings primitives, exact accounting-unit inputs, revision recovery and permission-aware audit attribution. |
+| 2026-11-11 | Respect server spend-write availability with readable retained policy, explicit refresh/review, and preserved unrelated settings saves. |
