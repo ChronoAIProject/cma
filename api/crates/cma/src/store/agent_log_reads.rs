@@ -2,7 +2,7 @@
 
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{SandboxStoreError, MAX_PAGE_SIZE};
-use layer2_core::sandbox::{AgentLogEntry, AgentLogKind};
+use layer2_core::sandbox::AgentLogEntry;
 use mongodb::bson::doc;
 use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
@@ -13,7 +13,7 @@ use super::agent_log_telemetry::ScanCaller;
 use super::sandbox_mongo::{signed, MongoSandboxStore};
 
 pub(super) mod integrity;
-use integrity::{LogReadIntegrity, PreparedIntegrity};
+use integrity::{LogReadIntegrity, PreparedIntegrity, ReadHead};
 
 #[derive(Clone, Copy)]
 pub(super) enum Window {
@@ -109,7 +109,7 @@ pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
     };
     let entries = if head.trusted {
         let (after, through) = window.bounds(head.last_seq)?;
-        read_bounded(store, agent_id, after, through, &mut session).await?
+        read_bounded(store, agent_id, after, through, &head, &mut session).await?
     } else {
         let mut entries = Vec::new();
         scan_collection(
@@ -120,20 +120,7 @@ pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
             &mut session,
             true,
             |entry| {
-                if let AgentLogKind::Created {
-                    workspace_id,
-                    worktree_id,
-                } = &entry.kind
-                {
-                    if entry.seq != 1
-                        || workspace_id != &head.workspace_id
-                        || worktree_id != &head.creation_worktree_id
-                    {
-                        return Err(SandboxStoreError::Corrupt(
-                            "Agent creation log lineage does not match".into(),
-                        ));
-                    }
-                }
+                head.validate_lineage(&entry)?;
                 if window.contains(entry.seq) && (entries.len() as u64) < window.limit() {
                     entries.push(entry);
                 }
@@ -156,6 +143,7 @@ async fn read_bounded(
     agent_id: &AgentId,
     after: u64,
     through: u64,
+    head: &ReadHead,
     session: &mut ClientSession,
 ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
     let count = through - after;
@@ -186,6 +174,7 @@ async fn read_bounded(
         .map_err(unavailable)?
     {
         let entry = read_entry(&document)?;
+        head.validate_lineage(&entry)?;
         if entry.agent_id != *agent_id || entry.seq != after + entries.len() as u64 + 1 {
             return Err(SandboxStoreError::SequenceConflict);
         }
