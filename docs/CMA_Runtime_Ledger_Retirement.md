@@ -90,6 +90,26 @@ not evidence that all remaining resources are live or that cleanup is impossible
 
 ## Archive and restore boundary
 
+The runtime now understands a required retirement archive dependency. Its exact
+descriptor binds the archive UUID, retained home, roots, creation generation and
+active V1/V2 format. Startup opens the existing archive and refuses any pending
+deactivation before home initialization or installation recovery. Missing,
+partial, replaced or mismatched metadata holds startup; an unactivated process
+also holds when activation artifacts appear while it is serving.
+
+Admission checks the complete prepared pair before either active ledger writes,
+then checks retirement again at journal begin and recovery. A retired group
+refuses permanently, including another valid operation on that Agent. Both
+archive payloads and scoped operation identities remain retained. The required
+installation marker is unknown to earlier readers, which refuse before
+installation recovery. This code-level refusal still requires qualification
+against the exact approved rollback/recovery images before activation.
+
+These are reader capabilities only. There is no supported activation publisher,
+source deactivation command or automatic collector yet. Do not manufacture the
+descriptor or marker to enable them. The synthetic storage probe and isolated
+tests are the only current publishers of test artifacts.
+
 Archive/apply and restore are not implemented by this preflight. Retained exact
 receipts and authority still protect against stale replay. Moving them out of
 the active lookup without permanent retirement refusal would make some old

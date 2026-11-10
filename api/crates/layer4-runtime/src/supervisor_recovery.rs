@@ -12,6 +12,7 @@ impl Supervisor {
     }
 
     pub(super) async fn recover_journals_locked(&self) -> Result<()> {
+        self.mutations.verify()?;
         let home = crate::persistent_home::verify(&self.config)?;
         let durable = crate::install::recover(&self.config)?;
         let restored = home
