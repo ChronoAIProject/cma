@@ -48,6 +48,7 @@ mod resource_network;
 mod resources;
 mod restore_bootstrap;
 mod retirement_archive;
+mod retirement_format;
 mod skills;
 mod snapshot_export;
 mod supervisor;
