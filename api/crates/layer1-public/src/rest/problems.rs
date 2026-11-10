@@ -136,6 +136,10 @@ impl IntoResponse for Problem {
                 StatusCode::SERVICE_UNAVAILABLE,
                 "skill-catalogue-unavailable",
             ),
+            CoreError::ModelBudgetWritesUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "model-budget-writes-unavailable",
+            ),
             CoreError::InvalidPressurePolicy(_) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "invalid-pressure-policy")
             }
