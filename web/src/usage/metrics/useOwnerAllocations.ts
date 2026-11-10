@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { UsageOwnerAllocation } from '@chronoai/cma-sdk';
 import type { Metric, MetricsClient } from './model';
 import { metricsFailure, type MetricsFailure } from './failure';
+import { usageRequest } from './request';
 
 interface PageState {
   readonly items: readonly UsageOwnerAllocation[];
@@ -40,13 +41,14 @@ export function useOwnerAllocations(
     const controller = new AbortController();
     request.current = controller;
     setPending(true);
-    void api
-      .ownerAllocations(reportId, {
+    void usageRequest(api, controller.signal, (signal) =>
+      api.ownerAllocations(reportId, {
         metric,
         limit: 200,
         cursor: previous.next ?? undefined,
-        signal: controller.signal,
-      })
+        signal,
+      }),
+    )
       .then((page) => {
         if (controller.signal.aborted) return;
         const seen = new Set(previous.items.map((item) => item.subject));
