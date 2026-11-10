@@ -25,6 +25,9 @@ impl Command {
     fn owner_only(&self) -> bool {
         !matches!(self, Self::Comment(_) | Self::RemoveComment(_, _))
     }
+    fn revokes_access(&self) -> bool {
+        matches!(self, Self::Revoke(..) | Self::RevokeLink(..))
+    }
     fn operation(&self) -> &'static str {
         match self {
             Self::Update(_) => "update",
@@ -210,7 +213,8 @@ impl DocumentService {
                 outcome.document.access = access(caller, token, &record)?;
                 return Ok(outcome);
             }
-            if record.receipts.len() >= MAX_RECEIPTS {
+            let reserve = self.revocation_reserve_enabled && command.revokes_access();
+            if !reserve && record.receipts.len() >= MAX_RECEIPTS {
                 return Err(DocumentError::Capacity);
             }
             let previous = record.metadata.revision;
@@ -231,6 +235,10 @@ impl DocumentService {
                     outcome: outcome.clone(),
                 },
             );
+            // Ordinary mutations cannot consume the reserved count or bytes.
+            // Revocation removes a live grant/link before recording its receipt;
+            // it never evicts a receipt that could otherwise replay an old grant.
+            self.validate_write(&record, command.revokes_access())?;
             // This single aggregate CAS fences all concurrent revocations and
             // comment admission. Retry reloads policy before producing effects.
             if let Some(guard) = guard {
@@ -295,7 +303,12 @@ impl DocumentService {
                     });
                 }
             }
-            Command::Revoke(subject, _) => record.shares.retain(|s| &s.subject != subject),
+            Command::Revoke(subject, _) => {
+                if !record.shares.iter().any(|s| &s.subject == subject) {
+                    return Err(DocumentError::NotFound);
+                }
+                record.shares.retain(|s| &s.subject != subject);
+            }
             Command::Link(body) => {
                 if record.links.len() >= MAX_LINKS {
                     return Err(DocumentError::Capacity);
@@ -315,7 +328,12 @@ impl DocumentService {
                     token_sha256,
                 });
             }
-            Command::RevokeLink(id, _) => record.links.retain(|l| &l.metadata.id != id),
+            Command::RevokeLink(id, _) => {
+                if !record.links.iter().any(|l| &l.metadata.id == id) {
+                    return Err(DocumentError::NotFound);
+                }
+                record.links.retain(|l| &l.metadata.id != id);
+            }
             Command::Comment(body) => {
                 if record.comments.len() >= MAX_COMMENTS {
                     return Err(DocumentError::Capacity);
@@ -344,12 +362,15 @@ impl DocumentService {
                 record.comments.push(value);
             }
             Command::RemoveComment(id, _) => {
-                if let Some(value) = record.comments.iter().find(|c| &c.id == id) {
-                    if record.metadata.owner_subject != caller.subject.as_str()
-                        && value.author_subject != caller.subject.as_str()
-                    {
-                        return Err(DocumentError::NotFound);
-                    }
+                let value = record
+                    .comments
+                    .iter()
+                    .find(|c| &c.id == id)
+                    .ok_or(DocumentError::NotFound)?;
+                if record.metadata.owner_subject != caller.subject.as_str()
+                    && value.author_subject != caller.subject.as_str()
+                {
+                    return Err(DocumentError::NotFound);
                 }
                 record.comments.retain(|c| &c.id != id);
             }
