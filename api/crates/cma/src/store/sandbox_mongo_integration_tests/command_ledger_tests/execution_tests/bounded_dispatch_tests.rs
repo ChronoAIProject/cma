@@ -1,5 +1,5 @@
 use super::super::work_tests::message_mutation;
-use super::bounded_admission_tests::prepare_history;
+use super::bounded_fixtures::prepare_history;
 use super::*;
 use crate::store::agent_log_integrity::INTEGRITY_FIELD;
 use crate::store::agent_log_telemetry::{isolated_test as isolated, snapshot, ScanCaller};
