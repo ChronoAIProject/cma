@@ -6076,3 +6076,13 @@ saving. Use existing form spacing, labels and validation; introduce no new token
 | 2026-11-06 | Preserve the owner’s existing keyboard focus when the conversation becomes ready; computer Home/End/Arrow navigation keeps focus on its selected tab while initial composer focus remains available on an otherwise unfocused page. |
 
 | 2026-11-07 | Integrate Workspace v3 with stable streaming recovery, retained sidebar status, deterministic desktop reconnection, mounted identity retries and complete-cohort resource usage; preserve channel queue policy independently of composer follow-ups. |
+
+### 2026-11-10 — Usage over retained responsive Agent input
+
+The retained Agent composer fits changed text immediately. Width-driven fitting
+is coalesced into the next animation frame, outside ResizeObserver delivery, so
+opening Usage and resizing its background do not trigger a browser layout loop.
+Closing the Agent cancels any scheduled fitting. Keep the draft, focus and input
+semantics unchanged; browser-error checks remain strict across all engines.
+
+| 2026-11-10 | Schedule retained composer width fitting outside resize notifications for Usage dialog continuity in WebKit. |
