@@ -5,12 +5,24 @@ pub const OWNER_KEYS: &str = "CMAEG_OWNER_KEYS_ENABLED";
 pub const SERVICE_ID: &str = "CMAEG_OWNER_KEY_SERVICE_ID";
 pub const CUTOVER_ID: &str = "CMAEG_OWNER_KEY_CUTOVER_ID";
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Settings {
     pub tracking: bool,
     pub owner_keys: bool,
     pub service_id: Option<String>,
     pub cutover_id: Option<String>,
+}
+
+impl std::fmt::Debug for Settings {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Settings")
+            .field("tracking", &self.tracking)
+            .field("owner_keys", &self.owner_keys)
+            .field("service_id_present", &self.service_id.is_some())
+            .field("cutover_id_present", &self.cutover_id.is_some())
+            .finish()
+    }
 }
 
 impl Settings {
@@ -60,3 +72,7 @@ impl Settings {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "owner_keys_tests.rs"]
+mod tests;
