@@ -2442,6 +2442,15 @@ carry matching numeric SSE IDs and `sequence_number` values with no gaps or
 duplicates after the requested `starting_after` cursor. Observation `error`
 frames have no SSE ID and cannot change the command outcome or advance the
 gateway's durable cursor. Recovery support grants no right to repeat a POST.
+The SSE decoder's 1 MiB frame limit also governs routed frame acknowledgement;
+the gateway hashes the full decoded JSON and persists its digest, not the raw
+frame. The separate 256 KiB serialized delivery-effect limit and bounded output
+projection remain unchanged. A large terminal snapshot can therefore settle
+without storing or delivering its repeated tool bodies. Retained executions
+blocked by the former 256 KiB raw-frame guard recover through GET at their last
+acknowledged cursor, including a terminal projection saved before that guard
+failed. This does not renew reply authority: expired EventRefs still suppress
+outbound replies while allowing already-accepted Custom/GitHub settlement.
 See [recovery transport operations](CMAEG_Operations.md#provider-response-recovery-transport)
 for configuration, bounds and staged activation.
 
