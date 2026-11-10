@@ -445,7 +445,7 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.home-layout="2"
 
 # Explicit experimental target. The default target remains the Debian runtime.
-# CI supplies a verified native CMA artifact as OMARCHY_CMA_BASE.
+# CI supplies verified OMARCHY_CMA_BASE; the graphics patch stays checksum-pinned.
 FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
 FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy
 COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
