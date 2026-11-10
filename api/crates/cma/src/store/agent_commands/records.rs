@@ -12,9 +12,8 @@ pub(in crate::store) fn document(
     let envelope = &record.receipt.envelope;
     let mut compatible = record.clone();
     let budget_failure = compatible.work.failure.as_mut().and_then(|failure| {
-        failure.code.budget_error().map(|reason| {
+        failure.code.budget_error().inspect(|_| {
             failure.code = failure.code.legacy_code();
-            reason
         })
     });
     let mut document = doc! {
