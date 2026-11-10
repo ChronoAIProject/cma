@@ -1,22 +1,35 @@
-//! Reader contract for #1591's prepared metadata proof; no metadata parser here.
-use layer2_core::{ids::AgentId, sandbox::store::SandboxStoreError};
-use mongodb::{bson::doc, options::ReadConcern, ClientSession};
+//! Reuse #1591's proof and retain its Agent lineage for read-only fallback.
+use layer2_core::{
+    ids::{AgentId, WorkspaceId, WorktreeId},
+    sandbox::{store::SandboxStoreError, Agent},
+};
+use mongodb::ClientSession;
 
-use crate::store::sandbox_mongo::{require_version, unsigned, MongoSandboxStore};
+use crate::store::sandbox_mongo::MongoSandboxStore;
 
 pub(in crate::store) struct ReadHead {
     pub(in crate::store) last_seq: u64,
-    /// True only after a prepared-cohort proof of revision/history, head/count/
-    /// encoded bytes, raw tail hash and absence of extra rows in this snapshot.
+    /// Requires the shared prepared-cohort proof, never metadata presence alone.
     pub(in crate::store) trusted: bool,
+    pub(super) workspace_id: WorkspaceId,
+    pub(super) creation_worktree_id: WorktreeId,
+}
+
+impl ReadHead {
+    fn from_agent(agent: &Agent, trusted: bool) -> Self {
+        Self {
+            last_seq: agent.conversation.last_seq,
+            trusted,
+            workspace_id: agent.workspace_id.clone(),
+            creation_worktree_id: agent.creation_worktree_id().clone(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
 pub(in crate::store) trait LogReadIntegrity: Send + Sync {
-    /// Use the supplied snapshot session for every proof query. Return None
-    /// only for a missing Agent. Missing/stale/disabled trust returns an
-    /// untrusted head; corruption, quarantine and dependency errors propagate.
-    /// Never start/abort a transaction, repair metadata, or write quarantine.
+    /// Keep every query in the supplied snapshot. Never prepare, repair,
+    /// quarantine or operate a transaction from the public read.
     async fn read_head(
         &self,
         store: &MongoSandboxStore,
@@ -25,8 +38,29 @@ pub(in crate::store) trait LogReadIntegrity: Send + Sync {
     ) -> Result<Option<ReadHead>, SandboxStoreError>;
 }
 
+pub(in crate::store) struct PreparedIntegrity;
+
+#[async_trait::async_trait]
+impl LogReadIntegrity for PreparedIntegrity {
+    async fn read_head(
+        &self,
+        store: &MongoSandboxStore,
+        agent_id: &AgentId,
+        session: &mut ClientSession,
+    ) -> Result<Option<ReadHead>, SandboxStoreError> {
+        Ok(
+            super::super::agent_log_integrity::read::read_proven_agent(store, agent_id, session)
+                .await?
+                .map(|(agent, trusted)| ReadHead::from_agent(&agent, trusted)),
+        )
+    }
+}
+
+/// Baseline for paired fixtures; production always validates shared metadata.
+#[cfg(test)]
 pub(in crate::store) struct LegacyIntegrity;
 
+#[cfg(test)]
 #[async_trait::async_trait]
 impl LogReadIntegrity for LegacyIntegrity {
     async fn read_head(
@@ -35,27 +69,18 @@ impl LogReadIntegrity for LegacyIntegrity {
         agent_id: &AgentId,
         session: &mut ClientSession,
     ) -> Result<Option<ReadHead>, SandboxStoreError> {
-        let Some(row) = store
+        let row = store
             .agents
-            .find_one(doc! { "_id": agent_id.as_str() })
-            .projection(doc! { "document_schema_version": 1, "last_seq": 1 })
-            .read_concern(ReadConcern::snapshot())
+            .find_one(mongodb::bson::doc! { "_id": agent_id.as_str() })
+            .read_concern(mongodb::options::ReadConcern::snapshot())
             .session(session)
             .await
-            .map_err(super::unavailable)?
-        else {
-            return Ok(None);
-        };
-        require_version(&row).map_err(SandboxStoreError::Corrupt)?;
-        let last_seq = row
-            .get_i64("last_seq")
-            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
-            .and_then(|value| {
-                unsigned(value, "agent log sequence").map_err(SandboxStoreError::Corrupt)
-            })?;
-        Ok(Some(ReadHead {
-            last_seq,
-            trusted: false,
-        }))
+            .map_err(super::unavailable)?;
+        row.as_ref()
+            .map(|row| {
+                super::super::agents::read_agent(row)
+                    .map(|agent| ReadHead::from_agent(&agent, false))
+            })
+            .transpose()
     }
 }
