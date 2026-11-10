@@ -46,6 +46,9 @@ pub(super) async fn run(
     let mut status = statuses.begin(&record, None);
     let mut terminal_revision: Option<(String, NativeDiscordConnectionStatus)> = None;
     let mut status_revision = None;
+    // Resolution failure changes the current attempt, not the revision that
+    // owns its history. Keep that tag until a successful read replaces it.
+    let mut last_known_revision = None;
     let mut failures = 0u32;
     loop {
         if *shutdown.borrow() {
@@ -58,7 +61,7 @@ pub(super) async fn run(
         let revision = match revision {
             Ok(revision) => revision,
             Err(error) => {
-                status = statuses.begin(&record, None);
+                status = statuses.begin(&record, last_known_revision.as_deref());
                 status_revision = None;
                 status.finish(error.into(), false, timing.poll);
                 if stopped(&mut shutdown, timing.poll).await {
@@ -67,6 +70,7 @@ pub(super) async fn run(
                 continue;
             }
         };
+        last_known_revision = Some(revision.clone());
         if let Some((_, snapshot)) = terminal_revision
             .as_ref()
             .filter(|(saved, _)| saved == &revision)
