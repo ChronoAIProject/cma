@@ -427,6 +427,18 @@ mod tests {
     #[test]
     fn agent_indexes_include_the_live_worktree_constraint() {
         let indexes = agent_indexes();
+        let named = |name: &str| {
+            indexes
+                .iter()
+                .find(|index| {
+                    index
+                        .options
+                        .as_ref()
+                        .and_then(|options| options.name.as_deref())
+                        == Some(name)
+                })
+                .expect("required named Agent index")
+        };
         assert_eq!(
             indexes[0].keys,
             doc! { "owner": 1, "status": 1, "updated_at": -1 }
@@ -453,13 +465,23 @@ mod tests {
             indexes[4].options.as_ref().unwrap().name.as_deref(),
             Some("agents_due_work")
         );
-        assert_eq!(indexes[5].keys, doc! { "status": 1, "_id": 1 });
+        let pacing = named("agents_paced_work");
         assert_eq!(
-            indexes[5].options.as_ref().unwrap().name.as_deref(),
-            Some("agents_live_connections")
+            pacing.keys,
+            doc! { "work_pending": 1, "worker_failure_pacing_v1.until": 1,
+            "work_lease_expires_at": 1, "_id": 1 }
         );
-        assert_eq!(indexes[6].keys, doc! { "worktree_id": 1 });
-        let options = indexes[6].options.as_ref().unwrap();
+        assert_eq!(
+            pacing.options.as_ref().unwrap().partial_filter_expression,
+            Some(doc! { "worker_failure_pacing_v1.until": { "$exists": true } })
+        );
+        assert_eq!(
+            named("agents_live_connections").keys,
+            doc! { "status": 1, "_id": 1 }
+        );
+        let worktree = named("agents_live_worktree");
+        assert_eq!(worktree.keys, doc! { "worktree_id": 1 });
+        let options = worktree.options.as_ref().unwrap();
         assert_eq!(options.unique, Some(true));
         assert_eq!(
             options.partial_filter_expression,
