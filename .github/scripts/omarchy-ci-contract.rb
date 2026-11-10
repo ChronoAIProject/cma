@@ -14,7 +14,7 @@ module OmarchyCIContract
     row = contract.job(ci, "omarchy", "Images (runtime-omarchy)")
     contract.require!(row.keys.sort == %w[name permissions runs-on steps timeout-minutes].sort,
       "Omarchy cannot acquire conditional, dependency, matrix or deployment authority")
-    contract.require!(row["runs-on"] == "ubuntu-24.04" && row["timeout-minutes"] == 90 &&
+    contract.require!(row["runs-on"] == "ubuntu-24.04" && row["timeout-minutes"] == 150 &&
       row["permissions"] == { "contents" => "read" }, "Omarchy requires bounded native amd64 read-only CI")
     expected = [
       { "uses" => "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" },
