@@ -257,3 +257,9 @@ Display `label`, and show `disambiguator` only as secondary duplicate-name conte
 `subject` is an opaque key and must not appear in chart text or tooltips. Respect
 partial `complete` flags, retain loaded/total counts on failures, and handle
 429/503 retries and 410 report expiry explicitly.
+
+## Retained runtime assessment
+
+`client.sandboxes().inspect_runtime_recovery(id).await` reads the owner-only
+retained-runtime assessment. Its fixed disposition is diagnostic and
+`admission_enabled` is false. GET performs no recovery or lifecycle action.

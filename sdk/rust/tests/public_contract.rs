@@ -96,6 +96,13 @@ async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
         || op.starts_with("GET /auth/")
     {
         experience::dispatch(c).await
+    } else if op == "GET /api/v1/sandboxes/{id}/runtime-recovery" {
+        c.check(
+            c.client
+                .sandboxes()
+                .inspect_runtime_recovery(c.param("id"))
+                .await,
+        )
     } else {
         resources::dispatch(c).await
     }
