@@ -207,6 +207,8 @@ data:
   # disabled pending request-level enforcement. See CMA_Model_Budget_Controls.md.
   # CMA auxiliary requests also require privately approved request_models bounds;
   # no model/rate is enabled by default. See CMA_Model_Request_Reservations.md.
+  # Admin Operations settings supply all platform/owner/turn controls, including
+  # explicit period, thresholds, reserve, lag, call limit and IANA day timezone.
   # TTL applies to existing Activity records; lowering it can remove history.
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
   # Canonical platform origin for scoped runtime service proxying.

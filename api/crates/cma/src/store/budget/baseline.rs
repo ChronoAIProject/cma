@@ -23,7 +23,7 @@ pub(super) async fn recorded_owner_usage(
         token_units: Some([policy.input_token_units, policy.output_token_units]),
         ..OwnerBudget::default()
     };
-    result.advance(now).map_err(domain)?;
+    result.advance(policy, now).map_err(domain)?;
     let mut count = 0;
     while cursor
         .advance(&mut *session)

@@ -7,7 +7,6 @@ use super::*;
 use crate::sandbox::store::{Page, PageRequest};
 use crate::sandbox::{Agent, AgentListQuery};
 use crate::{Authorization, Capability, SubjectId};
-use futures_util::{stream, StreamExt, TryStreamExt};
 
 impl ResourceAccessSnapshot {
     /// Aggregate discovery requires a covering explicit incoming grant even if
@@ -164,14 +163,28 @@ impl ResourceAccessService {
         // Validate the hidden lookahead as well: the presence of `next` must not
         // disclose an Agent whose grant has just disappeared.
         tokio::time::timeout(Duration::from_secs(15), async {
-            let mut checks = Vec::with_capacity(authorized.len());
-            for value in &authorized {
-                checks.push(self.validate_inventory_item(value, organization));
+            let targets: Vec<_> = authorized
+                .iter()
+                .map(|value| {
+                    let agent = value.snapshot.organization_agent(organization)?;
+                    Ok(ResourceTarget::Agent {
+                        agent_id: agent.id.clone(),
+                    })
+                })
+                .collect::<Result<_, ResourceAccessError>>()?;
+            let current = self.store.resource_access_snapshots(&targets).await?;
+            if current.len() != authorized.len() {
+                return Err(ResourceAccessStoreError::Corrupt.into());
             }
-            stream::iter(checks)
-                .buffer_unordered(8)
-                .try_collect::<Vec<_>>()
+            for ((value, target), snapshot) in authorized.iter().zip(&targets).zip(&current) {
+                self.validate_current_read_snapshot(
+                    value,
+                    target,
+                    ResourceCapability::ViewDetails,
+                    snapshot,
+                )
                 .await?;
+            }
             for (target, value) in &parent_decisions {
                 self.validate_read_result(value, target, ResourceCapability::ViewDetails)
                     .await?;
@@ -205,22 +218,6 @@ impl ResourceAccessService {
             items: authorized,
             next,
         })
-    }
-
-    async fn validate_inventory_item(
-        &self,
-        value: &AuthorizedResource,
-        organization: &SubjectId,
-    ) -> Result<(), ResourceAccessError> {
-        let agent = value.snapshot.organization_agent(organization)?;
-        self.validate_read_result(
-            value,
-            &ResourceTarget::Agent {
-                agent_id: agent.id.clone(),
-            },
-            ResourceCapability::ViewDetails,
-        )
-        .await
     }
 
     pub(crate) async fn inventory_context(
