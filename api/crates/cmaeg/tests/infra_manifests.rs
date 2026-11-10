@@ -16,6 +16,8 @@ mod fixtures;
 mod lifecycle;
 #[path = "infra_manifests/native_whatsapp.rs"]
 mod native_whatsapp;
+#[path = "infra_manifests/owner_keys.rs"]
+mod owner_keys;
 
 use fixtures::{set_config, with_memory};
 

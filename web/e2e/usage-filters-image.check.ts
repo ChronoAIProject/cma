@@ -174,7 +174,7 @@ for (const theme of ['light', 'dark']) {
     options.failure = 503;
     await page.getByRole('button', { name: 'Owner: Everyone' }).click();
     await expect(
-      page.getByRole('alert').filter({ hasText: 'Could not load owner choices' }),
+      page.getByRole('alert').filter({ hasText: 'Usage reporting is unavailable' }),
     ).toBeVisible();
     await page.screenshot({
       path: info.outputPath(`option-error-${theme}.png`),
