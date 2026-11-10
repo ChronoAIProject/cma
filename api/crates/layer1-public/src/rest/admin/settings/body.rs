@@ -4,8 +4,8 @@ use axum::{extract::FromRequest, extract::Request, Json};
 use layer2_core::profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef};
 use layer2_core::{
     platform::UsageReportingSettings, AgentProfileId, InactivitySettings, MarketplaceSettings,
-    PlatformDefaults, PlatformLimits, PlatformSettings, RetentionSettings, SandboxProfileId,
-    StoredPlatformSettings, TriggerSettings, WorkspaceProfileId,
+    PlatformDefaults, PlatformLimits, PlatformSettings, PlatformSettingsService, RetentionSettings,
+    SandboxProfileId, StoredPlatformSettings, TriggerSettings, WorkspaceProfileId,
 };
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
@@ -233,14 +233,16 @@ pub(crate) struct SettingsView {
     revision: u64,
     settings: PlatformSettingsBody,
     model_budget_writes_available: bool,
+    model_request_budget_writes_available: bool,
 }
 
 impl SettingsView {
-    pub(crate) fn new(value: StoredPlatformSettings, model_budget_writes_available: bool) -> Self {
+    pub(crate) fn new(value: StoredPlatformSettings, service: &PlatformSettingsService) -> Self {
         Self {
             revision: value.revision,
             settings: value.settings.into(),
-            model_budget_writes_available,
+            model_budget_writes_available: service.model_budget_writes_enabled(),
+            model_request_budget_writes_available: service.model_request_budget_writes_enabled(),
         }
     }
 }
