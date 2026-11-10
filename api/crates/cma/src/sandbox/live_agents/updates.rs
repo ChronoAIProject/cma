@@ -41,6 +41,8 @@ pub(super) fn spawn_update_task(
             }
             return;
         }
+        let _budget_monitor =
+            super::budget::monitor(registry.clone(), attachment.clone(), recorder.clone());
         while let Some(update) = updates.recv().await {
             if record_update(
                 recorder.as_ref(),

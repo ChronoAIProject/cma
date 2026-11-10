@@ -6,6 +6,7 @@ use mongodb::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) const COLLECTIONS: &[&str] = &[
+    super::budget::COLLECTION,
     super::sandbox_metric_bindings::COLLECTION,
     super::sandbox_metric_rollups::COLLECTION,
     super::sandbox_usage_rollups::COLLECTION,
