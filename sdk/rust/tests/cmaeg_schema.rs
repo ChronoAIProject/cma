@@ -1,3 +1,8 @@
+#[path = "cmaeg_schema/inventory.rs"]
+mod inventory;
+#[path = "cmaeg_schema/legacy.rs"]
+mod legacy;
+
 use cma_sdk::cmaeg::types::*;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -12,70 +17,6 @@ fn fixtures() -> Value {
     .unwrap()
 }
 
-#[test]
-fn telegram_rename_keeps_strict_legacy_discovery_bytes_and_existing_request_shape() {
-    let legacy =
-        r#"{"manage_original_topic":true,"actions":["close","reopen"],"expires_at":1800000600}"#;
-    let caps: TopicLifecycleCapabilities = serde_json::from_str(legacy).unwrap();
-    assert_eq!(serde_json::to_string(&caps).unwrap(), legacy);
-    assert!(
-        serde_json::from_str::<TopicLifecycleCapabilities>(&legacy.replace("reopen", "rename"))
-            .is_err()
-    );
-    let request = r#"{"target":{"type":"event","event_ref":"cmaeg1.ev.fixture"},"action":"rename","name":"Incident triage"}"#;
-    let decoded: ManageThreadRequest = serde_json::from_str(request).unwrap();
-    assert_eq!(serde_json::to_string(&decoded).unwrap(), request);
-}
-
-#[test]
-fn historical_activity_receipts_roundtrip_without_inventing_event_facts() {
-    let mut page = fixtures()["ActivityPage"][0].clone();
-    for row in page["items"].as_array_mut().unwrap() {
-        for key in ["kind", "event_type", "source_occurred_at"] {
-            row.as_object_mut().unwrap().remove(key);
-        }
-    }
-    let decoded: ActivityPage = serde_json::from_value(page.clone()).unwrap();
-    assert_eq!(serde_json::to_value(decoded).unwrap(), page);
-}
-
-#[test]
-fn github_receipt_dispatch_progress_is_additive_and_nullable() {
-    let mut receipt = fixtures()["Receipt"][0].clone();
-    receipt["dispatch"] = json!([{
-        "channel_id":"cmaeg1.ch.example",
-        "status":"dispatched",
-        "reason":null,
-        "admission_id":"admission-1"
-    }]);
-    let decoded: Receipt = serde_json::from_value(receipt.clone()).unwrap();
-    assert_eq!(serde_json::to_value(decoded).unwrap(), receipt);
-}
-
-#[test]
-fn historical_media_capabilities_do_not_advertise_native_presentations() {
-    let mut legacy = fixtures()["NativeMediaCapabilities"][0].clone();
-    legacy
-        .as_object_mut()
-        .unwrap()
-        .remove("presentation_profiles");
-    let decoded: NativeMediaCapabilities = serde_json::from_value(legacy.clone()).unwrap();
-    assert!(decoded.presentation_profiles.is_none());
-    assert_eq!(serde_json::to_value(decoded).unwrap(), legacy);
-}
-
-#[test]
-fn legacy_relay_sources_never_gain_a_resource_binding_on_roundtrip() {
-    for platform in ["telegram", "lark", "feishu", "discord", "whatsapp", "slack"] {
-        let request = json!({"type":"nyxid_relay","platform":platform,"issuer":"https://nyx.example","key_id":"key-fixture","route_ids":["route-fixture"],"admission":{"type":"all"}});
-        let decoded: SourceRequest = serde_json::from_value(request.clone()).unwrap();
-        assert_eq!(serde_json::to_value(decoded).unwrap(), request);
-        let mut source = request;
-        source["jwks_url"] = json!("https://nyx.example/.well-known/jwks.json");
-        let decoded: Source = serde_json::from_value(source.clone()).unwrap();
-        assert_eq!(serde_json::to_value(decoded).unwrap(), source);
-    }
-}
 fn roundtrip<T: DeserializeOwned + Serialize>(name: &str, examples: &Value) {
     for example in examples[name].as_array().unwrap() {
         let decoded: T = serde_json::from_value(example.clone())
@@ -93,456 +34,6 @@ fn github_nullable_objects_preserve_explicit_null_separately_from_absence() {
     roundtrip::<AppIntegration>("AppIntegration", &examples);
     roundtrip::<Task>("Task", &examples);
     roundtrip::<WebhookCredentialStatus>("WebhookCredentialStatus", &examples);
-}
-
-#[test]
-fn every_gateway_wire_type_replays_the_protocol_examples_without_losing_properties() {
-    let examples = fixtures();
-    let mut inventory = Vec::new();
-    macro_rules! check { ($($ty:ident),+ $(,)?) => {$({ inventory.push(stringify!($ty)); roundtrip::<$ty>(stringify!($ty), &examples); })+}; }
-    check!(
-        AppIntegration,
-        AppList,
-        AppVerification,
-        BindRequest,
-        BindingApproval,
-        VerifyBindingRequest,
-        RetireAppRequest,
-        Binding,
-        CreateAppRequest,
-        CredentialStatus,
-        GitHubCapabilities,
-        Receipt,
-        Task,
-        TaskResult,
-        TaskResultStatus,
-        UpdateAppRequest,
-        VerifyAppRequest,
-        WebhookCredentialOverlap,
-        WebhookCredentialStatus,
-        WebhookSecretRequest,
-        ActivityMediaResponse,
-        EventAttestationRequest,
-        EventAttestationResponse,
-        MediaArtifactClaim,
-        MediaContinuationKind,
-        MediaResponsePage,
-        RetainedMediaResponse,
-        FormCustomerMessage,
-        FormPreparationReceipt,
-        FormPreparationState,
-        AcceptedStatus,
-        ActionMode,
-        Activity,
-        ActivityConsumer,
-        ActivityConversation,
-        ActivityDelivery,
-        ActivityKind,
-        ActivityPage,
-        ActivityRecipient,
-        Actor,
-        ActorKind,
-        AdmissionPolicy,
-        AgentProfileSnapshot,
-        EventWorkerProfile,
-        ApiType,
-        Attachment,
-        AttachmentKind,
-        AttachmentSource,
-        LarkRegion,
-        NativeLarkIdentity,
-        NativeLarkCredentials,
-        NativeLarkSource,
-        LarkResourceBinding,
-        LarkMessageEffectsBinding,
-        LarkResourceKind,
-        AttachmentImage,
-        AttachmentImageOrigin,
-        AttachmentStatus,
-        AttachmentText,
-        AttachmentTextSource,
-        AttachmentUnavailableReason,
-        AttachmentView,
-        AttachmentViewKind,
-        BindingId,
-        Block,
-        BlockRendering,
-        BlockRenderingOutcome,
-        BotMessageAdmission,
-        CallbackPayload,
-        CallbackResponse,
-        Capabilities,
-        CapabilityView,
-        AgentToolCapability,
-        RelayAuthoringCapabilities,
-        RelayPlatformCapability,
-        RelayVerificationCapability,
-        ResourcePlatform,
-        ResourceConnectionSource,
-        ResourceConnection,
-        ResourceConnectionList,
-        ConnectionPage,
-        ConnectionView,
-        CreateConnection,
-        PlatformCapability,
-        Status,
-        ChannelCreateRequest,
-        ChannelActivity,
-        ChannelCreation,
-        ChannelId,
-        ChannelListItem,
-        ChannelPage,
-        ChannelResponse,
-        ChannelUpdateRequest,
-        ChoiceOption,
-        CloudEvent,
-        ConformanceLevel,
-        ContextConfig,
-        ContextResponse,
-        ReceivedMessageContext,
-        ThreadHistory,
-        ThreadRef,
-        ThreadListView,
-        CreateThreadRequest,
-        ThreadAction,
-        ThreadTarget,
-        ManageThreadRequest,
-        ThreadSummary,
-        ThreadListScope,
-        ThreadList,
-        ThreadOutcome,
-        ThreadReceipt,
-        ThreadCapabilities,
-        TopicAction,
-        TopicLifecycleCapabilities,
-        HistoryCursor,
-        HistoryAttachmentFacts,
-        HistoryOmittedContent,
-        HistoryMessage,
-        HistoryContinuation,
-        HistoryContentCoverage,
-        ConversationHistoryPage,
-        HistoryDirection,
-        ConversationHistoryCapabilities,
-        ThreadHistoryMessage,
-        ConversationId,
-        ConversationInspection,
-        PartitionInspection,
-        ConversationKind,
-        CredentialPatch,
-        CredentialsRequest,
-        WhatsappCredentials,
-        WhatsappWebhookResponse,
-        CustomAttachments,
-        CustomAuth,
-        DeliveryOutcome,
-        DispatchProgress,
-        EndpointResponse,
-        EventAccepted,
-        EventContextSnapshot,
-        EventId,
-        EventRef,
-        Field,
-        FieldRefusal,
-        FormField,
-        FormFieldKind,
-        GroupAdmission,
-        HmacSecretRequest,
-        IdentityAdmission,
-        InboundMediaCapabilities,
-        ConfirmedMessagePart,
-        IntentReceipt,
-        EmptyEffectRequest,
-        MessageEffectReceipt,
-        MessageEffectsCapabilities,
-        MessageReactionRequest,
-        TelegramReaction,
-        InteractionResult,
-        McpAuth,
-        McpServerRef,
-        MediaDownload,
-        MediaVariant,
-        MessageRef,
-        ModelAccess,
-        ModelConfig,
-        NyxIdIdentity,
-        NyxIdIdentityKind,
-        OptionStyle,
-        OutboundMessage,
-        PrepareOutboundMessage,
-        OutboundReceipt,
-        OutboundStatus,
-        PartitionKey,
-        PartitionRule,
-        PermissionConfig,
-        Platform,
-        Problem,
-        ProblemCode,
-        ProfileMetadata,
-        ProviderBinding,
-        ProviderRequest,
-        ProviderTarget,
-        ProviderResponse,
-        ProviderSlug,
-        PublicActivity,
-        PublicChannelDefinition,
-        PublicSecrets,
-        QuoteRelation,
-        QuoteTextOrigin,
-        QuotedContent,
-        QuotedContentKind,
-        QuotedContextSummary,
-        QuotedMessage,
-        QuotedText,
-        RecordId,
-        Refusal,
-        RekeyResponse,
-        RelayAgent,
-        RelayAttachment,
-        RelayContent,
-        RelayConversation,
-        RelaySender,
-        RenderingOutcome,
-        RenderingReport,
-        ReplyPolicy,
-        ReplyTargetRef,
-        ReplyTargetResponse,
-        Secret,
-        Sink,
-        SkillRef,
-        SkillSource,
-        Source,
-        SourceKind,
-        SourceRequest,
-        TestChannelResponse,
-        ThinkingEffort,
-        ThreadAddress,
-        ThreadContract,
-        ThreadFacts,
-        ThreadKind,
-        TypingOutcome,
-        TypingReceipt,
-        VisualSupport,
-        ActivityKindName,
-        Addressing,
-        AgentEventPolicy,
-        Consumer,
-        ConsumerId,
-        ConsumerName,
-        ConsumerReply,
-        ConsumerState,
-        DefaultConsumer,
-        DefaultReply,
-        Pattern,
-        PublishPolicy,
-        ReplyChoice,
-        ReplyLabel,
-        RoutingPolicy,
-        RoutingRule,
-        RuleId,
-        RuleMatch,
-        SourceId,
-        ActivityRouting,
-        Causation,
-        ConsumerSummary,
-        ConsumerTarget,
-        RouteResolution,
-        WhatsappTemplate,
-        WhatsappTemplateLanguage,
-        WhatsappTemplateParameter,
-        WhatsappTemplateMedia,
-        WhatsappTemplateDocument,
-        WhatsappTemplateCurrency,
-        WhatsappTemplateDateTime,
-        WhatsappTemplateButtonType,
-        WhatsappTemplateComponent,
-        NativeDiscordActivation,
-        NativeAttachment,
-        NativeMediaKind,
-        NativeMediaSource,
-        NativeMediaCapabilities,
-        NativePresentationProfile,
-        NativeAlbumCapabilities,
-        MediaControlsCapabilities,
-        StructuredContent,
-        NativeMediaUpdate,
-        NativeMediaReplacement,
-        NativeMediaEditCapabilities,
-        NativeStickerCapabilities,
-        NativeVideoCapabilities,
-        SourceCheckResponse,
-        SourceCheck,
-        SourceCheckStatus,
-        RoutingUpdateRequest,
-        RoutingPolicyRequest,
-        ConsumerPolicyRequest
-    );
-    inventory.sort_unstable();
-    assert_eq!(
-        inventory,
-        snapshot()["components"]["schemas"]
-            .as_object()
-            .unwrap()
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-    );
-}
-
-fn properties(schema: &Value, schemas: &Value) -> Value {
-    if let Some(reference) = schema["$ref"].as_str() {
-        return properties(&schemas[reference.rsplit('/').next().unwrap()], schemas);
-    }
-    if let Some(parts) = schema["allOf"].as_array() {
-        let mut variants = vec![json!({"type":"object","properties":{}})];
-        for part in parts {
-            let expanded = properties(part, schemas);
-            let options = expanded["oneOf"]
-                .as_array()
-                .cloned()
-                .unwrap_or_else(|| vec![expanded]);
-            let mut next = Vec::new();
-            for variant in &variants {
-                for option in &options {
-                    let mut merged = variant.clone();
-                    merged["properties"].as_object_mut().unwrap().extend(
-                        properties(option, schemas)["properties"]
-                            .as_object()
-                            .unwrap()
-                            .clone(),
-                    );
-                    next.push(merged);
-                }
-            }
-            variants = next;
-        }
-        return if variants.len() == 1 {
-            variants.pop().unwrap()
-        } else {
-            json!({"oneOf":variants})
-        };
-    }
-    schema.clone()
-}
-
-fn check_shape(schema: &Value, example: &Value, schemas: &Value, path: &str) -> Result<(), String> {
-    if let Some(reference) = schema["$ref"].as_str() {
-        return check_shape(
-            &schemas[reference.rsplit('/').next().unwrap()],
-            example,
-            schemas,
-            path,
-        );
-    }
-    if schema["allOf"].is_array() {
-        return check_shape(&properties(schema, schemas), example, schemas, path);
-    }
-    if let Some(variants) = schema["oneOf"].as_array() {
-        let nonnull: Vec<_> = variants.iter().filter(|v| v["type"] != "null").collect();
-        if nonnull.len() == 1 {
-            return check_shape(nonnull[0], example, schemas, path);
-        }
-        for variant in nonnull {
-            let expanded = properties(variant, schemas);
-            let discriminator = expanded["properties"]
-                .as_object()
-                .unwrap()
-                .iter()
-                .find(|(_, v)| v["enum"].is_array());
-            if discriminator.is_some_and(|(k, v)| example[k] == v["enum"][0]) {
-                return check_shape(&expanded, example, schemas, path);
-            }
-        }
-        return Err(format!("{path}: no matching variant"));
-    }
-    if let Some(fields) = schema["properties"].as_object() {
-        let object = example
-            .as_object()
-            .ok_or_else(|| format!("{path}: expected object"))?;
-        for (key, field) in fields {
-            let Some(value) = object.get(key) else {
-                if schema["required"]
-                    .as_array()
-                    .is_some_and(|required| required.iter().any(|field| field == key))
-                {
-                    return Err(format!("{path}/{key}: missing required example property"));
-                }
-                continue;
-            };
-            check_shape(field, value, schemas, &format!("{path}/{key}"))?;
-        }
-        if schema
-            .get("additionalProperties")
-            .is_none_or(|v| v == false)
-            && object.keys().any(|k| !fields.contains_key(k))
-        {
-            return Err(format!(
-                "{path}: SDK example retains a removed schema property"
-            ));
-        }
-    }
-    if schema.get("items").is_some() {
-        for item in example
-            .as_array()
-            .ok_or_else(|| format!("{path}: expected array"))?
-        {
-            check_shape(&schema["items"], item, schemas, path)?;
-        }
-    }
-    Ok(())
-}
-
-// Optional additive fields may be absent from legacy examples. Require their
-// coverage across the complete example set, while check_shape validates every
-// present field and recursively rejects properties removed from the snapshot.
-fn check_property_coverage(schema: &Value, examples: &[Value], schemas: &Value, path: &str) {
-    // Referenced types have their own complete top-level example collection.
-    if schema["$ref"].is_string() {
-        return;
-    }
-    let schema = properties(schema, schemas);
-    if let Some(variants) = schema["oneOf"].as_array() {
-        for variant in variants.iter().filter(|variant| variant["type"] != "null") {
-            if variant["$ref"].is_string() {
-                continue;
-            }
-            let expanded = properties(variant, schemas);
-            let discriminator = expanded["properties"]
-                .as_object()
-                .and_then(|fields| fields.iter().find(|(_, field)| field["enum"].is_array()));
-            let matching: Vec<_> = examples
-                .iter()
-                .filter(|example| {
-                    discriminator.is_none_or(|(key, field)| example[key] == field["enum"][0])
-                })
-                .cloned()
-                .collect();
-            assert!(!matching.is_empty(), "{path}: missing variant examples");
-            check_property_coverage(&expanded, &matching, schemas, path);
-        }
-    }
-    if let Some(fields) = schema["properties"].as_object() {
-        for (key, field) in fields {
-            let values: Vec<_> = examples
-                .iter()
-                .filter_map(|example| example.get(key).cloned())
-                .collect();
-            assert!(
-                !values.is_empty(),
-                "{path}/{key}: missing example property coverage"
-            );
-            check_property_coverage(field, &values, schemas, &format!("{path}/{key}"));
-        }
-    }
-    if let Some(items) = schema.get("items") {
-        let values: Vec<_> = examples
-            .iter()
-            .filter_map(Value::as_array)
-            .flatten()
-            .cloned()
-            .collect();
-        check_property_coverage(items, &values, schemas, path);
-    }
 }
 
 #[test]
@@ -799,5 +290,161 @@ fn discord_voice_constraints_round_trip_and_older_profile_omits_new_fields() {
     for value in fixtures()["NativePresentationProfile"].as_array().unwrap() {
         let decoded: NativePresentationProfile = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(serde_json::to_value(decoded).unwrap(), *value);
+    }
+}
+
+fn properties(schema: &Value, schemas: &Value) -> Value {
+    if let Some(reference) = schema["$ref"].as_str() {
+        return properties(&schemas[reference.rsplit('/').next().unwrap()], schemas);
+    }
+    if let Some(parts) = schema["allOf"].as_array() {
+        let mut variants = vec![json!({"type":"object","properties":{}})];
+        for part in parts {
+            let expanded = properties(part, schemas);
+            let options = expanded["oneOf"]
+                .as_array()
+                .cloned()
+                .unwrap_or_else(|| vec![expanded]);
+            let mut next = Vec::new();
+            for variant in &variants {
+                for option in &options {
+                    let mut merged = variant.clone();
+                    merged["properties"].as_object_mut().unwrap().extend(
+                        properties(option, schemas)["properties"]
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    );
+                    next.push(merged);
+                }
+            }
+            variants = next;
+        }
+        return if variants.len() == 1 {
+            variants.pop().unwrap()
+        } else {
+            json!({"oneOf":variants})
+        };
+    }
+    schema.clone()
+}
+
+fn check_shape(schema: &Value, example: &Value, schemas: &Value, path: &str) -> Result<(), String> {
+    if let Some(reference) = schema["$ref"].as_str() {
+        return check_shape(
+            &schemas[reference.rsplit('/').next().unwrap()],
+            example,
+            schemas,
+            path,
+        );
+    }
+    if schema["allOf"].is_array() {
+        return check_shape(&properties(schema, schemas), example, schemas, path);
+    }
+    if let Some(variants) = schema["oneOf"].as_array() {
+        let nonnull: Vec<_> = variants.iter().filter(|v| v["type"] != "null").collect();
+        if nonnull.len() == 1 {
+            return check_shape(nonnull[0], example, schemas, path);
+        }
+        for variant in nonnull {
+            let expanded = properties(variant, schemas);
+            let discriminator = expanded["properties"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .find(|(_, v)| v["enum"].is_array());
+            if discriminator.is_some_and(|(k, v)| example[k] == v["enum"][0]) {
+                return check_shape(&expanded, example, schemas, path);
+            }
+        }
+        return Err(format!("{path}: no matching variant"));
+    }
+    if let Some(fields) = schema["properties"].as_object() {
+        let object = example
+            .as_object()
+            .ok_or_else(|| format!("{path}: expected object"))?;
+        for (key, field) in fields {
+            let Some(value) = object.get(key) else {
+                if schema["required"]
+                    .as_array()
+                    .is_some_and(|required| required.iter().any(|field| field == key))
+                {
+                    return Err(format!("{path}/{key}: missing required example property"));
+                }
+                continue;
+            };
+            check_shape(field, value, schemas, &format!("{path}/{key}"))?;
+        }
+        if schema
+            .get("additionalProperties")
+            .is_none_or(|v| v == false)
+            && object.keys().any(|k| !fields.contains_key(k))
+        {
+            return Err(format!(
+                "{path}: SDK example retains a removed schema property"
+            ));
+        }
+    }
+    if schema.get("items").is_some() {
+        for item in example
+            .as_array()
+            .ok_or_else(|| format!("{path}: expected array"))?
+        {
+            check_shape(&schema["items"], item, schemas, path)?;
+        }
+    }
+    Ok(())
+}
+
+// Optional additive fields may be absent from legacy examples. Require their
+// coverage across the complete example set, while check_shape validates every
+// present field and recursively rejects properties removed from the snapshot.
+fn check_property_coverage(schema: &Value, examples: &[Value], schemas: &Value, path: &str) {
+    // Referenced types have their own complete top-level example collection.
+    if schema["$ref"].is_string() {
+        return;
+    }
+    let schema = properties(schema, schemas);
+    if let Some(variants) = schema["oneOf"].as_array() {
+        for variant in variants.iter().filter(|variant| variant["type"] != "null") {
+            if variant["$ref"].is_string() {
+                continue;
+            }
+            let expanded = properties(variant, schemas);
+            let discriminator = expanded["properties"]
+                .as_object()
+                .and_then(|fields| fields.iter().find(|(_, field)| field["enum"].is_array()));
+            let matching: Vec<_> = examples
+                .iter()
+                .filter(|example| {
+                    discriminator.is_none_or(|(key, field)| example[key] == field["enum"][0])
+                })
+                .cloned()
+                .collect();
+            assert!(!matching.is_empty(), "{path}: missing variant examples");
+            check_property_coverage(&expanded, &matching, schemas, path);
+        }
+    }
+    if let Some(fields) = schema["properties"].as_object() {
+        for (key, field) in fields {
+            let values: Vec<_> = examples
+                .iter()
+                .filter_map(|example| example.get(key).cloned())
+                .collect();
+            assert!(
+                !values.is_empty(),
+                "{path}/{key}: missing example property coverage"
+            );
+            check_property_coverage(field, &values, schemas, &format!("{path}/{key}"));
+        }
+    }
+    if let Some(items) = schema.get("items") {
+        let values: Vec<_> = examples
+            .iter()
+            .filter_map(Value::as_array)
+            .flatten()
+            .cloned()
+            .collect();
+        check_property_coverage(items, &values, schemas, path);
     }
 }

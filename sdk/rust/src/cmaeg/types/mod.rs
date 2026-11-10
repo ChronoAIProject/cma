@@ -59,3 +59,6 @@ pub use structured_content::*;
 
 mod github;
 pub use github::*;
+
+mod discord_status;
+pub use discord_status::*;
