@@ -11,7 +11,7 @@ use mongodb::options::ReadConcern;
 use super::agent_log::{log_document, read_entry};
 use super::sandbox_mongo::MongoSandboxStore;
 
-pub(super) const NORMAL_AGENT_LOG_ENTRIES: u64 = 10_000;
+pub(super) use layer2_core::sandbox::store::NORMAL_AGENT_LOG_ENTRIES;
 pub(super) const NORMAL_AGENT_LOG_BYTES: usize = 64 * 1024 * 1024;
 const STOP_RESERVE_ENTRIES: u64 = 64;
 const STOP_RESERVE_BYTES: usize = 512 * 1024;
