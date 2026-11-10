@@ -67,6 +67,13 @@ pub enum AgentConversationError {
 
 #[async_trait::async_trait]
 pub trait AgentUpdateRecorder: Send + Sync {
+    async fn budget_stop(
+        &self,
+        _id: &AgentId,
+        _runtime_generation: u64,
+    ) -> Result<Option<crate::budget::BudgetStop>, AgentConversationError> {
+        Ok(None)
+    }
     async fn record_reopen_update(
         &self,
         _id: &AgentId,
