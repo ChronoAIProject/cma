@@ -13,10 +13,20 @@ const FIELD: &str = "worker_failure_pacing_v1";
 const CLASS: &str = "agent_runtime_unavailable";
 const MAX_DELAY: u64 = 300;
 
+pub(super) fn command_generation(row: &Document) -> Option<u64> {
+    match row.get("agent_command_admission_fence") {
+        None => Some(0),
+        Some(Bson::Int64(value)) => u64::try_from(*value).ok(),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Pacing {
     class: String,
     agent_revision: u64,
+    #[serde(default)]
+    command_admission_generation: u64,
     attempts: u32,
     repeats: u32,
     sandbox_revision: u64,
@@ -95,6 +105,7 @@ pub(super) async fn record(
     let repeats = Pacing::read(&row)
         .filter(|previous| {
             previous.class == CLASS
+                && previous.command_admission_generation == observed.command_admission_generation
                 && previous.unchanged_parents(observed)
                 && previous.agent_revision.checked_add(2) == Some(next.revision)
                 && previous.attempts.checked_add(1) == Some(next.work.attempts)
@@ -108,6 +119,10 @@ pub(super) async fn record(
         // log metadata. Preserve the inspected revision so that change wakes
         // work instead of becoming a fresh but unobserved hold.
         agent_revision: observed_publication_revision,
+        // Never adopt the generation read after publication. Keeping the
+        // pre-inspection generation fences this hint even if admission commits
+        // before, during, or after this CAS: both readers must wake on mismatch.
+        command_admission_generation: observed.command_admission_generation,
         attempts: next.work.attempts,
         repeats,
         sandbox_revision: observed.sandbox_revision,
@@ -141,7 +156,9 @@ pub(super) async fn decision(
     let Some(pacing) = Pacing::read(row).filter(|pacing| pacing.applies(agent, now)) else {
         return Ok(Decision::Ordinary);
     };
-    if pacing.agent_revision != agent.revision {
+    if pacing.agent_revision != agent.revision
+        || command_generation(row) != Some(pacing.command_admission_generation)
+    {
         return Ok(Decision::Wake);
     }
     for (collection, id, revision) in [
