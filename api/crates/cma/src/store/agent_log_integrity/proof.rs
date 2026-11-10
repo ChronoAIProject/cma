@@ -44,12 +44,7 @@ pub(super) async fn read_only_summary(
             "Agent log integrity is quarantined".into(),
         )));
     }
-    let parsed = match parse_integrity(row) {
-        Ok(integrity) => integrity,
-        Err(error) => {
-            return Err(error.into());
-        }
-    };
+    let parsed = parse_integrity(row)?;
     let Some(integrity) = parsed else {
         if agent.conversation.last_seq == 0
             && point_read(
@@ -110,10 +105,7 @@ pub(super) async fn read_only_summary(
         let entry = Document::try_from(&raw)
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
             .and_then(|document| read_entry(&document));
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => return Err(error.into()),
-        };
+        let entry = entry?;
         if entry.agent_id != agent.id
             || entry.seq != integrity.head_seq
             || hash_raw(raw.as_bytes()) != integrity.head_hash
