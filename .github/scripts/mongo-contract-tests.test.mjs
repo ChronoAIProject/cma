@@ -34,6 +34,7 @@ const requiredPrefixes = [
   'store::sandbox_mongo_integration_tests::warm_hierarchy_tests::',
   'store::agent_admission::mongo_integration_tests::',
   'store::schema_mongo_integration_tests::',
+  'store::sandbox_mongo_integration_tests::ledger_retirement_tests::',
   'store::workspaces::mongo_integration_tests::',
   'store::bindings::',
   'store::gateway_records_mongo_integration_tests::',
