@@ -95,7 +95,7 @@ impl Archive {
         })
     }
 
-    fn verify(&self) -> Result<()> {
+    pub(crate) fn verify(&self) -> Result<()> {
         // An anchored artifact stays confined to its original owned directory
         // even if another actor replaces its visible pathname. The publisher
         // separately verifies that pathname before it can report a ready copy.
@@ -103,6 +103,28 @@ impl Archive {
             return Err(invalid());
         }
         Ok(())
+    }
+
+    /// Serving cannot recover active sources while a deactivation is pending.
+    /// The bounded partial index makes this independent of archive history size.
+    pub(crate) async fn require_ready(&self) -> Result<()> {
+        self.verify()?;
+        require_reserve(&self.path, self.anchor.as_deref())?;
+        self.storage
+            .call(|db| {
+                let pending: bool = db
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM retired_groups WHERE complete=0)",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(|_| storage_error())?;
+                if pending {
+                    return Err(invalid());
+                }
+                Ok(())
+            })
+            .await
     }
 
     /// Check the entire prepared pair before its first active-ledger write.

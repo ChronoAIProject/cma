@@ -7,7 +7,7 @@ use std::path::Path;
 use super::hold;
 use crate::failure::Result;
 
-pub(super) fn exists(path: &Path) -> Result<bool> {
+pub(crate) fn exists(path: &Path) -> Result<bool> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -15,7 +15,7 @@ pub(super) fn exists(path: &Path) -> Result<bool> {
     }
 }
 
-pub(super) fn directories(path: &Path) -> Result<()> {
+pub(crate) fn directories(path: &Path) -> Result<()> {
     for ancestor in path.ancestors() {
         if !std::fs::symlink_metadata(ancestor)
             .map_err(|_| hold())?
@@ -49,7 +49,7 @@ fn open(path: &Path, create: bool) -> Result<File> {
     Ok(file)
 }
 
-pub(super) fn read(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read(path: &Path) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     open(path, false)?
         .take(8193)
