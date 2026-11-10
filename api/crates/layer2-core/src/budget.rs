@@ -18,6 +18,8 @@ pub use platform::PlatformBudgetPolicy;
 mod controls_tests;
 
 #[cfg(test)]
+mod rollout_tests;
+#[cfg(test)]
 mod tests;
 
 /// Exact accounting units. Their valuation is configured privately by an operator.
@@ -122,7 +124,9 @@ pub struct OwnerBudgetPolicy {
 }
 
 impl BudgetSettings {
-    pub fn is_disabled(&self) -> bool {
+    /// Only this empty shape can be omitted for strict pre-budget readers.
+    /// Disabled policies with retained values still require compatible readers.
+    pub fn is_empty_disabled(&self) -> bool {
         !self.enabled
             && self.platform.is_none()
             && self.default_policy.is_none()
