@@ -25,13 +25,14 @@ pub(super) fn final_agent_and_logs(
 
 pub(super) async fn insert_logs(
     store: &MongoSandboxStore,
-    logs: &[AgentLogEntry],
+    logs: &[mongodb::bson::RawDocumentBuf],
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     for entry in logs {
         store
             .agent_log
-            .insert_one(log_document(entry).map_err(ApplyError::Domain)?)
+            .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+            .insert_one(entry)
             .session(&mut *session)
             .await
             .map_err(|error| {
