@@ -15,6 +15,11 @@ pub enum BindingRouteError {
 
 #[async_trait::async_trait]
 pub trait BindingEventRouter: Send + Sync {
+    /// Pure projection for comparison with an already admitted complete command.
+    /// This does not attest a new event or authorize a new admission.
+    fn sender_line(&self, _event: &ExternalEventContext) -> Result<String, BindingRouteError> {
+        Err(BindingRouteError::SenderUnsupported)
+    }
     /// Attest the complete original event and render one deterministic first line.
     async fn verified_sender_line(
         &self,

@@ -18,7 +18,7 @@ impl AgentCommandService {
         credential: &str,
         agent_id: &AgentId,
         key: &str,
-    ) -> Result<Option<(AgentCommand, super::CommandReceiptView)>, CommandAdmissionError> {
+    ) -> Result<Option<AgentCommand>, CommandAdmissionError> {
         let target = ResourceTarget::Agent {
             agent_id: agent_id.clone(),
         };
@@ -53,7 +53,6 @@ impl AgentCommandService {
         };
         record.validate()?;
         proof.require_command(&record.receipt.envelope)?;
-        let receipt = super::CommandStatusView::from_record(&record).receipt;
-        Ok(Some((record.receipt.envelope.command, receipt)))
+        Ok(Some(record.receipt.envelope.command))
     }
 }

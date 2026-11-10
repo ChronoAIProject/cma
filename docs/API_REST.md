@@ -638,17 +638,29 @@ use their attested `platform`. WhatsApp, Discord and GitHub use `whatsapp`,
 JSON escaping, including escaped Unicode line separators. User text follows the
 line verbatim; a supplied lookalike cannot precede the verified prefix. The
 complete prefix counts against the existing input-byte limit; overflow is a
-named refusal, never truncation. Empty text/media-only events can carry the line.
+named refusal, never truncation. Blank text remains refused in both policy modes.
+Media-only activities work because CMAEG supplies a non-empty attachments block.
 
 Only a current binding credential may submit `event_context`; owner/API callers
 cannot forge it. Turns without that context receive no prefix. Commands persist
-ordinary text using the existing ledger schema. Exact retries compare the full
-request rendered under either policy state. Matching the prefixed form requires
-re-attestation; an exact match to the original undecorated request stays unchanged.
-A failed re-attestation carries the original response ID so the gateway preserves
-recovery of admitted work. Policy toggles never rewrite admitted bytes or fingerprints. Changed requests
-under the same idempotency key still conflict. With the extension disabled,
-new input bytes and fingerprints retain their previous behavior.
+ordinary text using the existing ledger schema. Enabled-policy requests first
+look up the retained command. Exact replay compares the complete request with
+its original form and a prefixed form rendered locally from its own Activity;
+the retained ExternalEvent is part of that equality. Replay returns the original
+admission without contacting the gateway, even after reference expiry or during
+an outage. Only new admissions attest. Changed requests under the same key
+conflict. Policy toggles never rewrite admitted bytes or fingerprints.
+
+Disabled-policy turns use the ordinary admission path without extra preliminary
+reads or a new timeout. Only an idempotency conflict triggers a retained-command
+comparison with the locally prefixed form, supporting replay after disabling.
+Unrelated conflicts and store failures retain their existing responses.
+
+An older binary can read and dispatch these ordinary-text commands, but ignores
+the policy carried in `honoured`: new gateway turns then arrive without the
+verified line. Consumers must fail closed whenever `event_ref` is present without
+that line. The Q&A skill must enforce this during rollback; the enabled policy
+alone does not prove that an older provider rendered the sender context.
 
 The CMA Responses v2 dialect defines `403 verified_sender_context_invalid`,
 `422 verified_sender_context_unsupported`, and retryable
