@@ -22,6 +22,7 @@ mod resource_execution;
 mod capacity_execution;
 
 mod bounded_admission_tests;
+mod bounded_audit_tests;
 mod bounded_compatibility_tests;
 mod bounded_dispatch_tests;
 mod bounded_fixtures;

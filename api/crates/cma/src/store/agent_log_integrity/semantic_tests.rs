@@ -237,3 +237,50 @@ fn every_restart_partition_matches_full_domain_fold() {
         }
     }
 }
+
+#[test]
+fn strict_audit_recognizes_an_unfinished_turn_without_hiding_earlier_damage() {
+    let mut agent = ready_agent(&active_sandbox("sbx_partial_audit"), "agt_partial_audit");
+    agent.conversation.last_seq = 0;
+    agent.conversation.conversation_id = None;
+    agent.conversation.runtime_generation = None;
+    let kinds = [
+        Created {
+            workspace_id: agent.workspace_id.clone(),
+            worktree_id: agent.creation_worktree_id().clone(),
+        },
+        ConversationOpened {
+            conversation_id: "conversation".into(),
+            runtime_generation: 1,
+        },
+        TurnStarted {
+            turn_sequence: 3,
+            origin_key: None,
+            model: None,
+        },
+    ];
+    let mut entries = Vec::new();
+    let mut incremental = SemanticCheckpoint::empty();
+    for (i, kind) in kinds.into_iter().enumerate() {
+        let entry = AgentLogEntry {
+            agent_id: agent.id.clone(),
+            seq: i as u64 + 1,
+            appended_at: AT.into(),
+            kind,
+        };
+        apply_agent(&mut agent, &entry);
+        incremental = incremental
+            .after_append(std::slice::from_ref(&entry), &agent)
+            .unwrap();
+        entries.push(entry);
+    }
+    assert!(incremental.valid);
+    assert!(
+        !SemanticCheckpoint::from_entries(&agent, &entries)
+            .unwrap()
+            .valid
+    );
+    assert!(SemanticCheckpoint::validate_retained_semantics(&agent, &entries).is_ok());
+    entries[0].appended_at = "x".repeat(AT.len());
+    assert!(SemanticCheckpoint::validate_retained_semantics(&agent, &entries).is_err());
+}
