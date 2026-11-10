@@ -139,6 +139,7 @@ async fn terminal_authentication_error_requires_a_new_source_revision() {
         Some(FailureCode::AuthenticationFailed)
     );
     assert_eq!(view.outcome, super::super::status::Outcome::Blocked);
+    let failed_at = view.last_failure_at.clone();
     *port.revision.lock().unwrap() = None;
     tokio::time::sleep(Duration::from_millis(25)).await;
     assert_eq!(
@@ -151,6 +152,10 @@ async fn terminal_authentication_error_requires_a_new_source_revision() {
     assert_eq!(
         registry.view("record", Some("initial")).last_failure_code,
         Some(FailureCode::AuthenticationFailed)
+    );
+    assert_eq!(
+        registry.view("record", Some("initial")).last_failure_at,
+        failed_at
     );
     *port.revision.lock().unwrap() = Some("fixed-credential".into());
     assert_eq!(next(&mut rx).await, 2);
