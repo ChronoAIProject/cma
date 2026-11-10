@@ -1,5 +1,8 @@
 //! One configured, owned connection with lease renewal. No automatic activation.
-use super::{DurableJournal, EndReason, GatewayClient, GatewayEnd, GatewayError};
+use super::{
+    status::{FailureCode, Stage},
+    DurableJournal, EndReason, GatewayClient, GatewayEnd, GatewayError,
+};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
 impl DurableJournal {
@@ -10,11 +13,14 @@ impl DurableJournal {
         self: Arc<Self>,
         mut shutdown: watch::Receiver<bool>,
     ) -> Result<GatewayEnd, GatewayError> {
+        self.status.step(Stage::Identify);
         let gateway = GatewayClient::new(
             self.authority.token.clone(),
             self.authority.bot_id.clone(),
             self.authority.intents,
-        )?;
+        )
+        .inspect_err(|error| self.status.failure((*error).into()))?
+        .with_status(self.status.clone());
         let resume = self.checkpoint().await?;
         let (stop, receiver) = watch::channel(*shutdown.borrow());
         let connection = gateway.connect(resume, self.clone(), receiver);
@@ -22,8 +28,17 @@ impl DurableJournal {
         let renewal = async {
             loop {
                 tokio::time::sleep(Duration::from_secs(10)).await;
-                if tokio::time::timeout(Duration::from_secs(15), self.renew()).await != Ok(Ok(())) {
-                    break;
+                match tokio::time::timeout(Duration::from_secs(15), self.renew()).await {
+                    Ok(Ok(())) => {}
+                    result => {
+                        self.status.step(Stage::Renew);
+                        self.status.failure(if result.is_err() {
+                            FailureCode::RenewTimeout
+                        } else {
+                            FailureCode::RenewFailed
+                        });
+                        break;
+                    }
                 }
             }
         };
@@ -46,12 +61,23 @@ impl DurableJournal {
                 }
             }
         };
-        if result.as_ref().is_ok_and(|end| end.checkpoint.is_none()) {
-            let _ = self.discard_checkpoint().await;
+        match &result {
+            Ok(end) if end.reason != EndReason::Stopped => self.status.failure(end.reason.into()),
+            Err(error) => self.status.failure((*error).into()),
+            _ => {}
+        }
+        if result.as_ref().is_ok_and(|end| end.checkpoint.is_none())
+            && self.discard_checkpoint().await.is_err()
+        {
+            self.status.cleanup_failed();
         }
         // Failed release is safe: a new process must wait for the durable lease
         // to expire, and stale workers cannot release a newer owner's fence.
-        let _ = self.release().await;
+        let released = self.release().await.is_ok();
+        if !released {
+            self.status.cleanup_failed();
+        }
+        self.status.lease_released(released);
         result
     }
 }
