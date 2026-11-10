@@ -166,6 +166,43 @@ impl ResourceAccessStore for MongoSandboxStore {
         }
         Err(ResourceAccessStoreError::Unavailable)
     }
+
+    async fn resource_access_snapshots(
+        &self,
+        targets: &[ResourceTarget],
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
+        for _ in 0..TRANSACTION_ATTEMPTS {
+            let mut session = self
+                .client
+                .start_session()
+                .await
+                .map_err(|_| ResourceAccessStoreError::Unavailable)?;
+            start_transaction(&mut session)
+                .await
+                .map_err(|_| ResourceAccessStoreError::Unavailable)?;
+            let result: Result<Vec<_>, ReadError> = async {
+                let mut snapshots = Vec::with_capacity(targets.len());
+                for target in targets {
+                    snapshots.push(snapshot::read(self, target, &mut session).await?);
+                }
+                Ok(snapshots)
+            }
+            .await;
+            // These are read-only snapshots; abort releases the transaction
+            // while preserving the same session for every row in the batch.
+            let _ = session.abort_transaction().await;
+            match result {
+                Ok(snapshots) => return Ok(snapshots),
+                Err(ReadError::Domain(error)) => return Err(error),
+                Err(ReadError::Driver(error)) if is_transient(&error) => continue,
+                Err(ReadError::Driver(_)) => return Err(ResourceAccessStoreError::Unavailable),
+            }
+        }
+        Err(ResourceAccessStoreError::Unavailable)
+    }
 }
 
 pub(super) async fn ensure_indexes(

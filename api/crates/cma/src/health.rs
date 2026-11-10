@@ -131,6 +131,8 @@ async fn readiness(State(state): State<CheckState>) -> impl IntoResponse {
 }
 
 #[cfg(test)]
+mod gateway_tests;
+#[cfg(test)]
 mod mongo_fixture;
 #[cfg(test)]
 mod mongo_tests;
