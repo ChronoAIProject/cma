@@ -14,9 +14,7 @@ use mongodb::bson::{doc, Bson, Timestamp};
 use mongodb::options::ReadConcern;
 
 use super::agent_log::{read_entry, scan_complete_log_with_session};
-use super::agent_log_integrity::{
-    prepare_append, AppendCapacity, SemanticCheckpoint, TransactionLogError,
-};
+use super::agent_log_integrity::{prepare_append, AppendCapacity, TransactionLogError};
 use super::agents::{agent_replacement_fields, read_agent};
 use super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
 use super::sandbox_events::{
@@ -206,7 +204,13 @@ async fn apply_lifecycle(
         )
         .await?;
         let complete = complete.with_semantic(
-            SemanticCheckpoint::from_entries(stored, &prior_entries).map_err(ApplyError::Domain)?,
+            crate::store::agent_log_integrity::audit_checkpoint(
+                store,
+                stored,
+                &prior_entries,
+                session,
+            )
+            .await?,
         );
         let batch = materialize_logs(stored, change, &mutation.appended_at)?;
 
