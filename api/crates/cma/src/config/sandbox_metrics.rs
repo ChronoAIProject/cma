@@ -5,6 +5,7 @@ pub(crate) struct MetricsConfig {
     pub cluster: String,
     pub source_url: Option<String>,
     pub budgets: MetricsBudgets,
+    pub reporting_pool_size: u32,
 }
 impl MetricsConfig {
     pub(super) fn from_lookup(
@@ -26,13 +27,35 @@ impl MetricsConfig {
                 .map_err(|e| e.to_string())?;
         }
         let budgets = MetricsBudgets::from_lookup(lookup)?;
+        let reporting_pool_size = reporting_pool_size(lookup)?;
         Ok(Self {
             enabled,
             cluster,
             source_url,
             budgets,
+            reporting_pool_size,
         })
     }
+}
+
+pub(crate) const DEFAULT_REPORTING_POOL_SIZE: u32 = 4;
+
+fn reporting_pool_size(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<u32, String> {
+    let Some(value) = lookup("CHRONO_USAGE_REPORTING_MONGO_MAX_POOL_SIZE")? else {
+        return Ok(DEFAULT_REPORTING_POOL_SIZE);
+    };
+    let invalid =
+        || "CHRONO_USAGE_REPORTING_MONGO_MAX_POOL_SIZE must be an integer in 1..=16".to_owned();
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(invalid());
+    }
+    let size = value.parse::<u32>().map_err(|_| invalid())?;
+    if !(1..=16).contains(&size) {
+        return Err(invalid());
+    }
+    Ok(size)
 }
 
 /// Configurable reductions preserve the cluster-wide hard ceilings.
@@ -47,6 +70,7 @@ pub(crate) struct MetricsBudgets {
     pub tenant_bytes: i64,
     pub global_bytes: i64,
 }
+
 impl Default for MetricsBudgets {
     fn default() -> Self {
         Self {
@@ -102,3 +126,7 @@ impl MetricsBudgets {
         Ok(result)
     }
 }
+
+#[cfg(test)]
+#[path = "sandbox_metrics_tests.rs"]
+mod tests;
