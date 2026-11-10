@@ -96,5 +96,6 @@ nextest_build run -E 'package(=cma) and test(~gateway::tests::)' \
   --run-ignored only --test-threads 1
 
 # Verified sender input must survive real binding policy updates and ledger replay.
-nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
+  nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and test(~sender_context_tests::)'
