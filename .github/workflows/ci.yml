@@ -111,6 +111,7 @@ jobs:
           node-version: 26
       - name: Omarchy desktop fixture regressions
         run: |
+          python3 -B .github/scripts/omarchy-cache-key-tests.py
           python3 .github/scripts/omarchy-close-browser-tests.py
           python3 .github/scripts/omarchy-browser-input-tests.py
           node --test .github/scripts/omarchy-browser-page.test.cjs
@@ -118,6 +119,9 @@ jobs:
       - name: Set immutable Omarchy image version
         id: identity
         run: echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+      - name: Identify pinned Omarchy dependency cache
+        id: cache
+        run: python3 .github/scripts/omarchy-cache-key.py "$RUNNER_TEMP/omarchy-evidence/cache-inputs.json" >> "$GITHUB_OUTPUT"
       # Build the tool donor and supervisor from this checkout. The historical
       # prototype's expiring donor artifact cannot supply a develop release gate.
       - name: Build current-source Omarchy image
@@ -137,10 +141,23 @@ jobs:
             CHRONO_BUILD=${{ steps.identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
-          cache-from: type=gha,scope=runtime-omarchy
-          # PR merge-ref caches cannot seed develop and compete with shared layers.
-          # Keep all checks; only develop publishes reusable build caches.
-          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'type=gha,mode=max,scope=runtime-omarchy' || '' }}
+          cache-from: |
+            type=gha,scope=${{ steps.cache.outputs.scope }}
+            type=gha,scope=runtime-desktop
+            type=gha,scope=runtime
+            type=gha,scope=runtime-omarchy
+      # Export only the pinned desktop stage after the parallel full build.
+      # GHA keeps PR writes scoped to their merge ref; develop seeds future PRs.
+      - name: Retain pinned Omarchy dependency layers
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: infra/runtime/Dockerfile
+          target: omarchy-dependencies
+          platforms: linux/amd64
+          push: false
+          load: false
+          cache-to: type=gha,mode=min,scope=${{ steps.cache.outputs.scope }}
       - name: Release Omarchy build cache before image checks
         run: |
           image_id=$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')
