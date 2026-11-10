@@ -48,9 +48,7 @@ impl RequestPermit {
         };
         if value["status"] != "completed"
             || !value["error"].is_null()
-            || value["model"]
-                .as_str()
-                .is_some_and(|model| model != self.hold.request.model)
+            || value["model"].as_str() != Some(self.hold.request.model.as_str())
         {
             return Ok(());
         }

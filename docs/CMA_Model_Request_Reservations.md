@@ -44,8 +44,17 @@ write and turn aggregate serialize concurrent holds across replicas. Admission
 checks both the owner/day budget and the remaining originating-turn budget,
 including earlier auxiliary requests and unresolved holds. Existing parent-turn
 accounting remains conservative: it retains its full debit when authoritative
-final main-turn usage is unavailable. Auxiliary holds are additional liability;
-this can refuse work earlier than a fully reconciled meter would.
+final main-turn usage is unavailable. The parent debit consumes the turn allowance
+too; observations alone cannot create capacity for auxiliary calls. The current
+runtime source never certifies final usage or final request count, so enabled
+auxiliary calls conservatively refuse until the authoritative gateway integration
+supplies both. Success tests explicitly seed that future settlement contract;
+they do not demonstrate current production settlement completeness.
+
+`max_calls_per_turn` includes the certified parent request count and every granted
+auxiliary permit. Concurrent holds serialize the count, and neither settlement
+nor restart refunds it. Missing parent call-count evidence fails closed. Lowered
+current limits and the original turn limits both constrain new requests.
 
 Only a fresh, confirmed reservation transaction returns permission for one HTTP
 send. A repeated request key never grants another send. Unknown commit outcomes
@@ -59,7 +68,7 @@ network dispatch. Title orchestration retains the typed budget reason and its
 retryable unavailable result. Suggestions preserve their existing typed
 unavailable failure shape for compatibility.
 
-Complete successful provider responses with both usage counters settle the
+Complete successful provider responses with the exact model and both usage counters settle the
 exact hold transactionally. Duplicate identical settlement is harmless;
 conflicting usage is refused. Missing, malformed, incomplete or mismatched-model
 usage leaves the full hold outstanding. Timeouts, transport errors, restarts
