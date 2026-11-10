@@ -1,3 +1,4 @@
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::ids::AgentCommandId;
 use layer2_core::sandbox::agent_io::{AdmittedAgentCommand, CommandEvidence, CommandLedgerError};
 use layer2_core::sandbox::store::SandboxStoreError;
@@ -42,6 +43,7 @@ pub(super) async fn apply(
     let mut lane = lane_records::read(&lane, agent_id.as_str())?;
     let mut evidence = CommandEvidence::new(&command)?;
     scan_complete_log_with_session(
+        ScanCaller::CommandAdmission,
         store,
         agent_id,
         agent.conversation.last_seq,

@@ -1,5 +1,6 @@
 //! Atomic Mongo admission for an agent and its owned worktree.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, SandboxStoreError,
 };
@@ -38,32 +39,7 @@ enum ApplyError {
     AgentDuplicate,
 }
 
-impl From<LoadError> for ApplyError {
-    fn from(error: LoadError) -> Self {
-        match error {
-            LoadError::Domain(error) => Self::Domain(error),
-            LoadError::Driver(error) => Self::Driver(error),
-        }
-    }
-}
-
-impl From<TransactionEventError> for ApplyError {
-    fn from(error: TransactionEventError) -> Self {
-        match error {
-            TransactionEventError::Domain(error) => Self::Domain(error),
-            TransactionEventError::Driver(error) => Self::Driver(error),
-        }
-    }
-}
-
-impl From<TransactionLogError> for ApplyError {
-    fn from(error: TransactionLogError) -> Self {
-        match error {
-            TransactionLogError::Domain(error) => Self::Domain(error),
-            TransactionLogError::Driver(error) => Self::Driver(error),
-        }
-    }
-}
+mod errors;
 
 impl MongoSandboxStore {
     async fn admit_agent_with_reuse(
@@ -348,8 +324,15 @@ async fn apply_admission(
             ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string()))
         }
     })?;
-    let log_summary =
-        scan_complete_log_with_session(store, &creation.agent.id, 0, session, |_| Ok(())).await?;
+    let log_summary = scan_complete_log_with_session(
+        ScanCaller::CommandAdmission,
+        store,
+        &creation.agent.id,
+        0,
+        session,
+        |_| Ok(()),
+    )
+    .await?;
     ensure_append_capacity(
         &log_summary,
         std::slice::from_ref(&creation.initial_log),

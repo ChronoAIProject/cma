@@ -1,3 +1,4 @@
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::agent_io::{
     AgentCommand, CommandLedgerError, CommandReservationResult, TargetedControlBinding,
     TargetedControlInspection, TargetedControlReservation,
@@ -83,6 +84,7 @@ pub(super) async fn apply(
     ) {
         let mut pending = PendingAgentApprovals::default();
         scan_complete_log_with_session(
+            ScanCaller::CommandAdmission,
             store,
             &agent.id,
             agent.conversation.last_seq,
