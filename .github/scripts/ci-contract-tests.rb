@@ -205,7 +205,7 @@ if mode == "release"
     end
     raise "Gateway contract accepted absent or shortened #{service} connection drain"
   end
-  %w[/ready /].each do |health|
+  %w[/livez /].each do |health|
     candidate = GatewaySourceContract.expected
     candidate["infra/api/healthcheckpolicy.yaml"][0]["spec"]["default"]["config"]["httpHealthCheck"]["requestPath"] = health
     begin
@@ -214,7 +214,7 @@ if mode == "release"
       tests += 1
       next
     end
-    raise "Gateway contract accepted dependency health"
+    raise "Gateway contract accepted non-readiness health"
   end
   %w[direct-gateway stripped-prefix].each do |mutation|
     candidate = GatewaySourceContract.expected
