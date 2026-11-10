@@ -1,5 +1,8 @@
 //! One source's reconnect loop. A fresh lease is acquired for every attempt.
-use super::{EndReason, GatewayEnd, GatewayError};
+use super::{
+    status::{FailureCode, StatusAttempt, StatusRegistry},
+    EndReason, GatewayEnd, GatewayError,
+};
 use futures_util::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
@@ -11,6 +14,7 @@ pub(super) trait SourcePort: Send + Sync {
         &'a self,
         record: &'a str,
         stop: watch::Receiver<bool>,
+        status: StatusAttempt,
     ) -> BoxFuture<'a, Attempt>;
 }
 pub(super) struct Attempt {
@@ -37,31 +41,52 @@ pub(super) async fn run(
     record: String,
     mut shutdown: watch::Receiver<bool>,
     timing: Timing,
+    statuses: StatusRegistry,
 ) {
-    let mut terminal_revision = None;
+    let mut status = statuses.begin(&record, None);
+    let mut terminal_revision: Option<(String, super::status::Stage, FailureCode)> = None;
+    let mut status_revision = None;
     let mut failures = 0u32;
     loop {
         if *shutdown.borrow() {
-            return;
+            break;
         }
         let revision = tokio::select! {
-            changed = shutdown.changed() => { if changed.is_err() || *shutdown.borrow() { return; } else { continue; } },
+            changed = shutdown.changed() => { if changed.is_err() || *shutdown.borrow() { break; } else { continue; } },
             revision = port.revision(&record) => revision,
         };
-        let Ok(revision) = revision else {
-            if stopped(&mut shutdown, timing.poll).await {
-                return;
+        let revision = match revision {
+            Ok(revision) => revision,
+            Err(error) => {
+                status = statuses.begin(&record, None);
+                status_revision = None;
+                status.finish(error.into(), false, timing.poll);
+                if stopped(&mut shutdown, timing.poll).await {
+                    break;
+                }
+                continue;
             }
-            continue;
         };
-        if terminal_revision.as_ref() == Some(&revision) {
+        if let Some((_, stage, code)) = terminal_revision
+            .as_ref()
+            .filter(|(saved, _, _)| saved == &revision)
+        {
+            if status_revision.as_ref() != Some(&revision) {
+                status = statuses.begin(&record, Some(&revision));
+                status.step(*stage);
+                status.finish(*code, true, Duration::ZERO);
+                status_revision = Some(revision.clone());
+            }
+            status.poll();
             if stopped(&mut shutdown, timing.poll).await {
-                return;
+                break;
             }
             continue;
         }
+        status = statuses.begin(&record, Some(&revision));
+        status_revision = Some(revision.clone());
         let (stop, receiver) = watch::channel(false);
-        let attempt = port.connect(&record, receiver);
+        let attempt = port.connect(&record, receiver, status.clone());
         tokio::pin!(attempt);
         // Polling authority is independent of the socket future; neither blocks
         // the other. Routing removal is also an eligibility revocation.
@@ -69,7 +94,9 @@ pub(super) async fn run(
             loop {
                 tokio::time::sleep(timing.poll).await;
                 match port.revision(&record).await {
-                    Ok(current) if current == revision => {}
+                    Ok(current) if current == revision => {
+                        status.poll();
+                    }
                     _ => return,
                 }
             }
@@ -81,11 +108,16 @@ pub(super) async fn run(
             _ = shutdown.changed() => None,
         };
         let Some(outcome) = outcome else {
+            let shutting_down = *shutdown.borrow() || shutdown.has_changed().is_err();
+            if !shutting_down {
+                status.failure(FailureCode::AuthorityRevoked);
+            }
             let _ = stop.send(true);
             let _ = tokio::time::timeout(timing.stop, &mut attempt).await;
             if *shutdown.borrow() || shutdown.has_changed().is_err() {
-                return;
+                break;
             }
+            status.finish(FailureCode::AuthorityRevoked, false, Duration::ZERO);
             failures = 0;
             continue;
         };
@@ -101,15 +133,26 @@ pub(super) async fn run(
             ) => true,
             _ => false,
         };
-        if terminal {
-            terminal_revision = Some(revision.clone());
-        }
         failures = failures.saturating_add(1);
         let delay = retry_delay(&outcome, failures, timing.retry);
+        let code = match &outcome.result {
+            Ok(end) => end.reason.into(),
+            Err(error) => (*error).into(),
+        };
+        status.finish(code, terminal, delay);
+        if terminal {
+            let snapshot = statuses.view(&record, Some(&revision));
+            terminal_revision = Some((
+                revision.clone(),
+                snapshot.stage,
+                snapshot.last_failure_code.unwrap_or(code),
+            ));
+        }
         if stopped(&mut shutdown, delay).await {
-            return;
+            break;
         }
     }
+    status.stopped();
 }
 fn retry_delay(attempt: &Attempt, failures: u32, base: Duration) -> Duration {
     let minimum = match &attempt.result {
