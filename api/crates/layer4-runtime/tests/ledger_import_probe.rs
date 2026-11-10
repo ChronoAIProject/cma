@@ -113,6 +113,24 @@ fn retirement_archive_cli_builds_only_a_detached_pending_copy() {
     assert_eq!(archived["admission"], "retirement_held");
     assert_eq!(archived["archived_records"], 0);
     assert_eq!(archived["source_deactivated"], false);
+    let verified = fixture.success(&[
+        "--verify-ledger-retirement",
+        output.to_str().unwrap(),
+        archived["ready_sha256"].as_str().unwrap(),
+    ]);
+    assert_eq!(verified["admission"], "retirement_held");
+    assert_eq!(verified["archived_records"], 0);
+    assert!(!fixture
+        .run(
+            &[
+                "--verify-ledger-retirement",
+                output.to_str().unwrap(),
+                &"f".repeat(64)
+            ],
+            true
+        )
+        .status
+        .success());
     assert!(!fixture.run(&args, true).status.success());
     assert!(!fixture
         .0
