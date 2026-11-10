@@ -29,7 +29,19 @@ impl OwnerBudget {
     }
 
     pub fn reserve(&mut self, policy: &BudgetPolicy, now: u64) -> Result<(), BudgetError> {
+        self.reserve_liability(policy, policy.turn_limit, now)
+    }
+
+    pub fn reserve_liability(
+        &mut self,
+        policy: &BudgetPolicy,
+        liability: u64,
+        now: u64,
+    ) -> Result<(), BudgetError> {
         policy.validate()?;
+        if liability == 0 {
+            return Err(BudgetError::Unavailable);
+        }
         let mut next = self.clone();
         next.advance(now)?;
         let units = [policy.input_token_units, policy.output_token_units];
@@ -39,7 +51,7 @@ impl OwnerBudget {
         next.token_units = Some(units);
         let reserved = next
             .reserved
-            .checked_add(policy.turn_limit)
+            .checked_add(liability)
             .ok_or(BudgetError::Unavailable)?;
         if next
             .spent

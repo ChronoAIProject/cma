@@ -6,6 +6,12 @@ use crate::{AgentId, SubjectId};
 
 mod ledger;
 pub use ledger::{OwnerBudget, TurnReservation};
+mod request;
+pub use request::{
+    ModelRequest, RequestBudget, RequestHold, RequestModelPolicy, RequestScope, RequestUsage,
+};
+#[cfg(test)]
+mod request_tests;
 #[cfg(test)]
 mod tests;
 
@@ -71,6 +77,8 @@ pub struct BudgetSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_policy: Option<BudgetPolicy>,
     pub owners: Vec<OwnerBudgetPolicy>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub request_models: Vec<RequestModelPolicy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,10 +90,20 @@ pub struct OwnerBudgetPolicy {
 
 impl BudgetSettings {
     pub fn is_disabled(&self) -> bool {
-        self.default_policy.is_none() && self.owners.is_empty()
+        self.default_policy.is_none() && self.owners.is_empty() && self.request_models.is_empty()
     }
 
     pub fn validate(&self) -> Result<(), BudgetError> {
+        if self.request_models.len() > 64 {
+            return Err(BudgetError::InvalidPolicy);
+        }
+        let mut models = std::collections::HashSet::new();
+        for model in &self.request_models {
+            model.validate()?;
+            if !models.insert(&model.model) {
+                return Err(BudgetError::InvalidPolicy);
+            }
+        }
         if let Some(policy) = &self.default_policy {
             policy.validate()?;
         }

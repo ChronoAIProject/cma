@@ -42,6 +42,7 @@ pub(super) async fn configure(
     let settings = layer2_core::PlatformSettings {
         model_budget: BudgetSettings {
             default_policy: None,
+            request_models: Vec::new(),
             owners: vec![OwnerBudgetPolicy {
                 owner: owner.clone(),
                 policy: policy.clone(),
