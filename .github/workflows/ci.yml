@@ -147,17 +147,9 @@ jobs:
             type=gha,scope=runtime-desktop
             type=gha,scope=runtime
             type=gha,scope=runtime-omarchy
-      # Export only the pinned desktop stage after the parallel full build.
-      # GHA keeps PR writes scoped to their merge ref; develop seeds future PRs.
-      - name: Retain pinned Omarchy dependency layers
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: infra/runtime/Dockerfile
-          target: omarchy-dependencies
-          platforms: linux/amd64
-          push: false
-          load: false
+          # Keep final-image layers, including the pinned dependency stage, in
+          # this solve: a separate cache-only solve recompiled it in CI. Exclude
+          # donor/build intermediate layers; GHA keeps PR writes branch-scoped.
           cache-to: type=gha,mode=min,scope=${{ steps.cache.outputs.scope }}
       - name: Release Omarchy build cache before image checks
         run: |
