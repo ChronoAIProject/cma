@@ -373,6 +373,7 @@ const TRIGGERS: &[FieldSpec] = &[leaf("enabled"), leaf("orchestration_paused")];
 const MARKETPLACE: &[FieldSpec] = &[leaf("enabled")];
 const USAGE_REPORTING: &[FieldSpec] = &[leaf("measured_visible")];
 const MODEL_BUDGET: &[FieldSpec] = &[
+    leaf("request_models"),
     leaf("enabled"),
     leaf("platform"),
     leaf("owners"),
