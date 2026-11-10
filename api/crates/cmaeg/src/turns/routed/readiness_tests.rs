@@ -170,13 +170,186 @@ async fn readiness_retry_rechecks_original_expiry_and_current_authority() {
             .dispatch(&setup.plan.identity, &setup.target().id, "retry")
             .await;
         assert!(if expired {
-            matches!(result, Err(ExecutionError::Expired))
+            matches!(result, Ok(DispatchOutcome::Terminal(Phase::Refused { code })) if code == "event_expired_before_start")
         } else {
             matches!(result, Err(ExecutionError::AuthorityChanged))
         });
         assert_eq!(http.seen().len(), 1);
         assert_eq!(setup.port.prepares.load(Ordering::SeqCst), 1);
     }
+}
+
+#[tokio::test]
+async fn sender_context_refusals_are_strict_and_expire_without_another_post() {
+    for (status, code) in [
+        (403, "verified_sender_context_invalid"),
+        (422, "verified_sender_context_unsupported"),
+        (503, "verified_sender_context_unavailable"),
+    ] {
+        for fault in [
+            "none",
+            "code",
+            "status",
+            "content_type",
+            "header",
+            "type",
+            "malformed",
+            "top_level",
+        ] {
+            let setup = Setup::new(supported()).await;
+            let http = HttpServer::start().await;
+            {
+                let mut memory = http.memory.lock().unwrap();
+                let config = &mut memory.config;
+                config.post_status = if fault == "status" {
+                    if status == 403 {
+                        422
+                    } else {
+                        403
+                    }
+                } else {
+                    status
+                };
+                let mut body = json!({"error":{"type":if status == 503 {"server_error"} else {"invalid_request_error"},"code":code,"message":"no admission","param":"event_context"}});
+                match fault {
+                    "code" => body["error"]["code"] = "unrelated_failure".into(),
+                    "content_type" => config.post_error_content_type = "text/plain".into(),
+                    "header" => config.post_error_response_id = true,
+                    "type" => body["error"]["type"] = "other_error".into(),
+                    "top_level" => body = json!({"code":code}),
+                    _ => {}
+                }
+                config.post_error_body = Some(if fault == "malformed" {
+                    "{".into()
+                } else {
+                    body.to_string()
+                });
+            }
+            let activity_server =
+                crate::ingress::routing_store::test_server::Server::start_realtime().await;
+            let activity = Arc::new(crate::activity::ActivityStore::new(
+                activity_server.records.clone(),
+                Arc::new(fixture::keys()),
+            ));
+            activity
+                .received_at(
+                    &setup.plan.identity.owner,
+                    setup.plan.identity.record_id.as_str(),
+                    &setup.plan.activity,
+                    time::OffsetDateTime::now_utc(),
+                )
+                .await
+                .unwrap();
+            let dispatcher = Arc::new(HttpExecutionPort::new(
+                http.client(true, Duration::from_millis(250)),
+                setup.port.clone(),
+                setup.server.store(),
+                setup.journal().clone().with_activity(activity.clone()),
+                setup.current.clone(),
+            ))
+            .dispatcher();
+            let result = dispatcher
+                .dispatch(&setup.plan.identity, &setup.target().id, "first")
+                .await
+                .unwrap();
+            if fault != "none" {
+                assert!(
+                    matches!(result, DispatchOutcome::Unknown),
+                    "{status} {fault}"
+                );
+                assert_eq!(stored(&setup).await.phase, Phase::Unknown);
+            } else if status == 503 {
+                assert!(matches!(result, DispatchOutcome::Retry));
+                setup
+                    .server
+                    .memory
+                    .clock
+                    .store(setup.target().launch.event.expires_at, Ordering::SeqCst);
+                assert!(
+                    matches!(dispatcher.dispatch(&setup.plan.identity,&setup.target().id,"expired").await.unwrap(),
+                    DispatchOutcome::Terminal(Phase::Refused { code }) if code == "event_expired_before_start")
+                );
+            } else {
+                assert!(
+                    matches!(result,DispatchOutcome::Terminal(Phase::Refused { code: observed }) if observed == code)
+                );
+                assert!(matches!(
+                    dispatcher
+                        .dispatch(&setup.plan.identity, &setup.target().id, "again")
+                        .await
+                        .unwrap(),
+                    DispatchOutcome::Terminal(_)
+                ));
+            }
+            assert_eq!(http.seen().len(), 1, "no transport boundary retries");
+            if fault == "none" {
+                let page = activity
+                    .latest(
+                        &setup.plan.identity.owner,
+                        setup.plan.identity.record_id.as_str(),
+                    )
+                    .await
+                    .unwrap();
+                let consumer = &page.items[0].consumers[0];
+                assert_eq!(
+                    consumer.refusal_code.as_deref(),
+                    Some(if status == 503 {
+                        "event_expired_before_start"
+                    } else {
+                        code
+                    })
+                );
+                assert_eq!(consumer.state, crate::activity::ConsumerState::Refused);
+                assert!(consumer.completed_at.is_some());
+                assert!(consumer.deliveries.is_empty());
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn sender_context_outage_retries_after_cooldown_and_admits_once() {
+    let mut app = App::new(true).await;
+    {
+        let mut memory = app.provider.memory.lock().unwrap();
+        memory.config.post_status = 503;
+        memory.config.post_error_body = Some(json!({"error":{"type":"server_error","code":"verified_sender_context_unavailable","message":"no admission","param":"event_context"}}).to_string());
+    }
+    let event = app.event("sender-outage").to_string();
+    let response = app.request(event.clone(), true).send().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while !app.provider.seen().iter().any(|r| r.method == "POST") {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        app.provider
+            .seen()
+            .iter()
+            .filter(|r| r.method == "POST")
+            .count(),
+        1
+    );
+    app.provider.memory.lock().unwrap().config.post_status = 200;
+    let stream = tokio::time::timeout(Duration::from_secs(10), response.text())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stream.matches("event: cmaeg.completed").count(), 1);
+    app.drain().await;
+    let posts: Vec<_> = app
+        .provider
+        .seen()
+        .into_iter()
+        .filter(|r| r.method == "POST")
+        .collect();
+    assert_eq!(posts.len(), 2);
+    assert_eq!(posts[0].body, posts[1].body);
+    assert_eq!(posts[0].idempotency, posts[1].idempotency);
+    assert_eq!(app.request(event, true).send().await.unwrap().status(), 202);
 }
 
 #[tokio::test]

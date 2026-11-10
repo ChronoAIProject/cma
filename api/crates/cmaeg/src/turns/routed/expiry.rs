@@ -12,7 +12,7 @@ use cmaeg_core::problem::{Problem, ProblemCode};
 pub(super) const EXPIRED_BEFORE_START: &str = "event_expired_before_start";
 
 fn unstarted(state: &TargetState) -> bool {
-    state.body.is_none() && state.delivery.is_none() && state.projection.is_none()
+    state.delivery.is_none() && state.projection.is_none()
 }
 
 impl Journal {
@@ -23,7 +23,7 @@ impl Journal {
         // Expired also describes ancestors, read/replay and delivery authority.
         // Only this target's deadline and retained start evidence decide here.
         if lease.state.event_expires_at > (self.clock)()
-            || lease.state.phase != Phase::Pending
+            || !matches!(lease.state.phase, Phase::Pending | Phase::Prepared)
             || !unstarted(&lease.state)
         {
             return Ok(None);
@@ -31,6 +31,7 @@ impl Journal {
         let phase = Phase::Refused {
             code: EXPIRED_BEFORE_START.into(),
         };
+        // Prepared proves no start, including a precise non-admission refusal.
         // Keep binding_preparation unchanged: Pending can retain an ambiguous
         // reservation or a confirmed hierarchy receipt. Neither is cancelled
         // or retried by terminalizing the never-started Responses target.

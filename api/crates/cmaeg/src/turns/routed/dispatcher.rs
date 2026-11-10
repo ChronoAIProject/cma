@@ -163,6 +163,14 @@ impl Dispatcher {
                 durable_cursor,
             }),
             Ok(RunResult::Done(outcome)) => {
+                if let DispatchOutcome::Terminal(Phase::Refused { code }) = &outcome {
+                    self.journal
+                        .observe(
+                            &plan.identity,
+                            crate::activity::Change::refused(target.launch.consumer.as_str(), code),
+                        )
+                        .await;
+                }
                 self.journal.release(&mut lease).await?;
                 Ok(outcome)
             }
