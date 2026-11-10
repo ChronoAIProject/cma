@@ -104,7 +104,8 @@ async fn retained_oracle_rejects_route_status_header_and_response_field_drift() 
             3 => case.response.body["id"] = "changed_agent".into(),
             _ => unreachable!(),
         }
-        let result = tokio::spawn(async move { replay_corpus(&mut corpus, false, false).await }).await;
+        let result =
+            tokio::spawn(async move { replay_corpus(&mut corpus, false, false).await }).await;
         assert!(
             result.is_err_and(|error| error.is_panic()),
             "mutation {mutation} escaped the oracle"
