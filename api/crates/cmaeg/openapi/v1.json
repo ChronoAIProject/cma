@@ -5140,6 +5140,16 @@
             "minimum": 0,
             "type": "integer"
           },
+          "connection": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeDiscordConnectionStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "detail": {
             "type": "string"
           },
@@ -5156,6 +5166,200 @@
           "detail",
           "capacity",
           "selected_records"
+        ],
+        "type": "object"
+      },
+      "NativeDiscordConnectionFailureCode": {
+        "enum": [
+          "unavailable",
+          "authority_refused",
+          "invalid_configuration",
+          "missing_message_content_intent",
+          "rate_limited",
+          "protocol",
+          "discovery_unauthorized",
+          "bot_identity_mismatch",
+          "sharding_unsupported",
+          "session_limit_invalid",
+          "lease_contended",
+          "lease_owner_mismatch",
+          "lease_source_mismatch",
+          "lease_invalid",
+          "identify_budget_exhausted",
+          "identify_bucket_wait",
+          "hello_timeout",
+          "hello_invalid",
+          "authentication_failed",
+          "disallowed_intents",
+          "invalid_intents",
+          "sharding_required",
+          "unsupported_version",
+          "backpressure",
+          "commit_unavailable",
+          "heartbeat_lost",
+          "renew_failed",
+          "renew_timeout",
+          "authority_revoked",
+          "invalid_session",
+          "reconnect",
+          "transport"
+        ],
+        "type": "string"
+      },
+      "NativeDiscordConnectionOutcome": {
+        "enum": [
+          "unknown",
+          "pending",
+          "ok",
+          "retrying",
+          "blocked",
+          "stopped"
+        ],
+        "type": "string"
+      },
+      "NativeDiscordConnectionStage": {
+        "enum": [
+          "unobserved",
+          "resolve",
+          "discovery",
+          "lease",
+          "authorize",
+          "socket",
+          "hello",
+          "identify",
+          "resume",
+          "ready",
+          "renew",
+          "event_commit",
+          "stopped"
+        ],
+        "type": "string"
+      },
+      "NativeDiscordConnectionStatus": {
+        "description": "This serving process's observation, never a cluster-wide handover authority.",
+        "properties": {
+          "authenticated": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "connected": {
+            "description": "Null for an unobserved, stale or different source revision.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "identify": {
+            "description": "not_attempted, reserved, sent, resuming or resume_sent.",
+            "type": "string"
+          },
+          "last_dispatch_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_dispatch_outcome": {
+            "description": "unknown, admitted, pending, refused, expired or invalid; not reply delivery.",
+            "type": "string"
+          },
+          "last_event_at": {
+            "description": "Last authenticated MESSAGE_CREATE received, before durable commit.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_event_committed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_failure_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_failure_code": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeDiscordConnectionFailureCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_failure_stage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeDiscordConnectionStage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_ready_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lease": {
+            "description": "unknown, acquired, contended, lost or released.",
+            "type": "string"
+          },
+          "observed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/NativeDiscordConnectionOutcome"
+          },
+          "ready": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "retry_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "description": "Always `serving_instance`; another replica may own the connection.",
+            "type": "string"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/NativeDiscordConnectionStage"
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "valid_until": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "scope",
+          "stage",
+          "outcome",
+          "lease",
+          "identify",
+          "stale",
+          "last_dispatch_outcome"
         ],
         "type": "object"
       },

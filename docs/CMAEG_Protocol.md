@@ -4141,6 +4141,10 @@ https://core.telegram.org/bots/api#setmessagereaction (reviewed 2026-10-26).
 
 ## Native Discord source reader and durable intake
 
+The additive [native Discord connection observations](CMAEG_Discord_Connection_Status.md)
+contract defines `native_discord_activation.connection`. Selection is scheduling,
+not connection health; all status is scoped to the serving instance.
+
 The additive source `{"type":"discord","bot_id":"<snowflake>","intents":37377,
 "admission":{"type":"all"}}` names a CMAEG-owned Discord Gateway connection.
 It is distinct from `nyxid_relay` with `platform=discord`; native socket events
