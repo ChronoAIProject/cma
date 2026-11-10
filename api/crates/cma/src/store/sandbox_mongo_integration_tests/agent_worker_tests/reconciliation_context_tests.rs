@@ -15,6 +15,8 @@ use crate::sandbox::LiveAgentRegistry;
 
 mod cpu_profile;
 mod eligibility_tests;
+#[path = "failure_pacing_tests/mod.rs"]
+mod failure_pacing_tests;
 
 // These attached streams emit no updates. Keep their asynchronous checkpoint
 // restoration separate from the reconciliation reads measured by this test.
