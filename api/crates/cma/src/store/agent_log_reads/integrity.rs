@@ -1,7 +1,7 @@
 //! Reuse #1591's proof and retain its Agent lineage for read-only fallback.
 use layer2_core::{
     ids::{AgentId, WorkspaceId, WorktreeId},
-    sandbox::{store::SandboxStoreError, Agent},
+    sandbox::{store::SandboxStoreError, Agent, AgentLogEntry, AgentLogKind},
 };
 use mongodb::ClientSession;
 
@@ -16,6 +16,24 @@ pub(in crate::store) struct ReadHead {
 }
 
 impl ReadHead {
+    pub(super) fn validate_lineage(&self, entry: &AgentLogEntry) -> Result<(), SandboxStoreError> {
+        if let AgentLogKind::Created {
+            workspace_id,
+            worktree_id,
+        } = &entry.kind
+        {
+            if entry.seq != 1
+                || workspace_id != &self.workspace_id
+                || worktree_id != &self.creation_worktree_id
+            {
+                return Err(SandboxStoreError::Corrupt(
+                    "Agent creation log lineage does not match".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn from_agent(agent: &Agent, trusted: bool) -> Self {
         Self {
             last_seq: agent.conversation.last_seq,
