@@ -79,6 +79,7 @@ mod proof;
 mod quarantine_tests;
 pub(super) mod read;
 mod scan;
+mod semantic;
 #[cfg(test)]
 mod semantic_tests;
 #[cfg(test)]
@@ -90,6 +91,7 @@ use metadata::{hash_raw, history_identity, LogIntegrity};
 pub(super) use proof::trusted_summary;
 pub(super) use scan::scan_collection;
 pub(super) use scan::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
+pub(super) use semantic::audit_checkpoint;
 
 pub(super) fn empty_summary() -> LogSummary {
     LogSummary::default()

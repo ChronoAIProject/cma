@@ -36,6 +36,7 @@ first trusted summary was established.
 | Older revision or lower head after an old writer | Verify retained identity/tail evidence, then full validation and transactional repair |
 | Explicitly invalidated semantic checkpoint | Full legacy validation; a valid complete domain fold can re-establish it |
 | Ahead head, malformed supported metadata, conflicting identity/hash, missing tail or extra rows | Refuse; collect full-scan evidence where possible; abort and CAS a durable quarantine marker against the immutable creation incarnation and monotonic observed head |
+| Complete semantic audit disproves a matching previously valid checkpoint | Abort and persist majority-acknowledged fenced quarantine; preserve the old proof as evidence |
 | Existing quarantine marker | Refuse ordinary appends; never clear it through fallback |
 
 An audit that exceeds the retained physical entry/byte ceiling also quarantines
@@ -52,6 +53,16 @@ persist `valid: false` and never authorize a semantic shortcut. Their existing
 structural append contract remains available. Answer-context admission still
 requires a valid full or incremental domain projection and every original
 status, queue, policy, resource and authority fence.
+
+Every full checkpoint rebuild uses the same semantic-audit classifier. When a
+supported checkpoint still matches the Agent revision, head, immutable identity
+and aggregate semantics, a malformed historical timestamp or impossible retained
+transition disproves that trusted state. The audit aborts its transaction and
+persists quarantine through the existing majority-acknowledged incarnation/prefix
+fence before returning the failure. This protects already-enabled processes and
+restarted processes. A revision-only write cannot erase the finding. Recognized
+unfinished legacy turns and pending steering boundaries remain untrusted and
+eligible for full fallback; an invalid projection alone is not corruption.
 
 ## Transaction and writer maintenance
 
@@ -112,7 +123,9 @@ for forbidden writes and transaction commands in success and refusal cases.
 ## Preparation, activation and rollback
 
 `CHRONO_AGENT_LOG_ADMISSION_AGENTS` defaults to empty. It selects at most 16 exact
-Agent ids. Before serving, each selected Agent is audited serially with a
+Agent ids as a comma-separated list, without spaces or duplicates. IDs must
+start with `agt_` and contain only ASCII letters, digits and underscores (5–128
+characters). Before serving, each selected Agent is audited serially with a
 10-second per-Agent deadline and a 60-second total deadline. Preparation writes
 only metadata under the captured revision and both head fields. Failure or an
 unconfirmed commit prevents the process from activating the cohort. Retrying
@@ -137,7 +150,9 @@ that the two additive top-level metadata/quarantine fields are ignored by its
 readers and preserved by its writers. Schema version and log/command records do
 not change. Old-shaped writer tests exercise stale detection; they are not an
 executed generation-173 binary qualification. A rollback uses full validation;
-forward upgrade revalidates stale metadata before using it.
+forward upgrade revalidates stale metadata before using it. Generation 173 does
+not enforce the new quarantine marker: a quarantined Agent requires operational
+isolation and validated recovery before use through a rollback binary.
 
 ## Acceptance evidence
 
@@ -156,7 +171,10 @@ A separate failpoint test forces five ambiguous single-append commit replies,
 proves one insert and a single pinned reconciliation snapshot, and verifies the
 next append sequence with acceleration both enabled and disabled. Separate cases cover concurrent append, transaction abort, raw byte
 accounting, old revision-only writes, stale repair, restart, tail corruption,
-middle-gap audit quarantine, legacy-zero orphans and normal capacity refusal.
+middle-gap and semantic-only audit quarantine, legacy-zero orphans and normal
+capacity refusal. Negative single-entry receipt tests reject an absent Agent,
+absent row, mismatched full entry and uncommitted/aborted transaction with the
+cohort on and off. Existing multi-record and zero-entry receipt tests remain.
 Partition tests serialize/reload reducer state at every boundary and compare
 the final answer and latest turn with the existing complete fold.
 

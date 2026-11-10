@@ -87,10 +87,15 @@ pub(in crate::store) async fn project_terminal(
         },
     };
 
-    let semantic = super::super::agent_log_integrity::SemanticCheckpoint::from_entries(
-        &prior_agent,
-        &entries,
-    )?;
+    let semantic =
+        crate::store::agent_log_integrity::audit_checkpoint(store, &prior_agent, &entries, session)
+            .await
+            .map_err(|error| match error {
+                super::super::agent_log_integrity::TransactionLogError::Domain(error) => error,
+                super::super::agent_log_integrity::TransactionLogError::Driver(error) => {
+                    unavailable(error)
+                }
+            })?;
     let integrity = super::super::agent_log_integrity::prepare_append(
         &agent,
         &summary,

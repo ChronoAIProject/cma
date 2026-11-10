@@ -22,9 +22,13 @@ mod resource_execution;
 mod capacity_execution;
 
 mod bounded_admission_tests;
+mod bounded_audit_tests;
 mod bounded_compatibility_tests;
 mod bounded_dispatch_tests;
+mod bounded_fixtures;
+mod bounded_message_tests;
 mod bounded_read_proof_tests;
+mod bounded_receipt_tests;
 
 struct Authority(Mutex<Result<Caller, CommandAuthorizationError>>);
 #[async_trait::async_trait]
@@ -190,8 +194,7 @@ async fn composed_with_history(
     store.create_workspace(workspace).await.unwrap();
     store.create_worktree(worktree).await.unwrap();
     let (store, agent) = if let Some((count, enabled)) = history {
-        let (mut store, agent) =
-            bounded_admission_tests::prepare_history(store, agent, count).await;
+        let (mut store, agent) = bounded_fixtures::prepare_history(store, agent, count).await;
         if !enabled {
             store.bounded_admission_agents.clear();
         }
