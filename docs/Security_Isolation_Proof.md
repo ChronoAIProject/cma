@@ -1,11 +1,11 @@
 # Friday application authorization proof (Part of #1549)
 
-Status: work in progress, paused for the lead’s #1421 priority change.
+Status: work in progress, resumed after the #1421 PR handoff.
 Compilation and executable security gates have not run; no passing result is claimed.
 
 This is application-contract evidence, not certification of the complete gate.
 The executable route matrix is `api/crates/layer1-public/tests/fixtures/tenant-isolation-matrix.json`.
-Its 160 documented operations are checked against OpenAPI; an additional source
+Its 171 documented operations are checked against OpenAPI; an additional source
 mount audit identifies undocumented absolute resource routes, including history export.
 
 ## Proof layers
@@ -14,6 +14,12 @@ mount audit identifies undocumented absolute resource routes, including history 
   owner control. Foreign and nonexistent targets must have identical typed denial;
   GET also exercises implicit HEAD. Stateful setup and capture dependencies remain
   in their original order. Subsequent owner results catch changed fixture state.
+- `receipt-contract`: Sandbox command receipt aliases pair permitted reads with
+  foreign/missing IDs, implicit HEAD and revoked access against the real service.
+- `delegation`: CMA broker, current actor-grant checks and actual hierarchy handlers
+  prove foreign targets remain hidden and revoked grants stop before dispatch.
+- `binding-contract`: binding-authorized conversation/event/media handler projections,
+  supplemented by existing CMA binding-origin and credential contracts.
 - `contract`: existing exact real-handler owner/foreign or revoked-grant fixtures.
   Sharing fixtures retain real caller contexts; a subject/context mismatch alone
   is not counted as cross-tenant evidence.
@@ -67,11 +73,12 @@ above supplement ports that intentionally use HTTP projection doubles.
 | `DELETE /api/v1/agents/{id}/browser` | `browser-delete-success` | `browser-delete-foreign` | contract |
 | `DELETE /api/v1/agents/{id}/files` | `filesystem-directory-delete` | `filesystem-delete-foreign` | contract |
 | `DELETE /api/v1/agents/{id}/share-links/{share_id}` | `typed-link-revoke` | `typed-link-revoke-not-owner` | contract |
+| `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | `binding-conversation-delete` | `binding-delete-conversation-forbidden` | binding-contract |
 | `DELETE /api/v1/documents/{id}/comments/{comment_id}` | `document-uncomment-success` | `document-uncomment-foreign` | probe |
 | `DELETE /api/v1/documents/{id}/share-links/{link_id}` | `document-unlink-success` | `document-unlink-foreign` | probe |
 | `DELETE /api/v1/documents/{id}/shares/{subject}` | `document-revoke-success` | `document-revoke-foreign` | probe |
 | `DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}` | `share-revoke-success` | `share-revoke-not-found` | contract |
-| `DELETE /api/v1/responses/{response_id}` | `responses-delete-refused` | Uniform refusal | unsupported |
+| `DELETE /api/v1/responses/{response_id}` | `responses-delete-refused` | `` | unsupported |
 | `DELETE /api/v1/sandboxes/{id}` | `state-sandbox-retire-before-pause` | `sandbox-delete-denied` | probe |
 | `DELETE /api/v1/workspaces/{id}` | `workspace-live-agent-removal` | `workspace-live-agent-conflict-denied` | probe |
 | `GET /api/v1/admin/runtime-inventory` | `admin-runtime-inventory` | `admin-runtime-inventory-denied` | operator |
@@ -127,6 +134,9 @@ above supplement ports that intentionally use HTTP projection doubles.
 | `GET /api/v1/agui/agents/{id}/sandbox` | `agui-sandbox-context` | `agui-context-foreign` | contract |
 | `GET /api/v1/agui/events` | `agui-events-replay` | `agui-events-foreign` | filtered-inventory |
 | `GET /api/v1/agui/launches/{id}/events` | `launch-review-stream` | `launch-missing-stream` | probe |
+| `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | `binding-inspection-mapped` | `binding-inspection-forbidden` | binding-contract |
+| `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}` | `binding-event-get` | `binding-event-owner-refused` | binding-contract |
+| `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment` | `binding-media-receipt` | `binding-media-receipt-forbidden` | binding-contract |
 | `GET /api/v1/conversations/{id}` | `responses-conversation-read` | `responses-conversation-foreign` | contract |
 | `GET /api/v1/conversations/{id}/items` | `responses-items-first-page` | `responses-items-foreign` | contract |
 | `GET /api/v1/desktop-capability` | `desktop-capability-owner-200` | `desktop-capability-forbidden-403` | mongo-lifecycle |
@@ -141,6 +151,7 @@ above supplement ports that intentionally use HTTP projection doubles.
 | `GET /api/v1/resource-shares/{kind}/{id}` | `share-list-success` | `share-list-not-found` | contract |
 | `GET /api/v1/resource-shares/{kind}/{id}/{share_id}` | `share-read-success` | `share-read-not-found` | contract |
 | `GET /api/v1/responses/{response_id}` | `responses-read-completed` | `responses-read-foreign` | contract |
+| `GET /api/v1/sandbox-commands/{id}` | `sandbox-command-shared-recover` | `sandbox-command-missing-receipt` | receipt-contract |
 | `GET /api/v1/sandboxes` | `sandbox-list` | `sandbox-list-denied` | filtered-inventory |
 | `GET /api/v1/sandboxes/{id}` | `sandbox-read` | `shared-hierarchy-0-revoked` | probe |
 | `GET /api/v1/sandboxes/{id}/events` | `sandbox-events` | `sandbox-events-denied` | probe |
@@ -162,6 +173,7 @@ above supplement ports that intentionally use HTTP projection doubles.
 | `GET /api/v2/agents/{agent_id}/queued-inputs` | `queued-input-v2-owner-list` | `queued-input-v2-foreign-list` | contract |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | `interruption-v2-observe` | `response-controls-v2-foreign-observe` | contract |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | `queued-cancellation-v2-owner-observe` | `queued-cancellation-v2-foreign-observe` | contract |
+| `GET /api/v2/commands/{command_id}` | `response-controls-v2-cancel-status` | `response-controls-v2-foreign-status` | contract |
 | `GET /api/v2/conversations/{conversation_id}` | `responses-v2-conversation` | `responses-v2-conversation-foreign` | contract |
 | `GET /api/v2/conversations/{conversation_id}/items` | `responses-v2-items` | `responses-v2-items-foreign` | contract |
 | `GET /api/v2/responses/{response_id}` | `responses-v2-retrieve` | `responses-v2-retrieve-foreign` | contract |
@@ -175,6 +187,8 @@ above supplement ports that intentionally use HTTP projection doubles.
 | `POST /api/v1/admin/sandboxes/{id}/runtime-update` | `admin-runtime-update-noop` | `admin-runtime-update-forbidden` | operator |
 | `POST /api/v1/admin/usage/metrics/options` | `metrics-options-owners` | `metrics-options-forbidden` | operator |
 | `POST /api/v1/admin/usage/metrics/reports` | `metrics-1-create-ready` | `metrics-1-create-forbidden` | operator |
+| `POST /api/v1/agent-delegations/identity` | `agent-delegation-identity-linked` | `agent-delegation-identity-refused` | delegation |
+| `POST /api/v1/agent-delegations/operations` | `agent-delegation-operations-organizations` | `agent-delegation-operations-wrong-owner` | delegation |
 | `POST /api/v1/agent-share-links/{share_id}/redeem` | `typed-link-redeem` | `typed-link-redeem-wrong-recipient` | contract |
 | `POST /api/v1/agents` | `desktop-create-false` | `lifecycle-create-forbidden` | mongo-lifecycle |
 | `POST /api/v1/agents/{id}/access-requests/{request_id}/approve` | `agent-access-approve-success` | `agent-access-approve-forbidden` | mongo-service-access |
@@ -193,13 +207,15 @@ above supplement ports that intentionally use HTTP projection doubles.
 | `POST /api/v1/agents/{id}/steer` | `agent-runtime-steer` | `agent-steer-no-turn-denied` | probe |
 | `POST /api/v1/agents/{id}/stop` | `agent-stop` | `agent-stop-denied` | probe |
 | `POST /api/v1/agui/run` | `agui-run-stopped-owner` | `agui-run-foreign` | contract |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment` | `binding-media-upload` | `binding-media-upload-forbidden` | binding-contract |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement` | `binding-media-supplement` | `binding-media-supplement-forbidden` | binding-contract |
 | `POST /api/v1/conversations` | `responses-create-conversation` | `conversations-create-workspace-missing` | context-creation |
 | `POST /api/v1/documents` | `document-create-success` | `document-create-forbidden` | own-creation |
 | `POST /api/v1/documents/{id}/comments` | `document-comment-success` | `document-comment-foreign` | probe |
 | `POST /api/v1/documents/{id}/share-links` | `document-link-success` | `document-link-foreign` | probe |
 | `POST /api/v1/resource-shares/{kind}/{id}` | `share-create-success` | `share-create-not-found` | contract |
 | `POST /api/v1/responses` | `responses-create-completes` | `responses-create-foreign` | contract |
-| `POST /api/v1/responses/{response_id}/cancel` | `responses-cancel-refused` | Uniform refusal | unsupported |
+| `POST /api/v1/responses/{response_id}/cancel` | `responses-cancel-refused` | `` | unsupported |
 | `POST /api/v1/sandboxes` | `sandbox-create` | `sandbox-create-denied` | profile-creation |
 | `POST /api/v1/sandboxes/{id}/always-on` | `auto-pause-owner-always-on` | `auto-pause-owner-forbidden` | probe |
 | `POST /api/v1/sandboxes/{id}/commands` | `sandbox-command-owner-admission` | `sandbox-command-revoked` | contract |
@@ -222,5 +238,6 @@ above supplement ports that intentionally use HTTP projection doubles.
 | `PUT /api/v1/agents/{id}/messages/{message_id}/feedback` | `feedback-reasons-down` | `message-feedback-set-foreign` | contract |
 | `PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons` | `feedback-reasons-save` | `feedback-reasons-put-foreign` | contract |
 | `PUT /api/v1/agents/{id}/service-access` | `agent-service-access-success` | `agent-service-access-forbidden` | mongo-service-access |
+| `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | `binding-conversation-put` | `binding-put-conversation-forbidden` | binding-contract |
 | `PUT /api/v1/documents/{id}/shares/{subject}` | `document-grant-success` | `document-grant-foreign` | probe |
 | `GET /api/v1/agents/{id}/history` | `raw_history_allows_owner_and_denies_shared_and_foreign_before_export` | Same test + 1,000 interleavings | Real exporter boundary |
