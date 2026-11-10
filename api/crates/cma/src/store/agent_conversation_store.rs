@@ -10,11 +10,9 @@ use layer2_core::seconds_from_rfc3339;
 use mongodb::bson::doc;
 use mongodb::options::ReadConcern;
 
-use super::agent_log::{
-    log_document, scan_complete_log_with_session, scan_complete_log_with_snapshot_session,
-};
+use super::agent_log::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
 use super::agent_log_integrity::{
-    ensure_append_batch_size, ensure_append_capacity, AppendCapacity, TransactionLogError,
+    ensure_append_batch_size, prepare_append, trusted_summary, AppendCapacity, TransactionLogError,
 };
 use super::agents::{agent_replacement_fields, read_agent};
 use super::sandbox_mongo::{
@@ -167,30 +165,63 @@ async fn apply_mutation(
     super::trigger_first_messages::require_mutation(store, &current, mutation, session)
         .await
         .map_err(ApplyError::Domain)?;
-    let mut actual_last_seq = 0;
-    let mut latest_turn = None;
-    let log_summary = scan_complete_log_with_session(
-        caller,
-        store,
-        &mutation.agent.id,
-        current.conversation.last_seq,
-        session,
-        |entry| {
-            actual_last_seq = entry.seq;
-            if let layer2_core::sandbox::AgentLogKind::TurnStarted { turn_sequence, .. } =
-                entry.kind
-            {
-                latest_turn = Some(turn_sequence);
+    let (actual_last_seq, latest_turn, log_summary, semantic) =
+        match trusted_summary(store, &current, &current_row, caller, session, false).await? {
+            Some(summary) => {
+                let semantic = summary.semantic().cloned().ok_or_else(|| {
+                    ApplyError::Domain(SandboxStoreError::Corrupt(
+                        "trusted Agent log metadata has no semantic checkpoint".into(),
+                    ))
+                })?;
+                (
+                    summary.entry_count(),
+                    semantic.latest_turn(),
+                    summary,
+                    semantic,
+                )
             }
-            Ok(())
-        },
-    )
-    .await?;
+            None => {
+                let mut entries = Vec::new();
+                let summary = scan_complete_log_with_session(
+                    caller,
+                    store,
+                    &mutation.agent.id,
+                    current.conversation.last_seq,
+                    session,
+                    |entry| {
+                        entries.push(entry);
+                        Ok(())
+                    },
+                )
+                .await?;
+                let semantic = crate::store::agent_log_integrity::audit_checkpoint(
+                    store, &current, &entries, session,
+                )
+                .await?;
+                (
+                    summary.entry_count(),
+                    semantic.latest_turn(),
+                    summary,
+                    semantic,
+                )
+            }
+        };
     validate_mutation(&current, actual_last_seq, mutation).map_err(ApplyError::Domain)?;
     cleanup_admission::require(&current_row, &current, mutation).map_err(ApplyError::Domain)?;
     let logs = conversation_logs(mutation).map_err(ApplyError::Domain)?;
-    ensure_append_capacity(&log_summary, &logs, AppendCapacity::Normal)
+
+    let semantic = semantic
+        .after_append(&logs, &mutation.agent)
         .map_err(ApplyError::Domain)?;
+    let integrity = prepare_append(
+        &current,
+        &log_summary,
+        &logs,
+        mutation.agent.revision,
+        semantic,
+        AppendCapacity::Normal,
+    )
+    .map_err(ApplyError::Domain)?;
 
     admission::validate_and_fence(store, &current, mutation, session).await?;
     super::budget::apply(store, &current, mutation, session).await?;
@@ -203,9 +234,9 @@ async fn apply_mutation(
                 }
                 super::agent_commands::ApplyError::Driver(error) => ApplyError::Driver(error),
             })?;
-    replace_agent(store, &current, mutation, session).await?;
+    replace_agent(store, &current, mutation, integrity.integrity, session).await?;
     checkpoint::carry(store, &current_row, &current, &mutation.agent, session).await?;
-    insert_logs(store, &logs, session).await?;
+    insert_logs(store, &integrity.documents, session).await?;
     super::suggestions::enqueue(store, &mutation.agent, &logs, session).await?;
     Ok(ConversationReceipt {
         command_dispatch,
@@ -297,9 +328,11 @@ async fn replace_agent(
     store: &MongoSandboxStore,
     current: &Agent,
     mutation: &AgentConversationMutation,
+    integrity: mongodb::bson::Document,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     let mut fields = agent_replacement_fields(&mutation.agent).map_err(ApplyError::Domain)?;
+    fields.insert("agent_log_integrity_v1", integrity);
     fields.insert(
         "last_seq",
         signed(mutation.agent.conversation.last_seq, "agent log sequence")
@@ -336,13 +369,14 @@ async fn replace_agent(
 
 async fn insert_logs(
     store: &MongoSandboxStore,
-    logs: &[AgentLogEntry],
+    logs: &[mongodb::bson::RawDocumentBuf],
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     for entry in logs {
         store
             .agent_log
-            .insert_one(log_document(entry).map_err(ApplyError::Domain)?)
+            .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+            .insert_one(entry)
             .session(&mut *session)
             .await
             .map_err(|error| {
