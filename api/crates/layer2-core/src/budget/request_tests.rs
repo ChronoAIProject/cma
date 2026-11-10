@@ -4,6 +4,8 @@ fn policy() -> BudgetPolicy {
     BudgetPolicy {
         owner_day_limit: u64::from(u32::MAX),
         turn_limit: u64::from(u16::MAX),
+        max_calls_per_turn: u64::from(u8::MAX),
+        day_timezone: "UTC".into(),
         input_token_units: 2,
         output_token_units: 3,
         max_unobserved_units: 1,

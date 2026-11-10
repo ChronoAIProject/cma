@@ -38,7 +38,9 @@ pub(super) async fn settle(
         .map_err(ApplyError::Driver)?
         .ok_or_else(|| domain(BudgetError::Unavailable))?;
     let mut owner: OwnerBudget = decode(&raw)?;
-    owner.advance(now().map_err(domain)?).map_err(domain)?;
+    owner
+        .advance(&record.policy, now().map_err(domain)?)
+        .map_err(domain)?;
     if owner.token_units
         != Some([
             record.policy.input_token_units,

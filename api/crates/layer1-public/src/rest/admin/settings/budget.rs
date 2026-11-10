@@ -1,4 +1,6 @@
-use layer2_core::budget::{BudgetPolicy, BudgetSettings, OwnerBudgetPolicy, PlatformBudgetPolicy, RequestModelPolicy};
+use layer2_core::budget::{
+    BudgetPolicy, BudgetSettings, OwnerBudgetPolicy, PlatformBudgetPolicy, RequestModelPolicy,
+};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
