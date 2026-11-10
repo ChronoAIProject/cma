@@ -139,6 +139,13 @@
               "null"
             ]
           },
+          "refusal_code": {
+            "description": "Named terminal refusal before a provider admitted a turn.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "response_id": {
             "type": [
               "string",

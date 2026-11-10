@@ -195,6 +195,7 @@ mod tests {
 
     fn consumer(state: ConsumerState) -> ActivityConsumer {
         ActivityConsumer {
+            refusal_code: None,
             consumer_id: "goal-agent".into(),
             display_name: None,
             agent_id: None,
