@@ -126,7 +126,7 @@ impl AgentCommandService {
         source: CommandSubmissionSource,
         submission: CommandSubmission,
     ) -> Result<CommandStatusView, CommandAdmissionError> {
-        self.admit_at_binding_revision(context, credential, source, submission, None)
+        self.admit_inner(context, credential, source, submission, None)
             .await
     }
 
@@ -139,14 +139,38 @@ impl AgentCommandService {
         submission: CommandSubmission,
         binding_revision: Option<u64>,
     ) -> Result<CommandStatusView, CommandAdmissionError> {
+        self.admit_inner(
+            context,
+            credential,
+            source,
+            submission,
+            Some(binding_revision),
+        )
+        .await
+    }
+
+    async fn admit_inner(
+        &self,
+        context: &CallerContext,
+        credential: &str,
+        source: CommandSubmissionSource,
+        submission: CommandSubmission,
+        binding_policy: Option<Option<u64>>,
+    ) -> Result<CommandStatusView, CommandAdmissionError> {
         let (mut authorized, mut request) = self
             .prepare(context, credential, source, submission.clone())
             .await?;
-        if binding_revision.is_some_and(|revision| {
-            request
+        if binding_policy.is_some_and(|revision| match revision {
+            Some(revision) => request
                 .binding
                 .as_ref()
-                .is_none_or(|proof| proof.binding.revision != revision)
+                .is_none_or(|proof| proof.binding.revision != revision),
+            None => {
+                request.envelope.command.external_event().is_some()
+                    && request.binding.as_ref().is_some_and(|proof| {
+                        proof.binding.profile.verified_sender_context_enabled()
+                    })
+            }
         }) {
             return Err(CommandLedgerError::Conflict.into());
         }
