@@ -53,6 +53,41 @@ These settings do not migrate or rotate Sandbox runtimes. Existing Sandbox,
 Agent, home and conversation IDs remain independently durable. All other process
 authorities still need their existing leases and writer fences during overlap.
 
+## Retained Web asset inventory contract
+
+`infra/web/deployment.yaml` must preserve the complete, ordered live asset
+initializer list. Recreating a Pod from an incomplete list leaves older browser
+tabs without their lazy chunks, even when the current page and readiness pass.
+The reviewed production snapshot is recorded in
+`.github/fixtures/web-retained-assets.json`: Deployment identity and generation,
+capture time, count, full-list SHA-256 and the documented rollback image digest.
+The fingerprint covers every initializer field, including commands, mounts,
+resources and Kubernetes defaults. Mapping key order is ignored; list order is
+significant. The Manifests CI job checks this baseline and runs mutation tests.
+
+Before a parity update, use the approved bounded read-only Deployment path to
+capture the complete `spec.template.spec.initContainers` array. Retain only the
+static asset initializer specification and resource metadata, never a raw
+Deployment or credential-bearing env. The private JSON projection contains
+`read_only: true`, `deployment: {name: "cma-web"}`, and `initContainers`. Compare
+the manifest with that fresh evidence as well as the reviewed baseline:
+
+```sh
+ruby .github/scripts/web-asset-retention-contract.rb "$web_initializer_projection"
+ruby .github/scripts/web-asset-retention-tests.rb
+```
+
+When a verified release intentionally adds assets, update the full manifest
+list and the baseline count/fingerprint from the fresh capture in the same
+reviewed parity commit. Derive the fingerprint with
+`Digest::SHA256.hexdigest(JSON.generate(WebAssetRetention.canonical(items)))`
+from the contract module. Retain the separately documented rollback image;
+changing or removing retained releases needs an explicit retention decision.
+Record the new capture time and generation. Do not regenerate a baseline merely
+to accept an unexplained difference. CI protects the reviewed snapshot against
+repository edits; it cannot discover later out-of-band production drift, so the
+fresh live comparison remains a release/parity gate.
+
 ## First migration from the old deployment
 
 Changing a Deployment does not retrofit a preStop hook or longer grace into its
