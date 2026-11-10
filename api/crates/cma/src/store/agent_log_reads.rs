@@ -1,5 +1,6 @@
 //! Complete-snapshot traversal for Mongo agent log page, range, and prefix reads.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::AgentLogEntry;
@@ -42,9 +43,16 @@ where
         .and_then(|value| {
             unsigned(value, "agent log sequence").map_err(SandboxStoreError::Corrupt)
         })?;
-    scan_complete_log_with_snapshot_session(store, agent_id, last_seq, &mut session, visit)
-        .await
-        .map_err(transaction_error)?;
+    scan_complete_log_with_snapshot_session(
+        ScanCaller::PublicWindowPrefix,
+        store,
+        agent_id,
+        last_seq,
+        &mut session,
+        visit,
+    )
+    .await
+    .map_err(transaction_error)?;
     Ok(())
 }
 

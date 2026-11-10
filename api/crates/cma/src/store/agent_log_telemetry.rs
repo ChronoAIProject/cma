@@ -1,34 +1,58 @@
-//! Complete-scan accounting from the raw BSON lengths already used by integrity checks.
+//! Complete-scan accounting on the shared periodic read-telemetry path.
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, LazyLock,
 };
+use std::time::Instant;
+
+mod caller;
+pub(super) use caller::ScanCaller;
+use caller::CALLERS;
 
 #[derive(Default)]
 struct Totals {
     scans: AtomicU64,
     documents: AtomicU64,
     bytes: AtomicU64,
+    duration_us: AtomicU64,
+    changed: AtomicBool,
 }
-static TOTALS: LazyLock<Arc<[Totals; 2]>> = LazyLock::new(Arc::default);
+struct Counters([[Totals; 2]; CALLERS.len()]);
+impl Default for Counters {
+    fn default() -> Self {
+        Self(std::array::from_fn(|_| {
+            std::array::from_fn(|_| Totals::default())
+        }))
+    }
+}
+static COUNTERS: LazyLock<Arc<Counters>> = LazyLock::new(Arc::default);
+fn counters() -> Arc<Counters> {
+    #[cfg(test)]
+    if let Ok(counters) = TEST_COUNTERS.try_with(Arc::clone) {
+        return counters;
+    }
+    Arc::clone(&COUNTERS)
+}
 
+/// One complete validation attempt. No atomics or log events per document;
+/// Drop retains consumed work and elapsed wall time on failure/cancellation.
 pub(super) struct Scan {
-    totals: Arc<[Totals; 2]>,
+    counters: Arc<Counters>,
+    caller: ScanCaller,
+    started: Instant,
     documents: u64,
     bytes: u64,
     success: bool,
 }
 impl Scan {
-    pub(super) fn new() -> Self {
-        #[cfg(test)]
-        if let Ok(totals) = TEST_TOTALS.try_with(Arc::clone) {
-            return Self::with_totals(totals);
-        }
-        Self::with_totals(Arc::clone(&TOTALS))
+    pub(super) fn new(caller: ScanCaller) -> Self {
+        Self::with_counters(counters(), caller)
     }
-    fn with_totals(totals: Arc<[Totals; 2]>) -> Self {
+    fn with_counters(counters: Arc<Counters>, caller: ScanCaller) -> Self {
         Self {
-            totals,
+            counters,
+            caller,
+            started: Instant::now(),
             documents: 0,
             bytes: 0,
             success: false,
@@ -44,32 +68,70 @@ impl Scan {
 }
 impl Drop for Scan {
     fn drop(&mut self) {
-        let totals = &self.totals[usize::from(self.success)];
+        let totals = &self.counters.0[self.caller.index()][usize::from(self.success)];
         add(&totals.scans, 1);
         add(&totals.documents, self.documents);
         add(&totals.bytes, self.bytes);
+        add(
+            &totals.duration_us,
+            self.started.elapsed().as_micros().min(u64::MAX as u128) as u64,
+        );
+        totals.changed.store(true, Ordering::Release);
     }
 }
 fn add(counter: &AtomicU64, delta: u64) {
-    let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-        Some(v.saturating_add(delta))
-    });
+    if delta != 0 {
+        let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+            Some(v.saturating_add(delta))
+        });
+    }
 }
 pub(crate) fn emit() {
-    for (totals, outcome) in TOTALS.iter().zip(["failed", "success"]) {
-        for (metric, counter) in [
-            ("cma_agent_log_scans_total", &totals.scans),
-            ("cma_agent_log_scan_documents_total", &totals.documents),
-            ("cma_agent_log_scan_bytes_total", &totals.bytes),
-        ] {
-            tracing::info!(parent: None, metric, outcome, value = counter.load(Ordering::Relaxed),
-                "complete Agent log scan counter");
+    counters().emit();
+}
+impl Counters {
+    fn emit(&self) {
+        for (classes, caller) in self.0.iter().zip(CALLERS) {
+            for (totals, outcome) in classes.iter().zip(["failed", "success"]) {
+                if !totals.changed.swap(false, Ordering::Acquire) {
+                    continue;
+                }
+                for (metric, counter) in [
+                    ("cma_agent_log_scans_total", &totals.scans),
+                    ("cma_agent_log_scan_documents_total", &totals.documents),
+                    ("cma_agent_log_scan_bytes_total", &totals.bytes),
+                    (
+                        "cma_agent_log_scan_duration_microseconds_total",
+                        &totals.duration_us,
+                    ),
+                ] {
+                    tracing::info!(parent: None, metric, caller = caller.name(),
+                        worker_step = caller.worker_step(), outcome,
+                        value = counter.load(Ordering::Relaxed), "complete Agent log scan counter");
+                }
+            }
         }
     }
 }
 
 #[cfg(test)]
-tokio::task_local! { static TEST_TOTALS: Arc<[Totals; 2]>; }
+tokio::task_local! { static TEST_COUNTERS: Arc<Counters>; }
+#[cfg(test)]
+pub(in crate::store) async fn isolated_test<F: std::future::Future>(future: F) -> F::Output {
+    TEST_COUNTERS.scope(Arc::default(), future).await
+}
+#[cfg(test)]
+pub(in crate::store) fn snapshot(caller: ScanCaller, success: bool) -> [u64; 4] {
+    let counters = counters();
+    let totals = &counters.0[caller.index()][usize::from(success)];
+    [
+        &totals.scans,
+        &totals.documents,
+        &totals.bytes,
+        &totals.duration_us,
+    ]
+    .map(|v| v.load(Ordering::Relaxed))
+}
 #[cfg(test)]
 #[path = "agent_log_telemetry_tests.rs"]
 mod tests;

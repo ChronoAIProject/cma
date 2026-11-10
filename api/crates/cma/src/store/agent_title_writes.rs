@@ -1,5 +1,6 @@
 //! Snapshot transactions for agent-title claims and durable completion.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
@@ -413,6 +414,7 @@ async fn transaction_log(
     session: &mut mongodb::ClientSession,
 ) -> Result<LogSummary, ApplyError> {
     let summary = scan_complete_log_with_session(
+        ScanCaller::TitleDiscovery,
         store,
         &agent.id,
         agent.conversation.last_seq,
@@ -450,6 +452,7 @@ async fn reconcile_title(
     }
     let mut found = None;
     scan_complete_log_with_snapshot_session(
+        ScanCaller::UnknownCommitProof,
         store,
         &agent.id,
         agent.conversation.last_seq,
@@ -479,20 +482,5 @@ impl CompletionProof {
     }
 }
 
-fn map_domain(error: SandboxStoreError) -> ApplyError {
-    ApplyError::Domain(map_store_error(error))
-}
-
-fn map_transaction_log(error: TransactionLogError) -> ApplyError {
-    match error {
-        TransactionLogError::Domain(error) => map_domain(error),
-        TransactionLogError::Driver(error) => ApplyError::Driver(error),
-    }
-}
-
-fn map_reconciliation_log(error: TransactionLogError) -> AgentTitleStoreError {
-    match error {
-        TransactionLogError::Domain(error) => map_store_error(error),
-        TransactionLogError::Driver(_) => AgentTitleStoreError::Unavailable,
-    }
-}
+mod errors;
+use errors::{map_domain, map_reconciliation_log, map_transaction_log};

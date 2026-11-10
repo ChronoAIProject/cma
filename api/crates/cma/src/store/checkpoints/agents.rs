@@ -1,3 +1,4 @@
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::{
     validate_checkpoint_mutation, SandboxCheckpointMutation, SandboxStoreError,
 };
@@ -26,6 +27,7 @@ pub(super) async fn validate_and_fence(
     for agent in agents {
         let last_seq = if agent.status.is_live() {
             scan_complete_log_with_session(
+                ScanCaller::Checkpoint,
                 store,
                 &agent.id,
                 agent.conversation.last_seq,
