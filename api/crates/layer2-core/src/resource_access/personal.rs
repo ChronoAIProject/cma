@@ -47,8 +47,24 @@ impl ResourceAccessService {
         capability: ResourceCapability,
     ) -> Result<ResourceAccessSnapshot, ResourceAccessError> {
         authorized.decision.require(capability)?;
-        let original_scope = authorized.snapshot.scope(target)?;
         let current = self.store.resource_access_snapshot(target).await?;
+        self.validate_current_read_snapshot(authorized, target, capability, &current)
+            .await?;
+        Ok(current)
+    }
+
+    /// Validate a snapshot already read under the store's current transaction.
+    /// Inventory release validation uses this to check every row while keeping
+    /// all current reads on one Mongo session.
+    pub(crate) async fn validate_current_read_snapshot(
+        &self,
+        authorized: &AuthorizedResource,
+        target: &ResourceTarget,
+        capability: ResourceCapability,
+        current: &ResourceAccessSnapshot,
+    ) -> Result<(), ResourceAccessError> {
+        authorized.decision.require(capability)?;
+        let original_scope = authorized.snapshot.scope(target)?;
         if current.fence() != authorized.snapshot.fence()
             || current.scope(target)? != original_scope
         {
@@ -56,6 +72,6 @@ impl ResourceAccessService {
         }
         self.validate_binding_authority(authorized).await?;
         authorized.decision.require(capability)?;
-        Ok(current)
+        Ok(())
     }
 }
