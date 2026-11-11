@@ -250,6 +250,7 @@ impl ControlPlaneComposition {
             },
             SandboxLifecycleConfig {
                 bounded_live_fragments: config.features.bounded_live_fragments,
+                coordinated_ingress: config.features.coordinated_ingress,
                 access_transport_migration: config.agent_access_transport_migration.clone(),
                 managed_documents_enabled: config.document_storage.is_some(),
                 home_policy: config
