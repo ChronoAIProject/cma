@@ -8,6 +8,7 @@ use tokio::sync::broadcast;
 use crate::AgentId;
 
 use super::super::{Agent, AgentMessageAssembly};
+use super::live_budget::{AgentLiveDelivery, LiveBudget};
 
 pub(crate) const LIVE_BUFFER_FRAGMENTS: usize = 256;
 const LIVE_FRAGMENT_BYTES: usize = 16 * 1024;
@@ -46,20 +47,25 @@ impl std::fmt::Debug for AgentLiveFragment {
 
 /// A live-only lane; lag requires replaying the canonical durable transcript.
 pub struct AgentLiveSubscription {
-    receiver: broadcast::Receiver<AgentLiveFragment>,
-    _sender: Arc<broadcast::Sender<AgentLiveFragment>>,
+    receiver: broadcast::Receiver<Option<AgentLiveDelivery>>,
+    _sender: Arc<broadcast::Sender<Option<AgentLiveDelivery>>>,
 }
 
 impl AgentLiveSubscription {
     /// Number of source fragments retained before a subscriber reports lag.
     pub const BUFFER_FRAGMENTS: usize = LIVE_BUFFER_FRAGMENTS;
 
-    pub async fn recv(&mut self) -> Result<AgentLiveFragment, broadcast::error::RecvError> {
-        self.receiver.recv().await
+    pub async fn recv(&mut self) -> Result<AgentLiveDelivery, broadcast::error::RecvError> {
+        self.receiver
+            .recv()
+            .await?
+            .ok_or(broadcast::error::RecvError::Lagged(1))
     }
 
-    pub fn try_recv(&mut self) -> Result<AgentLiveFragment, broadcast::error::TryRecvError> {
-        self.receiver.try_recv()
+    pub fn try_recv(&mut self) -> Result<AgentLiveDelivery, broadcast::error::TryRecvError> {
+        self.receiver
+            .try_recv()?
+            .ok_or(broadcast::error::TryRecvError::Lagged(1))
     }
 }
 
@@ -74,10 +80,18 @@ pub(crate) struct AgentLiveMessageIdentity {
 
 #[derive(Default)]
 pub(super) struct AgentLiveHub {
-    lanes: Mutex<BTreeMap<AgentId, Weak<broadcast::Sender<AgentLiveFragment>>>>,
+    budget: Option<Arc<LiveBudget>>,
+    lanes: Mutex<BTreeMap<AgentId, Weak<broadcast::Sender<Option<AgentLiveDelivery>>>>>,
 }
 
 impl AgentLiveHub {
+    pub(super) fn with_budget(budget: Arc<LiveBudget>) -> Self {
+        Self {
+            budget: Some(budget),
+            lanes: Mutex::default(),
+        }
+    }
+
     pub(super) fn subscribe(&self, id: &AgentId) -> AgentLiveSubscription {
         let mut lanes = self.lanes.lock().unwrap_or_else(|error| error.into_inner());
         lanes.retain(|_, sender| sender.strong_count() > 0);
@@ -109,7 +123,13 @@ impl AgentLiveHub {
                 end -= 1;
             }
             fragment.delta = remaining[..end].into();
-            let _ = sender.send(fragment.clone());
+            let delivery = match &self.budget {
+                Some(budget) => budget.retain(fragment.clone()),
+                None => Some(fragment.clone().into()),
+            };
+            // None is an ordered gap, not an acknowledged runtime output. Live
+            // consumers already replay durable history after broadcast lag.
+            let _ = sender.send(delivery);
             remaining = &remaining[end..];
         }
     }
