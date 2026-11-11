@@ -72,6 +72,9 @@ impl Bridge {
     }
 
     pub(in super::super) async fn mark_prompt_completed(&self, id: &str) {
+        if let Some(state) = &self.permission_state {
+            state.lock().await.complete_prompt(id);
+        }
         self.recovery.lock().await.mark_completed(id);
     }
 
@@ -90,6 +93,9 @@ impl Bridge {
             return false;
         }
         let prompt_id = recovery.expected.clone().expect("identity was checked");
+        if let Some(state) = &self.permission_state {
+            state.lock().await.complete_prompt(id);
+        }
         recovery.mark_completed(id);
         recovery.expected = None;
         let outcome = crate::hosted::acp_turn::turn_outcome(frame);

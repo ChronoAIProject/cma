@@ -97,8 +97,7 @@ module CIContract
         "name" => "Backend Image Manager Mongo isolation", "timeout-minutes" => 30,
         "steps" => consumers + [{ "uses" => "actions/setup-node@v6", "with" => { "node-version" => "24.15.0" } },
           backend_step("Prepare compiled gateway browser contract", "npm ci --prefix web\nnpm ci --prefix sdk/typescript --omit=dev --ignore-scripts\nnpm run build --prefix web\n", "working-directory" => "."),
-          backend_step("Select official Ubuntu archive for browser dependencies", "sudo python3 .github/scripts/select-ubuntu-archive.py", "working-directory" => "."),
-          backend_step("Install gateway contract browser", "npx --no-install playwright install --with-deps chromium", "timeout-minutes" => 10, "working-directory" => "web"),
+          backend_step("Install gateway contract browser", "node --test ../.github/scripts/install-contract-browser.test.mjs\nnode ../.github/scripts/install-contract-browser.mjs\n", "timeout-minutes" => 10, "working-directory" => "web"),
           backend_step("Image Manager authenticated Mongo isolation", "bash ../.github/scripts/image-manager-mongo-contract.sh", "timeout-minutes" => 15)],
       },
       "cmaeg-latency" => {

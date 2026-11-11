@@ -1,5 +1,5 @@
 import { waitFor } from '@testing-library/react';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { Dispatch, SetStateAction } from 'react';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT } from '../test/agent';
 import { workspaceFixture } from '../test/hierarchy';
@@ -17,6 +17,10 @@ function deferred<T>() {
 }
 
 beforeEach(() => sessionStorage.clear());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 async function setup() {
   const h = harness();
@@ -104,4 +108,43 @@ it('refuses readiness publication and snapshot reads if the account changes duri
   expect(readAgent).toHaveBeenCalledOnce();
   expect(h.publish).not.toHaveBeenCalled();
   expect(h.snapshot).not.toHaveBeenCalled();
+});
+
+it('backs off unchanged preparation, suspends hidden reads and stops after Ready', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, 'random').mockReturnValue(0.5);
+  const h = await setup();
+  const read = vi
+    .spyOn(h.client, 'readAgent')
+    .mockResolvedValue({ ...h.detail, status: 'starting' });
+  const completed = h.start();
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(read.mock.calls.length).toBeLessThanOrEqual(9);
+  expect(h.snapshot).not.toHaveBeenCalled();
+  const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+  document.dispatchEvent(new Event('visibilitychange'));
+  const count = read.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(read).toHaveBeenCalledTimes(count);
+  read.mockResolvedValue(h.detail);
+  hidden.mockReturnValue(false);
+  document.dispatchEvent(new Event('visibilitychange'));
+  await vi.advanceTimersByTimeAsync(1000);
+  expect((await completed).value?.detail.status).toBe('ready');
+  const finished = read.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(read).toHaveBeenCalledTimes(finished);
+});
+
+it('does not reload history while first-message delivery stays unchanged', async () => {
+  vi.useFakeTimers();
+  const h = await setup();
+  if (h.state.current.status !== 'ready') throw new Error('Expected ready fixture');
+  h.state.current = { ...h.state.current, detail: h.detail };
+  vi.spyOn(h.client, 'readAgent').mockResolvedValue(h.detail);
+  const completed = h.start();
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(h.snapshot).not.toHaveBeenCalled();
+  h.abort.abort();
+  expect((await completed).error).toBe(h.abort.signal.reason);
 });
