@@ -17,6 +17,7 @@ use crate::store::{
 pub(in crate::store) const COLLECTION: &str = "agent_capacity_recovery_work";
 
 mod result;
+mod shape;
 pub(in crate::store) use result::ResultBinding;
 #[cfg(test)]
 pub(in crate::store) mod test_support;
@@ -73,6 +74,7 @@ fn decode(document: Document) -> Result<StoredRecovery, SandboxStoreError> {
     {
         return Err(invalid());
     }
+    shape::validate(&document)?;
     let row: Row = bson::deserialize_from_document(document).map_err(|_| invalid())?;
     row.work.validate().map_err(|_| invalid())?;
     row.result.validate(&row.work)?;
@@ -123,6 +125,7 @@ fn encode(stored: &StoredRecovery) -> Result<Document, SandboxStoreError> {
         "work": bson::serialize_to_bson(work).map_err(|_| invalid())?,
         "result": bson::serialize_to_bson(&stored.result).map_err(|_| invalid())?,
     };
+    shape::validate(&row)?;
     if bson::serialize_to_vec(&row).map_err(|_| invalid())?.len() > 32 * 1024 {
         return Err(invalid());
     }
