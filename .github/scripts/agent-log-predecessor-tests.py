@@ -99,8 +99,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix="predecessor-source-", dir=target) as temp:
         scratch = Path(temp)
         archive = scratch / "source.tar"
+        # Cma's dependency graph embeds documentation at compile time. Keep
+        # those inputs and manifests at the same predecessor revision too.
         subprocess.run(
-            ["git", "archive", "--format=tar", f"--output={archive}", commit, "api"],
+            ["git", "archive", "--format=tar", f"--output={archive}", commit,
+             "api", "docs", "infra"],
             cwd=ROOT, check=True,
         )
         with tarfile.open(archive) as source:
