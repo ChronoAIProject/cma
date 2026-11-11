@@ -27,6 +27,21 @@ impl Bridge {
         frame: super::retained_json::JsonFrame,
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
+        let sign_in = self
+            .json_pools
+            .as_ref()
+            .map(|pools| pools.admit_sign_in(&frame))
+            .transpose()?
+            .flatten();
+        self.receive_admitted_frame(frame, updates, sign_in).await
+    }
+
+    pub(super) async fn receive_admitted_frame(
+        &self,
+        frame: super::retained_json::JsonFrame,
+        updates: &UpdateRelay,
+        sign_in: Option<super::sign_in_retention::Admission>,
+    ) -> crate::Result<()> {
         if let Some(id) = frame.get("id") {
             if frame.get("method").is_none() {
                 let waiting = match id.as_str() {
@@ -103,7 +118,7 @@ impl Bridge {
             Some("cma/codex/credentials") => self.subscription_credential(&frame).await,
             Some("session/update") => self.session_update(&frame, updates).await,
             Some("session/request_permission") => self.blocked_on(&frame, updates).await?,
-            Some("elicitation/create") => self.sign_in(&frame, updates).await,
+            Some("elicitation/create") => self.sign_in(&frame, updates, sign_in).await,
             Some(method) => {
                 if let Some(id) = frame.get("id") {
                     tracing::info!(%method, "refusing ACP request not offered by this client");
@@ -170,8 +185,13 @@ impl Bridge {
         }
     }
 
-    async fn sign_in(&self, frame: &serde_json::Value, updates: &UpdateRelay) {
-        let Some((url, code, message)) = sign_in_from(frame.get("params")) else {
+    async fn sign_in(
+        &self,
+        frame: &serde_json::Value,
+        updates: &UpdateRelay,
+        admission: Option<super::sign_in_retention::Admission>,
+    ) {
+        let Some(fields) = super::sign_in_retention::Fields::read(frame.get("params")) else {
             tracing::warn!("ACP sign-in request contained no URL");
             if let Some(id) = frame.get("id") {
                 let _ = self
@@ -184,9 +204,12 @@ impl Bridge {
             }
             return;
         };
-        updates
-            .send(ConversationUpdate::SignInRequired { url, code, message })
-            .await;
+        let update = fields.owned();
+        let update = match admission {
+            Some(admission) => admission.wrap(update),
+            None => update,
+        };
+        updates.send(update).await;
         if let Some(id) = frame.get("id") {
             let _ = self
                 .send(&serde_json::json!({
