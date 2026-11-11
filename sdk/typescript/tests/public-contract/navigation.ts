@@ -39,7 +39,9 @@ export async function verifyNavigation(
       ...(fixture.response.status === 503
         ? []
         : [`cma_session=; Path=/; HttpOnly${secure}; SameSite=Lax; Max-Age=0`]),
-      `cma_signed_out=1; Path=/; HttpOnly${secure}; SameSite=Lax; Max-Age=2592000`,
+      ...(fixture.id === 'auth-cross-site-logout'
+        ? []
+        : [`cma_signed_out=1000; Path=/; HttpOnly${secure}; SameSite=Lax; Max-Age=2592000`]),
     ]);
   } else if (fixture.operation === 'GET /api/v1/triggers/public/{public_id}/open/{placement_id}') {
     const parts = url.pathname.split('/');

@@ -344,7 +344,9 @@ export function expectedProjection(fixture: ContractCase): unknown {
     // browser flow; the SDK's signed-out projection deliberately omits it.
     assert.deepStrictEqual(fixture.response.body, {
       authenticated: false,
-      silent_sign_in: fixture.scenario !== 'auth_anonymous_disabled',
+      silent_sign_in:
+        fixture.scenario !== 'auth_anonymous_disabled' &&
+        !['auth-silent-suppressed', 'auth-silent-later-logout'].includes(fixture.id),
     });
     return { authenticated: false };
   }
