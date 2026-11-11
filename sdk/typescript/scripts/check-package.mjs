@@ -81,13 +81,24 @@ try {
     'tsconfig.json',
   ]);
   await writeFile(join(scratch, 'descriptor.json'), JSON.stringify(descriptor));
+  const navigationBudget = JSON.parse(
+    await readFile(
+      new URL(
+        '../../../api/crates/layer1-public/tests/fixtures/browser-auth-limits.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  );
   await writeFile(
     join(scratch, 'smoke.mjs'),
     `
 import { readFileSync } from 'node:fs';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { createClient } from '@chronoai/cma-sdk';
+import { createClient, MAX_LOGIN_URL_BYTES } from '@chronoai/cma-sdk';
+if (MAX_LOGIN_URL_BYTES !== ${JSON.stringify(navigationBudget.max_login_url_bytes)})
+  throw new Error('Packaged login URL budget export does not match the public contract');
 import { PublishedButton } from './dist/embed.js';
 const descriptor = JSON.parse(readFileSync(new URL('./descriptor.json', import.meta.url), 'utf8'));
 let fetched = false;
@@ -104,7 +115,7 @@ if ((await client.readConformance()).service !== 'cma') throw new Error('Root ex
   );
   run(process.execPath, ['smoke.mjs']);
   console.log(
-    'Packaged SDK root and backend React embed compile and render in an isolated npm ci consumer.',
+    'Packaged SDK root, login URL budget and backend React embed pass in an isolated npm ci consumer.',
   );
 } catch (error) {
   if (error.stdout) process.stderr.write(error.stdout);

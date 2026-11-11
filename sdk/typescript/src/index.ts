@@ -41,7 +41,6 @@ export { readDefaults, type PlatformDefaults } from './defaults.js';
 export * from './admin/index.js';
 export * from './profile-authoring/index.js';
 export * from './triggers.js';
-export { MAX_LOGIN_URL_BYTES } from './auth.js';
 export * from './auth.js';
 export * from './responses.js';
 export * from './responses-v2.js';
