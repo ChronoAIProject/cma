@@ -20,6 +20,9 @@ import {
   type Output,
 } from './schema.js';
 
+/** Complete encoded absolute URL budget; mirrored from the shared browser-auth-limits wire fixture. */
+export const MAX_LOGIN_URL_BYTES = 4096;
+
 const capability = enumeration(
   'create_sandbox',
   'use_own_sandboxes',
@@ -106,10 +109,13 @@ export class Authentication {
     if (options.screen !== undefined && options.screen !== 'register')
       throw new ValidationError('screen must be register when supplied');
     if (options.returnTo !== undefined) validateReturnTarget(options.returnTo);
-    return urlOf(
+    const target = urlOf(
       this.config,
       query('/auth/login', { return_to: options.returnTo, screen: options.screen }),
     );
+    if (target.length > MAX_LOGIN_URL_BYTES)
+      throw new ValidationError('encoded login URL exceeds the public navigation budget');
+    return target;
   }
 
   logoutUrl(): string {
@@ -141,12 +147,12 @@ function validateReturnTarget(value: string): void {
     keys.add(key);
   }
   if (
-    new TextEncoder().encode(value).length > 25064 ||
+    value.length > MAX_LOGIN_URL_BYTES ||
     path.length > 256 ||
     Array.from(value).some(
       (character) =>
         character.charCodeAt(0) <= 32 ||
-        character.charCodeAt(0) === 127 ||
+        character.charCodeAt(0) >= 127 ||
         character === '#' ||
         character === '\\',
     ) ||

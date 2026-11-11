@@ -14,6 +14,8 @@
 import type { AuthProvider, AuthState, Capability, SignInOptions } from './types';
 import { isCapability } from './types';
 import { parseRoute, routePath } from '../routing/routes';
+import { MAX_LOGIN_URL_BYTES } from '../../../sdk/typescript/src/auth';
+import { retainFatherDraftForSignIn } from '../bots/fatherDraft';
 
 /** Where the control plane answers questions about the current browser identity. */
 const IDENTITY_ENDPOINT = '/auth/session';
@@ -90,16 +92,29 @@ export function handleFor(subject: string, displayName?: string, email?: string)
   return subject;
 }
 
-export function signInPath(returnTo?: string, options?: SignInOptions): string {
+function loginTarget(returnTo?: string, options?: SignInOptions): URL {
   const target = new URL(LOGIN_ENDPOINT, window.location.origin);
   if (returnTo !== undefined) {
-    const [path] = returnTo.split('?');
-    const route = parseRoute(path ?? '');
-    if (route.kind === 'not_found' || routePath(route) !== path || !returnQueryAllowed(returnTo))
+    const path = returnTo.split('?')[0] ?? '';
+    const route = parseRoute(path);
+    if (
+      route.kind === 'not_found' ||
+      routePath(route) !== path ||
+      path.length > RETURN_TARGET_MAX_LENGTH ||
+      !returnQueryAllowed(returnTo)
+    )
       throw new Error('The sign-in destination is not a CMA page.');
     target.searchParams.set('return_to', returnTo);
   }
   if (options?.screen === 'register') target.searchParams.set('screen', 'register');
+  return target;
+}
+
+export function signInPath(returnTo?: string, options?: SignInOptions): string {
+  let target = loginTarget(returnTo, options);
+  if (target.href.length > MAX_LOGIN_URL_BYTES)
+    target = loginTarget(returnTo?.split('?')[0], options);
+  if (target.href.length > MAX_LOGIN_URL_BYTES) throw new Error('The sign-in address is too long.');
   return `${target.pathname}${target.search}`;
 }
 
@@ -146,8 +161,11 @@ export function silentReturnTarget(location: {
     case 'marketplace_profile':
     case 'triggers':
     case 'trigger':
-    case 'trigger_embed':
-      return pathname + location.search;
+    case 'trigger_embed': {
+      const target = loginTarget(pathname + location.search);
+      target.searchParams.set('prompt', 'none');
+      return target.href.length <= MAX_LOGIN_URL_BYTES ? pathname + location.search : undefined;
+    }
     default:
       return undefined;
   }
@@ -156,11 +174,10 @@ export function silentReturnTarget(location: {
 /** Only UI-defined query state is restored; unknown redirect/authority parameters fail closed. */
 function returnQueryAllowed(value: string): boolean {
   if (
-    new TextEncoder().encode(value).length > 25064 ||
     Array.from(value).some(
       (character) =>
         character.charCodeAt(0) <= 32 ||
-        character.charCodeAt(0) === 127 ||
+        character.charCodeAt(0) >= 127 ||
         character === '#' ||
         character === '\\',
     )
@@ -294,7 +311,9 @@ export function createNyxidAuthProvider(): AuthProvider {
     async signIn(returnTo, options): Promise<void> {
       // A navigation, not a fetch: the provider needs to run its own redirects
       // and may show a login page, neither of which survives XHR.
-      window.location.assign(signInPath(returnTo, options));
+      const target = signInPath(returnTo, options);
+      retainFatherDraftForSignIn();
+      window.location.assign(target);
     },
 
     async signOut(): Promise<void> {
@@ -311,7 +330,14 @@ export function createNyxidAuthProvider(): AuthProvider {
     signInSilently(): boolean {
       if (!silentSignInOffered) return false;
       const returnTo = silentReturnTarget(window.location);
-      if (returnTo === undefined) return false;
+      if (returnTo === undefined) {
+        // An oversized setup stays at its original URL and in tab storage.
+        remember(() => {
+          retainFatherDraftForSignIn();
+          return true;
+        });
+        return false;
+      }
       const started = remember(() => {
         if (sessionStorage.getItem(SILENT_ATTEMPT_KEY) !== null) return false;
         sessionStorage.setItem(SILENT_ATTEMPT_KEY, '1');
