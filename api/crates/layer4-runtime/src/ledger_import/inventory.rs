@@ -93,6 +93,40 @@ where
 }
 
 impl Inventory {
+    /// Physical entries that the V1 serving readers count. Historical process
+    /// scopes remain in the complete inventory but do not spend today's bound.
+    pub(super) fn capacity_summary(&self, generation: u64) -> serde_json::Value {
+        let mut journal = [0_u64; 2];
+        let mut authority = [0_u64; 2];
+        let mut historical = [0_u64; 2];
+        for entry in &self.entries {
+            let root = &self.roots[entry.directory];
+            let current = root.scope == 0 || root.scope == generation;
+            let temporary = usize::from(entry.temporary);
+            match (root.kind, current) {
+                (Kind::Journal, true) => journal[temporary] += 1,
+                (Kind::Authority, true) => authority[temporary] += 1,
+                (Kind::Journal, false) => historical[0] += 1,
+                (Kind::Authority, false) => historical[1] += 1,
+                _ => {}
+            }
+        }
+        serde_json::json!({
+            "journal_canonical_files": journal[0],
+            "journal_temporary_files": journal[1],
+            "journal_scan_entries": journal.iter().sum::<u64>(),
+            "journal_scan_limit": crate::mutation_journal::MAX_JOURNAL_ENTRIES,
+            "authority_canonical_files": authority[0],
+            "authority_temporary_files": authority[1],
+            "authority_scan_entries": authority[0],
+            "authority_scan_limit": crate::mutation_authority::MAX_AUTHORITY_RECORDS,
+            "historical_journal_files": historical[0],
+            "historical_authority_files": historical[1],
+            "admission_headroom": "unproved",
+            "retirement_eligibility": "requires_authoritative_state",
+        })
+    }
+
     pub(super) fn read(&self, index: usize, budget: &mut Budget) -> Result<Vec<u8>> {
         let entry = self.entries.get(index).ok_or_else(invalid)?;
         let root = self.roots.get(entry.directory).ok_or_else(invalid)?;
