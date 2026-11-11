@@ -10,6 +10,9 @@ records; the linked issue remains authoritative.
 1. Start from an explicit assignment or an issue carrying the existing
    `status:ready` label. Read its complete body, comments, linked PRs, dependencies
    and acceptance checklist. A label does not override a newer blocker.
+   For sprint assignments, query the named project's exact week and assignee
+   across repositories, including closed issues and PRs. An all-open backlog or
+   a related gate does not expand the assigned sprint scope.
 2. Identify one independently reviewable result, the affected layer, the required
    permissions, and where delivery ends: repository documentation, merged code,
    deployment, production verification, or a measured qualification window.
@@ -113,6 +116,9 @@ do not overwrite a failed observation with a later successful attempt.
 Close only when the issue's acceptance and delivery boundary are met. A completed
 report can close while its linked engineering work remains open. A policy draft
 awaiting confirmation or an unfinished qualification window remains open.
+Distinguish the item's own dated steps from final qualification owned by another
+issue. A closed state alone does not prove later production acceptance. Evidence
+held for review remains unavailable for acceptance until the lead releases it.
 
 Keep [PROJECT_STATE.md](PROJECT_STATE.md) as a short index of authoritative
 coordination and evidence records. Update links when responsibility moves; keep
