@@ -750,4 +750,66 @@ mod evaluation {
         );
         client.database(&name).drop().await.unwrap();
     }
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+    async fn cloud_observations_append_once_and_update_the_period_row() {
+        use layer2_core::budget::{CloudObservationInput, ObservationError, PlatformSpendLedger};
+        let (client, name) = database("platform_observations").await;
+        let (store, agent, _) = fixture(&name, &client).await;
+        configure_with_platform(&store, &agent.owner, open_platform(), 1).await;
+        let now = seconds(NOW);
+        let input = CloudObservationInput {
+            observed_through: now - 60,
+            units: 5,
+        };
+        let state = store.record_cloud_observation(input, now).await.unwrap();
+        let row = state.ledger.unwrap();
+        assert_eq!(row.cloud.as_ref().unwrap().units, 5);
+        assert_eq!(row.cloud.as_ref().unwrap().settings_revision, 1);
+        let repeated = store.record_cloud_observation(input, now).await.unwrap();
+        assert_eq!(repeated.ledger.unwrap().revision, row.revision);
+        assert_eq!(
+            store
+                .record_cloud_observation(CloudObservationInput { units: 6, ..input }, now)
+                .await,
+            Err(ObservationError::Conflict)
+        );
+        let (start, _) = open_platform().period_bounds().unwrap();
+        for invalid in [
+            CloudObservationInput {
+                observed_through: now + 1,
+                units: 1,
+            },
+            CloudObservationInput {
+                observed_through: start - 1,
+                units: 1,
+            },
+            CloudObservationInput {
+                observed_through: now - 30,
+                units: 1 << 53,
+            },
+        ] {
+            assert_eq!(
+                store.record_cloud_observation(invalid, now).await,
+                Err(ObservationError::Invalid)
+            );
+        }
+        assert_eq!(
+            store
+                .model_budget
+                .count_documents(doc! {"_id": {"$regex": "^observation:cloud:"}})
+                .await
+                .unwrap(),
+            1
+        );
+        let later = CloudObservationInput {
+            observed_through: now - 30,
+            units: 7,
+        };
+        let state = store.record_cloud_observation(later, now).await.unwrap();
+        assert_eq!(state.ledger.unwrap().cloud.unwrap().units, 7);
+        assert!(state.committed.is_some());
+        client.database(&name).drop().await.unwrap();
+    }
 }

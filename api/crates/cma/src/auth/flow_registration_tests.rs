@@ -452,6 +452,14 @@ mod platform_closure {
         async fn spend_state(&self, _: u64) -> Result<PlatformSpendState, BudgetError> {
             Err(BudgetError::Unavailable)
         }
+
+        async fn record_cloud_observation(
+            &self,
+            _: layer2_core::budget::CloudObservationInput,
+            _: u64,
+        ) -> Result<PlatformSpendState, layer2_core::budget::ObservationError> {
+            Err(layer2_core::budget::ObservationError::Unavailable)
+        }
     }
 
     fn closed(reason: ClosureReason) -> Arc<FixedSpend> {
