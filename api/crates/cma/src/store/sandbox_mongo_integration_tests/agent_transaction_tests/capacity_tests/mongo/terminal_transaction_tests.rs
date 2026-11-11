@@ -72,6 +72,9 @@ async fn exhausted_terminal_reserve_preserves_prefix_and_never_acknowledges() {
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::with_bytes(false).await
+    }
+    async fn with_bytes(bytes: bool) -> Self {
         let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
         let app = format!("capacity-terminal-{}", uuid::Uuid::new_v4());
         let mut options = ClientOptions::parse(&uri).await.unwrap();
@@ -83,7 +86,7 @@ impl Fixture {
         let ready = ready_conversation_fixture(&store, "terminal_transaction").await;
         let turn = begin_stored_conversation_turn(&store, ready).await;
         store.commit_agent_conversation(turn.clone()).await.unwrap();
-        let full = fill_normal_capacity(&store, turn.agent, false).await;
+        let full = fill_normal_capacity(&store, turn.agent, bytes).await;
         Self {
             store,
             client,
@@ -279,4 +282,110 @@ async fn unproved_native_terminal_commit_returns_typed_unknown_without_assuming_
         .unwrap();
     f.one_terminal().await;
     f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn compact_capacity_failure_preserves_prefix_through_both_unknown_commit_outcomes() {
+    for committed in [false, true] {
+        let f = Fixture::with_bytes(true).await;
+        let recorder = DurableAgentUpdateRecorder::new(f.store.clone());
+        let mut assembly = AgentMessageAssembly::default();
+        recorder
+            .record_update(
+                &f.full.id,
+                1,
+                &mut assembly,
+                ConversationUpdate::Said(layer3_adapter::SessionUpdate::AgentMessageChunk(
+                    layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(
+                        "p".repeat(1024 * 1024),
+                    )),
+                )),
+                MINUTE.into(),
+            )
+            .await
+            .unwrap();
+        let current = f.full.clone();
+        let prefix = f
+            .store
+            .agent_message_checkpoint(&current.id)
+            .await
+            .unwrap()
+            .unwrap();
+        if committed {
+            f.failpoint(Bson::Document(doc! {"times":5}), doc! {"writeConcernError":{"code":50,"codeName":"MaxTimeMSExpired","errmsg":"fixture uncertain compact commit"}}).await;
+        } else {
+            f.failpoint(
+                Bson::String("alwaysOn".into()),
+                doc! {"errorCode":1,"errorLabels":["UnknownTransactionCommitResult"]},
+            )
+            .await;
+        }
+        let (acks, mut acknowledged) = tokio::sync::mpsc::channel(2);
+        let update = f.update(acks);
+        let started = Instant::now();
+        let result = recorder
+            .record_update(&current.id, 1, &mut assembly, update.clone(), MINUTE.into())
+            .await;
+        f.off().await;
+        assert!(started.elapsed() < Duration::from_secs(120));
+        if committed {
+            let outcome = result.unwrap();
+            assert!(outcome.turn_closed);
+            assert!(outcome.appended.iter().any(|e|matches!(&e.kind,AgentLogKind::TurnFailed {failure,..} if failure.class == "agent_log_capacity_exceeded")));
+        } else {
+            assert!(matches!(
+                result,
+                Err(AgentConversationError::Unavailable(_))
+            ));
+            assert_eq!(
+                f.store.get_agent(&current.id).await.unwrap(),
+                Some(current.clone())
+            );
+            assert_eq!(
+                crate::sandbox::record_update_for_test(
+                    recorder.as_ref(),
+                    &current.id,
+                    1,
+                    &mut assembly,
+                    update
+                )
+                .await,
+                Err(AgentConversationError::CapacityExceeded)
+            );
+        }
+        assert!(acknowledged.try_recv().is_err());
+        let row = f
+            .store
+            .agents
+            .find_one(doc! {"_id":current.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            row.get("agent_capacity_prefix_v1"),
+            Some(&mongodb::bson::serialize_to_bson(&prefix).unwrap())
+        );
+        let tail = f
+            .store
+            .agent_log(&current.id, current.conversation.last_seq, 20)
+            .await
+            .unwrap();
+        assert_eq!(
+            tail.iter()
+                .filter(|e| matches!(e.kind, AgentLogKind::TurnFailed { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            f.store
+                .get_agent(&current.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            AgentStatus::Failed
+        );
+        f.cleanup().await;
+    }
 }

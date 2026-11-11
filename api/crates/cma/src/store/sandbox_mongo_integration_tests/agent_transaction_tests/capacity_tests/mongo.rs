@@ -5,22 +5,40 @@ use crate::store::sandbox_mongo_integration_tests::capacity_fixtures::{
 
 mod retry_tests;
 mod telemetry_tests;
+mod terminal_boundary_tests;
+mod terminal_overflow_tests;
 mod terminal_tests;
 mod terminal_transaction_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn agent_log_count_capacity_keeps_stop_and_delete_reachable() {
-    verify_full_log_cleanup(false).await;
+    verify_full_log_cleanup(false, None).await;
 }
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn agent_log_byte_capacity_keeps_stop_and_delete_reachable() {
-    verify_full_log_cleanup(true).await;
+    verify_full_log_cleanup(true, None).await;
 }
 
-async fn verify_full_log_cleanup(bytes: bool) {
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn deletion_count_ceiling_accepts_exactly_and_refuses_one_over() {
+    for over in [false, true] {
+        verify_full_log_cleanup(false, Some(over)).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn deletion_byte_ceiling_accepts_exactly_and_refuses_one_over() {
+    for over in [false, true] {
+        verify_full_log_cleanup(true, Some(over)).await;
+    }
+}
+
+async fn verify_full_log_cleanup(bytes: bool, boundary: Option<bool>) {
     let (client, name) = database(if bytes {
         "capacity_bytes"
     } else {
@@ -139,7 +157,26 @@ async fn verify_full_log_cleanup(bytes: bool) {
         }
         store.commit_agent_work(publication).await.unwrap();
     }
-    let publishing = claim(&store, &agent.id, TWO_MINUTES).await;
+    let mut publishing = claim(&store, &agent.id, TWO_MINUTES).await;
+    if let Some(over) = boundary {
+        let pending_bytes = log_document(&AgentLogEntry {
+            agent_id: agent.id.clone(),
+            seq: 10_128,
+            appended_at: TWO_MINUTES.into(),
+            kind: AgentLogKind::Deleted,
+        })
+        .unwrap()
+        .to_vec()
+        .unwrap()
+        .len();
+        publishing = crate::store::sandbox_mongo_integration_tests::capacity_fixtures::fill_to(
+            &store,
+            publishing,
+            (!bytes).then_some(10_127 + u64::from(over)),
+            bytes.then_some(65 * 1024 * 1024 - pending_bytes + usize::from(over)),
+        )
+        .await;
+    }
     let mut deleted = advance(&publishing, AgentWorkStep::None, TWO_MINUTES);
     deleted.agent.revision -= 1;
     deleted
@@ -150,7 +187,42 @@ async fn verify_full_log_cleanup(bytes: bool) {
     deleted.sandbox_event = Some(SandboxEventKind::AgentDeleted {
         agent_id: agent.id.clone(),
     });
-    store.commit_agent_work(deleted.clone()).await.unwrap();
+    let result = store.commit_agent_work(deleted.clone()).await;
+    if boundary == Some(true) {
+        assert_eq!(result, Err(SandboxStoreError::AgentLogCapacityExceeded));
+        assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(publishing));
+        assert_eq!(
+            fingerprint(&store, &agent.id, original_head).await,
+            original_history
+        );
+        client.database(&name).drop().await.unwrap();
+        return;
+    }
+    result.unwrap();
+    if boundary == Some(false) {
+        assert!(deleted.agent.work.lease.is_none());
+        if bytes {
+            use futures_util::TryStreamExt;
+            let mut rows = store
+                .agent_log
+                .find(doc! {"agent_id":agent.id.as_str()})
+                .await
+                .unwrap();
+            let mut total = 0;
+            while let Some(row) = rows.try_next().await.unwrap() {
+                total += row.to_vec().unwrap().len();
+            }
+            assert_eq!(total, 65 * 1024 * 1024);
+        } else {
+            assert_eq!(deleted.agent.conversation.last_seq, 10_128);
+        }
+        assert_eq!(
+            fingerprint(&store, &agent.id, original_head).await,
+            original_history
+        );
+        client.database(&name).drop().await.unwrap();
+        return;
+    }
 
     let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
     assert_eq!(

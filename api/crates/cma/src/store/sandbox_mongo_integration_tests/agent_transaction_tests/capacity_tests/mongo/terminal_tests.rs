@@ -100,7 +100,7 @@ async fn terminal_case(bytes: bool, refuse_output: bool) {
     } else { matches!(entry.kind, AgentLogKind::TurnCompleted { .. }) }));
     let peer = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
     let replacement = DurableAgentUpdateRecorder::new(peer);
-    replacement
+    let replay = replacement
         .record_update(
             &full.id,
             1,
@@ -108,8 +108,12 @@ async fn terminal_case(bytes: bool, refuse_output: bool) {
             retained(1, update),
             MINUTE.into(),
         )
-        .await
-        .unwrap();
+        .await;
+    if refuse_output {
+        assert!(replay.is_err());
+    } else {
+        replay.unwrap();
+    }
     if refuse_output {
         assert!(replacement
             .record_update(

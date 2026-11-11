@@ -6,6 +6,7 @@ use mongodb::Client;
 
 mod cpu_profile;
 mod direct_retry_tests;
+mod exhausted_cleanup_tests;
 mod ledger_hold_tests;
 mod removal_retry_tests;
 mod settlement_tests;
