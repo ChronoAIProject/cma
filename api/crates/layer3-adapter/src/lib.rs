@@ -8,9 +8,11 @@ mod adapter;
 mod agent;
 mod agent_attachment;
 mod agent_filesystem;
+pub mod archive_source;
 pub mod binding_diagnostics;
 mod browser;
 mod browser_control;
+pub mod permanent_custody;
 pub use browser::{
     BrowserAdapter, BrowserFrame, BrowserObservation, BrowserOperation, BrowserReceipt,
     BrowserRequest, BrowserState,
