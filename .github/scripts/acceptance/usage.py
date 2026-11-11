@@ -3,6 +3,7 @@
 import time
 
 from safety import decode
+import retained
 
 ISSUES = [1549, 1320, 1333, 1334]
 REPORT_SUFFIXES = ("", "/sandboxes?limit=1", "/series?metric=cpu&top=1")
@@ -29,6 +30,12 @@ def run(p):
             p.assert_case(label + "_owner_scope", report.get("scope", {}).get("admin") is False, ISSUES, response, True)
             p.fixture(label, {"report_id": report["report_id"]})
         report_id = p.state["fixtures"][label]["report_id"]
+        retained.check_fixture(p, owner, "report", report_id)
+        expiry = retained.load(p)["slots"][owner + ":report"].get("expires_at", 0)
+        if expiry <= int(time.time()):
+            p.record(label + "_expired", "BLOCKED", ISSUES,
+                     reason="retained_report_expired; fixture_cap_prevents_replacement")
+            continue
         for suffix in REPORT_SUFFIXES:
             path = "/api/v1/usage/metrics/reports/" + report_id + suffix
             name = "metadata" if not suffix else "rows" if "sandboxes" in suffix else "series"

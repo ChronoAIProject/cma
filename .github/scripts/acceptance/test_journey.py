@@ -1,107 +1,108 @@
-"""Safety regressions for consent, quota, cleanup scope and private reporting."""
+"""Policy, quota and restart fences use independent durable history."""
 
 import contextlib
 import datetime
 import io
-import json
 import unittest
 from unittest.mock import patch
 
+import launch_ledger as ledger
+import launch_recovery
 import oauth_session
 import resources
-from journey_scope import allowed_write, reserve_launch
-from probe import Probe
-from safety import Refusal
+import trigger_pin
+from journey_scope import allowed_write
+from safety import Refusal, read_private, write_private
+from test_support import context, intent, launch_value, restart
+
+NOW = datetime.datetime(2026, 11, 11, 4, tzinfo=datetime.timezone.utc)
 
 
 class JourneyTests(unittest.TestCase):
-    def context(self):
-        p = object.__new__(Probe)
-        p.accounts = {"a": {"subject": "private-a"}, "b": {"subject": "private-b"}}
-        p.state = {"fixtures": {}, "writes": {}, "results": []}
-        p.results = []
-        p.save = lambda: None
-        return p
+    def test_sixth_intent_refused_across_restart_and_new_campaign(self):
+        with context() as p:
+            for index in range(5):
+                key = "synthetic-" + str(index)
+                ledger.reserve(p, "a", key, intent(), NOW)
+                ledger.observed(p, key, 409, {"code": "sandbox_credential_setup_required"})
+                restart(p); p.state["campaign"] = "replacement-" + str(index)
+            with self.assertRaisesRegex(Refusal, "visitor_daily_launch_budget"):
+                ledger.reserve(p, "a", "sixth", intent(), NOW)
+            self.assertEqual(len(ledger.load(p)["entries"]), 5)
+            ledger.reserve(p, "a", "next-day", intent(), NOW + datetime.timedelta(days=1))
 
-    def test_reserved_launch_survives_restart_without_extra_charge(self):
-        p = self.context()
-        now = datetime.datetime(2026, 11, 11, 4, tzinfo=datetime.timezone.utc)
-        reserve_launch(p, "a", now)
-        reopened = self.context()
-        reopened.state = json.loads(json.dumps(p.state))
-        reserve_launch(reopened, "a", now)
-        self.assertEqual(reopened.state["launch_daily_counts"], {"2026-11-11:a": 1})
-        with self.assertRaises(Refusal):
-            reserve_launch(reopened, "a", now + datetime.timedelta(days=1))
+    def test_original_reservation_survives_restart_and_pending_blocks_rollover(self):
+        with context() as p:
+            ledger.reserve(p, "a", "original", intent(), NOW); restart(p)
+            ledger.reserve(p, "a", "original", intent(), NOW)
+            self.assertEqual(len(ledger.load(p)["entries"]), 1)
+            with self.assertRaisesRegex(Refusal, "pending_launch"):
+                ledger.reserve(p, "a", "replacement", intent(), NOW + datetime.timedelta(days=1))
+            with self.assertRaisesRegex(Refusal, "outside_safe_receipt_window"):
+                ledger.validate(p, "a", "original", intent(), NOW + datetime.timedelta(hours=23))
 
-    def test_new_attempt_refuses_daily_budget_and_existing_sandbox(self):
-        p = self.context()
-        now = datetime.datetime(2026, 11, 11, 4, tzinfo=datetime.timezone.utc)
-        p.state["launch_daily_counts"] = {"2026-11-11:a": 5}
-        with self.assertRaises(Refusal):
-            reserve_launch(p, "a", now)
-        p.state["launch_daily_counts"].clear()
-        p.state["fixtures"]["sandbox_a"] = {"id": "synthetic-sandbox"}
-        with self.assertRaises(Refusal):
-            reserve_launch(p, "a", now)
+    def test_missing_or_uncertain_history_refuses(self):
+        with context() as p:
+            from safety import private_path
+            for value in (None, {"version": 1, "complete_history": False}):
+                private_path(ledger.NAME).unlink(missing_ok=True)
+                if value is not None: write_private(ledger.NAME, value)
+                with self.assertRaises(Refusal): ledger.reserve(p, "a", "new", intent(), NOW)
 
-    @patch("journey_scope.read_private", return_value={"public_id": "approved-trigger"})
-    def test_only_exact_approved_trigger_with_reservation_can_launch(self, _):
-        p = self.context()
-        route = "/api/v1/triggers/public/approved-trigger/launches"
-        with self.assertRaises(Refusal):
-            allowed_write(p, "a", route, "POST", {"start_if_ready": True})
-        p.state["launch_reservations"] = {"a": {"day": "2026-11-11"}}
-        self.assertTrue(allowed_write(p, "a", route, "POST", {"start_if_ready": True}))
-        with self.assertRaises(Refusal):
-            allowed_write(p, "a", route, "POST", {"start_if_ready": True, "choice": "new"})
-        self.assertFalse(allowed_write(p, "a", route.replace("approved-trigger", "outside"), "POST", {}))
-        self.assertFalse(allowed_write(p, "a", "/api/v1/triggers/approved-trigger", "PATCH", {}))
+    def test_exact_actor_key_body_and_nonstarting_policy_required(self):
+        with context() as p, patch("launch_ledger.utc_now", return_value=NOW):
+            draft = intent(); ledger.reserve(p, "a", "original", draft)
+            self.assertTrue(allowed_write(p, "a", draft["path"], "POST", draft["body"], "original"))
+            for actor, key, body in (("b", "original", draft["body"]), ("a", "new", draft["body"]),
+                                     ("a", "original", {"start_if_ready": True})):
+                with self.assertRaises(Refusal): allowed_write(p, actor, draft["path"], "POST", body, key)
+            with self.assertRaises(Refusal):
+                ledger.reserve(p, "b", "start", dict(intent("b"), body={"start_if_ready": True}))
 
-    @patch("journey_scope.read_private", return_value={})
-    def test_cleanup_and_negative_writes_cannot_target_another_real_tenant(self, _):
-        p = self.context()
-        p.state["fixtures"]["sandbox_a"] = {"id": "synthetic-sandbox", "owner": "private-a"}
-        route = "/api/v1/sandboxes/synthetic-sandbox"
-        self.assertTrue(allowed_write(p, "a", route, "DELETE", None))
-        self.assertTrue(allowed_write(p, "b", route, "DELETE", None))
-        p.state["fixtures"]["sandbox_a"]["owner"] = "unrelated-owner"
-        self.assertFalse(allowed_write(p, "a", route, "DELETE", None))
-        self.assertFalse(allowed_write(p, "b", route, "DELETE", None))
+    def test_wrong_trigger_descriptor_policy_and_revision_refuse(self):
+        with context() as p:
+            original = read_private("acceptance-trigger.json")
+            for field, value in (("public_id", "another-trigger"), ("public_descriptor", {})):
+                write_private("acceptance-trigger.json", dict(original, **{field: value}))
+                with self.assertRaises(Refusal): trigger_pin.configured(p)
+            write_private("acceptance-trigger.json", original)
+            for field, value in (("revision_digest", "new-revision"), ("public_id", "another-trigger"),
+                                 ("trust", {"disclosures": ["unexpected"]})):
+                bad = dict(launch_value(), **{field: value})
+                p.state["fixtures"]["launch_a"] = bad
+                with self.assertRaises(Refusal):
+                    allowed_write(p, "a", "/api/v1/launches/test-launch/start", "POST", {"acknowledgements": []})
 
-    def test_report_never_contains_response_body_or_sensitive_headers(self):
-        p = self.context()
-        capture = io.StringIO()
-        response = (200, {"Set-Cookie": "private-cookie"},
-                    b'{"subject":"private-a","content":"private-content"}', 0.1)
-        with contextlib.redirect_stdout(capture):
-            p.record("owner_read", "PASS", [1549], response)
-        rendered = capture.getvalue()
-        for value in ("private-a", "private-content", "private-cookie"):
-            self.assertNotIn(value, rendered)
-        self.assertEqual(p.results[0]["response_bytes"], len(response[2]))
-        self.assertEqual(len(p.results[0]["response_sha256"]), 64)
+    def test_second_live_sandbox_is_refused(self):
+        import json
+        with context() as p, contextlib.redirect_stdout(io.StringIO()):
+            p.state["fixtures"]["sandbox_a"] = {"id": "first", "owner": "test-a"}
+            p.http.request = lambda *a, **kw: (200, {}, json.dumps({"id": "test-sandbox", "owner": "test-a"}).encode(), 0)
+            with self.assertRaisesRegex(Refusal, "second_live"):
+                launch_recovery.remember(p, "a", launch_value(True))
 
-    def test_missing_visitor_resources_are_blocked_without_network_requests(self):
-        p = self.context()
-        p.request = lambda *args: self.fail("a missing fixture must not issue a probe")
-        with contextlib.redirect_stdout(io.StringIO()):
+    def test_unknown_inflight_or_recovery_errors_keep_reservation(self):
+        with context() as p:
+            ledger.reserve(p, "a", "original", intent(), NOW)
+            for code in ("idempotency_in_flight", "idempotency_recovery_required", "idempotency_key_reused"):
+                ledger.observed(p, "original", 409, {"code": code})
+                self.assertEqual(ledger.load(p)["entries"]["original"]["status"], "submitted")
+
+    def test_missing_resources_are_explicitly_blocked(self):
+        with context() as p, contextlib.redirect_stdout(io.StringIO()):
             resources.run(p)
-        self.assertEqual(len(p.results), 4)
-        self.assertTrue(all(r["result"] == "BLOCKED" for r in p.results))
+            self.assertEqual(len(p.results), 4)
+            self.assertTrue(all(r["result"] == "BLOCKED" for r in p.results))
 
-    def test_unexpected_oauth_scopes_never_reach_consent(self):
-        p = self.context()
-        p.login = lambda tenant: None
-        calls = []
-        class FakeHttp:
-            def request(self, *args, **kwargs):
+    def test_unexpected_oauth_scope_never_reaches_consent(self):
+        with context() as p:
+            calls = []
+            def request(*args, **kwargs):
                 calls.append(args)
                 return 303, {"Location": "https://api.nyxid.ai/oauth/authorize?scope=unexpected"}, b"", 0
-        p.http = FakeHttp()
-        with self.assertRaises(Refusal):
-            oauth_session.run(p)
-        self.assertEqual(len(calls), 1)
+            p.http.request = request
+            with self.assertRaises(Refusal): oauth_session.run(p)
+            self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

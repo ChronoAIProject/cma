@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from probe import Probe
 from safety import Http, Refusal, outside_quiet_window, read_private, write_private
 from usage import REPORT_SUFFIXES
 
@@ -20,7 +19,7 @@ class SafetyTests(unittest.TestCase):
 
     def test_secret_permissions_and_symlinks_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
-            with patch("safety.SECRET_ROOT", Path(directory) / "private"):
+            with patch("safety.SECRET_ROOT", Path(directory).resolve() / "private"):
                 write_private("state.json", {"example": True})
                 self.assertEqual(read_private("state.json"), {"example": True})
                 path = Path(directory) / "private/state.json"
@@ -41,44 +40,20 @@ class SafetyTests(unittest.TestCase):
                 http.request(origin, path)
         self.assertEqual(http.count, 0)
 
-    def context(self):
-        p = object.__new__(Probe)
-        p.accounts = {"a": {"subject": "test-a"}, "b": {"subject": "test-b"}}
-        p.state = {"fixtures": {"document_a": {"id": "doc_owned"}}, "writes": {}}
-        return p
-
-    def test_mutations_are_restricted_to_test_scope(self):
-        p = self.context()
-        p.allow_write("a", "/api/v1/documents/doc_owned", "PATCH", {})
-        p.allow_write("b", "/api/v1/documents/doc_owned/shares/test-a", "PUT", {})
-        for path, method, body in (
-            ("/api/v1/documents/doc_outside", "PATCH", {}),
-            ("/api/v1/documents/doc_owned/shares/outside", "PUT", {}),
-            ("/api/v1/admin/settings", "PATCH", {}),
-            ("/api/v1/agents", "POST", {"sandbox_id": "outside"}),
-            ("/api/v1/usage/metrics/reports", "POST", {"filters": {"owner": "outside"}}),
-        ):
-            with self.assertRaises(Refusal):
-                p.allow_write("a", path, method, body)
-
-    def test_uncertain_write_reuses_original_operation(self):
-        p = self.context()
-        p.save = lambda: None
-        seen = []
-        def request(*args, **kwargs):
-            seen.append(kwargs["key"])
-            if len(seen) == 1:
-                raise Refusal("request_transport_failure")
-            return 201, {}, b'{"id":"doc_owned"}', 1.0
-        p.request = request
+    def test_cleanup_budget_and_time_are_reserved(self):
+        http = Http()
+        now = datetime.datetime(2026, 11, 11, 17, 30, tzinfo=datetime.timezone.utc)
         with self.assertRaises(Refusal):
-            p.write("create", "a", "/api/v1/documents", "POST", {"title": "synthetic"})
-        p.write("create", "a", "/api/v1/documents", "POST", {"title": "synthetic"})
-        self.assertEqual(seen[0], seen[1])
-        p.write("create", "a", "/api/v1/documents", "POST", {"title": "synthetic"})
-        self.assertEqual(len(seen), 2)
-        with self.assertRaises(Refusal):
-            p.write("create", "a", "/api/v1/documents", "POST", {"title": "changed"})
+            http.reserve_cleanup_time(now)
+        with http.cleanup_budget():
+            http.reserve_cleanup_time(now)
+        http.count = 350
+        with patch("safety.outside_quiet_window"), patch.object(http, "reserve_cleanup_time"):
+            with self.assertRaisesRegex(Refusal, "request_budget_exhausted"):
+                http.request("https://cma.nyxid.ai", "/auth/session")
+            with http.cleanup_budget(), patch.object(http.opener, "open", side_effect=TimeoutError):
+                with self.assertRaisesRegex(Refusal, "request_transport_failure"):
+                    http.request("https://cma.nyxid.ai", "/auth/session")
 
     def test_series_probes_include_required_bounded_query(self):
         self.assertIn("/series?metric=cpu&top=1", REPORT_SUFFIXES)

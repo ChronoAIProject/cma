@@ -7,7 +7,7 @@ def probe_resource(p, owner, foreign, kind, resource_id):
     collection = {"agent": "agents", "sandbox": "sandboxes"}[kind]
     path = "/api/v1/" + collection + "/" + resource_id
     label = kind + "_" + owner
-    issues = [1549, 1594] if kind == "agent" else [1549]
+    issues = [1472, 1549, 1594] if kind == "agent" else [1472, 1549]
     suffixes = ("", "/events?after=0&limit=10")
     if kind == "agent":
         suffixes += ("/transcript", "/history", "/usage")
@@ -47,7 +47,7 @@ def run_tenant(p, owner, foreign):
     for kind in ("sandbox", "agent"):
         resource_id = launch.get("resolution", {}).get(kind, {}).get("id")
         if not resource_id or p.state.get("cleaned_sandboxes", {}).get(owner):
-            p.record(kind + "_production_isolation_" + owner, "BLOCKED", [1549, 1594, 1596],
+            p.record(kind + "_production_isolation_" + owner, "BLOCKED", [1472, 1549, 1594, 1596],
                      reason="approved_visitor_launch_has_no_live_owned_resource; no_unrelated_fixture_used")
             continue
         # The resolution came from this test account's owned Launch.
