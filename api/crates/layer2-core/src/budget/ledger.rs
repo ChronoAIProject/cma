@@ -36,7 +36,19 @@ impl OwnerBudget {
     }
 
     pub fn reserve(&mut self, policy: &BudgetPolicy, now: u64) -> Result<(), BudgetError> {
+        self.reserve_liability(policy, policy.turn_limit, now)
+    }
+
+    pub fn reserve_liability(
+        &mut self,
+        policy: &BudgetPolicy,
+        liability: u64,
+        now: u64,
+    ) -> Result<(), BudgetError> {
         policy.validate()?;
+        if liability == 0 {
+            return Err(BudgetError::Unavailable);
+        }
         let mut next = self.clone();
         next.advance(policy, now)?;
         let units = [policy.input_token_units, policy.output_token_units];
@@ -46,7 +58,7 @@ impl OwnerBudget {
         next.token_units = Some(units);
         let reserved = next
             .reserved
-            .checked_add(policy.turn_limit)
+            .checked_add(liability)
             .ok_or(BudgetError::Unavailable)?;
         if next
             .spent
@@ -112,6 +124,9 @@ pub struct TurnReservation {
     pub observed: u64,
     pub last_usage_at: u64,
     pub final_usage_known: bool,
+    /// Certified final runtime request count, supplied with authoritative settlement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_model_calls: Option<u64>,
     pub stop: Option<BudgetError>,
     pub settled: bool,
 }
@@ -124,6 +139,7 @@ impl TurnReservation {
             observed: 0,
             last_usage_at: now,
             final_usage_known: false,
+            final_model_calls: None,
             stop: None,
             settled: false,
         }
