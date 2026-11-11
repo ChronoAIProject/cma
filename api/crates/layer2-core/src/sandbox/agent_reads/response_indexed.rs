@@ -6,6 +6,9 @@ use crate::sandbox::store::indexed::{
 };
 use std::{future::Future, pin::Pin};
 
+#[path = "response_indexed_validation.rs"]
+mod validation;
+
 pub struct AgentOutputObservation<'a> {
     reader: Box<dyn AgentOutputReader + 'a>,
     personal: bool,
@@ -38,6 +41,7 @@ impl AgentOutputObservation<'_> {
             return Err(corrupt("output page has incomplete coverage"));
         }
         for (offset, change) in result.iter().enumerate() {
+            validation::change(change, index)?;
             if change.ordinal != from + offset as u64
                 || change.turn_sequence != index.turn_sequence
                 || change.source_sequence > index.through_sequence
@@ -56,7 +60,16 @@ impl AgentOutputObservation<'_> {
         Ok(result)
     }
     pub async fn tool(&mut self, call: &str) -> Result<AgentToolOutputState, AgentReadError> {
-        self.reader.tool(call).await.map_err(log_store_error)
+        let value = self.reader.tool(call).await.map_err(log_store_error)?;
+        validation::tool(
+            &value,
+            call,
+            self.metadata()
+                .index
+                .as_ref()
+                .ok_or_else(|| corrupt("tool has no turn"))?,
+        )?;
+        Ok(value)
     }
     pub async fn points(
         &mut self,
@@ -155,13 +168,7 @@ impl AgentReadService {
             else {
                 return Ok(None);
             };
-            let metadata = reader.metadata();
-            if metadata.agent_id != original.agent.id
-                || metadata.through != original.agent.conversation.last_seq
-                || metadata.turn.as_ref().map(|t| t.facts.turn_sequence) != Some(turn)
-            {
-                return Err(corrupt("personal output does not match its capture"));
-            }
+            validation::metadata(reader.metadata(), &original.agent, Some(turn))?;
             let mut observation = AgentOutputObservation {
                 reader,
                 personal: true,
@@ -235,16 +242,7 @@ impl AgentReadService {
                 else {
                     return Ok(None);
                 };
-                let metadata = reader.metadata();
-                if metadata.agent_id != agent.id
-                    || metadata.through != agent.conversation.last_seq
-                    || metadata.turn.as_ref().map(|t| t.facts.turn_sequence) != turn
-                    || metadata.index.as_ref().map(|i| i.turn_sequence) != turn
-                {
-                    return Err(corrupt(
-                        "indexed output does not match the authorized capture",
-                    ));
-                }
+                validation::metadata(reader.metadata(), &agent, turn)?;
                 let mut observation = AgentOutputObservation {
                     reader,
                     personal: authorization.resource().2,

@@ -25,7 +25,7 @@ impl Open {
                     agent.profile.content.model = source.metadata().initial_model.clone();
                     let mut response =
                         retrieve::indexed::metadata(source, &origin, &agent, turn).await?;
-                    let rows = source.source_page(after, 32).await?;
+                    let rows = source.source_page(after, 1).await?;
                     let cursor = rows.last().map_or(after, |row| row.seq);
                     let through = source
                         .metadata()

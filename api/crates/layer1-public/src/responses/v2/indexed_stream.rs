@@ -55,12 +55,7 @@ pub(in crate::responses::v2) async fn read(
     }
     if next < terminal_sequence {
         let from = projection::seek(source, next - opening_count).await?;
-        let changes = source
-            .changes(
-                from,
-                layer2_core::sandbox::store::indexed::OUTPUT_PAGE_CHANGES,
-            )
-            .await?;
+        let changes = source.changes(from, 1).await?;
         let mut bytes = 0_usize;
         for change in changes {
             for event in projection::change_events(source, &change).await? {
