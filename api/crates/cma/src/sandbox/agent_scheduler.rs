@@ -61,10 +61,13 @@ impl AgentScheduler {
 
     pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
         tokio::spawn(async move {
+            let telemetry = crate::telemetry::worker::Worker::start("agents");
             let mut work = ScheduledWork::new(self.worker, self.concurrency, self.budget);
             let mut ticker = tokio::time::interval(self.sweep_interval);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
+                telemetry.heartbeat();
+                telemetry.queue(work.queued.len(), work.in_flight.len());
                 if *shutdown.borrow() {
                     break;
                 }
@@ -219,6 +222,17 @@ impl ScheduledWork {
             Ok((id, _)) => *id,
             Err(error) => error.id(),
         };
+        let phase = match self.kinds.get(&task_id) {
+            Some(TaskKind::Due) => "discovery",
+            Some(TaskKind::Reconcile) => "reconciliation",
+            _ => "execution",
+        };
+        let outcome = match &result {
+            Ok((_, Ok(_))) => "ok",
+            Ok((_, Err(_))) => "error",
+            Err(_) => "terminated",
+        };
+        crate::telemetry::worker::completed("agents", phase, outcome);
         match self.kinds.remove(&task_id) {
             Some(TaskKind::Due) => self.polling = false,
             Some(TaskKind::Reconcile) => self.reconciling = false,
