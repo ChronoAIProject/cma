@@ -112,6 +112,7 @@ jobs:
           node-version: 26
       - name: Omarchy desktop fixture regressions
         run: |
+          python3 -B .github/scripts/omarchy-cache-key-tests.py
           python3 .github/scripts/omarchy-close-browser-tests.py
           python3 .github/scripts/omarchy-browser-input-tests.py
           node --test .github/scripts/omarchy-browser-page.test.cjs
@@ -119,6 +120,23 @@ jobs:
       - name: Set immutable Omarchy image version
         id: identity
         run: echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+      - name: Identify pinned Omarchy dependency cache
+        id: cache
+        run: python3 .github/scripts/omarchy-cache-key.py "$RUNNER_TEMP/omarchy-evidence/cache-inputs.json" >> "$GITHUB_OUTPUT"
+      # Import only complete local archives. Remote GHA indexes can lose blobs
+      # during the build and leave invalid references in the later cache export.
+      - name: Restore complete Omarchy layer cache
+        id: omarchy-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/omarchy-layer-cache
+          key: omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}
+          fail-on-cache-miss: false
+      - name: Discard incomplete Omarchy cache restore
+        if: steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true'
+        run: rm -rf "$RUNNER_TEMP/omarchy-layer-cache"
       # Build the tool donor and supervisor from this checkout. The historical
       # prototype's expiring donor artifact cannot supply a develop release gate.
       - name: Build current-source Omarchy image
@@ -138,8 +156,11 @@ jobs:
             CHRONO_BUILD=${{ steps.identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
-          cache-from: type=gha,scope=runtime-omarchy
-          cache-to: type=gha,mode=max,scope=runtime-omarchy
+          cache-from: |
+            ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
+          # Export final-image layers in this solve, only for a missing archive.
+          # A complete restored archive stays local throughout the build.
+          cache-to: ${{ (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true') && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}
       - name: Release Omarchy build cache before image checks
         run: |
           image_id=$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')
@@ -195,6 +216,14 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
+      - name: Save qualified Omarchy layer cache
+        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true')
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/omarchy-layer-cache
+          key: omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}
 
   structure:
     name: Repository structure
@@ -950,6 +979,10 @@ jobs:
           ruby-version: "3.4"
       - name: HTTPRoute ownership
         run: ruby .github/scripts/check-http-route-backends.rb
+      - name: Retained Web asset inventory
+        run: |
+          ruby .github/scripts/web-asset-retention-contract.rb
+          ruby .github/scripts/web-asset-retention-tests.rb
       - name: kubeconform
         run: |
           curl -sSL -o kubeconform.tar.gz \
@@ -1049,7 +1082,9 @@ jobs:
           # cache. A branch's first run is still cold, since it can only read
           # what the base branch has already populated.
           cache-from: type=gha,scope=${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+          # Same policy as the Cargo job caches: PRs restore, develop saves.
+          # The next native load reuses this runner's local BuildKit layers.
+          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,mode=max,scope={0}', matrix.component) || '' }}
       # Reuses the layers just cached above, so this is near-free.
       - name: Load native image for scanning
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -1067,13 +1102,13 @@ jobs:
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ matrix.component }}
       - name: Extract API Cargo cache before pruning
-        if: matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'
         id: api-cargo-cache-export
         timeout-minutes: 3
         run: python3 .github/scripts/api-cargo-cache.py extract
       - name: Release build cache before image checks
         # Native Docker image bytes are independent of BuildKit's build cache.
-        # The cache is already exported above; free its toolchain/build layers
+        # Develop exported its cache above; free the local toolchain/build layers
         # before Trivy's Docker export and the tested-image transfer archive.
         env:
           IMAGE_COMPONENT: ${{ matrix.component }}
@@ -1182,7 +1217,7 @@ jobs:
           compression-level: 0
           retention-days: 1
       - name: Save accepted API Cargo cache archive
-        if: success() && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         timeout-minutes: 3
         continue-on-error: true

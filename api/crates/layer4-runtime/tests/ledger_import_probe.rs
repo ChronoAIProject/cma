@@ -73,6 +73,80 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn retirement_archive_cli_builds_only_a_detached_pending_copy() {
+    use sha2::{Digest, Sha256};
+    let fixture = Fixture::new();
+    let plan = fixture.0.join("retirement-plan");
+    let report = fixture.success(&["--plan-ledger-v1", plan.to_str().unwrap()]);
+    let plan_hash = report["plan_sha256"].as_str().unwrap();
+    let observation = fixture.0.join("observation.json");
+    let snapshot = layer3_adapter::runtime_ledger_retirement::RuntimeLedgerRetirementSnapshot {
+        format: layer3_adapter::runtime_ledger_retirement::LEDGER_RETIREMENT_SNAPSHOT_FORMAT.into(),
+        sandbox_id: "ledger-cli-fixture".into(),
+        home_identity: "a".repeat(43),
+        generation: 7,
+        sandbox_revision: 1,
+        observed_at: "2026-11-11T00:00:00Z".into(),
+        source_sha256: "b".repeat(64),
+        agents_observed: 0,
+        worktrees_observed: 0,
+        deleted_agents: vec![],
+        removed_worktrees: vec![],
+    };
+    let bytes = serde_json::to_vec(&snapshot).unwrap();
+    let snapshot_hash = format!("{:x}", Sha256::digest(&bytes));
+    std::fs::write(&observation, bytes).unwrap();
+    let output = fixture.0.join("retirement-archive");
+    let args = [
+        "--stage-ledger-retirement",
+        plan.to_str().unwrap(),
+        plan_hash,
+        observation.to_str().unwrap(),
+        &snapshot_hash,
+        output.to_str().unwrap(),
+    ];
+    let refused = fixture.run(&args, false);
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty());
+    assert!(!output.exists());
+    let archived = fixture.success(&args);
+    assert_eq!(archived["admission"], "retirement_held");
+    assert_eq!(archived["archived_records"], 0);
+    assert_eq!(archived["source_deactivated"], false);
+    let verified = fixture.success(&[
+        "--verify-ledger-retirement",
+        output.to_str().unwrap(),
+        archived["ready_sha256"].as_str().unwrap(),
+    ]);
+    assert_eq!(verified["admission"], "retirement_held");
+    assert_eq!(verified["archived_records"], 0);
+    assert!(!fixture
+        .run(
+            &[
+                "--verify-ledger-retirement",
+                output.to_str().unwrap(),
+                &"f".repeat(64)
+            ],
+            true
+        )
+        .status
+        .success());
+    assert!(!fixture.run(&args, true).status.success());
+    assert!(!fixture
+        .0
+        .join("state/mutation-retirement-v1.current.json")
+        .exists());
+    assert_eq!(
+        std::fs::read(fixture.0.join("state/mutation-authority/.authority-1.tmp")).unwrap(),
+        b"unpublished authority"
+    );
+    assert_eq!(
+        std::fs::read(fixture.0.join("home/wanted-file")).unwrap(),
+        b"preserved home bytes"
+    );
+}
+
+#[test]
 fn ledger_import_cli_cutover_refuses_before_configuration_or_source_access() {
     let fixture = Fixture::new();
     for configured in [true, false] {

@@ -45,6 +45,7 @@ pub mod recovery_diagnostics;
 mod runtime;
 pub mod runtime_bootstrap;
 pub mod runtime_control_relay;
+pub mod runtime_ledger_retirement;
 mod runtime_ledger_status;
 mod runtime_output;
 mod runtime_recovery;

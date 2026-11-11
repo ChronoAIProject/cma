@@ -62,6 +62,7 @@ async fn commit_conversation(
     mutation: AgentConversationMutation,
 ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
     ensure_append_batch_size(mutation.agent_logs.len())?;
+    store.prepare_fleet_log(&mutation.agent.id).await;
     let _writer = store.agent_writes.lock(&mutation.agent.id).await;
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
@@ -224,6 +225,7 @@ async fn apply_mutation(
     .map_err(ApplyError::Domain)?;
 
     admission::validate_and_fence(store, &current, mutation, session).await?;
+    super::budget::apply(store, &current, mutation, session).await?;
     let command_dispatch =
         super::agent_commands::binding::bind(store, &current, latest_turn, mutation, session)
             .await
