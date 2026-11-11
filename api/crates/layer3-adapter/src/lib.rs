@@ -183,6 +183,7 @@ pub use agent_filesystem::{
 pub mod sandbox_metrics;
 
 // Shared immutable archive locator; core persistence and runtime use one shape.
-pub use layer2_core::sandbox::ledger_collection_artifact::{
+mod runtime_ledger_collection_artifact;
+pub use runtime_ledger_collection_artifact::{
     LedgerCollectionArtifactReferenceV1, LEDGER_COLLECTION_ARTIFACT_FORMAT,
 };
