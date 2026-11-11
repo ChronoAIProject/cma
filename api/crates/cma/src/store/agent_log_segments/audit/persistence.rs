@@ -74,14 +74,25 @@ pub(super) async fn write(
         {
             return Err(SandboxStoreError::Conflict);
         }
-        let evidence = collection(database, EVIDENCE);
-        for (id, row) in &batch.rows {
-            evidence
-                .replace_one(doc! {"_id":id}, row.clone())
-                .upsert(true)
+        if !batch.rows.is_empty() {
+            // One bounded update command preserves the same transaction/fence
+            // while avoiding a network round trip for each evidence row. Use
+            // the collection update protocol, which does not raise the server
+            // version floor to the newer cross-namespace bulkWrite command.
+            let updates: Vec<_> = batch
+                .rows
+                .iter()
+                .map(|(id, row)| {
+                    doc! {"q":{"_id":id},"u":row.clone(),"upsert":true,"multi":false}
+                })
+                .collect();
+            let reply = database
+                .run_command(doc! {"update":EVIDENCE,
+                "updates":updates,"ordered":true})
                 .session(&mut session)
                 .await
                 .map_err(unavailable)?;
+            require_complete_batch(&reply, batch.rows.len())?;
         }
         Ok(())
     }
@@ -92,6 +103,28 @@ pub(super) async fn write(
     }
     commit(&mut session).await?;
     *progress = next;
+    Ok(())
+}
+
+pub(super) fn require_complete_batch(
+    reply: &Document,
+    expected: usize,
+) -> Result<(), SandboxStoreError> {
+    let complete = match reply.get("n") {
+        Some(bson::Bson::Int32(n)) => i64::from(*n),
+        Some(bson::Bson::Int64(n)) => *n,
+        _ => -1,
+    } == expected as i64;
+    let no_errors = match reply.get("writeErrors") {
+        None => true,
+        Some(bson::Bson::Array(errors)) => errors.is_empty(),
+        _ => false,
+    };
+    if !complete || !no_errors || reply.contains_key("writeConcernError") {
+        return Err(SandboxStoreError::Unavailable(
+            "Audit evidence batch was not fully acknowledged; resume the same audit ID".into(),
+        ));
+    }
     Ok(())
 }
 
