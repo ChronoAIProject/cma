@@ -399,7 +399,7 @@ impl CapacityRecoveryRuntime for Runtime {
                 confirmation.operation_key.clone(),
                 confirmation.authority_fence,
             ),
-            confirmation,
+            confirmation: Box::new(confirmation),
         })
     }
 
