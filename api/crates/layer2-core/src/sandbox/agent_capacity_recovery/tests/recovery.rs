@@ -259,12 +259,15 @@ async fn lost_completion_ack_reconciles_original_receipt_after_later_head_and_st
         s.fixture.agent.conversation.last_seq += 7;
         s.fixture.agent.status = AgentStatus::Stopped;
     }
-    let result = svc
-        .resume(&caller, &request, "other", LATER, EXPIRES, EXPIRES)
-        .await
-        .unwrap();
+    assert_eq!(
+        svc.resume(&caller, &request, "other", LATER, EXPIRES, EXPIRES)
+            .await,
+        Err(RecoveryError::Conflict)
+    );
+    // The immutable completion remains readable without authorizing activation
+    // after a later stop or head change.
     assert!(matches!(
-        result,
+        svc.admit(&caller, &request).await.unwrap(),
         CommitOutcome::Recorded(RecoveryWork {
             phase: RecoveryPhase::Completed,
             ..
