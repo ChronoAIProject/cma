@@ -61,6 +61,7 @@ pub(crate) struct SandboxLifecycleComposition {
     sandbox: SandboxScheduler,
     workspace: SandboxScheduler,
     agent: AgentScheduler,
+    capacity_worker: Arc<AgentWorker>,
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
     updates: Arc<dyn AgentUpdateRecorder>,
@@ -189,6 +190,7 @@ impl SandboxLifecycleComposition {
             reconciliation,
             sandbox: SandboxScheduler::new(sandbox_worker).with_admission_wake(sandbox_admitted),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
+            capacity_worker: agent_worker.clone(),
             agent: AgentScheduler::new(agent_worker, agent_admitted),
             titles,
             funding_renewal,
@@ -198,6 +200,16 @@ impl SandboxLifecycleComposition {
 
     pub(crate) fn updates(&self) -> Arc<dyn AgentUpdateRecorder> {
         Arc::clone(&self.updates)
+    }
+
+    pub(crate) fn capacity_recovery_commands(
+        &self,
+        service: Arc<crate::store::agent_capacity_recovery::RecoveryService>,
+    ) -> Arc<dyn layer2_core::sandbox::agent_capacity_recovery::commands::CapacityRecoveryCommands>
+    {
+        self.capacity_worker
+            .clone()
+            .capacity_recovery_commands(service)
     }
 
     pub(crate) async fn initialize(&self) -> Result<(), String> {
