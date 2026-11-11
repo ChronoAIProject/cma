@@ -33,6 +33,7 @@ impl AgentReadService {
         caller: &Caller,
         id: &AgentId,
     ) -> Result<AgentTranscript, AgentReadError> {
+        require(caller)?;
         let lineage = self.owned_lineage(caller, id).await?;
         require_granted(&lineage.agent, crate::RuntimeCapability::Conversation)?;
         self.read_transcript(&lineage.agent).await
