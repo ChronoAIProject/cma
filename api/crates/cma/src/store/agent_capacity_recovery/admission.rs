@@ -100,12 +100,21 @@ pub(in crate::store) async fn persist_admission(
         input.bootstrap,
         Some(input.admission),
     )
-    .await?;
+    .await
+    .inspect_err(|_error| {
+        #[cfg(test)]
+        eprintln!("capacity admission writer prepare refused: {_error:?}");
+    })?;
     let filter = source::fence_filter_scoped(store, context.agent, scope).await?;
     // No user input or synthetic event is materialized. A carrier/parent/CAS
     // failure aborts the same transaction as the seal, successor and Publication.
     records::insert(store, &stored, scope).await?;
-    authority::fence_parents(store, &current, scope).await?;
+    authority::fence_parents(store, &current, scope)
+        .await
+        .inspect_err(|_error| {
+            #[cfg(test)]
+            eprintln!("capacity admission parent fence refused: {_error:?}");
+        })?;
     authority::require(input.authorized)?;
     let publication = writer_commit::persist(
         store,
@@ -116,7 +125,11 @@ pub(in crate::store) async fn persist_admission(
             fields: agent_replacement_fields(&next)?,
         },
     )
-    .await?;
+    .await
+    .inspect_err(|_error| {
+        #[cfg(test)]
+        eprintln!("capacity admission writer persist refused: {_error:?}");
+    })?;
     Ok(AdmittedRecovery {
         work,
         agent: next,
