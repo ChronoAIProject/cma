@@ -249,6 +249,15 @@ impl RecoveryService {
         transactions::reconcile(&self.store, &authorized, expected).await
     }
 
+    /// Metadata candidates only, including completed work after process restart.
+    /// Overflow/absence never permits ordinary reconnect or proves KnownAbort.
+    pub(crate) async fn discover_agent(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<Vec<RecoveryRequest>, RecoveryError> {
+        discovery::for_agent(&self.store, agent_id).await
+    }
+
     pub(crate) async fn discover(
         &self,
         stream: RecoveryStream,
