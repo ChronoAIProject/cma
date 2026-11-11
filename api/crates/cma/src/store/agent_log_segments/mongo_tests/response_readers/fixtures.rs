@@ -85,3 +85,74 @@ pub(super) async fn certify(client: &Client, db: &mongodb::Database, agent: &Age
         "installed"
     );
 }
+
+#[derive(Default)]
+pub(super) struct Trace {
+    pub enabled: std::sync::atomic::AtomicBool,
+    pub checkouts: std::sync::atomic::AtomicU64,
+    pub commands: std::sync::atomic::AtomicU64,
+    pub bytes: std::sync::atomic::AtomicU64,
+    pub writes: std::sync::atomic::AtomicU64,
+}
+impl Trace {
+    pub fn reset(&self) {
+        use std::sync::atomic::Ordering::SeqCst;
+        for counter in [&self.checkouts, &self.commands, &self.bytes, &self.writes] {
+            counter.store(0, SeqCst);
+        }
+        self.enabled.store(true, SeqCst);
+    }
+    pub fn finish(&self) -> [u64; 4] {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.enabled.store(false, SeqCst);
+        [&self.checkouts, &self.commands, &self.bytes, &self.writes].map(|v| v.load(SeqCst))
+    }
+}
+
+pub(super) async fn measured_client() -> (Client, std::sync::Arc<Trace>) {
+    use mongodb::{
+        event::{cmap::CmapEvent, command::CommandEvent, EventHandler},
+        options::ClientOptions,
+    };
+    use std::sync::{atomic::Ordering::SeqCst, Arc};
+    let trace = Arc::new(Trace::default());
+    let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let seen = trace.clone();
+    options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        if seen.enabled.load(SeqCst) && matches!(event, CmapEvent::ConnectionCheckedOut(_)) {
+            seen.checkouts.fetch_add(1, SeqCst);
+        }
+    }));
+    let seen = trace.clone();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        if !seen.enabled.load(SeqCst) {
+            return;
+        }
+        match event {
+            CommandEvent::Started(e) => {
+                seen.commands.fetch_add(1, SeqCst);
+                if matches!(
+                    e.command_name.as_str(),
+                    "insert"
+                        | "update"
+                        | "delete"
+                        | "findAndModify"
+                        | "commitTransaction"
+                        | "abortTransaction"
+                ) {
+                    seen.writes.fetch_add(1, SeqCst);
+                }
+            }
+            CommandEvent::Succeeded(e) => {
+                seen.bytes.fetch_add(
+                    bson::serialize_to_vec(&e.reply).unwrap().len() as u64,
+                    SeqCst,
+                );
+            }
+            _ => {}
+        }
+    }));
+    (Client::with_options(options).unwrap(), trace)
+}
