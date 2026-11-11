@@ -24,14 +24,22 @@ The API observes a requested dependency closure in one Mongo snapshot and aborts
 the transaction even on success. A request has an independent operation ID and
 pins its exact page hash. It contains at most 64 groups and encodes to at most
 64 KiB. The shared read budget is 256 document reads, 16 MiB of BSON and five
-seconds overall; each query has a two-second server limit. Repeated reads count
-against that budget. A dependency exceeding it refuses the request instead of
+seconds overall; each query has a two-second server limit. Repeated reads and
+index metadata rows/bytes count against that budget. A dependency exceeding it refuses the request instead of
 silently truncating eligibility.
 
 Lookups use complete indexes over both the projected relationship and the
 authoritative record relationship. A drifted projection cannot hide a shared
-live child. Queries explicitly hint the index; a missing index refuses. The
-observation path performs no DDL, history reads or durable writes.
+live child. Before using an index, the observer reads at most 64 index definitions
+per collection and requires an exhausted metadata cursor. It rejects partial,
+sparse, hidden, collated, ambiguous or unreviewed definitions, then hints the
+verified full index by name. Metadata is cached only within one observation and
+included in its bounded source digest. Missing indexes refuse. The observation
+path performs no DDL, history reads or durable writes.
+
+Index qualification is not a fence against privileged concurrent DDL. The
+maintenance/release window must exclude index replacement while collecting;
+metadata inspection does not replace that exclusion or Track A's explicit migration.
 
 | Collection | Required index keys |
 | --- | --- |
