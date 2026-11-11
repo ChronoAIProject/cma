@@ -8,21 +8,21 @@ metadata:
     app.kubernetes.io/part-of: cma
 data:
   CMAEG_GITHUB_ENABLED: "true"
-  # Desired activation state: deploy compatible readers with prior values first,
-  # wait for predecessor Pods to drain, then apply these native messaging gates.
+  # Recorded production state after the verified 2026-11-10 release.
+  # These gates were already live; this change records their existing values.
   CMAEG_MULTI_CONSUMER_WRITES_ENABLED: "true"
   # Explicit record IDs only. Empty preserves all existing ingress paths.
-  # Every serving and rollback image must support durable_custom_execution; live reader verified 2026-11-08.
-  # Image pins lag production; see docs/CMAEG_Custom_Durable_Execution.md before promotion.
+  # Production reader verified 2026-11-10; CMAEG is forward-fix only.
+  # Never restore the prior image after guarded records or queue policies exist.
   CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED: "true"
-  CMAEG_ROUTED_CHANNEL_RECORDS: ""
+  CMAEG_ROUTED_CHANNEL_RECORDS: "1f52d334-420e-428c-96ee-8ed4c05ec85b,8d37d274-b5d0-4c8e-bb89-0b977cabb430,47fa6e25-eaef-4f22-9f46-9d5e543032cb"
   # Keep recovery and selected records after stopping admission, until retained work expires.
   CMAEG_ROUTED_RECOVERY_ENABLED: "true"
   # Deploy the optional media index and both services' readers before enabling writers.
-  CMAEG_MEDIA_CONTINUATIONS_ENABLED: "false"
+  CMAEG_MEDIA_CONTINUATIONS_ENABLED: "true"
   CMAEG_ROUTED_ADMISSION_ENABLED: "true"
   # Reader-first preparation; no binding can be replaced without explicit enrollment.
-  CMAEG_BINDING_PREPARATION_ENABLED: "false"
+  CMAEG_BINDING_PREPARATION_ENABLED: "true"
   CMAEG_BINDING_REPLACEMENT_BINDINGS: ""
   CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED: "true"
   # Compatible readers are deployed; each delivery still requires owner commit.
@@ -39,49 +39,50 @@ data:
   CMAEG_NATIVE_LARK_INTAKE_ENABLED: "true"
   # Compatible retained readers support native resource locators; owner app setup remains explicit.
   CMAEG_NATIVE_LARK_MEDIA_ENABLED: "true"
-  CMAEG_NATIVE_LARK_STICKERS_ENABLED: "false"
-  CMAEG_NATIVE_LARK_STICKER_REPLIES_ENABLED: "false"
+  CMAEG_NATIVE_LARK_STICKERS_ENABLED: "true"
+  CMAEG_NATIVE_LARK_STICKER_REPLIES_ENABLED: "true"
   # Compatible #1158 readers and shared Custom acceptance verified; native owner testing is enabled.
   CMAEG_NATIVE_LARK_OUTBOUND_MEDIA_ENABLED: "true"
   # Native single-attachment Telegram edits are enabled after compatible reader rollout.
   # Requires every reader to support durable media-card custody before enabling.
   # Ordered native albums; existing single uploads and their references are unchanged.
-  CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED: "false"
-  CMAEG_NATIVE_TELEGRAM_STRUCTURED_REPLIES_ENABLED: "false"
-  CMAEG_NATIVE_WHATSAPP_STRUCTURED_REPLIES_ENABLED: "false"
+  CMAEG_NATIVE_TELEGRAM_ALBUMS_ENABLED: "true"
+  CMAEG_NATIVE_TELEGRAM_STRUCTURED_REPLIES_ENABLED: "true"
+  CMAEG_NATIVE_WHATSAPP_STRUCTURED_REPLIES_ENABLED: "true"
   # Reader-first voice/animation kinds and native Telegram static stickers; existing audio is unchanged.
-  CMAEG_NATIVE_MEDIA_PRESENTATIONS_ENABLED: "false"
+  CMAEG_NATIVE_MEDIA_PRESENTATIONS_ENABLED: "true"
+  # Explicit source default: production omits this key, which also means false.
   # Canonical PCM WAV voice-only Discord replies, independently enabled.
   CMAEG_NATIVE_DISCORD_VOICE_ENABLED: "false"
-  CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED: "false"
-  CMAEG_NATIVE_SPLIT_TEXT_REFS_ENABLED: "false"
-  CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED: "false"
+  CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROLS_ENABLED: "true"
+  CMAEG_NATIVE_SPLIT_TEXT_REFS_ENABLED: "true"
+  CMAEG_NATIVE_TELEGRAM_MEDIA_CONTROL_EDITS_ENABLED: "true"
   CMAEG_NATIVE_TELEGRAM_MEDIA_EDITS_ENABLED: "true"
   # Native single-attachment Discord edits are enabled after compatible reader rollout.
   CMAEG_NATIVE_DISCORD_MEDIA_EDITS_ENABLED: "true"
   # Enable only after every retained card reader accepts native media controls.
-  CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED: "false"
+  CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED: "true"
   # Retained exact file proofs allow content/control edits without replacing media.
-  CMAEG_NATIVE_DISCORD_MEDIA_CARD_EDITS_ENABLED: "false"
-  CMAEG_NATIVE_DISCORD_MEDIA_CARD_SETS_ENABLED: "false"
-  CMAEG_NATIVE_DISCORD_MEDIA_CARD_REPLACEMENTS_ENABLED: "false"
+  CMAEG_NATIVE_DISCORD_MEDIA_CARD_EDITS_ENABLED: "true"
+  CMAEG_NATIVE_DISCORD_MEDIA_CARD_SETS_ENABLED: "true"
+  CMAEG_NATIVE_DISCORD_MEDIA_CARD_REPLACEMENTS_ENABLED: "true"
   # Requires separately migrated persistent fence storage and runtime grants.
-  CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED: "false"
+  CMAEG_NATIVE_TELEGRAM_TOPIC_LIFECYCLE_ENABLED: "true"
   # Compatible creation readers and persistent fences are released; owners still opt in.
   CMAEG_NATIVE_TELEGRAM_TOPIC_CREATION_ENABLED: "true"
-  CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED: "false"
-  CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED: "false"
+  CMAEG_NATIVE_TELEGRAM_GENERAL_TOPIC_LIFECYCLE_ENABLED: "true"
+  CMAEG_NATIVE_DISCORD_THREAD_LIFECYCLE_ENABLED: "true"
   # Bounded original Discord history is enabled; source consent remains required.
   CMAEG_NATIVE_DISCORD_CONVERSATION_HISTORY_ENABLED: "true"
   # Bounded original Lark/Feishu history is enabled; source consent remains required.
   CMAEG_NATIVE_LARK_CONVERSATION_HISTORY_ENABLED: "true"
-  CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED: "false"
+  CMAEG_NATIVE_LARK_MIXED_HISTORY_ENABLED: "true"
   # Native Lark/Feishu cards, buttons and choices are enabled for opted-in sources.
   CMAEG_NATIVE_LARK_CONTROLS_ENABLED: "true"
-  CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED: "false"
-  CMAEG_NATIVE_LARK_MULTI_IMAGE_CONTROLS_ENABLED: "false"
-  CMAEG_NATIVE_LARK_MEDIA_CARD_REPLACEMENTS_ENABLED: "false"
-  CMAEG_NATIVE_LARK_THREAD_START_ENABLED: "false"
+  CMAEG_NATIVE_LARK_MEDIA_CONTROLS_ENABLED: "true"
+  CMAEG_NATIVE_LARK_MULTI_IMAGE_CONTROLS_ENABLED: "true"
+  CMAEG_NATIVE_LARK_MEDIA_CARD_REPLACEMENTS_ENABLED: "true"
+  CMAEG_NATIVE_LARK_THREAD_START_ENABLED: "true"
   # Native Lark/Feishu forms require the native controls gate and source consent.
   CMAEG_NATIVE_LARK_FORMS_ENABLED: "true"
   CMAEG_NATIVE_LARK_MESSAGE_EFFECTS_ENABLED: "true"
@@ -93,7 +94,7 @@ data:
   CMAEG_NATIVE_WHATSAPP_MEDIA_ENABLED: "true"
   # Compatible serving and rollback readers permit private native controls for owner testing.
   CMAEG_NATIVE_WHATSAPP_INTERACTIONS_ENABLED: "true"
-  CMAEG_NATIVE_WHATSAPP_MEDIA_CONTROLS_ENABLED: "false"
+  CMAEG_NATIVE_WHATSAPP_MEDIA_CONTROLS_ENABLED: "true"
   # Independent native image/document/audio/sticker/video reply uploads; live Meta acceptance remains unverified.
   CMAEG_NATIVE_WHATSAPP_OUTBOUND_MEDIA_ENABLED: "true"
   # Native WhatsApp received reactions enabled after compatible reader rollout.
@@ -107,9 +108,9 @@ data:
   # Coexistence incoming edits/revokes use existing interaction storage and proof.
   CMAEG_NATIVE_WHATSAPP_MESSAGE_EVENTS_ENABLED: "true"
   # Reader-first bounded native context snapshots; deploy all readers before activation.
-  CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED: "false"
-  CMAEG_NATIVE_WHATSAPP_FORMS_ENABLED: "false"
-  CMAEG_NATIVE_WHATSAPP_FLOW_WRITES_ENABLED: "false"
+  CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED: "true"
+  CMAEG_NATIVE_WHATSAPP_FORMS_ENABLED: "true"
+  CMAEG_NATIVE_WHATSAPP_FLOW_WRITES_ENABLED: "true"
   CMAEG_NATIVE_WHATSAPP_GROUPS_WRITES_ENABLED: "true"
   CMAEG_NATIVE_WHATSAPP_GROUPS_ENABLED: "true"
   # Only explicitly authored native sources are discovered; existing relay sources stay unchanged.
@@ -123,9 +124,9 @@ data:
   CMAEG_DISCORD_REACTIONS_ENABLED: "true"
   CMAEG_DISCORD_MESSAGE_EVENTS_ENABLED: "true"
   # Enable only after all readers support content_projection v1 and old pods drain.
-  CMAEG_NATIVE_DISCORD_RICH_CONTENT_ENABLED: "false"
+  CMAEG_NATIVE_DISCORD_RICH_CONTENT_ENABLED: "true"
   # Reader-first separate forward_projection v1; retain legacy rich-content bytes.
-  CMAEG_NATIVE_DISCORD_FORWARDS_ENABLED: "false"
+  CMAEG_NATIVE_DISCORD_FORWARDS_ENABLED: "true"
   CMAEG_DISCORD_FORMS_ENABLED: "true"
   # Upgrade all card-edit readers before starting native replacement chains.
   CMAEG_DISCORD_CARD_EDITS_ENABLED: "true"
@@ -139,8 +140,8 @@ data:
   CMAEG_THREAD_CONTRACT_WRITES_ENABLED: "true"
   CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED: "true"
   # Stage tracking first; enable owner keys only after the documented writer cutover.
-  CMAEG_WORKER_CREDENTIAL_TRACKING_ENABLED: "false"
-  CMAEG_OWNER_KEYS_ENABLED: "false"
+  CMAEG_WORKER_CREDENTIAL_TRACKING_ENABLED: "true"
+  CMAEG_OWNER_KEYS_ENABLED: "true"
   CMAEG_MONGODB_DATABASE: "chrono-bot"
   CMAEG_MONGODB_AUTHORITY_MODE: "shared-schema"
   CMAEG_LISTEN: "0.0.0.0:8090"
@@ -165,7 +166,7 @@ data:
   # NyxBot native snapshot/cursor semantics are covered by provider_recovery tests.
   # Recovery reads do not enable the durable dispatcher or retry a turn POST.
   CMAEG_PROVIDERS: >-
-    [{"slug":"cma_codex","base_url":"http://cma-api.chrono-bot.svc","kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses","recovery":{"response":"/api/v2/responses/{response_id}","events":"/api/v2/responses/{response_id}/events"}},"max_inflight":256},{"slug":"nyxbot","base_url":"https://nyx-api.chrono-ai.fun","kind":"responses_http","paths":{"agent_card":"/api/v1/nyxbot/agent-card","binding":"/api/v1/nyxbot/bindings/{binding_id}","conversation":"/api/v1/nyxbot/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v1/nyxbot/responses","recovery":{"response":"/api/v1/nyxbot/responses/{response_id}","events":"/api/v1/nyxbot/responses/{response_id}/events"}},"max_inflight":256}]
+    [{"slug":"cma_codex","base_url":"http://cma-api.chrono-bot.svc","kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses","recovery":{"response":"/api/v2/responses/{response_id}","events":"/api/v2/responses/{response_id}/events"},"preparation":{"inspection":"/api/v1/cmaeg/bindings/{binding_id}/preparation-inspections","reservation":"/api/v1/cmaeg/bindings/{binding_id}/preparations"}},"max_inflight":256},{"slug":"nyxbot","base_url":"https://nyx-api.chrono-ai.fun","kind":"responses_http","paths":{"agent_card":"/api/v1/nyxbot/agent-card","binding":"/api/v1/nyxbot/bindings/{binding_id}","conversation":"/api/v1/nyxbot/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v1/nyxbot/responses","recovery":{"response":"/api/v1/nyxbot/responses/{response_id}","events":"/api/v1/nyxbot/responses/{response_id}/events"}},"max_inflight":256}]
   CMAEG_MEDIA_TOOL_PROVIDERS: "cma_codex"
   CMAEG_NON_HUMAN_PROVIDERS: "cma_codex"
   CMAEG_MEDIA_ENABLED: "true"
