@@ -490,5 +490,5 @@ async fn pending_approvals(
     pending_approvals_snapshot(store, id, &mut session).await
 }
 
-mod reads;
+pub(super) mod reads;
 use reads::{pending_approvals_snapshot, snapshot_error, snapshot_session};
