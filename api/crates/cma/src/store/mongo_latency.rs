@@ -74,24 +74,30 @@ impl Observer {
                 window.in_use_peak = window.in_use_peak.max(window.checked_out.len());
             } else {
                 window.untracked = window.untracked.saturating_add(1);
+                metrics::counter!("cma_mongo_connection_tracking_overflow_total").increment(1);
             }
+            metrics::gauge!("cma_mongo_connections_tracked").set(window.checked_out.len() as f64);
         }
         self.record(0, duration, false);
     }
 
     fn returned(&self, key: u64, closed: bool) {
-        let started = self
-            .0
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .checked_out
-            .remove(&key);
+        let started = {
+            let mut window = self.0.lock().unwrap_or_else(|error| error.into_inner());
+            let started = window.checked_out.remove(&key);
+            metrics::gauge!("cma_mongo_connections_tracked").set(window.checked_out.len() as f64);
+            started
+        };
         if let Some(started) = started {
             self.record(3, started.elapsed(), closed);
         }
     }
 
     fn record(&self, index: usize, duration: Duration, failed: bool) {
+        let operation = LABELS[index];
+        let outcome = if failed { "failed" } else { "ok" };
+        metrics::counter!("cma_mongo_pool_events_total", "operation" => operation, "outcome" => outcome).increment(1);
+        metrics::histogram!("cma_mongo_pool_operation_seconds", "operation" => operation, "outcome" => outcome).record(duration.as_secs_f64());
         let now = Instant::now();
         let completed = {
             let mut window = self.0.lock().unwrap_or_else(|error| error.into_inner());
@@ -130,6 +136,10 @@ impl Observer {
 }
 
 pub(super) fn observe(options: &mut ClientOptions) {
+    metrics::gauge!("cma_mongo_connections_tracked").set(0);
+    metrics::gauge!("cma_mongo_checkouts_pending").set(0);
+    metrics::gauge!("cma_mongo_pool_max_connections")
+        .set(options.max_pool_size.unwrap_or(10) as f64);
     let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
     attach(options, observer);
 }
@@ -139,17 +149,26 @@ fn attach(options: &mut ClientOptions, observer: Observer) {
     // before invoking the callback, even when it only reads duration. Keep it
     // disabled so diagnostics do not add BSON decoding to every database call.
     options.cmap_event_handler = Some(EventHandler::callback(move |event| match event {
-        CmapEvent::ConnectionCheckedOut(event) => observer.checked_out(
-            connection_key(&event.address, event.connection_id),
-            event.duration,
-        ),
+        CmapEvent::ConnectionCheckoutStarted(_) => {
+            metrics::gauge!("cma_mongo_checkouts_pending").increment(1.)
+        }
+        CmapEvent::ConnectionCheckedOut(event) => {
+            metrics::gauge!("cma_mongo_checkouts_pending").decrement(1.);
+            observer.checked_out(
+                connection_key(&event.address, event.connection_id),
+                event.duration,
+            );
+        }
         CmapEvent::ConnectionCheckedIn(event) => {
             observer.returned(connection_key(&event.address, event.connection_id), false)
         }
         CmapEvent::ConnectionClosed(event) => {
             observer.returned(connection_key(&event.address, event.connection_id), true)
         }
-        CmapEvent::ConnectionCheckoutFailed(event) => observer.record(0, event.duration, true),
+        CmapEvent::ConnectionCheckoutFailed(event) => {
+            metrics::gauge!("cma_mongo_checkouts_pending").decrement(1.);
+            observer.record(0, event.duration, true);
+        }
         CmapEvent::ConnectionReady(event) => observer.record(1, event.duration, false),
         CmapEvent::PoolCleared(_) => observer.record(2, Duration::ZERO, false),
         _ => {}
