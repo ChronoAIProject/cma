@@ -274,8 +274,9 @@ impl RecoveryService {
         transactions::reconcile(&self.store, &authorized, expected).await
     }
 
-    /// Metadata candidates only, including completed work after process restart.
-    /// Overflow/absence never permits ordinary reconnect or proves KnownAbort.
+    /// Expose bounded per-Agent lookup to Mongo contract tests. Production
+    /// restart consumes discovery::for_agent directly within its receipt check.
+    #[cfg(test)]
     pub(crate) async fn discover_agent(
         &self,
         agent_id: &AgentId,
