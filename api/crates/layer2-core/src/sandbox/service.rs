@@ -119,6 +119,8 @@ pub enum SandboxServiceError {
     TrustConfirmationRequired { commands_digest: String },
     #[error("sandbox limit reached: {live} of {limit}")]
     SandboxLimitReached { limit: u16, live: u16 },
+    #[error("global sandbox capacity is unavailable")]
+    GlobalCapacityReached,
     #[error("sandbox name is invalid")]
     InvalidName,
     #[error("sandbox name is already in use")]
@@ -149,6 +151,7 @@ impl SandboxServiceError {
             Self::NotFound => "sandbox_not_found",
             Self::TrustConfirmationRequired { .. } => "trust_confirmation_required",
             Self::SandboxLimitReached { .. } => "sandbox_limit_reached",
+            Self::GlobalCapacityReached => "sandbox_capacity_unavailable",
             Self::InvalidName => "invalid_sandbox_name",
             Self::NameConflict => "sandbox_name_conflict",
             Self::InvalidOrigin => "invalid_sandbox_origin",
@@ -397,6 +400,7 @@ pub(super) fn store_error(error: SandboxStoreError) -> SandboxServiceError {
         SandboxStoreError::LimitReached { limit, live } => {
             SandboxServiceError::SandboxLimitReached { limit, live }
         }
+        SandboxStoreError::GlobalCapacityReached => SandboxServiceError::GlobalCapacityReached,
         SandboxStoreError::SandboxOriginConflict => SandboxServiceError::SandboxOriginConflict,
         SandboxStoreError::Corrupt(detail) => SandboxServiceError::Corrupt(detail),
         SandboxStoreError::InvalidPage => SandboxServiceError::InvalidState,
