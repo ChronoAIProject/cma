@@ -132,6 +132,7 @@ impl Bridge {
         let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
+            shared_runtime_output: settings.shared_runtime_output,
             output_json_budget,
             permission_state,
             subscription,

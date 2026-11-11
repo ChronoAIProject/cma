@@ -1,28 +1,19 @@
 use super::*;
 
-async fn answer_websocket(
-    socket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-    request: &serde_json::Value,
-    result: serde_json::Value,
-) {
-    let mut frame = vec![super::super::acp::LANE_CONVERSATION];
-    frame.extend(
-        serde_json::to_vec(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": request["id"].clone(),
-            "result": result,
-        }))
-        .expect("ACP response serializes"),
-    );
-    socket
-        .send(Message::Binary(frame))
-        .await
-        .expect("ACP response sends");
+#[tokio::test]
+async fn open_pins_one_endpoint_and_retires_the_authenticated_link() {
+    open_with_output_policy(false, false).await;
 }
 
 #[tokio::test]
+async fn transport_overrides_renderer_shared_policy_in_both_directions() {
+    for shared in [false, true] {
+        open_with_output_policy(shared, true).await;
+    }
+}
+
 #[allow(clippy::result_large_err)]
-async fn open_pins_one_endpoint_and_retires_the_authenticated_link() {
+async fn open_with_output_policy(shared: bool, retained: bool) {
     let handle = RuntimeHandle::new("runtime-1");
     let launch = AgentLaunch {
         operation_id: "agent:agent-1:open:v1".into(),
@@ -78,27 +69,48 @@ async fn open_pins_one_endpoint_and_retires_the_authenticated_link() {
         )
         .await
         .expect("WebSocket handshake succeeds");
+        let mut ready = serde_json::json!({
+            "t": "ready", "wireVersion": 1,
+            "lanes": ["ctl", "conv"], "agentId": "agent-1",
+        });
+        if retained {
+            ready["outputAcknowledgement"] = serde_json::json!({
+                "version": 1, "streamId": uuid::Uuid::from_u128(1),
+            });
+        }
         websocket
-            .send(Message::Text(
-                serde_json::json!({
-                    "t": "ready", "wireVersion": 1,
-                    "lanes": ["ctl", "conv"], "agentId": "agent-1",
-                })
-                .to_string(),
-            ))
+            .send(Message::Text(ready.to_string()))
             .await
             .expect("Ready sends");
         let initialize = receive_websocket_json(&mut websocket).await;
         assert_eq!(initialize["method"], "initialize");
-        answer_websocket(&mut websocket, &initialize, serde_json::json!({})).await;
+        answer_policy(
+            &mut websocket,
+            &initialize,
+            serde_json::json!({}),
+            retained,
+            1,
+        )
+        .await;
         let session = receive_websocket_json(&mut websocket).await;
         assert_eq!(session["method"], "session/new");
-        answer_websocket(
+        answer_policy(
             &mut websocket,
             &session,
             serde_json::json!({ "sessionId": "conversation-1" }),
+            retained,
+            2,
         )
         .await;
+        if retained {
+            retained_frame(&mut websocket, 3, serde_json::json!({
+                "jsonrpc": "2.0", "method": "session/update", "params": {
+                    "sessionId": "conversation-1", "update": {
+                        "sessionUpdate": "agent_message_chunk", "content": {"type":"text", "text":"shared payload"},
+                    },
+                },
+            })).await;
+        }
         while let Some(frame) = websocket.next().await {
             match frame {
                 Ok(Message::Close(_)) | Err(_) => break,
@@ -119,8 +131,9 @@ async fn open_pins_one_endpoint_and_retires_the_authenticated_link() {
         SandboxClient::new(format!("http://{provider_address}"), "provider-secret"),
         factory,
     )
-    .expect("transport builds");
-    let (updates, _) = tokio::sync::mpsc::channel(4);
+    .expect("transport builds")
+    .with_shared_runtime_output(shared);
+    let (updates, mut received) = tokio::sync::mpsc::channel(4);
 
     let (channel, receipt) = transport
         .open_agent(
@@ -129,7 +142,8 @@ async fn open_pins_one_endpoint_and_retires_the_authenticated_link() {
             None,
             HostedAgentOpenSettings {
                 bounded_permission_state: false,
-                output_json_budget: true, // The disabled transport overrides renderer policy.
+                output_json_budget: true, // Disabled transport overrides renderer policy.
+                shared_runtime_output: !shared,
                 already_initialized_error: None,
                 open_completion: None,
                 context_refresh: None,
@@ -151,6 +165,23 @@ async fn open_pins_one_endpoint_and_retires_the_authenticated_link() {
         "control receipt is completed only after ACP handshake"
     );
     assert_eq!(transport.state.lock().await.links.len(), 1);
+    if retained {
+        for cursor in 1..=3 {
+            let update = tokio::time::timeout(Duration::from_secs(2), received.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let ConversationUpdate::RuntimeOutput { receipt, update } = update else {
+                panic!("retained receipt required")
+            };
+            assert_eq!(receipt.source.cursor, cursor);
+            if cursor == 3 {
+                let effect = update.expect("domain effect required");
+                assert_eq!(effect.is_shared(), shared);
+                assert_eq!(std::ptr::eq(&*effect, &*effect.clone()), shared);
+            }
+        }
+    }
 
     let provider_request = request_text(provider_task.await.expect("provider fixture completes"));
     assert!(provider_request
@@ -175,4 +206,35 @@ async fn open_pins_one_endpoint_and_retires_the_authenticated_link() {
             Some("provider-secret".into()),
         ))
     );
+}
+
+async fn retained_frame(
+    socket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    cursor: u64,
+    value: serde_json::Value,
+) {
+    let mut frame = vec![0x04];
+    frame.extend_from_slice(uuid::Uuid::from_u128(1).as_bytes());
+    frame.extend_from_slice(&cursor.to_be_bytes());
+    frame.extend(serde_json::to_vec(&value).unwrap());
+    socket.send(Message::Binary(frame)).await.unwrap();
+}
+
+async fn answer_policy(
+    socket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    request: &serde_json::Value,
+    result: serde_json::Value,
+    retained: bool,
+    cursor: u64,
+) {
+    if retained {
+        retained_frame(
+            socket,
+            cursor,
+            serde_json::json!({"jsonrpc":"2.0", "id":request["id"], "result":result}),
+        )
+        .await;
+    } else {
+        answer_websocket(socket, request, result).await;
+    }
 }

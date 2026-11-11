@@ -43,6 +43,7 @@ pub struct ProviderHostedControlTransport {
     native_http_budget: Arc<tokio::sync::Semaphore>,
     bounded_permission_state: bool,
     bounded_update_relay: bool,
+    shared_runtime_output: bool,
 }
 
 #[derive(Clone)]
@@ -97,6 +98,11 @@ impl ProviderHostedControlTransport {
 
     pub fn with_output_json_budget(mut self, enabled: bool) -> Self {
         self.output_json_budget = enabled;
+        self
+    }
+
+    pub fn with_shared_runtime_output(mut self, enabled: bool) -> Self {
+        self.shared_runtime_output = enabled;
         self
     }
 
