@@ -192,7 +192,7 @@ fn delta_coalesces_incomplete_turn_intermediates_before_validating_evidence() {
     let turn = delta
         .evidence
         .iter()
-        .find(|row| row.get_str("kind") == Ok("turn"))
+        .find(|row| row.get_str("kind").ok() == Some("turn"))
         .unwrap();
     let projection::EvidenceRecord::Turn { facts } =
         projection::read_evidence(&after, "turn", "3", turn.clone()).unwrap()
