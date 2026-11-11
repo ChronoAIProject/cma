@@ -6,11 +6,11 @@
 use layer2_core::sandbox::{store::SandboxStoreError, Agent, AgentLogEntry};
 use mongodb::{
     bson::{Binary, Document},
-    ClientSession,
 };
 
 use super::{
     capture::CapturedLog,
+    transaction_scope::{TransactionIdentity, TransactionScope},
     publication::{Publication, PublicationIdentity},
     writer_admission::Admission,
     writer_bootstrap::BootstrapPlan,
@@ -42,7 +42,8 @@ pub(in crate::store) struct AggregateUpdate {
 }
 
 pub(in crate::store) struct PreparedPublication {
-    session_id: Document,
+    transaction: TransactionIdentity,
+    database: String,
     current: Agent,
     next: Agent,
     source: SourceFormat,
@@ -65,7 +66,7 @@ mod planning;
 /// Refuse pending source/bootstrap certification before any durable side effect.
 pub(in crate::store) async fn prepare(
     _store: &MongoSandboxStore,
-    _session: &mut ClientSession,
+    _scope: &mut TransactionScope<'_>,
     _captured: &CapturedLog,
     _input: PublicationInput<'_>,
     _bootstrap: Option<&BootstrapPlan>,
@@ -78,11 +79,11 @@ pub(in crate::store) async fn prepare(
 /// transaction. The caller must abort that transaction on any helper error.
 pub(in crate::store) async fn persist(
     store: &MongoSandboxStore,
-    session: &mut ClientSession,
+    scope: &mut TransactionScope<'_>,
     prepared: PreparedPublication,
     aggregate: AggregateUpdate,
 ) -> Result<Publication, TransactionLogError> {
-    persistence::persist(store, session, prepared, aggregate).await
+    persistence::persist(store, scope, prepared, aggregate).await
 }
 
 fn pending() -> TransactionLogError {

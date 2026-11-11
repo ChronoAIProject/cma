@@ -4,11 +4,24 @@ mod codec;
 #[cfg(test)]
 mod codec_tests;
 mod collections;
+pub(in crate::store) use collections::SegmentCollections;
+pub(in crate::store) mod command;
 mod digest;
 mod envelope;
+pub(in crate::store) mod projection;
+pub(in crate::store) mod publication;
 mod reads;
 pub(in crate::store) mod retention;
 pub(in crate::store) mod schema;
+pub(in crate::store) mod transaction_scope;
+pub(in crate::store) mod writer_admission;
+pub(in crate::store) mod writer_bootstrap;
+pub(in crate::store) mod writer_commit;
+pub(in crate::store) mod writer_control;
+pub(in crate::store) mod writer_gate;
+pub(in crate::store) mod writer_plan;
+pub(in crate::store) mod writer_projection;
+pub(in crate::store) mod writer_reconcile;
 
 pub(in crate::store) use codec::{Head, Seal};
 pub(in crate::store) use envelope::{read_format, require_agent_version, validate_identity};

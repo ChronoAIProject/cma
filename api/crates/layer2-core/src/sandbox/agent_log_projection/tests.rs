@@ -308,6 +308,10 @@ fn generation_maxima_certify_each_boundary_kind_after_later_native_changes() {
         missing.as_object_mut().unwrap().remove(field);
         assert!(serde_json::from_value::<AgentLogProjectionState>(missing).is_err());
     }
+    let original = state.max_opened_generation;
     state.max_opened_generation = 0;
+    assert!(state.validate_aggregate(&agent).is_err());
+    state.max_opened_generation = original;
+    state.max_retired_generation = original;
     assert!(state.validate_aggregate(&agent).is_err());
 }
