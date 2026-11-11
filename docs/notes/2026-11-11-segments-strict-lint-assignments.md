@@ -62,3 +62,29 @@ Strict CMA run at `b813b8ecf`/operator source `23a017d91` finished with 39 disti
 - S3: publish the actual bounded consumers and constructors. Their absence need not produce a dead-code warning, so a zero-warning result alone would not prove their delivery.
 
 Each heavy step remains a separate existing heavy-1 acquisition with two build jobs and one retained api/target. No warning allowance, fake call or weakening of the strict lint command was introduced.
+
+## Restricted native recovery ownership checkpoint — 21:38 SGT
+
+S2 (cma-db-contention) owns shared Layer 3 trait/export/Hosted/Codex dispatch and any shared Layer 4 protocol/dispatcher registration. S5 (cma-seg-3) owns the focused native producer, restricted transport, model-to-adapter mapping, staged registry activation and success/refusal/crash tests. This assignment resolves the shared-adapter ownership request.
+
+The consumed S5 source is d9a0335d4dec82dacdaf73326c946bcd1da30722. Its shared patch is applied to executable source and removed from docs (Markdown-only). The stable entry is:
+
+```rust
+async fn reconnect_agent_for_capacity_recovery(
+    &self,
+    request: &layer3_adapter::agent_capacity_recovery::CapacityRecoveryRequest,
+    updates: tokio::sync::mpsc::Sender<layer3_adapter::ConversationUpdate>,
+) -> layer3_adapter::agent_capacity_recovery::CapacityRecoveryResult<
+    layer3_adapter::agent_capacity_recovery::CapacityRecoveryConnection,
+>;
+```
+
+The existing `HostedBackend::capacity_recovery_transport(&self) -> Option<&dyn CapacityRecoveryNativeTransport>` defaults to None. S5 implements `CapacityRecoveryNativeTransport::reattach_existing` in focused children, returning the channel plus independently produced `CapacityRecoveryConfirmation`. No provider currently supplies the production producer. Until it does, the route returns typed Unsupported without ordinary reconnect, prompt/settings replay, process launch or replacement.
+
+S5 may add focused `layer4-runtime/src/agent_capacity_recovery.rs` and its test children for retained-process-only fencing and atomic native-state/output confirmation. S2 owns registration and shared changes to supervisor/bridge/protocol/dispatch roots; S5 must supply the minimal exact patch with its focused implementation. Existing ledger tracks retain ownership of ledger state and retirement logic. S5 must reuse their receipt/fence authority and expose any new ledger dependency before changing it. No new inferred native state from the Agent aggregate or the original open receipt is acceptable.
+
+Required producer evidence: exact original home/runtime boot and generation/conversation/open digest; current independently observed Idle/Working/WaitingApproval and prompt identity; current writer fence and fresh challenge; contiguous retained-output interval; no input or acknowledgement before the same durable recovery completes. Tests must include absent/dead retained process, mismatched identity/fence/challenge, approval wait, pending terminal output, output gap, restart before/after durable completion, and zero new input/launch. A real pinned-runtime handshake remains an activation gate.
+
+S2 has also merged S1 9f2fe7ac0, S4 191afaa86 and S3 33d878350 into the combined branch. The next strict CMA result, adapter tests and updated remaining-wiring inventory will be published tonight; these source integrations are not executable recovery or activation evidence. The schema for the bounded accepted-work carrier remains S1/S5 dependent: S5 owns exact serialized record/discovery predicates, S1 owns its validator/index inventory, S2 owns the shared migration/authority/backup registration. No production command or grant was changed.
+
+Shared restricted reconnect is separately published at `ccfce0137ec2d9df4e85bd8d74dfebf0d9e0093a` on `tl/cma-log-segments/restricted-reconnect`, based on S5’s contract plus a normal develop merge. S5 can consume this dependency without importing the mixed integration tip. Adapter integration is `851e69533`; audit parser/checksum integration is `4748868a2`; strict default-off transcript config is `ddc1ec39c`. The canonical runner’s 31 mocked infrastructure tests pass on this combined tree, and the source-size gate passes 6,008 files. No actual Mongo test or current strict-lint pass is implied.
