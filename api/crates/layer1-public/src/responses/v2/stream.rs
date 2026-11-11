@@ -43,6 +43,9 @@ pub(super) async fn open(
     receipt: CommandReceiptView,
     after: Option<u64>,
 ) -> Response {
+    if state.paged_events {
+        return super::stream_pages::open(state, authorization, receipt, after).await;
+    }
     let (initial, bound) = match snapshot(&state, &authorization, &receipt).await {
         Ok(value) => value,
         Err(error) => return error,
@@ -114,6 +117,14 @@ pub(super) async fn open(
             }
         }
     });
+    response(body, &response_id, &command_id)
+}
+
+pub(super) fn response(
+    body: impl futures_util::Stream<Item = Result<Event, Infallible>> + Send + 'static,
+    response_id: &str,
+    command_id: &str,
+) -> Response {
     let mut response = Sse::new(stream_telemetry::observe(body, Kind::ResponsesV2))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response();
@@ -153,7 +164,7 @@ impl Open {
         Some((Ok(sse(event)), self))
     }
 }
-fn sse(event: Value) -> Event {
+pub(super) fn sse(event: Value) -> Event {
     let mut result = Event::default().event(event["type"].as_str().unwrap());
     // Only durable events carry replay IDs. Observation errors are connection
     // events and must never advance the reconnect cursor past future output.

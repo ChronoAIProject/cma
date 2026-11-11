@@ -4,7 +4,7 @@ use crate::sandbox::AgentLogKind;
 use serde::Serialize;
 
 /// Current safe coordinates. Runtime generation is for the server's live guard.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentEventStreamHeader {
     pub id: AgentId,
     pub created_at: String,
