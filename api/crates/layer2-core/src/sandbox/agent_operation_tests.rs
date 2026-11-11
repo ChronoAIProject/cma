@@ -16,6 +16,7 @@ mod preferences_tests;
 mod queued_message_tests;
 mod retired_prompt_tests;
 mod settings_tests;
+mod skill_contention_tests;
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
