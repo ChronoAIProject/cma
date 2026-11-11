@@ -487,3 +487,7 @@ and unchanged native-proof boundary; it does not change deployment configuration
 Strict qualification also needs S2's published `c13eff3b5` caller delta in
 `store/sandbox_unpublished_recovery.rs` (under the same crate). Consume only that
 unchanged delta through a narrow normal merge; S2 retains this root's ownership.
+
+The `service.rs::discover_agent` facade exists only for Mongo contract tests;
+S4 restricts its exposure to test builds. Production restart already consumes
+bounded `discovery::for_agent` directly; S5's restart file needs no caller edit.
