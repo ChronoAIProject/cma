@@ -7,6 +7,7 @@ fn held(budget: &Arc<Semaphore>, bytes: usize) -> crate::Result<HeldOutput> {
         payload: vec![0; bytes],
         prepared: None,
         decoded: None,
+        sign_in: None,
         _storage: storage,
     })
 }

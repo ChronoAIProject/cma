@@ -56,6 +56,15 @@ pub(super) async fn opening_agent(harness: &Harness, name: &str) -> Agent {
 
 #[tokio::test]
 async fn startup_sign_in_reaches_durable_reads_before_authentication_completes() {
+    startup_sign_in_visible(false).await;
+}
+
+#[tokio::test]
+async fn retained_sign_in_reaches_durable_reads_before_authentication_completes() {
+    startup_sign_in_visible(true).await;
+}
+
+async fn startup_sign_in_visible(retained: bool) {
     let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     let mut agent = opening_agent(&harness, "sign-in-durable").await;
     let initial = agent.clone();
@@ -67,14 +76,19 @@ async fn startup_sign_in_reaches_durable_reads_before_authentication_completes()
         .unwrap();
     let (sender, receiver) = mpsc::channel(4);
     let authentication = async {
-        sender
-            .send(ConversationUpdate::SignInRequired {
-                url: "https://login.example.test/device".into(),
-                code: Some("fixture-code".into()),
-                message: None,
-            })
-            .await
-            .unwrap();
+        let notice = ConversationUpdate::SignInRequired {
+            url: "https://login.example.test/device".into(),
+            code: Some("fixture-code".into()),
+            message: None,
+        };
+        let notice = if retained {
+            ConversationUpdate::RetainedEffect(layer3_adapter::RuntimeOutputUpdate::new(
+                notice, true,
+            ))
+        } else {
+            notice
+        };
+        sender.send(notice).await.unwrap();
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 let logs = harness
@@ -140,6 +154,15 @@ async fn startup_sign_in_reaches_durable_reads_before_authentication_completes()
 
 #[tokio::test]
 async fn startup_timeout_preserves_visible_challenge_and_cleanup_intent() {
+    startup_timeout(false).await;
+}
+
+#[tokio::test]
+async fn retained_startup_timeout_preserves_visible_challenge_and_cleanup_intent() {
+    startup_timeout(true).await;
+}
+
+async fn startup_timeout(retained: bool) {
     let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     let mut agent = opening_agent(&harness, "sign-in-timeout").await;
     let initial = agent.clone();
@@ -151,14 +174,19 @@ async fn startup_timeout_preserves_visible_challenge_and_cleanup_intent() {
         .unwrap();
     let (sender, receiver) = mpsc::channel(4);
     let opening = async {
-        sender
-            .send(ConversationUpdate::SignInRequired {
-                url: "https://login.example.test/device".into(),
-                code: None,
-                message: None,
-            })
-            .await
-            .unwrap();
+        let notice = ConversationUpdate::SignInRequired {
+            url: "https://login.example.test/device".into(),
+            code: None,
+            message: None,
+        };
+        let notice = if retained {
+            ConversationUpdate::RetainedEffect(layer3_adapter::RuntimeOutputUpdate::new(
+                notice, true,
+            ))
+        } else {
+            notice
+        };
+        sender.send(notice).await.unwrap();
         std::future::pending::<layer3_adapter::Result<ConversationChannel>>().await
     };
     let error = harness

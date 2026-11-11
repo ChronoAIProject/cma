@@ -179,13 +179,14 @@ impl DurableAgentUpdateRecorder {
                 "conversation update timestamp is invalid",
             ));
         }
-        let (source, update, shared) = match &update {
+        let retained_effect = matches!(&update, ConversationUpdate::RetainedEffect(_));
+        let (source, update, shared) = match update.effect() {
             ConversationUpdate::RuntimeOutput { receipt, update } => (
                 Some(&receipt.source),
-                update.as_deref(),
+                update.as_deref().map(ConversationUpdate::effect),
                 update.as_ref().is_some_and(|update| update.is_shared()),
             ),
-            update => (None, Some(update), false),
+            update => (None, Some(update), retained_effect),
         };
         let fingerprint = source.map_or_else(
             || {
