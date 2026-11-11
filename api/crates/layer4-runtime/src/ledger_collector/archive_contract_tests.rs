@@ -264,9 +264,10 @@ fn staged_original_survives_revision_change_before_selected() {
     let model = Model::new(SourceFormat::V2, &[(1, Decision::SettledDeleted)]);
     let original = staged(&model);
     model.state.lock().unwrap().source_revision += 1;
-    for expected in [Step::EvidenceSelected] {
-        assert_eq!(run(step(Admission::default(), &model)), Ok(expected));
-    }
+    assert_eq!(
+        run(step(Admission::default(), &model)),
+        Ok(Step::EvidenceSelected)
+    );
     assert_eq!(
         run(step(Admission::default(), &model)),
         Err(Refusal::UnknownOutcome)
