@@ -20,6 +20,7 @@ export class Observer {
       const row = {
         phase: this.phase,
         route: category(request.url(), origin),
+        path_sha256: hash(new URL(request.url()).pathname),
         method: ["GET", "HEAD", "OPTIONS"].includes(request.method())
           ? request.method()
           : "WRITE",

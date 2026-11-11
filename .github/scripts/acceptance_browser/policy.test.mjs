@@ -14,6 +14,9 @@ import {
 import { Observer } from "./observer.mjs";
 
 test("route evidence never includes identifiers, queries or remote hosts", () => {
+  assert.equal(category(ORIGIN + "/openapi.json"), "DISCOVERY");
+  assert.equal(category(ORIGIN + "/api/v2/ui/task-experience"), "CAPABILITIES");
+  assert.equal(category(ORIGIN + "/api/v1/organizations"), "ORGANIZATIONS");
   assert.equal(
     category(ORIGIN + "/api/v2/agents/fixture/events?after=private"),
     "STREAM",

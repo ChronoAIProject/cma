@@ -12,7 +12,7 @@ let browser;
 let snapshot = () => null;
 try {
   const config = await receive();
-  if (!["public", "agent"].includes(config.mode)) throw Error();
+  if (!["public", "account", "agent"].includes(config.mode)) throw Error();
   const bin = process.env.PATH.split(path.delimiter).find((item) =>
     item.endsWith("node_modules/.bin"),
   );
@@ -41,9 +41,9 @@ try {
     STOPPED: 0,
   };
   const guard = new Guard();
-  if (config.mode === "agent") {
+  if (config.mode !== "public") {
     if (
-      !/^[A-Za-z0-9_-]+$/.test(config.agent) ||
+      (config.mode === "agent" && !/^[A-Za-z0-9_-]+$/.test(config.agent)) ||
       !/^cma_session=[^;\s]+$/.test(config.cookie)
     )
       throw Error();
@@ -117,7 +117,7 @@ try {
     observation_complete: complete,
   });
   const browserVersion = (await browser.version()).split("/").at(-1);
-  if (config.mode === "public") {
+  if (config.mode !== "agent") {
     const start = observer.begin("A1");
     await page.goto(ORIGIN, { waitUntil: "domcontentloaded", timeout: 30000 });
     await wait(10000);

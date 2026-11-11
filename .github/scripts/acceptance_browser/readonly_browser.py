@@ -71,11 +71,11 @@ def source_hash():
 
 def browser_run(mode, probe=None):
     config = {"mode": mode}
-    if mode == "agent":
+    if mode != "public":
         bind_browser(probe)
-        config.update(
-            agent=existing_fixture(probe), cookie=probe.accounts["a"]["cma_cookie"]
-        )
+        config["cookie"] = probe.accounts["a"]["cma_cookie"]
+        if mode == "agent":
+            config["agent"] = existing_fixture(probe)
     # Credentials are transported only through an anonymous stdin pipe. Browser
     # debug, tracing, proxy and persistent-profile environment are not inherited.
     environment = {
@@ -202,7 +202,7 @@ def run(mode):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("public", "agent"))
+    parser.add_argument("mode", choices=("public", "account", "agent"))
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     # Reserve the output before ANY HTTP request or account file read.

@@ -6,6 +6,9 @@ from safety import Refusal
 
 PHASES = {"A1", "A2", "A3", "A4", "A5_focus", "A5_return", "A6", "A7"}
 ROUTES = {
+    "DISCOVERY",
+    "CAPABILITIES",
+    "ORGANIZATIONS",
     "AUTH",
     "BUILD",
     "INVENTORY",
@@ -90,9 +93,10 @@ def validate(value):
     for row in value["requests"]:
         keys(
             row,
-            "phase route method start_ms end_ms status canceled censored hidden_start duplicate sse correlation_sha256",
+            "phase route path_sha256 method start_ms end_ms status canceled censored hidden_start duplicate sse correlation_sha256",
         )
         require(row["phase"] in PHASES | {"UNMEASURED"} and row["route"] in ROUTES)
+        fingerprint(row["path_sha256"])
         require(row["method"] in ("GET", "HEAD", "OPTIONS", "WRITE"))
         number(row["start_ms"])
         if row["end_ms"] is not None:

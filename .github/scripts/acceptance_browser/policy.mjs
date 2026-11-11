@@ -24,6 +24,9 @@ export const phases = [
 ];
 const id = "[A-Za-z0-9_-]+";
 const routes = [
+  ["DISCOVERY", "/openapi.json"],
+  ["CAPABILITIES", "/api/v2/ui/task-experience"],
+  ["ORGANIZATIONS", "/api/v1/organizations"],
   ["AUTH", "/auth/session"],
   ["BUILD", "/build-info.json"],
   ["INVENTORY", "/api/(?:v1|agent-manager/v1)/(?:sandboxes|agents|workspaces)"],
