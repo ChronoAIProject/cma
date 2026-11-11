@@ -8,6 +8,8 @@ use super::*;
 use crate::mutation_authority::Record as Authority;
 use crate::mutation_journal::Record as Journal;
 use layer3_adapter::{AgentHomeRemoveRequest, AgentSlot};
+#[path = "indexed_probe.rs"]
+mod indexed;
 
 pub(crate) async fn run(directory: &Path) -> Result<()> {
     for anchored in [false, true] {
@@ -18,7 +20,7 @@ pub(crate) async fn run(directory: &Path) -> Result<()> {
         };
         qualify(&path, anchored).await?;
     }
-    Ok(())
+    indexed::run(&directory.with_extension("retirement-indexed")).await
 }
 
 async fn qualify(directory: &Path, anchored: bool) -> Result<()> {
