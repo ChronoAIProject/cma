@@ -291,8 +291,11 @@ impl Bridge {
         updates
             .send(ConversationUpdate::RuntimeOutput {
                 receipt: RuntimeOutputReceipt::new(source, state.acknowledgements.clone()),
-                update: update.map(|update| {
-                    crate::RuntimeOutputUpdate::new(update, self.shared_runtime_output)
+                update: update.map(|update| match update {
+                    // Transfer the already admitted owner without another box
+                    // or an independent clone policy around its string payload.
+                    ConversationUpdate::RetainedEffect(effect) => effect,
+                    update => crate::RuntimeOutputUpdate::new(update, self.shared_runtime_output),
                 }),
             })
             .await;
