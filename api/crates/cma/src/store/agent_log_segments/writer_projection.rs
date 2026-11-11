@@ -111,4 +111,4 @@ pub(super) fn plan(
 
 #[cfg(test)]
 #[path = "writer_projection_tests.rs"]
-mod tests;
+pub(super) mod tests;
