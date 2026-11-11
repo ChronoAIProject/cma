@@ -134,10 +134,11 @@ async fn audit_rebuilds_output_across_units_and_refuses_missing_completed_output
                 .unwrap();
             store.segment_logs.evidence.delete_one(doc! {"agent_id":agent.id.as_str(),
                 "evidence_generation":progress.get_str("result_generation").unwrap(),"kind":"turn_output"}).await.unwrap();
-            assert!(
+            assert_eq!(
                 audit::run_unit(&client, &db, agent.id.as_str(), "outputs", false)
                     .await
-                    .is_err()
+                    .unwrap(),
+                "corrupt"
             );
             assert!(audit::install(&client, &db, agent.id.as_str(), "outputs")
                 .await
