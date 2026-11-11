@@ -402,6 +402,13 @@ impl AgentLogStore for MongoSandboxStore {
     ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
         self.read_transcript_log(expected).await
     }
+
+    async fn agent_log_usage(
+        &self,
+        expected: &layer2_core::sandbox::Agent,
+    ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+        self.read_usage_log(expected).await
+    }
 }
 
 #[cfg(test)]

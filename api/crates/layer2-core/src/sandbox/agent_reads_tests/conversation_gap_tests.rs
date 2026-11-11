@@ -351,6 +351,48 @@ async fn bounded_transcript_projection_matches_the_complete_fold_and_keeps_denia
         service(store)
             .transcript_bounded(&caller("owner", false), &current.id)
             .await,
-        Err(AgentReadError::Unauthorized)
+        Err(AgentReadError::Forbidden)
+    ));
+}
+
+#[tokio::test]
+async fn bounded_usage_projection_matches_the_complete_fold_and_keeps_denials() {
+    let (store, current) = gap_history(
+        vec![
+            opened(),
+            AgentLogKind::Usage {
+                input_tokens: 11,
+                output_tokens: 7,
+                context_used: 4,
+                context_window: Some(32),
+            },
+            AgentLogKind::UsageUpdated {
+                input_tokens: 15,
+                output_tokens: 9,
+                context_used: 8,
+                context_window: Some(64),
+                turn_sequence: Some(3),
+                turn_input_tokens: 5,
+                turn_output_tokens: 3,
+            },
+        ],
+        None,
+    )
+    .await;
+    let reads = service(store);
+    let complete = reads
+        .usage(&caller("owner", true), &current.id)
+        .await
+        .unwrap();
+    let bounded = reads
+        .usage_bounded(&caller("owner", true), &current.id)
+        .await
+        .unwrap();
+    assert_eq!(bounded, complete);
+    assert!(matches!(
+        reads
+            .usage_bounded(&caller("owner", false), &current.id)
+            .await,
+        Err(AgentReadError::Forbidden)
     ));
 }
