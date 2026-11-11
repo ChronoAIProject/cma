@@ -233,12 +233,12 @@ async fn capacity_composition_refuses_foreign_receipts_and_changed_authority_bef
         SubjectId::new("foreign"),
         Authorization::new([Capability::UseOwnSandboxes]),
     );
-    assert_eq!(
+    assert!(matches!(
         service
             .status(&intruder, &request.agent_id, Some(&request))
             .await,
         Err(RecoveryError::Unauthorized)
-    );
+    ));
     assert_eq!(snapshot(&store, &request).await, before);
     let mut changed = before.agent.clone();
     changed.owner = SubjectId::new("replacement-owner");
