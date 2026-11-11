@@ -59,11 +59,21 @@ pub(in crate::store) async fn legacy_proof(
     row: &Document,
     session: &mut mongodb::ClientSession,
 ) -> Result<bool, SandboxStoreError> {
+    legacy_proof_for_context(store, agent, row, session, true).await
+}
+
+pub(in crate::store) async fn legacy_proof_for_context(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    row: &Document,
+    session: &mut mongodb::ClientSession,
+    snapshot: bool,
+) -> Result<bool, SandboxStoreError> {
     let agent_id = &agent.id;
     if store.bounded_log_enabled(agent_id) && row.contains_key(QUARANTINE_FIELD) {
         fleet::telemetry::record(fleet::telemetry::Event::Quarantined);
     }
-    let proof = proof::read_only_summary(store, agent, row, session, true)
+    let proof = proof::read_only_summary(store, agent, row, session, snapshot)
         .await
         .map_err(|error| match error {
             TransactionLogError::Domain(error) => error,
