@@ -286,3 +286,21 @@ Layer2 all-targets/all-features Clippy passed with warnings denied. Fmt,whitespa
 5998-file size passed. Every changed file<500lines. Release-only lock,2jobs,
 minimum memory20%,zero pauses. Durable missing fields fail closed; activation
 remains closed. Contract:docs/notes/2026-11-12-s4-response-facts.md.
+
+## Final S4 source and test checkpoint
+
+Source `bc075a36aa45ac8fc826d4999748a9bcc8071c6d` is pushed on
+`tl/cma-log-segments/writer-publication`. It includes the authorized shared
+optional-generation correction, develop through42fbf75de, the narrow response
+facts dependency99f9826f4, and a durable fact commit/abort Mongo regression.
+47unit/configuration,37writer+lease Mongo,23legacy caller Mongo,9retained
+Mongo and8original unpublished Mongo tests passed:124passes,zero failures.
+Final strict diagnostics and cleanup are appended in the post-review evidence.
+P2-5 has passing corrected Mongo evidence; P1-1 remains open at discovery,
+claims, command reservation and targeted approval. Activation stays closed.
+No missing interface blocks the completed original receipt callers. Shared
+strict composition still requires sandbox_reconciliation::transaction::apply_scoped
+and agent_capacity_recovery::{admission,authority,records,status} through
+TransactionScope::insert_one. No slice PR; integration owns the combined PR.
+
+Final strict CMA at `bc075a36a` exited 101: 22 shared reachability diagnostics, zero type errors, no S4 receipt diagnostic. The 124-test batch completed at 02:21 SGT. Minimum available RAM 25%, no pause. Final source-bound gate evidence is in `2026-11-12-s4-postreview-gates.md`; the 01:30 qualification deadline was missed and reported while the build continued.

@@ -34,3 +34,21 @@ Tests cover historical settings timing, explicit models, post-terminal usage,
 next-turn cutoff, mismatched prior-turn usage, exact/foreign/nonadjacent/different-
 time pre-write references, serialized omission/forgery refusal, bootstrap versus
 publication parity, and refused publication preserving its source state.
+
+## Dependency gate evidence
+
+Gated dependency pin `91b487f575dfdf60758bb4d211324a7036f4f5c5`; implementation commit `99f9826f4b98ff3784c03492ce877f883700526b`. Rust1.96.1; existing release-only lock;two jobs;one target;minimum available RAM20%;no pause.
+
+- Layer2 projection tests:15passed,0failed,1419filtered. Includes5new response parity/refusal tests.
+- Strict Layer2 Clippy,all targets/features,no-deps,-D warnings:exit0.
+- fmt/whitespace passed;source size5998files passed;all changed files<500lines.
+
+Commands:
+```sh
+cargo test --locked --offline --manifest-path api/Cargo.toml -p layer2-core --lib agent_log_projection -- --test-threads=2
+cargo clippy --locked --offline --manifest-path api/Cargo.toml -p layer2-core --all-targets --all-features --no-deps -- -D warnings
+```
+
+`s4-final-facts-units.log` SHA256 `5d8ef50a4e04bc25c7dde82c5cff37761c620afc2db002557dee2ff7c31cb22a`;gate wall 100.211seconds.
+
+`s4-final-facts-strict.log` SHA256 `5345a741b4c8b97fa9fde788bf06375a54bf9dc1b40ff7a0624a84d24cb975b2`;gate wall 57.881seconds.
