@@ -2,10 +2,12 @@
 //! Metadata and access change atomically; immutable source bytes live behind a
 //! separate bounded object repository. No caller selects an object location.
 mod mutation;
+mod quota;
 mod runtime;
 mod service;
 mod types;
 mod validation;
+pub use quota::*;
 pub use service::DocumentService;
 pub use types::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -24,3 +26,6 @@ mod revocation_race_tests;
 
 #[cfg(test)]
 mod rollout_tests;
+
+#[cfg(test)]
+mod quota_tests;
