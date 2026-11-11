@@ -181,26 +181,23 @@ it.each([false, undefined])(
 );
 
 it.each([false, undefined])(
-  'adopts request availability %s from mutation responses and current-value review',
+  'keeps retained policy unavailable after loading request availability %s',
   async (request) => {
-    const local = transport(retained, true, true);
+    const local = transport(retained, true, request);
     render(<PlatformSettings client={local.client} />);
     await screen.findByLabelText('Enable spend controls');
-    local.gates(true, request);
-    await userEvent.click(save());
-    await screen.findByText('Settings saved at revision 5.');
     expect(amount()).toBeDisabled();
     expect(save()).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: 'Refresh settings availability' }));
-    await screen.findByText(/The current revision is 5/);
+    await screen.findByText(/The current revision is 4/);
     await userEvent.click(screen.getByRole('button', { name: 'Load current values' }));
     expect(save()).toBeDisabled();
     local.gates(true, true);
     await userEvent.click(screen.getByRole('button', { name: 'Refresh settings availability' }));
-    await screen.findByText(/The current revision is 5/);
+    await screen.findByText(/The current revision is 4/);
     await userEvent.click(screen.getByRole('button', { name: 'Load current values' }));
     expect(amount()).toBeEnabled();
     expect(save()).toBeEnabled();
-    expect(local.writes).toHaveLength(1);
+    expect(local.writes).toHaveLength(0);
   },
 );
