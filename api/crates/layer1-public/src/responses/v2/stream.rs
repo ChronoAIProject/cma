@@ -14,6 +14,15 @@ pub(super) async fn snapshot(
     authorization: &AgentEventStreamAuthorization,
     receipt: &CommandReceiptView,
 ) -> Result<(V2ResponseObject, bool), Response> {
+    snapshot_mode(state, authorization, receipt, true).await
+}
+
+async fn snapshot_mode(
+    state: &ResponsesV2State,
+    authorization: &AgentEventStreamAuthorization,
+    receipt: &CommandReceiptView,
+    indexed_allowed: bool,
+) -> Result<(V2ResponseObject, bool), Response> {
     let id = receipt
         .response_id
         .as_ref()
@@ -36,6 +45,11 @@ pub(super) async fn snapshot(
             reading.command.turn_sequence,
             move |source| {
                 Box::pin(async move {
+                    if !indexed_allowed {
+                        return Err(layer2_core::sandbox::AgentReadError::Unavailable(
+                            "source format changed; reconnect at the same durable cursor".into(),
+                        ));
+                    }
                     projection::indexed::complete(source, &origin, indexed_reading).await
                 })
             },
@@ -70,7 +84,7 @@ pub(super) async fn open(
     if state.paged_events || indexed {
         return super::stream_pages::open(state, authorization, receipt, after).await;
     }
-    let (initial, bound) = match snapshot(&state, &authorization, &receipt).await {
+    let (initial, bound) = match snapshot_mode(&state, &authorization, &receipt, false).await {
         Ok(value) => value,
         Err(error) => return error,
     };
@@ -126,7 +140,7 @@ pub(super) async fn open(
                 .map_or(wake, |expires| expires.min(wake));
             tokio::time::sleep_until(wake).await;
             let poll = Poll::new(Kind::ResponsesV2);
-            match snapshot(&open.state, &open.authorization, &open.receipt).await {
+            match snapshot_mode(&open.state, &open.authorization, &open.receipt, false).await {
                 Ok((response, bound)) => {
                     open.terminal = response.terminal();
                     open.pending = projection::events(&response, bound).into();
