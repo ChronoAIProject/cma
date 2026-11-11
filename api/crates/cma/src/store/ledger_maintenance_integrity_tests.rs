@@ -223,11 +223,7 @@ async fn unknown_quarantine_commit_does_not_start_another_write_or_report_confir
             .await
             .unwrap();
         let outcome = proof::quarantine_row(&store, &observed).await;
-        client
-            .database("admin")
-            .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
-            .await
-            .unwrap();
+        support::disable_failpoint_and_observe_majority(&store).await;
         assert!(matches!(outcome, Err(TransactionLogError::Driver(error))
             if error.contains_label("UnknownTransactionCommitResult")));
         if committed {

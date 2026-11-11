@@ -243,6 +243,35 @@ pub(super) async fn all_rows(store: &MongoSandboxStore) -> Vec<(String, Vec<Docu
     result
 }
 
+/// A write-concern failpoint can return before the committed transaction reaches
+/// the majority snapshot. Establish a read-only timestamp barrier before checking
+/// its durable outcome; no sleep, retry of the mutation, or weaker read concern.
+pub(super) async fn disable_failpoint_and_observe_majority(store: &MongoSandboxStore) {
+    let stopped = store
+        .client
+        .database("admin")
+        .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
+        .await
+        .unwrap();
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .snapshot_time(stopped.get_timestamp("operationTime").unwrap())
+        .await
+        .unwrap();
+    assert!(store
+        .agents
+        .find_one(doc! {})
+        .projection(doc! {"_id":1})
+        .read_concern(mongodb::options::ReadConcern::snapshot())
+        .max_time(std::time::Duration::from_secs(10))
+        .session(&mut session)
+        .await
+        .unwrap()
+        .is_some());
+}
+
 /// Propose E1 from the current disposable database, before admission only.
 /// This contains no execution binding and proves no provider/storage exclusion.
 pub(super) async fn pre_exclusion(

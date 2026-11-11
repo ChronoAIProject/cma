@@ -164,11 +164,7 @@ async fn unknown_commit_never_restarts_save_or_claims_confirmed_success() {
                 .await
                 .unwrap();
             let result = port(&store, agent, &next).await;
-            client
-                .database("admin")
-                .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
-                .await
-                .unwrap();
+            support::disable_failpoint_and_observe_majority(&store).await;
             let Err(SandboxStoreError::Unavailable(error)) = result else {
                 panic!("uncertain save must not report confirmed success");
             };
