@@ -4,7 +4,7 @@ use serde_json::json;
 
 #[test]
 fn maximal_invalid_discriminator_does_not_expand_into_an_owned_diagnostic() {
-    let value = json!({"sessionUpdate":"\0".repeat(699_000)});
+    let value = json!({"sessionUpdate":"x".repeat(4_193_900)});
     let encoded = serde_json::to_vec(&value).unwrap();
     let shape = crate::hosted::output_json_budget::inspect(&encoded).unwrap();
     assert!(shape.nodes < 5);
