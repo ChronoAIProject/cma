@@ -442,3 +442,11 @@ on `tl/cma-log-segments/reader-registrations`. Shared projection/root declaratio
 and S3's supporting fold exports are the remaining compile integration, followed
 by actual source/persistence implementations and their local/Mongo gates. The
 common integration lane combines these checkpoints; it is not a deployable PR.
+
+## Dependency amendment, Wed 2026-11-11 19:30 SGT
+
+S2 has taken the four small shared dependencies to unblock S1: fold serialization/identity exports, store sidecar handles, opened/retired generation maxima and exclusive transaction scope. Continuing ownership returns to S3 (fold), S1 (capture/collection registry), S4 (projection/publication) and S5 (recovery caller) after merging `tl/cma-log-segments/dependency-contracts`. No parallel replacement implementation is needed.
+
+The exact frozen signatures and ownership are in `2026-11-11-segments-dependency-contract.md` beside this plan and `docs/notes/2026-11-11-segments-dependency-contract.md` on the dependency branch. Transaction callers now use `TransactionScope::start(&mut session)` then `capture_transaction(store,current,&mut scope)` and `points_transaction(store,captured,sequences,&mut scope)`. S4 `prepare` and `persist` take `&mut TransactionScope<'_>` instead of raw session in parameter2. `scope.release()` consumes the scope before returning the session for caller commit/abort. Only audited segment internals can access its raw session; no lifecycle calls are allowed there. Private stamps differ across transactions even on the same session. Old raw transaction capture remains closed. New capture/publication bodies remain typed refusals until their owners implement certification; this signature checkpoint is not a green combined candidate.
+
+Required generation fields are `AgentLogProjectionState::{max_opened_generation,max_retired_generation}`; they cannot default on document decode. The store handle is `MongoSandboxStore.segment_logs` with heads/seals/publications/projections/evidence/audits using the existing six collections, no DDL. S3's requested derives and `validate_projection_identity(agent,entries)` are supplied in this checkpoint. Heavy gates await disk headroom and heavy-1; no owned target or disposable Mongo remains at handoff.

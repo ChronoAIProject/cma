@@ -1,0 +1,199 @@
+use super::*;
+use crate::store::sandbox_mongo::{commit_transaction, CommitOutcome};
+use mongodb::ClientSession;
+
+#[path = "writer_test_fixture.rs"]
+mod fixture;
+use fixture::*;
+
+async fn transaction(f: &Fixture) -> ClientSession {
+    f.client.start_session().await.unwrap()
+}
+
+fn update(plan: &PreparedPublication) -> AggregateUpdate {
+    AggregateUpdate {
+        filter: doc! {"_id":plan.current.id.as_str()},
+        fields: agent_replacement_fields(&plan.next).unwrap(),
+    }
+}
+
+async fn unchanged(f: &Fixture) {
+    let row = f
+        .store
+        .agents
+        .find_one(doc! {"_id":f.agent.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(crate::store::agents::read_agent(&row).unwrap(), f.agent);
+    assert_eq!(
+        f.store.agent_log.count_documents(doc! {}).await.unwrap(),
+        f.head.last_seq as u64
+    );
+    assert_eq!(
+        collection(&f.store, SEGMENTS)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    let head = collection(&f.store, HEADS)
+        .find_one(doc! {"_id":f.agent.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(Head::read(head).unwrap(), f.head);
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn writer_rollover_commits_original_batch_head_projection_and_receipt_together() {
+    let f = fixture(10_000).await;
+    let mut session = transaction(&f).await;
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
+    let expected = plan.next.clone();
+    let mutation = update(&plan);
+    let receipt = persist(&f.store, &mut scope, plan, mutation).await.unwrap();
+    assert!(matches!(
+        commit_transaction(scope.release()).await,
+        CommitOutcome::Committed
+    ));
+    let row = f
+        .store
+        .agents
+        .find_one(doc! {"_id":f.agent.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(crate::store::agents::read_agent(&row).unwrap(), expected);
+    assert_eq!(
+        f.store.agent_log.count_documents(doc! {}).await.unwrap(),
+        10_001
+    );
+    let head = Head::read(
+        collection(&f.store, HEADS)
+            .find_one(doc! {"_id":f.agent.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        (head.active_ordinal, head.active_count, head.last_seq),
+        (1, 1, 10_001)
+    );
+    assert_eq!(
+        collection(&f.store, SEGMENTS)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        1
+    );
+    let proof = collection(&f.store, PROJECTIONS)
+        .find_one(doc! {"_id":f.agent.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.get_i64("through_seq").unwrap(), head.last_seq);
+    assert_eq!(proof.get_i64("head_revision").unwrap(), head.revision);
+    let committed = Publication::read(
+        collection(&f.store, PUBLICATIONS)
+            .find_one(doc! {"_id":&receipt.id})
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(committed.result_digest, receipt.result_digest);
+    f.destroy().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn writer_abort_after_rollover_and_late_receipt_conflict_leave_no_partial_effects() {
+    let f = fixture(10_000).await;
+    let mut session = transaction(&f).await;
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
+    let mutation = update(&plan);
+    let receipt = persist(&f.store, &mut scope, plan, mutation).await.unwrap();
+    scope.release().abort_transaction().await.unwrap();
+    unchanged(&f).await;
+    assert_eq!(
+        collection(&f.store, PUBLICATIONS)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    // Force a late immutable-receipt uniqueness failure after other writes.
+    collection(&f.store, PUBLICATIONS)
+        .insert_one(bson::serialize_to_document(&receipt).unwrap())
+        .await
+        .unwrap();
+    let mut session = transaction(&f).await;
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
+    let mutation = update(&plan);
+    assert!(persist(&f.store, &mut scope, plan, mutation).await.is_err());
+    let _ = scope.release().abort_transaction().await;
+    unchanged(&f).await;
+    f.destroy().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn writer_rejects_stale_domain_fence_mismatched_result_and_different_session() {
+    let f = fixture(2).await;
+    let mut session = transaction(&f).await;
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
+    let mut mutation = update(&plan);
+    mutation.filter.insert("work_lease_fence", 999_i64);
+    assert!(persist(&f.store, &mut scope, plan, mutation).await.is_err());
+    scope.release().abort_transaction().await.unwrap();
+    let mut session = transaction(&f).await;
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
+    let mut mutation = update(&plan);
+    mutation.fields.insert("last_seq", 999_i64);
+    assert!(persist(&f.store, &mut scope, plan, mutation).await.is_err());
+    scope.release().abort_transaction().await.unwrap();
+    let mut original = transaction(&f).await;
+    let original_scope = TransactionScope::start(&mut original).await.unwrap();
+    let plan = f.prepared(&original_scope);
+    let mutation = update(&plan);
+    let mut another = transaction(&f).await;
+    let mut another_scope = TransactionScope::start(&mut another).await.unwrap();
+    assert!(persist(&f.store, &mut another_scope, plan, mutation)
+        .await
+        .is_err());
+    original_scope.release().abort_transaction().await.unwrap();
+    another_scope.release().abort_transaction().await.unwrap();
+    unchanged(&f).await;
+    f.destroy().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn writer_rejects_prepared_proof_after_restart_on_the_same_session_without_writes() {
+    let f = fixture(2).await;
+    let mut session = transaction(&f).await;
+    let original = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&original);
+    let mutation = update(&plan);
+    original.release().abort_transaction().await.unwrap();
+    let mut later = TransactionScope::start(&mut session).await.unwrap();
+    assert!(persist(&f.store, &mut later, plan, mutation).await.is_err());
+    later.release().abort_transaction().await.unwrap();
+    unchanged(&f).await;
+    assert_eq!(
+        collection(&f.store, PUBLICATIONS)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    f.destroy().await;
+}
