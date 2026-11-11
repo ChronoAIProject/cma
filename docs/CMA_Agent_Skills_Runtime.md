@@ -59,7 +59,9 @@ Named refusals distinguish the causes:
 | Failed upgrade, `runtime_skill_upgrade_conflict` | A receipt, parent, unsafe entry or recovery snapshot conflicts with the expected installation. Preserve evidence and resolve the named conflict before retrying. |
 | Failed upgrade, `agent_skill_upgrade_modified` | An archive-owned path is missing or its type/bytes changed. Save edits outside the skill directory and restore the installed archive's files before a new attempt. |
 | Failed upgrade, `agent_skill_upgrade_previous_unavailable` | The checksum-pinned previous archive is absent from the warm cache and cannot be fetched (including deletion/unsharing). Restore access or the verified cache, then make a new attempt. |
-| Failed upgrade, `agent_skill_upgrade_retention_full` | Retention would exceed 32 trees or 512 MiB. Archive and remove settled retained trees outside discovery; never remove a pending operation's evidence. |
+| Failed upgrade, `agent_skill_upgrade_retention_full` | Retaining additional/unexpected content would exceed 32 trees or 512 MiB. Contact an infrastructure operator; CMA has no retention cleanup endpoint. Never remove a pending operation's evidence. |
+| Failed upgrade, `agent_skill_upgrade_recovery_conflict` | The target has no matching new receipt and the proved pair cannot be recovered. The previous version remains effective; preserve the target, staged trees and proof, save/restore local edits, then use a new key. |
+| Failed upgrade, `agent_skill_upgrade_preparation_exhausted` | Five safe preparation attempts failed before publication. The previous version remains effective and the Agent is idle. Restore the dependency and use a new key. |
 
 The global idempotency contract is unchanged. All completed outcomes, including
 refusals, are retained and replayed for **24 hours**. Reuse the unchanged body
@@ -102,6 +104,24 @@ keeps the failed entry. An owner may submit another upgrade attempt after it
 settles. Failed additive installations retain their original operation identity
 and cannot be silently reinterpreted as a new installation.
 
+Upgrade preparation has two finite budgets of five attempts: the Manager's
+per-installation `preparation_retries` bounds context/catalog retries while
+material is absent, independently of lifecycle work-step counters, and the runtime
+records up to five immutable 64-byte request-hash markers
+(`skill-upgrades/{request-sha256}.attempt-1` through `.attempt-5`) before proof
+publication. Retries and runtime startup recovery consume the same runtime budget.
+An attempt is recorded and synced before extraction. After the fifth transient
+failure, the runtime durably fails its journal; a crash before that commit still
+cannot start a sixth preparation, even if the dependency has recovered. A new
+owner attempt has a new history sequence and its own budget. Additive installs
+retain their existing retry policy.
+
+Once material is pinned, a lost runtime reply cannot prove that publication did
+not happen. The Manager therefore reconciles that exact operation rather than
+blindly timing out to the previous version. Successful/failed journal settlement
+requires reachable storage and transport, as with other admitted operations;
+the preparation budget never guesses an outcome across a lost response.
+
 Stop, lease takeover, retained-home revival, and parent cleanup use the existing
 worker fencing. Revival reattaches the recorded conversation and reschedules
 pending skill work before queued input is delivered. A stale worker cannot pin
@@ -135,40 +155,62 @@ The replacement operation follows these durable steps:
 3. Extra regular files/directories, including Python `__pycache__/*.pyc`, are
    allowed and retained with the entire old tree. They are not copied into the
    new version. Symlinks, special entries, hard links, unreadable content, over
-   8,192 entries, more than 64 directory levels, or over 256 MiB are refused. Live installations also require the
-   exact previous `.cma-install-receipt.json`; profile skills must lack that marker.
+   8,192 entries, more than 64 directory levels, or over 256 MiB are refused.
+   Live installations also require the exact previous `.cma-install-receipt.json`; profile skills must lack that marker.
    Neither a marker alone nor a marker supplied by an archive proves the tree.
 4. Stage under the same Agent home's `.cma-skill-upgrades/{request-sha256}/`,
-   outside `skills/` and provider discovery. Check retained trees plus incoming
-   old bytes against 32 trees / 512 MiB, reserving receipt space. No automatic
-   age/count eviction deletes owner data; exceeding either admission bound yields
-   `agent_skill_upgrade_retention_full`. Temporary extraction adds at most two
-   archive expansion limits. Owner writes after admission remain owner-controlled.
+   outside `skills/` and provider discovery. Only an old tree with additional
+   content reserves retention space: existing retained trees plus its bytes must
+   fit 32 trees / 512 MiB, including receipt space. An archive-exact old tree
+   consumes no retention slot and can upgrade even if retention is already full.
+   No age/count eviction deletes owner data. Temporary extraction adds at most
+   two archive expansion limits. Owner writes after admission remain owner-controlled.
 5. Place the new receipt inside the staged `new/` tree. Sync staging, then publish
    runtime-state `skill-upgrades/{request-sha256}.json` with exact old/new content
    snapshots (including extra old files, excluding the separately checked receipt
-   and all modes). Repair ambiguous proof-publication sync before exchange.
-6. Recheck both snapshots and parents, then atomically exchange staged `new/`
-   and `skills/{id}` with descriptor-relative Linux `renameat2(RENAME_EXCHANGE)`
-   or macOS `renameatx_np(RENAME_SWAP)`. Linux invokes the raw syscall. The target
-   is always a complete old or new tree. The supervisor gate serializes mutations.
-7. Sync both affected parents. Remove only the extracted comparison archive
-   `previous/`; retain the exchanged old installation at `new/` and the small
-   proof. Publish the journal receipt. Recovery recognizes the new receipt/content
-   after exchange and repeats the sync/cleanup without redownloading. Once proof
-   exists, a conflicting tree keeps the admitted operation pending with
-   `agent_skill_upgrade_recovery_required`; a terminal failure could otherwise
-   expose the old version after publication. Preserve evidence for reconciliation. Replaced
-   files, modes, caches and owner extras survive as the original inodes.
+   and all modes) and `retain_previous`. Missing retention policy in an earlier
+   proof defaults to retaining the tree; it never authorizes deletion.
+6. Resolve publication deterministically. A target carrying this request's exact
+   receipt is Installed at the new version, even if its files were subsequently
+   edited or staging/proof data is missing. Otherwise, only a target matching the
+   previous snapshot **and** a candidate matching the new snapshot may exchange.
+   Every other state is a terminal `agent_skill_upgrade_recovery_conflict`, with
+   the previous version effective and all remaining trees/proof/journal preserved.
+   A receipt identifies the published version; it does not assert that later owner
+   edits are absent. A conflict never waits for an owner repair while blocking input.
+7. Exchange uses descriptor-relative Linux `renameat2(RENAME_EXCHANGE)` or macOS
+   `renameatx_np(RENAME_SWAP)`; Linux invokes the raw syscall. The supervisor gate
+   serializes mutations. Sync both affected parents before confirming publication.
+   When the proof marks the old tree archive-exact, compare it again and remove it
+   only if it still matches. Additional/unexpected content stays at `new/` outside
+   discovery. Remove the disposable comparison archive and empty staging container;
+   cleanup failure is logged, preserves what remains, and does not prevent Installed settlement.
+   The small proof, attempt markers and terminal journal remain recovery evidence.
 
-The owner may archive and remove a **settled** operation's retained directory to
-free retention capacity after its result is confirmed. Keep runtime journal and
-proof files; never remove a pending directory. Agent-home deletion removes the
-retained trees under the existing explicit lifecycle authority. Preservation is
-chosen over silently classifying/deleting files by a cache-like name: a user may
-put valuable data under `__pycache__` too. Modified archive files are refused
-because their bytes no longer prove the expected version; the refusal names the
-owner action instead of overwriting those changes.
+Normal repeated replacements of archive-exact trees do not accumulate retention
+or hit a 32-upgrade ceiling. Trees containing extra content—including caches—stay
+intact as their original inodes; modified/unsafe old trees discovered after exchange
+also remain intact. Failed post-proof attempts keep every remaining tree even when
+some staged files are reproducible: that evidence belongs to the failed operation.
+Agent-home deletion remains governed by the existing explicit lifecycle authority.
+
+There is **no supported CMA retention listing, export or deletion endpoint, nor a
+CMA operator retention-cleanup command** in this release. Public Agent file routes
+reject `.cma` and `cma/.cma`, including for owners (`agent_filesystem/scope.rs`);
+the named refusal in skills GET is the only built-in owner signal. Do not suggest
+using those routes or deleting a guessed hidden path as a supported recovery flow.
+
+An infrastructure operator with existing, separately authorized native `pods/exec`
+access can inspect the retained filesystem at
+`/home/cma/.cma/agents/{agent-id}/home/.cma-skill-upgrades/{request-sha256}/`.
+This is manual infrastructure maintenance, not a CMA cleanup capability. The
+operator must identify the exact retained Pod/PVC and Agent, correlate that hash
+with its terminal runtime journal and proof under the configured runtime state
+root, preserve an owner-approved archive of any wanted files, and remove only that
+settled retained directory. Never remove `skills/{id}`, runtime proofs/attempt
+markers/journals, or a pending operation's directory; do not restart the Sandbox.
+If terminality or ownership cannot be established, leave the data and refusal in
+place. A product retention-management workflow remains outside this release.
 
 ### Historical mode compatibility
 
@@ -195,9 +237,9 @@ and upgrade both. Crash recovery also succeeds after group-bit changes.
 
 | Surface | Compatibility rule |
 | --- | --- |
-| `AgentSkillInstallation.previous` | Absent/`None` is omitted. Ordinary additive records remain byte-for-byte predecessor-readable. The **first admitted upgrade** writes this field and raises the Agent Manager reader floor, even if it later fails or completes. Historical entries must remain readable. |
+| `AgentSkillInstallation.previous` / `preparation_retries` | `previous` is omitted when absent. The **first admitted upgrade** writes it and raises the Agent Manager reader floor, even if the upgrade later fails or completes. `preparation_retries` is omitted at zero and advances only for admitted upgrades; reconnects cannot reset it. Ordinary additive records remain byte-for-byte predecessor-readable, and all history remains readable. |
 | Runtime `AgentSkillInstallRequest.upgrade` | Absent is omitted and the old install hash/identity is unchanged. The first upgrade authority/journal write raises the retained runtime-state reader floor to the replacement implementation. |
-| Runtime `skill-upgrades/` proofs | Written only for upgrade work; retain with the runtime's persistent state. Never remove evidence to enable an older reader. |
+| Runtime `skill-upgrades/` proofs and attempt markers | Upgrade-only proof includes `retain_previous` (missing means retain); five immutable hash markers bound preparation across restart. Keep these with JSON/indexed journals; a recovery runtime must honor the same budget and policy. Never remove evidence to enable an older reader. |
 | Runtime `agent_skill_upgrade` status | False is omitted. True is returned only when a standalone status request explicitly accepts `application/vnd.chrono.agent-skill-upgrade-status.v1+json`. Embedded and unnegotiated status retain the predecessor shape. |
 
 **Promotion ordering and rollback floor:** deploy this release's compatible
@@ -221,14 +263,14 @@ binary. Runtime adoption remains subject to the existing owner/idle update polic
 | Required field | Evidence |
 | --- | --- |
 | Release / migration identity, phase and owners | `2026-11-11-am-agent-skill-upgrade`, issue #1209; expand-only source change, activation pending. Agent Manager owns Mongo/admission; Layer 4 owns home/journal formats; release operator owns promotion/drain verification. Candidate source and executable checksums must be attached to the release receipt before activation; no published image is claimed here. |
-| Affected stores and all writer triggers | `Agent.work.live_skills.previous` on explicit idle owner POST; Agent worker pin/settlement and recovery; global command replies; runtime upgrade requests nested in V1 JSON authority/journal and indexed ledger payloads; retirement import/archive preserve those exact payloads; runtime proof and retained-tree directories. Startup does not backfill or admit upgrades. GET reads and runtime status observation do not write upgrade intents. |
-| Old/new format and preservation contract | Optional `previous`/`upgrade` omitted for additive records; existing envelope versions unchanged. New true `agent_skill_upgrade` status field negotiated on explicit requests. No index/TTL/validator/key/client-journal changes. Original profile, resolved material, IDs, history, request keys, fences, PVC and conversations retained. |
-| Compatible reader floor / allowed recovery artifacts | Agent Manager and runtime implementations in the final #1209 source, including bounded history, gate, content/retention proofs and typed failure settlement. Runtime floor covers strict `AgentSkillInstallRequest.upgrade` inside JSON/indexed journals, authority, import and retirement archive readers—not only Mongo. No predecessor executable is certified. Exact candidate/recovery image digests and cross-image drills remain **unverified**, so no production recovery artifact is approved by this local record. |
+| Affected stores and all writer triggers | `Agent.work.live_skills.previous` on explicit idle owner POST and its `preparation_retries` during safe retry; Agent worker pin/settlement and recovery; global command replies; runtime upgrade requests nested in V1 JSON authority/journal and indexed ledger payloads; retirement import/archive preserve those exact payloads; runtime proof/retention policy, preparation-attempt markers and retained-tree directories. Startup may settle already-admitted work with the same finite budget; it does not backfill or admit upgrades. GET reads and runtime status observation do not write upgrade intents. |
+| Old/new format and preservation contract | Optional `previous`/`upgrade` and zero `preparation_retries` omitted for additive records; existing envelope versions unchanged. New true `agent_skill_upgrade` status field negotiated on explicit requests; upgrade-proof `retain_previous` and the five-marker preparation format are runtime-owned v1 shapes. No index/TTL/validator/key/client-journal changes. Original profile, resolved material, IDs, history, request keys, fences, PVC and conversations retained. |
+| Compatible reader floor / allowed recovery artifacts | Agent Manager and runtime implementations in the final #1209 source, including bounded history, gate, deterministic recovery, durable preparation budgets and selective retention. Runtime floor covers strict `AgentSkillInstallRequest.upgrade` inside JSON/indexed journals, authority, import and retirement archive readers—not only Mongo. No predecessor executable is certified. Exact candidate/recovery image digests and cross-image drills remain **unverified**, so no production recovery artifact is approved by this local record. |
 | Writer gate and cohort | `CHRONO_AGENT_SKILL_UPGRADE_ENABLED=false` by default in parser and API ConfigMap. Closed new version admission returns `agent_skill_upgrade_disabled`; ordinary additive work/read/exact accepted key replay continue. Open admission still requires owner authority, idle state and exact runtime support. Core gate covers non-REST callers; workers only settle retained admitted work after closure. Serving/recovery processes must share the compatible floor and incompatible workers must drain before the operator activates a bounded cohort. Drain/cohort receipts pending. |
 | Backfill execution | None: no transform or startup migration. Existing homes are proved on explicit upgrade. Current executor is the Agent worker with durable lease/fence and per-record CAS, then the serialized runtime mutation gate/journal. No separate manual migrator, cross-store transaction or global migration lock is claimed. Prerequisites are compatible Manager deployment/drain, runtime promotion proof and release qualification receipts. |
-| Backup and dry-run | No bulk rewrite/deletion/backfill requiring a migration backup. Per-request exchange preserves the previous tree outside discovery. Recovery unit is Agent Mongo history/commands plus the same home, journals/proofs/retained trees and exact runtime. Production backup/restore artifacts and recovery rehearsal are not claimed; do not restore stale Mongo over later accepted home effects. |
+| Backup and dry-run | No bulk rewrite/backfill. After durable per-request exchange, only the proved reproducible old bytes are discarded; additional or unexpected data remains outside discovery. No owner-created or modified bytes are intentionally deleted. Recovery unit is Agent Mongo history/commands plus the same home, journals/proofs/retained trees and exact runtime. Production backup/restore artifacts and recovery rehearsal are not claimed; do not restore stale Mongo over later accepted home effects. |
 | Rollback / forward recovery | Close the writer flag in a compatible Manager and let admitted work settle. From runtime capability promotion, retain this Manager floor; from first journal write, retain this runtime reader/recovery floor. Keep latest runtime default and existing live runtime/home/conversation; use compatible forward repair, not a pre-release Manager/runtime rollback. No operation unsets fields or deletes receipts to lower the floor. Abort activation if capability, drain, retention, reader or continuity checks fail. |
-| Verification and completion | Local gates and source identities are recorded in the issue handoff; old-shape/new-reader and strict-predecessor negative fixtures, gate/replay/settlement, real materializers, remount/cache/extra-data policy, crash boundaries, fencing and retirement preservation are covered. Pinned-provider proof checks the next latest catalog, same process/conversation and new disk bytes. Historical/candidate image matrix, production cohort observations, recovery drills and reviewer/operator sign-off remain unexecuted. This is not production migration completion. |
+| Verification and completion | Record local gates and source identities in the issue/PR evidence; old-shape/new-reader and strict-predecessor negative fixtures, gate/replay/settlement, real materializers, remount/cache/extra-data policy, crash boundaries, fencing and retirement preservation are covered. Pinned-provider proof checks the next latest catalog, same process/conversation and new disk bytes. Historical/candidate image matrix, production cohort observations, recovery drills and reviewer/operator sign-off remain unexecuted. This is not production migration completion. |
 
 ## Binding version-only PUT assessment
 
