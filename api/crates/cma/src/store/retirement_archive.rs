@@ -347,22 +347,55 @@ impl ArchiveStore {
     ) -> Result<()> {
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => Ok(()),
-            _ => {
-                let current = self.inspect(&request.sandbox_id).await?;
-                let parent = accepted(&current, request, bytes)?;
-                if verified.is_none()
-                    || parent
-                        .lifecycle
-                        .retirement_archive
-                        .as_ref()
-                        .and_then(|g| g.verified.as_ref())
-                        == verified
-                {
-                    Ok(())
-                } else {
-                    Err(REFUSED)
-                }
+            CommitOutcome::Unknown(_) => {
+                let at = session.operation_time().ok_or(REFUSED)?;
+                let store = Self {
+                    client: self.client.clone(),
+                    database: self.database.clone(),
+                };
+                let request = request.clone();
+                let bytes = bytes.to_vec();
+                let verified = verified.cloned();
+                super::sandbox_mongo::wait_for_reconciliation(
+                    "retirement archive commit",
+                    async move {
+                        // An unpinned majority read can precede a committed write
+                        // whose acknowledgement was lost. Use its commit-time
+                        // snapshot, with the shared bounded reconciliation budget.
+                        let mut session = store
+                            .client
+                            .start_session()
+                            .snapshot(true)
+                            .snapshot_time(at)
+                            .await
+                            .map_err(|_| REFUSED)?;
+                        let current = store
+                            .parents()
+                            .find_one(doc! {"_id":&request.sandbox_id})
+                            .read_concern(mongodb::options::ReadConcern::snapshot())
+                            .session(&mut session)
+                            .await
+                            .map_err(|_| REFUSED)?
+                            .ok_or(REFUSED)?;
+                        let parent = accepted(&current, &request, &bytes)?;
+                        if verified.is_none()
+                            || parent
+                                .lifecycle
+                                .retirement_archive
+                                .as_ref()
+                                .and_then(|g| g.verified.as_ref())
+                                == verified.as_ref()
+                        {
+                            Ok(())
+                        } else {
+                            Err(REFUSED)
+                        }
+                    },
+                )
+                .await
+                .map_err(|_| REFUSED)?
             }
+            CommitOutcome::Retry(_) | CommitOutcome::Failed(_) => Err(REFUSED),
         }
     }
 }

@@ -8,6 +8,9 @@ use layer2_core::sandbox::store::{SandboxStore, SandboxWorkerStore};
 use layer2_core::sandbox::{SandboxEvent, SandboxEventKind, SandboxHome, SandboxWorkStep};
 use layer3_adapter::{permanent_custody::PermanentCustody, HomeVolumePolicy, HomeVolumeReceipt};
 
+#[path = "commit_test_support.rs"]
+mod commit_support;
+
 async fn fixture() -> (Temp, ArchiveStore, Request, Vec<u8>) {
     let temp = Temp::new();
     let mut request = request(&temp);
@@ -181,11 +184,20 @@ async fn full_archive_reconstructs_home_conversations_and_ledgers_before_gate_re
     for (collection, document) in [
         (
             "agent_artifacts",
-            doc! {"_id":"artifact1","agent_id":"agt_atomic","content_base64":"cHJlc2VydmVk"},
+            doc! {"_id":"artifact1","document_schema_version":1_i64,"agent_id":"agt_atomic","content_base64":"cHJlc2VydmVk"},
         ),
         (
             "agent_log",
-            doc! {"_id":"unrelated","agent_id":"agt_unrelated","record":{"message":"must not export"}},
+            crate::store::agent_log::log_document(&layer2_core::sandbox::AgentLogEntry {
+                agent_id: layer2_core::AgentId("agt_unrelated".into()),
+                seq: 1,
+                appended_at: layer2_core::now_rfc3339(),
+                kind: layer2_core::sandbox::AgentLogKind::Created {
+                    workspace_id: layer2_core::WorkspaceId("wks_unrelated".into()),
+                    worktree_id: layer2_core::WorktreeId("wtr_unrelated".into()),
+                },
+            })
+            .unwrap(),
         ),
     ] {
         store
@@ -241,10 +253,10 @@ async fn full_archive_reconstructs_home_conversations_and_ledgers_before_gate_re
     let mut bad = receipt.clone();
     bad.verification_sha256 = "a".repeat(64);
     assert!(store.complete(&request, &bytes, bad).await.is_err());
-    store
-        .complete(&request, &bytes, receipt.clone())
-        .await
-        .unwrap();
+    let (archive, observed) = commit_support::begin(&store).await;
+    let result = archive.complete(&request, &bytes, receipt.clone()).await;
+    commit_support::finish(&store, observed).await;
+    result.unwrap();
     let completed = store.inspect(&request.sandbox_id).await.unwrap();
     store.complete(&request, &bytes, receipt).await.unwrap();
     assert_eq!(completed, store.inspect(&request.sandbox_id).await.unwrap());
@@ -396,24 +408,9 @@ async fn unsupported_external_objects_refuse_without_certifying_metadata() {
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
 async fn ambiguous_hold_commit_reconciles_same_original_without_duplicate_usage() {
     let (_temp, store, request, bytes) = fixture().await;
-    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
-    let app = format!("archive-reconcile-{}", uuid::Uuid::new_v4());
-    let mut options = mongodb::options::ClientOptions::parse(&uri).await.unwrap();
-    options.app_name = Some(app.clone());
-    let client = Client::with_options(options).unwrap();
-    let archive = ArchiveStore {
-        database: client.database(store.database.name()),
-        client,
-    };
-    store.client.database("admin").run_command(doc!{"configureFailPoint":"failCommand","mode":{"times":5},"data":{
-        "failCommands":["commitTransaction"],"appName":&app,"writeConcernError":{"code":50,"codeName":"MaxTimeMSExpired","errmsg":"injected archive acknowledgement loss"}}}).await.unwrap();
+    let (archive, observed) = commit_support::begin(&store).await;
     let result = archive.admit(&request, &bytes).await;
-    store
-        .client
-        .database("admin")
-        .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
-        .await
-        .unwrap();
+    commit_support::finish(&store, observed).await;
     result.unwrap();
     let accepted = store.inspect(&request.sandbox_id).await.unwrap();
     let restarted = ArchiveStore {
