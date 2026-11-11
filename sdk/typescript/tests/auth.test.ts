@@ -167,7 +167,7 @@ it('preserves allowed return queries and rejects the complete forbidden or overs
 });
 
 it('bounds the fully encoded absolute login URL and rejects raw non-ASCII', async () => {
-  const { MAX_LOGIN_URL_BYTES } = await import('../src/auth.js');
+  const { MAX_LOGIN_URL_BYTES } = await import('../src/index.js');
   const { readFileSync } = await import('node:fs');
   const budget = JSON.parse(
     readFileSync(
