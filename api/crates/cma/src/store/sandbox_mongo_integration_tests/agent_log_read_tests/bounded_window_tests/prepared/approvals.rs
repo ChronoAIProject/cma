@@ -149,7 +149,7 @@ async fn small_and_completed_approval_histories_keep_empty_and_absent_semantics(
         f.reset_commands();
         assert_eq!(
             f.store
-                .pending_agent_approvals(&AgentId::new("agt_absent"))
+                .pending_agent_approvals(&AgentId("agt_absent".into()))
                 .await,
             Err(SandboxStoreError::NotFound)
         );
