@@ -18,11 +18,11 @@ pub(super) async fn persist(
     aggregate: AggregateUpdate,
 ) -> Result<Publication, TransactionLogError> {
     scope.require(&prepared.transaction)?;
-    if prepared.database != store.agents.namespace().db {
+    if store.agents.namespace().db != prepared.database {
         return Err(SandboxStoreError::Conflict.into());
     }
-    let session = scope.session();
     let (filter, update) = aggregate_update(&prepared, aggregate)?;
+    let session = scope.session();
     let database = store.client.database(&store.agents.namespace().db);
     if let Some(permit) = &prepared.permit {
         permit
