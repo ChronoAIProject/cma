@@ -46,7 +46,7 @@ impl Archive {
                         return Err(invalid());
                     }
                     super::require_reserve(&directory, anchor.as_deref())?;
-                    let sizes = originals.each_ref().map(Vec::len);
+                    let sizes = originals.each_ref().map(|bytes| bytes.len() as i64);
                     tx.execute(
                         "INSERT INTO collection_evidence VALUES (?,?,?,?,?,?,?,?,1)",
                         params![

@@ -14,7 +14,7 @@ pub(super) fn put(db: &Connection, operation: &str, originals: &[Vec<u8>; 3]) ->
         for (ordinal, chunk) in bytes.chunks(CHUNK).enumerate() {
             db.execute(
                 "INSERT INTO collection_artifacts VALUES (?,?,?,?)",
-                params![operation, kind, ordinal, chunk],
+                params![operation, kind as u32, ordinal as u32, chunk],
             )
             .map_err(|_| storage_error())?;
         }
@@ -23,9 +23,10 @@ pub(super) fn put(db: &Connection, operation: &str, originals: &[Vec<u8>; 3]) ->
 }
 
 pub(super) fn read(db: &Connection, operation: &str) -> Result<[Vec<u8>; 3]> {
-    let sizes:[usize;3]=db.query_row(
+    let sizes:[u32;3]=db.query_row(
         "SELECT candidate_bytes,request_bytes,observation_bytes FROM collection_evidence WHERE operation_id=?",
         [operation],|r| Ok([r.get(0)?,r.get(1)?,r.get(2)?])).map_err(|_| invalid())?;
+    let sizes = sizes.map(|size| size as usize);
     if sizes
         .iter()
         .zip(LIMITS)
@@ -40,8 +41,8 @@ pub(super) fn read(db: &Connection, operation: &str) -> Result<[Vec<u8>; 3]> {
     let mut count = 0;
     while let Some(row) = rows.next().map_err(|_| invalid())? {
         count += 1;
-        let kind: usize = row.get(0).map_err(|_| invalid())?;
-        let ordinal: usize = row.get(1).map_err(|_| invalid())?;
+        let kind = row.get::<_, u32>(0).map_err(|_| invalid())? as usize;
+        let ordinal = row.get::<_, u32>(1).map_err(|_| invalid())? as usize;
         let bytes: Vec<u8> = row.get(2).map_err(|_| invalid())?;
         let Some(target) = output.get_mut(kind) else {
             return Err(invalid());

@@ -42,7 +42,11 @@ pub(super) fn load(db: &Connection, operation: &str) -> Result<CollectionReferen
         FROM collection_evidence WHERE operation_id=?", [operation], |r| Ok(CollectionReference {
             format:layer3_adapter::LEDGER_COLLECTION_ARTIFACT_FORMAT.into(),archive_id,archive_version,
             operation_id:r.get(0)?,group_key:r.get(1)?,binding_sha256:r.get(2)?,plan_sha256:r.get(3)?,
-            artifacts_sha256:r.get(4)?,artifact_lengths:[r.get(5)?,r.get(6)?,r.get(7)?],
+            artifacts_sha256:r.get(4)?,artifact_lengths:[
+                u64::from(r.get::<_,u32>(5)?),
+                u64::from(r.get::<_,u32>(6)?),
+                u64::from(r.get::<_,u32>(7)?),
+            ],
         })).map_err(|_|invalid())?;
     validate(&result)?;
     Ok(result)
