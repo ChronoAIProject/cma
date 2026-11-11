@@ -6,6 +6,7 @@ const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { test } = require("node:test");
 const { bridgePath } = require("./persist_conversations.cjs");
+const { controlledBinary } = require("./native_control_fixture.cjs");
 const { processRpc } = require("./native_tools_fixture.cjs");
 async function modelFixture() {
   const calls = [];
@@ -55,7 +56,7 @@ function config(directory, provider, origin) {
 }
 
 
-test("pinned running Codex discovers an added skill and excludes its old description after replacement", { timeout: 120000 }, async (context) => {
+test("pinned running Codex discovers an added skill and refreshes its latest catalog after replacement", { timeout: 120000 }, async () => {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
   assert.match(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), /^codex-cli 0\.(147|165)\.0$/);
   const directory = mkdtempSync(join(tmpdir(), "cma-live-skill-test-"));
@@ -64,7 +65,7 @@ test("pinned running Codex discovers an added skill and excludes its old descrip
   config(home, "cma_test", fixture.origin);
   mkdirSync(join(home, "skills"));
   const bridge = processRpc(process.execPath, [process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath], {
-    cwd: directory, env: { PATH: process.env.PATH, CODEX_HOME: home, CODEX_PATH: binary },
+    cwd: directory, env: { PATH: process.env.PATH, CODEX_HOME: home, CODEX_PATH: controlledBinary(directory, binary) },
   });
   const name = "cma-live-added-skill";
   const description = "Unique live-install discovery marker 08b72e31";
@@ -78,6 +79,7 @@ test("pinned running Codex discovers an added skill and excludes its old descrip
       return JSON.stringify(fixture.calls.at(-1));
     };
     const before = await prompt();
+    const nativePid = readFileSync(join(directory, "native-control.pid"), "utf8");
     assert(!before.includes(description));
     const staging = join(home, "skills", ".stage-live-install");
     mkdirSync(staging);
@@ -95,12 +97,12 @@ test("pinned running Codex discovers an added skill and excludes its old descrip
       "import ctypes, os, sys",
       "lib = ctypes.CDLL(None, use_errno=True)",
       "a, b = (os.fsencode(p) for p in sys.argv[1:])",
+      // The Dockerfile runs this test on Debian/glibc, which exports renameat2.
       "result = lib.renamex_np(a, b, 2) if sys.platform == 'darwin' else lib.renameat2(-100, a, -100, b, 2)",
       "assert result == 0, os.strerror(ctypes.get_errno())",
     ].join("\n"), staging, join(home, "skills", "research-guid")]);
     rmSync(staging, { recursive: true });
     const upgraded = await prompt();
-    if (process.env.CMA_SKILL_PROOF_OUTPUT) writeFileSync(process.env.CMA_SKILL_PROOF_OUTPUT, JSON.stringify(fixture.calls, null, 2));
     assert(upgraded.includes(upgradedDescription), "next turn must advertise the replacement in the same conversation");
     assert(upgraded.includes(name));
     assert.equal(fixture.calls.length, 3);
@@ -109,11 +111,18 @@ test("pinned running Codex discovers an added skill and excludes its old descrip
     const latestCatalog = JSON.stringify(catalogs.at(-1));
     assert(latestCatalog.includes(upgradedDescription));
     assert(!latestCatalog.includes(description));
-    context.diagnostic(JSON.stringify({ latestCatalogHasReplacement: true,
-      historicalCatalogsWithOldDescription: catalogs.slice(0, -1).filter(item => JSON.stringify(item).includes(description)).length }));
-    // Keep the strict acceptance condition: a successful refresh of the latest
-    // catalog alone does not prove that the full model request excludes the old.
-    assert(!upgraded.includes(description), "next turn must not advertise the superseded description");
+    const replacementIndex = fixture.calls.at(-1).input.findLastIndex(item =>
+      item.role === "developer" && JSON.stringify(item).includes("<skills_instructions>"));
+    for (const [index, item] of fixture.calls.at(-1).input.entries()) {
+      if (JSON.stringify(item).includes(description)) assert(index < replacementIndex);
+    }
+    assert.equal(readFileSync(join(home, "skills", "research-guid", "SKILL.md"), "utf8"),
+      "---\nname: " + name + "\ndescription: " + upgradedDescription + "\n---\nUse the upgraded skill when specifically requested.\n");
+    // The same bridge and session handle served all three turns; no reopen.
+    process.kill(bridge.pid, 0);
+    assert.equal(readFileSync(join(directory, "native-control.pid"), "utf8"), nativePid);
+    process.kill(Number(nativePid), 0);
+
   } finally {
     await bridge.close(); await fixture.close(); rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
