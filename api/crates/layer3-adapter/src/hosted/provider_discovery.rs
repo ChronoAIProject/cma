@@ -59,6 +59,7 @@ impl ProviderHostedControlTransport {
             native_transport: NativeRuntimeTransport::Direct,
             native_http_budget: Arc::new(tokio::sync::Semaphore::new(32)),
             bounded_permission_state: false,
+            bounded_update_relay: false,
         })
     }
 
