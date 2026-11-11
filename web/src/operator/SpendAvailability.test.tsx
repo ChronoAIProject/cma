@@ -17,12 +17,11 @@ const configured = (available?: boolean, enabled = false) => ({
 });
 
 it.each([false, undefined])(
-  'keeps retained policies readable with availability %s and preserves them during unrelated saves',
+  'keeps retained policies readable but blocks all settings saves with availability %s',
   async (available) => {
     const client = operatorClient();
     const initial = configured(available);
     client.admin.readSettings.mockResolvedValue(initial);
-    client.admin.replaceSettings.mockResolvedValue({ ...initial, revision: 5 });
     render(<PlatformSettings client={client} />);
     await screen.findByText(/Saving spend controls is not available yet/);
     expect(screen.getByLabelText('Enable spend controls')).toBeDisabled();
@@ -31,14 +30,12 @@ it.each([false, undefined])(
     fireEvent.change(screen.getByLabelText('Agent log retention (days)'), {
       target: { value: '45' },
     });
-    await userEvent.click(save());
-    await screen.findByText('Settings saved at revision 5.');
-    expect(client.admin.replaceSettings.mock.calls[0]![0].settings).not.toHaveProperty(
-      'model_budget',
-    );
-    expect(client.admin.replaceSettings.mock.calls[0]![0].settings.retention.agent_log_days).toBe(
-      45,
-    );
+    expect(save()).toBeDisabled();
+    expect(
+      screen.getByText(/Saving settings is not available yet for this spend policy/),
+    ).toBeVisible();
+    fireEvent.submit(save().closest('form')!);
+    expect(client.admin.replaceSettings).not.toHaveBeenCalled();
     expect(amount()).toHaveValue(String(testBudget.default_policy!.turn_limit));
   },
 );
@@ -95,6 +92,7 @@ it.each([false, undefined])('adopts availability %s from a successful save', asy
   await userEvent.click(save());
   await screen.findByText('Settings saved at revision 5.');
   expect(amount()).toBeDisabled();
+  expect(save()).toBeDisabled();
   expect(screen.getByText(/Saving spend controls is not available yet/)).toBeVisible();
 });
 

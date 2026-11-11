@@ -6143,3 +6143,14 @@ Refresh settings availability and explicit revision review permit the save.
 | --- | --- |
 | 2026-11-11 | Add admin Spend controls using existing settings primitives, exact accounting-unit inputs, revision recovery and permission-aware audit attribution. |
 | 2026-11-11 | Respect server spend-write availability with readable retained policy, explicit refresh/review, and preserved unrelated settings saves. |
+
+### 2026-11-11 — Retained spend policy save availability
+
+Use the effective retained policy and every applicable server write gate for the
+settings Save action. A configured policy behind a closed gate makes the entire
+save unavailable, including unrelated edits; explain that the draft is retained.
+An empty disabled policy still permits unrelated settings saves. Only require the
+request-policy gate when request models are retained. Refresh and explicit review
+must not reopen Save without an available response for that policy.
+
+| 2026-11-11 | Align settings save availability with retained foundation/request policy gates and keep empty-policy unrelated saves available. |
