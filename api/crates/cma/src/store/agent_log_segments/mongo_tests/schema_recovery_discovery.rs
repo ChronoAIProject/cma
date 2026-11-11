@@ -36,14 +36,19 @@ fn assert_index_plan(value: &Bson, index: &str) -> bool {
         Bson::Document(document) => {
             assert_ne!(document.get_str("stage").ok(), Some("COLLSCAN"));
             assert_ne!(document.get_str("stage").ok(), Some("SORT"));
-            let here = document.get_str("indexName").ok() == Some(index);
-            document.values().fold(here, |found, value| {
-                assert_index_plan(value, index) || found
-            })
+            let mut found = document.get_str("indexName").ok() == Some(index);
+            for value in document.values() {
+                found |= assert_index_plan(value, index);
+            }
+            found
         }
-        Bson::Array(values) => values.iter().fold(false, |found, value| {
-            assert_index_plan(value, index) || found
-        }),
+        Bson::Array(values) => {
+            let mut found = false;
+            for value in values {
+                found |= assert_index_plan(value, index);
+            }
+            found
+        }
         _ => false,
     }
 }
