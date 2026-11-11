@@ -107,10 +107,13 @@ async fn missing_previous_archive_is_named_without_changing_the_installation() {
 }
 
 #[tokio::test]
-async fn retention_bounds_refuse_without_evicting_data_or_swapping() {
-    for byte_limit in [true, false] {
+async fn retention_limits_apply_only_to_trees_with_extra_content() {
+    for (byte_limit, extra) in [(true, true), (false, true), (true, false), (false, false)] {
         let (config, request) = fixture(false).await;
         let parent = config.agent_home(request.agent_id.as_str()).join("skills");
+        if extra {
+            std::fs::write(parent.join("research/owner-note"), b"retain").unwrap();
+        }
         let stage = staging(&parent, &request);
         retention::prepare(&stage).unwrap();
         let root = stage.parent().unwrap();
@@ -121,14 +124,23 @@ async fn retention_bounds_refuse_without_evicting_data_or_swapping() {
         let file = std::fs::File::create(&kept).unwrap();
         file.set_len(if byte_limit { 512 * 1024 * 1024 } else { 42 })
             .unwrap();
-        let error = install(&config, &reqwest::Client::new(), &request)
-            .await
-            .unwrap_err();
-        assert_eq!(error.code, "agent_skill_upgrade_retention_full");
+        let result = install(&config, &reqwest::Client::new(), &request).await;
+        if extra {
+            assert_eq!(
+                result.unwrap_err().code,
+                "agent_skill_upgrade_retention_full"
+            );
+        } else {
+            assert!(result.unwrap().matches(&request));
+        }
         assert!(kept.exists());
         assert_eq!(
             std::fs::read_to_string(parent.join("research/SKILL.md")).unwrap(),
-            "# Research 1.0\n"
+            if extra {
+                "# Research 1.0\n"
+            } else {
+                "# Research 1.1\n"
+            }
         );
         assert!(!stage.exists());
         cleanup(&config);
