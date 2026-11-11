@@ -184,3 +184,27 @@ async fn durable_locator_restores_bounded_state_and_wrong_session_is_refused() {
         .load(Ordering::SeqCst));
     stop(opened).await;
 }
+
+#[tokio::test]
+async fn blocked_sink_cannot_hold_permission_refusal_past_its_deadline() {
+    let (opened, _server, _, _received) = open(true).await;
+    let sink = opened.bridge.sink.lock().await;
+    let (capture, mut updates) = UpdateRelay::capture();
+    let bytes = retained_bytes(3, &permission(1, &"x".repeat(MAX_OPTION_BYTES + 1)));
+    tokio::time::pause();
+    let started = tokio::time::Instant::now();
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        opened.bridge.receive_output(&bytes, &capture),
+    )
+    .await;
+    assert!(matches!(result, Ok(Err(AdapterError::Rejected(_)))));
+    assert_eq!(started.elapsed(), Duration::from_secs(1));
+    assert!(
+        updates.try_recv().is_err(),
+        "notification timeout publishes no receipt or effect"
+    );
+    drop(sink);
+    tokio::time::resume();
+    stop(opened).await;
+}
