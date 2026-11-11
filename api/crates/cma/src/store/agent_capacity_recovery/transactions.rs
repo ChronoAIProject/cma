@@ -1,6 +1,6 @@
 //! One accepted-work attempt per exclusive transaction. An uncertain commit
 //! never repeats the mutation or authorizes a runtime attachment/acknowledgement.
-use layer2_core::resource_access::AuthorizedResource;
+use super::authority::RecoveryAuthority;
 use layer2_core::sandbox::{
     agent_capacity_recovery::{
         ports::{ClaimOutcome, CommitOutcome, RecoveryError, RecoveryLookup},
@@ -47,10 +47,11 @@ pub(in crate::store) async fn admit(
 /// not authorize a new logical admission: absence always remains Unknown.
 pub(in crate::store) async fn lookup_accepted(
     store: &MongoSandboxStore,
-    authorized: &AuthorizedResource,
+    authorized: &dyn RecoveryAuthority,
     request: &RecoveryRequest,
 ) -> Result<RecoveryLookup, RecoveryError> {
     request.validate()?;
+    authorized.require_request(request).map_err(error)?;
     let mut session = store
         .client
         .start_session()
@@ -79,7 +80,7 @@ pub(in crate::store) async fn lookup_accepted(
 /// replacement lease or timestamp. Call with newly acquired current authority.
 pub(in crate::store) async fn reconcile(
     store: &MongoSandboxStore,
-    authorized: &AuthorizedResource,
+    authorized: &dyn RecoveryAuthority,
     expected: &RecoveryWork,
 ) -> Result<CommitOutcome<RecoveryWork>, RecoveryError> {
     expected.validate()?;
@@ -115,7 +116,7 @@ pub(in crate::store) async fn claim(
 
 pub(in crate::store) async fn complete(
     store: &MongoSandboxStore,
-    authorized: &AuthorizedResource,
+    authorized: &dyn RecoveryAuthority,
     claim: &RecoveryClaim,
     confirmation: &RecoveryConfirmation,
     now: &str,
@@ -135,7 +136,7 @@ pub(in crate::store) async fn complete(
 
 pub(in crate::store) async fn retry(
     store: &MongoSandboxStore,
-    authorized: &AuthorizedResource,
+    authorized: &dyn RecoveryAuthority,
     claim: &RecoveryClaim,
     now: &str,
     retry_at: &str,
