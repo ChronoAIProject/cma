@@ -69,6 +69,8 @@ async fn enabled_transport_cannot_be_downgraded_by_renderer_settings() {
             FencedRequest::new(9, launch),
             None,
             HostedAgentOpenSettings {
+                bounded_permission_state: false,
+                shared_runtime_output: false,
                 output_json_budget: false,
                 already_initialized_error: None,
                 open_completion: None,
