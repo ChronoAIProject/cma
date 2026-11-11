@@ -3,8 +3,9 @@
 Pre-review 2 baseline: `34bcc3667`, including normal slice/develop merges; branch
 `tl/cma-log-segments/integration-20261111`; develop `8167d01d8` is included.
 Mechanical follow-ups are `efc880523` and `3cb7a3348`, detailed below.
-Latest code assembly `a48333d82` includes proof/schema pin `c4e4b995a`,
-S1 `f0d9746ef`, S4 `984d881ee` and S5 `5123295c3`; combined gates pending.
+Latest code assembly `c3ca9e3aa` includes proof/schema pin `c4e4b995a`,
+S1 `f0d9746ef`, S4 `984d881ee`, S5 `5123295c3` and develop `cf1d6ce54`;
+combined gates are queued against that immutable source.
 No integration PR is ready. Pre-review 2 has four unresolved P1s; P1-2 is
 closed in source, while exact combined qualification remains a release gate.
 The source remains default-off. Production was not touched.
@@ -21,7 +22,7 @@ closing an issue whose production acceptance is still missing.
 | --- | --- | --- |
 | S1 readers/schema | `f0d9746ef` (compatibility correction `b9d390634`; readers `e955d37f1`) | Exact index drift and shared-reader qualification; response consumers now owned by S1 under the 01:55 allocation below. |
 | S2 composition / integration | scheduler `541c3f7f2`; merge checkpoint `e47527cbf` | Shared registration, runtime authority, accepted-work scheduler qualification, completed-work/loss routing composition and combined gates. |
-| S3 transcript consumers | `e300190a6` (`bc08dc4a0` fixes) | Fixture sequence corrected; title/usage facts use projections. Transcript still traverses lifetime data; golden parity, pagination and scale evidence remain open. |
+| S3 transcript consumers | `c62ab928f` (`bc08dc4a0` fixes) | Fixture sequence corrected; title/usage facts use projections. Transcript still traverses lifetime data; golden parity, pagination and scale evidence remain open. |
 | S4 publication | `984d881ee` (composition gates `fbe139132`) | Remaining command/discovery/claim roots; response-interval metadata; segmented capacity successor; combined root qualification. |
 | S5 capacity recovery | `5123295c3` | Current activation domain helpers, later-progress restart/loss tests and strict BSON/discovery corrections integrated; S4 service caller and actual current-source qualification pending. |
 | Develop | `8167d01d8` | Normally included; later develop merges require affected checks at the resulting candidate. |
@@ -430,3 +431,51 @@ emits four known shared-root warnings, so this is not strict-lint evidence.
 Actual Mongo is queued separately under existing heavy-1, not passed.
 At `c4e4b995a`, fmt, whitespace and source-size (6,187 files) passed.
 The combined candidate still requires strict lint and exact-source execution.
+
+
+## Lead allocation 05:20
+
+Lead answer #216 transfers response-consumer caller wiring to S1 on
+`tl/cma-log-segments/reader-foundation`; S2 keeps all other shared composition.
+Exact S1 edit paths for this narrow delta:
+
+- `api/crates/cma/src/projections.rs`: attach the response reader to the shared
+  Agent read service before legacy response/router/stream state construction.
+- `api/crates/cma/src/composition.rs`: only the corresponding response-reader
+  builder call in AgentProjectionServices construction.
+- `api/crates/cma/src/composition/bindings.rs`: remove the redundant v2-only
+  reader attachment; keep binding/gateway policy and every other caller intact.
+- `api/crates/cma/src/projections/response_readers_tests.rs`: focused production
+  construction regressions; register this child in projections.rs.
+- `docs/notes/2026-11-12-response-caller-handoff.md`: source/gate evidence.
+
+The route and stream handlers already call the indexed interfaces, but current
+production composition installs the reader only in the v2-specific clone. The
+legacy router therefore receives an unconfigured read service. The fix wires
+the shared service once before route construction. Legacy optimization and
+writer/recovery admission stay default-off; retained adopted readers stay usable.
+The prior22/20 lint diagnostics concern S4/S5/reconciliation roots, not these
+response callers. S1 will execute strict CMA and report its exact disposition
+without altering other allocations. Target:10:00 for the16:00 combined merge.
+
+
+### Integration source and gate queue — c3ca9e3aa
+
+Normally merged develop `cf1d6ce54` and resolved three overlapping declarations
+by preserving both sides: configuration documentation inventories, default-off
+reconciliation and pacing flags, and accepted recovery plus event-driven Agent
+scheduler composition. Source fmt and config documentation passed. The one
+combined branch is published at `c3ca9e3aa`; no develop merge occurred.
+
+After the current-proof Mongo run completes, the immutable combined export
+queues strict CMA, scheduler/config, adapter, canonical authenticated Mongo and
+retained-fixture Mongo separately under heavy-1. A failure stops this batch for
+inspection. These are pending checks, not source-head passes. Actual proof unit
+results remain at `44ad38198`. Both shared lock files are preserved.
+
+
+Runner qualification at `c3ca9e3aa`: **31 passed, 0 failed, 0 skipped**,
+172.707s. These are mocked Cargo/Docker orchestration, selection and cleanup
+contracts; they are not actual Mongo evidence. Formatting/config checks passed;
+base-to-working-tree whitespace passes after trimming the history6 EOF blank.
+The canonical secret scan at `b0b4943c5` passed3,977commits with zero findings.

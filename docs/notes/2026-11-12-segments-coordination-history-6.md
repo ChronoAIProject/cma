@@ -135,5 +135,3 @@ Latest clean pushed pin: `f07034864a093bff3f102cbb28a724eee12184f9`, capacity-re
 Acceptance tests remain explicitly at69eda007a:67CMA(64ignored),19actualMongo(0ignored),46core,8HTTP,7adapter;zero failures. Completed-result restart and exact wire32 profiler pass. Later ordinary-progress P1-3 remains deferred and requires the designated S2/S4 positive current publication/activation proof API/pin; the lead has been asked for that interface. Revision growth or candidate absence never grants authority. Production native proof remains typed Unsupported. No full P1 closure, PR-ready or activation claim.
 
 All owned build artifacts and completed-test executables are removed; no owned disposable Mongo container/volume remains. Both shared lock inodes are unchanged (160171589/160080032). Worktree remains for lead removal. S5 made no transferred composition-path edits after the03:25 allocation. The next source/gate work depends on shared pins and the later-progress proof contract; the combined PR stays with S2.
-
-
