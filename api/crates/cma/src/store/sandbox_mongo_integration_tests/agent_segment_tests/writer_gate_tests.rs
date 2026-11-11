@@ -20,8 +20,6 @@ async fn fixture(prefix: &str) -> (Client, String, MongoSandboxStore, Agent) {
     let (client, name) = database(prefix).await;
     let db = client.database(&name);
     segments::migrate(&db).await.unwrap();
-    db.create_collection(gate::COLLECTION).await.unwrap();
-    db.create_collection(admission::COLLECTION).await.unwrap();
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let (_, agent) = worktree_and_agent(&SandboxId("sbx_gate_fixture".into()));
     store.create_agent(agent.clone()).await.unwrap();
@@ -33,12 +31,14 @@ fn selected(agent: &Agent) -> gate::Policy {
         enabled: true,
         agents: vec![agent.id.0.clone()],
         owners: Vec::new(),
+        ..gate::Policy::default()
     }
 }
 
 fn operation() -> PublicationIdentity {
     PublicationIdentity {
         key: "fixture-publication".into(),
+        appended_at: NOW.into(),
         fingerprint: segments::publication::result_digest(&("fixture-request", 1_i64)).unwrap(),
     }
 }
@@ -354,3 +354,6 @@ async fn recovery_admission_requires_both_independent_cohorts_and_aborts_all_fen
     session.abort_transaction().await.unwrap();
     db.drop().await.unwrap();
 }
+
+#[path = "writer_slot_tests.rs"]
+mod slot_tests;
