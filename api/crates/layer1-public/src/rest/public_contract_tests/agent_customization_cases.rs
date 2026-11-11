@@ -137,7 +137,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     }
     let support = Arc::new(RuntimeSupport(
         mode != "unsupported",
-        matches!(mode, "upgrade" | "upgrade_disabled"),
+        matches!(mode, "upgrade" | "upgrade_disabled" | "history_full"),
     ));
     if matches!(
         mode,
@@ -170,6 +170,11 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
                 "1.1",
             )
             .await;
+        }
+    }
+    if mode == "history_full" {
+        for index in 0..128 {
+            settle_skill(&fixture, "installed", &format!("v{index}")).await;
         }
     }
     if mode == "upgrade_closed" {

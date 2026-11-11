@@ -202,3 +202,47 @@ async fn closed_upgrade_gate_preserves_ordinary_installs_and_accepted_work() {
     );
     assert_eq!(store.agent_log(&ready.id, 0, 100).await.unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn history_capacity_bounds_hot_metadata_and_refuses_new_work_without_truncating() {
+    let mut ready = test_agent(AgentStatus::Ready, None);
+    for n in 0..128 {
+        let version = format!("{n:03}{}", "v".repeat(253));
+        let mut item = AgentSkillInstallation::new(reference(&version));
+        item.previous = agent_live_skills::effective(&ready.work, &item.reference.id).cloned();
+        let mut pinned = material(&version);
+        pinned.name = Some("n".repeat(256));
+        item.material = Some(pinned);
+        item.status = AgentSkillInstallStatus::Installed;
+        ready.work.live_skills.push(item);
+    }
+    assert!(agent_live_skills::validate_installations(&ready.work, &[]).is_ok());
+    assert!(serde_json::to_vec(&ready.work.live_skills).unwrap().len() < 512 * 1024);
+    assert_eq!(agent_live_skills::capacity(&ready), (false, false));
+    let store = Arc::new(InMemorySandboxStore::with_agent_fixture(ready.clone()));
+    seed_active_parent(&store).await;
+    let (sender, _) = recording_sender(Ok(()));
+    let service = AgentOperationService::new(
+        store.clone(),
+        TestRuntimeRegistry::new(full_capabilities(), sender),
+    )
+    .with_skill_upgrades_enabled(true);
+    assert_eq!(
+        service
+            .install_skill(&owner(), &ready.id, reference("next"))
+            .await,
+        Err(AgentOperationError::SkillHistoryFull)
+    );
+    assert_eq!(
+        service
+            .install_skill(
+                &owner(),
+                &ready.id,
+                ready.work.live_skills.last().unwrap().reference.clone()
+            )
+            .await
+            .unwrap(),
+        ready
+    );
+    assert_eq!(store.get_agent(&ready.id).await.unwrap().unwrap(), ready);
+}

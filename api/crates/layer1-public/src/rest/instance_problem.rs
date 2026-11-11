@@ -44,6 +44,7 @@ pub(crate) enum InstanceProblem {
     },
     SkillInstallUnsupported,
     SkillUpgradeDisabled,
+    SkillHistoryFull,
     SkillNotReady,
     OperationInFlight,
     CheckpointInProgress,
@@ -143,6 +144,7 @@ impl From<AgentOperationError> for InstanceProblem {
             }
             AgentOperationError::ContentUnsupported => Self::ContentUnsupported,
             AgentOperationError::SkillUpgradeDisabled => Self::SkillUpgradeDisabled,
+            AgentOperationError::SkillHistoryFull => Self::SkillHistoryFull,
             AgentOperationError::SkillVersionUpgradeUnsupported {
                 id,
                 installed,
@@ -230,6 +232,11 @@ impl IntoResponse for InstanceProblem {
                     "Skill {id:?} is already installed at version {installed:?}; this runtime does not support upgrading it to version {requested:?}. No upgrade was admitted. After runtime support becomes available, make a new attempt with a new Idempotency-Key."
                 ),
                 "agent_skill_version_upgrade_unsupported",
+            ),
+            Self::SkillHistoryFull => (
+                StatusCode::CONFLICT, "agent-skill-history-full",
+                "This Agent has reached its retained skill installation history limit (128 attempts). Existing skills and conversation remain available; use a new Agent for further installations.",
+                "agent_skill_history_full",
             ),
             Self::SkillUpgradeDisabled => (
                 StatusCode::CONFLICT, "agent-skill-upgrade-disabled",

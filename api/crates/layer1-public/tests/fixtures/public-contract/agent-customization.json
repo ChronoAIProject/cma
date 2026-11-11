@@ -1785,6 +1785,38 @@
         "bodyKind": "json"
       },
       "captures": {}
+    },
+    {
+      "id": "agent-skills-history-full",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_history_full",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-version-upgrade-unsupported"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.1"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-skill-history-full",
+          "title": "agent skill history full",
+          "status": 409,
+          "detail": "This Agent has reached its retained skill installation history limit (128 attempts). Existing skills and conversation remain available; use a new Agent for further installations.",
+          "code": "agent_skill_history_full"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
     }
   ]
 }
