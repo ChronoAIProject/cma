@@ -128,7 +128,9 @@ async fn capacity_discovery_consumer_bounds_examined_work_across_keyset_pages() 
                 "agent_capacity_recovery_work"
             );
             assert_eq!(number(command, "limit"), 32);
-            assert_eq!(number(command, "batchSize"), 32);
+            // The pinned Rust driver increments an equal limit/batch pair to
+            // close the cursor in this batch. The server limit remains32.
+            assert_eq!(number(command, "batchSize"), 33);
             assert_eq!(number(command, "maxTimeMS"), 1000);
             assert!(matches!(
                 command.get_str("hint").unwrap(),
