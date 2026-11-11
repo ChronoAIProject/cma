@@ -199,7 +199,8 @@ async fn blocked_sink_cannot_hold_permission_refusal_past_its_deadline() {
     )
     .await;
     assert!(matches!(result, Ok(Err(AdapterError::Rejected(_)))));
-    assert_eq!(started.elapsed(), Duration::from_secs(1));
+    // Tokio rounds deadlines up to its next one-millisecond timer tick.
+    assert!((Duration::from_secs(1)..=Duration::from_millis(1001)).contains(&started.elapsed()));
     assert!(
         updates.try_recv().is_err(),
         "notification timeout publishes no receipt or effect"
