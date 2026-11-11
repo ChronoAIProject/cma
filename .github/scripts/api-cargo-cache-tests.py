@@ -84,6 +84,59 @@ class CacheTests(unittest.TestCase):
             with self.subTest(route=route), self.assertRaises(ValueError):
                 cache.authority(self.env, event)
 
+    def test_release_push_prepares_and_injects_without_cache_write_authority(self):
+        self.inputs()
+        event_path, output = self.root / "event.json", self.root / "output"
+        event_path.write_text(json.dumps({"repository": {"full_name": cache.REPOSITORY}}))
+        env = dict(self.env, GITHUB_EVENT_NAME="push", GITHUB_REF="refs/heads/tl/release/train-w2",
+                   GITHUB_EVENT_PATH=str(event_path), RUNNER_TEMP=str(self.root), GITHUB_OUTPUT=str(output))
+        with patch.dict(os.environ, env, clear=True), patch.object(cache, "ROOT", self.root), \
+                patch.object(cache, "transfer") as transfer:
+            with patch.object(cache.sys, "argv", ["cache", "prepare"]):
+                cache.main()
+            self.assertIn("key=cma-api-cargo-", output.read_text())
+            bundle = self.root / "cma-api-cargo-cache/data"
+            original_root = self.root
+            self.root = bundle
+            self.bundle()
+            self.root = original_root
+            state = self.root / "cma-api-cargo-cache/state.json"
+            state.write_text(json.dumps({"prefix": self.prefix}))
+            with patch.object(cache.sys, "argv", ["cache", "inject"]), contextlib.redirect_stdout(io.StringIO()):
+                cache.main()
+            transfer.assert_called_once_with("inject", bundle.resolve())
+            transfer.reset_mock()
+            before = output.read_text()
+            with patch.object(cache.sys, "argv", ["cache", "extract"]), \
+                    self.assertRaisesRegex(ValueError, "only develop push"):
+                cache.main()
+            transfer.assert_not_called()
+            self.assertEqual(output.read_text(), before)
+
+    def test_cache_write_authority_remains_develop_only(self):
+        develop = dict(self.env, GITHUB_EVENT_NAME="push", GITHUB_REF="refs/heads/develop")
+        cache.authority(develop, self.event, "extract")
+        for ref in ("refs/heads/tl/release/train", "refs/heads/tl/release/nested/train"):
+            release = dict(develop, GITHUB_REF=ref)
+            for operation in ("prepare", "inject"):
+                cache.authority(release, self.event, operation)
+            with self.subTest(ref=ref), self.assertRaisesRegex(ValueError, "only develop push"):
+                cache.authority(release, self.event, "extract")
+        with self.assertRaisesRegex(ValueError, "only develop push"):
+            cache.authority(self.env, self.event, "extract")
+        for ref in ("refs/heads/main", "refs/heads/tl/release", "refs/heads/tl/release/",
+                    "refs/heads/tl/release-other/train", "refs/tags/tl/release/train"):
+            with self.subTest(ref=ref), self.assertRaises(ValueError):
+                cache.authority(dict(develop, GITHUB_REF=ref), self.event)
+        release = dict(develop, GITHUB_REF="refs/heads/tl/release/train")
+        foreign = {"repository": {"full_name": "other/project"}}
+        with self.assertRaises(ValueError):
+            cache.authority(release, foreign)
+        with self.assertRaises(ValueError):
+            cache.authority(dict(release, GITHUB_REPOSITORY="other/project"), self.event)
+        with self.assertRaises(ValueError):
+            cache.authority(release, self.event, "unknown")
+
     def test_source_changes_reuse_dependencies_but_compatibility_changes_do_not(self):
         now = self.inputs()
         prefix = cache.compatibility(self.root, now)
