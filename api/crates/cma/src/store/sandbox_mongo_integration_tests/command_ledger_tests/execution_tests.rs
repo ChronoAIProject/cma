@@ -21,6 +21,9 @@ mod resource_execution;
 #[path = "capacity_execution_tests.rs"]
 mod capacity_execution;
 
+#[path = "request_budget_tests.rs"]
+mod request_budget;
+
 mod bounded_admission_tests;
 mod bounded_audit_tests;
 mod bounded_compatibility_tests;
@@ -29,6 +32,7 @@ mod bounded_fixtures;
 mod bounded_message_tests;
 mod bounded_read_proof_tests;
 mod bounded_receipt_tests;
+mod fleet_activation_tests;
 
 struct Authority(Mutex<Result<Caller, CommandAuthorizationError>>);
 #[async_trait::async_trait]
@@ -474,3 +478,6 @@ async fn operation_command_lookup_is_exact_and_rejects_duplicate_bindings() {
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "budget_execution_tests.rs"]
+mod budget_execution;

@@ -1,10 +1,14 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub model_budget_writes_enabled: bool,
+    pub model_request_budget_writes_enabled: bool,
+    pub bounded_title_reads: bool,
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
+    pub document_revocation_reserve: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -21,10 +25,46 @@ impl FeatureFlags {
             }
         }
         Ok(Self {
+            model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
+            model_request_budget_writes_enabled: flag(
+                lookup,
+                "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED",
+            )?,
+            bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             v2_ui_transport: flag(lookup, "CHRONO_V2_UI_TRANSPORT_ENABLED")?,
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
             nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
+            document_revocation_reserve: flag(
+                lookup,
+                "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
+            )?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bounded_title_reads_require_an_explicit_boolean_opt_in() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok(if key == "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED" {
+                    value.map(str::to_owned)
+                } else {
+                    None
+                })
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_title_reads, expected);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED").then(|| value.into()))
+            })
+            .is_err());
+        }
     }
 }
