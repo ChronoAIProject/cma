@@ -93,6 +93,8 @@ data:
   CHRONO_AGENT_LOG_FLEET_PERCENT: "0"
   # Qualify title reads separately after the admission/public-window cohort.
   CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED: "false"
+  CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED: "false"
+  CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "false"
   # Response projection uses a proven target-turn window; independent rollout.
   CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
   CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED: "false"
