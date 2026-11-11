@@ -75,14 +75,14 @@ pub(super) async fn require_current_result(
     stored: &StoredRecovery,
     scope: &mut TransactionScope<'_>,
 ) -> Result<(), TransactionLogError> {
-    if stored.result.agent_revision == current.revision {
+    if same_result_position(current, stored) {
         if stored.result.agent_digest != publication::result_digest(current)? {
             return Err(SandboxStoreError::Conflict.into());
         }
         return Ok(());
     }
     if stored.work.phase != RecoveryPhase::Completed
-        || stored.result.agent_revision >= current.revision
+        || stored.result.agent_revision > current.revision
         || stored.result.through_seq > current.conversation.last_seq
     {
         return Err(SandboxStoreError::Conflict.into());
@@ -95,6 +95,13 @@ pub(super) async fn require_current_result(
         return Err(SandboxStoreError::Conflict.into());
     }
     Ok(())
+}
+
+fn same_result_position(current: &Agent, stored: &StoredRecovery) -> bool {
+    // Keyed output advances the log and publication head without incrementing
+    // the Agent revision. Either coordinate can require a new current witness.
+    stored.result.agent_revision == current.revision
+        && stored.result.through_seq == current.conversation.last_seq
 }
 
 fn verify_binding(
@@ -138,7 +145,7 @@ fn verify_binding(
         || latest.last_seq < admitted.last_seq
         || stored.result.agent_revision > current.revision
         || stored.result.through_seq > current.conversation.last_seq
-        || (stored.result.agent_revision == current.revision
+        || (same_result_position(current, stored)
             && stored.result.agent_digest != publication::result_digest(current)?)
     {
         return Err(SandboxStoreError::Conflict);

@@ -15,7 +15,12 @@ async fn capacity_later_progress_restarts_with_current_target_without_rewriting_
         let before = support::snapshot(&store, &completed).await;
         assert_eq!(before.carrier, original.carrier);
         assert_eq!(before.original_publication, original.original_publication);
-        assert!(advanced.revision > original.agent.revision);
+        assert!(advanced.conversation.last_seq > original.agent.conversation.last_seq);
+        if turn {
+            assert!(advanced.revision > original.agent.revision);
+        } else {
+            assert_eq!(advanced.revision, original.agent.revision);
+        }
         let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
         let service = Arc::new(RecoveryService::new(
             reopened.clone(),
@@ -97,7 +102,11 @@ async fn capacity_later_progress_refuses_missing_old_or_foreign_current_witness_
     let before = support::snapshot(&store, &completed).await;
     let publications = &store.segment_logs.publications;
     let row = publications
-        .find_one(doc! {"result_revision": current.revision as i64})
+        .find_one(doc! {
+            "agent_id": current.id.as_str(),
+            "result_revision": current.revision as i64,
+            "last_seq": current.conversation.last_seq as i64,
+        })
         .await
         .unwrap()
         .unwrap();
