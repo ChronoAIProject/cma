@@ -288,104 +288,151 @@ async fn unproved_native_terminal_commit_returns_typed_unknown_without_assuming_
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
 async fn compact_capacity_failure_preserves_prefix_through_both_unknown_commit_outcomes() {
     for committed in [false, true] {
-        let f = Fixture::with_bytes(true).await;
-        let recorder = DurableAgentUpdateRecorder::new(f.store.clone());
-        let mut assembly = AgentMessageAssembly::default();
-        recorder
-            .record_update(
-                &f.full.id,
+        prefix_failure_unknown(committed, true).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn visible_capacity_failure_replays_prefix_once_through_both_unknown_commit_outcomes() {
+    for committed in [false, true] {
+        prefix_failure_unknown(committed, false).await;
+    }
+}
+
+async fn prefix_failure_unknown(committed: bool, retained: bool) {
+    let f = Fixture::with_bytes(true).await;
+    let recorder = DurableAgentUpdateRecorder::new(f.store.clone());
+    let mut assembly = AgentMessageAssembly::default();
+    let text = if retained {
+        "p".repeat(1024 * 1024)
+    } else {
+        "Visible partial reply before failure".to_owned()
+    };
+    recorder
+        .record_update(
+            &f.full.id,
+            1,
+            &mut assembly,
+            ConversationUpdate::Said(layer3_adapter::SessionUpdate::AgentMessageChunk(
+                layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(text.clone())),
+            )),
+            MINUTE.into(),
+        )
+        .await
+        .unwrap();
+    let current = f.full.clone();
+    let prefix = f
+        .store
+        .agent_message_checkpoint(&current.id)
+        .await
+        .unwrap()
+        .unwrap();
+    if committed {
+        f.failpoint(Bson::Document(doc! {"times":5}), doc! {"writeConcernError":{"code":50,"codeName":"MaxTimeMSExpired","errmsg":"fixture uncertain compact commit"}}).await;
+    } else {
+        f.failpoint(
+            Bson::String("alwaysOn".into()),
+            doc! {"errorCode":1,"errorLabels":["UnknownTransactionCommitResult"]},
+        )
+        .await;
+    }
+    let (acks, mut acknowledged) = tokio::sync::mpsc::channel(2);
+    let mut update = f.update(acks);
+    if !retained {
+        let ConversationUpdate::RuntimeOutput { update: inner, .. } = &mut update else {
+            unreachable!()
+        };
+        *inner = Some(Box::new(ConversationUpdate::Said(
+            layer3_adapter::SessionUpdate::ToolCallUpdate(layer3_adapter::ToolCallUpdate::new(
+                "refused",
+                layer3_adapter::ToolCallUpdateFields::new().title("Unrecorded tool output"),
+            )),
+        )));
+    }
+    let started = Instant::now();
+    let result = recorder
+        .record_update(&current.id, 1, &mut assembly, update.clone(), MINUTE.into())
+        .await;
+    f.off().await;
+    assert!(started.elapsed() < Duration::from_secs(120));
+    if committed {
+        let outcome = result.unwrap();
+        assert!(outcome.turn_closed);
+        assert!(outcome.appended.iter().any(|e|matches!(&e.kind,AgentLogKind::TurnFailed {failure,..} if failure.class == "agent_log_capacity_exceeded")));
+    } else {
+        assert!(matches!(
+            result,
+            Err(AgentConversationError::Unavailable(_))
+        ));
+        assert_eq!(
+            f.store.get_agent(&current.id).await.unwrap(),
+            Some(current.clone())
+        );
+        assert_eq!(
+            crate::sandbox::record_update_for_test(
+                recorder.as_ref(),
+                &current.id,
                 1,
                 &mut assembly,
-                ConversationUpdate::Said(layer3_adapter::SessionUpdate::AgentMessageChunk(
-                    layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(
-                        "p".repeat(1024 * 1024),
-                    )),
-                )),
-                MINUTE.into(),
+                update.clone()
             )
-            .await
-            .unwrap();
-        let current = f.full.clone();
-        let prefix = f
-            .store
-            .agent_message_checkpoint(&current.id)
-            .await
-            .unwrap()
-            .unwrap();
-        if committed {
-            f.failpoint(Bson::Document(doc! {"times":5}), doc! {"writeConcernError":{"code":50,"codeName":"MaxTimeMSExpired","errmsg":"fixture uncertain compact commit"}}).await;
-        } else {
-            f.failpoint(
-                Bson::String("alwaysOn".into()),
-                doc! {"errorCode":1,"errorLabels":["UnknownTransactionCommitResult"]},
-            )
-            .await;
-        }
-        let (acks, mut acknowledged) = tokio::sync::mpsc::channel(2);
-        let update = f.update(acks);
-        let started = Instant::now();
-        let result = recorder
-            .record_update(&current.id, 1, &mut assembly, update.clone(), MINUTE.into())
-            .await;
-        f.off().await;
-        assert!(started.elapsed() < Duration::from_secs(120));
-        if committed {
-            let outcome = result.unwrap();
-            assert!(outcome.turn_closed);
-            assert!(outcome.appended.iter().any(|e|matches!(&e.kind,AgentLogKind::TurnFailed {failure,..} if failure.class == "agent_log_capacity_exceeded")));
-        } else {
-            assert!(matches!(
-                result,
-                Err(AgentConversationError::Unavailable(_))
-            ));
-            assert_eq!(
-                f.store.get_agent(&current.id).await.unwrap(),
-                Some(current.clone())
-            );
-            assert_eq!(
-                crate::sandbox::record_update_for_test(
-                    recorder.as_ref(),
-                    &current.id,
-                    1,
-                    &mut assembly,
-                    update
-                )
-                .await,
-                Err(AgentConversationError::CapacityExceeded)
-            );
-        }
-        assert!(acknowledged.try_recv().is_err());
-        let row = f
-            .store
-            .agents
-            .find_one(doc! {"_id":current.id.as_str()})
-            .await
-            .unwrap()
-            .unwrap();
+            .await,
+            Err(AgentConversationError::CapacityExceeded)
+        );
+    }
+    assert!(acknowledged.try_recv().is_err());
+    let row = f
+        .store
+        .agents
+        .find_one(doc! {"_id":current.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    if retained {
         assert_eq!(
             row.get("agent_capacity_prefix_v1"),
             Some(&mongodb::bson::serialize_to_bson(&prefix).unwrap())
         );
-        let tail = f
-            .store
-            .agent_log(&current.id, current.conversation.last_seq, 20)
-            .await
-            .unwrap();
-        assert_eq!(
-            tail.iter()
-                .filter(|e| matches!(e.kind, AgentLogKind::TurnFailed { .. }))
-                .count(),
-            1
-        );
-        assert_eq!(
-            f.store
-                .get_agent(&current.id)
-                .await
-                .unwrap()
-                .unwrap()
-                .status,
-            AgentStatus::Failed
-        );
-        f.cleanup().await;
+    } else {
+        assert!(!row.contains_key("agent_capacity_prefix_v1"));
     }
+    let tail = f
+        .store
+        .agent_log(&current.id, current.conversation.last_seq, 20)
+        .await
+        .unwrap();
+    assert_eq!(tail.iter().filter(|entry| matches!(&entry.kind, AgentLogKind::AgentMessage { content } if content == &text)).count(), usize::from(!retained));
+    if !retained {
+        assert!(matches!(tail[0].kind, AgentLogKind::AgentMessage { .. }));
+    }
+    let settled = f.store.get_agent(&current.id).await.unwrap().unwrap();
+    let peer = Arc::new(MongoSandboxStore::open(&f.client, &f.name).await.unwrap());
+    assert!(DurableAgentUpdateRecorder::new(peer)
+        .record_update(
+            &current.id,
+            1,
+            &mut AgentMessageAssembly::default(),
+            update,
+            MINUTE.into()
+        )
+        .await
+        .is_err());
+    assert_eq!(f.store.get_agent(&current.id).await.unwrap(), Some(settled));
+    assert_eq!(
+        tail.iter()
+            .filter(|e| matches!(e.kind, AgentLogKind::TurnFailed { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        f.store
+            .get_agent(&current.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        AgentStatus::Failed
+    );
+    f.cleanup().await;
 }

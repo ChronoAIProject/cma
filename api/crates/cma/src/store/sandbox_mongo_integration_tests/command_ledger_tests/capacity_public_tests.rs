@@ -118,6 +118,20 @@ async fn public_case(bytes: bool, refused: bool) {
         .unwrap();
     let prepared = Arc::new(prepared);
     let recorder = DurableAgentUpdateRecorder::new(prepared.clone());
+    recorder
+        .record_update(
+            &agent.id,
+            1,
+            &mut assembly,
+            ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(
+                layer3_adapter::ContentChunk::new(layer3_adapter::ContentBlock::from(
+                    "Visible partial reply before settlement",
+                )),
+            )),
+            layer2_core::now_rfc3339(),
+        )
+        .await
+        .unwrap();
     let terminal = ConversationUpdate::TurnEndedForPrompt {
         prompt_id: PromptIdentity::new(
             full.conversation.conversation_id.as_deref().unwrap(),
@@ -199,6 +213,9 @@ async fn public_case(bytes: bool, refused: bool) {
         assert!(response["error"].is_null());
     }
     assert!(response.to_string().contains("Preserved answer"));
+    assert!(response
+        .to_string()
+        .contains("Visible partial reply before settlement"));
     assert!(!response.to_string().contains("Unrecorded output"));
     assert!(started.elapsed() < Duration::from_secs(120));
     assert_eq!(
@@ -209,6 +226,17 @@ async fn public_case(bytes: bool, refused: bool) {
         .agent_log(&agent.id, full.conversation.last_seq, 200)
         .await
         .unwrap();
+    assert!(
+        matches!(&tail[0].kind, AgentLogKind::AgentMessage {content} if content == "Visible partial reply before settlement")
+    );
+    assert_eq!(tail.iter().filter(|e| matches!(&e.kind, AgentLogKind::AgentMessage {content} if content == "Visible partial reply before settlement")).count(), 1);
+    assert!(!store
+        .agents
+        .find_one(doc! {"_id":agent.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap()
+        .contains_key("agent_capacity_prefix_v1"));
     assert_eq!(
         tail.iter()
             .filter(|entry| matches!(
