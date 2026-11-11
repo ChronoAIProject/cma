@@ -128,7 +128,12 @@ impl CapacityRecoverySweep {
         // unbounded tasks, consume a whole page of leases, or trigger replay.
         let count = CONCURRENCY.min(state.queued.len());
         let batch: Vec<_> = state.queued.drain(..count).collect();
-        let mut attempts = stream::iter(batch.iter().map(|request| self.work.run(request)))
+        let work = Arc::clone(&self.work);
+        let mut attempts = stream::iter(batch)
+            .map(move |request| {
+                let work = Arc::clone(&work);
+                async move { work.run(&request).await }
+            })
             .buffer_unordered(CONCURRENCY);
         let mut completed = 0;
         let mut refused = 0;
@@ -139,9 +144,9 @@ impl CapacityRecoverySweep {
                 Err(_) => refused += 1,
             }
         }
-        if !batch.is_empty() {
+        if count > 0 {
             tracing::debug!(
-                attempted = batch.len(),
+                attempted = count,
                 completed,
                 refused,
                 "Accepted capacity recovery sweep completed"
