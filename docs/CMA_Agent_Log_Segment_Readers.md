@@ -101,8 +101,8 @@ alone are not an executable or activation claim.
 
 ## Additive migration and retention
 
-The reader migration adds the six sidecars: heads, segments, publications,
-projections, evidence and audits. The shared migration runner owns source and
+The reader migration adds the eight sidecars: heads, segments, publications,
+projections, evidence, audits, rollout gates and exact publication admissions. The shared migration runner owns source and
 checksum identity, authority, lease renewal and completion receipts. One adapter
 step creates one collection or one index with majority acknowledgment, then
 reads back the contract. Existing validator, index-order, name, collation or TTL
@@ -113,8 +113,8 @@ Startup verifies instead of creating sidecars. All may be absent before any
 version-2 Agent exists; a partial or incompatible inventory fails startup.
 Original events and all sidecars must be backed up and restored coherently.
 No TTL, deletion, compaction, archival or sequence reset is authorized by this
-reader migration. Later writer control/admission collections require their
-separate registered additive migration.
+reader migration. Writer control/admission collections are part of the same
+explicitly registered additive inventory; their creation enables no policy.
 
 ## Rollout gates and verification
 
@@ -150,3 +150,26 @@ Cargo target. It reuses the canonical disposable Mongo runner's image, cache,
 resource bounds and cleanup; its temporary source archive is removed afterward.
 This predecessor check does not certify the release's permitted rollback image
 or prove that an already-running old writer has been drained.
+
+## Output ordering and durable controls
+
+The additive inventory includes `agent_log_gates` and `agent_log_admissions`.
+Migration creates their validators and the exact admission-key index without
+creating a gate record, selecting a cohort or activating a writer. The gate
+record includes its bounded preparation slots; admissions retain their original
+request identity and required nullable recovery proof. Runtime parsers still
+validate authority and semantic relationships before effects. Global gate
+policy alone does not prevent a legacy hierarchy purge; per-Agent admissions
+do preserve its evidence and lineage.
+
+Output changes use the partial unique `agent_log_output_change_seek` index on
+Agent, incarnation, evidence generation, kind, numeric turn and numeric ordinal.
+Only `output_change` evidence carries the numeric seek fields. Its validator
+requires BSON long values within the safe sequence range and equality to the
+typed nested record. Other evidence kinds omit these fields. Migration inspection
+compares the exact partial predicate as well as key order, uniqueness and name;
+drift refuses before further DDL.
+
+The immutable migration checksum must include `schema.rs`,
+`schema/validators.rs` and `schema/controls.rs`. The migration adapter and shared
+operator registration remain an integration gate; startup still performs no DDL.
