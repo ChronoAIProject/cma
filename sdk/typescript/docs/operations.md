@@ -40,14 +40,6 @@ export async function restorePlatformDefaults() {
 }
 ```
 
-Settings responses expose optional `model_budget_writes_available` separately
-from the stored policy. Only explicit `true` permits spend-control saves; false
-or missing means saving is unavailable. This response capability is not writable
-policy. A closed-gate refusal uses `model_budget_writes_unavailable` and retains
-the current revision. A full replacement that omits an unchanged `model_budget`
-preserves its stored value, so unrelated settings can still be updated. Never
-silently omit an edited policy or retry a refused save automatically.
-
 Settings replacement, patch and reset use `expected_revision`. Patches contain
 at least one complete section; omitted sections remain unchanged, while null
 sections and empty patches are refused. Reread after a conflict and review the
@@ -56,6 +48,14 @@ set `triggers.orchestration_paused`, freezing or resuming admitted Launch work
 without failing it. `triggers.enabled` separately controls new public admission.
 These commands do not invent an idempotency key or
 automatically retry an uncertain result.
+
+Settings reads and successful settings mutations preserve the optional
+`model_budget_writes_available` and `model_request_budget_writes_available`
+booleans. These describe deployment compatibility, separately from policy
+enablement and operator permissions. False or missing means the corresponding
+save capability is unavailable; saving nonempty request-model bounds requires
+both flags to be true. Keep this read-only metadata outside writable settings.
+The server remains authoritative and can refuse a save if availability changes.
 
 Sandbox persistence is owned by Agent Sandbox and its attached PV. CMA exposes
 no public setting for snapshot scheduling or checkpoint archive retention.
