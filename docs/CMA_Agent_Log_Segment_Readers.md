@@ -170,6 +170,15 @@ typed nested record. Other evidence kinds omit these fields. Migration inspectio
 compares the exact partial predicate as well as key order, uniqueness and name;
 drift refuses before further DDL.
 
+Audit collection uses the shared publication output fold. It rebuilds turn
+counters, immutable output changes and indexed tool state into the same private
+stage as the semantic evidence, then promotes both under one progress cursor.
+A resumed physical unit requires the prior completed turn-output checkpoint;
+missing output state refuses installation. The first-terminal tool reference
+remains immutable when later output advances the current tool record. Source
+reply row limits are independent of the smaller evidence write-transaction
+limit; the historical source/query/time and transaction caps remain test gates.
+
 The immutable migration checksum must include `schema.rs`,
 `schema/validators.rs` and `schema/controls.rs`. The migration adapter and shared
 operator registration remain an integration gate; startup still performs no DDL.
