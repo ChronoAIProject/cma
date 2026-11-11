@@ -4,7 +4,8 @@ Owner: S2 API/schema/publisher; S4 invariant confirmation and service caller.
 Published narrow source pin: `c4e4b995a`, branch
 `tl/cma-log-segments/current-publication-proof`. S4 caller target: 06:30 SGT.
 S5 owns current activation domain/native helpers and restart/loss qualification.
-S4 agreement remains pending; the exact boundary is in the assignments note.
+S4 confirmed the invariant in `281f92000`; caller source is published at
+`2dbb5d81c` and consumed by S5. Actual combined caller qualification is pending.
 This is a dependency contract, not P1-3 closure or permission to activate writers.
 
 ## Frozen API

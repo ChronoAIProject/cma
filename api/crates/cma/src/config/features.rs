@@ -494,3 +494,6 @@ mod relay_tests {
 
 #[cfg(test)]
 mod rollout_tail_tests;
+
+#[cfg(test)]
+mod raw_output_tests;
