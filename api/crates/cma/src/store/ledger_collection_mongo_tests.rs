@@ -101,20 +101,36 @@ async fn bounded_collection_observes_complete_groups_with_no_writes_or_history_s
     let commands = trace.lock().unwrap().clone();
     assert!(commands.iter().all(|(name, _)| matches!(
         name.as_str(),
-        "find" | "getMore" | "abortTransaction" | "killCursors"
+        "find" | "listIndexes" | "getMore" | "abortTransaction" | "killCursors"
     )));
-    assert!(commands[0]
-        .1
+    let first_find = &commands.iter().find(|(name, _)| name == "find").unwrap().1;
+    assert!(first_find
         .get_document("readConcern")
         .is_ok_and(|c| c.get_str("level").ok() == Some("snapshot")));
     assert_eq!(commands.last().unwrap().0, "abortTransaction");
+    let inventories: Vec<_> = commands
+        .iter()
+        .filter(|(name, _)| name == "listIndexes")
+        .collect();
+    assert_eq!(inventories.len(), 4, "qualify each collection only once");
+    for (_, command) in inventories {
+        assert_eq!(
+            command
+                .get_document("cursor")
+                .unwrap()
+                .get_i32("batchSize")
+                .unwrap(),
+            64
+        );
+        assert_eq!(command.get_i32("maxTimeMS").unwrap(), 2_000);
+    }
     for (_, command) in commands.iter().filter(|(name, _)| name == "find") {
         assert_ne!(command.get_str("find").unwrap(), "agent_log");
-        assert!(command.contains_key("hint"));
+        assert!(command.get_str("hint").is_ok());
         assert!(command.get_i64("limit").unwrap() <= 257);
         assert_eq!(
             command.get_document("lsid").unwrap(),
-            commands[0].1.get_document("lsid").unwrap()
+            first_find.get_document("lsid").unwrap()
         );
     }
     for (collection, document) in &documents {
