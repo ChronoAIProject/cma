@@ -162,3 +162,51 @@ async fn capacity_lineage_refuses_oversized_child_set_before_mutation() {
     assert_eq!(store.get_agent(&original.id).await.unwrap(), Some(original));
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn capacity_lineage_refuses_oversized_workspace_set_before_mutation() {
+    let (client, name) = database("capacity_workspace_bound").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let agent = ready_conversation_fixture(&store, "workspace-bound").await;
+    let original = store
+        .get_workspace(&agent.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut rows = Vec::new();
+    for index in 0..512 {
+        let mut workspace = original.clone();
+        workspace.id = WorkspaceId(format!("bounded-workspace-{index:04}"));
+        workspace.name = format!("bounded-workspace-{index:04}");
+        workspace.path = format!("/home/cma/{}", workspace.name);
+        rows.push(crate::store::workspaces::workspace_document(&workspace).unwrap());
+    }
+    store.workspaces.insert_many(rows).await.unwrap();
+    let mut session = client.start_session().await.unwrap();
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
+    assert!(matches!(
+        crate::store::agent_capacity_recovery::lineage::workspaces(
+            &store,
+            &agent.sandbox_id,
+            &mut scope
+        )
+        .await,
+        Err(
+            crate::store::agent_log_integrity::TransactionLogError::Domain(
+                SandboxStoreError::Unavailable(_)
+            )
+        )
+    ));
+    scope.release().abort_transaction().await.unwrap();
+    assert_eq!(
+        store.workspaces.count_documents(doc! {}).await.unwrap(),
+        513
+    );
+    assert_eq!(
+        store.get_workspace(&original.id).await.unwrap(),
+        Some(original)
+    );
+    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
+    client.database(&name).drop().await.unwrap();
+}
