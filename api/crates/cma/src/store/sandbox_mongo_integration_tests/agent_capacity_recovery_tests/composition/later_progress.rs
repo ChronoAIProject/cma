@@ -120,7 +120,8 @@ async fn capacity_later_service_retries_crash_and_refuses_foreign_or_stale_activ
     let receipt = completion_receipt(&store, &completed).await;
     progress(&store, &request).await;
     let advanced = snapshot(&store, &request).await;
-    assert!(advanced.agent.revision > original.agent.revision);
+    assert_eq!(advanced.agent.revision, original.agent.revision);
+    assert!(advanced.agent.conversation.last_seq > original.agent.conversation.last_seq);
     assert_eq!(advanced.carrier, original.carrier);
     let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
     let service = service(&reopened, false);
