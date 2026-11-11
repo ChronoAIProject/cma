@@ -465,9 +465,16 @@ normal-merge dependency, without importing the mixed integration tip. Exact
 additional composition paths: `sandbox/capacity_scheduler.rs`,
 `sandbox/capacity_scheduler_tests.rs`, `sandbox/scheduler.rs`, `sandbox/mod.rs`,
 `store/agent_capacity_recovery_presence.rs`, and its registration in `store/mod.rs`
-(all under `api/crates/cma/src/`). The scheduler's migration-presence check is
-qualified in `store/migrations/tests/segments_runtime.rs`; this dependency's
-existing single assertion is reused unchanged. Shared schema/grants remain S2.
+(all under `api/crates/cma/src/`). The scheduler migration-presence check is
+qualified in the new composition Mongo tests. The source branch lacks S2's
+`store/migrations/tests/segments_runtime.rs`, so its single test-only assertion
+is omitted from the isolated dependency. Shared schema/grants remain S2.
 The scheduler observes one32-row page, runs at most2 accepted operations per turn,
 and grants no admission or principal from discovery. All7 existing scheduler
 unit tests must actually execute. S5's published service merge is `1a6d8401d`.
+
+Exact new scoped test child: `store/sandbox_mongo_integration_tests/
+agent_capacity_recovery_tests/composition/faults.rs`. Both this child and its
+`composition.rs` parent belong to S4; the existing S5 restart/native tests remain
+unchanged. Scheduler source pins are isolated as `82ecad179` and `6a0399f3a` and
+normally merged; their production code and seven unit tests are unchanged.
