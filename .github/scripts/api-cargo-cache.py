@@ -38,15 +38,12 @@ def digest(path):
     return result.hexdigest()
 
 
-def authority(env, event, operation="prepare"):
-    require(operation in ("prepare", "inject", "extract"), "unsupported cache operation")
+def authority(env, event):
     require(env.get("GITHUB_REPOSITORY") == REPOSITORY, "repository differs")
     require(event.get("repository", {}).get("full_name") == REPOSITORY, "event repository differs")
     require(re.fullmatch(r"[0-9a-f]{40}", env.get("GITHUB_SHA", "")), "full source SHA required")
     if env.get("GITHUB_EVENT_NAME") == "push":
-        ref = env.get("GITHUB_REF", "")
-        release = ref.startswith("refs/heads/tl/release/") and len(ref) > len("refs/heads/tl/release/")
-        require(ref == "refs/heads/develop" or release, "unsupported cache push ref")
+        require(env.get("GITHUB_REF") == "refs/heads/develop", "only develop push can seed the branch cache")
     else:
         require(env.get("GITHUB_EVENT_NAME") == "pull_request", "unsupported cache event")
         request = event.get("pull_request", {})
@@ -56,9 +53,6 @@ def authority(env, event, operation="prepare"):
         number = event.get("number")
         require(type(number) is int and number > 0, "PR number required")
         require(env.get("GITHUB_REF") == f"refs/pull/{number}/merge", "PR merge ref required")
-    if operation == "extract":
-        require(env.get("GITHUB_EVENT_NAME") == "push" and env.get("GITHUB_REF") == "refs/heads/develop",
-                "only develop push can seed the branch cache")
 
 
 def compatibility(root, now):
@@ -83,8 +77,8 @@ def emit(name, value):
         output.write(f"{name}={value}\n")
 
 
-def context(operation):
-    authority(os.environ, json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()), operation)
+def context():
+    authority(os.environ, json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()))
     temporary = Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
     require(temporary.is_dir(), "runner temporary directory required")
     directory = temporary / "cma-api-cargo-cache"
@@ -208,8 +202,8 @@ def run(operation, directory):
 
 def main():
     require(len(sys.argv) == 2 and sys.argv[1] in ("prepare", "inject", "extract"), "expected prepare, inject or extract")
+    directory = context()  # Authority failures are errors, never cache misses.
     operation = sys.argv[1]
-    directory = context(operation)  # Authority failures are errors, never cache misses.
     if operation == "prepare":
         prepare(directory)
         return
