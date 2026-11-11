@@ -21,7 +21,12 @@ mod platform;
 mod request_tests;
 mod spend;
 pub use platform::{CloudSpendPolicy, PlatformBudgetPolicy, SpendLevels};
-pub use spend::{PlatformAdmissionState, PlatformSpendLedger, PlatformSpendState};
+pub use spend::{
+    CloudObservationInput, ObservationError, PlatformAdmissionState, PlatformSpendLedger,
+    PlatformSpendState,
+};
+mod spend_service;
+pub use spend_service::PlatformSpendService;
 #[cfg(test)]
 mod controls_tests;
 
