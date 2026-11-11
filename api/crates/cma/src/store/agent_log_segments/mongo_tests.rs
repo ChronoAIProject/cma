@@ -31,6 +31,7 @@ mod ranges;
 mod recovery_shape_fixture;
 mod retention;
 mod schema_controls;
+mod schema_inventory_drift;
 mod schema_output;
 mod schema_recovery_discovery;
 mod schema_recovery_migration;

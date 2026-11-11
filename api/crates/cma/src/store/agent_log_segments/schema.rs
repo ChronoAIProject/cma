@@ -192,15 +192,24 @@ async fn pending(database: &Database) -> Result<Vec<Step>, StoreError> {
             .try_collect()
             .await
             .map_err(unavailable)?;
-        if actual.iter().any(|index| {
-            index
-                .options
-                .as_ref()
-                .is_some_and(|o| o.expire_after.is_some())
-        }) {
+        let expected = indexes(name);
+        // A complete inventory is part of the contract: an unrelated index can
+        // reject otherwise valid writes or change a consumer's query plan.
+        if actual
+            .iter()
+            .filter(|index| index_contract::primary_matches(index))
+            .count()
+            != 1
+            || actual.iter().any(|index| {
+                !index_contract::primary_matches(index)
+                    && !expected
+                        .iter()
+                        .any(|expected| index_contract::matches(index, expected))
+            })
+        {
             return Err(failed());
         }
-        for expected in indexes(name) {
+        for expected in expected {
             let expected_name = expected.options.as_ref().and_then(|o| o.name.as_ref());
             let mut matching = actual.iter().filter(|index| {
                 index.keys.iter().eq(expected.keys.iter())
