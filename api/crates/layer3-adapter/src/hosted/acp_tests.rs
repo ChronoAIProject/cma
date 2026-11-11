@@ -35,6 +35,8 @@ mod fresh_bridge_tests;
 #[path = "acp_reconnect_turn_tests.rs"]
 mod reconnect_turn_tests;
 
+#[path = "acp_backpressure_tests.rs"]
+mod backpressure_tests;
 #[path = "acp_context_refresh_tests.rs"]
 mod context_refresh_tests;
 #[path = "acp_output_tests.rs"]
