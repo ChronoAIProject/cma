@@ -71,6 +71,7 @@ pub(super) async fn production_adapter(
         let transport = ProviderHostedControlTransport::for_retained_opensandbox(client.clone())
             .map_err(|e| e.to_string())?
             .with_subscriptions(subscriptions.clone())
+            .with_bounded_raw_output(config.features.bounded_raw_output)
             .with_bounded_permission_state(config.features.bounded_permission_state)
             .with_bounded_update_relay(config.features.bounded_update_relay)
             .with_output_json_budget(config.features.output_json_budget)
@@ -145,6 +146,7 @@ pub(super) async fn production_adapter(
         )
         .map_err(|e| e.to_string())?
         .with_subscriptions(subscriptions)
+        .with_bounded_raw_output(config.features.bounded_raw_output)
         .with_bounded_permission_state(config.features.bounded_permission_state)
         .with_bounded_update_relay(config.features.bounded_update_relay)
         .with_output_json_budget(config.features.output_json_budget)
