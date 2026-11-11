@@ -1,6 +1,9 @@
 use super::*;
 
 pub(super) fn validator(name: &str) -> Document {
+    if name == super::super::RECOVERY_WORK {
+        return super::recovery::validator();
+    }
     if name == super::super::writer_gate::COLLECTION {
         return controls::gate();
     }
