@@ -80,6 +80,13 @@ async fn title_prefix_preserves_setup_exclusion_and_complete_fallbacks() {
             transcript
         })
         .await;
+        if count == 200 {
+            assert_eq!(
+                f.used(before),
+                6,
+                "small histories skip the new prefix proof"
+            );
+        }
         assert_eq!(
             result,
             f.expected(),
@@ -93,6 +100,57 @@ async fn title_prefix_preserves_setup_exclusion_and_complete_fallbacks() {
         eprintln!("title_prefix_fallback history={count} task_end={end} setup={setup} owner_bytes={owner_bytes} bounded={bounded} checkouts={}", f.used(before));
         f.cleanup().await;
     }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn an_interrupted_first_task_does_not_borrow_a_later_completed_turn() {
+    use crate::store::agent_log_integrity::INTEGRITY_FIELD;
+    let mut f = Fixture::new(1_000, 6, false, 64).await;
+    f.entries[5].kind = AgentLogKind::TurnInterrupted { turn_sequence: 3 };
+    f.store
+        .agent_log
+        .replace_one(
+            doc! { "agent_id": f.agent.id.as_str(), "seq": 6_i64 },
+            log_document(&f.entries[5]).unwrap(),
+        )
+        .await
+        .unwrap();
+    f.store
+        .agents
+        .update_one(
+            doc! { "_id": f.agent.id.as_str() },
+            doc! {
+                "$unset": { INTEGRITY_FIELD: "" }
+            },
+        )
+        .await
+        .unwrap();
+    f.store = f
+        .store
+        .prepare_bounded_admission(std::slice::from_ref(&f.agent.id))
+        .await
+        .unwrap();
+    assert_eq!(f.expected(), None);
+    reads::isolated_test(async {
+        assert_eq!(
+            f.store.agent_title_transcript(&f.agent.id).await.unwrap(),
+            None
+        );
+        assert!(reads::snapshot(AGENT_LOG)[2] >= 1_000);
+    })
+    .await;
+    assert!(f
+        .store
+        .agent_title_candidates(&PageRequest {
+            cursor: None,
+            limit: 1
+        })
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    f.cleanup().await;
 }
 
 #[tokio::test]
