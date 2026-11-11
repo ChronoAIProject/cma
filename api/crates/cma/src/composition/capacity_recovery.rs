@@ -15,7 +15,7 @@ use crate::{
 pub(super) fn router(
     stores: &MongoStores,
     access: Arc<ResourceAccessService>,
-    lifecycle: &SandboxLifecycleComposition,
+    lifecycle: &mut SandboxLifecycleComposition,
     admission_enabled: bool,
 ) -> Router {
     let service = Arc::new(
@@ -29,6 +29,6 @@ pub(super) fn router(
     // This retains fresh personal authorization on every command; discovery
     // metadata is never promoted into a Caller or a background execution grant.
     layer1_public::rest::agent_capacity_recovery_commands_router(
-        lifecycle.capacity_recovery_commands(service),
+        lifecycle.capacity_recovery_commands(stores.sandbox_model.clone(), service),
     )
 }
