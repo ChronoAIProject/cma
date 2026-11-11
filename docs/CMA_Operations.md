@@ -2261,6 +2261,17 @@ record validation and the fresh final authorization fence retain their existing
 behavior. Disable the flag to return to the transaction reader; no data migration
 or writer change is involved.
 
+`CHRONO_SANDBOX_BATCHED_READS_ENABLED` separately defaults to `false` and accepts
+only exact `true` or `false`. Enabling it requires the snapshot reader above;
+startup rejects batching without snapshot sessions. It streams the three child
+collections through one indexed aggregation after reading the root, at the same
+snapshot time. Existing decoders, ordering and the fresh final fence still apply.
+Rows near the BSON document limit select the original child queries at that same
+snapshot, without hiding database errors. Disable batching alone to return to
+four snapshot reads; disable both reader flags to restore transactions. See
+[Sandbox hierarchy batching](CMA_Sandbox_Hierarchy_Batching.md) for bounds,
+compatibility tests and local volume measurements. Activation is release-owned.
+
 `CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED` independently defaults to `false` and
 accepts only exact `true` or `false`. It emits the allowlisted auth, hierarchy,
 colors, names and final-fence durations and completion/error/cancellation outcome,
