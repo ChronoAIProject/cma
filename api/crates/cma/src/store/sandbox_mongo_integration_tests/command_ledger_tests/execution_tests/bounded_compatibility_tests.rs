@@ -6,7 +6,7 @@ use crate::store::sandbox_mongo::{is_transient, start_transaction};
 
 // Reproduce generation 173's transaction/head write shape without installing
 // new metadata. This is a protocol race test, not an executed old-binary test.
-async fn old_writer_append(store: &MongoSandboxStore, id: &AgentId) -> u64 {
+pub(super) async fn old_writer_append(store: &MongoSandboxStore, id: &AgentId) -> u64 {
     for _ in 0..16 {
         let mut session = store.client.start_session().await.unwrap();
         start_transaction(&mut session).await.unwrap();

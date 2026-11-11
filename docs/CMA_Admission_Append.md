@@ -187,3 +187,13 @@ lower scan count alone is not proof of CPU improvement or the complete #1475
 scale contract. Final production verification deadline is Friday 2026-11-13
 15:00 SGT; the preferred merge window is Wednesday 2026-11-11 14:00 SGT, with
 Thursday 2026-11-12 06:00 SGT as the fallback.
+
+## Fleet selection extension
+
+The explicit 16-ID startup mode above is retained for compatibility. The separate,
+default-off `CHRONO_AGENT_LOG_FLEET_PERCENT` enables stable percentage stages with
+lazy bounded preparation instead of startup enumeration. Read the
+[fleet activation contract](CMA_Fleet_Log_Activation.md) for concurrency, failure
+isolation, restart, telemetry and same-image disablement. Neither mode bypasses
+the existing proof or quarantine contract. The public-window reader shares
+selection and remains write-free; #1349's independent consumer switches stay off.
