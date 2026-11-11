@@ -35,6 +35,9 @@ impl Observations {
                     };
                     match result {
                         Ok(Ok(summary)) => {
+                            if spec.worker == "agent_commands" && spec.state != "expired_queue" {
+                                metrics::gauge!("cma_admission_durable_commands", "status" => spec.state).set(summary.count as f64);
+                            }
                             metrics::gauge!("cma_worker_durable_items", "worker" => spec.worker, "state" => spec.state).set(summary.count as f64);
                             metrics::gauge!("cma_worker_durable_oldest_timestamp_seconds", "worker" => spec.worker, "state" => spec.state).set(summary.oldest);
                             sampled(spec.worker, spec.state, true);
@@ -119,7 +122,14 @@ fn date(field: &str) -> Bson {
 fn specifications(now: DateTime) -> Vec<Spec> {
     let timestamp = layer2_core::rfc3339_at(now.to_system_time());
     let mut specs = Vec::new();
-    for state in ["queued", "in_progress", "waiting_action"] {
+    for state in [
+        "queued",
+        "in_progress",
+        "waiting_action",
+        "completed",
+        "failed",
+        "cancelled",
+    ] {
         specs.push(Spec {
             worker: "agent_commands",
             state,
