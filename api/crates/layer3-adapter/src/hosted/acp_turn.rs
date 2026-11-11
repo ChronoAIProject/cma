@@ -291,7 +291,15 @@ pub(super) fn scoped_turn_outcome(
     }
 }
 
+#[cfg(test)]
 pub(super) fn turn_outcome(frame: impl std::borrow::Borrow<serde_json::Value>) -> Outcome {
+    turn_outcome_with_policy(frame, false)
+}
+
+pub(super) fn turn_outcome_with_policy(
+    frame: impl std::borrow::Borrow<serde_json::Value>,
+    bounded_error_json: bool,
+) -> Outcome {
     let frame = frame.borrow();
     if let Some(error) = frame.get("error") {
         let message = error
@@ -299,7 +307,7 @@ pub(super) fn turn_outcome(frame: impl std::borrow::Borrow<serde_json::Value>) -
             .and_then(serde_json::Value::as_str)
             .unwrap_or("agent refused the prompt without saying why")
             .to_string();
-        if let Some(failure) = super::acp_credit_failure::classify(&message) {
+        if let Some(failure) = super::acp_credit_failure::classify(&message, bounded_error_json) {
             return failure;
         }
         return Outcome::Failed {
@@ -324,7 +332,9 @@ pub(super) fn turn_outcome(frame: impl std::borrow::Borrow<serde_json::Value>) -
             if let Some(failure) = failure
                 .get("title")
                 .and_then(serde_json::Value::as_str)
-                .and_then(super::acp_credit_failure::classify)
+                .and_then(|message| {
+                    super::acp_credit_failure::classify(message, bounded_error_json)
+                })
             {
                 return failure;
             }
