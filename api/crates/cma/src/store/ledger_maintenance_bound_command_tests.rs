@@ -105,6 +105,13 @@ async fn hold(store: &MongoSandboxStore, parent: &Sandbox, v1: bool) {
         return;
     }
     // Synthetic disposable persistence binding only; no physical authority.
+    // The two inspection protocols deliberately use different digest domains.
+    // V1 admission must retain its own original snapshot, not an E1 snapshot.
+    let source = store
+        .inspect_ledger_maintenance(&input.caller, &parent.id)
+        .await
+        .unwrap()
+        .source;
     let p = input.accepted.plan();
     let plan = LedgerMaintenancePlanV1 {
         format: "ledger-maintenance-plan-v1".into(),
@@ -119,12 +126,12 @@ async fn hold(store: &MongoSandboxStore, parent: &Sandbox, v1: bool) {
             archive_id: uuid::Uuid::from_u128(1).to_string(),
             maintenance_id: p.operation_id.clone(),
             maintenance_epoch: 1,
-            sandbox_revision: parent.revision,
+            sandbox_revision: source.sandbox.revision,
             candidate_sha256: "c".repeat(64),
             recovery_sha256: "d".repeat(64),
             exclusion_receipt_sha256: "e".repeat(64),
         },
-        source: p.source.clone(),
+        source,
         consent_receipt_sha256: p.consent_receipt_sha256.clone(),
         requested_at: NOW.into(),
     };
