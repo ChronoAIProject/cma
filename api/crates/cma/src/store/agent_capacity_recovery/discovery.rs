@@ -9,7 +9,9 @@ use mongodb::{
 };
 
 use super::records;
+mod agent;
 use crate::store::sandbox_mongo::MongoSandboxStore;
+pub(super) use agent::page as for_agent;
 
 pub(crate) const PAGE_SIZE: u32 = 32;
 

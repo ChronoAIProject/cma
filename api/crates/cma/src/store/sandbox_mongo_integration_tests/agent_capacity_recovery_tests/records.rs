@@ -12,9 +12,7 @@ use records::test_support::stored;
 async fn capacity_carrier_insert_and_replace_obey_commit_abort_and_exact_cas() {
     let (client, name) = database("capacity_carrier_cas").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    client
-        .database(&name)
-        .create_collection(records::COLLECTION)
+    crate::store::agent_log_segments::schema::migrate(&client.database(&name))
         .await
         .unwrap();
     let original = stored();
@@ -82,9 +80,7 @@ async fn capacity_carrier_insert_and_replace_obey_commit_abort_and_exact_cas() {
 async fn capacity_carrier_cannot_change_original_request_or_native_target() {
     let (client, name) = database("capacity_carrier_identity").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    client
-        .database(&name)
-        .create_collection(records::COLLECTION)
+    crate::store::agent_log_segments::schema::migrate(&client.database(&name))
         .await
         .unwrap();
     let original = stored();
@@ -106,10 +102,14 @@ async fn capacity_carrier_cannot_change_original_request_or_native_target() {
             _ => changed.work.revision += 1,
         }
         let mut scope = TransactionScope::start(&mut session).await.unwrap();
-        assert!(matches!(
-            records::replace(&store, &original, &changed, &mut scope).await,
-            Err(TransactionLogError::Domain(SandboxStoreError::Conflict))
-        ));
+        let result = records::replace(&store, &original, &changed, &mut scope).await;
+        assert!(
+            matches!(
+                result,
+                Err(TransactionLogError::Domain(SandboxStoreError::Conflict))
+            ),
+            "identity variant {variant}: {result:?}"
+        );
         scope.release().abort_transaction().await.unwrap();
     }
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
@@ -126,9 +126,7 @@ async fn capacity_carrier_cannot_change_original_request_or_native_target() {
 async fn capacity_carrier_corrupt_projection_and_unknown_fields_fail_closed() {
     let (client, name) = database("capacity_carrier_corrupt").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    client
-        .database(&name)
-        .create_collection(records::COLLECTION)
+    crate::store::agent_log_segments::schema::migrate(&client.database(&name))
         .await
         .unwrap();
     let original = stored();
@@ -163,6 +161,9 @@ async fn capacity_carrier_corrupt_projection_and_unknown_fields_fail_closed() {
         }
         collection
             .replace_one(doc! {"_id": &key}, corrupt)
+            // Inject restored/legacy corruption deliberately; normal writes
+            // above must pass the canonical installed validator.
+            .bypass_document_validation(true)
             .await
             .unwrap();
         let mut scope = TransactionScope::start(&mut session).await.unwrap();
