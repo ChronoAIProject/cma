@@ -5,7 +5,10 @@ use crate::store::agent_log_segments::{
     publication::{self, PublicationIdentity},
     writer_admission::{Admission, AdmissionKind},
 };
-use mongodb::bson::{Binary, DateTime};
+use mongodb::{
+    bson::{Binary, DateTime},
+    options::ReturnDocument,
+};
 
 const LEASE_MILLIS: i64 = 120_000;
 
@@ -53,7 +56,7 @@ pub(super) fn validate(gate: &GateRecord) -> Result<(), SandboxStoreError> {
 
 /// Claim/reclaim one slot after exact admission has been committed or observed.
 /// Reclaim always issues a new fence, including for the same logical request.
-/// Clock skew can cause a conservative conflict; server time decides expiry.
+/// Server time caps expiry, so a client-ahead clock cannot extend the lease.
 /// Commit uncertainty must be reconciled before this permit is used.
 pub(in crate::store) async fn claim(
     database: &Database,
@@ -92,10 +95,7 @@ pub(in crate::store) async fn claim(
         fence,
         expires_at: DateTime::from_millis(expires_at),
     };
-    let mut conditions = vec![
-        doc! {"$gt": [slot.expires_at, "$$NOW"]},
-        doc! {"$lte": [slot.expires_at, {"$add": ["$$NOW", LEASE_MILLIS]}]},
-    ];
+    let mut conditions = vec![doc! {"$gt": [slot.expires_at, "$$NOW"]}];
     if let Some(index) = replace {
         if existing.is_none() {
             conditions.push(doc! {"$lte": [gate.slots[index].expires_at, "$$NOW"]});
@@ -106,19 +106,19 @@ pub(in crate::store) async fn claim(
     }
     let result = database
         .collection::<Document>(COLLECTION)
-        .update_one(
+        .find_one_and_update(
             doc! {"_id":name.as_str(),"format_version":1_i64,"revision":gate.revision,
             "admission_fence":gate.admission_fence,"$expr":{"$and":conditions}},
-            doc! {"$set":{"slots":bson::serialize_to_bson(&gate.slots).map_err(|_| invalid())?},
-            "$inc":{"admission_fence":1_i64}},
+            vec![doc! {"$set":{
+                "slots": bounded_slots(doc! {"$literal":bson::serialize_to_bson(&gate.slots).map_err(|_| invalid())?}.into(), &slot),
+                "admission_fence":fence,
+            }}],
         )
+        .return_document(ReturnDocument::After)
         .session(session)
         .await
         .map_err(TransactionLogError::Driver)?;
-    if result.matched_count != 1 {
-        return Err(SandboxStoreError::Conflict.into());
-    }
-    Ok(Some(Permit { name, slot }))
+    Ok(Some(returned_permit(name, &slot, result)?))
 }
 
 impl Permit {
@@ -160,20 +160,17 @@ impl Permit {
                 .checked_add(LEASE_MILLIS)
                 .ok_or_else(invalid)?,
         );
-        let result = database.collection::<Document>(COLLECTION).update_one(
+        let result = database.collection::<Document>(COLLECTION).find_one_and_update(
             doc! {"_id":self.name.as_str(),"format_version":1_i64,
                 "slots":{"$elemMatch":bson::serialize_to_document(&self.slot).map_err(|_| invalid())?},
                 "$expr":{"$and":[
                     {"$gt":[self.slot.expires_at,"$$NOW"]},
                     {"$gte":[renewed.slot.expires_at,self.slot.expires_at]},
-                    {"$lte":[renewed.slot.expires_at,{"$add":["$$NOW",LEASE_MILLIS]}]}
+                    {"$lte":[self.slot.expires_at,{"$add":["$$NOW",LEASE_MILLIS]}]}
                 ]}},
-            doc! {"$set":{"slots.$.expires_at":renewed.slot.expires_at}},
-        ).session(session).await.map_err(TransactionLogError::Driver)?;
-        if result.matched_count != 1 {
-            return Err(SandboxStoreError::Conflict.into());
-        }
-        Ok(renewed)
+            vec![doc! {"$set":{"slots":bounded_slots("$slots".into(), &renewed.slot)}}],
+        ).return_document(ReturnDocument::After).session(session).await.map_err(TransactionLogError::Driver)?;
+        returned_permit(self.name, &renewed.slot, result)
     }
 
     /// Consume in the publication transaction, after domain/source revalidation.
@@ -197,4 +194,34 @@ impl Permit {
         }
         Ok(())
     }
+}
+
+// Every slot constant is literal: request keys are data, never pipeline expressions.
+fn bounded_slots(input: bson::Bson, slot: &Slot) -> Document {
+    doc! {"$map":{
+        "input":input,"as":"slot",
+        "in":{"$cond":[{"$eq":["$$slot.fence",slot.fence]},
+            {"$mergeObjects":["$$slot",{"expires_at":{"$min":[
+                slot.expires_at,{"$add":["$$NOW",LEASE_MILLIS]}
+            ]}}]},"$$slot"]}
+    }}
+}
+
+fn returned_permit(
+    name: GateName,
+    requested: &Slot,
+    row: Option<Document>,
+) -> Result<Permit, TransactionLogError> {
+    let gate = GateRecord::read(name, row.ok_or(SandboxStoreError::Conflict)?)?;
+    let slot = gate
+        .slots
+        .into_iter()
+        .find(|slot| {
+            slot.holder == requested.holder
+                && slot.fingerprint == requested.fingerprint
+                && slot.fence == requested.fence
+                && slot.expires_at <= requested.expires_at
+        })
+        .ok_or_else(invalid)?;
+    Ok(Permit { name, slot })
 }

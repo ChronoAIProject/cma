@@ -12,6 +12,7 @@ use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 use sha2::{Digest, Sha256};
 
+use super::super::agent_capacity_recovery::source::{capture_segmented, fence_agent};
 use super::super::agent_log::scan_complete_log_with_session;
 use super::super::agent_log_integrity::TransactionLogError;
 use super::super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
@@ -130,6 +131,43 @@ async fn load_for_inspection(
     let mut history_digest = Sha256::new();
     for agent in &agents {
         let mut observation = Observation::new(Stage::PublicationLog);
+        match capture_segmented(store, agent, session).await {
+            Ok(Some(source)) => {
+                // These are full-prefix certified maxima. A missing point row
+                // never proves the proposed generation was unpublished.
+                if require_reopen {
+                    observation.finish(Reason::Unavailable);
+                    return Err(ApplyError::Domain(SandboxStoreError::Unavailable(
+                        "segmented retained reopen requires its original bounded history proof"
+                            .into(),
+                    )));
+                }
+                if require_unpublished
+                    && generation.is_some_and(|generation| {
+                        source.max_opened_generation() >= generation
+                            || source.max_retired_generation() >= generation
+                    })
+                {
+                    observation.finish(Reason::PublishedGeneration);
+                    return Err(ApplyError::Domain(SandboxStoreError::InvalidTransaction(
+                        "runtime generation was already published",
+                    )));
+                }
+                observation.finish(Reason::Success);
+                continue;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                observation.finish(match &error {
+                    TransactionLogError::Driver(_) => Reason::Unavailable,
+                    TransactionLogError::Domain(SandboxStoreError::Unavailable(_)) => {
+                        Reason::Unavailable
+                    }
+                    _ => Reason::CorruptHistory,
+                });
+                return Err(error.into());
+            }
+        }
         let mut published = false;
         let mut entries = Vec::new();
         let result = if require_unpublished {
@@ -230,16 +268,7 @@ pub(super) async fn apply(
     // Actual writes to every child serialize native proof with dispatch, cleanup,
     // Workspace setup and lifecycle publication. Preserve every child byte.
     for agent in &current.agents {
-        let result = store.agents.update_one(doc! {
-            "_id": agent.id.as_str(), "sandbox_id": current.sandbox.id.as_str(),
-            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-            "revision": signed(agent.revision, "recovery Agent revision").map_err(corrupt)?,
-            "last_seq": signed(agent.conversation.last_seq, "recovery Agent log sequence").map_err(corrupt)?,
-        }, doc! { "$inc": { "sandbox_recovery_fence": 1_i64 } })
-            .session(&mut *session).await.map_err(ApplyError::Driver)?;
-        if result.matched_count != 1 {
-            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-        }
+        fence_agent(store, agent, "sandbox_recovery_fence", session).await?;
     }
     for workspace in &current.workspaces {
         let result = store.workspaces.update_one(doc! {
