@@ -18,7 +18,7 @@ use super::{
 };
 use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::MongoSandboxStore};
 
-pub(super) const INDEX: &str = "agent_log_publication_head";
+pub(super) use super::schema::PUBLICATION_HEAD_INDEX as INDEX;
 const MAX_RECEIPT_BYTES: usize = 16 * 1024;
 
 /// Constructed only from the current certified source and exactly one immutable
