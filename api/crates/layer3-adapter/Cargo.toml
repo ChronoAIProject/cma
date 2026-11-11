@@ -16,6 +16,7 @@ hyper = { workspace = true }
 hyper-util = { workspace = true }
 hyper-timeout = "0.5"
 ipnet = { workspace = true }
+libc = { workspace = true }
 k8s-openapi = { workspace = true }
 kube = { workspace = true }
 reqwest = { workspace = true }
