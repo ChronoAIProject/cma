@@ -18,7 +18,7 @@ use super::super::lifecycle_execution::load_sandbox_agents;
 use super::super::sandbox_mongo::{is_duplicate_key, signed, MongoSandboxStore};
 use super::transaction::ApplyError;
 
-mod scoped;
+pub(super) mod scoped;
 
 pub(super) enum Source {
     Legacy(Box<LogSummary>),
@@ -40,6 +40,14 @@ pub(super) async fn load_agents(
     session: &mut ClientSession,
 ) -> Result<Vec<(Agent, Source)>, ApplyError> {
     let agents = load_sandbox_agents(store, id, session).await?;
+    validate_agents(store, agents, session).await
+}
+
+pub(super) async fn validate_agents(
+    store: &MongoSandboxStore,
+    agents: Vec<Agent>,
+    session: &mut ClientSession,
+) -> Result<Vec<(Agent, Source)>, ApplyError> {
     let mut rows = Vec::with_capacity(agents.len());
     for agent in agents {
         if let Some(source) = capture_segmented(store, &agent, session).await? {

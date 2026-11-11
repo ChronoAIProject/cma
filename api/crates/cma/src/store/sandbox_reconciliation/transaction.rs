@@ -17,6 +17,9 @@ use super::super::sandbox_mongo::{
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::agents::{load_agents, publish_agents};
 
+mod scoped;
+pub(super) use scoped::apply_scoped;
+
 #[derive(Debug)]
 pub(super) enum ApplyError {
     Domain(SandboxStoreError),
@@ -94,8 +97,25 @@ pub(super) async fn apply(
         }
         SandboxRuntimeLossApplication::Persist(mutation) => mutation,
     };
-    validate_in_transaction(store, &current.id, last_seq, session).await?;
     let (agents, logs) = publish_agents(store, rows, &mutation.agents, request, session).await?;
+    persist_sandbox(
+        store, request, &current, last_seq, mutation, agents, logs, session,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn persist_sandbox(
+    store: &MongoSandboxStore,
+    request: &SandboxRuntimeLossRequest,
+    current: &Sandbox,
+    last_seq: u64,
+    mutation: layer2_core::sandbox::store::SandboxRuntimeLossMutation,
+    agents: Vec<Agent>,
+    logs: Vec<AgentLogEntry>,
+    session: &mut ClientSession,
+) -> Result<RecoveryApplication, ApplyError> {
+    validate_in_transaction(store, &current.id, last_seq, session).await?;
     let advanced = store.sandboxes.update_one(
         doc! {
             "_id": current.id.as_str(),
