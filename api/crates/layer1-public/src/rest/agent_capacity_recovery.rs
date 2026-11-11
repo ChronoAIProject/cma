@@ -22,6 +22,7 @@ pub fn agent_capacity_recovery_router(service: Arc<CapacityRecoveryPreflightServ
             get(dry_run),
         )
         .with_state(service)
+        .layer(axum::middleware::map_response(private_no_store))
 }
 
 async fn dry_run(
@@ -43,13 +44,21 @@ async fn dry_run(
         }
         None => service.read(&caller, &id).await,
     };
-    let mut response = match result {
+    match result {
         Ok(value) => Json(value).into_response(),
         Err(error) => InstanceProblem::ResourceAccess(error).into_response(),
-    };
+    }
+}
+
+// Apply to extractor refusals too: unauthenticated/error responses must not be
+// cached simply because the request never reached the handler.
+async fn private_no_store(mut response: Response) -> Response {
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, no-store"),
     );
     response
 }
+
+#[cfg(test)]
+mod tests;
