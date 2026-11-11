@@ -1,10 +1,7 @@
 use std::time::SystemTime;
 
-use layer2_core::rfc3339_at;
-use layer2_core::sandbox::store::{AgentWorkMutation, SandboxStoreError, VersionedWorktree};
-use layer2_core::sandbox::{
-    Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, WorktreeStatus,
-};
+use layer2_core::sandbox::store::SandboxStoreError;
+use layer2_core::sandbox::{Agent, AgentWorkStep};
 use layer3_adapter::{AgentHomeRequest, AgentOpenRequest, ConversationChannel, WorktreeRequest};
 use tokio::sync::mpsc;
 
@@ -12,9 +9,8 @@ use super::startup_support::{
     live_target, registry_failure, valid_conversation_id, valid_worktree_receipt,
 };
 use super::support::{
-    adapter_failure, bump_log_sequence, claimed_fence, request_evidence, runtime_capabilities,
-    runtime_options, skill_failure, validate_runtime_skills, validate_skills, AgentContext,
-    WorkerFailure,
+    adapter_failure, claimed_fence, request_evidence, runtime_capabilities, runtime_options,
+    skill_failure, validate_runtime_skills, validate_skills, AgentContext, WorkerFailure,
 };
 use super::AgentWorker;
 use crate::sandbox::live_agents::{LiveAgentAttachment, LiveAgentTarget};
@@ -34,7 +30,11 @@ impl AgentWorker {
         let started = tokio::time::Instant::now();
         let context = match self.startup_context(&agent).await {
             Ok(context) => context,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_failure(agent, failure, now + started.elapsed())
+                    .await
+            }
         };
         if self
             .dependencies
@@ -119,7 +119,11 @@ impl AgentWorker {
         let started = tokio::time::Instant::now();
         let context = match self.startup_context(&agent).await {
             Ok(context) => context,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_failure(agent, failure, now + started.elapsed())
+                    .await
+            }
         };
         let material = match &agent.work.resolved_skills {
             Some(material) => material.clone(),
@@ -233,7 +237,11 @@ impl AgentWorker {
             None => self.startup_context(&agent).await,
         } {
             Ok(context) => context,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_failure(agent, failure, now + started.elapsed())
+                    .await
+            }
         };
         timing.completed("open_context");
         if agent.conversation.conversation_id.is_some()
@@ -363,7 +371,11 @@ impl AgentWorker {
         let started = tokio::time::Instant::now();
         let context = match self.startup_context(&agent).await {
             Ok(context) => context,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_failure(agent, failure, now + started.elapsed())
+                    .await
+            }
         };
         if let Err(detail) = layer2_core::sandbox::desktop_creation::prepare_desktop(
             self.dependencies.adapter.as_ref(),
@@ -382,7 +394,11 @@ impl AgentWorker {
         }
         let target = match live_target(&agent) {
             Ok(target) => target,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_failure(agent, failure, now + started.elapsed())
+                    .await
+            }
         };
         let authority_fence = claimed_fence(&agent, &self.config.holder)?;
         let attachment = match self
@@ -393,11 +409,15 @@ impl AgentWorker {
             Ok(Some(attachment)) => attachment,
             Ok(None) => match self.reattach(&agent, &context, &target).await {
                 Ok(attachment) => attachment,
-                Err(failure) => return self.handle_failure(agent, failure, now).await,
+                Err(failure) => {
+                    return self
+                        .handle_failure(agent, failure, now + started.elapsed())
+                        .await
+                }
             },
             Err(error) => {
                 return self
-                    .handle_failure(agent, registry_failure(error), now)
+                    .handle_failure(agent, registry_failure(error), now + started.elapsed())
                     .await;
             }
         };
@@ -413,67 +433,5 @@ impl AgentWorker {
             self.dependencies.registry.rollback(&attachment);
         }
         result
-    }
-
-    async fn publish_ready_once(
-        &self,
-        mut agent: Agent,
-        context: &AgentContext,
-        target: &LiveAgentTarget,
-        now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        let expected = agent.revision;
-        let fence = claimed_fence(&agent, &self.config.holder)?;
-        let stamp = rfc3339_at(now);
-        agent
-            .work
-            .advance(
-                &self.config.holder,
-                fence,
-                AgentWorkStep::PublishConnection,
-                stamp.clone(),
-            )
-            .map_err(|_| SandboxStoreError::Conflict)?;
-        agent
-            .transition(AgentStatus::Ready, stamp.clone(), None)
-            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-        let conversation_id = target.conversation_id.clone();
-        let runtime_generation = target.runtime_generation;
-        let logs = vec![
-            AgentLogKind::ConversationOpened {
-                conversation_id,
-                runtime_generation,
-            },
-            AgentLogKind::StatusChanged {
-                from: AgentStatus::Starting,
-                to: AgentStatus::Ready,
-            },
-        ];
-        bump_log_sequence(&mut agent, logs.len())?;
-        let mut worktree = context.worktree.clone();
-        let expected_worktree_revision = worktree.revision;
-        worktree
-            .transition(WorktreeStatus::Ready)
-            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-        self.dependencies
-            .store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: expected,
-                holder: self.config.holder.clone(),
-                fence,
-                agent: agent.clone(),
-                worktree: Some(VersionedWorktree {
-                    expected_revision: expected_worktree_revision,
-                    worktree,
-                }),
-                appended_at: stamp,
-                sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
-                    agent_id: agent.id.clone(),
-                    from: AgentStatus::Starting,
-                    to: AgentStatus::Ready,
-                }),
-                agent_logs: logs,
-            })
-            .await
     }
 }

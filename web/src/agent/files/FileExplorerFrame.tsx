@@ -63,3 +63,26 @@ export function FileExplorerFrame({
     </aside>
   );
 }
+
+export function FileLocation({
+  directory,
+  canDelete,
+  busy,
+  onDelete,
+}: {
+  readonly directory: string;
+  readonly canDelete: boolean;
+  readonly busy: boolean;
+  readonly onDelete: () => void;
+}) {
+  return (
+    <footer className="agent-files__location">
+      <code title={`/home/${directory}`}>/home/{directory}</code>
+      {directory && canDelete ? (
+        <Button size="sm" variant="danger" disabled={busy} onClick={onDelete}>
+          Delete folder
+        </Button>
+      ) : null}
+    </footer>
+  );
+}

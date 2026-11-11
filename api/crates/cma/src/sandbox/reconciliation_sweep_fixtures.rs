@@ -12,6 +12,7 @@ pub(super) enum Failure {
     Deadline,
     Unavailable,
     Corrupt,
+    Delay(Duration),
 }
 
 pub(super) struct Store {
@@ -19,6 +20,7 @@ pub(super) struct Store {
     pub(super) calls: Mutex<Vec<(String, String)>>,
     pub(super) pauses: Mutex<Vec<SandboxInactivityPauseRequest>>,
     pub(super) failure: Mutex<Option<(&'static str, String, Failure)>>,
+    pub(super) loss_race: Mutex<Option<Sandbox>>,
     pub(super) delay: Duration,
 }
 
@@ -29,6 +31,7 @@ impl Store {
             calls: Mutex::default(),
             pauses: Mutex::default(),
             failure: Mutex::default(),
+            loss_race: Mutex::default(),
             delay,
         })
     }
@@ -61,6 +64,10 @@ impl Store {
             Some(Failure::Deadline) => std::future::pending().await,
             Some(Failure::Unavailable) => Err(SandboxStoreError::Unavailable("fixture".into())),
             Some(Failure::Corrupt) => Err(SandboxStoreError::Corrupt("fixture".into())),
+            Some(Failure::Delay(delay)) => {
+                tokio::time::sleep(delay).await;
+                Ok(())
+            }
             None => {
                 if !self.delay.is_zero() {
                     tokio::time::sleep(self.delay).await;
@@ -82,6 +89,21 @@ impl SandboxStore for Store {
     }
     async fn save_sandbox(&self, revision: u64, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
         self.inner.save_sandbox(revision, sandbox).await
+    }
+    async fn unpublished_runtime_recovery_snapshot(
+        &self,
+        id: &SandboxId,
+    ) -> Result<SandboxUnpublishedRecoverySnapshot, SandboxStoreError> {
+        self.observe("recovery_snapshot", id.as_str()).await?;
+        self.inner.unpublished_runtime_recovery_snapshot(id).await
+    }
+    async fn admit_unpublished_runtime_recovery(
+        &self,
+        request: SandboxUnpublishedRecoveryRequest,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        self.observe("recovery_admit", request.snapshot.sandbox.id.as_str())
+            .await?;
+        self.inner.admit_unpublished_runtime_recovery(request).await
     }
     async fn list_sandboxes(
         &self,
@@ -111,7 +133,15 @@ impl SandboxReconciliationStore for Store {
         &self,
         request: SandboxRuntimeLossRequest,
     ) -> Result<SandboxRuntimeLossOutcome, SandboxStoreError> {
-        self.inner.recover_runtime_loss(request).await
+        let id = request.sandbox_id.clone();
+        self.observe("loss", id.as_str()).await?;
+        let race = self.loss_race.lock().unwrap().take();
+        if let Some(newer) = race {
+            self.inner.save_sandbox(newer.revision - 1, newer).await?;
+        }
+        let outcome = self.inner.recover_runtime_loss(request).await?;
+        self.observe("loss_reply", id.as_str()).await?;
+        Ok(outcome)
     }
     async fn unowned_runtime_authority(
         &self,

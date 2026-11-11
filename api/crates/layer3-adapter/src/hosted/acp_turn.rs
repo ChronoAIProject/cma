@@ -178,6 +178,7 @@ impl Bridge {
             "prompt": content,
         });
         let recoverable = prompt_id.is_some();
+        let terminal_identity = prompt_id.clone();
         match self.begin_prompt(params, prompt_id).await {
             Ok(waiting) => {
                 let answered_permissions = Arc::clone(&self.answered);
@@ -203,6 +204,7 @@ impl Bridge {
                                 capability: None,
                             },
                             false,
+                            terminal_identity.clone(),
                         )),
                     };
                     if let Some(update) = update {
@@ -220,6 +222,7 @@ impl Bridge {
                         capability: None,
                     },
                     false,
+                    terminal_identity,
                 ));
                 Err(error)
             }
@@ -242,9 +245,36 @@ impl Outcome {
     }
 }
 
-pub(super) fn scoped_turn_outcome(outcome: Outcome, prompt_evidence: bool) -> ConversationUpdate {
-    let update = outcome.into_update();
-    if prompt_evidence {
+pub(super) fn scoped_turn_outcome(
+    outcome: Outcome,
+    prompt_evidence: bool,
+    prompt_id: Option<crate::PromptIdentity>,
+) -> ConversationUpdate {
+    let update = match (outcome, prompt_id) {
+        (Outcome::Ended(response), Some(prompt_id)) => ConversationUpdate::TurnEndedForPrompt {
+            prompt_id,
+            response,
+        },
+        (
+            Outcome::Failed {
+                message,
+                capability,
+            },
+            Some(prompt_id),
+        ) => ConversationUpdate::FailedForPrompt {
+            prompt_id,
+            message,
+            capability,
+        },
+        (outcome, None) => outcome.into_update(),
+    };
+    if prompt_evidence
+        || matches!(
+            update,
+            ConversationUpdate::TurnEndedForPrompt { .. }
+                | ConversationUpdate::FailedForPrompt { .. }
+        )
+    {
         update
     } else {
         update.without_prompt_evidence()
@@ -258,6 +288,9 @@ pub(super) fn turn_outcome(frame: serde_json::Value) -> Outcome {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("agent refused the prompt without saying why")
             .to_string();
+        if let Some(failure) = super::acp_credit_failure::classify(&message) {
+            return failure;
+        }
         return Outcome::Failed {
             message,
             capability: error
@@ -277,6 +310,13 @@ pub(super) fn turn_outcome(frame: serde_json::Value) -> Outcome {
         if !failure.is_null()
             && failure.get("severity").and_then(serde_json::Value::as_str) != Some("warning")
         {
+            if let Some(failure) = failure
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .and_then(super::acp_credit_failure::classify)
+            {
+                return failure;
+            }
             return Outcome::Failed {
                 message: failure
                     .get("title")

@@ -50,6 +50,12 @@ it.each([false, true])(
       </AuthContextProvider>,
     );
     const editor = await screen.findByRole('textbox', { name: 'Message' });
+    const settings = await screen.findByRole('button', { name: /^Agent settings:/ });
+    await waitFor(() =>
+      expect(settings).toHaveAccessibleDescription(expect.stringContaining('120 input')),
+    );
+    expect(settings).toHaveAttribute('title', expect.stringContaining('Context: 400 / 1,000'));
+    expect(screen.queryByRole('button', { name: 'Context usage' })).not.toBeInTheDocument();
     fireEvent.change(editor, { target: { value: 'Preserve this unsent draft' } });
     const trigger = screen.getByRole('button', { name: /Account menu for/ });
     await actor.click(trigger);
@@ -58,6 +64,15 @@ it.each([false, true])(
     expect(window.location.pathname).toBe('/usage');
     const saved = window.history.state;
     await within(dialog).findByRole('button', { name: 'Research Sandbox' });
+    expect(within(dialog).getByRole('heading', { name: 'Allocation overview' })).toBeVisible();
+    const allocation = within(dialog).getByRole('region', { name: 'Allocated resource-hours' });
+    expect(allocation).toHaveTextContent('CPU (core-hours)');
+    expect(allocation).toHaveTextContent('Disk (GiB-hours)');
+    expect(
+      within(dialog).getByRole('region', { name: 'Allocation comparison chart' }),
+    ).toHaveTextContent('1 of 25,001 Sandboxes on this page.');
+    expect(dialog).not.toHaveTextContent('Total tokens:');
+    expect(settings).toBeInTheDocument();
     expect(metrics.create).toHaveBeenCalledTimes(1);
     expect(adminMetrics.create).not.toHaveBeenCalled();
     if (measured)
@@ -77,6 +92,9 @@ it.each([false, true])(
     await waitFor(() => expect(window.location.pathname).toBe('/agents/agt_1'));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(screen.getByRole('textbox', { name: 'Message' })).toBe(editor);
+    expect(screen.getByRole('button', { name: /^Agent settings:/ })).toBe(settings);
+    expect(settings).toHaveAccessibleDescription(expect.stringContaining('120 input'));
+    expect(screen.queryByRole('button', { name: 'Context usage' })).not.toBeInTheDocument();
     expect(editor).toHaveValue('Preserve this unsent draft');
     expect(trigger).toHaveFocus();
     expect(replay).toHaveBeenCalledTimes(1);

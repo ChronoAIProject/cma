@@ -1,6 +1,9 @@
 //! One-operation native authority and process inspection.
 use super::*;
 use crate::hosted::inspection_timing;
+use std::time::{Duration, Instant};
+
+const ADOPTION_REFRESH_ATTEMPTS: usize = 3;
 
 pub(super) fn observation(object: &DynamicObject) -> Result<RuntimeObservation> {
     let identity = crate::hosted::deployment::provider_metadata_identity(object.annotations())?;
@@ -44,6 +47,43 @@ pub(super) fn observation(object: &DynamicObject) -> Result<RuntimeObservation> 
 }
 
 impl AgentSandboxBackend {
+    /// Read the Sandbox again after readiness/assignment. The object used to
+    /// authorize binding is deliberately not reused as the running observation:
+    /// Kubernetes may have returned Pending immediately before the controller
+    /// published Ready. Only a bounded Pending retry is allowed; identity and
+    /// ownership failures remain fail-closed.
+    pub(super) async fn refreshed_adoption_observation(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> Result<Option<RuntimeObservation>> {
+        let started = Instant::now();
+        for attempt in 0..ADOPTION_REFRESH_ATTEMPTS {
+            let Some(object) = self.client.validate_request(handle, request).await? else {
+                return Ok(None);
+            };
+            let observed = observation(&object)?;
+            if observed.lifecycle.is_running() {
+                self.client.verify_explicit_runtime_policy(&object).await?;
+                return Ok(Some(observed));
+            }
+            if !observed.lifecycle.state.eq_ignore_ascii_case("pending") {
+                return Ok(Some(observed));
+            }
+            if attempt + 1 < ADOPTION_REFRESH_ATTEMPTS {
+                let delay = if started.elapsed() < Duration::from_secs(30) {
+                    Duration::from_millis(250)
+                } else {
+                    Duration::from_millis(500)
+                };
+                tokio::time::sleep(delay).await;
+            }
+        }
+        Err(AdapterError::Unavailable(
+            "Sandbox readiness is still pending".into(),
+        ))
+    }
+
     pub(super) async fn bind_resumed(
         &self,
         handle: &RuntimeHandle,
@@ -90,7 +130,7 @@ impl AgentSandboxBackend {
                 .exchange(handle, RequestFrame::RuntimeStatus(proof.request().clone())),
         )
         .await?;
-        proof.complete(response).map(Some)
+        inspection.complete(proof, response).await.map(Some)
     }
 }
 
@@ -111,6 +151,35 @@ pub(crate) struct NativeStatusProof {
 }
 
 impl NativeStatusInspection<'_> {
+    pub(crate) async fn complete(
+        &self,
+        proof: NativeStatusProof,
+        response: ResponseFrame,
+    ) -> Result<RuntimeInspection> {
+        let (backend, handle, request, home) = (self.backend, self.handle, self.request, self.home);
+        // The captured reply must still belong to the exact graph and process
+        // that authorized dispatch. These reads cannot bootstrap or rebind it.
+        let current = timed(
+            Stage::NativeIdentity,
+            backend.client.native_runtime_proof(handle, request, home),
+        )
+        .await?;
+        backend
+            .client
+            .verify_explicit_runtime_policy(current.member())
+            .await?;
+        if !current.matches(request, home)?
+            || current.pod() != proof.pod()
+            || observation(current.member())? != proof.observation
+            || !backend.acknowledged_assignment(handle, current.pod(), request)?
+        {
+            return Err(AdapterError::Rejected(
+                "native authority changed during status exchange".into(),
+            ));
+        }
+        proof.complete(response)
+    }
+
     pub(crate) fn shares_client(&self, client: &AgentSandboxClient) -> bool {
         self.backend.client.shares_runtime_authority(client)
     }

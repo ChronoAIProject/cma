@@ -14,19 +14,58 @@ use std::{
 struct Pressure {
     circuit: Arc<AtomicU64>,
     checked_out: Mutex<HashMap<u64, Instant>>,
+    slow_checkouts: Mutex<(u8, Option<Instant>)>,
 }
 impl Pressure {
     fn checkout(&self, key: u64, duration: Duration, failed: bool, at: Instant) {
+        #[cfg(test)]
+        tracing::info!(
+            reason = "checkout_sample",
+            probe = true,
+            client_key = Arc::as_ptr(&self.circuit) as usize as u64,
+            connection_key = key,
+            elapsed_ms = duration.as_millis() as u64,
+            failed
+        );
         if !failed {
             let mut pending = self.checked_out.lock().unwrap_or_else(|e| e.into_inner());
-            // The reporting pool has four connections; bound diagnostic state
-            // even during topology changes or missing driver events.
+            // Bound diagnostic state across configured pool sizes, topology
+            // changes and missing driver events.
             if pending.len() < 32 {
                 pending.insert(key, at);
             }
         }
-        if failed || duration > Duration::from_millis(250) {
-            self.open("checkout", duration, failed);
+        // A successful checkout just above the soft threshold is not an
+        // outage. Require a short consecutive streak before rejecting work
+        // and cached pages for 30 seconds; failures/hard stalls remain immediate.
+        let sustained = {
+            let mut streak = self
+                .slow_checkouts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if duration > Duration::from_millis(250) {
+                if streak
+                    .1
+                    .is_none_or(|last| at.saturating_duration_since(last) > Duration::from_secs(1))
+                {
+                    streak.0 = 0;
+                }
+                streak.0 = streak.0.saturating_add(1);
+                streak.1 = Some(at);
+            } else {
+                *streak = (0, None);
+            }
+            streak.0 >= 3
+        };
+        if failed || duration > DB_DEADLINE || sustained {
+            let reason = if failed {
+                "checkout_failed"
+            } else if duration > DB_DEADLINE {
+                "checkout_deadline"
+            } else {
+                "sustained_slow_checkout"
+            };
+            self.open("checkout", reason, duration, failed);
         }
     }
     fn returned(&self, key: u64, at: Instant) {
@@ -37,15 +76,35 @@ impl Pressure {
             .remove(&key);
         if let Some(start) = start {
             let duration = at.saturating_duration_since(start);
+            #[cfg(test)]
+            tracing::info!(
+                reason = "connection_hold_sample",
+                probe = true,
+                client_key = Arc::as_ptr(&self.circuit) as usize as u64,
+                connection_key = key,
+                elapsed_ms = duration.as_millis() as u64
+            );
             if duration > DB_DEADLINE {
-                self.open("connection_hold", duration, false);
+                self.open(
+                    "connection_hold",
+                    "connection_hold_deadline",
+                    duration,
+                    false,
+                );
             }
         }
     }
-    fn open(&self, operation: &'static str, duration: Duration, failed: bool) {
+    fn open(
+        &self,
+        operation: &'static str,
+        reason: &'static str,
+        duration: Duration,
+        failed: bool,
+    ) {
         self.circuit.fetch_max(now() + 30, Ordering::Relaxed);
         tracing::warn!(
             operation,
+            reason,
             elapsed_ms = duration.as_millis() as u64,
             failed,
             "sandbox reporting database circuit opened"
@@ -56,6 +115,7 @@ pub(super) fn observe(options: &mut ClientOptions, circuit: Arc<AtomicU64>) {
     let pressure = Pressure {
         circuit,
         checked_out: Mutex::new(HashMap::new()),
+        slow_checkouts: Mutex::new((0, None)),
     };
     use super::super::mongo_latency::connection_key;
     options.cmap_event_handler = Some(EventHandler::callback(move |event| match event {
@@ -77,12 +137,27 @@ pub(super) fn observe(options: &mut ClientOptions, circuit: Arc<AtomicU64>) {
         _ => {}
     }));
 }
+pub(super) fn check(circuit: &AtomicU64, at: u64) -> Result<()> {
+    if circuit.load(Ordering::Relaxed) > at {
+        Err(MetricsError::Busy)
+    } else {
+        Ok(())
+    }
+}
+
 pub(crate) struct ReadTimer {
     start: Instant,
     operation: &'static str,
 }
 impl Drop for ReadTimer {
     fn drop(&mut self) {
+        #[cfg(test)]
+        tracing::info!(
+            reason = "read_wall_sample",
+            probe = true,
+            operation = self.operation,
+            elapsed_ms = self.start.elapsed().as_millis() as u64
+        );
         tracing::debug!(
             operation = self.operation,
             elapsed_ms = self.start.elapsed().as_millis() as u64,
@@ -107,6 +182,7 @@ mod tests {
         Pressure {
             circuit: Arc::default(),
             checked_out: Mutex::new(HashMap::new()),
+            slow_checkouts: Mutex::new((0, None)),
         }
     }
     #[test]
@@ -122,15 +198,105 @@ mod tests {
         assert!(pressure.checked_out.lock().unwrap().is_empty());
     }
     #[test]
+    fn soft_checkout_spikes_recover_but_sustained_pressure_still_opens_circuit() {
+        let pressure = pressure();
+        let start = Instant::now();
+        for n in 0..4 {
+            let at = start + Duration::from_millis(n * 500);
+            pressure.checkout(1, Duration::from_millis(252), false, at);
+            pressure.checkout(1, Duration::from_millis(10), false, at);
+        }
+        assert_eq!(pressure.circuit.load(Ordering::Relaxed), 0);
+        for n in 0..2 {
+            pressure.checkout(
+                1,
+                Duration::from_millis(252),
+                false,
+                start + Duration::from_secs(10 + n),
+            );
+        }
+        assert_eq!(pressure.circuit.load(Ordering::Relaxed), 0);
+        // An expired streak cannot accumulate across unrelated traffic bursts.
+        pressure.checkout(
+            1,
+            Duration::from_millis(252),
+            false,
+            start + Duration::from_secs(20),
+        );
+        assert_eq!(pressure.circuit.load(Ordering::Relaxed), 0);
+        pressure.checkout(
+            1,
+            Duration::from_millis(252),
+            false,
+            start + Duration::from_secs(20),
+        );
+        assert_eq!(pressure.circuit.load(Ordering::Relaxed), 0);
+        pressure.checkout(
+            1,
+            Duration::from_millis(252),
+            false,
+            start + Duration::from_secs(20),
+        );
+        assert!(pressure.circuit.load(Ordering::Relaxed) > now());
+    }
+    #[test]
     fn slow_individual_read_or_checkout_and_failed_checkout_still_open_circuit() {
         let pressure = pressure();
         let start = Instant::now();
         pressure.checkout(1, Duration::ZERO, false, start);
         pressure.returned(1, start + DB_DEADLINE + Duration::from_millis(1));
         assert!(pressure.circuit.swap(0, Ordering::Relaxed) > now());
-        pressure.checkout(2, Duration::from_millis(251), false, start);
+        pressure.checkout(2, DB_DEADLINE + Duration::from_millis(1), false, start);
         assert!(pressure.circuit.swap(0, Ordering::Relaxed) > now());
         pressure.checkout(0, Duration::ZERO, true, start);
         assert!(pressure.circuit.load(Ordering::Relaxed) > now());
+    }
+    #[test]
+    fn genuine_pressure_is_diagnosed_rejected_and_recovers_at_expiry() {
+        use super::super::tests::circuit_capture::Capture;
+        use tracing_subscriber::prelude::*;
+        for (reason, duration, failed) in [
+            ("checkout_failed", Duration::from_millis(7), true),
+            ("checkout_deadline", Duration::from_millis(2001), false),
+            (
+                "connection_hold_deadline",
+                Duration::from_millis(2001),
+                false,
+            ),
+            ("sustained_slow_checkout", Duration::from_millis(251), false),
+        ] {
+            let pressure = pressure();
+            let capture = Capture::default();
+            let subscriber = tracing_subscriber::registry().with(capture.clone());
+            tracing::subscriber::with_default(subscriber, || {
+                let at = Instant::now();
+                if reason == "connection_hold_deadline" {
+                    pressure.checkout(1, Duration::ZERO, false, at);
+                    pressure.returned(1, at + duration);
+                } else {
+                    for _ in 0..if reason == "sustained_slow_checkout" {
+                        3
+                    } else {
+                        1
+                    } {
+                        pressure.checkout(1, duration, failed, at);
+                    }
+                }
+            });
+            let until = pressure.circuit.load(Ordering::Relaxed);
+            assert!(until > now());
+            assert!(matches!(
+                check(&pressure.circuit, until - 1),
+                Err(MetricsError::Busy)
+            ));
+            assert!(check(&pressure.circuit, until).is_ok());
+            assert!(check(&pressure.circuit, until + 1).is_ok());
+            let (count, event) = capture.snapshot();
+            assert_eq!(count, 1);
+            let event = event.unwrap();
+            assert_eq!(event.reason, reason);
+            assert_eq!(event.elapsed_ms, duration.as_millis() as u64);
+            assert_eq!(event.failed, failed);
+        }
     }
 }

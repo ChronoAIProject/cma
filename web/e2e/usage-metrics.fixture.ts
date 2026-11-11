@@ -1,5 +1,10 @@
 import type { Page } from '@playwright/test';
-import type { UsageMetricQuery, UsageMetricReport, UsageMetricRow } from '@chronoai/cma-sdk';
+import type {
+  UsageMetricQuery,
+  UsageMetricReport,
+  UsageMetricRow,
+  UsageOwnerAllocation,
+} from '@chronoai/cma-sdk';
 import {
   asOf,
   metricRow,
@@ -13,6 +18,11 @@ export class LocalUsageMetrics {
   readonly creates: { admin: boolean; input: UsageMetricQuery; id: string }[] = [];
   readonly reports = new Map<string, UsageMetricReport>();
   presentationRows?: UsageMetricRow[];
+  summaryCount?: (query: UsageMetricQuery) => number;
+  runningCount?: (query: UsageMetricQuery) => number;
+  ownerCount = 400;
+  readonly ownerOverrides = new Map<number, Partial<UsageOwnerAllocation>>();
+  ownerFailure = 0;
   failure = 0;
   pending = false;
   /** Read-only session exposure; the test may change it after an admin save. */
@@ -69,8 +79,13 @@ export class LocalUsageMetrics {
           },
           summary: {
             ...base.summary!,
-            sandbox_count: input.filters?.search === 'empty' ? 0 : 25001,
-            running_count: input.filters?.search === 'empty' ? 0 : 18000,
+            sandbox_count:
+              this.summaryCount?.(input) ??
+              (input.filters?.search === 'empty' || input.filters?.statuses?.includes('retired')
+                ? 0
+                : 25001),
+            running_count:
+              this.runningCount?.(input) ?? (input.filters?.search === 'empty' ? 0 : 18000),
           },
         };
         if (this.presentationRows && report.summary) {
@@ -126,6 +141,48 @@ export class LocalUsageMetrics {
           },
         });
       if (!member) return route.fulfill({ json: report });
+      if (member === 'owner-allocations') {
+        if (this.ownerFailure)
+          return route.fulfill({
+            status: this.ownerFailure,
+            json: { status: this.ownerFailure, title: 'Unavailable', code: 'usage_unavailable' },
+          });
+        const metric = url.searchParams.get('metric')!;
+        const offset = Number(url.searchParams.get('cursor') ?? 0);
+        const limit = Number(url.searchParams.get('limit') ?? 50);
+        const count = report.query.filters.search === 'empty' ? 0 : this.ownerCount;
+        return route.fulfill({
+          json: {
+            report_id: id,
+            metric,
+            unit: metric === 'cpu' ? 'core-hours' : 'GiB-hours',
+            items: Array.from(
+              { length: Math.min(limit, Math.max(0, count - offset)) },
+              (_, index) => {
+                const n = offset + index;
+                return {
+                  subject: `91892afa-5fa5-4f4f-9100-${String(n).padStart(12, '0')}`,
+                  label:
+                    n < 2
+                      ? 'Alex Chen'
+                      : n === 2
+                        ? 'Unnamed owner'
+                        : n === 3
+                          ? 'Alexandra Montgomery Research Operations'
+                          : `Owner ${String(n).padStart(5, '0')}`,
+                  ...(n < 2 ? { disambiguator: `Joined 2026-0${n + 1}-01` } : {}),
+                  allocated_hours: (count - n) * (metric === 'cpu' ? 1 : 2),
+                  sandbox_count: 2,
+                  complete: n !== 0,
+                  ...this.ownerOverrides.get(n),
+                };
+              },
+            ),
+            total_count: count,
+            next: offset + limit < count ? String(offset + limit) : null,
+          },
+        });
+      }
       if (member === 'owners')
         return route.fulfill({
           json: {
@@ -153,7 +210,8 @@ export class LocalUsageMetrics {
             report_id: id,
             as_of: asOf,
             items:
-              report.query.filters.search === 'empty'
+              report.query.filters.search === 'empty' ||
+              report.query.filters.statuses.includes('retired')
                 ? []
                 : (this.presentationRows ?? [
                     {
@@ -182,7 +240,8 @@ export class LocalUsageMetrics {
           json: {
             ...series,
             lines:
-              report.query.filters.search === 'empty'
+              report.query.filters.search === 'empty' ||
+              report.query.filters.statuses.includes('retired')
                 ? []
                 : [
                     { ...line, points },

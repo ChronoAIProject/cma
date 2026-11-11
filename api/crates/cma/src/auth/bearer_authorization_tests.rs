@@ -1,3 +1,4 @@
+use crate::auth::identity;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 
 use axum::{
@@ -12,6 +13,9 @@ use tokio::sync::{RwLock, Semaphore};
 
 use super::*;
 use crate::auth::{permissions::PermissionEvidence, AuthMode};
+
+#[path = "bearer_authorization_tests/budget_tests.rs"]
+mod budget_tests;
 
 struct Gate {
     release: Semaphore,
@@ -233,12 +237,17 @@ async fn overlapping_unavailability_is_shared_without_caching_provider_failure()
         gate.release.add_permits(9);
         for request in [first, second] {
             let result = request.await.unwrap();
-            // Introspection authenticates this client; its HTTP401 does not
-            // establish revocation of the independent credential being checked.
-            assert!(matches!(
-                result,
-                Err(ProviderVerificationError::Unavailable(_))
-            ));
+            if status == 401 {
+                assert!(matches!(
+                    result,
+                    Err(ProviderVerificationError::Rejected(_))
+                ));
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(ProviderVerificationError::Unavailable(_))
+                ));
+            }
         }
         *f.control.gate.write().await = None;
         f.control.status.store(200, Ordering::SeqCst);
@@ -287,6 +296,8 @@ async fn abandoning_all_callers_and_provider_deadlines_do_not_leave_cached_evide
         Duration::from_millis(20),
     )
     .await;
+    // The caller's outer timeout does not know whether a body has started.
+    // Only the provider reader may classify a pre-response timeout as transient.
     assert!(matches!(
         result,
         Err(ProviderVerificationError::Unavailable(_))
@@ -321,4 +332,35 @@ async fn capacity_is_bounded_and_completed_flight_cannot_replace_new_pending_wor
     assert!(!Arc::ptr_eq(&retained[0], &replacement));
     flights.release(&key, &retained[0]).await;
     assert!(Arc::ptr_eq(&replacement, &flights.acquire(&key).await));
+}
+
+#[tokio::test]
+async fn every_single_flight_waiter_keeps_its_final_failure_reason() {
+    use layer2_core::dependency_diagnostics::{capture, Dependency, Failure, Reason};
+    let f = Fixture::new().await;
+    f.control.status.store(429, Ordering::SeqCst);
+    let gate = f.block().await;
+    let requests: Vec<_> = (0..3)
+        .map(|_| {
+            let auth = f.auth.clone();
+            tokio::spawn(async move {
+                capture(identity::request_for_bearer(&auth, "fixture-access".into())).await
+            })
+        })
+        .collect();
+    f.arrived(1).await;
+    f.callers("fixture-access", 3).await;
+    gate.release.add_permits(3);
+    for request in requests {
+        let (result, failure) = request.await.unwrap();
+        assert!(result.is_err());
+        assert_eq!(
+            failure,
+            Some(Failure::new(
+                Dependency::IdentityProvider,
+                Reason::InvalidEvidence
+            ))
+        );
+    }
+    assert_eq!(f.control.introspection_calls.load(Ordering::SeqCst), 1);
 }

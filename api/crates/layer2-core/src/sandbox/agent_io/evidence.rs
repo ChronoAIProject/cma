@@ -29,6 +29,30 @@ pub struct CommandEvidence {
 }
 
 impl CommandEvidence {
+    /// Begin at an ordinary message's exact dispatch fence after the store has
+    /// independently proved the immutable prefix through trusted integrity
+    /// metadata. Before this fence, message evidence observes no delivery,
+    /// approvals or outcome; its own TurnStarted follows the fence. Controls
+    /// need the preceding active turn and must use the complete fold.
+    pub fn from_trusted_message_prefix(
+        command: &AdmittedAgentCommand,
+    ) -> Result<Self, CommandLedgerError> {
+        let mut evidence = Self::new(command)?;
+        if !evidence.message
+            || evidence.trigger_first
+            || evidence.dispatch.operation_sequence.checked_add(1)
+                != Some(evidence.dispatch.turn_sequence)
+        {
+            return Err(CommandLedgerError::Invalid);
+        }
+        evidence.cursor = evidence
+            .dispatch
+            .operation_sequence
+            .checked_sub(1)
+            .ok_or(CommandLedgerError::Corrupt)?;
+        Ok(evidence)
+    }
+
     pub fn new(command: &AdmittedAgentCommand) -> Result<Self, CommandLedgerError> {
         command.validate()?;
         let dispatch = command

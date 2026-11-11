@@ -6,14 +6,87 @@ pub(super) enum ProviderVerificationError {
     Rejected(String),
     #[error("{0}")]
     Unavailable(String),
+    /// Only these classified transport / gateway failures permit retry and fallback.
+    #[error("identity provider unavailable: {0}")]
+    Transient(&'static str),
 }
 
 impl ProviderVerificationError {
+    pub(super) fn reason(&self) -> &'static str {
+        match self {
+            Self::Transient(reason) => reason,
+            Self::Rejected(_) => "rejected",
+            Self::Unavailable(_) => "invalid_evidence",
+        }
+    }
+
+    /// Preserve the final typed verification reason before the public projection.
+    /// This runs per caller, after single-flight fan-out and fallback decisions.
+    pub(super) fn record_unavailable(&self) {
+        use layer2_core::dependency_diagnostics::{Dependency, Failure, Reason};
+        let reason = match self.reason() {
+            "timeout" => Reason::Timeout,
+            "connection" => Reason::Connection,
+            "http_502" => Reason::BadGateway,
+            "http_503" => Reason::UpstreamUnavailable,
+            "deadline" => Reason::VerificationDeadline,
+            "invalid_evidence" => Reason::InvalidEvidence,
+            _ => Reason::Unknown,
+        };
+        Failure::new(Dependency::IdentityProvider, reason).record();
+    }
+
+    pub(super) fn transport(error: reqwest::Error) -> Self {
+        if error.is_timeout() {
+            Self::Transient("timeout")
+        } else if error.is_connect() || connection_io_failure(&error) {
+            Self::Transient("connection")
+        } else {
+            Self::Unavailable("identity provider transport failed".into())
+        }
+    }
+
+    pub(super) fn status(status: reqwest::StatusCode) -> Self {
+        match status.as_u16() {
+            401 | 403 => Self::Rejected("identity provider refused verification".into()),
+            502 => Self::Transient("http_502"),
+            503 => Self::Transient("http_503"),
+            // In particular, never bypass 429 limits or retry configuration errors.
+            _ => Self::Unavailable(format!(
+                "identity provider returned HTTP {}",
+                status.as_u16()
+            )),
+        }
+    }
+
     pub(super) fn command_error(self) -> layer2_core::sandbox::agent_io::CommandAuthorizationError {
         use layer2_core::sandbox::agent_io::CommandAuthorizationError;
         match self {
             Self::Rejected(_) => CommandAuthorizationError::Revoked,
-            Self::Unavailable(_) => CommandAuthorizationError::Unavailable,
+            Self::Unavailable(_) | Self::Transient(_) => CommandAuthorizationError::Unavailable,
         }
     }
+}
+
+fn connection_io_failure(error: &reqwest::Error) -> bool {
+    use std::error::Error;
+    use std::io::ErrorKind;
+    // is_request() also includes malformed HTTP responses. Only recognized
+    // connection IO failures before headers can enter the transient class.
+    let mut source = error.source();
+    while let Some(cause) = source {
+        if cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
+            matches!(
+                error.kind(),
+                ErrorKind::ConnectionReset
+                    | ErrorKind::ConnectionAborted
+                    | ErrorKind::NotConnected
+                    | ErrorKind::BrokenPipe
+            )
+        }) {
+            return true;
+        }
+        source = cause.source();
+    }
+    false
 }

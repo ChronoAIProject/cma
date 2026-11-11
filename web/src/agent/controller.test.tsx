@@ -691,3 +691,29 @@ describe('Agent controller operations', () => {
     });
   });
 });
+
+it('propagates a failed public interrupt to desktop takeover without discarding retained history', async () => {
+  const interruptAgent = vi.fn().mockRejectedValue(new Error('Stop request failed'));
+  const client = readableClient({
+    interruptAgent,
+    readAgent: async () => ({ ...AGENT_DETAIL, status: 'working' }),
+    readAgentTranscript: async () => ({
+      ...AGENT_TRANSCRIPT,
+      turns: AGENT_TRANSCRIPT.turns.map((turn) => ({ ...turn, outcome: { type: 'active' } })),
+    }),
+  });
+  const { result } = renderHook(() => useAgentController(client, 'agt_1'));
+  await waitFor(() => expect(result.current.state.status).toBe('ready'));
+  await act(async () => {
+    await expect(result.current.interruptForControl!()).rejects.toThrow('Stop request failed');
+  });
+  expect(interruptAgent).toHaveBeenCalledWith(
+    'agt_1',
+    expect.objectContaining({
+      idempotencyKey: expect.any(String),
+      signal: expect.any(AbortSignal),
+    }),
+  );
+  expect(result.current.state.status).toBe('ready');
+  expect(result.current.actionError).toContain('Stop request failed');
+});

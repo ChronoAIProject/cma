@@ -20,13 +20,15 @@ impl Supervisor {
         // Both original journals and per-resource fences remain authoritative.
         // A partial admission or effect is recoverable only with the same two
         // persisted intents; it does not authorize a fallback or blind replay.
-        for operation in [
-            Operation::add_worktree(&request.request.worktree),
-            Operation::create_agent_home(&request.request.home),
-        ] {
-            crate::mutation_authority::admit(&self.config, request.authority_fence, &operation)?;
-        }
-        Ok(())
+        self.mutations
+            .admit(
+                request.authority_fence,
+                &[
+                    Operation::add_worktree(&request.request.worktree),
+                    Operation::create_agent_home(&request.request.home),
+                ],
+            )
+            .await
     }
 
     pub(super) async fn prepare_agent_resources(

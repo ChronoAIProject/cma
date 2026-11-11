@@ -92,7 +92,8 @@ it.each(['active', 'failed', 'interrupted'])(
         },
       }),
     );
-    expect(screen.queryByRole('button', { name: 'Helpful' })).toBeNull();
+    for (const vote of screen.getAllByRole('button', { name: 'Helpful' }))
+      expect(vote).toBeDisabled();
     expect(answer().getByRole('button', { name: 'Copy content' })).toBeEnabled();
   },
 );
@@ -127,7 +128,16 @@ it('keeps regenerated identical answers independent and determines finality by d
     return Response.json({ message_id: 'event:5', vote: 'up' });
   });
   render(draw({ snapshot }));
-  const votes = await screen.findAllByRole('button', { name: 'Helpful' });
+  await waitFor(() =>
+    expect(
+      screen
+        .getAllByRole('button', { name: 'Helpful' })
+        .filter((button) => !button.hasAttribute('disabled')),
+    ).toHaveLength(2),
+  );
+  const votes = screen
+    .getAllByRole('button', { name: 'Helpful' })
+    .filter((button) => !button.hasAttribute('disabled'));
   expect(votes).toHaveLength(2);
   await waitFor(() => expect(votes[0]).toBeEnabled());
   await userEvent.click(votes[0]!);
@@ -202,7 +212,8 @@ it('withholds feedback when a completed turn reports missing conversation output
     }),
   );
   await waitFor(() => expect(answer().getByRole('button', { name: 'Copy content' })).toBeEnabled());
-  expect(screen.queryByRole('button', { name: 'Helpful' })).toBeNull();
+  for (const vote of screen.getAllByRole('button', { name: 'Helpful' }))
+    expect(vote).toBeDisabled();
 });
 
 it.each(['available', 'rejecting writes'])(
@@ -304,7 +315,10 @@ it('announces confirmed helpful, changed and removed votes without accepting a s
     ['Needs improvement', true, 'Vote recorded'],
     ['Needs improvement', false, 'Vote removed'],
   ] as const) {
-    await userEvent.click(answer().getByRole('button', { name: label }));
+    if (!selected) {
+      await userEvent.click(answer().getByRole('button', { name: 'Needs improvement' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Remove vote' }));
+    } else await userEvent.click(answer().getByRole('button', { name: label }));
     expect(answer().getByRole('status', { name: 'Vote status' })).toHaveTextContent('Saving vote');
     expect(answer().getByRole('button', { name: 'Helpful' })).toBeDisabled();
     expect(answer().getByRole('button', { name: 'Needs improvement' })).toBeDisabled();
@@ -331,7 +345,8 @@ it('keeps copy available without voting controls when access becomes read-only',
     ),
   );
   view.rerender(draw({ enabled: false }));
-  expect(screen.queryByRole('button', { name: 'Helpful' })).toBeNull();
+  for (const vote of screen.getAllByRole('button', { name: 'Helpful' }))
+    expect(vote).toBeDisabled();
   expect(answer().getByRole('button', { name: 'Copy content' })).toBeEnabled();
 });
 
@@ -353,7 +368,7 @@ it('offers feedback only on the recorded final answer and restores it when reope
   });
   const view = render(draw());
   await waitFor(() => expect(answer().getByRole('button', { name: 'Helpful' })).toBeEnabled());
-  expect(answer('Checking the evidence.').queryByRole('button', { name: 'Helpful' })).toBeNull();
+  expect(answer('Checking the evidence.').getByRole('button', { name: 'Helpful' })).toBeDisabled();
   await userEvent.click(answer().getByRole('button', { name: 'Helpful' }));
   await waitFor(() =>
     expect(answer().getByRole('button', { name: 'Helpful' })).toHaveAttribute(
@@ -398,7 +413,8 @@ it('waits for the durable successful turn outcome before offering feedback on li
     },
   ];
   const view = render(draw({ snapshot, events }));
-  expect(screen.queryByRole('button', { name: 'Helpful' })).toBeNull();
+  for (const vote of screen.getAllByRole('button', { name: 'Helpful' }))
+    expect(vote).toBeDisabled();
   view.rerender(
     draw({
       snapshot,
@@ -413,5 +429,5 @@ it('waits for the durable successful turn outcome before offering feedback on li
     }),
   );
   await waitFor(() => expect(answer().getByRole('button', { name: 'Helpful' })).toBeEnabled());
-  expect(answer('Checking the evidence.').queryByRole('button', { name: 'Helpful' })).toBeNull();
+  expect(answer('Checking the evidence.').getByRole('button', { name: 'Helpful' })).toBeDisabled();
 });

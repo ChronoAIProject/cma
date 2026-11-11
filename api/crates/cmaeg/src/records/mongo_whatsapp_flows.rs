@@ -74,7 +74,7 @@ impl MongoRecords {
 pub async fn migrate(db: &Database) -> Result<(), RecordError> {
     // A separate optional marker preserves the base schema version and existing startup.
     let validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","blob","version","schema_version"],"properties":{
-    "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]}}}};
+    "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0}}}};
     match db.run_command(doc!{"create":WHATSAPP_FLOWS,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await {
         Ok(_)=>{}, Err(e) if matches!(e.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code == 48)=>{
             db.run_command(doc!{"collMod":WHATSAPP_FLOWS,"validator":validator,"validationLevel":"strict","validationAction":"error"}).await.map_err(failure)?;

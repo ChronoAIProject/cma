@@ -227,7 +227,7 @@ async fn apply(
         if mutation.agent.id != current.id || !next.matches(&project(&mutation.agent)?) {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
-        let receipt = apply_mutation(store, mutation, session).await?;
+        let receipt = apply_mutation(ScanCaller::Checkpoint, store, mutation, session).await?;
         if receipt.logs != next.outcome.appended {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }

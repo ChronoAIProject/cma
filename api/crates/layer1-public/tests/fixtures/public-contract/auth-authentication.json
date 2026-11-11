@@ -890,6 +890,34 @@
         "bodyKind": "json"
       },
       "captures": {}
+    },
+    {
+      "id": "auth-session-identity-unavailable",
+      "operation": "GET /auth/session",
+      "scenario": "auth_identity_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {
+          "cookie": "cma_session=contract-browser"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "3"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/identity-unavailable",
+          "title": "Identity service temporarily unavailable",
+          "status": 503,
+          "detail": "The identity service is temporarily unavailable. Please retry shortly.",
+          "code": "identity_unavailable"
+        },
+        "bodyKind": "json"
+      }
     }
   ]
 }

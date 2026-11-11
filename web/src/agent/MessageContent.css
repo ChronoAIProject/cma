@@ -7,7 +7,7 @@
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-  font: var(--dsw-font-markdown-base);
+  font: var(--dsw-alias-workspace-body-font);
 }
 
 /* Pretty wrapping re-breaks the last lines on every streamed token; settle it once done. */

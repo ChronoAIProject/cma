@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { MenuRow } from './MenuRow';
+import { Input } from './Input';
 import { placeMenu, type MenuAlign, type MenuSide } from './menuPlacement';
 import { presenceAttributes, usePresence, usePresenceExiting } from './Presence';
 import './Menu.css';
@@ -85,6 +86,12 @@ export type MenuEntry = MenuItem | MenuSeparator | MenuLabel | MenuChoices;
 const MEASURING: CSSProperties = { visibility: 'hidden', left: 0, top: 0 };
 
 interface MenuProps {
+  readonly search?: {
+    readonly label: string;
+    readonly value: string;
+    readonly onChange: (value: string) => void;
+  };
+  readonly footer?: ReactNode;
   readonly open: boolean;
   readonly presentation?: 'run-target';
   /** The trigger, rendered in place. */
@@ -135,6 +142,8 @@ export function Menu({
   placement,
   matchAnchorWidth = false,
   label,
+  search,
+  footer,
 }: MenuProps) {
   const rootRef = useRef<HTMLSpanElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -185,11 +194,20 @@ export function Menu({
      */
     window.addEventListener('scroll', place, true);
     window.addEventListener('resize', place);
-    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(place);
+    let frame: number | undefined;
+    const schedulePlace = () => {
+      frame ??= requestAnimationFrame(() => {
+        frame = undefined;
+        place();
+      });
+    };
+    const observer =
+      typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(schedulePlace);
     if (listRef.current) observer?.observe(listRef.current);
     if (rootRef.current) observer?.observe(rootRef.current);
     return () => {
       observer?.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
       window.removeEventListener('scroll', place, true);
       window.removeEventListener('resize', place);
     };
@@ -236,7 +254,7 @@ export function Menu({
     }
     const rows = rowsIn(listRef.current);
     const chosen = rows.find((row) => row.dataset.id === selectedId);
-    (chosen ?? rows[0])?.focus();
+    (listRef.current?.querySelector('input') ?? chosen ?? rows[0])?.focus();
   }, [interactive, selectedId]);
 
   /*
@@ -264,6 +282,11 @@ export function Menu({
 
   const onListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!interactive) return;
+    if (
+      event.target instanceof HTMLInputElement &&
+      !['ArrowDown', 'ArrowUp', 'Escape'].includes(event.key)
+    )
+      return;
     const rows = rowsIn(listRef.current);
     if (rows.length === 0) {
       return;
@@ -291,7 +314,7 @@ export function Menu({
         move(here + 1);
         return;
       case 'ArrowUp':
-        move(here - 1);
+        move(here < 0 ? rows.length - 1 : here - 1);
         return;
       case 'Home':
         move(0);
@@ -322,6 +345,15 @@ export function Menu({
         event.stopPropagation();
       }}
     >
+      {search && (
+        <Input
+          aria-label={search.label}
+          placeholder="Search by name"
+          value={search.value}
+          maxLength={128}
+          onChange={(event) => search.onChange(event.target.value)}
+        />
+      )}
       {items.map((entry) => (
         <MenuRow
           key={entry.id}
@@ -333,6 +365,7 @@ export function Menu({
           }}
         />
       ))}
+      {footer}
     </div>
   );
 
