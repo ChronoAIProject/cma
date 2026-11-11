@@ -104,10 +104,12 @@ pub(super) fn responses(
     agent_page_origin: layer1_public::agent_page::AgentPageOrigin,
     bindings: &BindingComposition,
     gateway: Option<&crate::config::GatewayConfig>,
+    paged_events: bool,
 ) -> Result<Router, String> {
     let reads = reads.with_response_logs(stores.sandbox_model.response_log_reader());
     let mut state =
         layer1_public::responses::v2::ResponsesV2State::new(agent_page_origin, commands, reads)
+            .with_paged_events(paged_events)
             .with_bindings(layer2_core::sandbox::binding::BindingAccessService::new(
                 stores.sandbox_model.clone(),
             ));
