@@ -271,3 +271,18 @@ feature flags in the only conflict. New source qualification runs under the
 same release-only lock and memory floor; earlier results stay bound to5b49c51d6.
 
 Merged source `e094ffeea` requalified:47distinct unit/configuration tests and76real-Mongo tests passed; strict101with22shared diagnostics andzero type errors. Evidence and source-bound counts are in `2026-11-12-s4-postreview-gates.md`.
+
+## S4 response facts dependency
+
+Narrow implementation commit `99f9826f4b98ff3784c03492ce877f883700526b` on `tl/cma-log-segments/response-facts`;
+normal develop-merged branch pin `91b487f575dfdf60758bb4d211324a7036f4f5c5`.
+Shared base `11f4fcc69`; no mixed integration tip imported. Adds required
+settings_changed/legacy_model_known, response_usage/response_usage_sequence
+through the next TurnStarted, and exact adjacent prewrite_failure_sequence
+paired with original end_sequence. The existing publication and bootstrap fold
+both populate them. S1 consumes the same facts for indexed response parity.
+Rust1.96.1 Layer2 projection tests15passed,zero failures,1419filtered; strict
+Layer2 all-targets/all-features Clippy passed with warnings denied. Fmt,whitespace,
+5998-file size passed. Every changed file<500lines. Release-only lock,2jobs,
+minimum memory20%,zero pauses. Durable missing fields fail closed; activation
+remains closed. Contract:docs/notes/2026-11-12-s4-response-facts.md.
