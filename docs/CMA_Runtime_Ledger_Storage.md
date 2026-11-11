@@ -133,6 +133,21 @@ is unchanged; qualification reopens the resulting database through that VFS.
 The exact-image probe requires both ordinary and descriptor-rooted
 create/commit/reopen results for every image.
 
+The probe also qualifies a separate retirement archive using synthetic records,
+through both ordinary and descriptor-rooted storage. Exact original payloads
+and indexes for retired groups and scoped operation IDs commit together. It
+checks byte hashes after commit, refusal before and after restart, and an
+idempotent completion receipt. The report includes
+`retirement_archive_copy_reopen_refusal: passed`; image evidence rejects a
+missing or failed result. The extra probe directories are create-only and
+contain no operational runtime state.
+
+This storage qualification does not activate retirement or reclaim either
+active ledger. Serving integration must consult the archive before admission,
+enforce compatible readers, verify authoritative settled deletion and publish a
+retained backup before deactivating source records. Quiesced apply and held
+restore remain separate execution capabilities.
+
 The planner copies and syncs each source file, writes and syncs `plan.json`,
 rescans the original input, then publishes `sealed.json` with the plan digest.
 Publication writes a temporary file, syncs it, renames without replacement,
