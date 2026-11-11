@@ -139,6 +139,8 @@ async fn capacity_lineage_refuses_oversized_child_set_before_mutation() {
     for index in 0..512 {
         let mut agent = original.clone();
         agent.id = AgentId(format!("bounded-child-{index:04}"));
+        agent.creation_key = format!("bounded-creation-{index:04}");
+        agent.worktree_id = WorktreeId(format!("bounded-worktree-{index:04}"));
         rows.push(crate::store::agents::agent_document(&agent).unwrap());
     }
     store.agents.insert_many(rows).await.unwrap();
