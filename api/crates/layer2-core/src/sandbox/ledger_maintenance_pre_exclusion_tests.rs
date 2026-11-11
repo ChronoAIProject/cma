@@ -161,9 +161,15 @@ fn restart_and_expired_lease_replay_exact_bytes_without_renewal() {
     let original = progress.expected;
     let restarted: LedgerPreExclusionStateV1 =
         serde_json::from_slice(&serde_json::to_vec(&original).unwrap()).unwrap();
-    let (_, mut retry) = request();
-    retry.now = EXPIRED.into();
-    retry.lease.expires_at = NEXT.into();
+    let retry = LedgerPreExclusionAdmission {
+        caller: progress.caller,
+        accepted: original.accepted().unwrap(),
+        lease: LedgerMaintenanceLeaseV1 {
+            holder: original.lease.holder.clone(),
+            expires_at: NEXT.into(),
+        },
+        now: EXPIRED.into(),
+    };
     let outcome =
         plan_pre_exclusion_admission(&policy, &progress.expected_source, Some(&restarted), &retry)
             .unwrap();
@@ -186,7 +192,9 @@ fn semantically_equal_reserialization_and_replacement_operations_conflict() {
     let (policy, progress) = admitted();
     for change_operation in [false, true] {
         let (_, mut retry) = request();
-        let mut plan = retry.accepted.plan().clone();
+        retry.caller = progress.caller.clone();
+        let accepted = progress.expected.accepted().unwrap();
+        let mut plan = accepted.plan().clone();
         if change_operation {
             plan.operation_id.push('x');
         }
