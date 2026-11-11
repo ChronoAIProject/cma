@@ -12,6 +12,133 @@ use super::{
 };
 
 impl SandboxHierarchyRecord {
+    /// `self` must contain the complete dependency closure for the requested
+    /// groups, obtained by bounded indexed reads in one snapshot transaction.
+    /// This remains an observation; the source adapter revalidates at apply.
+    pub fn ledger_collection_observation(
+        &self,
+        request: &layer3_adapter::runtime_ledger_collection::CollectionRequest,
+        observed_at: String,
+        source_sha256: String,
+        dependencies_read: u64,
+        source_bytes: u64,
+    ) -> Result<layer3_adapter::runtime_ledger_collection::CollectionObservation, SandboxModelError>
+    {
+        use layer3_adapter::runtime_ledger_collection::{
+            CollectionGroup, CollectionObservation, LedgerGroupAuthorityV1, LedgerGroupDecisionV1,
+            LedgerGroupEvidenceV1, LedgerResourceRevisionV1,
+        };
+        use sha2::{Digest, Sha256};
+        let request_sha256 = request.fingerprint().ok_or_else(invalid)?;
+        let binding_sha256 = request.binding.binding_sha256().map_err(|_| invalid())?;
+        let snapshot =
+            self.ledger_retirement_observation(observed_at.clone(), source_sha256.clone())?;
+        if snapshot.sandbox_id != request.binding.sandbox_id
+            || snapshot.home_identity != request.binding.home_identity
+            || snapshot.generation != request.binding.generation
+            || snapshot.sandbox_revision != request.binding.sandbox_revision
+            || self
+                .sandbox
+                .retained_runtime_binding()
+                .and_then(|r| r.boot_id.as_ref())
+                != Some(&request.binding.boot_id)
+        {
+            return Err(invalid());
+        }
+        let mut revisions = Vec::new();
+        for (kind, id, revision) in self
+            .workspaces
+            .iter()
+            .map(|v| ("workspace", v.id.as_str(), v.revision))
+            .chain(
+                self.worktrees
+                    .iter()
+                    .map(|v| ("worktree", v.id.as_str(), v.revision)),
+            )
+            .chain(
+                self.agents
+                    .iter()
+                    .map(|v| ("agent", v.id.as_str(), v.revision)),
+            )
+        {
+            let mut hash = Sha256::new();
+            hash.update(b"chrono.runtime.ledger.api-resource.v1\0");
+            for field in [kind, id] {
+                hash.update((field.len() as u64).to_be_bytes());
+                hash.update(field.as_bytes());
+            }
+            revisions.push(LedgerResourceRevisionV1 {
+                resource_sha256: format!("{:x}", hash.finalize()),
+                revision,
+            });
+        }
+        revisions.sort_by(|a, b| a.resource_sha256.cmp(&b.resource_sha256));
+        let mut observation = CollectionObservation {
+            format: "runtime-ledger-authority-batch-v1".into(),
+            request_sha256: request_sha256.clone(),
+            groups: Vec::new(),
+            evidence: Vec::new(),
+            dependencies_read,
+            source_bytes,
+        };
+        for group in &request.groups {
+            let eligible = match group {
+                CollectionGroup::Agent { agent_id } => snapshot.contains_agent(agent_id),
+                CollectionGroup::Worktree { workspace, name } => {
+                    snapshot.contains_worktree(workspace, name)
+                }
+            };
+            let present = match group {
+                CollectionGroup::Agent { agent_id } => {
+                    self.agents.iter().any(|a| a.id.as_str() == agent_id)
+                }
+                CollectionGroup::Worktree { workspace, name } => self.worktrees.iter().any(|w| {
+                    &w.name == name
+                        && self
+                            .workspaces
+                            .iter()
+                            .any(|s| s.id == w.workspace_id && &s.name == workspace)
+                }),
+            };
+            let decision = if eligible {
+                LedgerGroupDecisionV1::SettledDeleted
+            } else if present {
+                LedgerGroupDecisionV1::RetainLive
+            } else {
+                LedgerGroupDecisionV1::RetainUnknown
+            };
+            let evidence = LedgerGroupEvidenceV1 {
+                format: "runtime-ledger-group-evidence-v1".into(),
+                request_sha256: request_sha256.clone(),
+                binding_sha256: binding_sha256.clone(),
+                group_key: group.key(),
+                sandbox_revision: self.sandbox.revision,
+                resource_revisions: revisions.clone(),
+                source_sha256: source_sha256.clone(),
+                observed_at: observed_at.clone(),
+                decision,
+            };
+            let bytes = serde_json::to_vec(&evidence).map_err(|_| invalid())?;
+            let hash = format!("{:x}", Sha256::digest(&bytes));
+            observation.groups.push(LedgerGroupAuthorityV1 {
+                format: "runtime-ledger-group-authority-v1".into(),
+                binding: request.binding.clone(),
+                group_key: group.key(),
+                sandbox_revision: self.sandbox.revision,
+                resource_revisions: revisions.clone(),
+                observed_at: observed_at.clone(),
+                observation_sha256: hash.clone(),
+                decision,
+                evidence_reference: format!("sha256:{hash}"),
+            });
+            observation.evidence.push(bytes);
+        }
+        if !observation.validate_for(request) {
+            return Err(invalid());
+        }
+        Ok(observation)
+    }
+
     pub fn ledger_retirement_observation(
         &self,
         observed_at: String,

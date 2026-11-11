@@ -195,6 +195,11 @@ async fn purge_in_transaction(
     let Some(aggregate) = aggregate else {
         return Err(PurgeError::Conflict);
     };
+    if super::ledger_collection_progress::retention_required(&aggregate)
+        .map_err(|_| PurgeError::Conflict)?
+    {
+        return Err(PurgeError::Conflict);
+    }
     if super::channel_storage_retention::required(
         &store.client.database(&store.sandboxes.namespace().db),
         id.as_str(),
