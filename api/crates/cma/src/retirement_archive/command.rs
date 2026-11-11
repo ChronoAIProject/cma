@@ -4,11 +4,11 @@ use layer2_core::{
     document_artifacts::DocumentBlobStore, sandbox::retirement_archive::RetirementArchiveReceipt,
 };
 use layer3_adapter::{
-    archive_source::read_private_file,
+    archive_source::{publish_private_file, read_private_file},
     permanent_custody::{digest, CustodyPolicy, GcsCustody, ObjectReceipt, PermanentCustody},
 };
 use serde::Deserialize;
-use std::{io::Write, os::unix::fs::OpenOptionsExt, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -251,24 +251,7 @@ fn publish<T: serde::Serialize>(path: &std::path::Path, value: &T) -> Result<Str
         return Err(REFUSED);
     }
     let bytes = serde_json::to_vec(value).map_err(|_| REFUSED)?;
-    if path.exists() {
-        if read_private_file(path, 64 * 1024 * 1024)? != bytes {
-            return Err(REFUSED);
-        }
-        return Ok(serde_json::json!({"format":1,"evidence_sha256":digest(&bytes),"evidence_bytes":bytes.len()}).to_string());
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|_| REFUSED)?;
-    file.write_all(&bytes)
-        .and_then(|()| file.sync_all())
-        .map_err(|_| REFUSED)?;
-    std::fs::File::open(path.parent().ok_or(REFUSED)?)
-        .and_then(|f| f.sync_all())
-        .map_err(|_| REFUSED)?;
+    publish_private_file(path, &bytes).map_err(|_| REFUSED)?;
     Ok(serde_json::json!({"format":1,"evidence_sha256":digest(&bytes),"evidence_bytes":bytes.len()}).to_string())
 }
 struct DigestOnly;
