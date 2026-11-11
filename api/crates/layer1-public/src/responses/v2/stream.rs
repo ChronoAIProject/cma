@@ -29,7 +29,7 @@ pub(super) async fn snapshot(
     let bound = reading.command.turn_sequence.is_some();
     let history = state
         .reads
-        .event_stream_snapshot(authorization)
+        .response_event_stream_snapshot(authorization, reading.command.turn_sequence)
         .await
         .map_err(error::read)?;
     projection::project(&state.agent_page_origin, reading, &history)
