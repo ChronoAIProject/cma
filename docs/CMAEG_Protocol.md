@@ -354,7 +354,7 @@ conservatively flagged for review. The freshness test also checks the CLI export
 From the repository root, regenerate, review the diff, commit:
 
 ```sh
-cargo run --manifest-path api/Cargo.toml -p cmaeg --locked -- --print-openapi > api/crates/cmaeg/openapi/v1.json
+cargo run --manifest-path api/Cargo.toml -p cmaeg --bin cmaeg --locked -- --print-openapi > api/crates/cmaeg/openapi/v1.json
 cargo nextest run --manifest-path api/Cargo.toml -p cmaeg --locked -E 'test(openapi_compat)'
 node .github/scripts/check-api-docs.mjs api/crates/cmaeg/openapi/v1.json docs/CMAEG_Protocol.md
 git diff -- api/crates/cmaeg/openapi/v1.json docs/CMAEG_Protocol.md
@@ -363,6 +363,19 @@ git diff -- api/crates/cmaeg/openapi/v1.json docs/CMAEG_Protocol.md
 A non-additive baseline diff MUST NOT be approved under `/v1`. Updating the file
 does not waive compatibility review. Human interoperability review is separate
 from automated checks; no second-engineer review is claimed by this document.
+
+Internally tagged newtype variants use the `cmaeg-core::schema` view at their
+`ToSchema` source. The closed payload declares the enclosing `type` property,
+and the enum requires its exact value. This avoids an impossible intersection
+between `additionalProperties:false` and a discriminator absent from that
+payload. Standalone payload schemas and runtime Serde decoding remain closed.
+The audit covers `Source.native_lark`, `SourceRequest.native_lark`,
+`SourceKind.native_lark` and `ActivityKind.interaction`. The private sealed
+`ReplyAddressWire` has no public schema; `IdentityAdmission` uses an adjacent
+`ids` field and does not have this intersection. Other tagged variants have
+named fields or no payload. `tagged_schemas` validates all four wire examples,
+a complete native-Lark create request and negative cases with a Draft 2020-12
+JSON Schema validator, and audits the generated document for this pattern.
 
 Stored channel definitions roll out readers before writers. An image that
 cannot parse a stored definition refuses that channel, so a new stored shape is

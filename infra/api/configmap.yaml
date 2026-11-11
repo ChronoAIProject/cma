@@ -83,6 +83,8 @@ data:
   CHRONO_AGENT_LOG_ADMISSION_AGENTS: ""
   # Owner-consented same-image reopening only; admission remains off until qualified.
   CHRONO_RETAINED_REOPEN_ENABLED: "false"
+  # Independent pending-approval reader; also requires trusted cohort membership.
+  CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Independent fleet mode: 0 disables; stable percentage stages require rollout.
   CHRONO_AGENT_LOG_FLEET_PERCENT: "0"
   # Qualify title reads separately after the admission/public-window cohort.
