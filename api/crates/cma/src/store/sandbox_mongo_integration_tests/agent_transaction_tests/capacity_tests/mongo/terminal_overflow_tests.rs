@@ -155,7 +155,7 @@ async fn overflow(bytes: bool, refused: bool) {
     );
     assert!(
         matches!(&tail[0].kind, AgentLogKind::TurnFailed { failure, .. }
-        if failure.class == "agent_log_capacity_exceeded" && failure.detail.contains("retained in the private capacity checkpoint"))
+        if failure.class == "agent_log_capacity_exceeded" && failure.detail.contains("retained privately") && failure.detail.contains("support") && failure.detail.contains("operator export"))
     );
     let peer = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
     assert!(DurableAgentUpdateRecorder::new(peer)
