@@ -6100,6 +6100,26 @@ No error or missing measurement is an empty result or a zero resource total.
 
 | 2026-11-10 | Honor usage Retry-After across report selections and bounded discovery, retaining distinct busy, unavailable, expired and denied states. |
 
+### 2026-11-10 — Usage over retained responsive Agent input
+
+The retained Agent composer fits changed text immediately. Width-driven fitting
+is coalesced into the next animation frame, outside ResizeObserver delivery, so
+opening Usage and resizing its background do not trigger a browser layout loop.
+Closing the Agent cancels any scheduled fitting. Keep the draft, focus and input
+semantics unchanged; browser-error checks remain strict across all engines.
+
+| 2026-11-10 | Schedule retained composer width fitting outside resize notifications for Usage dialog continuity in WebKit. |
+
+### 2026-11-10 — Usage filter menu resize placement
+
+Portalled menus place immediately when opened and follow scrolling. Content and
+anchor resize notifications schedule one placement in the next animation frame,
+so filtering a long choice list cannot resize its own observed box during delivery.
+Closing or unmounting cancels scheduled placement; focus and selection semantics
+remain unchanged.
+
+| 2026-11-10 | Coalesce menu resize placement outside observer delivery for searchable usage filters in WebKit. |
+
 | 2026-11-10 | Show recorded pre-admission refusal reasons in the existing Channel Activity detail rows. |
 
 | 2026-11-11 | Retain the last precise provider admission refusal beside the terminal expiry reason in Channel Activity. |
