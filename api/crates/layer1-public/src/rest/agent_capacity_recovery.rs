@@ -16,7 +16,7 @@ use super::instance_problem::InstanceProblem;
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
 
 mod commands;
-pub use commands::router as agent_capacity_recovery_command_router;
+pub use commands::router as agent_capacity_recovery_commands_router;
 
 pub fn agent_capacity_recovery_router(service: Arc<CapacityRecoveryPreflightService>) -> Router {
     Router::new()
