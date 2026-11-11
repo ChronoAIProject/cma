@@ -45,9 +45,28 @@ Paired disposable-Mongo tests compare all CMAP checkouts, complete scan counts,
 consumed log documents/bytes and the exact resulting Agent/integrity document at
 1,000 and 9,990 events. Other contracts cover disabled/untrusted fallbacks,
 corrupt tail/identity/quarantine, preserved mutation fences, full fallback gaps,
-capacity/metadata-only and successful-close exclusions, restart, concurrent and
-mixed writers, transient retries and actual ambiguous commits. Results are
-recorded in the PR before review. All source files remain below 500 lines.
+capacity/metadata-only and successful-close exclusions, restart, independent
+store races and mixed writers, transient retries and actual ambiguous commits.
+All changed Rust files remain below 500 lines.
+
+Paired local Mongo 8.0.13 results (4-KiB message fixtures; one retry publication):
+
+| Retained entries | Checkouts, off → on | Complete scans | Consumed log documents | Consumed BSON bytes |
+| --- | --- | --- | --- | --- |
+| 1,000 | 10 → 7 | 1 → 0 | 1,001 → 1 | 4,380,944 → 329 |
+| 9,990 | 12 → 7 | 1 → 0 | 9,991 → 1 | 43,981,894 → 329 |
+
+Both runs produce the exact same durable Agent and integrity metadata. These
+are total client checkouts and consumed log BSON, not network bytes, production
+latency or a fleet saving. The full path consumes its proof tail plus the
+complete history; the shortcut consumes only that tail.
+
+At 500 retained entries, disabled/cohort-off reads use 10 checkouts. Missing or
+unsupported metadata uses 8; stale metadata uses 10; semantically untrusted
+metadata uses 12. Each retains one complete scan. The last case repeats bounded
+proof reads before the full fallback, so fallback coverage matters when deciding
+whether activation helps. A successful ordinary full append rebuilds its
+checkpoint; legacy semantically unsupported history stays untrusted.
 
 Deploy default-off after review, lead-authorized merge and a fully green final
 develop batch artifact. Target Thu 2026-11-12 morning, review-ready by 02:00 SGT
