@@ -25,15 +25,19 @@ use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 
+mod later;
+
 #[derive(Clone, Default)]
 struct Native {
     attaches: Arc<AtomicUsize>,
     acknowledges: Arc<AtomicUsize>,
     fail_ack: Arc<AtomicBool>,
+    stale_confirmation: Arc<AtomicBool>,
+    activations: Arc<std::sync::Mutex<Vec<RecoveryActivation>>>,
 }
 #[async_trait::async_trait]
 impl CapacityRecoveryRuntime for Native {
-    type Attachment = (String, u64);
+    type Attachment = RecoveryActivation;
     async fn reattach_existing(
         &self,
         _: &RecoveryClaim,
@@ -45,25 +49,45 @@ impl CapacityRecoveryRuntime for Native {
         activation: &RecoveryActivation,
     ) -> Result<CompletedAttachment<Self::Attachment>, RecoveryError> {
         self.attaches.fetch_add(1, Ordering::SeqCst);
+        self.activations.lock().unwrap().push(activation.clone());
         let work = activation.completed();
         let key = work.request.key()?;
+        let stale = self.stale_confirmation.load(Ordering::SeqCst);
+        let target = if stale {
+            &work.target
+        } else {
+            activation.target()
+        };
+        let native_state = if stale {
+            ConfirmedNativeState::Idle
+        } else {
+            match activation.agent().status {
+                AgentStatus::Ready => ConfirmedNativeState::Idle,
+                AgentStatus::Working => ConfirmedNativeState::Working,
+                AgentStatus::WaitingApproval => ConfirmedNativeState::WaitingApproval,
+                _ => panic!("activation must require a current live native state"),
+            }
+        };
         Ok(CompletedAttachment::Reattached {
-            attachment: (key.clone(), activation.writer_fence()),
+            attachment: activation.clone(),
             confirmation: Box::new(RecoveryConfirmation {
                 operation_key: key,
-                target: work.target.clone(),
-                authority_fence: activation.writer_fence(),
-                native_state: ConfirmedNativeState::Idle,
+                target: target.clone(),
+                authority_fence: if stale {
+                    work.next_fence - 1
+                } else {
+                    activation.writer_fence()
+                },
+                native_state,
             }),
         })
     }
     async fn acknowledge(
         &self,
-        (key, fence): Self::Attachment,
+        attachment: Self::Attachment,
         work: &RecoveryWork,
     ) -> Result<(), RecoveryError> {
-        assert_eq!(key, work.request.key()?);
-        assert_eq!(fence + 1, work.next_fence);
+        assert_eq!(attachment.completed(), work);
         if self.fail_ack.swap(false, Ordering::SeqCst) {
             return Err(RecoveryError::Unavailable);
         }
