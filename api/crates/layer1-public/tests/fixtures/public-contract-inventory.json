@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 277,
+  "openapi_operations": 279,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3831,6 +3831,31 @@
         "reporting_budget_exceeded",
         "usage_unavailable",
         "report_expired"
+      ]
+    },
+    "GET /api/v1/sandboxes/{id}/runtime-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_retained_recovery.rs# Owner-only bounded read-only assessment; explicit POST repeats stronger admission proof.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "sandbox_not_found",
+        "hierarchy_service_unavailable"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/runtime-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_retained_recovery.rs# Explicit owner consent and fresh proof admit the existing same-image reopening suffix with immutable request receipts.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "sandbox_not_found",
+        "missing_idempotency_key",
+        "retained_recovery_consent_required",
+        "retained_recovery_authority_changed",
+        "retained_recovery_not_proved",
+        "retained_recovery_unavailable",
+        "hierarchy_service_unavailable"
       ]
     }
   }
