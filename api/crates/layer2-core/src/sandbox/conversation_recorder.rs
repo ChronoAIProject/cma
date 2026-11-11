@@ -179,13 +179,15 @@ impl DurableAgentUpdateRecorder {
                 "conversation update timestamp is invalid",
             ));
         }
-        let (source, update) = match update {
-            ConversationUpdate::RuntimeOutput { receipt, update } => {
-                (Some(receipt.source), update.map(|update| *update))
-            }
-            update => (None, Some(update)),
+        let (source, update, shared) = match &update {
+            ConversationUpdate::RuntimeOutput { receipt, update } => (
+                Some(&receipt.source),
+                update.as_deref(),
+                update.as_ref().is_some_and(|update| update.is_shared()),
+            ),
+            update => (None, Some(update), false),
         };
-        let fingerprint = source.as_ref().map_or_else(
+        let fingerprint = source.map_or_else(
             || {
                 format!(
                     "{:x}",
@@ -238,7 +240,7 @@ impl DurableAgentUpdateRecorder {
             let recorded = previous
                 .as_ref()
                 .filter(|checkpoint| checkpoint.update_id == update_id);
-            let identity_terminal = is_identity_terminal_for_current(&current, update.as_ref());
+            let identity_terminal = is_identity_terminal_for_current(&current, update);
             let replayed = if let Some(source) = &source {
                 let replayed = output_replayed(source, &current, previous.as_ref())?;
                 // An older observer may have durably recorded this exact
@@ -349,8 +351,16 @@ impl DurableAgentUpdateRecorder {
                 Some(update) => fold_update(
                     &current,
                     &recovered,
-                    budget::terminal(self.spend_source.as_deref(), &current, update.clone())
-                        .await?,
+                    budget::terminal(
+                        self.spend_source.as_deref(),
+                        &current,
+                        if shared {
+                            std::borrow::Cow::Borrowed(*update)
+                        } else {
+                            std::borrow::Cow::Owned((*update).clone())
+                        },
+                    )
+                    .await?,
                     &appended_at,
                     self.writer_policy.allows_writer(
                         &current.owner,
@@ -418,7 +428,7 @@ impl DurableAgentUpdateRecorder {
                 assembly: next_assembly.clone(),
                 outcome,
                 output: output_source_for_checkpoint(
-                    source.as_ref(),
+                    source,
                     previous.as_ref(),
                     runtime_generation,
                     identity_terminal,
