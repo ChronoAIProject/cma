@@ -4,6 +4,8 @@ use crate::RuntimeCapability;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentOperationError {
     #[error(transparent)]
+    Budget(crate::budget::BudgetError),
+    #[error(transparent)]
     Connection(#[from] SandboxCredentialPrerequisiteError),
     #[error("forbidden")]
     Forbidden,
@@ -65,6 +67,7 @@ pub enum AgentOperationError {
 impl AgentOperationError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::Budget(reason) => reason.code(),
             Self::Connection(error) => error.code(),
             Self::Forbidden => "forbidden",
             Self::NotFound => "agent_not_found",
