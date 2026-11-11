@@ -2394,22 +2394,29 @@ to the address opened, including `/`; consent may show NyxID's consent screen.
 A provider refusal or bound automatic exchange failure returns signed out.
 
 Preserve the existing `setup` query on `/bots/new` and `tab` query on Sandbox
-pages through the backend's validated return target. Unknown/duplicate query
-keys are excluded because they have no defined UI restoration meaning and may
-carry redirect or authority data. Fragments are excluded because share tokens
-must remain in the browser. Public Trigger, Launch, share-link and document
-journeys retain their own explicit sign-in. Focus, visibility and online refreshes
-never navigate. Background identity outages preserve mounted authenticated
-views; anonymous presentation and a stopped round trip retain owner-scoped
-unsubmitted drafts and command identities. Explicit logout or verification of
-a different owner clears that retained private state before mounting the new
-owner's view; nothing automatically creates or submits work.
+pages through the backend's validated return target. The complete encoded absolute
+login URL, including origin and options, must fit the shared 4 KiB budget. If a
+setup draft exceeds that budget, keep it in the current URL and tab storage,
+skip silent sign-in, and use a path-only return for explicit sign-in. Return
+targets are percent-encoded ASCII; unknown or duplicate query keys are excluded
+because they may carry undefined redirect or authority data. Addresses with fragments skip silent sign-in so share tokens stay in the browser. Public Trigger, Launch,
+share-link and document journeys retain their own explicit sign-in.
 
-Server logout establishes a 30-day browser opt-out of automatic sign-in. Explicit
-Sign in and Create account still work and do not erase this preference, so a
-late callback cannot undo a newer logout. No new control or visual primitive is
-introduced. Deployment activation is governed by the default-off startup flag
-and compatible-image rollout in the API Overview.
+Focus, visibility and online refreshes never navigate. Background identity
+outages preserve mounted authenticated views. Anonymous presentation and a
+stopped round trip retain owner-scoped unsubmitted drafts and command identities.
+Sign out clears private task and Agent-creation drafts before navigating; a
+verified different owner clears the previous owner's retained private state
+before mounting the new view. Nothing automatically creates or submits work.
+
+Same-origin server logout records an opt-out of automatic sign-in. A later
+successful explicit Sign in or Create account re-enables silent sign-in when
+the attempt started after that logout and its durable preference proof remains
+active. Logout revokes that proof, so delayed responses cannot reopen a revoked
+sign-in. An opted-out anonymous browser receives a false capability hint and
+stays on the ordinary signed-out surface. No new control or visual primitive is
+introduced. Deployment activation follows the default-off startup flag and
+compatible-image rollout in the API Overview.
 
 A public Trigger URL has its own complete read-only landing (§13b), not this
 generic gate. Sign in and Create account preserve the canonical local return
@@ -6185,24 +6192,4 @@ must not reopen Save without an available response for that policy.
 
 | 2026-11-06 | Check for a live NyxID session once, silently, before showing the signed-out surface (§20), keeping the existing Signing you in state for at most 10 seconds and never repeating after an explicit Sign out. |
 
-| 2026-11-11 | Finish silent sign-in rollout gating, server-owned logout suppression and callback fencing, eligible SPA navigation, bounded UI query restoration and owner-scoped draft preservation; retain all prior changelog entries. |
-
-### 2026-11-11 — Browser sign-in review corrections
-
-This entry supersedes §20's initial 30-day fixed opt-out and return-target sizing
-rules. A successful explicit sign-in re-enables automatic sign-in when that attempt
-started after the most recent logout; a delayed older callback never clears a
-newer logout. The start marker has a durable preference proof, preventing stale
-logout responses or replica clock skew from reopening a revoked sign-in. An
-opted-out anonymous browser receives a false capability hint.
-The web Sign out action clears private task/creation drafts before navigation.
-
-The complete encoded absolute login URL has the shared 4 KiB transport budget in
-API Overview. Oversized setup drafts stay in the URL and tab storage; explicit
-sign-in returns to the clean path and silent sign-in is skipped. Return targets
-are percent-encoded ASCII. Existing loading, error, focus/reconnection and draft
-isolation patterns remain authoritative; no new visual control is introduced.
-
-| 2026-11-11 | Restore explicit sign-in preference recovery with response-order fencing, clear private drafts before Sign out navigation, and bound fully encoded login URLs while retaining oversized setup drafts. |
-
-| 2026-11-11 | Bound browser login binding cookies to the ten-minute attempt plus one-minute callback margin; complete predecessor callbacks inline without changing the sign-in UI or retained draft behavior. |
+| 2026-11-11 | Complete §20 silent sign-in for opening and eligible SPA navigation with default-off activation, same-origin logout suppression and durable explicit-sign-in recovery, a 4 KiB encoded login URL budget, oversized-draft retention, private draft clearing before Sign out, and bounded browser bindings with inline predecessor completion. |
