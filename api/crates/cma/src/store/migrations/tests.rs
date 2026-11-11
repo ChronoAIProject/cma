@@ -2,6 +2,7 @@ use super::*;
 use cma_service_auth::mongodb_authority::MongoAuthorityMode;
 use mongodb::bson::{DateTime, Document};
 
+mod collection;
 mod failpoints;
 mod key_order;
 
