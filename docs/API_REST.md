@@ -256,8 +256,8 @@ Browser identity/flow responses use `Cache-Control: no-store`; anonymous signup
 options retain their public five-minute cache. Every `Set-Cookie` header must be
 preserved separately. Same-origin logout records its time; successful interactive
 sign-in records the attempt's start time and a non-authenticating binding reference
-in a separate cookie. The durable proof must still be active to re-enable silent
-entry; same-origin logout revokes it, so stale responses and replica clock skew
+in a separate cookie. The start must follow the logout marker and the durable proof must still be active
+to re-enable silent entry; same-origin logout revokes it, so stale responses and replica clock skew
 cannot overrule callback fencing. Suppressed anonymous
 sessions advertise `silent_sign_in: false`. Cross-site logout still revokes its
 session but cannot establish this new opt-out.

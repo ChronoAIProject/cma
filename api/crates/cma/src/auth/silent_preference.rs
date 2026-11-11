@@ -26,12 +26,18 @@ pub(super) fn reference(headers: &HeaderMap) -> Option<(SecretDigest, SystemTime
     Some((SecretDigest::from_bytes(bytes), started))
 }
 pub(super) async fn suppressed(auth: &AuthState, headers: &HeaderMap) -> bool {
-    if request_cookie(headers, SIGNED_OUT_COOKIE).is_none() {
+    let Some(signed_out) = request_cookie(headers, SIGNED_OUT_COOKIE) else {
         return false;
-    }
+    };
+    let Ok(signed_out) = signed_out.parse::<u64>() else {
+        return true;
+    };
     let Some((binding, started)) = reference(headers) else {
         return true;
     };
+    if timestamp(started) <= signed_out {
+        return true;
+    }
     // This reference is preference only, never an authentication credential.
     // The shared binding transaction proves no subsequent explicit logout won.
     !auth

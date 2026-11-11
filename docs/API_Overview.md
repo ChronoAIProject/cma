@@ -81,8 +81,8 @@ HttpOnly, host-only, SameSite=Lax cookies use Secure on HTTPS and last 30 days:
 `cma_signed_in` to the attempt's start time plus a non-authenticating binding
 reference. Its exact start is recorded in durable custody for the preference's
 30-day lifetime. Same-origin logout revokes that proof as well as the session,
-even when only the preference cookie remains. The proof is checked before
-re-enabling silent entry; timestamp comparison alone would be unsafe under
+even when only the preference cookie remains. The start must be later than the logout marker and its proof must still be active
+before re-enabling silent entry; timestamp comparison alone would be unsafe under
 reordered logout responses or replica clock skew. Missing, malformed, expired,
 revoked or unreadable proofs keep the opt-out in force. Cross-site logout revokes
 authority but preserves preference, so it cannot reactivate an older opt-out.

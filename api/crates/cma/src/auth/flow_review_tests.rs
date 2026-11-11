@@ -469,3 +469,30 @@ async fn predecessor_handoff_keeps_logout_handle_past_original_cookie_expiry() {
     .await;
     assert_eq!(late.headers()[header::LOCATION], "/");
 }
+
+#[tokio::test]
+async fn preference_never_overrides_a_logout_after_its_start_even_with_a_live_proof() {
+    let f = Fixture::new(StatusCode::OK, false).await;
+    let (path, binding) = f.start(false, "/agent-manager").await;
+    let complete = call(&f.app, &path, &binding).await;
+    let proof = cookie_value(&complete, "cma_signed_in");
+    let started: u64 = proof
+        .split_once('=')
+        .unwrap()
+        .1
+        .split_once('.')
+        .unwrap()
+        .0
+        .parse()
+        .unwrap();
+    for signed_out in [started, started + 1] {
+        let declined = call(
+            &f.app,
+            "/auth/login?prompt=none",
+            &format!("{proof}; cma_signed_out={signed_out}"),
+        )
+        .await;
+        assert_eq!(declined.headers()[header::LOCATION], "/");
+        assert!(cookies(&declined).is_empty());
+    }
+}
