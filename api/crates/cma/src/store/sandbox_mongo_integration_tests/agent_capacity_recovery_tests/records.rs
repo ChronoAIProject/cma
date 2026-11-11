@@ -102,7 +102,7 @@ async fn capacity_carrier_cannot_change_original_request_or_native_target() {
         match variant {
             0 => changed.work.target.conversation_id = "replacement".into(),
             1 => changed.work.target.input_sha256 = "e".repeat(64),
-            2 => changed.work.request.requested_at = MINUTE.into(),
+            2 => changed.work.request.requested_at = "2026-11-11T00:01:00Z".into(),
             _ => changed.work.revision += 1,
         }
         let mut scope = TransactionScope::start(&mut session).await.unwrap();
