@@ -4,9 +4,10 @@ use layer2_core::sandbox::ledger_maintenance_admission::{
     LedgerMaintenanceAdmissionPolicy as Policy, LedgerMaintenanceAdmissionRefusal as Refusal,
     LedgerMaintenanceStateV1,
 };
+use layer2_core::sandbox::ledger_maintenance_progress::LedgerMaintenanceProgress;
 use layer2_core::sandbox::store::ledger_maintenance::{
-    LedgerMaintenanceAdmission, LedgerMaintenanceInspection, LedgerMaintenanceStore,
-    LedgerMaintenanceStoreError as Domain, LedgerMaintenanceTakeover,
+    LedgerMaintenanceAdmission, LedgerMaintenanceInspection, LedgerMaintenanceProgressStore,
+    LedgerMaintenanceStore, LedgerMaintenanceStoreError as Domain, LedgerMaintenanceTakeover,
 };
 use layer2_core::{Caller, SandboxId};
 
@@ -48,6 +49,7 @@ pub(super) fn refused(reason: Refusal) -> ApplyError {
 pub(super) enum Change {
     Admit(Policy, LedgerMaintenanceAdmission),
     Takeover(Policy, LedgerMaintenanceTakeover),
+    Progress(Policy, LedgerMaintenanceProgress),
 }
 
 impl Change {
@@ -55,18 +57,31 @@ impl Change {
         match self {
             Self::Admit(_, r) => &r.caller,
             Self::Takeover(_, r) => &r.caller,
+            Self::Progress(_, r) => &r.caller,
         }
     }
     pub(super) fn sandbox(&self) -> SandboxId {
         match self {
             Self::Admit(_, r) => r.accepted.plan().source.sandbox.id.clone(),
             Self::Takeover(_, r) => r.expected_source.sandbox.id.clone(),
+            Self::Progress(_, r) => r.expected_source.sandbox.id.clone(),
         }
     }
     pub(super) fn policy(&self) -> Policy {
         match self {
-            Self::Admit(p, _) | Self::Takeover(p, _) => *p,
+            Self::Admit(p, _) | Self::Takeover(p, _) | Self::Progress(p, _) => *p,
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl LedgerMaintenanceProgressStore for MongoSandboxStore {
+    async fn progress_ledger_maintenance(
+        &self,
+        policy: Policy,
+        request: LedgerMaintenanceProgress,
+    ) -> Result<LedgerMaintenanceStateV1, Domain> {
+        execute(self, Change::Progress(policy, request)).await
     }
 }
 

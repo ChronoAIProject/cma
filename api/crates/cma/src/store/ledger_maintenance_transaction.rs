@@ -5,6 +5,7 @@ use layer2_core::sandbox::ledger_maintenance_admission::{
     LedgerMaintenanceAdmissionRefusal as Refusal, LedgerMaintenanceAdmissionRequest,
     LedgerMaintenanceAdmissionV1, LedgerMaintenanceStateV1, LedgerMaintenanceTakeoverRequest,
 };
+use layer2_core::sandbox::ledger_maintenance_progress::plan_ledger_maintenance_progress;
 use layer2_core::sandbox::store::ledger_maintenance::LedgerMaintenanceStoreError as Domain;
 use mongodb::{
     bson::{doc, Document, Timestamp},
@@ -58,6 +59,29 @@ pub(super) async fn apply(
                 }
                 LedgerMaintenanceAdmissionV1::Persist(state) => *state,
             }
+        }
+        Change::Progress(policy, request) => {
+            let desired = plan_ledger_maintenance_progress(
+                *policy,
+                &request.expected,
+                &request.expected_source,
+                request,
+            )
+            .map_err(Domain::from)?;
+            let audit = records::audit(Some(&request.expected), &desired, &request.caller)?;
+            if audit_present(store, &audit, session).await? {
+                return Ok(Receipt {
+                    state: desired,
+                    audit: None,
+                });
+            }
+            plan_ledger_maintenance_progress(
+                *policy,
+                existing.ok_or_else(|| refused(Refusal::Conflict))?,
+                source,
+                request,
+            )
+            .map_err(Domain::from)?
         }
         Change::Takeover(_, request) => {
             // Derive the exact original outcome for uncertain-commit replay.

@@ -9,6 +9,7 @@ use crate::sandbox::ledger_maintenance_admission::{
 use crate::sandbox::ledger_maintenance_plan::{
     LedgerMaintenancePlanArtifactV1, LedgerMaintenanceSnapshotV1,
 };
+use crate::sandbox::ledger_maintenance_progress::LedgerMaintenanceProgress;
 use crate::{Caller, SandboxId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -88,5 +89,15 @@ pub trait LedgerMaintenanceStore: Send + Sync {
         &self,
         policy: LedgerMaintenanceAdmissionPolicy,
         request: LedgerMaintenanceTakeover,
+    ) -> Result<LedgerMaintenanceStateV1, LedgerMaintenanceStoreError>;
+}
+
+/// Mutating early-progress port, kept separate from assessment and execution.
+#[async_trait]
+pub trait LedgerMaintenanceProgressStore: Send + Sync {
+    async fn progress_ledger_maintenance(
+        &self,
+        policy: LedgerMaintenanceAdmissionPolicy,
+        request: LedgerMaintenanceProgress,
     ) -> Result<LedgerMaintenanceStateV1, LedgerMaintenanceStoreError>;
 }
