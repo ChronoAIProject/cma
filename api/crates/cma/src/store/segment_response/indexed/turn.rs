@@ -42,13 +42,19 @@ impl Reader<'_> {
         {
             return Err(corrupt());
         }
+        index.validate().map_err(|_| corrupt())?;
+        facts
+            .validate(index.through_sequence)
+            .map_err(|_| corrupt())?;
         let mut sequences = vec![turn];
         if index.through_sequence < self.captured.through() {
             sequences.push(index.through_sequence + 1);
         }
         let rows = self.source_points(&sequences).await?;
-        if !matches!(&rows[0].kind,AgentLogKind::TurnStarted {turn_sequence,..} if *turn_sequence == turn)
-            || rows.get(1).is_some_and(|row| !matches!(&row.kind,AgentLogKind::TurnStarted {turn_sequence,..} if *turn_sequence == row.seq))
+        if !matches!(&rows[0].kind, AgentLogKind::TurnStarted { turn_sequence, origin_key, model }
+            if *turn_sequence == turn && origin_key == &facts.origin_key && model == &facts.model)
+            || rows[0].appended_at != facts.started_at
+            || rows.get(1).is_some_and(|row| !matches!(&row.kind, AgentLogKind::TurnStarted {turn_sequence, ..} if *turn_sequence == row.seq))
         { return Err(corrupt()); }
         self.metadata.turn = Some(facts::convert(*facts)?);
         self.metadata.index = Some(index);
