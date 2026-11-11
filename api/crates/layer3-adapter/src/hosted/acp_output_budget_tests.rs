@@ -67,12 +67,15 @@ async fn open_with_permissions(
     let mut configured = settings(None, false);
     configured.bounded_raw_output = bounded;
     configured.bounded_permission_state = permissions;
+    configured.output_json_budget = permissions;
+    configured.shared_runtime_output = permissions;
     let (sender, mut received) = mpsc::channel(4);
-    let opening = tokio::spawn(Bridge::open(
+    let opening = tokio::spawn(Bridge::open_with_relay_policy(
         client,
         "agent-1",
         "/workspace".into(),
-        configured,
+        (configured, None, permissions),
+        None,
         None,
         sender,
     ));

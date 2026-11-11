@@ -57,6 +57,11 @@ pub(super) struct ReliableOutput {
     durable_progress: tokio::sync::watch::Sender<u64>,
 }
 
+pub(super) struct OutputAckState {
+    stream: uuid::Uuid,
+    progress: tokio::sync::watch::Sender<u64>,
+}
+
 impl ReliableOutput {
     pub(super) fn new(
         stream: uuid::Uuid,
@@ -77,6 +82,16 @@ impl ReliableOutput {
 }
 
 impl Bridge {
+    // Capture before processing frames. Delivery may hold the output mutex
+    // while waiting for a bounded relay; durable ACKs must not need that mutex.
+    pub(super) async fn output_ack_state(&self) -> Option<OutputAckState> {
+        let state = self.output.as_ref()?.lock().await;
+        Some(OutputAckState {
+            stream: state.stream,
+            progress: state.durable_progress.clone(),
+        })
+    }
+
     pub(in crate::hosted) async fn output_progress(
         &self,
     ) -> Option<tokio::sync::watch::Receiver<u64>> {
@@ -106,6 +121,10 @@ impl Bridge {
         {
             return Err(fail());
         }
+        if self.output_json_budget {
+            super::super::output_json_budget::validate(&bytes[HEADER_BYTES..])
+                .map_err(|error| error.adapter_error())?;
+        }
         if state.session.is_none() && state.queued_bytes.saturating_add(bytes.len()) > STARTUP_BYTES
         {
             return Err(AdapterError::Unavailable(
@@ -127,7 +146,7 @@ impl Bridge {
                 held.prepared = Some(match effect {
                     // Owner authentication must remain visible before session creation.
                     Some(notice @ ConversationUpdate::SignInRequired { .. }) => {
-                        updates.send(notice);
+                        updates.send(notice).await;
                         None
                     }
                     other => other,
@@ -222,20 +241,30 @@ impl Bridge {
             })?,
             payload_sha256: format!("{:x}", Sha256::digest(&held.payload)),
         };
-        updates.send(ConversationUpdate::RuntimeOutput {
-            receipt: RuntimeOutputReceipt::new(source, state.acknowledgements.clone()),
-            update: update.map(Box::new),
-        });
+        updates
+            .send(ConversationUpdate::RuntimeOutput {
+                receipt: RuntimeOutputReceipt::new(source, state.acknowledgements.clone()),
+                update: update.map(|update| {
+                    crate::RuntimeOutputUpdate::new(update, self.shared_runtime_output)
+                }),
+            })
+            .await;
         Ok(())
     }
 
     pub(super) async fn acknowledge_output(
         &self,
         source: RuntimeOutputSource,
+        state: Option<&OutputAckState>,
     ) -> crate::Result<()> {
         let stream = uuid::Uuid::parse_str(&source.stream_id).map_err(|_| {
             AdapterError::Rejected("invalid output acknowledgement identity".into())
         })?;
+        let state = state
+            .filter(|state| state.stream == stream && source.cursor > 0)
+            .ok_or_else(|| {
+                AdapterError::Rejected("output acknowledgement changed its stream".into())
+            })?;
         let mut bytes = Vec::with_capacity(HEADER_BYTES + 1);
         bytes.push(LANE_OUTPUT_ACK);
         bytes.extend_from_slice(stream.as_bytes());
@@ -248,19 +277,13 @@ impl Bridge {
             .map_err(|error| {
                 AdapterError::Unavailable(format!("runtime acknowledgement write failed: {error}"))
             })?;
-        if let Some(state) = &self.output {
-            state
-                .lock()
-                .await
-                .durable_progress
-                .send_if_modified(|last| {
-                    if source.cursor <= *last {
-                        return false;
-                    }
-                    *last = source.cursor;
-                    true
-                });
-        }
+        state.progress.send_if_modified(|last| {
+            if source.cursor <= *last {
+                return false;
+            }
+            *last = source.cursor;
+            true
+        });
         Ok(())
     }
 }
