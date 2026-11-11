@@ -35,7 +35,11 @@ pub(super) fn group(
             }
             audit.observe(db, row)?;
             if let SourceRow::Auxiliary(Auxiliary::Process { cwd, .. }) = row {
-                if selection.worktrees.contains(cwd) {
+                // Valid process paths may spell the same Worktree differently.
+                // Compare parsed identity without requiring the path to exist.
+                let worktree = crate::worktree::parse_path(&config.home, std::path::Path::new(cwd))
+                    .ok_or_else(invalid)?;
+                if selection.worktrees.contains(&worktree) {
                     return Err(invalid());
                 }
             }
