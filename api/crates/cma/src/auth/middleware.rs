@@ -36,9 +36,18 @@ pub async fn attach_subject(
     let allow_fallback = auth
         .fallback_policy
         .permits(request.method(), request.uri().path());
+    let started = std::time::Instant::now();
     let (resolved, failure) =
         diagnostics::capture(auth.resolve_request_with_policy(request.headers(), allow_fallback))
             .await;
+    let outcome = match &resolved {
+        Ok(Some(_)) => "resolved",
+        Ok(None) => "anonymous",
+        Err(_) => "unavailable",
+    };
+    metrics::counter!("cma_auth_resolutions_total", "outcome" => outcome).increment(1);
+    metrics::histogram!("cma_auth_resolution_seconds", "outcome" => outcome)
+        .record(started.elapsed().as_secs_f64());
     let resolved = match resolved {
         Ok(resolved) => resolved,
         Err(error) => {
