@@ -45,6 +45,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 
 pub(crate) struct SandboxLifecycleConfig {
     pub bounded_live_fragments: bool,
+    pub coordinated_ingress: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -98,11 +99,12 @@ impl SandboxLifecycleComposition {
                 ),
             )),
         ));
-        let updates = DurableAgentUpdateRecorder::with_live_budget(
+        let updates = DurableAgentUpdateRecorder::with_ingress_budget(
             dependencies.store.clone(),
             dependencies.store.writer_policy.clone(),
             Some(dependencies.store.clone()),
             config.bounded_live_fragments,
+            config.coordinated_ingress,
         );
         let registry = Arc::clone(&dependencies.registry);
         let suggestions = super::suggestion_worker::SuggestionWorker::new(
