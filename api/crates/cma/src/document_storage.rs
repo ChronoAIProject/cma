@@ -14,6 +14,11 @@ use std::{
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
+// Includes token-lock contention, refresh, the single 401 retry and body reads.
+const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub(crate) struct StorageDocuments {
     http: Client,
     config: DocumentStorageConfig,
@@ -23,8 +28,8 @@ impl StorageDocuments {
     pub(crate) fn new(config: DocumentStorageConfig) -> Result<Arc<Self>, String> {
         let http = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(3))
-            .timeout(Duration::from_secs(12))
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
             .user_agent("cma-document-storage")
             .build()
             .map_err(|_| "document storage HTTP client could not be built")?;
@@ -146,9 +151,8 @@ struct StoredMetadata {
     fence_version: u64,
 }
 
-#[async_trait::async_trait]
-impl DocumentBlobStore for StorageDocuments {
-    async fn put(&self, key: &str, bytes: Vec<u8>) -> Result<(), DocumentError> {
+impl StorageDocuments {
+    async fn put_object(&self, key: &str, bytes: Vec<u8>) -> Result<(), DocumentError> {
         if bytes.is_empty() || bytes.len() > MAX_DOCUMENT_BYTES {
             return Err(DocumentError::Invalid);
         }
@@ -172,13 +176,28 @@ impl DocumentBlobStore for StorageDocuments {
         }
         Ok(())
     }
-    async fn get(&self, key: &str) -> Result<Vec<u8>, DocumentError> {
+    async fn get_object(&self, key: &str) -> Result<Vec<u8>, DocumentError> {
         bounded(
             self.send(Method::GET, self.object_url(key, None)?, None)
                 .await?,
             MAX_DOCUMENT_BYTES,
         )
         .await
+    }
+}
+
+#[async_trait::async_trait]
+impl DocumentBlobStore for StorageDocuments {
+    async fn put(&self, key: &str, bytes: Vec<u8>) -> Result<(), DocumentError> {
+        tokio::time::timeout(OPERATION_TIMEOUT, self.put_object(key, bytes))
+            .await
+            .map_err(|_| DocumentError::Unavailable)?
+    }
+
+    async fn get(&self, key: &str) -> Result<Vec<u8>, DocumentError> {
+        tokio::time::timeout(OPERATION_TIMEOUT, self.get_object(key))
+            .await
+            .map_err(|_| DocumentError::Unavailable)?
     }
 }
 async fn bounded(mut response: Response, max: usize) -> Result<Vec<u8>, DocumentError> {
@@ -229,3 +248,7 @@ impl DocumentBlobStore for UnavailableDocuments {
 #[cfg(test)]
 #[path = "document_storage_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "document_storage_failure_tests.rs"]
+mod failure_tests;

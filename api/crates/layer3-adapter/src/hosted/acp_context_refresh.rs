@@ -24,6 +24,24 @@ impl Bridge {
         binding.readiness_receipt(&session, sequence).await.ok()
     }
 
+    /// Inspect only this attachment's local state. Receipt issuance and all
+    /// runtime IO remain behind the caller's fresh admission checks.
+    pub(super) async fn context_readiness_session(&self) -> Option<String> {
+        self.context_refresh.as_ref()?;
+        let session = self.session().await.ok()?;
+        if self.context_busy().await
+            || !self
+                .context_goal
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|(id, safe)| id == &session && *safe)
+        {
+            return None;
+        }
+        Some(session)
+    }
+
     pub(super) async fn context_busy(&self) -> bool {
         self.owned_prompt_waiters.load(Ordering::SeqCst) != 0
             || self.orphaned_prompt_response.load(Ordering::SeqCst)
