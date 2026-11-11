@@ -29,6 +29,10 @@ impl AgentWorker {
     /// Background entry for an exact already-published recovery operation.
     /// The service proves fresh receipt-bound personal authority for every step;
     /// discovery metadata alone never grants this permission.
+    #[allow(
+        dead_code,
+        reason = "accepted recovery worker entry remains closed until qualification"
+    )]
     pub(crate) async fn run_accepted_capacity_recovery(
         &self,
         service: &crate::store::agent_capacity_recovery::RecoveryService,
