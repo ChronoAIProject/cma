@@ -8,14 +8,6 @@ Running record kept while implementing
 
 Things noticed while implementing that this plan does not change.
 
-- Owners without a model budget policy (not listed and no `default_policy`)
-  reserve no liability, so their messages and turn starts are never checked
-  against platform closures; the plan wires the check after the owner
-  reservation. Zero-liability commitments (Sandbox, Workspace, Agent, Launch,
-  revival) cover them.
-- The period row pins the token valuation of its first liability, as owner rows
-  do. Per-owner policies with a different valuation are then refused with
-  `budget_unavailable` until the period rotates.
 - `commit_conversation` retries only transient driver errors; a duplicate key
   from the in-transaction insert of a missing period row would surface as
   unavailable. In practice concurrent inserts surface as write conflicts, and
@@ -26,23 +18,18 @@ Things noticed while implementing that this plan does not change.
   overrides an owner's keep-alive. Sandboxes with no live Agents are not
   candidates of the quiet-pause predicate either. Both keep running cloud
   spend under `SpendStop`; decide with #1478.
-- `agent_reads/visibility.rs::redact_failure` maps budget failure classes to
-  guidance for shared transcripts; `platform_budget_exhausted` falls through
-  to the generic "This Agent turn failed." text there.
 - The admin spend routes (`GET /api/v1/admin/spend`,
   `POST /api/v1/admin/spend/observations`) still need OpenAPI registration,
   `docs/API_REST.md` rows and public-contract corpus coverage.
 - From the final review, deferred: `PlatformWrites` is taken for every
   message reservation regardless of the owner's policy and held across
-  admission retry sleeps and unknown-commit reconciliation; the observation
-  key `observation:cloud:<instant>` is not scoped to its period, so an
-  observation at an instant shared by two periods conflicts; the alert also
-  fires for `MeteringUnavailable`; revival and registration see staleness only
-  after the next evaluation; an unreadable admission state fails sign-in for
-  existing owners too; the message checkpoint commit still retries with
-  `yield_now` rather than `contention::backoff`; `ClosureReason` has no
-  fallback for #1478's future reasons; owners absent from the user directory
-  are treated as new while a closure exists.
+  admission retry sleeps and unknown-commit reconciliation; revival and
+  registration see staleness only after the next evaluation; the message
+  checkpoint commit still retries with `yield_now` rather than
+  `contention::backoff`; `ClosureReason` has no fallback for #1478's future
+  reasons; owners absent from the user directory are treated as never-seen.
+  (The period-scoped observation key, the `MeteringUnavailable` alert and
+  sign-in under an unreadable state were settled in review round 1.)
 - `#1672` (global Sandbox admission, merged into develop during this work) adds
   a `sandbox_capacity_unavailable` 503 that overlaps #1478's `CapacityLimit`
   reason; the two are not reconciled here.
@@ -91,7 +78,8 @@ Each entry: what the plan said, what was done instead, and why.
   (`ensure_period_row`), so a closure entered on a missing row is not lost.
 - `start_turn` runs `require_open` only for a queued turn (one reserved with its
   command); a turn reserved in the same transaction already passed
-  `admit_liability`.
+  `admit_liability`. Since review round 1 an owner without a budget policy
+  runs it for every turn start, as its message and model requests do.
 - The command reservation loop is `agent_commands.rs::reserve_command`, not
   `agent_commands/reserve.rs`; `PlatformWrites` is taken there for messages.
   Other `reserve::apply` callers (Launch first messages, interrupting
@@ -124,8 +112,8 @@ Each entry: what the plan said, what was done instead, and why.
   first-message refusal may carry; without `platform_budget_exhausted` there,
   a Launch first message refused by the platform stop failed validation as
   corrupt. The code was added with a test. The shared-transcript redaction
-  list in `agent_reads/visibility.rs` is the same kind of enumeration but only
-  degrades the shared text, so it is recorded under Out of scope.
+  list in `agent_reads/visibility.rs` is the same kind of enumeration; it
+  gained the code in review round 1.
 
 ### Task 4
 
@@ -166,9 +154,10 @@ Each entry: what the plan said, what was done instead, and why.
 
 - `registration_closed` lives in `auth/records.rs` beside the decision;
   `flow.rs` is close to the 500-line limit and only calls it.
-- `admit_registration` reads the user directory only while a closure exists,
-  so an open platform adds no read to sign-in. Without a configured directory
-  a closure refuses (the callback fails closed).
+- `admit_registration` first read the user directory only while a closure
+  existed. Review round 1 reversed the order (contract decision 25): the
+  directory is checked first, so an existing owner signs in without reading
+  the admission state, and only a never-seen subject reads it, failing closed.
 - The ledger is attached through `AuthState::with_platform_spend` in
   `composition/credentials.rs`, the pattern `with_binding_store` uses.
 
@@ -224,7 +213,8 @@ Three were fixed with a failing test first:
   `MeteringUnavailable` that the evaluator (which cannot see valuations)
   lifted and the owner's next try re-entered. It now refuses only that
   admission with `budget_unavailable` and enters no closure; a period change
-  under liability still enters `MeteringUnavailable`.
+  under liability still enters `MeteringUnavailable`. (Review round 1 removed
+  the period row's valuation altogether; see below.)
 - Turn ends reach the period row through the message checkpoint commit
   (`agent_conversation_store/checkpoint.rs`), which did not take
   `PlatformWrites`; it now does, like `commit_conversation`.
@@ -236,6 +226,31 @@ Three were fixed with a failing test first:
 The fourth (a refusal at `committed + L > disposable` enters `SpendStop` while
 `committed` is still below `disposable`) is the plan's admission semantics and
 TC-126's expectation; it is kept and recorded as contract decision 29.
+
+### Review round 1
+
+The parent session's review of the branch; each fix is its own commit with a
+test that failed first.
+
+- `develop` merged (no rebase), 174a35dbf.
+- Registration: the directory is checked before the admission state; an
+  unreadable state signs existing owners in and refuses never-seen subjects
+  (decision 25).
+- Owners without a budget policy reserve nothing but meet the platform state
+  on messages, turn starts (queued or not) and model requests, with the codes
+  of decision 19 (decision 24).
+- The period row no longer pins a token valuation; it sums the amounts the
+  owner rows valued, so owners valued differently share one period
+  (decision 30, sections 4, 4.2 and 6).
+- Observation rows are keyed
+  `observation:cloud:<period_start>:<observed_through>`, so adjacent periods
+  each record an observation at their shared boundary (section 8).
+- Shared transcripts show the static guidance for `platform_budget_exhausted`.
+- Section 5.3 states that the alert also fires for `MeteringUnavailable` (the
+  code already did).
+- Decisions 26 (keep-alive under a platform pause) and 29 (refusal entering
+  `SpendStop` before `committed` reaches `disposable`) are unchanged and wait
+  for the user's ruling.
 
 ## Blocked
 
