@@ -259,6 +259,15 @@ async fn unknown_settlement_commit_replays_once_after_restart_without_another_se
     let result = f.peer.settle_request(&f.hold, usage()).await;
     f.disable().await;
     assert_eq!(result, Err(BudgetError::Unavailable));
+    // The injected write-concern error skips the commit acknowledgement. Fence
+    // majority visibility before another client's snapshot inspects the ledger.
+    f.admin
+        .database(&f.name)
+        .collection::<Document>("settlement_visibility")
+        .insert_one(doc! {"_id": "after-uncertain-commit"})
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .unwrap();
     let expected = expected_settlement(before, &f.hold);
     assert_eq!(f.rows().await, expected);
     let reopened = MongoSandboxStore::open(&f.admin, &f.name).await.unwrap();
