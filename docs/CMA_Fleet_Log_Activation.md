@@ -81,6 +81,7 @@ The existing ten-second telemetry emission includes
 | `preparation_busy` | No proactive slot was available; the request proceeds through its existing path. |
 | `fallback` | A selected reader/writer lacked trusted proof and entered its complete path. |
 | `quarantined` | A selected proof observed a quarantine marker; an observation count, not a unique-Agent census. |
+| `quarantine_written` | An existing audit/writer quarantine update matched its fence, in any activation mode; counts writes, including repeated markers, not unique Agents. |
 | `write_scan_avoided` | A trusted append/admission/receipt proof replaced its complete validation scan. |
 | `window_scan_avoided` | A successful selected page/range avoided complete validation. Full-prefix reads are excluded. |
 
