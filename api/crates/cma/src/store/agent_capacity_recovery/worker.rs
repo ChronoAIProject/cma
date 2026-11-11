@@ -4,7 +4,10 @@ use std::time::{Duration, SystemTime};
 use layer2_core::{
     sandbox::agent_capacity_recovery::{
         activation::RecoveryActivation,
-        ports::{CapacityRecoveryRuntime, ClaimOutcome, CommitOutcome, RecoveryError},
+        ports::{
+            CapacityRecoveryRuntime, ClaimOutcome, CommitOutcome, CompletedAttachment,
+            RecoveryError,
+        },
         state::{
             RecoveryClaim, RecoveryConfirmation, RecoveryPhase, RecoveryRequest, RecoveryWork,
         },
@@ -92,17 +95,23 @@ pub(super) async fn run<S: AcceptedWork, R: CapacityRecoveryRuntime>(
             }
             if work.phase == RecoveryPhase::Completed {
                 let activation = store.activation(&work).await?;
-                let (attachment, confirmation) = tokio::time::timeout(
+                let attached = tokio::time::timeout(
                     Duration::from_secs(15),
                     runtime.reattach_completed(&activation),
                 )
                 .await
                 .map_err(|_| RecoveryError::Unavailable)??;
-                activation.require_confirmation(&confirmation)?;
                 if store.activation(&work).await? != activation {
                     return Err(RecoveryError::Conflict);
                 }
-                runtime.acknowledge(attachment, &work).await?;
+                if let CompletedAttachment::Reattached {
+                    attachment,
+                    confirmation,
+                } = attached
+                {
+                    activation.require_confirmation(&confirmation)?;
+                    runtime.acknowledge(attachment, &work).await?;
+                }
             }
             return Ok(CommitOutcome::Recorded(*work));
         }
