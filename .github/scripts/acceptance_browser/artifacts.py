@@ -3,7 +3,10 @@
 import hashlib
 from html.parser import HTMLParser
 import json
+import os
+from pathlib import Path
 import re
+import subprocess
 from urllib.parse import urljoin, urlsplit
 
 from safety import CMA_ORIGIN, Http, Refusal
@@ -53,8 +56,42 @@ def asset_path(raw, parent="/"):
     return resolved.path
 
 
-def attest(http=None):
+def javascript_references(source):
+    environment = {
+        key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR") if key in os.environ
+    }
+    completed = subprocess.run(
+        [
+            "npm",
+            "exec",
+            "--offline",
+            "--package=acorn@8.15.0",
+            "--",
+            "node",
+            str(Path(__file__).with_name("asset_parser.mjs")),
+        ],
+        input=source.encode(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+        env=environment,
+        check=False,
+    )
+    if completed.returncode != 0 or len(completed.stdout) > 256 * 1024:
+        raise Refusal("asset_dependency_parser_refused")
+    result = json.loads(completed.stdout)
+    if (
+        not isinstance(result, list)
+        or len(result) > 2048
+        or not all(isinstance(item, str) for item in result)
+    ):
+        raise Refusal("asset_dependency_parser_refused")
+    return result
+
+
+def attest(http=None, extractor=None):
     http = http or Http()
+    extractor = extractor or javascript_references
     info = http.request(CMA_ORIGIN, "/build-info.json")
     if info[0] != 200:
         raise Refusal("build_info_unavailable")
@@ -81,6 +118,7 @@ def attest(http=None):
     rows = []
     seen = set()
     total = 0
+    ignored_literals = set()
     while queue:
         path = queue.pop(0)
         if path in seen:
@@ -103,13 +141,30 @@ def attest(http=None):
         )
         if path.endswith((".js", ".css")):
             text = payload.decode("utf-8")
-            # Vite static/dynamic/preload dependencies, including bare assets/* tables.
-            references = re.findall(
+            literals = re.findall(
                 r"""["']((?:\./|/assets/|assets/)[A-Za-z0-9_.-]+\.(?:js|css|woff2?|ttf|otf|png|jpe?g|svg|webp|gif|ico|wasm|avif))["']""",
                 text,
             )
-            if path.endswith(".css"):
-                references.extend(re.findall(r"""url\(["']?([^\s"')]+)["']?\)""", text))
+            references = (
+                extractor(text)
+                if path.endswith(".js")
+                else re.findall(
+                    r"""url\(["']?([^\s"')]+)["']?\)""",
+                    re.sub(r"/\*.*?\*/", "", text, flags=re.S),
+                )
+            )
+            if path.endswith(".js"):
+                for literal in set(literals) - set(references):
+                    ignored_literals.add(
+                        digest(
+                            asset_path(
+                                "/" + literal
+                                if literal.startswith("assets/")
+                                else literal,
+                                path,
+                            ).encode()
+                        )
+                    )
             for reference in references:
                 if reference.startswith("data:"):
                     continue
@@ -133,4 +188,5 @@ def attest(http=None):
         "assets": rows,
         "total_bytes": total,
         "entry_count": len(entries.paths),
+        "non_dependency_literal_sha256": sorted(ignored_literals),
     }

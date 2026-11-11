@@ -66,9 +66,20 @@ export class Observer {
     );
     this.pending.delete(request);
   }
-  begin(phase, hidden = false) {
+  async trackVisibility(page) {
+    await page.exposeFunction("__acceptanceVisibility", (hidden) => {
+      this.hidden = hidden === true;
+    });
+    await page.evaluateOnNewDocument(() => {
+      const report = () => {
+        void globalThis.__acceptanceVisibility(document.hidden);
+      };
+      document.addEventListener("visibilitychange", report);
+      report();
+    });
+  }
+  begin(phase) {
     this.phase = phase;
-    this.hidden = hidden;
     return this.now();
   }
   result() {

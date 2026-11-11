@@ -105,6 +105,7 @@ test("isolated browser blocks mutations, sockets and foreign traffic; measures r
     const page = await context.newPage();
     await protect(page, guard, blocked);
     const observed = new Observer(page, origin);
+    await observed.trackVisibility(page);
     await page.goto(origin);
     await page.evaluate(async (other) => {
       const read = "/api/v1/agents/fixture?private=never-recorded";
@@ -138,6 +139,11 @@ test("isolated browser blocks mutations, sockets and foreign traffic; measures r
       timeout: 5000,
     });
     assert.equal(await page.evaluate(() => document.visibilityState), "hidden");
+    observed.begin("A4");
+    await page.evaluate(() => fetch("/api/v1/agents/fixture"));
+    assert.ok(
+      observed.rows.some((row) => row.phase === "A4" && row.hidden_start),
+    );
     await page.bringToFront();
     assert.equal(
       await page.evaluate(() => document.visibilityState),

@@ -28,6 +28,7 @@ REASONS = {
     "root_unavailable",
     "entry_assets_missing",
     "asset_count_limit",
+    "asset_dependency_parser_refused",
     "asset_status_or_size_limit",
     "artifact_changed_during_observation",
     "request_transport_failure",

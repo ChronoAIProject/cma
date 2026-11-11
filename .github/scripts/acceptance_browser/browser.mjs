@@ -57,9 +57,16 @@ try {
       sameSite: "Lax",
     });
   }
+  // Prepare the cover before opening an Agent, so no hidden time is discarded.
+  const cover = config.mode === "agent" ? await context.newPage() : null;
+  if (cover) {
+    await protect(cover, guard, blocked);
+    await cover.goto("about:blank");
+  }
   const page = await context.newPage();
   await protect(page, guard, blocked);
   const observer = new Observer(page, ORIGIN);
+  await observer.trackVisibility(page);
   const cases = [];
   const bind = async (phase) => {
     if (!phases.includes(phase)) throw Error();
@@ -75,9 +82,9 @@ try {
       );
     }
   };
-  const observe = async (phase, duration, action, hidden = false) => {
+  const observe = async (phase, duration, action) => {
     await bind(phase);
-    const start = observer.begin(phase, hidden);
+    const start = observer.begin(phase);
     if (action) await action();
     const windowStart = observer.now();
     await wait(duration);
@@ -147,18 +154,20 @@ try {
       history = await contentFingerprint(page);
     });
     await observe("A3", 60000);
-    const cover = await context.newPage();
-    await protect(cover, guard, blocked);
-    await cover.goto("about:blank");
-    await cover.bringToFront();
-    await page.waitForFunction(() => document.visibilityState === "hidden", {
+    await observe("A4", 60000, async () => {
+      await cover.bringToFront();
+      await page.waitForFunction(() => document.visibilityState === "hidden", {
+        timeout: 5000,
+      });
+      actualHidden = await page.evaluate(
+        () => document.visibilityState === "hidden",
+      );
+      if (!actualHidden) throw Error();
+    });
+    await page.bringToFront();
+    await page.waitForFunction(() => document.visibilityState === "visible", {
       timeout: 5000,
     });
-    actualHidden = await page.evaluate(
-      () => document.visibilityState === "hidden",
-    );
-    if (!actualHidden) throw Error();
-    await observe("A4", 60000, null, true);
     await observe("A5_focus", 30000, async () => {
       for (let count = 0; count < 5; count += 1) {
         await cover.bringToFront();

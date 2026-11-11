@@ -137,7 +137,12 @@ class ArtifactTests(unittest.TestCase):
             def request(self, _origin, path, **_kwargs):
                 return 200, {}, payloads[path], 0.1
 
-        result = artifacts.attest(Http())
+        result = artifacts.attest(
+            Http(),
+            extractor=lambda source: ["./next.js"]
+            if "next.js" in source
+            else ["./main.js"],
+        )
         self.assertEqual(len(result["assets"]), 2)
         self.assertNotIn("main.js", json.dumps(result))
         self.assertNotIn("import", json.dumps(result))
@@ -161,7 +166,7 @@ class ArtifactTests(unittest.TestCase):
                 )
 
         with self.assertRaisesRegex(Refusal, "artifact_changed"):
-            artifacts.attest(Http())
+            artifacts.attest(Http(), extractor=lambda _: [])
 
 
 if __name__ == "__main__":
