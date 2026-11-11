@@ -21,6 +21,7 @@ mod execution;
 mod gateway;
 mod home;
 mod profiles;
+mod public_streams;
 mod runtime;
 
 mod features;
@@ -167,6 +168,7 @@ pub struct Config {
     pub nyxid_proxy_audience: Option<String>,
     pub cors_origins: Vec<HeaderValue>,
     pub rate_limits: RateLimitConfig,
+    pub(crate) public_stream_limit: usize,
     pub trusted_proxies: TrustedProxyConfig,
     pub mongodb_uri: String,
     pub mongodb_database: String,
@@ -206,6 +208,7 @@ impl std::fmt::Debug for Config {
             .field("nyxid_public_url", &self.nyxid_public_url)
             .field("cors_origins", &self.cors_origins)
             .field("rate_limits", &self.rate_limits)
+            .field("public_stream_limit", &self.public_stream_limit)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("mongodb_uri", &"<redacted>")
             .field("mongodb_database", &self.mongodb_database)
@@ -377,6 +380,7 @@ impl Config {
         }
         Ok(Self {
             bind,
+            public_stream_limit: public_streams::from_lookup(&mut lookup)?,
             public_url,
             agent_access_retained_origins,
             agent_access_transport_migration,
