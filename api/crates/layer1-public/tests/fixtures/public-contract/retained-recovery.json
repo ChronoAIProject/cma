@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "retained-recovery-owner",
+      "operation": "GET /api/v1/sandboxes/{id}/runtime-recovery",
+      "scenario": "retained_recovery_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-recovery",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "disposition": "active_lifecycle",
+          "admission_enabled": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-recovery-anonymous",
+      "operation": "GET /api/v1/sandboxes/{id}/runtime-recovery",
+      "scenario": "retained_recovery_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-recovery",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-recovery-forbidden",
+      "operation": "GET /api/v1/sandboxes/{id}/runtime-recovery",
+      "scenario": "retained_recovery_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-recovery",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-recovery-foreign",
+      "operation": "GET /api/v1/sandboxes/{id}/runtime-recovery",
+      "scenario": "retained_recovery_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-recovery",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-recovery-unconfigured",
+      "operation": "GET /api/v1/sandboxes/{id}/runtime-recovery",
+      "scenario": "retained_recovery_unconfigured",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_update/runtime-recovery",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
