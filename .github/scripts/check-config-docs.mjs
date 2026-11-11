@@ -35,7 +35,7 @@ if (
   try {
     const root = fileURLToPath(new URL("../../", import.meta.url));
     for (const [crate, docs] of [
-      ["cma", ["CMA_Operations", "CMA_Admission_Append"]],
+      ["cma", ["CMA_Operations", "CMA_Admission_Append", "CMA_Reporting_Pool"]],
       ["cmaeg", ["CMAEG_Operations"]],
     ]) {
       const sources = [

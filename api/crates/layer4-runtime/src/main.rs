@@ -99,6 +99,16 @@ async fn run() -> Result<(), String> {
     if arguments.len() == 1 && arguments[0] == "--validate-ledger-v1" {
         return ledger_import::validate_command().await;
     }
+    if arguments.len() == 3 && arguments[0] == "--preview-ledger-retirement" {
+        let digest = arguments[2]
+            .to_str()
+            .ok_or("invalid ledger snapshot digest")?;
+        return ledger_import::retirement_preview_command(
+            arguments[1].clone().into(),
+            digest.into(),
+        )
+        .await;
+    }
     if arguments.len() == 2 && arguments[0] == "--plan-ledger-v1" {
         return ledger_import::plan_command(std::path::PathBuf::from(&arguments[1])).await;
     }
