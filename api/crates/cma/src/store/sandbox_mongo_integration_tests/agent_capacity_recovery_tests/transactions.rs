@@ -26,8 +26,15 @@ impl OrganizationAuthority for PersonalOnly {
     }
 }
 
+pub(super) fn access(store: &MongoSandboxStore) -> Arc<ResourceAccessService> {
+    Arc::new(ResourceAccessService::new(
+        Arc::new(store.clone()),
+        Arc::new(PersonalOnly),
+    ))
+}
+
 async fn authority(store: &MongoSandboxStore, agent: &Agent) -> AuthorizedResource {
-    ResourceAccessService::new(Arc::new(store.clone()), Arc::new(PersonalOnly))
+    access(store)
         .authorize_personal(
             &Caller::new(
                 agent.owner.clone(),
