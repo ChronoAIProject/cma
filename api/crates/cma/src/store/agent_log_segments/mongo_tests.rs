@@ -31,5 +31,6 @@ mod ranges;
 mod retention;
 mod schema_controls;
 mod schema_output;
+mod schema_recovery_migration;
 mod schema_tests;
 mod snapshot;

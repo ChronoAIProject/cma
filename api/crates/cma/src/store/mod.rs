@@ -137,6 +137,7 @@ mod sandboxes_tests;
 mod schema;
 #[cfg(test)]
 mod schema_mongo_integration_tests;
+pub(crate) mod segment_operations;
 pub mod settings;
 mod shared_child_capacity;
 mod suggestions;
