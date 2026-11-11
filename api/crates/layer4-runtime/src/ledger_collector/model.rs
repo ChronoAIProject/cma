@@ -21,10 +21,14 @@ pub enum Call {
 pub struct Model {
     pub state: Arc<Mutex<State>>,
     pub holds: Arc<AtomicUsize>,
+    pub acquires: Arc<AtomicUsize>,
+    pub loads: Arc<AtomicUsize>,
+    pub resume: Arc<tokio::sync::Notify>,
 }
 
 pub struct State {
     pub checkpoint: Checkpoint,
+    pub required_hold: Option<Arc<AtomicUsize>>,
     pub source_revision: u64,
     pub groups: BTreeMap<Digest, Decision>,
     pub evidence: BTreeMap<Operation, Intent>,
@@ -89,8 +93,12 @@ impl Model {
         };
         Self {
             holds: Arc::default(),
+            acquires: Arc::default(),
+            loads: Arc::default(),
+            resume: Arc::default(),
             state: Arc::new(Mutex::new(State {
                 checkpoint,
+                required_hold: None,
                 source_revision: 1,
                 groups: groups.iter().map(|(k, d)| (digest(*k), *d)).collect(),
                 evidence: BTreeMap::new(),
@@ -125,6 +133,13 @@ impl Model {
 }
 
 fn cas(s: &State, expected: &Checkpoint) -> Result<()> {
+    if let Some(count) = &s.required_hold {
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "gate lost across progress CAS"
+        );
+    }
     if s.checkpoint == *expected {
         Ok(())
     } else {
@@ -143,11 +158,14 @@ fn fail_after(s: &mut State, call: Call) -> Result<()> {
 impl CollectorPort for Model {
     type Hold = ModelHold;
     async fn load(&self) -> Result<Checkpoint> {
+        self.loads.fetch_add(1, Ordering::SeqCst);
         Ok(self.state.lock().unwrap().checkpoint.clone())
     }
     async fn acquire(&self, expected: &Checkpoint) -> Result<Arc<ModelHold>> {
         let s = self.state.lock().unwrap();
-        cas(&s, expected)?;
+        if s.checkpoint != *expected {
+            return Err(Refusal::Conflict);
+        }
         if s.in_flight.is_some() {
             return Err(Refusal::Conflict);
         }
@@ -156,6 +174,7 @@ impl CollectorPort for Model {
             binding.epoch += 1;
         }
         self.holds.fetch_add(1, Ordering::SeqCst);
+        self.acquires.fetch_add(1, Ordering::SeqCst);
         Ok(Arc::new(ModelHold {
             binding,
             revision: s.source_revision,
@@ -326,7 +345,7 @@ impl CollectorPort for Model {
             s.suspend_dispatch
         };
         if suspend {
-            std::future::pending::<()>().await;
+            self.resume.notified().await;
         }
         Ok(())
     }

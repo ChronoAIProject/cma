@@ -59,7 +59,7 @@ async fn advance<P: CollectorPort>(
     if hold.binding() != checkpoint.binding {
         return Err(Refusal::StaleAuthority);
     }
-    if let Some(pending) = checkpoint.pending {
+    if let Some(pending) = &checkpoint.pending {
         port.verify_retained(&pending.intent).await?;
         if pending.intent.decision != Decision::SettledDeleted {
             port.settle(checkpoint).await?;
@@ -99,7 +99,7 @@ async fn advance<P: CollectorPort>(
         if checkpoint.complete {
             return Ok(Step::InventoryComplete);
         }
-        match checkpoint.page {
+        match &checkpoint.page {
             None => {
                 let page = port.enumerate(hold.clone(), checkpoint).await?;
                 if !page.valid()
