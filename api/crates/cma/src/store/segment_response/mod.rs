@@ -17,6 +17,10 @@ use super::{
 const MAX_ENTRIES: u64 = 200;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
 
+mod telemetry;
+pub(crate) use telemetry::emit;
+use telemetry::{Attempt, Outcome};
+
 impl MongoSandboxStore {
     pub(crate) fn with_bounded_response_reads(mut self, enabled: bool) -> Self {
         self.bounded_response_reads = enabled;
@@ -39,6 +43,7 @@ impl AgentResponseLogStore for MongoSandboxStore {
         if !self.bounded_response_reads {
             return Ok(None);
         }
+        let mut attempt = Attempt::new();
         let mut session = self
             .client
             .start_session()
@@ -53,6 +58,7 @@ impl AgentResponseLogStore for MongoSandboxStore {
             return Err(SandboxStoreError::SequenceConflict);
         }
         if !head.trusted {
+            attempt.finish(Outcome::Untrusted);
             return Ok(None);
         }
         let mut entries = Vec::new();
@@ -72,6 +78,7 @@ impl AgentResponseLogStore for MongoSandboxStore {
             )
             .await?
             else {
+                attempt.finish(Outcome::Budget);
                 return Ok(None);
             };
             if !window.first().is_some_and(|entry| {
@@ -81,6 +88,7 @@ impl AgentResponseLogStore for MongoSandboxStore {
             }) {
                 // A historical TurnStarted without a retained model needs its
                 // preceding settings history. Today's model is not evidence.
+                attempt.finish(Outcome::Model);
                 return Ok(None);
             }
             let next_turn = window
@@ -88,6 +96,7 @@ impl AgentResponseLogStore for MongoSandboxStore {
                 .skip(1)
                 .position(|entry| matches!(entry.kind, AgentLogKind::TurnStarted { .. }));
             if next_turn.is_none() && through != head.last_seq {
+                attempt.finish(Outcome::Budget);
                 return Ok(None);
             }
             entries = window;
@@ -95,11 +104,7 @@ impl AgentResponseLogStore for MongoSandboxStore {
                 entries.truncate(index + 2);
             }
         }
-        tracing::debug!(
-            source_rows = entries.len(),
-            source_head = head.last_seq,
-            "bounded response source avoided a complete prefix"
-        );
+        attempt.finish(Outcome::Bounded);
         Ok(Some(AgentResponseLogWindow {
             through: head.last_seq,
             turn_sequence,
