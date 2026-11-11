@@ -1,6 +1,7 @@
 //! Bounded, revision-bound source enumeration. These are source facts, never
 //! retirement eligibility or permission to remove rows from the active store.
 use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{authority, fence, invalid, journal, storage_error, Ledger};
@@ -15,8 +16,10 @@ mod accounting;
 mod auxiliary;
 #[path = "retirement_context.rs"]
 mod context;
-use auxiliary::Auxiliary;
-use context::Context;
+#[path = "retirement_encoding.rs"]
+mod encoding;
+pub(crate) use auxiliary::Auxiliary;
+pub(crate) use context::Context;
 
 const ROWS: usize = 64;
 const BYTES: usize = 2 * 1024 * 1024;
@@ -49,7 +52,7 @@ impl Kind {
 }
 
 #[derive(Clone)]
-pub(super) struct Cursor {
+pub(crate) struct Cursor {
     context: Context,
     audit: accounting::Audit,
     kind: Kind,
@@ -58,7 +61,9 @@ pub(super) struct Cursor {
 
 /// Preserve every original logical column, including raw identity bytes and
 /// reservation classification. Decoding a journal alone would lose this state.
-pub(super) enum SourceRow {
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "table", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum SourceRow {
     Auxiliary(Auxiliary),
     Operation {
         scope: Vec<u8>,
@@ -76,14 +81,14 @@ pub(super) enum SourceRow {
     },
 }
 
-pub(super) struct Page {
-    pub(super) context: Context,
-    pub(super) rows: Vec<SourceRow>,
-    pub(super) next: Option<Cursor>,
+pub(crate) struct Page {
+    pub(crate) context: Context,
+    pub(crate) rows: Vec<SourceRow>,
+    pub(crate) next: Option<Cursor>,
 }
 
 impl SourceRow {
-    fn key(&self) -> (&[u8], &str) {
+    pub(crate) fn key(&self) -> (&[u8], &str) {
         match self {
             Self::Operation { scope, id, .. } => (scope, id),
             Self::Auxiliary(row) => row.key(),
@@ -93,7 +98,7 @@ impl SourceRow {
         }
     }
 
-    fn bytes(&self) -> usize {
+    pub(crate) fn bytes(&self) -> usize {
         if let Self::Auxiliary(row) = self {
             return row.bytes();
         }
@@ -113,7 +118,7 @@ impl SourceRow {
 
     /// Domain-separated, length-prefixed encoding includes NULL distinctions.
     /// It is a source comparison digest, not an archive or deletion receipt.
-    pub(super) fn hash_into(&self, digest: &mut Sha256) {
+    pub(crate) fn hash_into(&self, digest: &mut Sha256) {
         if let Self::Auxiliary(row) = self {
             row.hash_into(digest);
             return;
@@ -154,7 +159,7 @@ impl Ledger {
     /// Each query uses the existing primary-key range, with bounded rows and
     /// bytes. Any admitted mutation invalidates the continuation. Final apply
     /// must independently revalidate the complete selection under writer hold.
-    pub(super) async fn retirement_inventory(&self, cursor: Option<Cursor>) -> Result<Page> {
+    pub(crate) async fn retirement_inventory(&self, cursor: Option<Cursor>) -> Result<Page> {
         self.verify()?;
         let config = self.config.clone();
         self.storage
@@ -295,14 +300,14 @@ fn page(
         if bytes + source.bytes() > limit {
             return Ok((rows, true));
         }
-        validate(db, config, &source)?;
+        validate(config, &source)?;
         bytes += source.bytes();
         rows.push(source);
     }
     Ok((rows, false))
 }
 
-fn validate(db: &Connection, config: &RuntimeConfig, row: &SourceRow) -> Result<()> {
+fn validate(config: &RuntimeConfig, row: &SourceRow) -> Result<()> {
     let scope: [u8; 8] = row.key().0.try_into().map_err(|_| invalid())?;
     let generation = u64::from_be_bytes(scope);
     if generation > config.generation {
@@ -347,10 +352,22 @@ fn validate(db: &Connection, config: &RuntimeConfig, row: &SourceRow) -> Result<
                 None => return Err(invalid()),
             }
         }
-        SourceRow::Authority { resource, .. } => {
+        SourceRow::Authority {
+            resource,
+            high,
+            records,
+            ..
+        } => {
             let key: ResourceKey = serde_json::from_str(resource).map_err(|_| invalid())?;
             if authority::key(&key)? != *resource
-                || authority::load(db, &scoped, &key, &scope)?.is_empty()
+                || authority::decode(
+                    &scoped,
+                    &key,
+                    &scope,
+                    high,
+                    records.each_ref().map(|r| r.as_deref()),
+                )?
+                .is_empty()
             {
                 return Err(invalid());
             }
