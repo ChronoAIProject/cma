@@ -92,6 +92,16 @@ async fn main() {
         )
         .init();
 
+    if store::migrations::is_command(&arguments) {
+        match store::migrations::command(&arguments).await {
+            Ok(result) => println!("{result}"),
+            Err(reason) => {
+                eprintln!("migration refused: {reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if arguments == ["--print-runtime-role"] {
         match std::env::var("CHRONO_MONGODB_DATABASE") {
             Ok(database) => println!("{}", store::isolation::role(&database)),
@@ -103,7 +113,7 @@ async fn main() {
         return;
     }
     if !arguments.is_empty() {
-        eprintln!("usage: cma [--print-runtime-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE]");
+        eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {

@@ -1,4 +1,4 @@
-// Required Mongo contract families shared by runner regression assertions.
+// Expected Mongo contract suites, shared by source and archive fixtures.
 export const requiredPrefixes = [
   'store::usage_reports::tests::',
   'sandbox::funding::tests::mongo::',
@@ -26,6 +26,7 @@ export const requiredPrefixes = [
   'store::sandbox_mongo_integration_tests::warm_hierarchy_tests::',
   'store::agent_admission::mongo_integration_tests::',
   'store::schema_mongo_integration_tests::',
+  'store::migrations::tests::',
   'store::sandbox_mongo_integration_tests::ledger_retirement_tests::',
   'store::workspaces::mongo_integration_tests::',
   'store::bindings::',

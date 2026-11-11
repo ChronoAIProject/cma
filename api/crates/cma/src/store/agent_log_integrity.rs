@@ -72,6 +72,7 @@ impl LogSummary {
     }
 }
 
+pub(crate) mod fleet;
 mod metadata;
 mod preparation;
 mod proof;
