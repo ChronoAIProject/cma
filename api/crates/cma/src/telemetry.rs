@@ -4,6 +4,7 @@ pub(crate) mod browser;
 pub(crate) mod http;
 pub(crate) mod request;
 pub(crate) mod server;
+pub(crate) mod work;
 pub(crate) mod worker;
 
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
@@ -33,6 +34,7 @@ pub(crate) fn install() -> Result<PrometheusHandle, String> {
     );
     metrics::gauge!("cma_readiness_check_success").set(0);
     metrics::gauge!("cma_readiness_check_timestamp_seconds").set(0);
+    work::initialize();
     browser::initialize();
     worker::initialize();
     sample();
