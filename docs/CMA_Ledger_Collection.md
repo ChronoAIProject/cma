@@ -192,10 +192,8 @@ could resolve a provably unprepared stale selection; absence or lease expiry alo
 cannot authorize discarding it. The model's fair-tail test injects source changes
 between settled groups and is not proof against arbitrary inter-step writer churn.
 
-The `ledger_collection_contract` integration-test target compiles the held
-coordinator in normal CI without registering a production worker. Its tests include
-an in-memory fault model and a reusable lifecycle driver interface. Both model
-format selections run 1,400 cycles with modeled totals of
+The tests include an in-memory fault model and a reusable lifecycle driver
+interface. Both model format selections run 1,400 cycles with modeled totals of
 8,400 operations and 4,200 authority lifetimes, restart points and retained-replay
 checks. They exercise the harness and coordinator only. They do not execute the
 V1 journal, V2 SQLite, Mongo, a provider, a restart of a real process or physical

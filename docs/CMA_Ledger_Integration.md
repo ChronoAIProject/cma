@@ -124,6 +124,11 @@ acknowledgement, exact binding/revision checks, cancellation-safe ownership and 
 qualified maintenance permit. Restore requires full-home no-newer-effects proof.
 No background collector is scheduled merely by deploying this groundwork.
 
+The `ledger_collection_contract` integration-test target compiles the held
+coordinator in normal CI without registering a production worker. It exercises
+the existing in-memory restart, cancellation and lifecycle models. Passing those
+models does not qualify real V1/V2 storage, physical exclusion or recovery.
+
 Validation covers malformed/private-path input, preservation classifications,
 snapshot/no-DDL behavior, missing/changed/quarantined records, ordered index drift,
 separate manifest receipts, retry, shared-lease exclusion and future-reader refusal.
