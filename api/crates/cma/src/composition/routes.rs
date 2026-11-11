@@ -43,6 +43,7 @@ pub(super) fn compose(
             crate::background::interactive_request,
         ))
         .merge(crate::health::router(stores))
+        .merge(crate::telemetry::browser::router())
         .layer(axum::middleware::from_fn_with_state(
             limits,
             crate::rate_limit::admit,
