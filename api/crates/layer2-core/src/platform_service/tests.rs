@@ -1,3 +1,6 @@
+#[path = "budget_rollout_tests.rs"]
+mod budget_rollout;
+
 use std::sync::Mutex;
 
 use super::*;

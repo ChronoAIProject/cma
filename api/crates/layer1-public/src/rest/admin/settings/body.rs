@@ -4,12 +4,13 @@ use axum::{extract::FromRequest, extract::Request, Json};
 use layer2_core::profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef};
 use layer2_core::{
     platform::UsageReportingSettings, AgentProfileId, InactivitySettings, MarketplaceSettings,
-    PlatformDefaults, PlatformLimits, PlatformSettings, RetentionSettings, SandboxProfileId,
-    StoredPlatformSettings, TriggerSettings, WorkspaceProfileId,
+    PlatformDefaults, PlatformLimits, PlatformSettings, PlatformSettingsService, RetentionSettings,
+    SandboxProfileId, StoredPlatformSettings, TriggerSettings, WorkspaceProfileId,
 };
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 
+use super::budget::BudgetSettingsBody;
 use super::Failure;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -83,6 +84,8 @@ impl From<UsageReportingSettingsBody> for UsageReportingSettings {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PlatformSettingsBody {
+    #[serde(default, deserialize_with = "super::budget::present")]
+    model_budget: Option<BudgetSettingsBody>,
     #[serde(default)]
     usage_reporting: UsageReportingSettingsBody,
     defaults: PlatformDefaultsBody,
@@ -96,6 +99,7 @@ pub(crate) struct PlatformSettingsBody {
 impl From<PlatformSettingsBody> for PlatformSettings {
     fn from(value: PlatformSettingsBody) -> Self {
         Self {
+            model_budget: value.model_budget.map(Into::into).unwrap_or_default(),
             usage_reporting: value.usage_reporting.into(),
             defaults: value.defaults.into(),
             inactivity: value.inactivity.into(),
@@ -108,9 +112,16 @@ impl From<PlatformSettingsBody> for PlatformSettings {
     }
 }
 
+impl PlatformSettingsBody {
+    pub(super) fn has_model_budget(&self) -> bool {
+        self.model_budget.is_some()
+    }
+}
+
 impl From<PlatformSettings> for PlatformSettingsBody {
     fn from(value: PlatformSettings) -> Self {
         Self {
+            model_budget: Some(value.model_budget.into()),
             usage_reporting: UsageReportingSettingsBody {
                 measured_visible: value.usage_reporting.measured_visible,
             },
@@ -221,13 +232,17 @@ impl From<MarketplaceSettingsBody> for MarketplaceSettings {
 pub(crate) struct SettingsView {
     revision: u64,
     settings: PlatformSettingsBody,
+    model_budget_writes_available: bool,
+    model_request_budget_writes_available: bool,
 }
 
-impl From<StoredPlatformSettings> for SettingsView {
-    fn from(value: StoredPlatformSettings) -> Self {
+impl SettingsView {
+    pub(crate) fn new(value: StoredPlatformSettings, service: &PlatformSettingsService) -> Self {
         Self {
             revision: value.revision,
             settings: value.settings.into(),
+            model_budget_writes_available: service.model_budget_writes_enabled(),
+            model_request_budget_writes_available: service.model_request_budget_writes_enabled(),
         }
     }
 }
@@ -260,6 +275,9 @@ pub(crate) struct ReplaceRequest {
 #[serde(deny_unknown_fields)]
 pub(crate) struct PatchRequest {
     #[serde(default)]
+    #[schema(required = false, value_type = BudgetSettingsBody)]
+    model_budget: PatchField<BudgetSettingsBody>,
+    #[serde(default)]
     #[schema(required = false, value_type = UsageReportingSettingsBody)]
     usage_reporting: PatchField<UsageReportingSettingsBody>,
     pub(super) expected_revision: u64,
@@ -289,6 +307,11 @@ impl PatchRequest {
         mut settings: PlatformSettings,
     ) -> Result<(u64, PlatformSettings), Failure> {
         let mut changed = false;
+        changed |= apply(
+            self.model_budget,
+            &mut settings.model_budget,
+            "model_budget",
+        )?;
         changed |= apply(
             self.usage_reporting,
             &mut settings.usage_reporting,
@@ -353,7 +376,15 @@ const LIMITS: &[FieldSpec] = &[
 const TRIGGERS: &[FieldSpec] = &[leaf("enabled"), leaf("orchestration_paused")];
 const MARKETPLACE: &[FieldSpec] = &[leaf("enabled")];
 const USAGE_REPORTING: &[FieldSpec] = &[leaf("measured_visible")];
+const MODEL_BUDGET: &[FieldSpec] = &[
+    leaf("request_models"),
+    leaf("enabled"),
+    leaf("platform"),
+    leaf("owners"),
+    leaf("default_policy"),
+];
 const PLATFORM: &[FieldSpec] = &[
+    branch("model_budget", MODEL_BUDGET),
     branch("usage_reporting", USAGE_REPORTING),
     branch("defaults", DEFAULTS),
     branch("inactivity", INACTIVITY),
@@ -364,6 +395,7 @@ const PLATFORM: &[FieldSpec] = &[
 ];
 const REPLACE: &[FieldSpec] = &[leaf("expected_revision"), branch("settings", PLATFORM)];
 const PATCH: &[FieldSpec] = &[
+    branch("model_budget", MODEL_BUDGET),
     branch("usage_reporting", USAGE_REPORTING),
     leaf("expected_revision"),
     branch("defaults", DEFAULTS),

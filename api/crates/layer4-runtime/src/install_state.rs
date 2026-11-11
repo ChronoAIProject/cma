@@ -325,6 +325,10 @@ fn scan(config: &RuntimeConfig) -> Result<Option<Vec<StateFile>>> {
             crate::ledger_format::installation_marker(config)?;
             continue;
         }
+        if name == crate::retirement_format::BARRIER {
+            crate::retirement_format::installation_marker(config)?;
+            continue;
+        }
         let kind = classify(&name)?;
         files.push(StateFile {
             path: entry.path(),
