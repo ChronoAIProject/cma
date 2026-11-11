@@ -406,6 +406,7 @@ fn require_granted(
 pub(super) fn operation_store_error(error: SandboxStoreError) -> AgentOperationError {
     match error {
         SandboxStoreError::NotFound => AgentOperationError::NotFound,
+        SandboxStoreError::Budget(reason) => AgentOperationError::Budget(reason),
         SandboxStoreError::Conflict => AgentOperationError::Conflict,
         SandboxStoreError::CheckpointInProgress => AgentOperationError::CheckpointInProgress,
         SandboxStoreError::SequenceConflict => {

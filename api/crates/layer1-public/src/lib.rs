@@ -11,6 +11,7 @@ pub mod pty;
 mod resource_auth;
 pub mod responses;
 pub mod rest;
+pub mod stream_telemetry;
 pub mod tickets;
 
 pub use auth::{AuthMethod, AuthenticatedCaller, AuthenticatedSubject, DelegatedCredential};

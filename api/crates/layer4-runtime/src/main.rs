@@ -25,10 +25,20 @@ mod install;
 mod install_state;
 mod install_state_validation;
 mod lanes;
+mod ledger_format;
+mod ledger_import;
+mod ledger_storage;
 mod link;
 mod mutation_authority;
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "mutation_authority_v1_tests.rs"]
+mod mutation_authority_v1;
+mod mutation_capacity;
 mod mutation_journal;
+mod mutation_ledger;
 mod mutation_scope;
+mod mutation_store;
 mod paths;
 mod persistent_home;
 mod pool_bootstrap;
@@ -37,6 +47,8 @@ mod resource_cgroup;
 mod resource_network;
 mod resources;
 mod restore_bootstrap;
+mod retirement_archive;
+mod retirement_format;
 mod skills;
 mod snapshot_export;
 mod supervisor;
@@ -76,6 +88,75 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments
+        .first()
+        .is_some_and(|arg| arg == "--cutover-ledger-v1")
+    {
+        return ledger_import::cutover_command()
+            .map_err(|error| format!("{}: {error}", error.code));
+    }
+    if arguments.len() == 1 && arguments[0] == "--inspect-ledger-v1" {
+        return ledger_import::inspect_command().await;
+    }
+    if arguments.len() == 1 && arguments[0] == "--validate-ledger-v1" {
+        return ledger_import::validate_command().await;
+    }
+    if arguments.len() == 3 && arguments[0] == "--preview-ledger-retirement" {
+        let digest = arguments[2]
+            .to_str()
+            .ok_or("invalid ledger snapshot digest")?;
+        return ledger_import::retirement_preview_command(
+            arguments[1].clone().into(),
+            digest.into(),
+        )
+        .await;
+    }
+    if arguments.len() == 2 && arguments[0] == "--plan-ledger-v1" {
+        return ledger_import::plan_command(std::path::PathBuf::from(&arguments[1])).await;
+    }
+    if arguments.len() == 6 && arguments[0] == "--stage-ledger-retirement" {
+        let plan_digest = arguments[2].to_str().ok_or("invalid ledger plan digest")?;
+        let observation_digest = arguments[4]
+            .to_str()
+            .ok_or("invalid ledger snapshot digest")?;
+        return ledger_import::retirement_stage_command(
+            arguments[1].clone().into(),
+            plan_digest.into(),
+            arguments[3].clone().into(),
+            observation_digest.into(),
+            arguments[5].clone().into(),
+        )
+        .await;
+    }
+    if arguments.len() == 3 && arguments[0] == "--verify-ledger-plan" {
+        let digest = arguments[2].to_str().ok_or("invalid ledger plan digest")?;
+        return ledger_import::verify_plan_command(arguments[1].clone().into(), digest.into())
+            .await;
+    }
+    if arguments.len() == 3 && arguments[0] == "--verify-ledger-retirement" {
+        let digest = arguments[2]
+            .to_str()
+            .ok_or("invalid ledger retirement digest")?;
+        return ledger_import::retirement_verify_command(
+            arguments[1].clone().into(),
+            digest.into(),
+        )
+        .await;
+    }
+    if arguments.len() == 4 && arguments[0] == "--stage-ledger-v1" {
+        let digest = arguments[2].to_str().ok_or("invalid ledger plan digest")?;
+        return ledger_import::stage_command(
+            arguments[1].clone().into(),
+            digest.into(),
+            arguments[3].clone().into(),
+        )
+        .await;
+    }
+    if arguments.len() == 2 && arguments[0] == "--verify-ledger-storage" {
+        return ledger_storage::probe(std::path::Path::new(&arguments[1]))
+            .await
+            .map_err(|error| error.to_string());
+    }
     if arguments.len() == 2
         && (arguments[0] == "--initialize-home" || arguments[0] == "--initialize-home-tree")
     {

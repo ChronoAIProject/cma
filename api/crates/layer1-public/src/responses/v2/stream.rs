@@ -1,4 +1,5 @@
 use super::{error, projection, ResponsesV2State, V2ResponseObject};
+use crate::stream_telemetry::{self, Kind, Poll};
 use axum::response::{
     sse::{Event, KeepAlive},
     IntoResponse, Response, Sse,
@@ -97,16 +98,23 @@ pub(super) async fn open(
                 .revalidation_deadline()
                 .map_or(wake, |expires| expires.min(wake));
             tokio::time::sleep_until(wake).await;
+            let poll = Poll::new(Kind::ResponsesV2);
             match snapshot(&open.state, &open.authorization, &open.receipt).await {
                 Ok((response, bound)) => {
                     open.terminal = response.terminal();
                     open.pending = projection::events(&response, bound).into();
+                    // Projection sequences increase monotonically; inspect only the tail.
+                    poll.complete(open.pending.back().is_some_and(|event| {
+                        event["sequence_number"]
+                            .as_u64()
+                            .is_some_and(|seq| seq >= open.next)
+                    }));
                 }
                 Err(_) => return open.fail(),
             }
         }
     });
-    let mut response = Sse::new(body)
+    let mut response = Sse::new(stream_telemetry::observe(body, Kind::ResponsesV2))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response();
     let headers = response.headers_mut();

@@ -207,12 +207,9 @@ it('uses the shared keyboard menu, exposes the sole radio, and returns focus on 
   expect(screen.getAllByRole('menuitemradio')).toHaveLength(1);
   expect(screen.getByRole('menuitemradio')).toHaveFocus();
   await actor.keyboard('{ArrowDown}');
-  expect(screen.getByRole('menuitemcheckbox', { name: 'Agent browser' })).toHaveFocus();
-  expect(screen.getByRole('menuitemcheckbox', { name: 'Agent browser' })).toHaveAttribute(
-    'aria-disabled',
-    'true',
-  );
-  await actor.keyboard('{ArrowDown}{Enter}');
+  expect(screen.getByRole('menuitemcheckbox', { name: 'Shared desktop' })).toHaveFocus();
+  expect(screen.queryByRole('menuitemcheckbox', { name: 'Agent browser' })).not.toBeInTheDocument();
+  await actor.keyboard('{Enter}');
   expect(screen.getByRole('menuitemcheckbox', { name: 'Shared desktop' })).toBeChecked();
   expect(trigger).toHaveTextContent('Shared desktop');
   await actor.keyboard('{Escape}');
@@ -238,26 +235,6 @@ it.each(['unsupported', 'permission'])(
     expect(create).not.toHaveBeenCalled();
   },
 );
-
-it('keeps capability checking and retained policy-disabled browser choices distinct', async () => {
-  sessionStorage.setItem(
-    `cma:task-draft:${JSON.stringify([location.origin, 'owner', null, null])}`,
-    JSON.stringify({ version: 1, text: 'Retained task', desktop: true }),
-  );
-  draw({ taskExperience: taskExperience('owner', false) });
-  await ready();
-  fireEvent.click(screen.getByRole('button', { name: /^Cloud computer/ }));
-  const browser = screen.getByRole('menuitemcheckbox', { name: 'Agent browser' });
-  expect(browser).toBeChecked();
-  expect(browser).toHaveAttribute('aria-disabled', 'false');
-  expect(browser).toHaveAccessibleDescription(
-    'Agent browser is unavailable. Your current choice is kept.',
-  );
-  fireEvent.click(browser);
-  expect(browser).not.toBeChecked();
-  expect(browser).toHaveAttribute('aria-disabled', 'true');
-  expect(screen.getByLabelText('Your task')).toHaveValue('Retained task');
-});
 
 it.each([true, false])(
   'announces repository checking until support resolves to %s',

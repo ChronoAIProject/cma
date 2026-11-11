@@ -7,6 +7,13 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
         ("/api/v1/admin/usage/metrics", true),
     ] {
         for (suffix, method, name, schema) in [
+            ("/options", "post", "options", "UsageFilterOptions"),
+            (
+                "/reports/{report}/owner-allocations",
+                "get",
+                "owner_allocations",
+                "UsageOwnerAllocations",
+            ),
             (
                 "/reports/{report}/owners",
                 "get",
@@ -34,7 +41,7 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
                 "UsageMetricRow",
             ),
         ] {
-            if name == "owners" && !admin {
+            if matches!(name, "owners" | "options" | "owner_allocations") && !admin {
                 continue;
             }
             let mut operation = json!({"operationId":format!("{}UsageMetrics{name}",if admin{"admin"}else{"owner"}),"tags":["usage-metrics"],
@@ -67,12 +74,24 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
                         .push(json!({"name":key,"in":"query","required":false,"schema":schema}));
                 }
             }
+            if name == "owner_allocations" {
+                parameters.extend([
+                    json!({"name":"metric","in":"query","required":true,"schema":{"type":"string","enum":["cpu","memory","disk"]}}),
+                    json!({"name":"limit","in":"query","required":false,"schema":{"type":"integer","minimum":1,"maximum":200,"default":50}}),
+                    json!({"name":"cursor","in":"query","required":false,"schema":{"type":"string","minLength":1,"maxLength":4096}}),
+                ]);
+                operation["summary"] = json!("Paged owner allocation totals across the frozen administrator report; descending allocation then owner identity, reauthorized and budgeted on every read");
+            }
             if name == "owners" {
                 parameters.extend([
                     json!({"name":"search","in":"query","required":false,"schema":{"type":"string","maxLength":128}}),
                     json!({"name":"limit","in":"query","required":false,"schema":{"type":"integer","minimum":1,"maximum":200,"default":50}}),
                     json!({"name":"cursor","in":"query","required":false,"schema":{"type":"string"}}),
                 ]);
+            }
+            if name == "options" {
+                operation["requestBody"] = json!({"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/UsageFilterOptionsQuery"}}}});
+                operation["summary"] = json!("Read administrator filter choices independently of reports; names stay out of request URLs");
             }
             if name == "series" {
                 for (key, schema, required) in [
@@ -98,7 +117,7 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
                 }
             }
             operation["parameters"] = parameters.into();
-            if method == "post" {
+            if name == "create" {
                 operation["requestBody"] = json!({"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/UsageMetricQuery"}}}});
                 operation["responses"]["202"] = json!({"description":"Bounded report job pending; poll_url and Retry-After","content":{"application/json":{"schema":{"$ref":"#/components/schemas/UsageMetricReport"}}}});
             }

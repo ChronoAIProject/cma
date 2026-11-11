@@ -12,6 +12,9 @@ use axum::{
 use layer1_public::{AuthenticatedSubject, DelegatedCredential};
 
 use super::AuthState;
+use layer2_core::dependency_diagnostics::{
+    self as diagnostics, Dependency, Failure, Operation, Reason,
+};
 
 pub async fn attach_subject(
     State(auth): State<Arc<AuthState>>,
@@ -30,10 +33,27 @@ pub async fn attach_subject(
     if bypasses_ambient_auth(request.uri().path()) {
         return next.run(request).await;
     }
-    let resolved = match auth.resolve_request(request.headers()).await {
+    let allow_fallback = auth
+        .fallback_policy
+        .permits(request.method(), request.uri().path());
+    let (resolved, failure) =
+        diagnostics::capture(auth.resolve_request_with_policy(request.headers(), allow_fallback))
+            .await;
+    let resolved = match resolved {
         Ok(resolved) => resolved,
         Err(error) => {
-            tracing::error!(error = %error, "authentication store lookup failed");
+            diagnostics::report(
+                Operation::Authentication,
+                failure.or(Some(Failure::new(
+                    Dependency::AuthenticationAuthority,
+                    Reason::Unknown,
+                ))),
+            );
+            if request.uri().path() == "/auth/session"
+                && matches!(&error, layer2_core::StoreError::Unavailable(detail) if detail == "identity_provider_unavailable")
+            {
+                return identity_failure();
+            }
             return store_failure();
         }
     };
@@ -81,6 +101,25 @@ pub async fn attach_subject(
             .insert(AuthenticatedSubject(resolved.subject));
     }
     next.run(request).await
+}
+
+pub(super) fn identity_failure() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [
+            (axum::http::header::CONTENT_TYPE, "application/problem+json"),
+            (axum::http::header::RETRY_AFTER, "3"),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        Json(serde_json::json!({
+            "type": "https://spec.chrono-ai.fun/cma/1.0/problems/identity-unavailable",
+            "title": "Identity service temporarily unavailable",
+            "status": 503,
+            "detail": "The identity service is temporarily unavailable. Please retry shortly.",
+            "code": "identity_unavailable",
+        })),
+    )
+        .into_response()
 }
 
 pub(super) fn store_failure() -> Response {

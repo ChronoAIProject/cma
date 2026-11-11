@@ -100,6 +100,9 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
         | AdapterError::Unavailable(_) => {
             WorkerFailure::retryable("workspace runtime is temporarily unavailable")
         }
+        AdapterError::RuntimeLedgerHold(_) => {
+            WorkerFailure::retryable("runtime mutation ledger capacity requires recovery")
+        }
         AdapterError::AtCapacity(_) => WorkerFailure::terminal(
             "workspace_resource_quota",
             "workspace runtime has no available capacity",

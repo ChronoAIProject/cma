@@ -9,9 +9,9 @@ use crate::now_rfc3339;
 use super::store::{Page, PageRequest};
 use super::{
     AgentTitle, AgentTitleClaimMode, AgentTitleClaimRequest, AgentTitleGenerationContext,
-    AgentTitleGenerationRequest, AgentTitleGenerator, AgentTitleSource, AgentTitleStore,
-    AgentTitleStoreError, SetAgentTitleOutcome, StoredAgentTitle, AGENT_TITLE_ATTEMPTS,
-    AGENT_TITLE_CALL_TIMEOUT_SECONDS,
+    AgentTitleGenerationError, AgentTitleGenerationRequest, AgentTitleGenerator, AgentTitleSource,
+    AgentTitleStore, AgentTitleStoreError, SetAgentTitleOutcome, StoredAgentTitle,
+    AGENT_TITLE_ATTEMPTS, AGENT_TITLE_CALL_TIMEOUT_SECONDS, AGENT_TITLE_MAX_ATTEMPTS,
 };
 
 /// Content-free result of settling one eligible title candidate.
@@ -28,6 +28,10 @@ pub enum AgentTitleServiceError {
     InvalidHolder,
     #[error("agent title store returned inconsistent first-turn evidence")]
     InconsistentEvidence,
+    #[error("agent title generation is temporarily unavailable")]
+    GenerationUnavailable,
+    #[error(transparent)]
+    Budget(crate::budget::BudgetError),
     #[error(transparent)]
     Store(#[from] AgentTitleStoreError),
 }
@@ -90,12 +94,20 @@ impl AgentTitleService {
         context: Option<&AgentTitleGenerationContext>,
         generator: Option<&dyn AgentTitleGenerator>,
     ) -> Result<AgentTitleOutcome, AgentTitleServiceError> {
+        self.generate_agent_title_at(id, context, generator, SystemTime::now())
+            .await
+    }
+
+    #[doc(hidden)]
+    pub async fn generate_agent_title_at(
+        &self,
+        id: &AgentId,
+        context: Option<&AgentTitleGenerationContext>,
+        generator: Option<&dyn AgentTitleGenerator>,
+        now: SystemTime,
+    ) -> Result<AgentTitleOutcome, AgentTitleServiceError> {
         let request = AgentTitleClaimRequest::new(id.clone(), &self.coordination_holder);
-        let Some(claim) = self
-            .store
-            .acquire_agent_title_claim(&request, SystemTime::now())
-            .await?
-        else {
+        let Some(mut claim) = self.store.acquire_agent_title_claim(&request, now).await? else {
             return Ok(AgentTitleOutcome::Skipped);
         };
         let transcript = self
@@ -108,11 +120,37 @@ impl AgentTitleService {
         let generated = if claim.mode() == AgentTitleClaimMode::Generate {
             match (context, generator) {
                 (Some(context), Some(generator)) => {
-                    generate_title(generator, context, &transcript).await
+                    match generate_title(generator, context, &transcript).await {
+                        Ok(title) => Some(title),
+                        Err(error) if error.budget_error().is_some() => {
+                            return Err(AgentTitleServiceError::Budget(
+                                error.budget_error().unwrap(),
+                            ));
+                        }
+                        Err(error)
+                            if error.is_permanent()
+                                || claim.attempts() >= AGENT_TITLE_MAX_ATTEMPTS =>
+                        {
+                            claim = claim.settle_fallback();
+                            None
+                        }
+                        Err(_) => {
+                            if self
+                                .store
+                                .agent_title(id)
+                                .await?
+                                .is_some_and(|title| title.source != AgentTitleSource::Fallback)
+                            {
+                                return Ok(AgentTitleOutcome::Skipped);
+                            }
+                            return Err(AgentTitleServiceError::GenerationUnavailable);
+                        }
+                    }
                 }
                 _ => None,
             }
         } else {
+            claim = claim.settle_fallback();
             None
         };
         let (title, source, outcome) = match generated {
@@ -143,7 +181,7 @@ async fn generate_title(
     generator: &dyn AgentTitleGenerator,
     context: &AgentTitleGenerationContext,
     transcript: &super::AgentTitleTranscript,
-) -> Option<AgentTitle> {
+) -> Result<AgentTitle, AgentTitleGenerationError> {
     let request = AgentTitleGenerationRequest::new(context, transcript);
     for _ in 0..AGENT_TITLE_ATTEMPTS {
         let generated = tokio::time::timeout(
@@ -151,11 +189,16 @@ async fn generate_title(
             generator.generate(request.clone()),
         )
         .await;
-        if let Ok(Ok(response)) = generated {
-            if let Some(title) = AgentTitle::sanitize(response.as_str()) {
-                return Some(title);
+        match generated {
+            Ok(Ok(response)) => {
+                if let Some(title) = AgentTitle::sanitize(response.as_str()) {
+                    return Ok(title);
+                }
             }
+            Ok(Err(error)) if error.is_permanent() => return Err(error),
+            Ok(Err(error)) if error.budget_error().is_some() => return Err(error),
+            _ => (),
         }
     }
-    None
+    Err(AgentTitleGenerationError::unavailable())
 }

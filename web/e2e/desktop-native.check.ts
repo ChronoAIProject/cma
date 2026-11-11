@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { BrowserObservation } from '../../sdk/typescript/src/index';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 
-test('NATIVE Home lost receipt recovers one formal task and its prepared browser through public Web', async ({
+test('NATIVE Home recorded browser intent and lost receipt recovers one formal task and its prepared browser through public Web', async ({
   page,
   baseURL,
 }, info) => {
@@ -38,7 +38,7 @@ test('NATIVE Home lost receipt recovers one formal task and its prepared browser
     }),
   );
   await page.route(
-    /\/(openapi\.json|api\/(agent-manager\/)?v1\/(desktop-capability|agents|agent-lifecycle|sandboxes|workspaces)(\/|\?|$))/,
+    /\/(openapi\.json|api\/(agent-manager\/)?v1\/(agents|agent-lifecycle|sandboxes|workspaces)(\/|\?|$))/,
     async (route) => {
       const outgoing = route.request();
       const url = new URL(outgoing.url());
@@ -77,17 +77,22 @@ test('NATIVE Home lost receipt recovers one formal task and its prepared browser
   );
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/');
+  // Browser creation is a retained intent path; new drafts only offer Shared desktop.
+  await page.evaluate((body) => {
+    sessionStorage.setItem(
+      `cma:agent-creation:${JSON.stringify([location.origin, 'owner'])}`,
+      JSON.stringify({ version: 1, intent: { key: crypto.randomUUID(), body } }),
+    );
+  }, publicServer.body);
+  await page.reload();
   await page.getByRole('button', { name: /^Cloud computer/ }).click();
   const toggle = page.getByRole('menuitemcheckbox', { name: 'Agent browser' });
-  await expect(toggle).toBeEnabled();
-  await expect(toggle).not.toBeChecked();
+  await expect(toggle).toBeChecked();
+  await expect(toggle).toBeDisabled();
   expect(writes).toHaveLength(0);
-  await page.screenshot({ path: info.outputPath('home-default-off.png') });
-  await toggle.click();
+  await page.screenshot({ path: info.outputPath('home-recorded-browser.png') });
   await page.keyboard.press('Escape');
-  await page.getByLabel('Your task').fill(publicServer.body.initial_message);
-  expect(writes).toHaveLength(0);
-  await page.getByRole('button', { name: 'Start task', exact: true }).click();
+  await page.getByRole('button', { name: 'Recover original task' }).click();
   await expect(page.getByRole('button', { name: 'Recover original task' })).toBeVisible();
   await page.getByRole('button', { name: /^Cloud computer/ }).click();
   await expect(toggle).toBeChecked();

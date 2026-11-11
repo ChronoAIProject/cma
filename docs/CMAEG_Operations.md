@@ -1,5 +1,31 @@
 # CMA Event Gateway operations
 
+## Secret-first CMAEG deployment
+
+The owner-key identifiers come from `cma-event-gateway-owner-keys`, not ConfigMap
+values or empty placeholders. With owner keys enabled, the Secret must exist and
+its two keys must be verified **before any CMAEG deployment from this revision**.
+Missing required identifiers fail startup. Merge and image publication do not
+authorize a rollout or a full application of the checked-in manifests.
+
+Use the [owner-key Secret cutover runbook](CMAEG_Owner_Key_Secret_Cutover.md)
+and `.github/scripts/cmaeg-owner-key-cutover.py` under the current release GO,
+exclusive bridge lock and unchanged STOP marker. The required order is:
+
+1. Capture current resource fences and the existing owner-key authorization baseline.
+2. Seed the dedicated Secret from the existing live values in memory and verify
+   the two keys without printing or retaining values. A mismatch is a hold.
+3. Apply the fenced env-only change, preserving the image and unrelated settings.
+4. Verify readiness, owner-key authority and existing channels; complete observation.
+5. Only then remove the two legacy ConfigMap fields and verify the final state.
+
+Do not apply an empty Secret declaration, remove the legacy fields first or copy
+values into a file. The obsolete empty-placeholder apply wrapper is removed;
+its former ConfigMap-before-Deployment order is not the Secret migration path.
+After cutover, retain the Secret references and use separately approved fenced
+image patches. Preserve the current forward-fix boundary, stored data and all
+unrelated live configuration, including the separately decided typing flag.
+
 ## Native GitHub startup initialization
 
 `CMAEG_GITHUB_ENABLED` is the deployment-wide feature flag, default `false` when unset.
@@ -33,16 +59,18 @@ it does not permit a rollback to an image below that floor.
 When enabled, initialization runs in the background after the HTTP listener binds,
 using the existing gateway Mongo connection and keyring. GitHub operations return
 503 until initialization succeeds; ordinary channel traffic can proceed meanwhile.
-Missing or version-1 `github_integrations` storage is prepared in service code:
-the record validator, owner/kind index and migration-marker validator are updated,
-then the version-2 marker is committed with majority acknowledgement. No stored
-App or receipt is rewritten or deleted by this migration. Version 2 skips DDL
-and is checked for runtime authority and required non-TTL indexes; unknown
+Missing or version-1/version-2/version-3/version-4/version-5 `github_integrations` storage is prepared in service code:
+the record validator, owner/kind index, pending-dispatch recovery index and migration-marker validator are updated,
+then the version-6 marker is committed with majority acknowledgement. An older `--migrate` must not narrow these additive validator/index rules; rollback keeps GitHub unavailable until a version-6 reader returns. The expiry
+field/TTL index apply only to delivery rows. Legacy receipts receive one fixed
+seven-day cleanup deadline; their sealed bodies and configuration are not rewritten.
+Version 6 readers verify runtime authority plus both permanent and receipt
+TTL indexes; unknown versions are refused without downgrading them; unknown
 versions are refused without downgrading them.
 
 The normal rollout needs no `--migrate-automation` command or external migration
 script. Initialization verifies the existing credential's effective migration
-authority before DDL; it never creates users or grants roles. Shared-schema
+authority before DDL; it never creates users or grants roles. The v6 RECORDS validator/index change is part of the base Gateway migration role printed by `--print-migration-role`, not the automation-only role printed by `--print-automation-migration-role`. In shared-schema mode the deployed database credential must therefore retain `collMod`, `createIndex`, `createCollection` and update authority on the Gateway `eg_*` collections. If that authority is absent, the background guard migration fails closed, GitHub remains `store_ready: false`, and ordinary channels continue serving. Shared-schema
 deployments can use their existing database-scoped grants. Exact isolated-mode
 checks remain unchanged; a least-privilege runtime account can open prepared
 storage, but cannot initialize unprepared storage without the necessary authority.
@@ -51,8 +79,10 @@ The retained CLI and role-printing commands remain explicit operator tools.
 Background initialization has a 30-second bound. A failure keeps GitHub unavailable while
 ordinary channels remain available, with a sanitized reason in startup logs.
 Database delays that clear within the bound allow GitHub to become ready without
-restarting the process. Startup work is cancelled on shutdown. No execution-group
-polling runs without configured execution routes; onboarding alone starts no scan.
+restarting the process. Startup work is cancelled on shutdown. The GitHub execution-group worker and static routes have been removed. Receipt-first
+ordinary routed dispatch reports `durable_dispatch: true`; eligible business
+deliveries commit a pending receipt before bounded dispatch. Installation approval and lifecycle tightening are
+available, while `automatic_reconciliation` remains false.
 After correcting the cause, a subsequent startup resumes incomplete preparation.
 Concurrent startup reconciles a duplicate marker write against the majority-read
 current version before proceeding. GitHub `store_ready` becomes true only after
@@ -276,7 +306,7 @@ applies with all media flags off.**
 | `CMAEG_MEDIA_CONTINUATIONS_ENABLED` | boolean | `false` | New routed events targeting an existing CMA Agent durably deliver original attachments and late transcripts through independent Append commands. Requires routed recovery, enabled media service and the optional Gateway-owned Mongo media index. Deploy compatible Agent Manager and Gateway readers before enabling this writer. A ready index keeps recovery active with the flag off. Original event commands are never replayed or interrupted. See [media continuations](CMAEG_Media_Continuations.md). |
 | `CMAEG_NATIVE_QUOTED_CONTEXT_ENABLED` | boolean | `false` | Writes versioned bounded native quoted/context data on new durable ordinary admissions; Discord fixes it at inbox capture. Deploy all serving, provider and rollback readers first. Gate-off replays preserve existing snapshots. See [native quoted context](CMAEG_Native_Quoted_Context.md). |
 | `CMAEG_ROUTED_ADMISSION_ENABLED` | boolean | `false` | Allows new routed plans only for explicitly selected records. Set false to pause new admissions with 503 while exact committed retries and recovery continue. This does not disable the channel's legacy path when no routing policy exists. |
-| `CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED` | boolean | `false` | Reader-first writer gate for immutable `durable_custom_execution` on new Custom channels. Requires routed recovery/admission, routing writes and replay-capable providers. Retained marked Custom sources keep durable selection without an operator record allowlist; disabling the writer never falls back to legacy execution. Existing unmarked records remain unchanged. See [self-service Custom execution](CMAEG_Custom_Durable_Execution.md). |
+| `CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED` | boolean | `false` | Reader-first writer gate for immutable `durable_custom_execution` on new Custom channels. The checked-in ConfigMap sets `true`, matching live discovery verified on 2026-11-08; the code default remains false. Requires routed recovery/admission, routing writes and replay-capable providers. Discovery advertises `relay_authoring.custom_durable_execution_enabled: true` when these prerequisites are enabled. Existing channels remain unchanged. Roll back authoring by setting false; retained marked Custom sources keep durable selection without an operator record allowlist and never fall back to legacy execution. Serving and rollback images must retain the reader; the checked-in image pin lags production. See [reader evidence and promotion requirements](CMAEG_Custom_Durable_Execution.md#reader-evidence-and-image-promotion-2026-11-08). |
 | `CMAEG_ROUTED_CHANNEL_RECORDS` | comma-separated explicit record IDs | empty | At most 64 IDs; no wildcard. Unselected ingress keeps its existing launcher without admission-store reads. Retain selected IDs while their durable identities can be retried; removing selection is not a safe rollback. Provider replay capability must be explicitly configured and proved before a new routed plan is accepted. |
 | `CMAEG_MEDIA_ENABLED` | `true` or `false` | `false` | Master switch for inbound media. Exactly `true` or `false`; any other value, including `True` or `1`, fails startup. Off, every media message is refused with 202 `attachment_unsupported`, and every Lark or Feishu rich-text post with `content_unsupported`, exactly as before media existed. On, authenticated Telegram media from the NyxID relay and the native webhook, and Lark and Feishu image, file, audio and media/video messages from the relay, are admitted as activity attachments, and Lark and Feishu posts as text the observer flattens from the raw event (protocol §6); Lark stickers stay refused. It also governs custom sources: off, management refuses a custom `attachments` setting with `custom_attachments_disabled` and ingress ignores a stored one; on, the setting can be stored and the items it names in custom events are admitted as attachments. Enabling it requires the `cmaeg` container's memory request to equal its limit at 1536Mi or more; `tests/infra_manifests.rs` enforces this. |
 | `CMAEG_MEDIA_MAX_BYTES` | unsigned decimal, bytes | `20971520` | 1..=26214400. Most bytes fetched for one attachment; Telegram and NyxID serve at most 20 MiB themselves. Validated at startup even while `CMAEG_MEDIA_ENABLED` is `false`, like every media budget below; an out-of-bounds or non-decimal value fails startup naming the key. |
@@ -325,8 +355,8 @@ applies with all media flags off.**
 | `CMAEG_NYXID_CLIENT_SECRET` | secret string | Required with the client ID | Reuses Agent Manager's client secret through a Secret reference; never put it in a ConfigMap. |
 | `CMAEG_WORKER_CREDENTIAL_TRACKING_ENABLED` | `true` or `false` | `false` | Registers permanent worker credential hashes before provider handoff and sealed Channel admission/import. Requires Gateway-owned Mongo replica-set storage and the additive worker-credential migration. Enable on every writer before owner-key cutover; after the durable cutover barrier, tracking-aware binaries refuse untracked startup/import. See [owner service-key rollout](CMAEG_Owner_Service_Keys.md). |
 | `CMAEG_OWNER_KEYS_ENABLED` | `true` or `false` | `false` | Enables personal owner Bearer keys only with tracking, matching durable cutover, configured service UUID, and fresh NyxID plus Manager/local worker classification on every request. Only parent keys issued strictly after cutover qualify. Legacy remote records are unsupported. Disable owner acceptance before any untracked rollback. See [owner service-key rollout](CMAEG_Owner_Service_Keys.md). |
-| `CMAEG_OWNER_KEY_SERVICE_ID` | canonical UUID | `""` | Exact NyxID Event Gateway catalog service UUID for confidential service-key introspection; required when owner keys are enabled. The existing client must be registered to introspect this service. This is not its public slug or an RFC 8707 resource URL. |
-| `CMAEG_OWNER_KEY_CUTOVER_ID` | canonical UUID | `""` | Exact attestation ID returned by the explicit `--attest-owner-key-cutover` command after all old writers have drained and retained Channels are backfilled. Required when owner keys are enabled and checked against the current durable attestation on every owner request. A retained-record scan does not reconstruct missing pre-cutover custody. |
+| `CMAEG_OWNER_KEY_SERVICE_ID` | Secret-backed canonical UUID | unset when disabled; required when enabled | Exact NyxID Event Gateway catalog service UUID for confidential service-key introspection; required when owner keys are enabled. The existing client must be registered to introspect this service. This is not its public slug or an RFC 8707 resource URL. |
+| `CMAEG_OWNER_KEY_CUTOVER_ID` | Secret-backed canonical UUID | unset when disabled; required when enabled | Exact attestation ID returned by the explicit `--attest-owner-key-cutover` command after all old writers have drained and retained Channels are backfilled. Required when owner keys are enabled and checked against the current durable attestation on every owner request. A retained-record scan does not reconstruct missing pre-cutover custody. |
 | `CMAEG_WEB_ORIGIN` | legacy name | Unused by the shared portal | Retained compatibility constant; exact-origin browser checks now run in Agent Manager's portal bridge. |
 | `CMAEG_COOKIE_KEY_FILE` | legacy name | Unused by the shared portal | Retained compatibility constant; the portal uses the existing CMA browser session and no separate Gateway cookie key. |
 | `CMAEG_TOOLS_NYXID_SLUG` | string | `cmaeg` | NyxID service slug in the provider tools advertisement, matching `[a-z0-9_]{1,32}`. |
@@ -859,6 +889,15 @@ validator once canonical callbacks have been issued. Reverting URL generation
 is safe within that compatibility floor; reverting to an older CMA binary that
 recognizes only the legacy base would reject retained canonical callbacks.
 
+Owner-key identifiers are injected from `cma-event-gateway-owner-keys` using
+explicit optional `secretKeyRef` entries. They are absent from the ConfigMap;
+empty placeholders are not a supported apply path. The references are optional
+only to preserve startup with owner keys disabled. Enabled mode still rejects
+missing, empty or invalid identifiers. Explicit env entries take precedence over
+legacy `envFrom` ConfigMap values during the staged cutover. Follow the
+[owner-key Secret cutover runbook](CMAEG_Owner_Key_Secret_Cutover.md); merging the
+manifests does not authorize applying the full, potentially stale Deployment.
+
 Use native Kubernetes Secrets, injected as environment variables through explicit
 `secretKeyRef` entries. `cmaeg-master-keys` supplies `CMAEG_MASTER_KEYS`, and
 `cmaeg-cma-service-token` supplies `CMAEG_CMA_SERVICE_TOKEN`,
@@ -896,7 +935,9 @@ is never used as a provider credential.
 The deployment permits a rolling replacement with one surge pod and zero
 unavailable pods. Its 615-second termination grace covers the five-second
 load-balancer propagation delay, the 600-second application drain, and teardown.
-Apply ConfigMap and populated Secrets before starting the Deployment. Confirm
+Apply populated Secrets through the separately approved secret procedure;
+use the [guarded ConfigMap and Deployment path](#guarded-configmap-and-deployment-apply)
+before starting the Deployment. Confirm
 `/healthz`, `/readyz`, accepted HTTPRoute/health policy status, authenticated CMA
 record access, and the public HTTPS route after rollout. A ready gateway alone
 does not prove a deployed Telegram round trip.
@@ -1754,8 +1795,9 @@ Linux/amd64 Pod in the authorized cluster, with no secrets or service-account
 token and the gateway's restricted security context. Require a successful
 `--media-sandbox-check` and compare `--print-openapi` with the committed JSON.
 These probes establish executable/ABI compatibility, not the full Linux or
-transformer suite. Then dry-run and apply the locally committed ConfigMap and
-Deployment together, verify live digest/readiness, console sign-in and media
+transformer suite. Then use the
+[guarded ConfigMap and Deployment path](#guarded-configmap-and-deployment-apply)
+for the dry-run and approved apply, verify live digest/readiness, console sign-in and media
 attachment behavior, and record any unperformed acceptance probes explicitly.
 
 ### FFmpeg in the gateway image

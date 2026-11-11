@@ -22,18 +22,14 @@ import { retainTaskViewer } from '../create/taskIdentity';
 
 interface AuthContextValue {
   readonly state: AuthState;
+  readonly outage: Extract<AuthState, { status: 'error' }> | undefined;
+  readonly retry: () => void;
   readonly signIn: (returnTo?: string, options?: SignInOptions) => Promise<void>;
   readonly signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-/**
- * How long a silent sign-in may hold the page before it is shown signed out.
- * The navigation normally unloads the page well within this; one the person
- * stopped, or that stalled, leaves the landing and its sign-in rather than an
- * indefinite "Signing you in".
- */
 const SILENT_SIGN_IN_TIMEOUT_MS = 10000;
 
 interface AuthProviderProps {
@@ -44,56 +40,72 @@ interface AuthProviderProps {
 export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   const [state, setState] = useState<AuthState>({ status: 'checking' });
   const currentRead = useRef(0);
+  const [outage, setOutage] = useState<Extract<AuthState, { status: 'error' }>>();
+  const refreshRef = useRef<() => void>(() => {});
+  const retry = useCallback(() => refreshRef.current(), []);
 
   useEffect(() => {
     // Guards against a resolved promise landing after unmount, which React 19
     // StrictMode makes routine by running effects twice in development.
     let live = true;
-
-    // Only the first identity result this page acts on may leave it for a
-    // silent sign-in; a focus during that read supersedes it without using up
-    // the chance. Later refreshes never navigate away from work.
+    let inFlight = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
     let opening = true;
     let leaving: ReturnType<typeof setTimeout> | undefined;
+
     const refresh = () => {
-      if (leaving !== undefined) return;
+      if (!live || inFlight || leaving !== undefined) return;
+      clearTimeout(timer);
+      inFlight = true;
       const version = ++currentRead.current;
       void provider
         .current()
         .then((next) => {
-          if (!live || version !== currentRead.current) return;
-          const first = opening;
-          opening = false;
-          // A browser still signed in to the identity provider is taken
-          // straight through, rather than shown a landing it would click past.
-          // The state stays 'checking' while the page navigates away; if the
-          // page is still here after the bound, the navigation was stopped.
-          if (first && next.status === 'anonymous' && provider.signInSilently?.() === true) {
-            leaving = setTimeout(() => {
-              leaving = undefined;
-              if (!live || version !== currentRead.current) return;
-              retainTaskViewer();
+          if (live && version === currentRead.current) {
+            const first = opening;
+            opening = false;
+            if (first && next.status === 'anonymous' && provider.signInSilently?.() === true) {
+              leaving = setTimeout(() => {
+                leaving = undefined;
+                if (!live || version !== currentRead.current) return;
+                retainTaskViewer();
+                setState(next);
+              }, SILENT_SIGN_IN_TIMEOUT_MS);
+              return;
+            }
+            if (next.status === 'authenticated') retainTaskViewer(next.user.id);
+            if (next.status === 'anonymous') retainTaskViewer();
+            if (next.status === 'error' && next.reason !== undefined) {
+              setOutage(next);
+              // Retain mounted views and drafts. This is presentation only;
+              // every protected operation still requires server authorization.
+              setState((previous) => (previous.status === 'authenticated' ? previous : next));
+              const delay = Math.min(3000 * 2 ** Math.min(failures++, 4), 30000);
+              timer = setTimeout(refresh, delay + Math.floor(Math.random() * 501));
+            } else {
+              failures = 0;
+              setOutage(undefined);
               setState(next);
-            }, SILENT_SIGN_IN_TIMEOUT_MS);
-            return;
+            }
           }
-          if (next.status === 'authenticated') retainTaskViewer(next.user.id);
-          if (next.status === 'anonymous') retainTaskViewer();
-          setState(next);
         })
         .catch((error: unknown) => {
           // The contract says implementations must not throw, but a provider is
           // injected and may misbehave. Surface it rather than hanging on
           // 'checking' forever, which would render an empty page with no reason.
           if (live && version === currentRead.current) {
-            opening = false;
             setState({
               status: 'error',
               message: error instanceof Error ? error.message : 'Could not verify your identity.',
             });
           }
+        })
+        .finally(() => {
+          inFlight = false;
         });
     };
+    refreshRef.current = refresh;
     const visible = () => {
       if (document.visibilityState !== 'hidden') refresh();
     };
@@ -104,7 +116,9 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
 
     return () => {
       live = false;
+      clearTimeout(timer);
       clearTimeout(leaving);
+      refreshRef.current = () => {};
       window.removeEventListener('focus', refresh);
       window.removeEventListener('online', refresh);
       document.removeEventListener('visibilitychange', visible);
@@ -129,6 +143,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         if (version !== currentRead.current) return;
         if (next.status === 'authenticated') retainTaskViewer(next.user.id);
         if (next.status === 'anonymous') retainTaskViewer();
+        setOutage(undefined);
         setState(next);
       } catch (error: unknown) {
         if (version !== currentRead.current) return;
@@ -147,6 +162,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
       await provider.signOut();
       if (version !== currentRead.current) return;
       retainTaskViewer();
+      setOutage(undefined);
       setState({ status: 'anonymous' });
     } catch (error: unknown) {
       if (version !== currentRead.current) return;
@@ -158,8 +174,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   }, [provider]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ state, signIn, signOut }),
-    [state, signIn, signOut],
+    () => ({ state, outage, retry, signIn, signOut }),
+    [state, outage, retry, signIn, signOut],
   );
 
   return <AuthContext value={value}>{children}</AuthContext>;

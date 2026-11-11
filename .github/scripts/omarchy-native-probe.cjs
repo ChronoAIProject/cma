@@ -7,6 +7,7 @@ const { execFileSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
 const { processRpc } = require('/opt/codex-fixtures/native_tools_fixture.cjs');
+const browserPage = require('./omarchy-browser-page.cjs');
 
 const directory = mkdtempSync('/tmp/cma-desktop-proof-');
 const home = directory + '/home';
@@ -19,6 +20,7 @@ let failure;
 let command;
 let terminalCommand;
 let retainedProfile;
+const toolStates = new Map();
 function captureFailureScreen() {
   const path = '/tmp/cma-desktop-failed-screen.png';
   try { if (!existsSync(path)) execFileSync('scrot', [path]); }
@@ -52,7 +54,7 @@ const server = createServer(async (request, response) => {
         return;
       }
       response.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' });
-      response.end('<!doctype html><title>cma-desktop-ready</title><body style="margin:0;background:#234"><input id="field" style="position:absolute;left:80px;top:100px;width:300px;height:40px"><button style="position:absolute;left:80px;top:200px;width:250px;height:40px" onclick="localStorage.setItem(\'cma-desktop-proof\',document.getElementById(\'field\').value);document.title=\'cma-ui:\'+document.getElementById(\'field\').value">Verify input</button><script>fetch(\'/profile?value=\'+encodeURIComponent(localStorage.getItem(\'cma-desktop-proof\')||\'\'))</script>');
+      response.end(browserPage(new URL(request.url, 'http://127.0.0.1').pathname));
       return;
     }
     assert.equal(request.url, '/v1/responses');
@@ -138,33 +140,37 @@ const server = createServer(async (request, response) => {
     'export DISPLAY=:99',
     'xdotool windowfocus --sync ' + window,
     'xdotool key --clearmodifiers ctrl+d', 'sleep 0.3',
-    'xdotool key --clearmodifiers ctrl+l',
-    "xdotool type --clearmodifiers '" + origin + "/desktop-test'",
-    'xdotool key Return',
-    "for i in $(seq 1 30); do python3 /opt/probes/omarchy-active-title.py | grep -q cma-desktop-ready && break; sleep 0.1; done",
-    // Chromium's own full-screen command hides its browser chrome. Merely
-    // changing the window-manager state leaves the page origin offset by it.
-    'xdotool key --clearmodifiers F11', 'sleep 0.5',
-    'xdotool mousemove 120 120 click 1', 'xdotool type --clearmodifiers cma-codex',
-    'xdotool mousemove 120 220 click 1', 'sleep 0.1',
+    // Close the native Wayland window, then require the real launcher to reopen
+    // it and finish both native shell calls while the browser remains alive.
+    'python3 /opt/probes/omarchy-close-browser.py --normal-window',
+    '/usr/local/bin/cma-desktop-session --browser ' + origin + '/desktop-test',
+    '/usr/local/bin/cma-desktop-session --browser',
+    'python3 /opt/probes/omarchy-browser-input.py ' + origin,
     'scrot ' + screenshot,
     'python3 /opt/probes/omarchy-active-title.py',
   ].join('\n');
   const bridge = processRpc(process.execPath, ['/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js'], {
     cwd: directory, env: { PATH: process.env.PATH, DISPLAY: ':99', CODEX_HOME: home, CODEX_PATH: '/usr/local/bin/codex' },
-  });
+  }, frame => {
+    const update = frame.params?.update;
+    if (update?.toolCallId && update.status) toolStates.set(update.toolCallId, update.status);
+  }, 60000);
   try {
     await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
     const { sessionId } = await bridge.call('session/new', { cwd: directory, mcpServers: [] });
     await bridge.call('session/set_mode', { sessionId, modeId: 'agent-full-access' });
-    await bridge.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Open a desktop terminal, run a command and inspect its screenshot. Then use the browser, enter cma-codex, click Verify input, and inspect a screenshot.' }] });
+    const completed = await bridge.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Open a desktop terminal, run a command and inspect its screenshot. Then use the browser, enter cma-codex, click Verify input, and inspect a screenshot.' }] });
     if (failure) throw failure;
+    assert.equal(completed.stopReason, 'end_turn');
+    assert(toolStates.size > 0, 'native tool terminal evidence is missing');
+    assert([...toolStates.values()].every(status => status === 'completed'), 'native tools remain active');
     assert.equal(calls.length, 5);
     for (let i = 0; retainedProfile === undefined && i < 30; i++) await delay(100);
     assert.equal(retainedProfile, process.env.CMA_DESKTOP_EXPECT_RETAINED === '1' ? 'cma-user' : '');
     const bytes = readFileSync(screenshot);
     assert.equal(bytes.subarray(1, 4).toString(), 'PNG');
     assert(bytes.length > 1000);
+    assert(execFileSync('python3', ['/opt/probes/omarchy-active-title.py'], { encoding: 'utf8' }).startsWith('cma-ui:cma-codex'), 'page did not remain open after end_turn');
     // A user takes over the very same browser through the authenticated stream.
     const child = require('node:child_process').spawn('python3', ['/opt/probes/omarchy-vnc-probe.py'], { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let logs = '';
@@ -179,7 +185,7 @@ const server = createServer(async (request, response) => {
       await delay(100);
     }
     assert(title.startsWith('cma-ui:cma-user'), 'user input did not reach the same browser: ' + title);
-    console.log(JSON.stringify({ checks: ['codex-open-terminal', 'codex-type-run-terminal-command', 'codex-terminal-view-image', 'codex-shell-click-type', 'codex-view-image', 'authenticated-framebuffer', 'shared-browser-user-input'], screenshotSha256: createHash('sha256').update(bytes).digest('hex'), terminalScreenshotSha256: createHash('sha256').update(readFileSync(terminalScreenshot)).digest('hex') }));
+    console.log(JSON.stringify({ checks: ['browser-reopen-tool-completed', 'native-end-turn-with-page-open', 'codex-open-terminal', 'codex-type-run-terminal-command', 'codex-terminal-view-image', 'codex-shell-click-type', 'codex-view-image', 'authenticated-framebuffer', 'shared-browser-user-input'], screenshotSha256: createHash('sha256').update(bytes).digest('hex'), terminalScreenshotSha256: createHash('sha256').update(readFileSync(terminalScreenshot)).digest('hex') }));
   } finally {
     await bridge.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   }

@@ -48,7 +48,11 @@ collection renaming or data movement.
 
 Image and Gateway migrations are explicit commands targeting only their own
 collections; Agent Manager retains startup index/schema initialization confined
-to its named catalog. Validators, unique indexes and migration markers remain
+to its named catalog. Its explicit [migration runner](CMA_Migration_Runner.md)
+owns `agent_manager_migrations` and initially supports only additive activity
+query indexes. That ledger is outside normal runtime grants and startup; it
+uses separately verified migration authority without changing grants.
+Validators, unique indexes and migration markers remain
 mandatory in both authority modes. Copying the database URI into each service's
 Secret does not share browser keys or OAuth identities.
 
@@ -122,7 +126,9 @@ so the same restricted credential can initialize and operate the actual stores.
 `cma --print-runtime-role`, `cmaeg --print-runtime-role` and
 `cma-image-manager --print-runtime-role` emit collection-scoped roles. The latter
 two also support `--print-migration-role` and `--migrate`. None creates users or
-assigns NyxID roles implicitly. Provision those identities before rollout.
+assigns NyxID roles implicitly. Agent Manager supports `--print-migration-role`,
+`--migration-plan`, `--migration-status` and checksum-bound `--migration-apply`.
+Provision the required identities before rollout.
 
 ### Sandbox funding grants
 

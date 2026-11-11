@@ -703,11 +703,14 @@ content or report an empty list. Errors and pending commands remain scoped to
 their resource. Boot reserves geometry and never disables sign-in while a
 decorative asset loads.
 
-When the service cannot be reached while checking identity, the page says so in words a person can
-act on: a 20px heading *CMA could not reach its service*, the line *It may be starting up. Reload
-to try again.*, a primary **Reload**, and the service's own sentence beneath as a 12px mono detail
-for whoever reads a report. Unreachable is never shown as signed out, and nothing on the page is
-coloured as an alarm.
+When NyxID is unavailable while checking identity, the initial error page uses the existing 20px
+heading *The identity service is temporarily unavailable*, the line *Retrying automatically. You
+can also try again now.*, and a primary **Retry now**. Other failures say *CMA could not verify your
+sign-in* without guessing that CMA is starting up. Retry checks identity without reloading the
+page. For an already authenticated view, keep the same mounted content and drafts and show the
+shared warning Alert at the top of the service shell with the outage message and **Retry now**.
+Automatic retries back off; explicit rejection returns to sign-in. The detail remains in the
+existing 12px mono style. Unreachable is never presented as signed out.
 
 ---
 
@@ -861,6 +864,26 @@ creates anything. Fade-in uses the existing fast duration, with reduced-motion
 equivalence. Profile links remain independently clickable.
 
 ### 12.3 The dropdown
+
+Operations usage filters use this same portalled Menu/Picker. Large identity and
+runtime lists have an inline name-search field, a scrollable page of at most 50
+choices, and Previous/Next controls. Search is debounced; paging replaces the
+current page rather than accumulating DOM rows. Arrow keys move from search to
+choices; Escape closes and restores focus. Loading, empty and retry states stay
+inside the dropdown. Primary and selected labels show only the plain display
+name; missing names use Unnamed owner/Sandbox, never a raw ID. Duplicate names
+on the current page have secondary human context: owners use join date;
+Sandboxes use owner name, then creation date when owner names also match.
+Matching dates add UTC time, increasing precision through minutes, seconds and
+available fractional seconds. Owner clock precision requires directory-read
+access; Sandbox-only access retains owner join dates. Compare final rendered
+context across the duplicate group, including names that resemble generated
+context. A derived reference is a last resort in secondary text only when all
+available authorized human context still ties or is unavailable.
+Accessible menu text includes the same context; selected text, title and accessible
+label stay plain.
+The time-range picker retains Custom with local date/time fields. Apply filters
+commits the draft atomically; Clear filters restores Last 24 hours and all choices.
 
 One control for choosing a value and for choosing an action. Both are a card at radius 12 on the menu
 fill with an inverted hairline and the level-3 shadow, holding 40px rows at radius 7. The Lumen row
@@ -1061,62 +1084,20 @@ so intentional identical messages remain separate. Account, Agent and access
 changes invalidate both local rows and late draft-clearing callbacks. Retained
 pending requests keep the existing explicit same-request recovery action.
 
-One active Thinking disclosure follows the current Agent reply and settled turn
-activity inside the conversation scrollport, before queued follow-up messages.
-Its left edge aligns with the Agent avatar and message row's left edge, without
-the message body's avatar-and-gap inset. Before the first reply, it uses the same alignment.
-It is transient turn status, never a persisted message or an extra transcript row.
-Its 44px control
-places the turn's 32px character (§28) before Thinking, posed by what the turn
-is doing now — working while a tool is pending, replying while reply text
-streams, thinking otherwise — followed by elapsed seconds and a single-line
-current-activity preview. Clicking
-or keyboard activation opens the existing 120px capped body, containing current
-live reasoning and only pending or running tool calls. The character follows
-the shared visibility, static fallback and reduced-motion behavior in §28.
-The elapsed figure comes from the recorded active turn's start timestamp, so
-navigation, reload and reconnect do not reset it. A new turn uses its own start;
-an unavailable timestamp leaves the duration unstated rather than inventing zero.
-Thinking leaves the conversation when the turn finishes, fails or stops. Reasoning
-is live-only and never presented as recovered history. Appearance and disappearance
-fade and expand/collapse over the shared 200ms duration; the exit is immediately
-inert and leaves no spacer after removal. Recorded reply growth may ease the status
-row's measured vertical movement over the same duration without animating message
-text. Reduced motion skips these transitions and cancels active motion. The
-existing follow-output behavior remains authoritative: reviewing older history
-never forces the reader back to the status row. Elapsed time, current activity and
-turn token reporting retain their existing sources and do not reset on relocation.
-On narrow screens the token line wraps within the message content width so actual
-counts and explicitly labelled estimates remain readable.
+One active Thinking disclosure follows the current Agent reply and settled
+activity in the conversation scrollport. It aligns with the Agent avatar and
+uses the exact copy, logo and clock defined in §30. Its elapsed time comes from
+the public turn start and never resets on navigation or reconnect. View activity
+opens the existing 120px capped live-reasoning and pending-operation disclosure.
+No token usage appears in either state. Stopping replaces it with the recorded
+stopped duration. Reduced motion disables the shimmer and arrival transitions;
+reviewing older history never forces scrolling back to the indicator.
 
-Tool activity is one quiet line in the timeline, not a box: no border, ground
-or radius. It reads in 13/20 secondary ink, so the replies around it lead.
-Each settled tool call is a row inserted at its completion position and retained
-on reload, named **Tool call: <title>**. Rows use 8px vertical padding; a tool
-line is 28px tall with 12px after it, and a message leaves 8px below its footer. The
-row leads with a state dot and pairs it with a plain word: **In progress** (the
-pinging dot, still under reduced motion), **Completed** (done dot), **Failed**
-(error dot), **Cancelled** (no dot) for a call the provider reports as cancelled
-or stopped, and **Outcome not reported (last status: <status>)** (neutral dot)
-for a call left pending by an ended turn, without inventing success or failure.
-The recorded title and kind wrap beside the word. A duration appears only when
-the public contract reports one; it reports none today, so no row carries a
-duration or a "not reported" filler, and unknown duration is never zero. Tool
-activity never invents missing arguments or results: the recorded detail sits
-behind a bounded **Details** disclosure only when the contract supplies it.
-
-Two or more consecutive tool calls, with no message, approval, plan or notice
-between them, form one group. Its header is a text button with `aria-expanded`:
-a chevron and **<n> tool calls**. While a call in the group runs, the header adds
-**· Running <title>**, truncated with an ellipsis; when calls failed it adds
-**· <n> failed** in error ink. A settled group repeats no command line. The
-header has the hover ground only on hover. A collapsed group hides its rows; an
-expanded one lists every row with the same dot, word and disclosure, indented
-past the chevron against a 1px border-l1 rule on its left. A group
-containing a failure starts expanded, and stays so until the reader collapses it;
-otherwise it starts collapsed. A single call stays a single row. Live and
-replayed activity reconcile by call identity without duplicate rows or
-regression to pending after completion.
+Tool groups and rows follow §30: action summaries, collapsed defaults including
+failures, 36px rows, full command/path expansion and the independent Terminal
+jump. Recorded text stays intact. Missing duration is never shown as zero, and
+missing output never becomes a successful empty result. Calls reconcile by
+identity without duplicate rows or regression after completion.
 
 A plan the Agent reports through the public stream (`plan_set` in the durable
 history and Responses v2, the `/plan` state on AG-UI) renders as a **Plan** card
@@ -1575,35 +1556,10 @@ checkpoint permits reads. Paused and unavailable runtimes show written states,
 never zeroes. Cancel requests and reset the CPU sample pair when the runtime
 identity changes. Mounting a conversation does not start machine-resource polls.
 
-The conversation footer contains Context quota and cumulative Agent input/output
-tokens, including earlier turns and preserved across compaction. The Thinking
-row shows the current turn's input/output totals. Unreported input says unavailable.
-Before a token report arrives, live visible reply and reasoning text may show
-an explicitly labeled `≈ N visible output tokens` estimate using a local
-o200k_base tokenizer. Its explanation excludes hidden reasoning, tool calls and
-inputs, and states that actual model usage may differ. Load the tokenizer only
-for an active turn, in a background worker; update at most five times per second,
-reuse unchanged text chunks, and cap counted text at 65,536 UTF-16 code units with
-a visible partial label. Missing text, unavailable tokenization and missing provider counts have
-written states. Estimates are never added to session totals or retained as actual
-turn usage. An authoritative turn report replaces its estimate and records the
-visible text boundary it covers. Later model calls in the same turn display
-`+ ≈ N newly visible output tokens` beside the last reported counts, counting
-only new visible text past that boundary. Repeated identical reports do not
-advance the boundary; restored text does not count twice. Missing counts
-are never displayed as zero or inferred from elapsed time or context quota. Each reported
-increase animates towards that actual value over 600ms, never beyond it. Values
-use tabular numerals; reduced motion and hidden documents settle immediately.
-Accessible labels expose the actual count without announcing every animation
-frame. The cumulative footer uses the same observed-count animation. A new turn
-resets only its own counters.
-
-Each completed turn keeps its reported input/output counts below its final Agent
-reply, in the existing 12/18 caption style, revealed with the message footer
-(hover, keyboard focus, or always on touch devices). Earlier intermediate replies do not
-repeat the same turn total. Full durable replay restores every available turn's
-counts. A completed turn without a report draws no line at all: absence is still
-never shown as zero, and the composer's context ring holds the totals.
+The composer's existing Context control retains reported usage and quota facts.
+Message footers and Thinking contain no token counts or estimates. Their current
+content and interactions are specified in §30; recorded usage remains available
+through the public interfaces without becoming extra conversation chrome.
 
 Routine stream reconnection is quiet for 2.5 seconds; a continuing failure then
 shows the existing connection status. If live fragments need refreshing, show
@@ -2655,6 +2611,227 @@ retiring/retired resources clear their retained display data. Retain only the
 immutable Agent creation category for the owner header; privileged provenance
 and source actions still require fresh authorized reads. Memory retention adds
 no background polling and ends with the authenticated scope.
+
+## 30. Agent Workspace v3 (2026-11-05)
+
+The Agent Manager conversation follows the running and stopped Workspace v3
+references. This section supersedes the earlier task-row, toolbar, tool activity,
+composer and computer-panel presentation rules. Retained conversations, public
+authorization, exact request recovery and unsaved drafts keep their existing
+contracts. These changes reduce repeated status and put the conversation beside
+the environment the Agent actually operates.
+
+Task names prefer an owner rename, then the durable generated/task title, then
+eligible runtime metadata, then Untitled task. Both durable title events and the
+public live title delta update the existing conversation without remounting it.
+This replaces the older preview-first ordering, which masked generated names.
+
+The following alias tokens are defined on `body`, with dark overrides on
+`body[data-ds-dark-theme]`. Components read the aliases, never literal colors.
+The `workspace` role scopes this palette to the Agent conversation and task
+details. The shared sidebar, navigation selections, account menu and New agent
+landing keep the theme palette and task surfaces defined in §2 and the
+2026-11-06 theme contract. Workspace control actions retain their explicit
+contrast fill; other primary buttons retain the shared lime palette.
+
+| Alias suffix (`--dsw-alias-workspace-`) | Light | Dark |
+| --- | --- | --- |
+| `text` | `#1d1d1b` | `#fafafa` |
+| `secondary` | `#6e6e69` | `#b4b4ae` |
+| `weak` | `#a3a39e` | `#969690` |
+| `border` | `#ececea` | `#27272a` |
+| `border-strong` | `#e4e4e0` | `#3f3f46` |
+| `sidebar` | `#f7f7f5` | `#111113` |
+| `selected` | `#efefec` | `#27272a` |
+| `accent` | `#4f8a35` | `#a9cf90` |
+| `link` | `#456f2e` | `#b9dca4` |
+| `success` | `#8fb07a` | `#a4c38e` |
+| `danger` | `#c4493b` | `#ff9689` |
+| `ready-text` | `#8a6416` | `#f0ce82` |
+| `ready-bg` | `#f5ecd8` | `#332a18` |
+| `terminal-highlight` | `rgba(143,191,115,.18)` | `rgba(143,191,115,.24)` |
+| `control-bg` | `#1d1d1b` | `#fafafa` |
+| `control-text` | `#ffffff` | `#1d1d1b` |
+
+Weak ink is supplemental metadata, never the sole accessible account of state.
+The exact timestamp and status also belong to the row's accessible name; required
+status and control text use secondary or primary ink. Success is a check shape,
+and failures also carry their error text. Ready carries a visible word.
+
+The shared geometry aliases (same in both themes) are `workspace-row-height`
+36px, `workspace-group-font` 400 11.5px/18px in the interface face,
+`workspace-body-font` 400 15px/1.75 in the interface face,
+`workspace-mono` `'SF Mono', ui-monospace, Menlo, Consolas, monospace`, and
+`workspace-tool-font` 400 12.5px/20px in that mono stack. This explicit stack
+supersedes §4's generic-monospace restriction for Workspace tool literals only.
+`workspace-conversation-min` is 420px; `workspace-title-min` is 96px;
+`workspace-command-inset` is 16px; `workspace-highlight-duration` is 1.8s;
+`workspace-status-duration` is 1.6s for the breathing dot and Thinking shimmer.
+Existing 4/8/12/16/24px gaps, 32px controls, 44px touch targets, 8/12/16px radii
+and the shared easing/focus tokens remain the geometry vocabulary.
+
+Tasks are grouped Active, Today, Yesterday, Earlier. Active includes running and
+confirmed Ready tasks. Rows are 36px with the §28 Agent character (Sandbox colour and status pose), title and
+right-aligned time (today HH:mm; earlier MMM D). Running adds a breathing green
+dot and elapsed time (`<1m` before the first minute); Ready has a pill.
+The sidebar clock wakes only at the next displayed minute or local-midnight
+boundary, and on foregrounding. Accessible row names use the displayed date/time. Completed has no visible status word.
+Group headings use the group font and weak ink with 8px preceding space. The
+Tasks heading has 8px before its list. The row menu is revealed by hover or
+focus-within, and always visible for coarse pointers; it retains its target and
+accessible name when visually hidden. This replaces stacked task statuses and
+always-visible menus to keep the task list compact. Settings moves to the right
+of the bottom account row (avatar, name, email, Settings icon). The bottom gear
+opens its environment shortcut; the Tasks filter disclosure also retains its
+Manage environments button. Both enter the same environment view and preserve
+task route, scope, scroll and focus on return. No Settings heading returns to
+the main navigation. Appearance remains in the account menu.
+
+The toolbar is a normal grid row above the message scrollport; it never overlays
+messages. The title has a 96px minimum and ellipsizes only after its available
+space is exhausted. The right controls are Share, Computer, More. Computer uses
+the selected fill while open and a transparent ground while closed. More orders
+Rename, Update system prompt, Update skills, Export history, View deletion status,
+separator, Delete task (danger). Existing authority, unsupported-client and busy
+reasons remain. Stop stays in the composer and task-row menu. The title opens
+Details, including Sandbox id, Resources and Agent key scope. A collapsed sidebar exposes Show sidebar at
+the toolbar's left. Below 1180px an open computer automatically collapses the
+sidebar until the user explicitly chooses its state. The conversation floor is
+420px; smaller viewports retain the existing focus-trapped panel overlay.
+
+Tool groups start collapsed, including failures, and summarize actual operations
+(Ran 2 commands · Read 2 files; Searched 2 times; Listed 2 folders; Edited app.js +86 −14), with recorded duration.
+Expanded groups have one rounded border and 36px rows. Rows show type icon,
+ellipsized mono command/path, duration, muted success check and a 32px terminal
+jump target (a reserved slot for non-command rows). Activating a row expands its
+full command/path and recorded output or diff. Removed/added diff lines use
+danger/success ink with −/+ markers. Failures show at most the last three error lines (240 characters per line),
+clamped to three visible lines in danger ink; expanded details retain full output.
+The Terminal jump is independent of expansion: it opens Terminal, scrolls the
+matching command to 16px below its scrollport top and fades a highlight over
+1.8s. Terminal reserves trailing space when needed to align even its final command
+16px below the scrollport top. Tool duration is never guessed from render time.
+
+One bottom conversation status reads [logo] Thinking <elapsed> · View activity,
+updating its recorded-start clock once a second. Elapsed labels use seconds below
+one minute and minutes/seconds below one hour; at one hour they use hours/minutes
+(`1h 5m`), and at one day days/hours (`2d 3h`), retaining a zero lower unit.
+Thinking, stopped duration and the running task badge share this format; the
+sidebar keeps `<1m` and whole-minute labels for shorter runs. Thinking may shimmer: this is
+an explicit exception to the old status-text motion rule, not animation of an
+Agent's words. Stopped turns read ■ Stopped after <duration>. Neither status contains token usage, including its expanded details.
+The composer has no spinner. With input it shows Send (↑) when queueing is supported; when queueing is
+unsupported during a turn, Stop stays visible even with a draft. Empty while running
+it shows a solid contrast Stop square and Esc to stop; empty while idle it shows
+disabled Send. Enter sends, Shift+Enter inserts a newline, Escape stops eligible
+active work. Running placeholder: “Add a follow-up — it'll be queued while the
+agent works”; idle: “Reply to Chrono Agent…”. Admitted follow-ups appear directly
+above the composer as Queued · <content> with an independently named × removal
+button. Queue is offered only while running. The compact model/effort reads
+Astra · High; its tooltip retains the full model, reasoning, permission, context
+usage and token figures. The tooltip also describes the settings chip for screen
+readers. An unavailable settings chip remains focusable and exposes usage
+read-only with its reason. There is no context ring in the composer. Account
+Usage separately retains the owner-scoped Your usage popup for allocated and
+measured CPU, memory and disk; it keeps the current conversation and draft mounted.
+Context/token figures belong only to the settings tooltip, not that resource report.
+
+The allocated-usage redesign applies to that popup and Operations: period
+resource-hours lead each card, current capacity is separately labelled, allocation
+charts describe only the displayed server page, and responsive inventory and
+missing-history disclosures remain available. Measured-resource visibility keeps
+its existing independent gate. These Sandbox resource reports preserve the
+mounted conversation and its draft; opening or closing them keeps the settings
+chip's context/token description available and never adds a composer ring.
+
+
+Computer tabs are Screen, Terminal, Files with roving tabindex and arrow keys.
+Home/End/Arrow selection leaves focus on the selected tab. Initial composer focus
+is allowed only when no other control already owns focus; late conversation
+readiness must preserve an owner's existing focus in the computer or elsewhere.
+
+The tab well uses `workspace-selected`; its selected tab uses `bg-layer-1`,
+with primary ink on the selection and secondary ink on the other tabs.
+Terminal exists only after a recorded terminal operation. Opening Computer
+defaults to Screen. Screen follows the Agent's active desktop/browser surface;
+a real desktop includes its native browser, taskbar and current-app highlight.
+Browser-only tasks show their real page and address. The panel header has
+Reconnect and Full screen icon keys only on Screen and a Close computer ×.
+The Screen-only control bar says “Agent is in control · Working in <app>” or
+“Agent paused · Desktop is idle”, with a solid contrast Take control action.
+This intentionally supersedes the generic dark lime primary: control is a
+high-contrast action beside the picture, with the inverse light fill in dark.
+Browser takeover still requires the existing confirmed lease and permission.
+Native desktop input uses the authorized desktop connection. While running,
+Take control first asks “Taking control stops the Agent's current turn”, with
+confirm/cancel actions. Confirmation issues the existing public interrupt,
+waits for the turn to stop, then grants input. A failed or uncertain stop never
+grants input and exposes its error. Idle takeover remains immediate. New turns,
+reconnects and scope changes release held keys/buttons and never restore input.
+Screen defaults to desktop where available, then follows the latest identified
+public screen operation: cma-browser selects the agent browser when available;
+xdotool/desktop operations select the desktop. No manual source toggle is shown.
+Only loaded history can invalidate a selected Terminal tab. Screen errors clear
+on successful fullscreen changes, tab changes and reconnect.
+
+
+Screen operations form their own collapsed group, for example “Checked it in
+Browser · 3 steps 19s”. Each noninteractive row has an action icon, description
+and recorded HH:mm:ss time. Classification uses only public tool titles and
+kinds. When those fields cannot identify a screen action, retain the ordinary
+tool row. The preview shows the live interface and fills the panel without
+nested padded scrollports. Its cursor is the native interface's own cursor.
+
+Terminal shows bash, the recorded working directory and Live during the current
+turn. Every command retains its own block: $ command and duration, then complete
+recorded output, with existing explicit truncation evidence where the service
+bounded a result. It retains scrollback without playback. The end shows a cursor
+while running or “— agent paused —”. Files show name, path, reported +n −n and M
+for modified files. A Changed files list above the explorer exposes changes in
+collapsed folders and opens the selected file. Ancestor folders carry a Changes
+marker. Degraded diffs say “Counts unavailable” in groups and file rows; unknown
+counts never become zero. Settled plan disclosure reads “View plan”.
+
+Answer footers contain, in order, the always-visible Copy content, Helpful and
+Needs improvement icon buttons, then a semantic `<time dateTime=...>` using
+English relative labels: “just now” below one minute; “1 minute ago” / “5 minutes
+ago” below one hour; “1 hour ago” / “3 hours ago” below one day; “1 day ago” /
+“2 days ago” thereafter. Counts use elapsed whole units; a future timestamp
+clamps to “just now”, and an absent or invalid timestamp draws no time. Labels
+refresh at their next minute/hour/day boundary and on window focus or visibility
+changes. The clock is not a live announcement. Only the time is revealed on
+message/footer hover or focus-within; coarse pointers show it continuously.
+Opacity reserves its place after the icons, so interaction never moves a button.
+The footer has no absolute date, token totals or completed-turn duration. Copy
+and vote pending, success, retry and error states remain available. Voting still
+requires a recorded eligible answer and owner authority; unavailable voting
+controls remain visible and disabled with their reason. Optional negative-vote
+reasons open in the shared dialog, keeping the footer compact. Selecting an already
+active Needs improvement icon reopens that dialog; Remove vote inside the dialog
+clears the vote. The dialog has one Close action in its header.
+
+The task character uses its Sandbox colour whenever present. Without one, a
+stable task hash selects the documented theme aliases `workspace-task-blue`
+(light #245b98, dark #9acbff), `workspace-task-purple` (light #7b3f93, dark
+#d9abee), or `workspace-accent`. Each has at least 3:1 contrast on the sidebar
+in both appearances; status pose and text remain independent of hue. The shared
+character stage resolves these aliases and repaints on appearance changes.
+All icon keys have names and tooltips. Status announcements report
+transitions, not timer ticks. Reduced motion removes breathing, shimmer and the
+Terminal highlight fade; the selected command retains its highlight for 1.8s
+without a fade. The shared focus ring and 44px coarse-pointer targets remain.
+
+
+Workspace streaming recovery preserves visible text and reasoning across a gap.
+A durable successor keeps the live row's DOM identity and timeline position;
+recovery occupies the fixed stream status slot until the run settles. Grouped
+tools, relative answer footers and live Screen/Terminal/Files remain unchanged.
+The open Agent keeps its last reported sidebar task status while navigation
+refreshes; completed tasks still use the Workspace timestamp presentation.
+Identity retries preserve the mounted workspace and its draft. Resource usage
+filters and complete-cohort owner charts keep their own authorized identity
+policy. Channel Queue wait limits new channel admissions independently of
+composer follow-up queueing.
 
 ## Changelog
 
@@ -5207,6 +5384,9 @@ radius. Existing control availability and pending-request guards are unchanged.
 
 | 2026-11-04 | Clarify supported running follow-ups and label Stop without changing queue or interruption semantics. |
 
+| 2026-11-05 | Define Agent Workspace v3 palette in both appearances, compact grouped tasks and tools, one composer action and live Screen/Terminal/Files views; supersede repeated Completed labels, persistent row menus and the old motion/control conventions while preserving public authority and conversation continuity. |
+| 2026-11-05 | Remove the operation-record playback UI and its entry points; keep complete Terminal scrollback and screen-operation rows derived only from public events. Answer footers keep always-visible copy/vote icons followed by a relative time revealed on hover/focus or always on touch; remove absolute timestamps, token usage and worked-duration lines, including token counts in Thinking. |
+
 ### 2026-11-05 — Measured resource reporting
 
 Measured usage surfaces share one immutable, principal-scoped report for their
@@ -5385,12 +5565,15 @@ radius, 8px padding and menu fill. Trigger has 1.5px accent outline while open.
 Group labels use 12.5px/20px weak text. The sole location is **Cloud computer**,
 a checked menuitemradio with a 32px icon square, 8px radius, 1px panel border and
 secondary **Its own Linux machine in the cloud**. A separator and **Computer options**
-label precede **Agent browser** and **Shared desktop** menuitemcheckbox rows, with
-existing descriptions/unavailable reasons at 12px/18px. Menu gains per-item roles
+label precede the sole **Shared desktop** menuitemcheckbox for new drafts, with
+its description/unavailable reason at 12px/18px. It includes Chromium for the
+owner and Agent. Only a recorded lifecycle intent with `desktop: true` also shows
+a checked, disabled **Agent browser** row explaining that its choice is saved
+with the submitted task (see the 2026-11-06 refinement). Menu gains per-item roles
 so independent checkboxes and a radio can coexist. Checked rows show an accent
 check; row padding is 8px, gap 12px, minimum height 44px. Choices freeze after intent;
-a retained unavailable choice can still be unchecked before intent. Trigger suffixes
-**Browser**, **Shared desktop** or **2 options** make retained choices visible.
+a retained unavailable choice can still be unchecked before intent. The trigger suffix is
+**Shared desktop** when selected; no Browser or combined suffix is used.
 
 **Repository.** Reuse Modal with a `repository` presentation: full-screen scrim,
 8px backdrop blur, 16px viewport clearance, 480px maximum card width, 26px radius,
@@ -5445,7 +5628,8 @@ and overlay behavior; the sidebar never restacks above the content.
 #### Review refinements — 2026-11-05
 
 Repository capability is tri-state. While checking, the disabled Add git repo control
-says **Checking repository support…**, and submitting a retained repository says
+has the screen-reader-only description **Checking repository support…**, and
+submitting a retained repository says
 **Checking repository support. Wait for the check to finish before starting.** Only a
 confirmed unsupported result or absent capability reader says unavailable.
 
@@ -5461,10 +5645,9 @@ The initial composer must be entirely visible without scrolling at 1440×900 and
 reason is **This Sandbox's existing Linux machine**; preparation says **Preparing
 your Agent…**. New-Sandbox landing retains its original cloud-computer wording.
 
-All Agent browser descriptions and validation identify **Agent browser**. Clearing
-an unavailable choice points to **Agent browser in the Cloud computer menu**;
-shared-desktop validation points to **Shared desktop in the Cloud computer menu**.
-The two-choice trigger suffix is **Browser + desktop**, superseding **2 options**.
+Shared-desktop validation points to **Shared desktop in the Cloud computer menu**.
+As refined on 2026-11-06, new drafts have no Agent browser row, validation or
+capability read. The trigger suffix is only **Shared desktop** when selected.
 
 Repository errors use the same 14px/22px error ink as ref errors. A nonempty invalid
 repository is explained after blur; Enter also validates empty input. The form uses
@@ -5708,5 +5891,282 @@ and status chips share a line, secondary metadata wraps together, and permission
 hints stay beside the action they explain.
 
 | 2026-11-06 | Apply lead review to Usage toolbar alignment, overview spacing, refresh placement, history disclosure, chart labels and compact inventory rows. |
+| 2026-11-06 | Specify Ops usage dropdown search, bounded paging, keyboard navigation, visible discovery states and human-readable identity labels; preserve Custom date ranges and atomic Apply/Clear. |
+
+| 2026-11-06 | Add complete-cohort owner allocation rankings with plain identity labels, Top 5/10/50/All, bounded internal scrolling and an always-visible value axis. |
+
+#### Owner allocation rankings — 2026-11-06
+
+Operations owner allocation uses the complete frozen report cohort, independently
+of the Sandbox inventory page. Keep the existing resource and grouping Pickers;
+add a chart-only Top 5 / Top 10 / Top 50 / All Picker, default Top 10. Rank recorded
+resource-hours descending. Changing the visible count never applies report filters
+or creates another report. All loads bounded owner pages as the user scrolls;
+show loaded and total owner counts and an explicit retry if a page is unavailable.
+
+Use the filter discovery identity policy for plain owner display names, safe
+unnamed labels and duplicate-only secondary context. A derived reference is a
+last resort when human context cannot distinguish real duplicates. No raw owner
+identifier may appear in chart text, accessible names, titles or tooltips.
+
+Owner bars use fixed 48px rows in a focusable chart-local scroll area, at most
+384px high, with overscroll containment and a visible scrollbar gutter. Render
+only visible rows with a small overscan. Keep a 136px left name column aligned
+with bars and a persistent numeric value axis outside the scrolling rows. Long
+names truncate; hover and keyboard-readable chart data retain the full name.
+The data table also pages rather than rendering the entire owner list. Use the
+existing Recharts library, theme tokens and nonanimated bars. Empty, loading,
+partial-history and failure states stay explicit in both themes.
+
+Owner-name disclosure is portalled outside the scrolling chart and placed with
+the shared viewport placement helper. Hover and keyboard focus show the same
+full name and secondary context; Escape dismisses it. Reposition it on scrolling
+and resizing so the final row and bottom visible row cannot clip its text.
+Owner identity context is resolved across the report cohort, not each API page,
+with the same authorized human-context policy used by filter discovery.
+
+
+#### Settled landing capability checks — 2026-11-06
+
+Task-experience capability is explicitly unknown until settled. Only a settled
+non-admitted result (including a failed read, mismatched account or missing reader)
+may show **Task creation is unavailable. You can create an Agent and start a
+conversation.** and its **New agent** button. Unknown capability never shows that
+fallback. Focus, visible-document and online refreshes preserve the same scope's
+last settled capabilities until the new read succeeds or fails. Client or account
+changes immediately hide the previous scope's capabilities; late responses cannot
+restore them. Suggestions and Agent computer controls use the same behavior.
+
+Going offline aborts the read and invalidates capabilities to unknown, disabling
+new admission without showing misleading unavailable copy. Focus while offline
+does not read or restore capabilities; reconnecting starts a fresh check. All
+capability consumers remain fail-closed until that check settles. Same-scope
+refreshes otherwise keep the last confirmed admission; the server still enforces
+current authority on every submission.
+
+Initial and refresh checks must not insert transient visible content or shift the
+landing. **Checking task creation…** is a screen-reader-only status; **Checking
+repository support…** is a screen-reader-only description of the disabled repo
+control. Settled unsupported/error reasons remain visible, as do meaningful
+submission and preparation statuses. Repository support retains its existing
+tri-state validation and contextual inheritance. Start task stays disabled until
+creation support and task admission are confirmed; pending repository support
+still prevents submitting a retained repository.
+
+| 2026-11-06 | Keep landing capability checks visually stable and scope-safe: no unavailable fallback before a settled result, same-scope refreshes keep the last settled capabilities, offline invalidates admission, and checking statuses are screen-reader-only. |
+
+
+#### Shared desktop as the only landing computer option — 2026-11-06
+
+This refinement supersedes earlier independent Agent browser selection on Home,
+including the 2026-11-03/04 desktop creation rules. Both the new-Sandbox landing
+and contextual Workspace/Sandbox New task menu offer only **Shared desktop** under
+**Computer options** for new drafts. Shared desktop includes Chromium, which the
+owner and Agent can both control. Existing Sandbox and permission restrictions
+remain; a retained unavailable shared-desktop choice can still be cleared.
+The trigger suffix is **Shared desktop** only when selected. New submissions
+never request `desktop: true`, and the landing does not read browser capability
+or use the desktop-enable policy. The owner's **Enable browser** command after
+creation is unchanged.
+
+Version-1 task drafts containing a boolean `desktop` still load their text,
+repository and shared-desktop choice. Ignore that retired field immediately and
+omit it on the next persist. Recorded lifecycle intents are a separate boundary:
+keep their original key and body byte-identical during recovery, including
+`desktop: true`. Only such a frozen intent shows a checked, disabled **Agent
+browser** row, with **Agent browser choice is saved with the submitted task.**
+It does not add a Browser trigger suffix or require a capability read.
+
+| 2026-11-06 | Offer only Shared desktop for new landing tasks, accept and drop the retired desktop field in old drafts, and keep recorded Agent browser intents frozen, visible and byte-identical on recovery. |
+
+
+#### Next draft after confirmed creation — 2026-11-06
+
+Keep the editable next draft through submission, receipt, uncertain recovery,
+connection waits and failed preparation; **Start another task** still offers it.
+When a confirmed successful operation for the retained request's Agent clears
+its intent, discard the same scope's draft only if its exact text, repository URL,
+repository ref and Shared desktop choice still equal the submitted body (missing
+options mean empty/unchecked). An edited next draft survives unchanged. This
+applies to conversation follow-up and creation-dialog success paths, never to
+receipt alone or failed-intent clearing. A later landing starts empty, without a
+repository chip and with Shared desktop unchecked; a mounted matching draft also
+resets immediately so subsequent edits cannot re-save the submitted content.
+Draft cleanup is best-effort: storage errors must not throw or block conversation
+access, and unreadable or different drafts are preserved. Account isolation and
+sign-out clearing keep their existing rules.
+
+| 2026-11-06 | Discard the landing draft only when it still equals a task whose creation was confirmed successful; edited next drafts and failed preparations keep their text. |
+
+
+#### Streaming Markdown safe prefix — 2026-11-06
+
+Streaming replies render only a safe Markdown prefix. An open link or image,
+an unfinished link label, and unmatched `**` or `__` in the final paragraph stay
+hidden until their closing syntax arrives. Emphasis uses CommonMark flanking,
+including adjacent CJK text, punctuation and intraword asterisks. A blank line
+ends the paragraph's emphasis scope: unmatched delimiters in completed
+paragraphs are literal and cannot pair with a later paragraph or hide it.
+Literal underscores in words and spaced mathematical powers remain visible.
+Inline code closes with a backtick
+run of the same width, and the first remaining unclosed run stays hidden.
+Code spans stay within a paragraph; a blank line ends that scope. Unmatched
+backticks in completed paragraphs remain literal and cannot consume a later
+paragraph's code span. A single line break can remain inside a code span.
+Masking code preserves UTF-16 offsets, including emoji. Text inside an open
+fenced code block remains literal. A partial `<!--cma-deliverable:v1:` prefix,
+including a one-character prefix, is hidden only on the final line still being
+written; earlier lines keep their literal characters. Full marker prefixes
+remain hidden outside fences. Completed messages keep their existing bytes and
+marker handling.
+
+| 2026-11-06 | Render streaming replies through a safe Markdown prefix: CommonMark-flanking emphasis and code spans scoped to the paragraph still being written, UTF-16-exact masking, and partial deliverable markers hidden only on the final line. |
+
+
+
+#### Agent conversation streaming continuity — 2026-11-06
+
+A live stream gap preserves every visible message and reasoning row. The client
+freezes that run's live tail after the gap and waits for its durable message;
+it never appends a post-gap fragment to a buffer with a hole. Durable text
+replaces the live row in the same timeline position and keeps its DOM identity.
+Snapshot merges retain that identity on subsequent refreshes too. The durable
+successor replaces a frozen live row even when its text differs; an earlier
+durable message from the same run never consumes the second message's live row.
+The **Refreshing live updates…** status occupies one fixed slot at the end of
+the message stream and clears when the run is recorded or reaches a terminal
+outcome. Active thinking, composer busy state and other turn loading indicators
+also end at that terminal observation.
+
+| 2026-11-06 | Preserve streamed text across live gaps, replace frozen live rows in place with their durable successor and a stable DOM identity, and keep the live recovery status in one slot that clears at the run's terminal outcome. |
+
+
+
+#### Task list status for the open Agent — 2026-11-06
+
+When the open Agent is newer than its sidebar summary, the task list keeps the
+summary's last reported task status while requesting a navigation refresh.
+**Status unavailable** is shown only when the Agent's summary has never
+reported a task status.
+
+| 2026-11-06 | Keep the open Agent's last reported task status in the sidebar while its stale summary refreshes; show Status unavailable only when no status was ever reported. |
+
+| 2026-11-06 | Explain temporary identity outages explicitly, retry without reloading, and preserve mounted authenticated views and drafts with the shared warning Alert until verification recovers or rejects. |
+
+| 2026-11-06 | Resolve owner chart identities across report pages with the shared authorized context policy; portal full-name disclosure outside the scroll viewport and clamp it on keyboard focus and hover. |
+
+| 2026-11-06 | Prefer Sandbox creation dates and precise UTC creation/join times for duplicate Ops filter names before a last-resort secondary reference; preserve plain selected labels and accessible duplicate context. |
+
+| 2026-11-06 | Gate precise owner join times on current directory-read access and resolve collisions between final duplicate-option contexts, including generated-looking owner names; keep accessible choices distinct. |
+
+### Channel queue wait policy (2026-11-06)
+
+The channel Agent settings inspector includes a **Queue wait** group using the
+existing Section and NumberField controls. **Maximum wait (seconds)** defaults to
+300 and accepts whole values from 1 to 86,400. Explain that a message which exceeds
+this wait fails without starting, and that changes apply to newly admitted
+messages. The same control is available for an existing Agent without allowing
+its destination or runtime settings to change. Preserve other profile fields when
+saving. Use existing form spacing, labels and validation; introduce no new tokens.
+
+| 2026-11-06 | Add an editable channel queue wait limit with a five-minute default, a one-day maximum and explicit never-started expiry behavior; preserve the existing Agent destination. |
+
+| 2026-11-06 | Keep negative feedback editable through its selected icon, with vote removal inside the reasons dialog and one named Close action; preserve the compact three-icon answer footer. |
+
+| 2026-11-06 | Reserve trailing Terminal space for the final-command jump and document explicit native desktop input and return while preserving browser lease authority and reconnect behavior. |
+
+| 2026-11-06 | Preserve desktop key and pointer release when a new Agent turn starts; keep explicit Take control available during an existing turn. |
+
+| 2026-11-06 | Match the reference tab treatment with a selected white/light-layer tab on the neutral Workspace tab well in both appearances. |
+
+| 2026-11-06 | Review round 1: require confirmed interruption before desktop takeover; restore authorized header actions and machine details, Sandbox-coloured characters, minute-boundary clocks, changed-file discovery, truthful degraded-diff counts, concise tool errors, search/list summaries, composer stop access and usage tooltip, live source following, loaded-history tab fallback, and whole-answer timestamp reveal. |
+
+| 2026-11-06 | Review round 1 addendum: format long elapsed times as hours/minutes or days/hours consistently in Thinking, stopped duration and task badges; preserve usage access through an unavailable settings chip. |
+
+| 2026-11-06 | Integrate Workspace v3 with the shared theme and New agent landing; preserve both environment entry points and keep conversation context/token disclosure distinct from the retained account resource-usage popup. |
+
+| 2026-11-06 | Preserve the redesigned period-first resource Usage popup and Operations dashboard alongside Workspace context/token settings disclosure, retained drafts and streams, and the composer without a context ring. |
+
+| 2026-11-06 | Preserve the owner’s existing keyboard focus when the conversation becomes ready; computer Home/End/Arrow navigation keeps focus on its selected tab while initial composer focus remains available on an otherwise unfocused page. |
+
+| 2026-11-07 | Integrate Workspace v3 with stable streaming recovery, retained sidebar status, deterministic desktop reconnection, mounted identity retries and complete-cohort resource usage; preserve channel queue policy independently of composer follow-ups. |
+
+### 2026-11-10 — Usage reporting backoff
+
+Usage reports, chart/table/detail reads and filter discovery share a server-directed
+429 cooldown within the same account/API scope. Changing filters, closing/reopening
+a picker or dialog, and pressing Refresh must not bypass Retry-After. Preserve the
+selection and display **Usage reporting is busy**, with **Waiting to retry** disabled
+until the deadline; then offer an explicit retry. Background report refresh keeps
+its existing visible-only, at-most-once-per-minute cadence. Do not queue a burst of
+requests when a cooldown ends. A 503 remains **Usage reporting is unavailable**;
+authorization refusals and expired reports remain distinct and clear inaccessible
+data. Picker failures use the same error semantics and **Retry choices** action.
+No error or missing measurement is an empty result or a zero resource total.
+
+| 2026-11-10 | Honor usage Retry-After across report selections and bounded discovery, retaining distinct busy, unavailable, expired and denied states. |
+
+### 2026-11-10 — Usage over retained responsive Agent input
+
+The retained Agent composer fits changed text immediately. Width-driven fitting
+is coalesced into the next animation frame, outside ResizeObserver delivery, so
+opening Usage and resizing its background do not trigger a browser layout loop.
+Closing the Agent cancels any scheduled fitting. Keep the draft, focus and input
+semantics unchanged; browser-error checks remain strict across all engines.
+
+| 2026-11-10 | Schedule retained composer width fitting outside resize notifications for Usage dialog continuity in WebKit. |
+
+### 2026-11-10 — Usage filter menu resize placement
+
+Portalled menus place immediately when opened and follow scrolling. Content and
+anchor resize notifications schedule one placement in the next animation frame,
+so filtering a long choice list cannot resize its own observed box during delivery.
+Closing or unmounting cancels scheduled placement; focus and selection semantics
+remain unchanged.
+
+| 2026-11-10 | Coalesce menu resize placement outside observer delivery for searchable usage filters in WebKit. |
+
+## Admin Spend controls (2026-11-11)
+
+Operations → Platform settings includes a Spend controls section only for accounts
+with ConfigurePlatform. Use the existing operator form, Input, checkbox and Button
+patterns, two-column settings grid and single-column mobile layout. Subheadings
+reuse the strong small text token, with 24px top and 16px bottom spacing.
+
+Show configured exact accounting units explicitly; never infer currency or create
+policy defaults. Absent policies begin with blank required fields after an explicit
+Configure action. A disabled policy retains its configured values. Explain the
+current enforcement scope at the enable control and distinguish unavailable API
+capabilities from settings that are off. Decimal, exponent and unsafe integer input
+remains editable text until corrected; do not round a cap.
+
+The existing settings revision, save and conflict/uncertain-write recovery apply
+to spend edits. Explicit review preserves newer owner overrides and unedited
+settings. Server rejection keeps the draft and never produces a saved notice.
+Show the current revision's last platform-settings operation when its bounded
+activity lookup is permitted; unavailable names, permission, missing records and
+lookup errors remain explicit. Do not claim the audit identifies individual edits.
+
+Read-only save availability is separate from policy enablement. Missing or false
+availability shows “Saving spend controls is not available yet” and disables spend
+edits. Unchanged policy values remain visible and are preserved when other settings
+are saved. A refused edited draft stays visible and cannot be resubmitted until
+Refresh settings availability and explicit revision review permit the save.
+
+| Date | Change |
+| --- | --- |
+| 2026-11-11 | Add admin Spend controls using existing settings primitives, exact accounting-unit inputs, revision recovery and permission-aware audit attribution. |
+| 2026-11-11 | Respect server spend-write availability with readable retained policy, explicit refresh/review, and preserved unrelated settings saves. |
+
+### 2026-11-11 — Retained spend policy save availability
+
+Use the effective retained policy and every applicable server write gate for the
+settings Save action. A configured policy behind a closed gate makes the entire
+save unavailable, including unrelated edits; explain that the draft is retained.
+An empty disabled policy still permits unrelated settings saves. Only require the
+request-policy gate when request models are retained. Refresh and explicit review
+must not reopen Save without an available response for that policy.
+
+| 2026-11-11 | Align settings save availability with retained foundation/request policy gates and keep empty-policy unrelated saves available. |
 
 | 2026-11-06 | Check for a live NyxID session once, silently, before showing the signed-out surface (§20), keeping the existing Signing you in state for at most 10 seconds and never repeating after an explicit Sign out. |

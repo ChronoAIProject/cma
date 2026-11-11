@@ -190,19 +190,20 @@ export function createNyxidAuthProvider(): AuthProvider {
           credentials: 'include',
           signal: timeout,
         });
-      } catch (cause) {
+      } catch {
         // Unreachable is not anonymous. Saying "signed out" here would invite
         // a sign-in attempt that cannot succeed either.
         const timedOut = timeout.aborted;
         return {
           status: 'error',
+          reason: 'service_unavailable',
           message: timedOut
-            ? 'The control plane did not respond. It may be starting up — reload in a moment.'
-            : `cannot reach the control plane: ${String(cause)}`,
+            ? 'CMA did not respond. Retrying shortly.'
+            : 'Cannot reach CMA. Check your connection; retrying shortly.',
         };
       }
 
-      if (response.status === 401) {
+      if (response.status === 401 || response.status === 403) {
         try {
           const anonymous = (await response.json()) as IdentityResponse;
           silentSignInOffered = anonymous.silent_sign_in === true;
@@ -212,7 +213,25 @@ export function createNyxidAuthProvider(): AuthProvider {
         return { status: 'anonymous' };
       }
       if (!response.ok) {
-        return { status: 'error', message: `identity check failed with ${response.status}` };
+        const problem = (await response.json().catch(() => undefined)) as
+          { code?: unknown } | undefined;
+        if (response.status === 503 && problem?.code === 'identity_unavailable') {
+          return {
+            status: 'error',
+            reason: 'identity_unavailable',
+            message: 'The identity service is temporarily unavailable. Retrying shortly.',
+          };
+        }
+        return {
+          status: 'error',
+          // Auth-store failures include upstream limits and malformed evidence.
+          // Do not turn those into automatic browser retries of a NyxID 429.
+          reason:
+            [502, 503, 504].includes(response.status) && problem?.code !== 'store_failed'
+              ? 'service_unavailable'
+              : undefined,
+          message: `CMA could not verify your sign-in (HTTP ${response.status}).`,
+        };
       }
 
       let body: IdentityResponse;

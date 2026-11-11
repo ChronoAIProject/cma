@@ -151,3 +151,5 @@ async fn agent_log_prefix_uses_one_complete_snapshot_scan_and_retains_integrity_
     );
     admin.database(&name).drop().await.unwrap();
 }
+
+mod bounded_window_tests;

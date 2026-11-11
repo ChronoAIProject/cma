@@ -1,4 +1,5 @@
 use super::*;
+use crate::sandbox::conversation_recorder::live::LIVE_BUFFER_FRAGMENTS;
 use crate::sandbox::AgentLiveFragmentKind;
 use tokio::sync::broadcast::error::TryRecvError;
 
@@ -240,7 +241,7 @@ async fn idle_thoughts_emit_nothing_and_per_agent_lag_is_explicit() {
         .commit_agent_conversation(begin_turn(&store, ready.clone()))
         .await
         .unwrap();
-    for _ in 0..40 {
+    for _ in 0..(LIVE_BUFFER_FRAGMENTS + 8) {
         recorder
             .record_update(
                 &ready.id,

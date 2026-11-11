@@ -137,11 +137,14 @@ async fn read_in_snapshot(
                 read_agent,
             )
             .await?;
+            let task_started_at =
+                super::super::agent_task_status::active_starts(store, &agents, session).await?;
             let task_statuses =
                 super::super::agent_task_status::read_many(store, &agents, session).await?;
             Ok(Reading::Workspace(Some(Box::new(
                 WorkspaceHierarchyRecord {
                     task_statuses,
+                    task_started_at,
                     workspace,
                     worktrees,
                     agents,

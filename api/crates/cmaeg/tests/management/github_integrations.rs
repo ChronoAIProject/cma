@@ -1,9 +1,25 @@
 #[path = "github_integrations/authority.rs"]
 mod authority;
+#[path = "github_integrations/bindings.rs"]
+mod bindings;
+#[path = "github_integrations/contention.rs"]
+mod contention;
+#[path = "github_integrations/dispatch.rs"]
+mod dispatch;
+#[path = "github_integrations/legacy.rs"]
+mod legacy;
+#[path = "github_integrations/lifecycle.rs"]
+mod lifecycle;
 #[path = "github_integrations/registration.rs"]
 mod registration;
+#[path = "github_integrations/retirement.rs"]
+mod retirement;
+#[path = "github_integrations/retirement_rebinding.rs"]
+mod retirement_rebinding;
 #[path = "github_integrations/rotation.rs"]
 mod rotation;
+#[path = "github_integrations/sources.rs"]
+mod sources;
 #[path = "github_integrations/startup.rs"]
 mod startup;
 #[path = "github_integrations/webhooks.rs"]
@@ -22,6 +38,8 @@ struct Fixture {
     base: String,
     client: Client,
     shared_schema: bool,
+    authoring: bool,
+    routed_records: Vec<String>,
 }
 
 impl Fixture {
@@ -35,7 +53,16 @@ impl Fixture {
                 .run_command(cmaeg::github::runtime_role(&database.name))
                 .await
                 .unwrap();
-            admin.run_command(mongodb::bson::doc! {"grantRolesToUser":"runtime","roles":[{"role":"cma_eg_automation_runtime","db":&database.name}]}).await.unwrap();
+            admin
+                .run_command(mongodb::bson::doc! {
+                    "grantRolesToUser":"runtime",
+                    "roles":[
+                        {"role":"cma_eg_automation_runtime","db":&database.name},
+                        {"role":"cma_eg_runtime","db":&database.name}
+                    ]
+                })
+                .await
+                .unwrap();
         }
         let mut fixture = Self {
             provider: FakeProvider::start(FakeProviderConfig::default()).await,
@@ -47,6 +74,8 @@ impl Fixture {
             base: String::new(),
             client: Client::new(),
             shared_schema: false,
+            authoring: false,
+            routed_records: Vec::new(),
         };
         fixture.base = fixture.replica_with_flag(Some(true)).await;
         if migrated {
@@ -114,6 +143,26 @@ impl Fixture {
                 command.env_remove("CMAEG_GITHUB_ENABLED");
             }
         }
+        if self.authoring {
+            command.env("CMAEG_DYNAMIC_SOURCES_WRITES_ENABLED", "true")
+                .env("CMAEG_MULTI_CONSUMER_WRITES_ENABLED", "true")
+                .env("CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED", "true")
+                .env("CMAEG_ROUTED_RECOVERY_ENABLED", "true")
+                .env("CMAEG_ROUTED_ADMISSION_ENABLED", "true")
+                .env("CMAEG_NON_HUMAN_PROVIDERS", "cma_codex")
+                .env("CMAEG_PROVIDERS", json!([{
+                    "slug":"cma_codex","base_url":self.provider.base_url(),"kind":"responses_http",
+                    "paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}",
+                    "conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses",
+                    "recovery":{"response":"/api/v2/responses/{response_id}","events":"/api/v2/responses/{response_id}/events"}},"max_inflight":8
+                }]).to_string());
+            if !self.routed_records.is_empty() {
+                command.env(
+                    "CMAEG_ROUTED_CHANNEL_RECORDS",
+                    self.routed_records.join(","),
+                );
+            }
+        }
         let log = self
             .files
             .dir
@@ -129,7 +178,8 @@ impl Fixture {
             .run_command(cmaeg::github::migration_role(&self.database.name))
             .await
             .unwrap();
-        database.run_command(mongodb::bson::doc! {"grantRolesToUser":"runtime","roles":[{"role":"cma_eg_automation_migrator","db":&self.database.name}]}).await.unwrap();
+        // DatabaseFixture already creates the base migrator role.
+        database.run_command(mongodb::bson::doc! {"grantRolesToUser":"runtime","roles":[{"role":"cma_eg_automation_migrator","db":&self.database.name},{"role":"cma_eg_migrator","db":&self.database.name}]}).await.unwrap();
         self.shared_schema = true;
     }
 

@@ -52,6 +52,14 @@ trusted backend credential, whose inherited database-wide permissions are broade
 they do not claim database-level append-only enforcement or account isolation. This is separate from the Manager's existing binding custody and does not
 grant Gateway access to Manager collections.
 
+## Identifier storage
+
+The existing service and durable cutover identifiers come from the dedicated
+`cma-event-gateway-owner-keys` Secret through explicit Deployment references.
+They must not be stored in the ConfigMap, including as empty placeholders.
+See the [Secret cutover runbook](CMAEG_Owner_Key_Secret_Cutover.md) for a value-preserving
+train migration; it does not rotate a service identity or create a new attestation.
+
 ## Rollout
 
 Use the released CMA binaries and the existing secure environment injection;
@@ -88,8 +96,11 @@ do not paste database credentials or owner keys into commands or logs.
    of missing historical custody. Save the returned nonsecret attestation receipt.
 5. Verify the actual NyxID confidential client is allowed to introspect personal
    keys for the service UUID. Catalog visibility alone does not prove that
-   registration. Set `CMAEG_OWNER_KEY_SERVICE_ID` to the exact UUID and
-   `CMAEG_OWNER_KEY_CUTOVER_ID` to the returned attestation ID. Then set
+   registration. Populate Secret key `CMAEG_OWNER_KEY_SERVICE_ID` with the exact UUID
+   and `CMAEG_OWNER_KEY_CUTOVER_ID` with the returned attestation ID using the
+   approved confidential provisioning path; never place either in the ConfigMap.
+   For an already-enabled deployment, preserve both values through the cutover
+   runbook instead of creating a new attestation. Then set
    `CMAEG_OWNER_KEYS_ENABLED=true`, retaining tracking on all writers.
 6. Use a new owner key whose NyxID parent-key `iat` is strictly after the returned
    `not_before` timestamp. Verify scoped management and activity access, denied
@@ -130,6 +141,8 @@ cross-owner refusal and live-stream revocation. The ignored Mongo integration
 test runs in CI against the existing authenticated disposable replica set via
 `CMA_IM_TEST_MONGODB_URI`, selected exactly by
 `.github/scripts/image-manager-mongo-contract.sh` (and its local Python fallback).
+The shell runner retains a local source-build mode; CI uses its extracted-archive
+mode described in [Backend CI archive](Backend_CI_Archive.md).
 It checks separate-client visibility, exact runtime grants, retained markers and
 the startup barrier. Manager current/retired classification tests are selected by
 the existing `test(store::bindings::)` group in `mongo-contract-tests.sh`. These are acceptance tests,

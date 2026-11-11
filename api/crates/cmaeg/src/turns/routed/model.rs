@@ -102,6 +102,58 @@ impl FrozenTurn {
             .open(keys, now)
             .map_err(|_| ExecutionError::Expired)?
             .payload;
+        self.validate_event(plan, target, &opened)
+    }
+
+    /// Verify retained execution metadata, not a live reply/tool capability.
+    /// Accepted automation may finish after the reference's delivery deadline.
+    pub(super) fn settlement_event(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        keys: &MasterKeyRing,
+        now: i64,
+    ) -> Result<cmaeg_core::seal::EventRefPayload, ExecutionError> {
+        let opened = if matches!(
+            plan.activity.source,
+            cmaeg_core::activity::SourceKind::Custom
+                | cmaeg_core::activity::SourceKind::Github { .. }
+        ) {
+            cmaeg_core::seal::open::<cmaeg_core::seal::EventRefPayload>(
+                keys,
+                cmaeg_core::seal::TokenKind::EventRef,
+                self.event_context.event_ref.as_str(),
+            )
+            .map_err(|_| ExecutionError::Expired)?
+            .payload
+        } else {
+            self.event_context
+                .event_ref
+                .open(keys, now)
+                .map_err(|_| ExecutionError::Expired)?
+                .payload
+        };
+        opened.validate().map_err(|_| ExecutionError::Invalid)?;
+        self.validate_event(plan, target, &opened)?;
+        Ok(opened)
+    }
+
+    pub(super) fn validate_settlement(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        keys: &MasterKeyRing,
+        now: i64,
+    ) -> Result<(), ExecutionError> {
+        self.settlement_event(plan, target, keys, now).map(|_| ())
+    }
+
+    fn validate_event(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        opened: &cmaeg_core::seal::EventRefPayload,
+    ) -> Result<(), ExecutionError> {
         if self.conversation_id != target.launch.event.conversation_id
             || self.binding_generation == Some(0)
             || (self.binding_generation.is_some() && !plan.prepares_binding(target))
@@ -114,7 +166,7 @@ impl FrozenTurn {
             || self.delivery.label.len() > 256
             || (self.delivery.destination == ReplyChoice::Default)
                 != self.delivery.default_destination.is_some()
-            || opened != delivery_event(plan, target)
+            || opened != &delivery_event(plan, target)
             || self.event_context.validate().is_err()
             || self.input.is_empty()
             || serde_json::to_vec(&self.input)

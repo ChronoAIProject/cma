@@ -22,7 +22,7 @@ use crate::{
     projections::{AdapterAgentHistoryExporter, AdapterSandboxResources, AgentProjectionServices},
     rate_limit::RateLimiters,
     sandbox::{
-        runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, ProviderTitleEndpoint,
+        runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, PlatformTitleEndpoint,
         SandboxLifecycleComposition, SandboxLifecycleConfig, SandboxLifecycleDependencies,
     },
     store::{DefaultProfileSpec, MongoStores},
@@ -62,10 +62,13 @@ impl ControlPlaneComposition {
             retirement,
             Arc::clone(&activity),
         ));
-        let settings = Arc::new(PlatformSettingsService::new(
-            stores.settings.clone(),
-            Arc::clone(&activity),
-        ));
+        let settings = Arc::new(
+            PlatformSettingsService::new(stores.settings.clone(), Arc::clone(&activity))
+                .with_model_budget_writes_enabled(config.features.model_budget_writes_enabled)
+                .with_model_request_budget_writes_enabled(
+                    config.features.model_request_budget_writes_enabled,
+                ),
+        );
         let sandbox_policy = Arc::new(LiveSandboxPolicy::new(
             Arc::clone(&settings),
             config.baseline_services.clone(),
@@ -228,13 +231,9 @@ impl ControlPlaneComposition {
         let sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
                 store: stores.sandbox_model.clone(),
-                title_runtime: Arc::new(ProviderTitleEndpoint {
-                    adapter: Arc::clone(&adapter),
-                    client: layer3_adapter::provider::SandboxClient::new(
-                        config.runtime.sandbox_base_url.clone(),
-                        config.runtime.sandbox_api_key.clone(),
-                    ),
-                    deployment_id: config.deployment_id.clone(),
+                title_budget: stores.request_limits.clone(),
+                title_runtime: Arc::new(PlatformTitleEndpoint {
+                    platform_base_url: config.runtime.platform_base_url.clone(),
                 }),
                 adapter: adapter.clone(),
                 credentials: sandbox_credentials,

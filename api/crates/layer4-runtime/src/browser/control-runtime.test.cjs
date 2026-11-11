@@ -73,6 +73,24 @@ async function fixture(test) {
   return { call, rpc, agent, command, base, values, directory, url: `http://127.0.0.1:${page.address().port}/form` };
 }
 
+test('live observations report only the current origin and reset it with the browser context', { timeout: 30000 }, async test => {
+  const browser = await fixture(test);
+  const target = new URL(browser.url);
+  target.pathname = '/private/document';
+  target.search = '?search=private-value';
+  target.hash = 'private-fragment';
+  assert.equal((await browser.agent('/navigate', { url: target.href })).status, 200);
+  const observed = await browser.call({ operation: 'observe', observer: 'origin-reader' });
+  assert.equal(observed.location, 'Local page');
+  assert.equal(observed.address, target.origin);
+  assert.equal(observed.state, 'live');
+  const disabled = await browser.call({ operation: 'disable' });
+  assert.equal(disabled.address, 'about:blank');
+  const enabled = await browser.call({ operation: 'enable' });
+  assert.equal(enabled.address, 'about:blank');
+  assert.notEqual(enabled.context_id, observed.context_id);
+});
+
 test('a native request with a delayed body cannot act in a replacement browser context', { timeout: 40000 }, async test => {
   const browser = await fixture(test);
   for (const path of ['/input', '/navigate']) {

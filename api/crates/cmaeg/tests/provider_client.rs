@@ -31,6 +31,7 @@ fn provider() -> ProviderSlug {
 fn profile() -> EventWorkerProfile {
     EventWorkerProfile {
         schema_version: 1,
+        queue_lifetime_seconds: None,
         metadata: ProfileMetadata {
             name: "test".into(),
             description: String::new(),

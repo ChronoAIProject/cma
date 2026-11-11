@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::agent_log_telemetry::ScanCaller;
 
 pub(super) async fn reuse_profile_agent(
     store: &MongoSandboxStore,
@@ -107,12 +108,15 @@ pub(super) async fn reuse_profile_agent(
         .map_err(ApplyError::Domain)?;
     let mut initial_log = None;
     let mut has_input = false;
+    let mut entries = Vec::new();
     let summary = scan_complete_log_with_session(
+        ScanCaller::CommandAdmission,
         store,
         &agent.id,
         agent.conversation.last_seq,
         session,
         |entry| {
+            entries.push(entry.clone());
             has_input |= matches!(
                 entry.kind,
                 layer2_core::sandbox::AgentLogKind::OwnerMessage { .. }
@@ -137,6 +141,9 @@ pub(super) async fn reuse_profile_agent(
             .is_some();
     }
     let prior_revision = agent.revision;
+    let prior_semantic =
+        crate::store::agent_log_integrity::audit_checkpoint(store, &agent, &entries, session)
+            .await?;
     let kind = admission
         .initialize_reused_agent(&mut agent, has_input)
         .map_err(ApplyError::Domain)?;
@@ -148,9 +155,20 @@ pub(super) async fn reuse_profile_agent(
             appended_at: admission.event_at.clone(),
             kind,
         };
-        ensure_append_capacity(&summary, std::slice::from_ref(&log), AppendCapacity::Normal)
-            .map_err(ApplyError::Domain)?;
+
         let mut fields = agent_replacement_fields(&agent).map_err(ApplyError::Domain)?;
+        let integrity = prepare_append(
+            &agent,
+            &summary,
+            std::slice::from_ref(&log),
+            agent.revision,
+            prior_semantic
+                .after_append(std::slice::from_ref(&log), &agent)
+                .map_err(ApplyError::Domain)?,
+            AppendCapacity::Normal,
+        )
+        .map_err(ApplyError::Domain)?;
+        fields.insert("agent_log_integrity_v1", integrity.integrity);
         fields.insert(
             "last_seq",
             signed(agent.conversation.last_seq, "Agent log sequence")
@@ -163,10 +181,32 @@ pub(super) async fn reuse_profile_agent(
         }
         store
             .agent_log
-            .insert_one(log_document(&log).map_err(ApplyError::Domain)?)
+            .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+            .insert_one(&integrity.documents[0])
             .session(&mut *session)
             .await
             .map_err(classify_log_insert)?;
+    } else {
+        let integrity = integrity_document(&agent, &summary, agent.revision, prior_semantic)
+            .map_err(ApplyError::Domain)?;
+        let changed = store
+            .agents
+            .update_one(
+                doc! {
+                    "_id": agent.id.as_str(),
+                    "revision": signed(prior_revision, "Agent revision")
+                        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
+                    "last_seq": signed(agent.conversation.last_seq, "Agent log sequence")
+                        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
+                },
+                doc! { "$set": { "agent_log_integrity_v1": integrity } },
+            )
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        if changed.matched_count != 1 {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
     }
     // Explicit reuse participates in the same parent fences as creation, including a race
     // against automatic profile children and inactivity pause.

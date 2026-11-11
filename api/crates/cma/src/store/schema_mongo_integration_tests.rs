@@ -14,7 +14,9 @@ use super::operation::{MongoOperationStore, OPERATIONS};
 use super::settings::{MongoPlatformSettingsStore, SETTINGS};
 use super::MongoStores;
 
+mod activity_retention;
 mod auto_pause_compatibility;
+mod session_versions;
 
 async fn database() -> (Client, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
@@ -386,9 +388,25 @@ async fn archived_legacy_collections_preserve_custody_and_allow_full_new_store_b
                 .count_documents(doc! {})
                 .await
                 .unwrap(),
-            0
+            u64::from(collection == SETTINGS),
+            "unexpected records after bootstrap in {collection}"
         );
     }
+    // Admission needs a settings fence before its first concurrent transaction.
+    // It must contain only predecessor-readable defaults, never an active policy.
+    assert_eq!(
+        database
+            .collection::<Document>(SETTINGS)
+            .find_one(doc! {})
+            .await
+            .unwrap(),
+        Some(doc! {
+            "_id": "platform",
+            "document_schema_version": super::sandbox_mongo::DOCUMENT_SCHEMA_VERSION,
+            "revision": 0_i64,
+            "settings": mongodb::bson::serialize_to_bson(&layer2_core::PlatformSettings::default()).unwrap(),
+        })
+    );
     events
         .insert_many([first_event, second_event])
         .await

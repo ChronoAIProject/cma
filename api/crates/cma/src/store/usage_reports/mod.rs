@@ -4,6 +4,8 @@ mod budget;
 mod charts;
 mod diagnostics;
 pub(crate) mod inventory;
+mod options;
+mod owner_allocation;
 mod owners;
 mod progress;
 pub(crate) use progress::Progress;
@@ -72,23 +74,31 @@ impl ReportingStore {
     }
     #[cfg(test)]
     pub(crate) async fn connect(uri: &str, database: &str, key: &[u8]) -> Result<Arc<Self>> {
-        Self::connect_with_budgets(uri, database, key, Default::default()).await
+        Self::connect_with_budgets(
+            uri,
+            database,
+            key,
+            Default::default(),
+            crate::config::sandbox_metrics::DEFAULT_REPORTING_POOL_SIZE,
+        )
+        .await
     }
     pub(crate) async fn connect_with_budgets(
         uri: &str,
         database: &str,
         key: &[u8],
         budgets: crate::config::sandbox_metrics::MetricsBudgets,
+        pool_size: u32,
     ) -> Result<Arc<Self>> {
         let mut options = ClientOptions::parse(uri).await.map_err(unavailable)?;
-        options.max_pool_size = Some(4);
-        options.min_pool_size = Some(0);
-        options.max_connecting = Some(1);
-        options.connect_timeout = Some(DB_DEADLINE);
-        options.server_selection_timeout = Some(DB_DEADLINE);
+        configure_pool(&mut options, pool_size);
         let circuit = Arc::default();
         budget::observe(&mut options, Arc::clone(&circuit));
         let client = Client::with_options(options).map_err(unavailable)?;
+        tracing::info!(
+            max_pool_size = pool_size,
+            "reporting MongoDB pool configured"
+        );
         let store = Arc::new(Self {
             budgets,
             db: client.database(database),
@@ -103,11 +113,7 @@ impl ReportingStore {
         self.db.collection(name)
     }
     pub(crate) fn check_circuit(&self, now: u64) -> Result<()> {
-        if self.circuit.load(std::sync::atomic::Ordering::Relaxed) > now {
-            Err(MetricsError::Busy)
-        } else {
-            Ok(())
-        }
+        budget::check(&self.circuit, now)
     }
     pub(crate) async fn lease(&self, key: &str, holder: &str, seconds: u64) -> Result<bool> {
         let now = now();
@@ -132,6 +138,14 @@ impl ReportingStore {
             .map_err(unavailable)?;
         Ok(())
     }
+}
+
+fn configure_pool(options: &mut ClientOptions, pool_size: u32) {
+    options.max_pool_size = Some(pool_size);
+    options.min_pool_size = Some(0);
+    options.max_connecting = Some(1);
+    options.connect_timeout = Some(DB_DEADLINE);
+    options.server_selection_timeout = Some(DB_DEADLINE);
 }
 pub(super) fn unavailable(error: impl std::fmt::Display) -> MetricsError {
     tracing::warn!(error=%error,"reporting store unavailable");
@@ -164,3 +178,6 @@ pub(super) fn expires(at: u64) -> mongodb::bson::DateTime {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod pool_tests;

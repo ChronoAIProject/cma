@@ -809,6 +809,35 @@ one-day retention limits duration, not readership. Expired artifacts require a
 new successful CI run. SDK packages, release workflows, registry ACLs and tags
 are unaffected.
 
+### Web asset continuity
+
+The compatibility volume mounts over `/usr/share/nginx/html/assets`. Current
+images also carry their own assets at `/usr/share/nginx/current/assets`; nginx
+serves these first, falls back to retained assets for older tabs, and returns
+`Cache-Control: no-store` on a missing asset. Keep the original image asset path
+for the existing retention initializers.
+
+Before changing a web image, preserve every existing initializer and append a
+non-overwriting initializer for the incoming immutable image. When the serving
+Pods lack the incoming assets, first roll the **outgoing** web image with this
+expanded initializer set and wait for all predecessors to drain. Verify every
+incoming asset against the exact artifact's SHA-256 manifest through the public
+origin, including lazy chunks, workers, fonts and icons, before switching the
+entry document. Otherwise rolling overlap can serve a new index followed by an
+old Pod's asset 404, which an intermediary may cache. Check a fresh Chromium
+session as well as curl; compressed response variants can have different cached
+statuses. Clear any cached errors before proceeding.
+
+Use fresh Deployment UID/resourceVersion/outgoing-image tests, an exact server
+dry-run comparison, and a web-only patch for each phase. Recovery changes only
+image/provenance and retains both old and incoming assets. HTTP 200 for `/` alone
+does not prove the app mounts. CI runs `.github/scripts/web-image-smoke.py` on the
+exact native image before export, with an intentionally stale compatibility
+volume, and checks personal/Operations rendering, reload/history navigation,
+retained chunks and uncached 404 responses. It also checks copied bundle identity
+against the same image's OCI labels and reporting backoff/recovery. API data in
+that browser check is synthetic; it does not prove production source coverage.
+
 ### Lifecycle Scheduling
 
 Sandbox lifecycle scheduling permits at most four concurrent sweeps, with
@@ -936,6 +965,9 @@ The lifecycle flags `machine_included` and `desktop` retain independent meanings
 to task-experience admission and `CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE` proof.
 A request enabling both must verify the selected machine image against that exact
 desktop image reference. Accepted operations retain both original flags on replay.
+The Web landing offers only Shared desktop (`machine_included`); it does not
+request `desktop` for new tasks. Recorded intents still replay their original
+flags, and owners can enable the Agent browser after creation.
 Both runtime build targets install the current browser command alongside the
 supervisor; the Omarchy toolchain donor does not determine that command version.
 
@@ -954,6 +986,8 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_CORS_ORIGIN` | Comma-separated exact allowed browser origins; default local `http://localhost:5173`. Cookie-authenticated Event Gateway writes and actor-link consent accept these origins plus `CHRONO_SERVER_PUBLIC_URL`; Desktop WebSockets use the same explicit origin set; duplicate, missing cookie-auth Origin and unlisted origins remain refused. Retain both CMA domains during migration. |
 | `CHRONO_AUTH_MODE` | `provider` in production; `trusted` is local fixed-subject development only |
 | `CHRONO_V2_UI_TRANSPORT_ENABLED` | Eligibility for the integrated v2 browser transport; false code default, true in the production ConfigMap for new Agent tabs (including durable Starting input). Existing tabs retain their selected transport. Deploy with the matching API/Web release, ConfigMap compare-and-set, and API rollout; does not disable existing public v2 API routes or change an accepted request protocol |
+| `CHRONO_MODEL_BUDGET_WRITES_ENABLED` | Strict boolean, false by default in code and ConfigMap. Refuses saving any nonempty model budget policy, including disabled drafts, until compatible serving readers and the verified rollback image are established. The release operator enables it in a later fenced rollout; it does not activate budget enforcement or supply policy values. Disabling it retains readable settings and liabilities; it does not restore pre-budget reader compatibility. See CMA_Model_Budget_Controls.md |
+| `CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED` | Strict boolean, false by default in code and ConfigMap. A separate reader-before-write gate for nonempty request model policies, including disabled drafts; foundation writes must also be enabled. Enable only after the request settings/reservation reader is the verified serving and rollback baseline. Exposed as read-only admin save availability; does not activate enforcement. See CMA_Model_Request_Reservations.md |
 | `CHRONO_TASK_EXPERIENCE_POLICY` | Strict JSON, absent defaults to `{"mode":"disabled","accounts":[],"capabilities":[]}`; checked-in manifests disable it; live cohort selection must be observed at delivery. Modes: `disabled`, `accounts`, `all`. Exact authenticated subject ids only (at most1000, nonempty, at most256 UTF-8 bytes, no whitespace/control characters); ids are never returned to clients. Explicit capabilities: `task_home_admission`, `suggested_followup_admission`, `desktop_enable`, `browser_takeover`, `replay_presentation`. Unknown/duplicate fields, capabilities or accounts and contradictory settings fail startup: accounts must be empty outside accounts mode; disabled must have no capabilities. Empty account cohort admits nobody. Policy eligibility does not establish environment capability. Changes require an API rollout with compatible retained readers; closing new admission preserves exact accepted recovery, manual conversation, retained history/files/feedback, browser status and explicit return. See `plans/cma-ui-optimization/19-ROLLOUT-POLICY.md`. |
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
@@ -1008,6 +1042,9 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_UPSTREAM_WIRE_API` | Exactly `responses` |
 | `CHRONO_PLATFORM_BASE_URL` | Required canonical HTTPS platform proxy origin; also the upstream for the runtime's explicitly granted GitHub API proxy |
 | `CHRONO_DOCUMENT_BUCKET` | Existing S3-backed bucket used for durable Markdown artifacts. Empty disables document source storage and runtime publication tools; writes fail explicitly instead of storing ephemeral documents. Production uses `chrono-platform-bot`. |
+| `CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED` | Strict boolean, default `false`. Enables a proven 200-row/4-MiB suffix for pending-approval reads only for the shared trusted cohort. A missing reset boundary, oversized suffix or untrusted metadata retains complete validation. Independent of admission/public-window and title activation. Disable and restart the API for rollback; keep all original history and metadata. See [Bounded pending-approval recovery](CMA_Bounded_Approval_Reads.md). |
+| `CHRONO_AGENT_LOG_FLEET_PERCENT` | Canonical integer 0–100, default `0`; positive percentages require the explicit admission ID list to be empty. Stable Agent-hash buckets stage 10/50/100. Preparation is lazy and bounded before eligible writes; public reads never prepare. Stage changes/kill switch require a same-image API rollout; preserve quarantine and compatible-image floor. See [Fleet log activation](CMA_Fleet_Log_Activation.md). |
+| `CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED` | Strict boolean, default `false` in code and manifests. All writes retain 1,024 receipts / 12 MiB while off; compatible readers always accept bounded expanded aggregates. Enable only in a later train after the compatible reader is deployed, older workers have drained and that image is the pinned rollback target. Only owner grant/link revocations may spend the reserve; ordinary writes retain the old limits. Disabling it preserves expanded reads and exact retries. See [Document artifacts](Document_Artifacts.md) for activation and rollback. |
 | `CHRONO_STORAGE_CLIENT_ID` | Deployment-owned machine identity for the existing `chrono-storage-service` proxy. Required when the document bucket is configured. Never passed to runtime Agents or browsers. |
 | `CHRONO_STORAGE_CLIENT_SECRET` | Secret reference for the storage machine identity; required with a configured document bucket. Issued tokens are cached in memory and renewed before expiry or once after a 401. |
 | `CHRONO_BASELINE_SERVICES` | Default `chrono-llm-public,ornn-api`; unioned into newly admitted Sandbox scope |
@@ -1033,10 +1070,28 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_NYXID_SANDBOX_BILLING_ENABLED` | Default false. Enables NyxID prepaid Sandbox quotes, finite windows, renewal and retained evidence admission. Keep false until the NyxID producer contract and all readers are deployed. |
 | `CHRONO_NYXID_SANDBOX_BILLING_BASE_URL` | HTTPS NyxID producer API base ending `/api/v1/billing/sandboxes`; credentials and query strings are rejected. |
 | `CHRONO_NYXID_SANDBOX_BILLING_PRODUCER_ID` | Canonical UUID v4 of the General-purpose producer service account, used for diagnostics. NyxID verifies producer identity from its JWT; this setting grants no authority. |
-| `CHRONO_NYXID_SANDBOX_BILLING_CREDENTIAL_REF` | Environment variable name populated through secret injection with a General-purpose service-account JWT scoped to `billing:sandbox:write`. CMA resolves it at request time; no credential value is stored in config or receipts. |
+| `CHRONO_NYXID_SANDBOX_BILLING_CREDENTIAL_REF` | Static mode only: environment variable name containing a General-purpose service-account JWT scoped to `billing:sandbox:write`. Resolved at request time. Used when both client-credentials refs are absent/empty; ignored when both are set. Static tokens retain their existing expiry and require operator replacement/restart. |
+| `CHRONO_NYXID_SANDBOX_BILLING_CLIENT_ID_REF` | Empty by default. Set to `NYXID_CMA_BILLING_PRODUCER_CLIENT_ID` for renewable producer tokens; names an environment key in the existing `chrono-bot/cma-agent-manager` Secret. Must be paired with the secret ref and resolve to a nonempty value at startup. |
+| `CHRONO_NYXID_SANDBOX_BILLING_CLIENT_SECRET_REF` | Empty by default. Set to `NYXID_CMA_BILLING_PRODUCER_CLIENT_SECRET`; names the Secret-backed environment key containing the SA client secret. Required with the client ID ref. Never put credential values in the ConfigMap. |
 | `CHRONO_SERVER_TRUSTED_PROXY_CIDRS` | Exact trusted load-balancer peers; empty by default, production explicit |
 | `CHRONO_SERVER_TRUSTED_PROXY_HOPS` | Trusted rightmost forwarded hops, 1-16; default 1 |
 | `CHRONO_SERVER_CLOUDFLARE_PROXY_CIDRS` | Empty or the complete build-pinned set; must not overlap trusted peer ranges |
+
+Renewable Sandbox producer authentication posts form-encoded client credentials
+with scope `billing:sandbox:write` to `/oauth/token` on the billing base URL's
+HTTPS origin. Each process owns an independent memory-only cache. Before each
+funding request, it refreshes at the earlier of 80% of `expires_in` or five
+minutes before expiry (20% margin when lifetime is at most five minutes).
+An idle process refreshes on its next funding call, before using a stale token.
+Concurrent callers share an exchange. A funding 401 refreshes once and replays
+the identical request once; a second 401 retains the existing funding error.
+Transient token failures get three attempts, each bounded to two seconds,
+with 100/200 ms backoff plus 0–49 ms jitter; failures are shared for one second.
+Malformed responses and credential rejection fail immediately. Redirects are
+refused and responses are bounded to 32 KiB. Failed refresh remains fail-closed.
+Logs report `Sandbox producer token refresh`, a fixed category, outcome and
+Unix expiry when available; no credentials, token fingerprints or response text.
+See [billing credentials rollout and rotation](CMA_Billing_Pilot.md#producer-token-lifecycle-and-secret-rotation).
 
 New Agent Manager Sandbox operations capture their CPU, memory and Always on
 inactivity policy at admission. Their private Sandbox configuration starts with
@@ -1075,16 +1130,21 @@ checkpoint writer hold; they cannot create new holds or transfer archives.
 configuration field. Log level changes never authorize credential-value output.
 Keep model/service/provider configuration out of ad hoc frontend build flags.
 
-The API Deployment sets `TOKIO_WORKER_THREADS=2`, consumed by Tokio's existing
-multithread runtime before CMA starts. Its one-CPU quota would otherwise select
-one worker. Production desktop measurements found CPU work occupying that sole
-worker for about a second, delaying both desktop frames and liveness responses.
-Two workers let the operating system schedule interactive IO while one task is
-busy. This does not increase the CPU quota or replace profiling and moving
+The API Deployment supplies `TOKIO_WORKER_THREADS` through the downward API:
+`resourceFieldRef` names container `api`, resource `limits.cpu`, and divisor `"1"`.
+The current eight-core limit therefore supplies eight workers to Tokio's existing
+multithread runtime before CMA starts. Requests are four CPU cores and 256Mi;
+limits are eight CPU cores and 8Gi. The worker setting follows the container limit
+on Pod creation; it is not a live runtime resize. Production desktop measurements
+previously found CPU work occupying a sole worker and delaying frames and
+liveness responses. Additional workers do not replace profiling and moving
 expensive work off async workers; simultaneous CPU work can still delay IO.
 Apply this as an API-only rollout, preserving live Sandbox Pods and conversation
 history. Verify the worker count and public desktop input-to-pixel latency after
-the rollout. Rollback restores the previous worker setting on the same API image.
+the rollout. Any owner-approved rollback restores the recorded previous worker
+setting on the same API image. The namespace's `sandbox-limits` LimitRange permits
+Container max CPU `8` and memory `8Gi`; it is managed outside this repository's
+fixed `infra/` manifest list. Its defaults are unchanged by this parity update.
 
 Execution policy is pinned before each effect and participates in its operation
 fingerprint. A changed timeout or clone-depth environment value must not change
@@ -1396,6 +1456,11 @@ The staging harness lives in `web/e2e/`. Run commands from `web/` after `npm ci`
 `npm run e2e` for the configured remote target. The default remote run is only
 three read-only smoke cases. Listing cases with `npm run e2e -- --list` executes
 no journey. No staging fixture or credential is supplied by the repository.
+
+The opt-in [J0–J2 Friday slice](CMA_New_User_Friday_Slice.md) selects only those
+three authenticated journeys while retaining the complete existing fixture and
+cleanup contract. Its separate partial report never substitutes for J0–J7 or
+the new-user sample targets; the guide lists the J3–J7 prerequisites explicitly.
 
 Read-only smoke requires `CMA_E2E_BASE_URL` (one exact HTTPS origin),
 `CMA_E2E_PUBLIC_ID` (an existing published Trigger), and `CMA_E2E_OUTPUT_DIR`
@@ -2027,6 +2092,115 @@ four-connection Mongo pool, 2-second indexed-read budget, and a 30-second circui
 on failed/slow (>250 ms) checkout or reads exceeding their budget. Reporting
 pressure returns Retry-After without changing conversation/lifecycle pools.
 
+## API read and stream diagnostics
+
+`CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED` defaults to `false` and accepts only
+`true` or `false`. It independently enables the [bounded title-input reader](CMA_Bounded_Title_Transcript.md)
+for Agents selected by `CHRONO_AGENT_LOG_ADMISSION_AGENTS` or
+`CHRONO_AGENT_LOG_FLEET_PERCENT` with matching trusted metadata. Enable it only
+after admission/public-window qualification. Disable it and restart the API to
+restore complete title reads while preserving the admission/public-window cohort
+and all retained history. No title or metadata write is part of this reader.
+
+The API emits content-free structured log metrics every ten seconds and once
+after the background-worker drain completes. The final sample follows all joined
+workers, including cancellation cleanup at the thirty-second worker deadline,
+so reads completed or cancelled during that drain are included. HTTP drains
+before the worker signal. Detached tasks and HTTP work surviving its drain
+deadline are outside this guarantee; abrupt process termination can prevent the
+final sample. These are process-local cumulative counters; use differences within
+one process lifetime and handle resets across deployments.
+The timer emits zero gauges too, so a quiet or disconnected stream does not
+leave a stale active count. This uses the same API log path as reporting and
+runtime hold diagnostics, with no public metrics endpoint.
+
+| Metric | Fixed labels | Meaning |
+| --- | --- | --- |
+| `cma_public_streams_active` | `stream_kind` | Gauge of successful SSE response bodies still open, including bodies waiting for consumer reads. Ends at EOF or drop. |
+| `cma_public_stream_polls_total` | `stream_kind`, `outcome` | Refreshes of stream state; `quiet` has no new projected frames, `output` queues new frames, `failed` includes failed or cancelled refreshes. |
+| `cma_agent_log_scans_total` | `outcome` | Attempts to validate a complete captured Agent log, classified as `success` or `failed` (including cancellation). |
+| `cma_agent_log_scan_documents_total` | `outcome` | Documents consumed by those validation attempts, including the offending document on validation failure. |
+| `cma_agent_log_scan_bytes_total` | `outcome` | Encoded BSON document bytes consumed by those validation attempts, excluding reply/batch envelopes. |
+
+`stream_kind` is one of `agui`, `agent_events_v2`, `responses`, `responses_v2`,
+and `launch_events`. Initial buffered replay and SSE keepalives do not count as
+polls; Responses v1 reads its initial replay inside its first poll. Replayed
+Responses v2 frames before the caller's cursor do not count as new output.
+An output poll counts queued frames, which may subsequently be withheld by a
+fresh authorization check. The counters never change that authorization or the
+stream's outcome. No identities, contents or inherited request span fields are
+included in these metric events. The numeric sample is the `value` field.
+
+Complete-log scan observations count the raw lengths already used by integrity
+validation. They add no serialization, decode, query or validation shortcut.
+Counters update when each scan ends; failed scans retain partial document and
+byte totals, and pre-read refusals have zero documents/bytes. They describe
+validation work, not extra traffic to add to Mongo consumed-read totals: an abandoned
+cursor may have received more documents than the validator consumed.
+
+Mongo consumed-read counters use only BSON lengths already available in the
+store. The measured paths are:
+
+| Collection | Measured store paths |
+| --- | --- |
+| `agent_log` | `agent_log_integrity::scan_collection`: complete read-side and transaction/publication validation, including quiet log range reads. |
+| `agents` | `agents::list_agents`, `agent_reads::list_owned_agents`, `lifecycle_execution::sandbox_agents` and shared `load_sandbox_agents`, `agent_worker_store::live_agent_connections` and `due_agent_work`, and `operator_sandboxes::read_agents`. |
+| `sandbox_events` | `sandbox_events::validate_in_transaction` and `sandbox_events::sandbox_events`, including the admin event reader that delegates to it. |
+
+The shared transactional Agent loader covers recovery, maintenance, lifecycle
+and checkpoint callers. Projected queries count the encoded projection they
+consume, not the full stored record. Page lookahead rows count because the store
+consumes them even when it omits them from the returned page.
+
+The complete-log scanner uses its existing raw BSON buffer. The other listed
+cursors use the registry driver's public `advance`, `current` and
+`deserialize_current` methods: borrow the length, then perform the same single
+decode as before. The shared helpers are `mongo_read_telemetry::Read::next` and
+`next_in_session`. Query filters, sorting, limits, projections, sessions and
+validation remain unchanged. Telemetry accumulates local document/byte totals and
+publishes atomic totals when the traversal ends; it never walks
+fields, re-serializes records, copies BSON or adds a database round trip.
+
+| Metric | Fixed labels | Meaning |
+| --- | --- | --- |
+| `cma_mongo_read_operations_total` | `collection`, `operation` | Measured store find traversals that ended, including failure or cancellation. |
+| `cma_mongo_read_failures_total` | `collection`, `operation` | Those traversals that failed or were cancelled, including store validation failures. |
+| `cma_mongo_read_documents_total` | `collection`, `operation` | Documents consumed at the measured raw BSON boundaries, including a document whose decoding or validation fails. |
+| `cma_mongo_read_document_bytes_total` | `collection`, `operation` | Encoded BSON lengths of those consumed documents, including fields beyond the logical record. |
+
+`collection` comes only from the static schema-authority `COLLECTIONS` allow-list
+in `store/isolation.rs`; unknown names become `other`. `operation` is currently
+only `find`. A find includes documents consumed from subsequent `getMore`
+batches; these are not per-command or per-batch counters. Totals update when
+that store traversal ends, retaining partial work on failure. No query values,
+identities, contents or inherited request span fields are emitted.
+
+Rows emit only when the fixed label pair changes. Carry forward the previous
+cumulative value across quiet windows, and handle process restarts as resets.
+Complete-log scan counters overlap these consumed-read counters; do not add
+them together. The scan counters additionally distinguish validation outcomes.
+
+### Unmeasured Mongo traffic
+
+These counters are a lower bound on consumed document bytes, not a measurement
+of total API receive traffic. Reply envelopes, errors without documents,
+unconsumed/pre-fetched batches, driver retry traffic, command counts, separate
+`getMore` counts, compression, TLS and wire framing are unmeasured. The metrics
+`cma_mongo_read_bytes_total`, `cma_mongo_read_responses_total` and
+`cma_mongo_read_incomplete_summaries_total` are not emitted: the store cannot
+observe whole-reply metadata at this boundary.
+
+Collection labels do not imply complete collection coverage. Typed point
+lookups (including `get_agent`, `agent_log_entry`, log head/tail probes and the
+shared `agent_admission_records::find_at_snapshot` helper) are unmeasured: those
+boundaries expose decoded documents, not borrowed raw lengths. Other Agent
+cursors, such as title/provenance discovery, removal/purge and admission/capacity
+checks, remain uninstrumented. Aggregates, other collections, reporting and
+runtime-routing pools are also unmeasured unless explicitly listed above. The
+registry MongoDB driver and its lockfile are unchanged; no command monitoring,
+profiling query, database privilege or dependency fork is required. Do not
+re-serialize decoded documents merely to fill these coverage gaps.
+
 ## Immutable web build identity
 
 The account menu's **Copy build version** copies the running bundle's own version
@@ -2048,6 +2222,24 @@ OCI source/version/revision labels. It inspects by immutable image ID and cleans
 its stopped verification container. Transfer/promotion retains the tested image
 ID/digest and existing provenance checks; do not rebuild or relabel to correct an
 identity. A candidate identity is not a release version.
+
+The loopback usage, build-identity and exact-image browser harnesses default to
+Chromium. Set `CMA_E2E_BROWSERS=chromium,firefox,webkit` to run all three pinned
+Playwright engines after `npx playwright install chromium firefox webkit` in
+`web/`. A custom `CMA_E2E_BROWSER_PATH` applies only to Chromium; Firefox/WebKit
+use their own installed engines. Unknown or duplicate engine names fail the run.
+For the compiled frontend, run the existing `e2e/usage.config.ts` and
+`e2e/build-identity.config.ts` configurations; repeat owner/Operations tests with
+`CMA_E2E_MEASURED_USAGE=true` for synthetic measured-source states.
+
+For an immutable candidate, run `.github/scripts/web-image-smoke.py <image>` from
+the repository root with the same browser selection. It verifies bundle/OCI
+identity before starting the image, passes the expected version/revision to the
+browser, mounts stale retained assets read-only, and cleans its container/mount.
+The build-identity check reads the serving artifact's static `build-info.json`
+and compares the copied value; it never consults a potentially unrelated local
+`dist` directory. The report prints the immutable image ID, source, version and
+browser selection. Keep this candidate evidence separate from live acceptance.
 
 For production acceptance, the lead compares a fresh browser's copied identity
 with the tested source, image labels and promoted digest. Retain all prior hashed

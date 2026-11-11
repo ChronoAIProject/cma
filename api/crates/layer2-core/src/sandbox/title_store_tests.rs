@@ -259,7 +259,7 @@ async fn only_ordered_complete_first_turn_evidence_is_eligible() {
 }
 
 #[tokio::test]
-async fn claim_expiry_is_45_seconds_and_takeover_is_fallback_only() {
+async fn claim_expiry_is_45_seconds_and_takeover_retries_generation() {
     let store = InMemoryAgentTitleStore::default();
     let id = id("takeover");
     store.register_agent(id.clone()).unwrap();
@@ -297,22 +297,13 @@ async fn claim_expiry_is_45_seconds_and_takeover_is_fallback_only() {
     let successor = store
         .acquire_agent_title_claim(
             &AgentTitleClaimRequest::new(id.clone(), "holder-b"),
-            base_time() + Duration::from_secs(45),
+            base_time() + Duration::from_secs(60),
         )
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(successor.mode(), AgentTitleClaimMode::FallbackOnly);
+    assert_eq!(successor.mode(), AgentTitleClaimMode::Generate);
     let generated = AgentTitle::new("Stale Generated Title").unwrap();
-    assert!(!store
-        .complete_agent_title(
-            &successor,
-            &generated,
-            AgentTitleSource::Generated,
-            LATER.into(),
-        )
-        .await
-        .unwrap());
     assert!(!store
         .complete_agent_title(
             &first,
@@ -323,13 +314,12 @@ async fn claim_expiry_is_45_seconds_and_takeover_is_fallback_only() {
         .await
         .unwrap());
 
-    let fallback = AgentTitle::new("Takeover owner").unwrap();
     assert!(store
         .complete_agent_title(
             &successor,
-            &fallback,
-            AgentTitleSource::Fallback,
-            LATER.into(),
+            &generated,
+            AgentTitleSource::Generated,
+            LATER.into()
         )
         .await
         .unwrap());
@@ -338,14 +328,14 @@ async fn claim_expiry_is_45_seconds_and_takeover_is_fallback_only() {
             &successor,
             &generated,
             AgentTitleSource::Generated,
-            LATER.into(),
+            LATER.into()
         )
         .await
         .unwrap());
     assert_eq!(store.title_event_count(&id).unwrap(), 1);
     let stored = store.agent_title(&id).await.unwrap().unwrap();
-    assert_eq!(stored.title, fallback);
-    assert_eq!(stored.source, AgentTitleSource::Fallback);
+    assert_eq!(stored.title, generated);
+    assert_eq!(stored.source, AgentTitleSource::Generated);
 }
 
 #[tokio::test]

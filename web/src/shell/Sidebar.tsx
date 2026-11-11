@@ -1,5 +1,6 @@
 import { IconPanelLeftOutline16, IconPlusOutline16, IconSearchOutline16 } from '../ui/icons';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { NavigationSettingsContext } from './sidebarContext';
 import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
 import { ServiceMenu } from '../services/ServiceMenu';
@@ -65,6 +66,7 @@ export function Sidebar({
   onNavigate,
 }: SidebarProps) {
   const unavailableId = 'sidebar-new-agent-reason';
+  const [settingsHost, setSettingsHost] = useState<HTMLDivElement | null>(null);
   return (
     <aside
       className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`}
@@ -161,9 +163,12 @@ export function Sidebar({
         </div>
       )}
       <div className="sidebar__navigation" hidden={collapsed}>
-        {navigation}
+        <NavigationSettingsContext value={settingsHost}>{navigation}</NavigationSettingsContext>
       </div>
-      <div className="sidebar__account">{account}</div>
+      <div className="sidebar__account">
+        {account}
+        <div className="sidebar__settings" ref={setSettingsHost} />
+      </div>
     </aside>
   );
 }
