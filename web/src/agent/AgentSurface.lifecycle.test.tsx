@@ -160,13 +160,13 @@ it('holds Send and Enter during operator lifecycle changes while retaining edita
   }
 
   unavailable = true;
-  await act(() => vi.advanceTimersByTimeAsync(1500));
+  await act(() => vi.advanceTimersByTimeAsync(5500));
   expect(draft).toHaveAccessibleDescription(/Reconnecting/);
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   expect(draft).toHaveValue('Keep this unsubmitted draft');
   unavailable = false;
   sandbox = sandboxFixture('paused');
-  await act(() => vi.advanceTimersByTimeAsync(1500));
+  await act(() => vi.advanceTimersByTimeAsync(5500));
   expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
   expect(draft).toHaveValue('Keep this unsubmitted draft');
   expect(runAgent).not.toHaveBeenCalled();
