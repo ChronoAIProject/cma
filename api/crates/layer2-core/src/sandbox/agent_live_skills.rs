@@ -8,7 +8,8 @@ use crate::{now_rfc3339, AgentId, Caller};
 use serde::{Deserialize, Serialize};
 
 const MAX_SKILLS: usize = 32;
-const MAX_ATTEMPTS: usize = 1024;
+// At most 512 KiB of bounded installation metadata, retained in the hot Agent record.
+const MAX_ATTEMPTS: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -311,9 +312,7 @@ impl AgentOperationService {
                 }
             }
             if current.work.live_skills.len() >= MAX_ATTEMPTS {
-                return Err(AgentOperationError::InvalidRequest(
-                    "skill installation history limit reached".into(),
-                ));
+                return Err(AgentOperationError::SkillHistoryFull);
             }
             self.require_agent_connections(&current).await?;
             let (parent, queues) = self.parent_admission(&current).await?;

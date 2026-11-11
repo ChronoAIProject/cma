@@ -2771,7 +2771,9 @@
       "required_problems": [
         "agent_not_found",
         "agent_not_ready",
-        "agent_operation_in_flight",
+        "agent_skill_history_full",
+        "agent_skill_install_unsupported",
+        "agent_skill_upgrade_disabled",
         "agent_skill_version_upgrade_unsupported",
         "connections_required",
         "forbidden",
