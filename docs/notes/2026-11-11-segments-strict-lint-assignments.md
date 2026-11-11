@@ -129,10 +129,23 @@ Actual counts, skipped tests and failures remain tied to their exact source.
 ## Handoff sources and prior ledger
 
 - S1: `2026-11-12-response-caller-handoff.md` and response-consumer-handoff.md.
-- S4: `docs/notes/2026-11-12-s4-later-progress.md` and gate JSON.
+- S4: `docs/notes/2026-11-12-s4-later-progress.md` and the linked Markdown gate record.
 - S5: `2026-11-12-s5-final-handoff.md`.
 - Frozen recovery carrier: `daf605ab410fc4737633aa3997e67192d4c4112b`, format2only.
 - S2 proof: `2026-11-12-current-publication-proof.md`.
 - Prior central ledger (verbatim, split below500lines):
   [2026-11-12-segments-coordination-history-13.md](2026-11-12-segments-coordination-history-13.md)
   [2026-11-12-segments-coordination-history-14.md](2026-11-12-segments-coordination-history-14.md)
+
+## Final-handoff gate notes
+
+Light gates at assembled e28 source: formatting, config documentation and its4
+unit tests passed; canonical size6259files passed. Secret scan at11d917dd9
+covered4015commits with zero findings. Imported S4 JSON evidence was preserved
+in Markdown to satisfy the docs-only-Markdown structure rule; original source
+counts/meaning unchanged. The combined PR body is prepared locally at
+`2026-11-12-segments-combined-pr-draft.md`; it is not an open PR.
+
+Current exact-source gate inventory verifies both new production factory tests,
+raw-output and retained-JSON flags, reconciliation flag, and all7capacity scheduler
+tests before executing them. No stale-target attempt will be accepted.
