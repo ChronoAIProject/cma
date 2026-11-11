@@ -6,6 +6,9 @@ use cma_sdk::{
 
 pub const BROWSER_CASES: &[&str] = &[
     "auth-trusted-login-return",
+    "auth-login-preserves-sandbox-tab",
+    "auth-login-preserves-bot-draft",
+    "auth-silent-login-required",
     "auth-trusted-register-return",
     "auth-trusted-callback",
     "auth-trusted-logout",
@@ -91,6 +94,19 @@ fn desktop_upgrade(c: &Context<'_>) {
 // Cookie authority and OAuth callbacks belong to the browser. Validate their
 // shared response models and navigation helpers without issuing a replacement request.
 pub fn verify(c: &Context<'_>) {
+    let mut cookies = reqwest::header::HeaderMap::new();
+    for cookie in &c.case.response.set_cookies {
+        cookies.append(reqwest::header::SET_COOKIE, cookie.parse().unwrap());
+    }
+    assert_eq!(
+        cookies
+            .get_all(reqwest::header::SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect::<Vec<_>>(),
+        c.case.response.set_cookies
+    );
+
     match c.case.operation.as_str() {
         "GET /api/v1/agents/{id}/desktop/ws" => desktop_upgrade(c),
         "GET /api/v1/triggers/public/{public_id}/open/{placement_id}" => {
@@ -150,6 +166,21 @@ pub fn verify(c: &Context<'_>) {
             let target = c.client.auth().logout_url().unwrap();
             assert!(target.path().ends_with("/auth/logout"));
             assert!(target.query().is_none());
+            let secure = if c.case.scenario == "auth_trusted" {
+                ""
+            } else {
+                "; Secure"
+            };
+            let mut expected = vec![];
+            if c.case.response.status != 503 {
+                expected.push(format!(
+                    "cma_session=; Path=/; HttpOnly{secure}; SameSite=Lax; Max-Age=0"
+                ));
+            }
+            expected.push(format!(
+                "cma_signed_out=1; Path=/; HttpOnly{secure}; SameSite=Lax; Max-Age=2592000"
+            ));
+            assert_eq!(c.case.response.set_cookies, expected);
         }
         "GET /auth/callback" => assert!(c.case.request.path.starts_with("/auth/callback")),
         "GET /auth/session" => {
