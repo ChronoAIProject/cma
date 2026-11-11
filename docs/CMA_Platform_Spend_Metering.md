@@ -269,7 +269,8 @@ registration page) is refused too, so the sign-up path does not lead people to
 create an identity CMA will then refuse. The entry check is advisory: when the
 admission state cannot be read it proceeds, and the callback — which fails
 closed — remains the authority, because an identity can also be created at the
-provider directly. Existing owners are never affected by `SpendWarning`.
+provider directly. Existing owners are never affected: the callback finds them
+in the user directory before it reads the admission state (decision 25).
 
 Approval decisions remain allowed under `SpendStop` because the turn they
 continue has already reserved its full allowance; refusing them would not reduce
@@ -574,8 +575,11 @@ Recorded during implementation:
 24. Only owners with a model budget policy reserve liability; their messages
     and queued turn starts read the platform state. Zero-liability
     commitments read it for every owner.
-25. Registration reads the user directory only while a closure exists;
-    without a configured directory a closure refuses the callback.
+25. Registration checks the user directory first: an existing subject signs
+    in without reading the platform state, so an unreadable state never locks
+    an owner out. Only a never-seen subject reads the state, and a failed read
+    refuses its callback (fail closed). Without a configured directory every
+    subject is never-seen.
 26. The pause sweep keeps an owner's Always keep alive preference and does
     not pause Sandboxes with no live Agents (the quiet-pause predicate's
     existing rule). Whether a platform pause should override keep-alive is

@@ -704,4 +704,28 @@ mod platform_closure {
             .unwrap()
             .starts_with("https://nyx.example/register"));
     }
+
+    #[tokio::test]
+    async fn an_unreadable_admission_state_admits_existing_owners_and_refuses_new_subjects() {
+        let unreadable = || Arc::new(FixedSpend(Err(BudgetError::Unavailable)));
+        let existing = harness(unreadable(), vec![SubjectId::new(SUBJECT)]).await;
+        let (_, response) = sign_in(&existing.app).await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert!(existing
+            .store
+            .subject(&SubjectId::new(SUBJECT))
+            .await
+            .unwrap()
+            .is_some());
+        let unseen = harness(unreadable(), vec![]).await;
+        let (_, response) = sign_in(&unseen.app).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(unseen
+            .store
+            .subject(&SubjectId::new(SUBJECT))
+            .await
+            .unwrap()
+            .is_none());
+        assert!(unseen.directory.observed.lock().await.is_empty());
+    }
 }
