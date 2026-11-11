@@ -92,8 +92,14 @@ impl Archive {
         let receipt = self
             .storage
             .call(move |db| {
-                let receipt = existing(db, &proof)?.ok_or_else(invalid)?;
-                verification::group(db, &config, &proof, &receipt, None)?;
+                // This inspection must return a nonmutating refusal inside
+                // the worker, before Storage::call handles reserve release.
+                let tx = db.transaction().map_err(|_| invalid())?;
+                let receipt = existing(&tx, &proof)
+                    .map_err(|_| invalid())?
+                    .ok_or_else(invalid)?;
+                verification::group(&tx, &config, &proof, &receipt, None).map_err(|_| invalid())?;
+                tx.commit().map_err(|_| invalid())?;
                 Ok(receipt)
             })
             .await?;
