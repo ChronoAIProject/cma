@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalUsageMetrics } from './usage-metrics.fixture';
 import { testBudget } from '../src/operator/spendTestFixtures';
+import { ownerAmounts } from '../src/operator/spendBudget';
 import type { PlatformSettings } from '@chronoai/cma-sdk';
 
 async function fixture(
@@ -301,6 +302,110 @@ for (const gate of ['foundation', 'request']) {
       request_models: models,
     });
     expect(local.writes.at(-1)!).not.toHaveProperty('model_budget_writes_available');
+    expect(local.boundary.errors).toEqual([]);
+  });
+}
+
+async function addOwner(page: Page) {
+  await page.getByRole('button', { name: 'Add owner override' }).click();
+  await page.getByLabel('Owner override 1: owner ID').fill('fixture-isolated-owner');
+  for (const [field, label] of Object.entries(ownerAmounts))
+    await page
+      .getByLabel(`Owner override 1: ${label}`, { exact: true })
+      .fill(String(testBudget.default_policy![field as keyof typeof ownerAmounts]));
+  await page
+    .getByLabel('Owner override 1: Day-boundary timezone (IANA)')
+    .fill(testBudget.default_policy!.day_timezone);
+}
+
+test('LOCAL isolated owner and request-model editing saves explicit policy and validates drafts', async ({
+  page,
+  baseURL,
+}, testInfo) => {
+  const local = await fixture(page, baseURL!, { value: true, request: true });
+  await page.goto('/operations?tab=settings');
+  await addOwner(page);
+  await page.getByRole('button', { name: 'Remove default owner policy' }).click();
+  await page.getByRole('button', { name: 'Add request model' }).click();
+  const model = page.getByLabel('Request model 1: model name');
+  const overhead = page.getByLabel('Request model 1: input overhead (tokens)');
+  await expect(model).toHaveValue('');
+  await expect(overhead).toHaveValue('');
+  await model.fill('fixture-model');
+  await overhead.fill('1.5');
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(overhead).toHaveAttribute('aria-invalid', 'true');
+  expect(local.writes).toHaveLength(0);
+  await overhead.fill('1');
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.getByText('Settings saved at revision 5.')).toBeVisible();
+  expect(local.writes[0]!.expected_revision).toBe(4);
+  expect(local.writes[0]!.settings.model_budget).toEqual({
+    enabled: false,
+    platform: testBudget.platform,
+    owners: [{ owner: 'fixture-isolated-owner', policy: testBudget.default_policy }],
+    request_models: [{ model: 'fixture-model', input_overhead_tokens: 1 }],
+  });
+  await expect(page.getByLabel('Enable spend controls')).not.toBeChecked();
+  await page.getByRole('group', { name: 'Owner override 1', exact: true }).screenshot({
+    path: testInfo.outputPath('owner-policy.png'),
+  });
+  await page.getByRole('group', { name: 'Request model 1', exact: true }).screenshot({
+    path: testInfo.outputPath('request-model.png'),
+  });
+  await page.getByRole('button', { name: 'Remove owner override 1' }).click();
+  await page.getByRole('button', { name: 'Remove request model 1' }).click();
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.getByText('Settings saved at revision 6.')).toBeVisible();
+  expect(local.writes[1]!.settings.model_budget).toEqual({
+    enabled: false,
+    platform: testBudget.platform,
+    owners: [],
+    request_models: [],
+  });
+  expect(local.boundary.writes).toEqual([]);
+  expect(local.boundary.errors).toEqual([]);
+});
+
+test('LOCAL concurrent owner-list edits stay visible without overwriting the server list', async ({
+  page,
+  baseURL,
+}) => {
+  const local = await fixture(page, baseURL!, { value: true, request: true });
+  await page.goto('/operations?tab=settings');
+  await addOwner(page);
+  local.advance();
+  local.setFailure(409);
+  await page.getByRole('button', { name: 'Save settings' }).click();
+  await expect(page.getByText(/changed both here and on the server/)).toBeVisible();
+  await expect(page.getByLabel('Owner override 1: owner ID')).toHaveValue('fixture-isolated-owner');
+  await expect(page.getByRole('button', { name: 'Review retained draft' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save settings' })).toBeDisabled();
+  expect(local.writes).toHaveLength(1);
+  await page.getByRole('button', { name: 'Load current values' }).click();
+  await expect(page.getByLabel('Owner override 1: owner ID')).toHaveValue('fixture-owner');
+  await expect(page.getByRole('button', { name: 'Save settings' })).toBeEnabled();
+  expect(local.writes).toHaveLength(1);
+  expect(local.boundary.errors).toEqual([]);
+});
+
+for (const available of [false, undefined]) {
+  test(`LOCAL request-model editor waits for explicit gate at ${available} without blocking owner edits`, async ({
+    page,
+    baseURL,
+  }) => {
+    const local = await fixture(page, baseURL!, { value: true, request: available });
+    await page.goto('/operations?tab=settings');
+    await expect(page.getByRole('button', { name: 'Add request model' })).toBeDisabled();
+    await expect(page.getByText(/Saving request models is not available yet/)).toBeVisible();
+    await addOwner(page);
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await expect(page.getByText('Settings saved at revision 5.')).toBeVisible();
+    expect(local.writes).toHaveLength(1);
+    local.setRequestAvailable(true);
+    await page.getByRole('button', { name: 'Refresh settings availability' }).click();
+    await page.getByRole('button', { name: 'Review retained draft' }).click();
+    await expect(page.getByRole('button', { name: 'Add request model' })).toBeEnabled();
     expect(local.boundary.errors).toEqual([]);
   });
 }
