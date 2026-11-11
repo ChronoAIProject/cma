@@ -10,7 +10,9 @@ changes alone do not establish that production scraping or notification works.
 Agent Manager exports Prometheus text at `GET /metrics` on
 `CHRONO_METRICS_BIND` (default `0.0.0.0:9091`). This is a separate HTTP listener,
 outside the public router, authentication middleware and public Service ports.
-It serves no business API. Startup fails if its address cannot be bound. A
+It serves no business API. A separate five-second upkeep task aggregates raw
+histogram samples even when no collector scrapes or the listener fails; both
+tasks stop with the server guard. Startup fails if its address cannot be bound. A
 runtime listener failure is logged and detected by the external scrape/no-data
 rules; it does not stop application traffic or active work.
 
@@ -63,7 +65,7 @@ Unknown routes use `unmatched`. Correlation IDs belong in restricted logs.
 | SSE | `cma_sse_observation_closed_total{route,reason}` reports transport observation endings. It does not inspect protocol payloads or assert a terminal. `cma_public_streams_active{stream_kind}` and `cma_public_stream_polls_total{stream_kind,outcome}` export existing bounded stream diagnostics every 10 seconds. |
 | Authentication | `cma_auth_resolutions_total{outcome}` and `cma_auth_resolution_seconds`: ambient subject resolution is `resolved`, `anonymous`, or `unavailable`. Worker/resource-specific auth paths and intentional auth bypasses are not included; HTTP results still cover their responses. |
 | Readiness | `cma_readiness_check_success` is the last completed Mongo check's result. `cma_readiness_check_timestamp_seconds` supplies freshness; `cma_readiness_check_seconds{outcome}` reports check duration. A stale successful check is not ready. `/ready` retains its existing five-second freshness limit, `/livez` retains process liveness semantics. |
-| Mongo pool | `cma_mongo_pool_events_total{operation,outcome}`, `cma_mongo_pool_operation_seconds`, `cma_mongo_checkouts_pending`, `cma_mongo_connections_tracked`, `cma_mongo_pool_max_connections`, `cma_mongo_connection_tracking_overflow_total`. These observe the general application client across its server pools; max connections is a per-server pool limit, not a fleet denominator. Tracking is bounded at 4096; overflow means tracked occupancy is incomplete. Command monitoring stays disabled. |
+| Mongo pool | `cma_mongo_pool_events_total{operation,outcome}`, `cma_mongo_pool_operation_seconds`, `cma_mongo_checkout_started_total`, `cma_mongo_connections_tracked`, `cma_mongo_pool_max_connections`, `cma_mongo_connection_tracking_overflow_total`. These observe the general application client across its server pools; max connections is a per-server pool limit, not a fleet denominator. Tracking is bounded at 4096; overflow means tracked occupancy is incomplete. Checkout starts are events, not queue depth: the pinned driver may omit the end event on cancellation, so starts minus ends is invalid. Duration samples cover completed checkouts only. Command monitoring stays disabled. |
 | Mongo reads | Existing `cma_mongo_read_{operations,failures,documents,document_bytes}_total` snapshots, by bounded collection and `find`. They cover instrumented reads, not every database command or wire byte. |
 | Ledger reads | Existing `cma_agent_log_scan*` counters, by fixed caller/worker step/outcome, exported from periodic diagnostics. They measure read work, not accepted commands. |
 | Workers | `cma_worker_alive`, `cma_worker_heartbeat_timestamp_seconds`, `cma_worker_progress_timestamp_seconds{phase}`, `cma_worker_operations_total{phase,outcome}`, `cma_worker_local_queued`, `cma_worker_local_active`. Instrumented schedulers are Agent commands, Sandbox commands, Agent connection/lifecycle work, launches and native warm pools. A guard clears alive/queue gauges on return, abort or panic. Heartbeat proves scheduler-loop activity; successful discovery proves a scan completed; neither proves a turn completed. |
@@ -126,7 +128,7 @@ configuration. Attach an owner, runbook and bounded routing labels.
 | Child task terminated | A positive increase in `cma_worker_operations_total{outcome="terminated"}`; a scheduler may still be alive after a child panic. Investigate error outcomes separately from expected conflicts/retries. |
 | Scheduler-loop stalled | `time() - cma_worker_heartbeat_timestamp_seconds > 15`; tune warm-pool thresholds against measured bounded reconciliation time. This is a diagnostic, not a liveness restart trigger. |
 | Diagnostics stopped | `time() - cma_telemetry_sample_timestamp_seconds > 30`. |
-| Slow/blocked checkout | Histogram quantiles from `cma_mongo_pool_operation_seconds_bucket{operation="checkout"}`, failed checkout rate and `cma_mongo_checkouts_pending`. Evaluate an injected saturation, not just a static threshold. |
+| Slow/blocked checkout | Histogram quantiles from `cma_mongo_pool_operation_seconds_bucket{operation="checkout"}`, failed checkout rate and checkout-start rate. Exact pending checkout count/oldest age still need cancellation-safe instrumentation; do not derive them from starts minus ends. Evaluate an injected saturation, not just a static threshold. |
 | Background sweep stuck | `(cma_background_pending_since_timestamp_seconds > 0) and (time() - cma_background_pending_since_timestamp_seconds > 120)`; local sweep age only. |
 | Unexpected stream endings | Report `error`/`dropped` observations separately; protocol-specific terminal/error and client evidence must establish whether an ending was unexpected before using it in the durable terminal error budget. |
 | Missing target/data | Compare successful, fresh targets to the expected Deployment replica inventory. A vanished pod/series must not shrink the denominator. Alert on a continuous 30-second gap; include scrape failures and missing heartbeat series. A query over only existing series cannot detect a completely vanished target. |
@@ -163,7 +165,8 @@ Before claiming #1470 complete:
    synthetic deadlines must not become arbitrary-user inference deadlines.
 5. Complete the remaining issue families and #1486 reconciliation. This change
    does not implement durable admission/terminal SLIs, native-to-public lag,
-   provider permits, the complete warm-capacity inventory, browser fatal-event
+   cancellation-safe Mongo pending/oldest-age observations, provider permits, the
+   complete warm-capacity inventory, browser fatal-event
    collection, or Edge Gateway queue/delivery instrumentation beyond its
    existing metrics. Those are explicit gaps, not zero-valued successes.
 
