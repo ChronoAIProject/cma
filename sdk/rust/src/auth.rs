@@ -7,6 +7,10 @@ use crate::{
 use reqwest::StatusCode;
 use serde::Deserialize;
 
+/// Complete encoded absolute login URL budget. Normative wire contract:
+/// api/crates/layer1-public/tests/fixtures/browser-auth-limits.json (4 KiB).
+pub const MAX_LOGIN_URL_BYTES: usize = 4096;
+
 string_enum! { /// Public entitlement reported by the identity endpoint.
     pub enum Capability {
         CreateSandbox => "create_sandbox", UseOwnSandboxes => "use_own_sandboxes", DeleteOwnSandbox => "delete_own_sandbox",
@@ -157,6 +161,11 @@ impl Authentication<'_> {
         if options.register {
             target.query_pairs_mut().append_pair("screen", "register");
         }
+        if target.as_str().len() > MAX_LOGIN_URL_BYTES {
+            return Err(Error::validation(
+                "encoded login URL exceeds the public navigation budget",
+            ));
+        }
         Ok(target)
     }
 
@@ -170,7 +179,8 @@ fn validate_return_target(value: &str) -> Result<()> {
     let (path, query) = value
         .split_once('?')
         .map_or((value, None), |(path, query)| (path, Some(query)));
-    if value.len() > 25064
+    if value.len() > MAX_LOGIN_URL_BYTES
+        || !value.is_ascii()
         || value.contains(['#', '\\'])
         || value.bytes().any(|b| b.is_ascii_control() || b == b' ')
     {
@@ -252,4 +262,61 @@ fn opaque_path_segment(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~'))
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+    #[test]
+    fn full_encoded_url_and_ascii_match_the_public_budget() {
+        let spec: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../api/crates/layer1-public/tests/fixtures/browser-auth-limits.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            MAX_LOGIN_URL_BYTES,
+            spec["max_login_url_bytes"].as_u64().unwrap() as usize
+        );
+        let client = Client::builder("https://cma.example")
+            .unwrap()
+            .build()
+            .unwrap();
+        let base = "/bots/new?setup=";
+        let overhead = client
+            .auth()
+            .login_url(&LoginOptions {
+                return_to: Some(base.into()),
+                register: true,
+            })
+            .unwrap()
+            .as_str()
+            .len();
+        for length in [
+            MAX_LOGIN_URL_BYTES - 1,
+            MAX_LOGIN_URL_BYTES,
+            MAX_LOGIN_URL_BYTES + 1,
+        ] {
+            let result = client.auth().login_url(&LoginOptions {
+                return_to: Some(format!("{base}{}", "a".repeat(length - overhead))),
+                register: true,
+            });
+            if length <= MAX_LOGIN_URL_BYTES {
+                assert_eq!(result.unwrap().as_str().len(), length);
+            } else {
+                assert!(result.is_err());
+            }
+        }
+        for value in ["/bots/new?setup=界", "/sandboxes/s?tab=é"] {
+            assert!(validate_return_target(value).is_err());
+        }
+        assert!(
+            client
+                .auth()
+                .login_url(&LoginOptions {
+                    return_to: Some(format!("{base}{}", "%22".repeat(1500))),
+                    register: false
+                })
+                .is_err()
+        );
+    }
 }
