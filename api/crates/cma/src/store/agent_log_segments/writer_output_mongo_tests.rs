@@ -249,3 +249,86 @@ async fn missing_current_output_index_refuses_before_any_publication_write() {
     );
     f.destroy().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn response_facts_publish_and_abort_with_the_original_terminal_receipt() {
+    use layer2_core::sandbox::{
+        AgentOperationDelivery as Delivery, AgentOperationKind as Operation,
+    };
+    let mut f = fixture(2).await;
+    let usage = |input_tokens| AgentLogKind::Usage {
+        input_tokens,
+        output_tokens: 2,
+        context_used: 3,
+        context_window: None,
+    };
+    let kinds = vec![
+        AgentLogKind::OperationDeliveryChanged {
+            operation_sequence: 3,
+            operation: Operation::UpdateSettings,
+            state: Delivery::DispatchFenced,
+        },
+        AgentLogKind::OperationDeliveryChanged {
+            operation_sequence: 4,
+            operation: Operation::SendMessage,
+            state: Delivery::DispatchFenced,
+        },
+        AgentLogKind::TurnStarted {
+            turn_sequence: 5,
+            origin_key: None,
+            model: None,
+        },
+        AgentLogKind::OwnerMessage {
+            content: "original input".into(),
+        },
+        AgentLogKind::OperationDeliveryChanged {
+            operation_sequence: 4,
+            operation: Operation::SendMessage,
+            state: Delivery::PreWriteFailed,
+        },
+        AgentLogKind::TurnFailed {
+            turn_sequence: 5,
+            failure: layer2_core::sandbox::TypedFailure {
+                class: layer2_core::sandbox::agent_io::SOURCE_DEFERRED_FAILURE.into(),
+                detail: "original command binding".into(),
+            },
+        },
+        usage(17),
+    ];
+    publish(&mut f, kinds.clone(), "response-facts-abort", false).await;
+    unchanged(&f).await;
+    assert_eq!(
+        collection(&f.store, EVIDENCE)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    publish(&mut f, kinds, "response-facts-commit", true).await;
+    let original = evidence(&f, "turn", "5").await;
+    let EvidenceRecord::Turn { facts } =
+        projection::read_evidence(&f.head, "turn", "5", original.clone()).unwrap()
+    else {
+        panic!("original turn facts")
+    };
+    assert!(!facts.legacy_model_known);
+    assert_eq!(facts.prewrite_failure_sequence, Some(7));
+    assert_eq!(facts.end_sequence, Some(8));
+    assert_eq!(facts.response_usage_sequence, Some(9));
+    assert_eq!(facts.response_usage.unwrap().input_tokens, 17);
+    publish(&mut f, vec![usage(21)], "response-late-abort", false).await;
+    assert_eq!(evidence(&f, "turn", "5").await, original);
+    publish(&mut f, vec![usage(21)], "response-late-commit", true).await;
+    let EvidenceRecord::Turn { facts } =
+        projection::read_evidence(&f.head, "turn", "5", evidence(&f, "turn", "5").await).unwrap()
+    else {
+        panic!("late response usage")
+    };
+    assert_eq!(facts.response_usage_sequence, Some(10));
+    assert_eq!(facts.response_usage.unwrap().input_tokens, 21);
+    assert_eq!(facts.prewrite_failure_sequence, Some(7));
+    assert_eq!(facts.end_sequence, Some(8));
+    assert!(!facts.legacy_model_known);
+    f.destroy().await;
+}
