@@ -64,6 +64,11 @@ pub trait HostedAgentRuntime: Send + Sync {
 /// Provider lifecycle and supervisor transport used by a hosted adapter.
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
+    /// Present only when this backend supplies an independent native proof.
+    fn capacity_recovery_transport(&self) -> Option<&dyn super::CapacityRecoveryNativeTransport> {
+        None
+    }
+
     async fn open_desktop(
         &self,
         _handle: &RuntimeHandle,
