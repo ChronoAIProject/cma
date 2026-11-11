@@ -201,3 +201,16 @@ fn envelope_accepts_both_integer_encodings_and_refuses_every_partial_shape() {
         assert!(read_format(&malformed).is_err());
     }
 }
+
+#[test]
+fn sidecar_counter_encoding_is_strict_even_when_serde_could_coerce_it() {
+    let base = bson::serialize_to_document(&seal()).unwrap();
+    for replacement in [bson::Bson::Int32(1), bson::Bson::Double(1.0), "1".into()] {
+        let mut row = base.clone();
+        row.insert("entry_count", replacement);
+        assert!(Seal::read(row).is_err());
+    }
+    let mut wrong_version = base;
+    wrong_version.insert("format_version", 1_i32);
+    assert!(Seal::read(wrong_version).is_err());
+}
