@@ -2,7 +2,7 @@
 
 Status: **implemented on `feat/platform-spend`, activation off** (#1496;
 plan `docs/plans/platform-spend/IMPLEMENTATION.md`, implementation notes
-`docs/plans/platform-spend/NOTES.md`). Decisions 19–28 record where the
+`docs/plans/platform-spend/NOTES.md`). Decisions 19–30 record where the
 implementation settled details this contract left open. Related
 work: #1496 (this contract), #1489/#1621 (owner and turn reservations), #1631
 (request holds), #1603 (typed credit failures), #1478 (global admission and the
@@ -579,8 +579,17 @@ Recorded during implementation:
     not pause Sandboxes with no live Agents (the quiet-pause predicate's
     existing rule). Whether a platform pause should override keep-alive is
     left to #1478.
-27. A failed evaluation is logged and leaves pausing to the inactivity policy
-    for that sweep; admission keeps failing closed on its own.
+27. A failed evaluation is logged, keeps the last known stop answer and is
+    retried on the next attempt; admission keeps failing closed on its own.
 28. The two admin spend routes are served behind `ConfigurePlatform` and the
     third gate but are not yet in the published OpenAPI document or the
     public-contract corpus.
+29. A refusal at `committed + L > disposable` enters `SpendStop` even while
+    `committed` is below `disposable`, so the platform stops when the next
+    allowance no longer fits (TC-126). Where one owner's allowance exceeds the
+    remaining headroom this stops running work early; revisit with #1478.
+30. A token-valuation mismatch is one owner's condition, not a platform
+    metering fact: it refuses that admission with `budget_unavailable` and
+    enters no closure (section 4.2 otherwise unchanged). Evaluation runs on
+    every reconciliation attempt, at most once per 15 seconds, independent of
+    the sweep's other phases.
