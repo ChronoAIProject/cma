@@ -16,6 +16,10 @@ use layer2_core::{
     },
 };
 
+#[allow(
+    dead_code,
+    reason = "accepted recovery authority remains closed until qualification"
+)]
 pub(super) struct AcceptedAuthority {
     snapshot: ResourceAccessSnapshot,
     request: RecoveryRequest,
@@ -36,6 +40,10 @@ impl RecoveryAuthority for AcceptedAuthority {
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "accepted recovery authority remains closed until qualification"
+)]
 fn personal(
     snapshot: &ResourceAccessSnapshot,
     request: &RecoveryRequest,
@@ -64,6 +72,10 @@ fn personal(
 /// matches the current Agent (including owner). Every worker call obtains a new
 /// capability; capture compares current policy, all parents and shares again.
 /// There is intentionally no constructor from a discovery row or owner identity.
+#[allow(
+    dead_code,
+    reason = "accepted recovery authority remains closed until qualification"
+)]
 pub(super) async fn authorize(
     store: &MongoSandboxStore,
     request: &RecoveryRequest,

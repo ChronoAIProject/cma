@@ -262,6 +262,10 @@ impl RecoveryService {
 
     /// Metadata candidates only, including completed work after process restart.
     /// Overflow/absence never permits ordinary reconnect or proves KnownAbort.
+    #[allow(
+        dead_code,
+        reason = "capacity recovery discovery remains closed until qualification"
+    )]
     pub(crate) async fn discover_agent(
         &self,
         agent_id: &AgentId,
@@ -269,6 +273,10 @@ impl RecoveryService {
         discovery::for_agent(&self.store, agent_id).await
     }
 
+    #[allow(
+        dead_code,
+        reason = "capacity recovery discovery remains closed until qualification"
+    )]
     pub(crate) async fn discover(
         &self,
         stream: RecoveryStream,

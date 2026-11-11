@@ -1,4 +1,8 @@
 //! Admit public observers before handler work; retain slots through body lifetime.
+#![allow(
+    dead_code,
+    reason = "public stream admission remains closed until qualification"
+)]
 use std::sync::Arc;
 
 use axum::{
