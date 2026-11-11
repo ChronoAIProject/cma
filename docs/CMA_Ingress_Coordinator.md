@@ -58,8 +58,8 @@ to reservation layout or parser representation; requested bytes are not RSS.
 ## Allocation regression receipt
 
 The reservation layout was remeasured on aarch64-apple-darwin with Rust 1.96.1
-at API tree `d645b897cdfe11b357d00d0d147dc5bd6c72c41a` (source
-`b6d84af4a58a4618f7c732cacb46903d52f38cc0`). The seven existing parsed JSON
+at API tree `04265438f2e2c042926b7e4a2ec373c198da9928` (source
+`c09f0f0bf3d41d84160a266d5a67a0754a9e7d3a`). The seven existing parsed JSON
 fixtures all fit their derived tree/scratch reservations and returned measured
 frame allocations to zero after the final owner was dropped. The combined suite
 passed 205 focused tests. Values below are requested allocation bytes, excluding
