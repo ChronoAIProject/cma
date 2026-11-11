@@ -59,3 +59,12 @@ pub(in crate::store::sandbox_unpublished_recovery) async fn apply_scoped(
     let facts = NativeFacts::capture(store, &request.snapshot.sandbox.id, &mut scope).await?;
     apply_with_sources(store, request, scope.release(), Some(&facts)).await
 }
+
+pub(in crate::store::sandbox_unpublished_recovery) async fn load_retained_scoped(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+    mut scope: TransactionScope<'_>,
+) -> Result<layer2_core::sandbox::RetainedRecoverySnapshot, ApplyError> {
+    let facts = NativeFacts::capture(store, id, &mut scope).await?;
+    load_retained_with_sources(store, id, scope.release(), Some(&facts)).await
+}

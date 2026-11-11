@@ -5,6 +5,7 @@ mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
     pub parent_not_ready_pacing_enabled: bool,
+    pub retained_reopen_enabled: bool,
     pub model_budget_writes_enabled: bool,
     pub model_request_budget_writes_enabled: bool,
     pub bounded_title_reads: bool,
@@ -40,6 +41,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED",
             )?,
+            retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
