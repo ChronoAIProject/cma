@@ -248,19 +248,6 @@ impl AgentLogProjectionState {
             return Err("Agent steering fence has no adjacent owner message".into());
         }
         let changes = self.apply(agent, entry, queued_owner)?;
-        match entry.kind {
-            AgentLogKind::ConversationOpened {
-                runtime_generation, ..
-            } => {
-                self.max_opened_generation = self.max_opened_generation.max(runtime_generation);
-            }
-            AgentLogKind::RuntimeGenerationRetired {
-                runtime_generation, ..
-            } => {
-                self.max_retired_generation = self.max_retired_generation.max(runtime_generation);
-            }
-            _ => {}
-        }
         self.through_seq = entry.seq;
         Ok(changes)
     }
