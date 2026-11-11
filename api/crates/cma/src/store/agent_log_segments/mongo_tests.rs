@@ -29,6 +29,7 @@ mod capture_tests;
 mod capture_transaction_tests;
 mod ranges;
 mod recovery_shape_fixture;
+mod response_readers;
 mod retention;
 mod schema_controls;
 mod schema_inventory_drift;
