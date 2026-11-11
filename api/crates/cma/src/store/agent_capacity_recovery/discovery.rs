@@ -1,4 +1,8 @@
 //! Frozen format-2 keyset discovery. Candidates grant no execution authority.
+#![allow(
+    dead_code,
+    reason = "capacity recovery discovery remains closed until qualification"
+)]
 use std::time::Duration;
 
 use futures_util::TryStreamExt;
