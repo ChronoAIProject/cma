@@ -11,6 +11,7 @@ pub(crate) struct FeatureFlags {
     pub document_revocation_reserve: bool,
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
+    pub retained_context_lookup: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -28,6 +29,7 @@ impl FeatureFlags {
         }
         Ok(Self {
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
+            retained_context_lookup: flag(lookup, "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED")?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
             model_request_budget_writes_enabled: flag(
