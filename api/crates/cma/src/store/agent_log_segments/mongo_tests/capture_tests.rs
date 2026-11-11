@@ -207,11 +207,9 @@ async fn captured_points_reject_wrong_context_and_invalid_requests_before_source
         .await
         .unwrap();
     assert!(primed.snapshot_time().is_some());
-    assert!(
-        capture(&store, &agent, &mut primed, CaptureMode::Snapshot)
-            .await
-            .is_err()
-    );
+    assert!(capture(&store, &agent, &mut primed, CaptureMode::Snapshot)
+        .await
+        .is_err());
     let mut transaction = client.start_session().await.unwrap();
     crate::store::sandbox_mongo::start_transaction(&mut transaction)
         .await
