@@ -481,3 +481,42 @@ async fn stop_reads_are_served_from_the_cache_within_its_ttl() {
     assert_eq!(fence().await, before);
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_turn_end_through_the_message_checkpoint_waits_for_local_period_writers() {
+    let (client, name) = database("budget_platform_turn_end").await;
+    let (store, agent, generation, _) = running_turn(&client, &name).await;
+    let held = store.platform_writes.lock().await;
+    let recorder = DurableAgentUpdateRecorder::new(store.clone());
+    let agent_id = agent.id.clone();
+    let ending = tokio::spawn(async move {
+        recorder
+            .record_update(
+                &agent_id,
+                generation,
+                &mut AgentMessageAssembly::default(),
+                ConversationUpdate::TurnEnded(PromptResponse::new(TurnStopReason::EndTurn)),
+                layer2_core::now_rfc3339(),
+            )
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        !ending.is_finished(),
+        "a turn end writes the period row and is scheduled behind local period writers"
+    );
+    drop(held);
+    ending.await.unwrap().unwrap();
+    let (start, _) = open_platform().period_bounds().unwrap();
+    let row = store
+        .model_budget
+        .find_one(doc! {"_id": crate::store::budget::period_key(start)})
+        .await
+        .unwrap()
+        .unwrap();
+    let row: layer2_core::budget::PlatformPeriodLedger =
+        crate::store::sandbox_mongo::read_record(&row).unwrap();
+    assert_eq!(row.reserved, 0);
+    client.database(&name).drop().await.unwrap();
+}
