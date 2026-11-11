@@ -20,6 +20,9 @@ mod creations;
 #[path = "ledger_maintenance_parent_save_tests.rs"]
 mod parent_saves;
 
+#[path = "ledger_maintenance_specialized_command_tests.rs"]
+mod specialized_commands;
+
 #[tokio::test]
 #[ignore = "requires an owned disposable MongoDB replica set and shared input hooks"]
 async fn new_input_refuses_after_hold_restart_and_lease_expiry_without_any_writes() {

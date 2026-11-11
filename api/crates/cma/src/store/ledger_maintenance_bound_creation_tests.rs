@@ -9,6 +9,9 @@ use layer2_core::sandbox::store::*;
 use layer2_core::sandbox::*;
 use layer2_core::{AgentProfileId, RuntimeCapabilities, RuntimeCapability};
 
+#[path = "ledger_maintenance_bound_command_tests.rs"]
+mod bound_commands;
+
 async fn parent(store: &MongoSandboxStore, binding: &ProviderBinding) -> Sandbox {
     let mut value = sandbox(binding);
     value.status = SandboxStatus::Active;
