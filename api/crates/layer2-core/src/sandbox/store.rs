@@ -13,8 +13,10 @@ use super::{
 mod sandbox;
 pub use sandbox::SandboxStore;
 pub mod ledger_collection;
+mod pagination;
 mod service_traits;
 pub use super::binding::BindingStore;
+use pagination::page;
 pub use service_traits::*;
 
 mod agent;
@@ -471,28 +473,6 @@ impl InMemorySandboxStore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
-}
-
-fn page<T: Clone>(
-    mut values: Vec<(String, T)>,
-    request: &PageRequest,
-) -> Result<Page<T>, SandboxStoreError> {
-    if request.limit == 0 || request.limit > MAX_PAGE_SIZE {
-        return Err(SandboxStoreError::InvalidPage);
-    }
-    values.sort_by(|left, right| left.0.cmp(&right.0));
-    if let Some(cursor) = &request.cursor {
-        values.retain(|(key, _)| key > cursor);
-    }
-    let has_more = values.len() > usize::from(request.limit);
-    values.truncate(usize::from(request.limit));
-    let next = has_more
-        .then(|| values.last().map(|(key, _)| key.clone()))
-        .flatten();
-    Ok(Page {
-        items: values.into_iter().map(|(_, value)| value).collect(),
-        next,
-    })
 }
 
 mod admin_memory;
