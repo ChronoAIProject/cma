@@ -19,6 +19,8 @@ pub mod ledger_maintenance_admission;
 pub mod ledger_maintenance_assessment;
 #[path = "../../src/sandbox/ledger_maintenance_plan.rs"]
 pub mod ledger_maintenance_plan;
+#[path = "../../src/sandbox/ledger_maintenance_progress.rs"]
+pub mod ledger_maintenance_progress;
 
 #[path = "store.rs"]
 pub mod store;
