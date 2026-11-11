@@ -20,10 +20,13 @@ def ledger_files(root, folder, maximum):
         return []
     require(len(names) <= LEDGER_LIMIT, "ledger_capacity")
     result = []
+    total = 0
     for name in names:
         # Temporary writes, format barriers and noncanonical files all hold.
         require(re.fullmatch(r"[0-9a-f]{64}\.json", name), "ledger_unproved")
         data = read(path + "/" + name, maximum)
+        total += len(data)
+        require(total <= LEDGER_BYTES, "ledger_capacity")
         result.append((name, data, json.loads(data)))
     return result
 

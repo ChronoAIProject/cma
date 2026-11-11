@@ -91,6 +91,13 @@ class IdleReopen(Fixture):
         with self.assertRaisesRegex(m.Refused, "ledger_unsettled"):
             self.inspect()
 
+    def test_ledger_byte_budget_is_enforced_while_reading(self):
+        self.terminal()
+        self.ledger()
+        with patch.object(m, "LEDGER_BYTES", 1):
+            with self.assertRaisesRegex(m.Refused, "ledger_capacity"):
+                self.inspect()
+
     def test_indexed_partial_and_temporary_formats_are_unproved(self):
         self.terminal()
         for name in ("mutation-ledger-v2.current.json", "mutation-ledger-v2.lock", ".mutation-ledger-v2.preparing"):
