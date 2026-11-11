@@ -13,6 +13,7 @@ use crate::store::agent_log_segments::{
 use layer2_core::sandbox::{store::AgentLogPublicationIdentity, Agent};
 use mongodb::bson::{spec::BinarySubtype, Binary};
 
+mod claim;
 mod preparation;
 pub(in crate::store) mod settlement;
 
@@ -41,6 +42,7 @@ pub(super) async fn append(
         if let Some(entry) = writer_reconcile::replay(store, id, &operation, &kind).await? {
             return Ok(entry);
         }
+        claim::ensure_clear(store, id).await?;
         let (current, entry, admission_kind) = source(store, id, &operation, &kind).await?;
         let (admission, bootstrap) =
             preparation::prepare(store, &current, &operation, admission_kind).await?;
@@ -48,20 +50,26 @@ pub(super) async fn append(
         let mut scope = TransactionScope::start(&mut session)
             .await
             .map_err(driver)?;
-        let result = publish(
-            store,
-            &mut scope,
-            &current,
-            &entry,
-            &operation,
-            admission.as_ref(),
-            bootstrap.as_ref(),
-        )
+        let claim = claim::Claim::acquire(store, &current, &operation, &entry).await?;
+        let result = async {
+            claim.consume(store, &mut scope).await?;
+            publish(
+                store,
+                &mut scope,
+                &current,
+                &entry,
+                &operation,
+                admission.as_ref(),
+                bootstrap.as_ref(),
+            )
+            .await
+        }
         .await;
         let attempted = match result {
             Ok(attempted) => attempted,
             Err(error) => {
-                let _ = scope.release().abort_transaction().await;
+                scope.release().abort_transaction().await.map_err(driver)?;
+                claim.release_known_abort(store).await?;
                 if let Some(entry) = writer_reconcile::replay(store, id, &operation, &kind).await? {
                     return Ok(entry);
                 }
@@ -89,13 +97,16 @@ pub(super) async fn append(
             .await
             {
                 let _ = session.abort_transaction().await;
+                claim.release_known_abort(store).await?;
                 return Err(domain(error));
             }
         }
         match commit_transaction(session).await {
             CommitOutcome::Committed => return Ok(entry),
             CommitOutcome::Retry(_) => {
+                // TransientTransactionError positively establishes KnownAbort.
                 let _ = session.abort_transaction().await;
+                claim.release_known_abort(store).await?;
             }
             CommitOutcome::Unknown(_) => {
                 return settlement::after_unknown(
