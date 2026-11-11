@@ -163,6 +163,20 @@ async fn claim_transaction(
 }
 
 pub(super) fn read(row: Document, agent: &str, audit: &str) -> Result<Progress, SandboxStoreError> {
+    for field in [
+        "format_version",
+        "expires_at_ms",
+        "fence",
+        "step",
+        "through_seq",
+        "head_revision",
+    ] {
+        row.get_i64(field).map_err(|_| corrupt())?;
+    }
+    let checkpoint = row.get_document("completed").map_err(|_| corrupt())?;
+    for field in ["next_ordinal", "checked_entries", "checked_bytes"] {
+        checkpoint.get_i64(field).map_err(|_| corrupt())?;
+    }
     let progress: Progress = bson::deserialize_from_document(row).map_err(|_| corrupt())?;
     progress.captured_head.validate()?;
     let checkpoint = &progress.completed;
