@@ -317,3 +317,92 @@ async fn buffered_retained_context_path_preserves_success_and_concealment() {
         }
     }
 }
+
+#[tokio::test]
+async fn buffered_retained_context_rejects_binding_revoked_during_lookup() {
+    let (app, _, _, principal) = super::binding_tests::fixture_for_owner_with_revocation_race(
+        layer2_core::sandbox::binding::BindingConversationState::Ready,
+        "human",
+    )
+    .await;
+    let body = json!({
+        "conversation":"conversation-external",
+        "stream":true,
+        "input":"Hello",
+        "event_context":context()
+    });
+    assert_eq!(
+        app.clone()
+            .oneshot(request("/api/v2/responses", &principal, body))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+
+    let path =
+        "/api/v1/cmaeg/bindings/binding-responses/conversations/conversation-external/events/event-1";
+    let mut get = request(path, &principal, Value::Null);
+    *get.method_mut() = Method::GET;
+    *get.body_mut() = Body::empty();
+    let response = app.oneshot(get).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+}
+
+#[tokio::test]
+async fn buffered_retained_context_final_fence_failure_is_retryable() {
+    let (app, _, _, principal) = super::binding_tests::fixture_for_owner_with_fence_race(
+        layer2_core::sandbox::binding::BindingConversationState::Ready,
+        "human",
+    )
+    .await;
+    let body = json!({
+        "conversation":"conversation-external",
+        "stream":true,
+        "input":"Hello",
+        "event_context":context()
+    });
+    assert_eq!(
+        app.clone()
+            .oneshot(request("/api/v2/responses", &principal, body))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+
+    let path =
+        "/api/v1/cmaeg/bindings/binding-responses/conversations/conversation-external/events/event-1";
+    let mut get = request(path, &principal, Value::Null);
+    *get.method_mut() = Method::GET;
+    *get.body_mut() = Body::empty();
+    let response = app.oneshot(get).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["retry-after"], "1");
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let problem: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(problem["error"]["code"], "response_unavailable");
+}
+
+#[tokio::test]
+async fn buffered_retained_context_unavailable_lookup_is_retryable() {
+    let (app, _, _, principal) = super::binding_tests::fixture_for_owner_with_unavailable_context(
+        layer2_core::sandbox::binding::BindingConversationState::Ready,
+        "human",
+    )
+    .await;
+    let path =
+        "/api/v1/cmaeg/bindings/binding-responses/conversations/conversation-external/events/event-1";
+    let mut get = request(path, &principal, Value::Null);
+    *get.method_mut() = Method::GET;
+    *get.body_mut() = Body::empty();
+    let response = app.oneshot(get).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["retry-after"], "1");
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let problem: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(problem["error"]["code"], "response_unavailable");
+}
