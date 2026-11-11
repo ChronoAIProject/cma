@@ -122,10 +122,23 @@ struct Snapshot {
 }
 
 async fn snapshot(store: &MongoSandboxStore, request: &RecoveryRequest) -> Snapshot {
-    Snapshot {
-        agent: store.get_agent(&request.agent_id).await.unwrap().unwrap(),
+    // Independent majority reads can observe different stable timestamps after
+    // a committed-but-unknown result. Assert atomic state from one snapshot and
+    // finish the read with majority concern before trusting the observation.
+    let mut session = store.client.start_session().await.unwrap();
+    start_transaction(&mut session).await.unwrap();
+    let row = store
+        .agents
+        .find_one(doc! {"_id":request.agent_id.as_str()})
+        .session(&mut session)
+        .await
+        .unwrap()
+        .unwrap();
+    let snapshot = Snapshot {
+        agent: crate::store::agents::read_agent(&row).unwrap(),
         carrier: records::collection(store)
             .find_one(doc! {"_id":request.key().unwrap()})
+            .session(&mut session)
             .await
             .unwrap()
             .unwrap(),
@@ -133,9 +146,12 @@ async fn snapshot(store: &MongoSandboxStore, request: &RecoveryRequest) -> Snaps
             .segment_logs
             .publications
             .count_documents(doc! {})
+            .session(&mut session)
             .await
             .unwrap(),
-    }
+    };
+    session.commit_transaction().await.unwrap();
+    snapshot
 }
 
 #[tokio::test]
@@ -247,7 +263,8 @@ async fn capacity_composition_refuses_foreign_receipts_and_changed_authority_bef
     let after = snapshot(&store, &request).await;
     assert_eq!(
         service.run_accepted(&native, &request, "changed").await,
-        Err(RecoveryError::Conflict)
+        // Inconsistent current ownership prevents obtaining a lineage snapshot.
+        Err(RecoveryError::Unavailable)
     );
     assert_eq!(
         service.lookup(&caller, &request).await,
