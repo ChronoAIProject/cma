@@ -136,6 +136,7 @@ mod sandbox_worker_store;
 mod sandboxes;
 #[cfg(test)]
 mod sandboxes_tests;
+pub(crate) mod segment_operations;
 mod schema;
 #[cfg(test)]
 mod schema_mongo_integration_tests;
