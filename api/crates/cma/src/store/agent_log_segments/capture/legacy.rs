@@ -1,19 +1,20 @@
 //! One physical legacy unit: fold once and retain raw leaf hashes, never text.
 use super::*;
-use crate::store::{agent_log::read_entry, agent_log_integrity::read::legacy_proof};
+use crate::store::{agent_log::read_entry, agent_log_integrity::read::legacy_proof_for_context};
 use layer2_core::sandbox::{AgentLogKind, BoundedAgentLogFold};
 use mongodb::bson::RawDocumentBuf;
 
 use super::super::{corrupt, digest, MAX_BYTES, MAX_ENTRIES, MIGRATION, READER};
 
-pub(super) async fn legacy(
+pub(super) async fn read(
     store: &MongoSandboxStore,
     agent: &Agent,
     row: &Document,
     session: &mut ClientSession,
-    context: SnapshotContext,
+    context: SourceContext,
+    snapshot: bool,
 ) -> Result<CapturedLog, TransactionLogError> {
-    legacy_proof(store, agent, row, session).await?;
+    legacy_proof_for_context(store, agent, row, session, snapshot).await?;
     if agent.conversation.last_seq > MAX_ENTRIES as u64 {
         return Err(SandboxStoreError::AgentLogCapacityExceeded.into());
     }
@@ -23,12 +24,17 @@ pub(super) async fn legacy(
     let incarnation = digest::incarnation(agent);
     let source = store.agent_log.clone_with_type::<RawDocumentBuf>();
     let mut read = crate::store::mongo_read_telemetry::Read::find(source.name());
-    let mut cursor = source
+    let query = source
         .find(doc! {"agent_id":agent.id.as_str()})
         .sort(doc! {"seq":1})
         .limit(MAX_ENTRIES + 1)
-        .batch_size(64)
-        .read_concern(ReadConcern::snapshot())
+        .batch_size(64);
+    let query = if snapshot {
+        query.read_concern(ReadConcern::snapshot())
+    } else {
+        query
+    };
+    let mut cursor = query
         .session(&mut *session)
         .await
         .map_err(TransactionLogError::Driver)?;
@@ -122,60 +128,4 @@ pub(super) async fn legacy(
         active_leaf_digests: digest::binary(leaves),
         context,
     })
-}
-
-pub(super) async fn points(
-    store: &MongoSandboxStore,
-    captured: &CapturedLog,
-    sequences: &[u64],
-    session: &mut ClientSession,
-) -> Result<Vec<AgentLogEntry>, TransactionLogError> {
-    if captured.format != CapturedFormat::Legacy {
-        return Err(pending());
-    }
-    let source = store.agent_log.clone_with_type::<RawDocumentBuf>();
-    let mut read = crate::store::mongo_read_telemetry::Read::find(source.name());
-    let signed = sequences.iter().map(|seq| *seq as i64).collect::<Vec<_>>();
-    let mut cursor = source
-        .find(doc! {"agent_id":captured.agent.id.as_str(),"seq":{"$in":signed}})
-        .sort(doc! {"seq":1})
-        .limit(33)
-        .batch_size(32)
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut *session)
-        .await
-        .map_err(TransactionLogError::Driver)?;
-    let mut entries = Vec::with_capacity(sequences.len());
-    let mut bytes = 0_usize;
-    while let Some(raw) = read
-        .next_in_session(&mut cursor, session)
-        .await
-        .map_err(TransactionLogError::Driver)?
-    {
-        bytes = bytes
-            .checked_add(raw.as_bytes().len())
-            .filter(|n| *n <= 4 * 1024 * 1024)
-            .ok_or_else(|| {
-                SandboxStoreError::Unavailable(
-                    "captured Agent points exceed the source byte budget".into(),
-                )
-            })?;
-        let entry = read_entry(&Document::try_from(&raw).map_err(|_| corrupt())?)?;
-        if entry.agent_id != captured.agent.id || sequences.get(entries.len()) != Some(&entry.seq) {
-            return Err(SandboxStoreError::SequenceConflict.into());
-        }
-        let leaf = digest::leaf(
-            captured.agent.id.as_str(),
-            &captured.incarnation,
-            entry.seq as i64,
-            raw.as_bytes(),
-        );
-        digest::check_leaf(&captured.active_leaf_digests, entry.seq as i64 - 1, &leaf)?;
-        entries.push(entry);
-    }
-    if entries.len() != sequences.len() {
-        return Err(SandboxStoreError::SequenceConflict.into());
-    }
-    read.complete();
-    Ok(entries)
 }
