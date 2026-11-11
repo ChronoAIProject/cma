@@ -139,6 +139,7 @@ fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentO
     HostedAgentOpenSettings {
         bounded_permission_state: false,
         output_json_budget: false,
+        shared_runtime_output: false,
         already_initialized_error: Some(serde_json::json!({
             "code": -32603, "message": "Internal error",
             "data": { "details": "Already initialized" },

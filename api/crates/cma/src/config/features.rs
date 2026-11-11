@@ -7,6 +7,7 @@ pub(crate) struct FeatureFlags {
     pub retain_read_frames: bool,
     pub bounded_permission_state: bool,
     pub retained_reopen_enabled: bool,
+    pub shared_runtime_output: bool,
     pub model_budget_writes_enabled: bool,
     pub model_request_budget_writes_enabled: bool,
     pub bounded_title_reads: bool,
@@ -46,6 +47,7 @@ impl FeatureFlags {
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
             sandbox_detail_timings: flag(lookup, "CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")?,
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
+            shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
@@ -64,6 +66,31 @@ impl FeatureFlags {
                 "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
             )?,
         })
+    }
+}
+
+#[cfg(test)]
+mod shared_output_tests {
+    use super::*;
+
+    #[test]
+    fn shared_runtime_output_requires_its_own_strict_opt_in() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.shared_runtime_output, expected);
+            assert!(!flags.bounded_response_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED").then(|| value.into()))
+            })
+            .is_err());
+        }
     }
 }
 
