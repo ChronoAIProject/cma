@@ -279,6 +279,12 @@ async fn apply(
         current
     };
     write(store, updated, Some(next), session).await?;
+    if let Some(proof) = capacity {
+        // Replace the active checkpoint with the compact receipt before adding
+        // the retained prefix, avoiding two large checkpoints in one document.
+        // Both writes remain part of this same transaction.
+        capacity_prefix::preserve(store, &row, proof, session).await?;
+    }
     if let Some(mutation) = mutation {
         admission::require_current(mutation, session)
             .await
@@ -382,6 +388,7 @@ async fn reconcile(
             logs: proof.checkpoint().outcome.appended.clone(),
         };
         if actual.as_ref() != Some(proof.checkpoint())
+            || !capacity_prefix::matches(&row, proof)?
             || !reconcile_conversation_snapshot(store, &receipt, &mut session).await?
         {
             return Ok(None);

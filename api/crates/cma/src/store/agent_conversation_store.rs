@@ -24,6 +24,7 @@ use super::sandbox_mongo::{
 mod admission;
 #[cfg(test)]
 mod admission_tests;
+mod capacity_prefix;
 mod checkpoint;
 #[cfg(test)]
 mod checkpoint_tests;
