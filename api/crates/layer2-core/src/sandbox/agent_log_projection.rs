@@ -10,12 +10,17 @@ use super::{
 mod legacy;
 mod observe;
 mod publication;
+mod response;
 pub use legacy::BoundedAgentLogFold;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentLogProjectionState {
     pub through_seq: u64,
+    /// Whether any settings operation precedes the next turn.
+    pub settings_changed: bool,
+    #[serde(deserialize_with = "required_nullable")]
+    pending_prewrite_failure: Option<(u64, u64, String)>,
     /// Max event.runtime_generation, independently for each native boundary kind.
     /// Zero is a certified absence only when this state covers the captured head.
     pub max_opened_generation: u64,
@@ -91,6 +96,17 @@ pub struct AgentLogTurnFacts {
     pub origin_key: Option<String>,
     #[serde(deserialize_with = "required_nullable")]
     pub model: Option<String>,
+    /// A model-less turn may use the immutable creation profile only if true.
+    pub legacy_model_known: bool,
+    /// Last response usage in [turn start, next turn start), including after terminal.
+    #[serde(deserialize_with = "required_nullable")]
+    pub response_usage: Option<AgentTurnUsage>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub response_usage_sequence: Option<u64>,
+    /// Exact adjacent SendMessage PreWriteFailed before the original failed terminal.
+    /// The reader still verifies source failure detail and current command authority.
+    #[serde(deserialize_with = "required_nullable")]
+    pub prewrite_failure_sequence: Option<u64>,
     pub conversation_id: String,
     pub runtime_generation: u64,
     #[serde(deserialize_with = "required_nullable")]
@@ -118,6 +134,7 @@ pub struct AgentLogTurnFacts {
 impl AgentLogTurnFacts {
     pub fn validate(&self, through_seq: u64) -> Result<(), String> {
         let covered = |sequence| sequence > 0 && sequence <= through_seq;
+        self.validate_response_facts(through_seq)?;
         if !covered(self.turn_sequence)
             || self.conversation_id.trim().is_empty()
             || self.conversation_id.len() > 512
@@ -285,6 +302,20 @@ impl AgentLogProjectionState {
         agent
             .validate_worktree_recoveries()
             .map_err(|e| e.to_string())?;
+        if self
+            .pending_prewrite_failure
+            .as_ref()
+            .is_some_and(|(operation, sequence, at)| {
+                *sequence != self.through_seq
+                    || self
+                        .active
+                        .as_ref()
+                        .is_none_or(|turn| operation.checked_add(1) != Some(turn.turn_sequence))
+                    || crate::seconds_from_rfc3339(at).is_none()
+            })
+        {
+            return Err("Agent pending pre-write failure is outside its source interval".into());
+        }
         let maximum = self.max_opened_generation.max(self.max_retired_generation);
         if self
             .latest_conversation
