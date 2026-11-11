@@ -42,6 +42,11 @@ impl Supervisor {
         config: RuntimeConfig,
         writer_boundary: SupervisorBoundary,
     ) -> Result<Arc<Self>> {
+        // The archive is a required admission dependency once activated. Open
+        // it before even home-generation publication or installation recovery.
+        let retirement = crate::retirement_format::select(&config)?
+            .open(&config)
+            .await?;
         let mut prepared = prepare(&config, true)?;
         let ledger = prepared
             .selection
@@ -49,7 +54,8 @@ impl Supervisor {
             .expect("production format selection")
             .open(&config)
             .await?;
-        let supervisor = Self::from_prepared(config, writer_boundary, prepared, ledger)?;
+        let supervisor =
+            Self::from_prepared(config, writer_boundary, prepared, ledger, retirement)?;
         Self::finish_startup(supervisor).await
     }
 
@@ -86,7 +92,8 @@ impl Supervisor {
         writer_boundary: SupervisorBoundary,
     ) -> Result<Arc<Self>> {
         let prepared = prepare(&config, false)?;
-        Self::from_prepared(config, writer_boundary, prepared, None)
+        crate::retirement_format::require_absent(&config)?;
+        Self::from_prepared(config, writer_boundary, prepared, None, None)
     }
 
     fn from_prepared(
@@ -94,6 +101,7 @@ impl Supervisor {
         writer_boundary: SupervisorBoundary,
         prepared: Prepared,
         ledger: Option<Arc<crate::mutation_ledger::Ledger>>,
+        retirement: Option<crate::retirement_format::Reader>,
     ) -> Result<Arc<Self>> {
         let Prepared {
             boot_id,
@@ -101,6 +109,10 @@ impl Supervisor {
             _writer,
             ..
         } = prepared;
+        match &retirement {
+            Some(reader) => reader.verify()?,
+            None => crate::retirement_format::require_absent(&config)?,
+        }
         let install_state = crate::install::recover(&config)?;
         let restored = home
             .as_ref()
@@ -126,7 +138,8 @@ impl Supervisor {
             None
         };
         Ok(Arc::new(Self {
-            mutations: crate::mutation_store::Store::new(config.clone(), ledger),
+            mutations: crate::mutation_store::Store::new(config.clone(), ledger)
+                .with_retirement(retirement),
             config,
             boot_id,
             phase: RwLock::new(phase),

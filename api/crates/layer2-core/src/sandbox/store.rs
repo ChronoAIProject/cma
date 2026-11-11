@@ -74,7 +74,8 @@ mod agent_sign_in;
 pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
-    AgentConnectionRecoveryRequest, AgentWorkMutation, AgentWorkerStore, VersionedWorktree,
+    AgentConnectionRecoveryRequest, AgentRetryObservation, AgentWorkMutation, AgentWorkerStore,
+    VersionedWorktree,
 };
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
