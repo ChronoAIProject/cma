@@ -156,7 +156,7 @@ async fn source(
 }
 
 impl CapturedLog {
-    fn validate_snapshot(
+    pub(in crate::store) fn validate_snapshot(
         &self,
         store: &MongoSandboxStore,
         session: &ClientSession,
