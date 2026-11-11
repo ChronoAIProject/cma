@@ -54,6 +54,7 @@ pub(crate) async fn capture(
     let mut records = Vec::new();
     let mut external = Vec::new();
     let mut total = 0;
+    let mut document_count = 0;
     for name in super::super::isolation::COLLECTIONS {
         let mut selected = filter.clone();
         if *name == "checkpoint_archive_tombstones" {
@@ -99,9 +100,10 @@ pub(crate) async fn capture(
             }
             let data = mongodb::bson::serialize_to_vec(&document).map_err(|_| REFUSED)?;
             record.documents += 1;
+            document_count += 1;
             record.bytes += data.len() as u64;
             total += data.len() as u64;
-            if record.documents > MAX_DOCUMENTS || total > MAX_BYTES {
+            if document_count > MAX_DOCUMENTS || total > MAX_BYTES {
                 return Err(REFUSED);
             }
             hasher.update(&data);
@@ -160,6 +162,36 @@ async fn identities(
                 }
                 "agents" => {
                     let value = super::super::agents::read_agent(&document).map_err(|_| REFUSED)?;
+                    if document.contains_key(super::super::agent_log_integrity::QUARANTINE_FIELD) {
+                        return Err(REFUSED);
+                    }
+                    super::super::agent_log_integrity::scan_collection(
+                        super::super::agent_log_telemetry::ScanCaller::RecoveryProof,
+                        &db.collection::<Document>("agent_log"),
+                        &value.id,
+                        value.conversation.last_seq,
+                        session,
+                        true,
+                        |entry| {
+                            if let layer2_core::sandbox::AgentLogKind::Created {
+                                workspace_id,
+                                worktree_id,
+                            } = &entry.kind
+                            {
+                                if entry.seq != 1
+                                    || workspace_id != &value.workspace_id
+                                    || worktree_id != value.creation_worktree_id()
+                                {
+                                    return Err(
+                                        layer2_core::sandbox::store::SandboxStoreError::Conflict,
+                                    );
+                                }
+                            }
+                            Ok(())
+                        },
+                    )
+                    .await
+                    .map_err(|_| REFUSED)?;
                     (
                         value.sandbox_id.to_string(),
                         Some(value.workspace_id.to_string()),

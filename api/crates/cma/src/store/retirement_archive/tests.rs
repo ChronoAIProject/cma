@@ -129,8 +129,34 @@ async fn durable_hold_refuses_stale_workers_saves_and_unverified_completion() {
 async fn full_archive_reconstructs_home_conversations_and_ledgers_before_gate_release() {
     let (temp, store, request, bytes) = fixture().await;
     store.admit(&request, &bytes).await.unwrap();
-    let (_, workspace, worktree, agent) =
+    let (_, workspace, worktree, mut agent) =
         crate::store::sandbox_mongo_integration_tests::ledger_retirement_tests::hierarchy();
+    agent.conversation.last_seq = 2;
+    for (offset, kind) in [
+        layer2_core::sandbox::AgentLogKind::Created {
+            workspace_id: agent.workspace_id.clone(),
+            worktree_id: agent.worktree_id.clone(),
+        },
+        layer2_core::sandbox::AgentLogKind::OwnerMessage {
+            content: "retained conversation".into(),
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let entry = layer2_core::sandbox::AgentLogEntry {
+            agent_id: agent.id.clone(),
+            seq: offset as u64 + 1,
+            appended_at: layer2_core::now_rfc3339(),
+            kind,
+        };
+        store
+            .database
+            .collection::<Document>("agent_log")
+            .insert_one(crate::store::agent_log::log_document(&entry).unwrap())
+            .await
+            .unwrap();
+    }
     for (name, document) in [
         (
             "workspaces",
@@ -153,10 +179,6 @@ async fn full_archive_reconstructs_home_conversations_and_ledgers_before_gate_re
             .unwrap();
     }
     for (collection, document) in [
-        (
-            "agent_log",
-            doc! {"_id":"log1","agent_id":"agt_atomic","record":{"message":"retained conversation"}},
-        ),
         (
             "agent_artifacts",
             doc! {"_id":"artifact1","agent_id":"agt_atomic","content_base64":"cHJlc2VydmVk"},
@@ -187,7 +209,7 @@ async fn full_archive_reconstructs_home_conversations_and_ledgers_before_gate_re
             .find(|r| r.collection == "agent_log")
             .unwrap()
             .documents,
-        1
+        2
     );
     let verification = verify::restore(
         &custody,
@@ -230,6 +252,7 @@ async fn full_archive_reconstructs_home_conversations_and_ledgers_before_gate_re
         .unwrap()
         .retirement_archive_pending());
     store.database.drop().await.unwrap();
+    for root in &request.roots {std::fs::remove_dir_all(&root.path).unwrap();}
     assert!(verify::restore(
         &custody,
         &verification.manifest,

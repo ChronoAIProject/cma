@@ -29,6 +29,7 @@ pub(crate) async fn build(
     let policy = custody.policy().await?;
     let original = store.original(request, bytes).await?;
     let mut files = Vec::new();
+    let mut source_bytes = 0u64;
     for root in &request.roots {
         let tree = SnapshotTree::open(&root.path)?;
         let metadata = &tree.entries.first().ok_or(REFUSED)?.metadata;
@@ -36,11 +37,18 @@ pub(crate) async fn build(
             return Err(REFUSED);
         }
         for entry in &tree.entries {
+            if files.len() >= 200_000 {
+                return Err(REFUSED);
+            }
             let mut objects = Vec::new();
             let mut hash = Sha256::new();
             if entry.kind == Kind::File {
                 let mut reader = tree.reader(entry)?;
                 while let Some(data) = reader.chunk()? {
+                    source_bytes = source_bytes.checked_add(data.len() as u64).ok_or(REFUSED)?;
+                    if source_bytes > 1024 * 1024 * 1024 * 1024 {
+                        return Err(REFUSED);
+                    }
                     hash.update(&data);
                     objects.push(custody.retain(&request.operation_id, data).await?);
                 }
