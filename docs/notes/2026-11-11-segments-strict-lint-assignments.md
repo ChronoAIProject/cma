@@ -1,634 +1,138 @@
-# Segmentation integration and PR plan
+# Segmentation combined PR: current assignments and gate ledger
 
-Pre-review 2 baseline: `34bcc3667`, including normal slice/develop merges; branch
-`tl/cma-log-segments/integration-20261111`; develop `8167d01d8` is included.
-Mechanical follow-ups are `efc880523` and `3cb7a3348`, detailed below.
-Latest code assembly `05e4f4634` includes proof/schema pin `c4e4b995a`,
-S1 `f0d9746ef`, S4/S5 `2dbb5d81c`, config split `3fc57ec55` and develop
-`cece32bf4`. Interim combined gates stay fixed at immutable `b3052f1b6`;
-the final assembled head still requires its own complete qualification.
-No integration PR is ready. Pre-review 2 has four unresolved P1s; P1-2 is
-closed in source, while exact combined qualification remains a release gate.
-The source remains default-off. Production was not touched.
+Updated Thu 2026-11-12 07:27 SGT. S2 owns
+`tl/cma-log-segments/integration-20261111`. One default-off combined PR to develop;
+strict-green and PR by14:00, reviewer3 by15:30, explicit relay/merge by16:00,
+evening train19:00–22:00. Writer and recovery activation remain closed.
+No issue closes without its required production evidence. Native recovery remains
+Unsupported; source qualification does not claim supported production activation.
 
-The plan due Thu 2026-11-12 08:00 SGT is **one combined PR to develop**.
-The schema, proof capture, writer and recovery-carrier dependencies are not an
-independently qualified schema-first release. Narrow dependency branches are
-handoffs, not separate release candidates. Link #1348–#1351 and #1674 without
-closing an issue whose production acceptance is still missing.
+## Final handoffs normally integrated
 
-## Integrated checkpoints and ownership
+Combined source `e28cb6beb` contains all currently published final S1/S4/S5 pins:
 
-| Slice | Normally integrated pin | Remaining delivery / owner |
+| Owner | Pin / branch | Included work |
 | --- | --- | --- |
-| S1 readers/schema | `f0d9746ef` (compatibility correction `b9d390634`; readers `e955d37f1`) | Exact index drift and shared-reader qualification; response consumers now owned by S1 under the 01:55 allocation below. |
-| S2 composition / integration | scheduler `541c3f7f2`; merge checkpoint `e47527cbf` | Shared registration, runtime authority, accepted-work scheduler qualification, completed-work/loss routing composition and combined gates. |
-| S3 transcript consumers | `c62ab928f` (`bc08dc4a0` fixes) | Fixture sequence corrected; title/usage facts use projections. Transcript still traverses lifetime data; golden parity, pagination and scale evidence remain open. |
-| S4 publication | `2dbb5d81c` (prior composition gates `fbe139132`) | Remaining command/discovery/claim roots; response-interval metadata; segmented capacity successor; combined root qualification. |
-| S5 capacity recovery | `2dbb5d81c` | Current activation domain helpers, later-progress restart/loss tests and strict BSON/discovery corrections integrated; S4 service caller and actual current-source qualification pending. |
-| Develop | `8167d01d8` | Normally included; later develop merges require affected checks at the resulting candidate. |
+| S1 cma-cost | `f0d9746ef` response-consumers + `b24fb1c57` reader-foundation | Indexed response consumers, retained readers, legacy/v2 shared caller wiring, actual factory/public tests. |
+| S4 cma-seg-lead | `d8e10b63d` writer-publication | Scoped reconciliation, accepted-recovery composition, positive current activation caller, invariant agreement, final writer/recovery gate evidence. |
+| S5 cma-seg-3 | `2144909ce` capacity-recovery (ancestor of S4 final pin) | Sequence-only progress correction `00426512f`, original-witness recovery, later-turn fixture and qualified restart/loss cases. |
+| S3 cma-seg-2 | `c62ab928f` transcript-consumers | Prior checkpoint only; final bounded transcript/parity work still in progress. |
+| S2 cma-db-contention | `c4e4b995a` proof; `3fc57ec55` config split | Positive transaction-bound current publication, canonical schema/checksum/runtime roles, scheduler and integration. |
+| Develop | `3aee1ff68` | Retained-context and decoded-JSON policies normally included. |
 
-S2's new scheduler retains at most 32 candidates, executes at most two original
-accepted operations per sweep, alternates due/expired streams and reuses S5's
-fresh receipt-bound authority. It observes later explicit schema installation
-without startup DDL. Accepted settlement remains available when new admission
-closes. Its seven focused tests cover bounds, concurrency, failure isolation,
-restart, cancellation and later schema installation; execution is pending.
-It does not close the completed-recovery routing or native-proof gaps.
+Conflicts preserve every flag/parser/test once. Shared response reader attaches
+before either router is built. The response binding helper consumes the existing
+FeatureFlags to retain both independent policies within its argument bound.
+The duplicate quota child from S1 is removed only after verifying the existing
+registered assertions. No suppression or synthetic production consumer added.
 
-S4/develop merge conflicts retained both permission and parent-pacing flags,
-Sandbox snapshot/timing flags, all segmentation flags and the existing scoped
-captured-source reuse. Optional generations are compared only for unpublished
-recovery; segmented retained reopen still explicitly refuses until its exact
-bounded history proof exists. The S3 callback cleanup in `dcb94ae22` removes
-only an unused `mut`, with no semantic consumer change.
+## Exact current owner assignments — lead relay now
 
-## Lead allocation 2026-11-12 01:55
+All paths below are relative to `api/crates/cma/src/` unless stated otherwise.
+Owners start from this combined source (or merge it normally) before new fixes.
+Publish small pins plus exact selection/count/failure evidence. Do not edit other
+owners' source. S2 owns shared registration and resolves small module registrations
+from owner pins; owner tests should live in named new child files below.
 
-S1 owns the v2 AND legacy response retrieval/streaming implementation on
-`tl/cma-log-segments/response-consumers`, based on accepted `e955d37f1`.
-S2 stops editing those consumer paths and consumes the published branch normally.
-S2 retains shared composition/config/exports and canonical Mongo registration.
-S3 retains transcript/REST-history/frontend consumers. S4 retains shared
-projection facts, publication and bootstrap. The exact existing/planned file
-list is preserved in [coordination history part 2](2026-11-12-segments-coordination-history-2.md).
-
-S4 must supply historical model knowledge, response-interval usage through the
-next turn including post-terminal usage, and original terminal/prewrite-failure
-references. Missing proof is a typed refusal, not inferred metadata or a lifetime
-fallback. S1 consumes capture/evidence visibility changes with real callers.
-The output event-count/ordinal seek contract is retained in the shared note
-`2026-11-12-segments-response-event-contract.md`.
-
-## Narrow handoffs
-
-S1 operator/migration dependency: merge
-`origin/tl/cma-log-segments/operator-migration` at
-`b11107979231ec0da5683d8719722c8b4dfea15e` normally. It carries only the shared
-operator/migration implementation on develop. For the known add/add conflict in
-`store/migrations/agent_log_segments.rs`, retain that dependency's complete
-canonical-ledger adapter, including the schema-child checksum. Registration pin
-`9011a3796` remains available; preserve the union of existing selectors.
-
-S5 frozen carrier contract: `daf605ab410fc4737633aa3997e67192d4c4112b`, branch
-`tl/cma-log-segments/recovery-work-contract`. Outer BSON Int64 format_version is
-2 only; internal work format is Int32 1. Preserve the original result witness
-and immutable publication binding. Never register or relabel draft v1 rows.
-Install strict validation, simple collation and the exact nonunique due, expired
-and per-Agent discovery indexes. Retain the unique `_id_` index. No TTL/deletion.
-S1 owns schema/checksum validation, S5 codec/discovery, S2 shared migration/roles.
-
-## Current blocker ledger — pre-review 2 at 34bcc3667
-
-Source: `notes/reviews/2026-11-12-segments-prereview2.md`. Verdict changes:
-0 P0, **4 P1 + 2 P2 blocking findings**, plus one P3 nit. Prior numbered findings:
-8 source-closed, 3 open, 1 regressed; new P1-N1 and P2-N2 are included below.
-Source closure never substitutes for combined executable/release qualification.
-
-| Finding / state | Accountable owner and exact boundary | Required pin / proof deadline (Thu SGT) | 09:00 disposition rule |
-| --- | --- | --- | --- |
-| P1-1 OPEN: adopted Agents cannot claim/reserve/target-control | **S4 / cma-seg-lead**: `store/child_writer_claims.rs`, `agent_commands/reserve.rs`, `agent_commands/targeted_control/apply.rs` and remaining ordinary roots. S5 retains due-work discovery; S1 supplies its existing captured-proof interface. | Pin 07:30; actual adoption → discovery → AgentWorkerStore claim → ordinary/contextual/targeted admission → output, plus refusal/abort, by 10:30. Do not bypass the actual claim in fixtures. | Thursday only with a complete root inventory/pin and a credible remaining gate budget; otherwise name S4 and affected adoption scope for Friday. |
-| P1-4 / D6-2 OPEN: compatibility vector corrected in source; consumer bounds/parity still pending | **S1 / cma-cost** owns `agent_log_reads.rs`, response store/core/public consumers and v2 fallback dispatch. **S3 / cma-seg-2** owns `agent_log_segment_reads.rs`, transcript/usage/title consumers and bounded title-prefix reconstruction. S2 applies only agreed shared-core delegation/registration edits. | Both pins 07:30; stable continuation, v2 reads after flag closure, >10,128 rows/>4 MiB/long-turn parity and fixed requested-output query/byte/memory evidence at 1/10/100/1000 segments by 11:00. | Both halves must fit. Removing an old ceiling or retaining an unpaged projected response is not closure. Name the missing half/owner and dependent writer/reader scope for Friday. |
-| P1-3 OPEN: reconnect after later ordinary progress has no positive route | **S5 / cma-seg-3**: `agent_capacity_recovery/restart.rs`, `accepted_authority.rs`, worker/reconnect integration and actual restart/loss tests. **S2** supplies current-publication proof `c4e4b995a`; S4 coordinates publisher invariants and S1 retains capture. | API source published and passed13units/9Mongo at44ad; S4 agreement/caller published2dbb5d81c and consumed by S5; current-source caller qualification target07:30; positive later-progress actual restart/loss, fresh authority and foreign/stale refusal by 10:30. | Later revision, same incarnation or absent work alone never authorize reconnect. If the bounded positive proof is not implemented with executable cases by 09:00, name S5 and its S4/S1 dependency for Friday. |
-| P1-N1 ADDITIONAL: segmented CapacityRecovery admission rejected by writer | **S4 / cma-seg-lead** owns `agent_log_segments/writer_prepare.rs` and writer prepare/persist semantics. **S5** owns real admission/preparation callers and capacity Mongo tests. Preserve the existing shared helper interface if possible. | Writer pin 06:30 for S5 consumption; actual segmented admission, atomic seal/successor/carrier, abort, Unknown/restart and wrong/closed gate tests by 10:30. | Requires independent CapacityRecovery authority and original result/source identity. No substitution of ordinary Rollover admission, premature Ready or input replay. Missing contract/implementation at 09:00 falls to Friday. |
-| P2 / D6-5 OPEN: selected-consumer parity/failure matrix | **S3 / cma-seg-2** owns direct `AgentTranscriptFold`, transcript/usage projection tests and selected-reader replica-set fixtures. S1 retains response-specific parity/security tests under P1-4. | Matrix/test pin 07:30; actual legacy/segmented serialized parity, queued/steered/active/terminal/generation/gap cases, bad proofs, snapshot races, revocation after buffering, bounds and no read-side writes by 11:00. | The four repaired legacy tests alone cannot qualify new segmented readers. Unimplemented required cases at 09:00 are named for Friday with their consumer dependency. |
-| P2-N2 NEW: ordinary store module is 500 lines | **S2 / cma-db-contention** owns `layer2-core/src/sandbox/store.rs` and new `store/pagination.rs`. | Source fixed at `efc880523`: existing helper extracted, root now 480 lines. Existing pagination/maintenance/reconciliation selection passed37/0 atd76c2171b; combined lint and reviewer delta remain. Source target04:00 met. | Expected Thursday; requires executable checks and reviewer delta confirmation. |
-| P3 NEW nit: trailing blank line in history note | **S2 / cma-db-contention** owns `docs/notes/2026-11-12-segments-coordination-history-3.md`. | Trailing blank line removed in this checkpoint; base-to-candidate whitespace check passes. Source target 04:00 met. | Mechanical Thursday correction; non-blocking, tracked to completion. |
-
-The eight source-closed prior findings are P1-2 runtime/schema, P2-5 unresolved
-attempt preservation, P2-6 child budgets, S4 Option/u64/scoped-root build gap,
-S5 raw BSON shape, D6-1 required authentication, D6-3 enum layout, and D6-4 config
-documentation. The old S5 batchSize P3 is also source-closed. Retain their success,
-failure and combined gates; do not reopen them merely because the full build is
-not yet green. Native Unsupported is intentional and is not an additional defect.
-
-**Separate gate failure G1:** strict CMA at `34bcc3667` exited 101 on one emitted
-dependency diagnostic: S3 `AgentTranscriptFold` manual Default is derivable.
-Integrator applied the exact mechanical derive at `3cb7a3348`, preserving all
-field defaults. S3 retains semantic ownership and the open parity/bounds work.
-This is not a full warning inventory; repeat strict CMA on the next exact head.
-
-## Exact combined gate evidence
-
-| Source / gate | Result |
-| --- | --- |
-| `afc60d98a` authenticated Mongo | **1 passed, 0 failed, 2,568 skipped**. Canonical migration, format-2 witness/v1 refusal, isolated controls/work access, missing-grant and foreign-collection refusal. Build 4m22s; execution 1.789s. Owned fixture cleanup completed. |
-| `afc60d98a` formatting / source size | Passed; 6,125 files in the source-size check. |
-| `afc60d98a` runner / config reference | 31 mocked runner tests and 4 config parser tests passed; canonical config documentation passed. These are not actual Mongo qualification. |
-| `afc60d98a` strict CMA | Exit 101: S5 `CompletedAttachment` large enum variant is the first dependency failure; not a full warning inventory. |
-| `afc60d98a` adapter | **45 passed, 0 failed, 653 skipped**, 0.489s execution. Operator gate: **56 passed, 0 failed, 2,513 skipped**, 0.493s execution. Full Mongo gates remain in flight against the archive. |
-| `e7e4cdda0` scheduler/config | Compilation failed: three Send/FnOnce diagnostics from the borrowed request iterator; zero tests executed. |
-| `541c3f7f2` scheduler/config | **Result rejected:** reported 34 passes but omitted all seven new recovery-scheduler tests. Shared-target source aliasing invalidated this run; corrected gate will rebuild workspace artifacts and verify test inventory before execution. |
-
-A byte-verified export under the existing `api/target` pins archived gate source
-while integration continues. Guards reject a mismatched commit or changed bytes
-before Cargo. The one Cargo target remains `api/target`; each heavy step acquires
-and releases the existing heavy-1 lock with a 3,600-second allowance and at most
-two jobs. Each Mongo partition has at most 40 selected contracts and removes its
-owned fixture before the next allocation. Shared locks and other worktrees are
-never removed or changed. Remove disposable exports after their gates finish.
-
-## PR-ready gates and schedule
-
-1. Freeze all slice heads, merge current develop normally, review the combined
-   diff and preserve exact selector/authority/schema inventories. Files remain
-   under 500 lines; no warning suppression or fake production reachability.
-2. Formatting; strict CMA and affected-layer Clippy with warnings denied; affected
-   core/API/adapter tests. Record exact source, counts, skipped tests and failures.
-3. Real Mongo: transaction-scope reuse refusal; canonical schema/drift/restart and
-   isolated roles; captured reads/audits; writer roots/adoption/rollover; lost ACK,
-   absent receipt/restart/later-head; recovery claims/receipts/parent fences and
-   oversized children. Do not weaken production proofs to accommodate fixtures.
-4. Bounded consumer evidence at 1/10/100/1000 segments with a fixed requested
-   page: commands/checkouts, bytes, p50/p95/max and memory. Golden v1/v2 parity,
-   long turns, large histories, stable replay cursors, revocation/backpressure,
-   historical models and post-terminal usage. No lifetime fallback on v2.
-5. Compatible old/new readers and writers, an actual supported rollback artifact
-   (#1327), default-off restart, coherent backup/restore and closing admission
-   while retaining v2 reading and accepted settlement.
-6. Real pinned-runtime recovery proof before recovery activation/#1351 closure:
-   original home/boot/conversation, independently current native state/output,
-   exact receipt/fence, crash before/after completion, no new process/input replay.
-7. Canonical config/manifest, structure/size, secret and Mongo-runner gates;
-   release-owner stage/kill-switch/evidence instructions; exact-head review and
-   explicit lead merge relay. Monitor merged develop CI and fix forward/revert
-   an actual failure within one hour. The release requires its exact green artifact.
-
-Current target: **Thursday 2026-11-12 16:00 SGT reviewed and merged**, with
-release-owner deployment in the **19:00–22:00** window. Aim for a frozen source
-by 10:30, strict-green combined gates by 13:30, PR ready by 14:00, and final
-review/delta closure by 15:30. The current strict-green forecast is still
-12:00–16:00, so this schedule is at risk until the 09:00 owner checkpoint proves
-which items fit. It is a target, not a gate result or a new owner commitment.
-Items that cannot qualify in time must be named with their owners by **09:00**
-and fall back to the **Friday 2026-11-13 13:00 train**. Do not drop a required gate.
-Full recovery activation has **no defensible ETA while the native producer is
-deferred**. A source review must retain that blocker and cannot claim #1351 done.
-
-Activation order: explicit additive schema, compatible readers and qualified
-rollback floor, small writer cohort, separately qualified capacity-recovery
-cohort, then wider activation. Close new admission on correctness/authority or
-unknown-outcome faults, retaining compatible readers and accepted recovery.
-Never roll back to a binary that cannot read already-written envelopes/sidecars.
-Require representative route/checkouts/bytes/scan evidence, a real natural
-rollover and at least 36 minutes of canary observation before expansion. Target
-Thursday-evening deployment and separately authorized staged activation, with
-stable watch through Sun 2026-11-15; issue closure
-requires each issue's own verified production evidence.
-
-Complete chronological coordination snapshot:
-[part 1](2026-11-12-segments-coordination-history-1.md) and
-[part 2](2026-11-12-segments-coordination-history-2.md).
-
-## Integration-only #1696 and branch evidence
-
-GitHub REST reports #1696 base `tl/cma-log-segments/integration-20261111`, head `a744a5a3feab021eb3a4e5042540116ae89bd36f`, and merge `d036173eb56bd9d410ba4b8bf9b909205c40d9fa`. The merge subject is the ordinary local merge of the transcript branch into integration. After fetching origin, both `git merge-base --is-ancestor <merge-or-head> origin/develop` checks exit 1 at develop `42fbf75de`; the merge is contained by the integration ref only. The integration push marked the PR merged because integration was its base. No `gh pr merge`, develop push or protection change was performed here. Lead confirmed the integration-only merge and cancelled the revert. Keep the five delta6 blockers on the combined candidate; no develop merge is authorized.
-
-Scheduler/config gate at `e7e4cdda0` exited 101 during compilation: the borrowed request iterator produced three Send/FnOnce diagnostics, with zero tests executed. Own commit `541c3f7f2` moves each request into its future and retains the two-attempt bound. The exact corrected-head gate is queued; source/HEAD stay fixed until completion. This correction is not yet pushed or test-qualified.
-
-
-## S4 runtime-loss ownership
-
-The exact transferred paths, pins and root qualification contract are retained
-in [coordination history 10](2026-11-12-segments-coordination-history-10.md).
-S4 retains scoped reconciliation/publication and recovery source capture; S5
-retains lineage/native correctness. The later 03:25 service ownership supersedes
-the older general service assignment. S2 retains shared registration and integration.
-
-## #1696 delta6 disposition
-
-Pre-review 2 supersedes the older delta6 ledger. D6-1 authentication, D6-3 enum,
-and D6-4 configuration are closed in source. D6-2 is regressed and assigned to
-S1/S3 above; D6-5 remains open with the fixture half repaired. All five retain
-exact source/gate evidence. The previous integration-only merge did not imply
-review approval or change develop. See the current blocker ledger for deadlines.
-
-Earlier S5 correction, response test registration, accepted 08:30 NO-GO and
-combined-source gate history is preserved in
-[coordination history part 5](2026-11-12-segments-coordination-history-5.md).
-The current Thursday-evening schedule and exact source results below supersede
-those earlier forecasts. The 01:55 response ownership allocation remains binding.
-
-## Current delivery schedule — lead retarget to Thursday evening
-
-This supersedes earlier Friday-first source/review targets. The accepted 08:30
-NO-GO does not change. Pre-review is pinned at published `34bcc3667`; preserve
-its finding references while recording each subsequent fix and exact test head.
-No develop merge is authorized by this schedule alone. The normal exact-head
-review and explicit MERGE relay still apply; release uses green develop CI.
-
-| Slice / owner | Required delivery and evidence | Source / gate deadline (SGT) |
+| Owner | Exact remaining item and file ownership | Deadline Thu SGT |
 | --- | --- | --- |
-| S1 / cma-cost | Publish a consumable reader/response pin: retained v2 reads independent of admission flags, indexed long-turn response/events and legacy retrieval, >10,128-entry/>4 MiB parity, current authority, event cursor/page limits and unchanged-head polling. Include exact capture/schema/index dependency inventory. | Progress/pin 07:30; executable consumer and reader evidence 11:00. At 09:00 name any unresolved item that prevents 13:30 combined qualification. |
-| S2 / cma-db-contention | Integrate all pins; qualify source-closed P1-2 through the canonical migrator, exact runtime grants and discovery indexes; run current-source strict CMA, scheduler/config, adapter, authenticated Mongo and partitioned Mongo. Prove the seven new scheduler tests actually execute. Resolve shared wiring/registration deltas and track every pre-review finding. | Gate progress 07:30; itemized fallback decision 09:00; source freeze 10:30; combined gate evidence 13:30; PR 14:00. |
-| S3 / cma-seg-2 | Close remaining delta6 transcript lifetime traversal with caller continuation and a bounded requested page. Execute repaired legacy fixtures plus serialized v1/v2 parity, stale/corrupt/unsupported proofs, append/snapshot, generation/retirement, revocation, no read-side writes and 1/10/100/1000-segment cost evidence. Source-only title/usage changes do not close transcript qualification. | Source/pin and fixture results 07:30; full bounds/parity matrix 11:00; 09:00 risk/fallback decision. |
-| S4 / cma-seg-lead | Consume the transferred runtime-loss dispatch; qualify nonempty mixed-v1/v2 children, original scoped receipts, parent CAS and unknown outcomes. Finish ordinary v2 reserve/control/cancellation/claim roots and P2-5 root qualification. Supply exact response facts to S1. | Runtime-loss checkpoint 04:00 target remains; full caller pin 07:30; focused Mongo evidence 10:30. Report unresolved roots at 09:00. |
-| S5 / cma-seg-3 | Qualify exact completed-recovery restart/loss routing, fresh personal/parent authority, strict format-2 witness/codec, discovery and total child bounds. Supply real source/gate counts after the privacy-export and enum fixes. Typed Unsupported stays honest while native proof is unavailable. | Service/restart pin and first actual results 07:30; remaining default-off protocol gates 10:30. Native activation fallback identified below. |
-
-Each owner checkpoint must include the immutable pin, consumed dependency pins,
-actual success/failure/skip counts, remaining blocker, and its execution ETA.
-Use the existing shared heavy slot with two Cargo jobs and release it between
-steps. Use one target per worktree and remove obsolete artifacts; never delete
-shared lock files. The combined source is fixed while an in-place gate runs.
-
-**Known fallback item, named before 09:00:** native production recovery proof and
-capacity-recovery activation, **S5 / cma-seg-3**. There is still no qualified native
-producer. It is a Friday 13:00 candidate only after real pinned-runtime evidence;
-Friday is not a promise of unsupported capability. A reviewed default-off PR may
-retain the explicit Unsupported path. Do not enable recovery or close #1351 from
-mocked native ports or receipt-only tests. Required default-off protocol tests
-and the remaining P1-3 routing/authority checks are still due Thursday.
-
-At 09:00, publish a named GO/NO-GO row for each unresolved item, its dependency
-impact, and the largest safe qualified scope. A missing reader/parity dependency
-cannot be treated as closed because writer admission is off. The combined PR
-remains the authorized vehicle; any fallback must retain its required dependency
-closure and strict gates. Aim for final review by 15:30, relay/merge by 16:00,
-then monitor develop CI and hand the release owner exact-head evidence for the
-19:00–22:00 deployment. The release owner performs production changes/verification.
-
-
-### S5 exact-source capacity gate — 4d7f6d680
-
-At clean, unchanged `4d7f6d680`, `cargo test --locked -p cma --bin cma capacity` passed: 64 passed, 0 failed, 63 ignored, 2429 filtered. This includes all four strict raw-BSON shape regressions and the existing completed-activation/no-replay model tests; ignored Mongo tests are not counted as passed. Formatting and source-size passed (6119 files). Actual Mongo is queued separately under either existing heavy lock, retaining one reusable target and two Cargo jobs. No source mutation will occur during the run. The format-2 contract remains `daf605ab410fc4737633aa3997e67192d4c4112b`. P1-3 executable restart/loss proof, exact profiler conformance and strict lint remain pending; no PR-ready or activation claim.
-
-
-## 09:00 Thursday decision checkpoint
-
-At 09:00, report each row above as **expected to qualify for 16:00** or **Friday
-13:00 fallback**, naming its primary owner and dependent slices. The Thursday
-forecast requires published source, known test selection, actual results so far
-and sufficient slot/runtime budget to finish combined gates by 13:30. It is not
-merge or activation approval. Unresolved proof contracts, missing consumer cases
-or an unspecified source ETA cannot be reported as GO. Source closure is separate
-from any pending execution. Final review/deltas must finish by 15:30 for the
-explicit 16:00 merge relay. Keep the already named S5 native activation fallback
-separate from the default-off source's remaining P1-3/P1-N1 correctness gates.
-
-
-### S5 actual Mongo result and preparation diagnostic — 69eda007a
-
-At unchanged `4d7f6d680`, all19 S5 Mongo tests executed on pinned disposable8.0.13:17passed/2failed/0ignored in33.03s. The actual-consumer profiler PASS establishes wire limit32/batchSize32/singleBatch:true plus the existing page/count/key/document/byte bounds (P3). All carrier, unknown-result, authority, overflow and existing pacing cases passed. Restart still fails at service.admit with preparation Conflict; test-only stage tracing establishes that source capture/plan completed and the refusal occurs in the gate/admission/slot transaction, before bootstrap/native IO. The new adopted due-work case fails at append_agent_log_keyed before any discovery assertion. Neither test passes; no P1-3 closure. Owned Mongo container/volume removed.
-
-`892aadc89` adds test-only diagnostics distinguishing writer_admission::admit from writer_gate::slots::claim. Normally merged develop1d425cffc and pushed `69eda007a`, retaining both independent feature sets and tests. The bounded600-second CMA+Mongo rerun is queued on clean fixed source, with two jobs and one target. The runner also captures a read-only host/Mongo clock bracket to diagnose server-time slot refusal; no clock change or validation relaxation is performed.
-
-
-## Prior checkpoint evidence archive
-
-The 03:27–04:29 integration/gate history is preserved verbatim in
-[coordination history 6](2026-11-12-segments-coordination-history-6.md).
-It records the valid37/0 pagination test result, historical Mongo110/5 (not
-current-source evidence), normally consumed S1/S4/S5 pins, and S5 exact-source
-67CMA/19Mongo/46core/8HTTP/7adapter passes. The published integration baseline
-is efc1fd426; its focused Mongo run later failed compilation as recorded below.
-No strict or actual-Mongo pass is inferred for that combined head.
-
-## Early proof handoff archive
-
-The original API handoff, S4 composition integration and first pinned unit results
-are preserved in [coordination history 8](2026-11-12-segments-coordination-history-8.md).
-Newer source pins and executable evidence follow below.
-
-## Frozen current-publication and activation boundaries
-
-S2 API/schema pin `c4e4b995a` retains the immutable recovery carrier and original
-result. S4 confirmed the publisher invariant in `281f92000` and published its
-service caller in `87c8e0d48`, now on `2dbb5d81c`. S5 has normally consumed it.
-The scoped proof and fresh authority precede `receipts::require_current_result`
-and `RecoveryActivation::capture_current`; recapture/equality after native IO
-remains mandatory. Native production Unsupported remains explicit.
-API details: [current-publication proof](2026-11-12-current-publication-proof.md).
-Prior pinned evidence and assignments are preserved in
-[coordination history 11](2026-11-12-segments-coordination-history-11.md).
-
-## Lead allocation 05:20
-
-Lead answer #216 transfers response-consumer caller wiring to S1 on
-`tl/cma-log-segments/reader-foundation`; S2 keeps all other shared composition.
-Exact S1 edit paths for this narrow delta:
-
-- `api/crates/cma/src/projections.rs`: attach the response reader to the shared
-  Agent read service before legacy response/router/stream state construction.
-- `api/crates/cma/src/composition.rs`: only the corresponding response-reader
-  builder call in AgentProjectionServices construction.
-- `api/crates/cma/src/composition/bindings.rs`: remove the redundant v2-only
-  reader attachment; keep binding/gateway policy and every other caller intact.
-- `api/crates/cma/src/projections/response_readers_tests.rs`: focused production
-  construction regressions; register this child in projections.rs.
-- `docs/notes/2026-11-12-response-caller-handoff.md`: source/gate evidence.
-
-The route and stream handlers already call the indexed interfaces, but current
-production composition installs the reader only in the v2-specific clone. The
-legacy router therefore receives an unconfigured read service. The fix wires
-the shared service once before route construction. Legacy optimization and
-writer/recovery admission stay default-off; retained adopted readers stay usable.
-The prior22/20 lint diagnostics concern S4/S5/reconciliation roots, not these
-response callers. S1 will execute strict CMA and report its exact disposition
-without altering other allocations. Target:10:00 for the16:00 combined merge.
-
-
-Earlier c3ca integration/runner evidence is preserved in
-[coordination history 12](2026-11-12-segments-coordination-history-12.md).
-
-### S5 lint correction and develop synchronization —3aaa5539512ac97440fb665b4e3352bc0f56ae8e
-
-Strict at5123295c3 exited101 with one unused ReconnectAction test re-export in the shared sandbox registry; all other diagnostics absent. S5 fixed its owned test in3cf361ac4 by exercising the legacy positive router decision directly and asserting zero restricted native attachments. No shared registry edit, suppression or synthetic production consumer. Exact failed log2026-11-12-s5-strict-5123295c3.log.
-
-Develop advanced tocf1d6ce54 (#1719). The normal merge had two conflicts: sandbox/composition.rs construction and infra/api/configmap.yaml flags. The mechanical resolution preserves capacity_worker/capacity_recovery, the reviewed event-driven reconciliation builder, parent pacing=false and event-driven reconciliation=false. The3cf checkpoint push preceded completion of this newly fetched merge; it was immediately followed by the normal resolved merge3aaa55395, another fetch/merge verification and push. No history rewrite. Pushed head3aaa5539512ac97440fb665b4e3352bc0f56ae8e is clean and includes current develop. All imported feature/parser/test changes are retained.
-
-Formatting and configuration-documentation checks pass. Root restart374lines, later249, support218. Full source-size/history scan and strict gate8 are in progress/queued on the final merged source. Core49/HTTP8/adapter7 remain passed at unchanged domain pin11f381ea0. Later-progress Mongo source is ready but its S4-owned service.rs::activation_authorized caller still needs the already-published helpers; no actual later-progress pass claimed. Native Unsupported stays typed.
-
-
-### S1 response callers — source prepared, gates queued
-
-Caller fix `982360fa279ba8f633c0fea53ac0cf7389d5ff79` on reader-foundation
-attaches the retained reader to AgentProjectionServices before both legacy and
-v2 construction; removes the v2-only attachment. Normal develop merge
-`74dfc3406eadecabde6c3fca1b29cca1ff783735` preserves both disabled flags in
-the manifest conflict. No other shared composition was changed by the fix.
-Two production-factory regressions cover retrieval, ownership refusal, and
-stream source failure with paging disabled. These commits are local pending
-the targeted tests and strict CMA run; not a passing-gate or published claim.
-The immutable gate export is queued on existing heavy-1, with two Cargo jobs.
-At 05:33 SGT heavy-0 was absent; heavy-1 retained inode 160080032. S1 did not
-remove, recreate or modify either lock and continues on heavy-1.
-
-
-### Replaced unexecuted combined gate source —41c74a702
-
-Normally integrated S5 `3aaa55395`, including the real legacy-router test fix
-`3cf361ac4` for its one strict unused re-export diagnostic. No production
-registry suppression or synthetic consumer was added. The prior combined
-`c3ca9e3aa` coordinator was still waiting for narrow proof Mongo: stopped before
-any Cargo, lock acquisition or fixture allocation. Its unused export was removed.
-The replacement immutable source is `41c74a702`, with the same separately
-locked gate list. No heavy result is attributed to either combined head yet.
-
-
-### S5 strict/light PASS —3aaa5539512ac97440fb665b4e3352bc0f56ae8e
-
-Current-source strict four-package/all-target/all-feature Clippy with -D warnings passed in2m28s, exit0; exact log2026-11-12-s5-strict-pass-3aaa55395.log. Formatting, whitespace, configuration-doc coverage, canonical file-size6192files and history3884commits/zero-findings pass. Native/worker/test code is compiled, including the later-progress fixtures. No current-head runtime pass is inferred from compile/lint.
-
-The following CMA capacity gate initially refused before execution because heavy-0 was removed after release. Heavy-1 remains the original160080032; the acquire wrapper now skips missing/replaced locks and queues only original inodes, without recreating files. Lead coordination was requested after observing queued no-k probes; full evidence2026-11-12-s5-lock-probe-observation.md. CMA gate5 is queued on the intact slot. One reusable target retained, two jobs. A separate optional existing-only Mongo selection is prepared (gate11, explicit --skip restart::later::); the default full selection remains unchanged. Any such run will be reported as25existingcases only, with all3new later-progress functions still required after S4's caller pin.
-
-Latest S2 source pin c4e4b995a adds the lookup name to canonical migration checksum without API change; consume normally after the executing/queued source gate. S2's latest handoff assigns S4 caller/invariant checkpoint by06:30. S5 remains active on owned gates; no activation or PR-ready claim.
-
-S1 post-develop source-size gate at `74dfc3406`: shared
-`api/crates/cma/src/config/features.rs` is 506 lines after retaining both parents'
-flags and tests; its cohesive test-module split belongs to S2's shared-root
-integration. S1's four caller files are 409/489/123/452 lines. The earlier size
-pass preceded this normal develop merge and is not a pass for the merged head.
-No flag or test has been removed to satisfy the limit. Heavy gates remain queued.
-
-
-### P1-3 proof actual-Mongo PASS and current combined queue
-
-At exact `44ad38198`, actual disposable Mongo **9 passed, 0 failed, 2,639
-skipped**, 19.476s. Includes six current-proof cases, canonical publication
-schema and two abort/unknown-outcome cases. The same source passed13units.
-The source guard and owned fixture cleanup completed successfully. This is API
-qualification, not S5 later-progress worker/native activation or combined lint.
-
-Normal integration source `8c44436f7` includes develop `ce72ee311` raw-output
-policy. Its conflict resolution preserves the original output-JSON test and
-moves the new raw-output test unchanged into the existing rollout child; root
-496lines, child99. Fmt, config and whitespace pass. The unused41c export/queue
-was removed before any gate started. Strict CMA on immutable8c is now queued
-under heavy-1, followed by scheduler/adapter/authenticated and retained Mongo.
-The completed44ad export is removed; one Cargo target is retained for this run.
-
-Operational risk: heavy-0 was observed absent while heavy-1 retained inode
-160080032. Three earlier non-keeping lock probes are queued against heavy-1;
-lead notified. Own gates use `lockf -k -n -t 3600` and now verify the expected
-heavy-1 device/inode before Cargo and throughout execution. No shared lock was
-created, removed or repaired here. Combined gates stop if its identity changes.
-
-
-### S5 current caller consumed — 2dbb5d81c844f090cd3a9ee0e4d995545e59289f
-
-At approximately05:47 SGT, normally fast-forwarded the capacity-recovery branch to the published S4 caller source2dbb5d81c, which already includes S5's3aaa55395 and S2 checksum pinc4e4b995a. Fetch/develop merge was already current; push/readback succeeded. No ownership-crossing source edit or history rewrite. The obsolete gate5 was still queued and was cancelled before Cargo/Mongo; its owned lock waiter was released. Gate10 now queues current-source CMA capacity units followed by the complete recovery Mongo selection, including all3S5 later-progress functions and2S4 service functions. The service caller now verifies original work, requires current result and derives capture_current in the same fresh-authority transaction; no signature gap remains.
-
-Current fmt, whitespace, canonical size6199files and configuration documentation pass. Secret scan is running. Strict/current-source runtime gates remain pending; previous strict3aaa55395 and core49/HTTP8/adapter7 at11f381ea0 stay separately attributed. Native production proof remains Unsupported; writer/recovery admission stays closed. Slot1 retains original inode160080032 and is the only slot queued here. Slot0 now has replacement inode162845701, so the owned runner skips it pending coordinated baseline confirmation. No shared lock was changed. One target retained for these immediate gates; no owned Mongo fixture exists yet.
-
-Next checkpoint: actual CMA/Mongo and strict results after slot acquisition; target07:30, conditional on the shared slot and successful runtime qualification. S2 owns the combined PR.
-
-S1 caller tests executed at immutable `74dfc3406`: **2 passed, 0 failed,
-0 ignored**, 2,597 filtered; source checksum unchanged. Public response tests
-and strict CMA remain queued. The shared configuration size correction can
-move the cohesive reconciliation_tests module into a child without dropping
-flags or tests; S1 leaves that shared-root edit to S2 as allocated.
-
-
-### S4 P1-3 caller and invariant normally integrated
-
-S4/S5 `2dbb5d81c` supplies `activation_authorized` and two service Mongo cases.
-Its explicit invariant agreement is `281f92000`: the atomic shared publisher
-binds the full next Agent, head and immutable receipt even for revision-only
-progress. This closes the missing signature/agreement/caller source handoff;
-S5 actual worker/loss and S4 service cases remain unexecuted on the combined head.
-The merge preserves the canonical blocker ledger and both owners' evidence.
-Duplicate pacing declarations are kept once; the unchanged raw-output test is
-registered once in S4's child module. No production permission was weakened.
-
-S1 reported shared features.rs at506lines on its caller branch. S2 published
-`3fc57ec55` on `tl/cma-log-segments/config-test-split` for normal merge;
-the existing reconciliation test is unchanged and the parent shrinks26lines.
-Heavy-0 restoration was relayed by the lead (new inode162845701); all owned
-lockf calls already include -k, and heavy-1 keeps its guarded original inode.
-
-### S1 required develop-sync conflict resolution
-
-The pre-push fetch advanced develop to `ce72ee311` and conflicts directly in
-`api/crates/cma/src/config/features.rs`: raw-output rollout versus the retained
-quota and response branch settings. The normal merge must preserve both. Since
-this now requires editing that shared file to complete the mandated develop
-sync, S1 will mechanically extract the two conflicting cohesive test modules
-into `api/crates/cma/src/config/features/quota_tests.rs` and
-`api/crates/cma/src/config/features/raw_output_tests.rs`, preserving test names
-and all flags/parser mappings. This closes the source-size failure introduced
-by the combined declarations; no shared composition behavior is changed beyond
-the develop merge. S2 retains every other shared-root edit. Gates retain their
-actual tested source pins; configuration tests must run after this resolution.
-
-### S1 published response caller checkpoint — b24fb1c57
-
-Normal push complete: `tl/cma-log-segments/reader-foundation` at
-`b24fb1c570858392125c8ec6e5eb2d71688b137a`; caller-only commit
-`982360fa279ba8f633c0fea53ac0cf7389d5ff79`. S2 can merge normally. The latest
-normal develop sync consumes `ce72ee311`, preserves all fields/functions/keys
-from both parents, and keeps the shared configuration at 492 lines by moving
-quota/raw-output tests into their same-named child modules. This supersedes the
-earlier request for S2 to split the oversized file. Two factory tests passed at
-`74dfc3406`; current configuration, public response and strict CMA gates remain
-pending. Activation stays closed; this is a source checkpoint, not PR ready.
-
-
-### Combined caller qualification source —b3052f1b6
-
-The old8c strict waiter was canceled before acquiring a slot or starting Cargo;
-its source export is removed. The immutable replacement includes S4 caller and
-S1's narrow size dependency. Its batch is strict CMA, scheduler/config, adapter,
-authenticated Mongo, all current capacity-recovery Mongo (including the3S5 and
-2S4 later-progress functions), then retained assessment/discovery Mongo. Every
-step separately uses the existing heavy-1 with -k -n -t3600 and2jobs.
-One target retained; no combined heavy pass claimed. The S1 handoff is
-[config-test-split](2026-11-12-config-test-split-handoff.md).
-
-S1 response suite at published `b24fb1c57`: **104 passed, 0 failed,
-1 ignored** (existing SDK loopback fixture), 504 filtered. This includes the
-large-history, long-turn, pagination, authority and stream-error regressions.
-Source checksum remained unchanged. Formatting, whitespace, source-size
-(6,168 files) and canonical history secret scan (3,840 commits) also passed.
-Strict CMA and final configuration/factory execution remain pending.
-
-
-### Retained-context develop merge —05e4f4634
-
-Normally merged develop `cece32bf4` (#1693). Retained both default-off flags,
-builder methods, constructor defaults and ConfigMap keys. The shared
-`composition::bindings::responses` helper now takes the existing
-`crate::config::FeatureFlags` as its final argument, reading both named fields;
-its one production call passes `config.features`. This preserves both behaviors
-and avoids an eight-argument lint failure without suppression. S1 retains all
-response caller semantics and can keep this mechanical signature when merging.
-Formatting/config/whitespace pass; features root475lines. No caller test is
-claimed for this new merged head. Final qualification must include retained
-context success/refusal and paged-response tests as well as the recorded gates.
-The current b305 gate source remains frozen while integration continues.
-
-S1/S2 size-split overlap checked: non-mutating merge preview of published
-`b24fb1c57` with S2 `3fc57ec55` is clean (tree `724d41562`). Combined parent is
-466 lines; retain the quota, raw-output and reconciliation child modules and
-unchanged fully qualified test names. No integration-tip merge was made into S1.
-
-
-### S5 current Mongo result and sequence-progress correction
-
-Part of #1351. Exact source `2dbb5d81c844f090cd3a9ee0e4d995545e59289f` passed **74 CMA capacity units**, zero failed (75 ignored are not passes). The complete actual Mongo run executed **30 tests: 26 passed, 4 failed, zero ignored**, in 81.39s. The clean-source guard completed and the owned pinned 8.0.13 container/volume were removed. The original restart and profiler cases pass.
-
-The new later-progress cases expose a concrete revision assumption: `store/agent_log/keyed.rs::publish` advances `conversation.last_seq` and the publication head while preserving `Agent.revision`. S5's original-result checks compare only Agent revision, so they incorrectly require the original full-Agent digest after legitimate output. S5 is fixing its owned `receipts.rs` to identify the original position by **both revision and through-sequence**, and to require the positive current publication for advancement of either coordinate. No witness, current-authority, native-confirmation or recapture check is removed.
-
-S5 is also correcting its positive fixture to assert unchanged Agent revision plus increased sequence for keyed output; its negative fixture will select the newest witness by revision **and sequence**, avoiding the original completion publication.
-
-S4-owned correction needed in `agent_capacity_recovery_tests/composition/later_progress.rs:123`: assert unchanged Agent revision and increased last_seq after the real keyed append. Do not manufacture a revision increment in the fixture or publisher. The second service failure (`committed`: Conflict instead of Unknown) and S5 race failure (zero attaches) occur at the same original-result refusal; rerun after the helper pin. The S5 positive test currently fails its incorrect revision assertion first.
-
-Exact failure names: both `composition::later_progress` functions, plus `restart::later::capacity_later_progress_restarts_with_current_target_without_rewriting_completion` and `restart::later::capacity_later_progress_recaptures_parent_and_publication_before_acknowledgement`. S5 has not edited the transferred composition paths. Current source is not Mongo-green or activation-ready. The correction pin and new actual results follow; Project 9 remains In Progress.
-
-
-### S5 sequence-only correction pin —570cb1148
-
-Part of #1351. The S5 sequence-only correction is published as `00426512f`; the consumable branch head is **`570cb11488cb21b7c946052105af381af759b64e`** on `tl/cma-log-segments/capacity-recovery`. It normally merges S4 `086c8edcd` (including the corrected assertion and exact-current-witness service test) and develop `3aee1ff68`. No shared composition path was edited by S5.
-
-`receipts::{verify_binding,require_current_result}` now identifies the unchanged result by both Agent revision and through-sequence. Revision/sequence regression still refuses; any later Completed result still needs the existing positive full-current-publication proof in the same fresh-authority scope. Original work/result, native target/fence checks and post-IO recapture remain unchanged. A focused receipt regression covers sequence-only advancement, and S5's actual-worker fixtures now assert the real keyed behavior and select the exact current receipt by Agent/revision/sequence.
-
-This resolves the source boundary identified by both runs at `2dbb5d81c`; their failures remain recorded, not relabelled. Current-source CMA capacity units and the complete recovery Mongo selection are queued under either verified shared lock, with -k, two jobs and one target. Strict and affected-layer gates follow. No corrected-source runtime pass or activation claim yet. Project 9 remains In Progress.
-
-### S1 exact-head strict CMA result — b24fb1c57
-
-Strict CMA all-targets/all-features `-D warnings` executed and exited 101:
-22 normal-target and 20 test-target errors, all in shared capacity recovery,
-reconciliation and transaction_scope::insert_one. No response-caller or
-configuration-split diagnostics. The full path inventory and log are in
-`2026-11-12-response-consumer-evidence/callers-current-lint-summary.json` and
-`callers-02-cma-clippy.log`. Source checksum unchanged. Published response
-suite:104 passed/0 failed/1 existing ignored. Final configuration/factory gates
-are queued at b24fb1c57; S2 retains real shared-root integration and strict-green
-qualification. No suppressions or synthetic callers were introduced.
-
-
-### S5 sequence-only runtime pass and turn fixture correction
-
-Part of #1351. At clean unchanged `570cb11488cb21b7c946052105af381af759b64e`, **75 CMA capacity units passed** (zero failures; 76 ignored are not counted). Actual pinned Mongo executed **31 recovery tests: 30 passed, 1 failed, zero ignored**, in 81.44s; owned container and volume were removed.
-
-The sequence-only correction is exercised successfully: all three later-progress service tests pass, along with the actual sequence-only worker/loss route, proof refusals, publication/Retiring-parent races, original restart, profiler and strict-carrier contracts. The sole failure was the `turn=true` fixture inside `capacity_later_progress_restarts_with_current_target_without_rewriting_completion`: writer preparation correctly refused a TurnStarted batch missing its required OwnerMessage evidence, before recovery/native IO.
-
-Test-only correction **`2144909ce`** is pushed on `tl/cma-log-segments/capacity-recovery` after fetch/normal develop merge (already current). Its fixture publishes the synthetic later owner message together with TurnStarted and StatusChanged, with three contiguous sequence numbers. Production checks, original recovery witness, native boundary and no-replay assertions are unchanged. The complete corrected-source CMA/Mongo gate is queued with one reusable target and two jobs under either verified shared lock. Strict/affected-layer gates remain required before handoff as qualified. Native production proof stays Unsupported and admission remains closed. Project 9 remains In Progress.
-
-### S1 actual combined merge preview —50485e900
-
-Current combined-head merge preview: `b24fb1c57` into `50485e900` merges the response caller files automatically. The only conflict is `api/crates/cma/src/config/features.rs`, from declaration ordering and overlapping test-module splits.
-
-The combined configuration layout already contains every caller-branch flag, configuration key and test function, plus its newer integration flags. Preserve that complete layout, with each field/parser assignment once; retain the shared caller attachment from the automatic composition merge. The raw-output test child is identical. The caller branch's extracted quota test is already represented in the combined quota modules; if retaining the combined module layout, remove the newly merged unreferenced `features/quota_tests.rs` rather than leaving an unused test source.
-
-This is a non-mutating preview, not a combined build pass. Exact-source gate evidence and default-off rollout requirements remain unchanged. Next integration checkpoint is Thu 2026-11-12.
-
-
-
-### S5 current-source runtime PASS —2144909ce
-
-Part of #1351. **Current-source runtime PASS** at `2144909cede519ed286184a7fffe1af3e645a47b` on `tl/cma-log-segments/capacity-recovery`: 75 CMA capacity units passed, zero failed (76 ignored are not counted); actual pinned Mongo 8.0.13 recovery contracts **31 passed, zero failed, zero ignored**, in 90.81s. The source guard passed and the owned container/volume were removed.
-
-This executes the real worker sweep and loss handler after both sequence-only keyed output and later turn/input/fence progress, stale native confirmation refusal, missing/v1/foreign current proof refusal, current publication and Retiring-parent changes during native IO, acknowledgement crash/retry and unknown outcomes. Original completion/carrier remains unchanged and no ordinary input/claim replay occurs. The original schema-v2 restart, limit32/batchSize32/singleBatch profiler, strict carrier and bounded-lineage cases also pass.
-
-The production correction is `00426512f`: original-result identity uses both revision and through-sequence, with positive current publication still mandatory after either advances. The last test-only correction supplies the required synthetic owner-message evidence through the shared writer; no production validator was relaxed. All failures at the earlier source heads remain separately recorded.
-
-Current formatting, whitespace, file-size (6,204 files, every changed source/test below 500 lines) and secret-history scanning (3,908 commits, zero findings) pass. Strict four-package/all-target/all-feature Clippy is queued next, then the affected core/public/adapter recovery tests. Project 9 remains In Progress. Production native proof stays typed Unsupported, admission remains closed, and the integration owner retains the combined review/PR. No activation or production-recovery claim.
-
-S1 final-unit inventory guard found stale Cargo artifact reuse: the first
-current-head attempt listed only 16 configuration tests and omitted the new
-raw-output case. That attempt is rejected as b24fb1c57 execution evidence.
-A corrective locked run is queued to clean the four affected workspace packages,
-require raw-output/quota/both caller test names in a freshly built inventory,
-then rerun configuration, caller, public response and strict CMA gates. Source
-remains b24fb1c57; no additional code delta or PR-ready claim. The earlier public
-and Clippy logs show their b24fb1c57 compilation paths; they will also be repeated
-to remove the artifact concern. Final handoff target remains10:00 SGT.
-
-
-### S5 author qualification complete —2144909ce,06:57 SGT
-
-Part of #1351. **S5 qualification complete; ready for combined review** at **`2144909cede519ed286184a7fffe1af3e645a47b`**, pushed on `tl/cma-log-segments/capacity-recovery` and remote-readback verified. The worktree is clean.
-
-All following gates actually passed on that unchanged source:
-
-| Gate | Result |
+| **S1 cma-cost** | P1-4 response/reader half: verify final shared caller dispatch, retained v2 reads with admission/optimization off, large-history/long-turn/indexed-event parity and cost bounds on the combined pin. Own `projections.rs`, `projections/response_readers_tests.rs`, response-store/core/public paths from the01:55 allocation; report any new response diagnostic. Qualification selection must include both factory tests, public `responses::`, actual response projection/snapshot/scale cases and retained-context success/refusal imported from develop. Provide a complete evidence inventory for the final PR; do not fix capacity/reconciliation reachability. | Pin or no-code evidence map09:00; source fixes10:00; selected actual results11:30. |
+| **S4 cma-seg-lead** | **P1-1 still open:** ordinary v2 claim/reserve/target-control roots in `store/child_writer_claims.rs`, `store/agent_commands/reserve.rs`, `store/agent_commands/targeted_control/apply.rs`; inventory remaining ordinary roots. **P1-N1 still open:** `store/agent_log_segments/writer_prepare.rs` and writer-plan/persist permission for an independently admitted segmented CapacityRecovery successor. Own writer/source-contract fixes and tests under `store/sandbox_mongo_integration_tests/agent_segment_tests/`. Retain fresh capture, fencing, immutable receipt and no input replay. Own any recurring strict diagnostics in `sandbox_reconciliation/**` or accepted-work composition `service.rs/accepted_service.rs/worker*.rs/transactions.rs`. | Exact successor contract09:00; source pins10:30; root/adoption/abort/unknown tests11:30. At09:00 flag any item that cannot fit. |
+| **S5 cma-seg-3** | Own **P1-N1 actual service admission coverage** after S4's writer contract: already-segmented exhausted source through preparation/admission to atomic seal/successor/carrier; abort, Unknown/restart, closed/wrong admission gate and immutable original witness. New test child `store/sandbox_mongo_integration_tests/agent_capacity_recovery_tests/segmented_admission.rs`; request registration from S2. Own required fixes in `agent_capacity_recovery/{preparation,admission,authority,records,receipts,restart,accepted_authority}.rs`, with no S4 service edits. Reconcile the combined four old runtime failures against final2144909ce and provide exact closure mapping. Keep production native Unsupported. | Old-failure/contract map09:00; source/test pin10:30; actual service/refusal results11:30. |
+| **S3 cma-seg-2** | P1-4 transcript/usage/title and P2 selected-consumer matrix. Own `agent_log_segment_reads.rs`, transcript/usage/title projection paths, Layer2 folds and selected-reader tests already allocated. Bound requested-page work across1/10/100/1000segments; >10,128rows/>4MiB, long turns, continuation, serialized parity, corrupt/stale proofs, generation/retirement, snapshot races, final authority, no read-side writes. | Published final source10:30; bounds/parity matrix11:30; risk report09:00. |
+| **S2 cma-db-contention** | Integration, `transaction_scope`/shared exports, canonical migration/schema/index/runtime grants, source-size/conflict resolution and all combined gates. Own any recurring `TransactionScope::insert_one` or canonical registration diagnostics. Run strict CMA first on e28cb6beb, then current recovery/scheduler/adapter/authenticated Mongo and partitioned contracts; add final S3/owner deltas and qualify the final head. Prepare PR body/evidence, rollout/rollback reader floor and exact blocker dispositions. | Initial strict inventory ASAP; freeze source11:30; combined strict/all required gates13:30; PR14:00. |
+
+S4 and S5 agree the segmented capacity-successor contract in this note by09:00;
+use the existing independent CapacityRecovery admission rather than relabeling it
+Rollover. Source at e28cb6beb still rejects any segmented supplied admission other
+than Rollover (`writer_prepare.rs`), so the31recovery passes do not close P1-N1.
+S4's ordinary v1 predicates likewise remain P1-1, not an inferred closed item.
+
+## Strict diagnostics: attribution and current evidence
+
+S1 b24fb1c57 had22normal/20test unused imports/dead roots: capacity admission,
+authority, records, source/status; scoped sandbox reconciliation; and
+TransactionScope::insert_one. Those callers were absent from that slice branch.
+Combined **b3052f1b6 strict CMA passed with warnings denied, zero diagnostics**
+in2m58s. Therefore these historical counts are not current combined blockers.
+If they recur after final integration, route capacity primitives toS5, accepted
+service/reconciliation toS4, transaction/export registration toS2. No allowance,
+feature-gate suppression or fake call is an acceptable closure.
+
+## Executed gate ledger
+
+| Source | Gate | Actual result / limit |
+| --- | --- | --- |
+| `b3052f1b6` | Strict CMA all targets/features, -D warnings | PASS, zero diagnostics,2m58s. |
+| `b3052f1b6` | Scheduler/config | 56passed/0failed,2638skipped; inventory verified all7accepted-recovery scheduler tests. |
+| `b3052f1b6` | Adapter | 47passed/0failed,698skipped. |
+| `b3052f1b6` | Canonical authenticated Mongo | 1passed/0failed,2693skipped; runtime roles/schema/carrier/index contract. |
+| `b3052f1b6` | Recovery Mongo | **26passed/4failed**,2664skipped,71.548s. Two S4 later-service and two S5 later-restart cases failed. Keep as failed evidence; retained gate did not run. |
+| `2144909ce` (S5 final author) | Recovery Mongo | 31passed/0failed/0ignored,90.81s; corrections now integrated, combined rerun required. |
+| `2144909ce` (S5 final author) | CMA/core/public/adapter | 75/49/8/7passed;76ignored CMA tests are not passes. Four-package strict passed2m40s. |
+| `2144909ce` (S4 author) | Writer/recovery Mongo | 71passed/0failed (40writer +31recovery),177.547s; CMA/core166passed; strict passed. |
+| `b24fb1c57` (S1 caller author) | Fresh configuration/factory/public response | 17+2+104passed,0failed;1existing SDK fixture ignored. Earlier stale-binary attempt rejected. |
+| `b9d390634` (S1 response author) | Actual Mongo/scale | 13passed/0failed; at1/10/100/1000sealed units fixed requested output uses3operations/13rows/6408BSON bytes. |
+| `44ad38198` | Positive publication API | 13units +9actual Mongo passed; schema checksum-only delta c4e4b995a. |
+| `c3ca9e3aa` | Mongo orchestration runner | 31mocked tests passed; not actual Mongo evidence. |
+| `557c07593` | Secret history | 3992commits,zero findings; later final head needs scan. |
+| `e28cb6beb` | New assembled gates | Queued next; no inherited exact-head pass. |
+
+Original failed recovery cases: S4
+`capacity_later_service_retries_crash_and_refuses_foreign_or_stale_activation`,
+`capacity_later_service_unknown_claim_never_activates_and_retry_uses_original_completion`;
+S5 `capacity_later_progress_recaptures_parent_and_publication_before_acknowledgement`,
+`capacity_later_progress_restarts_with_current_target_without_rewriting_completion`.
+The final handoff corrects revision-only assumptions and missing OwnerMessage
+fixture evidence. S5 owns the precise case-to-correction mapping; final combined
+execution must actually select the cases.
+
+## Review ledger and activation boundaries
+
+| Finding | Current disposition |
 | --- | --- |
-| CMA capacity units | 75 passed, zero failed; 76 ignored are not passes |
-| Actual pinned Mongo 8.0.13 recovery contracts | 31 passed, zero failed/ignored; 90.81s |
-| Core/public/adapter recovery units | 49 / 8 / 7 passed; zero failed/ignored |
-| Strict Clippy, four packages, all targets/features, warnings denied | Pass; 2m40s |
-| Formatting, whitespace and configuration documentation | Pass |
-| Canonical file size | 6,204 files; every changed source/test below 500 lines |
-| Canonical secret-history scan | 3,908 commits; zero findings |
+| P1-1 ordinary v2 roots | OPEN, S4; must qualify actual worker claim through ordinary/control admission and output. |
+| P1-2 canonical runtime roles/carrier/index | Source-closed, S2; canonical authenticated Mongo passed onb305. Final combined rerun remains. |
+| P1-3 later-progress activation | Source and author gates qualified2144909ce; final combined rerun/reviewer required. Native Unsupported remains a separate activation prohibition. |
+| P1-4 / D6-2 large-history response/transcript | S1 source/author response gates handed off; S3 bounded transcript and final shared parity pending. |
+| P1-N1 segmented capacity admission | OPEN, S4writer + S5service tests; not covered by legacy bootstrap success. |
+| P2 / D6-5 selected-consumer matrix | OPEN, S3, with response portionS1. |
+| P2-N2 changed file exactly500lines | Source closed by split; final size gate required, task limit <500. |
+| P3 archived trailing blank | Source corrected; base-to-head diff check remains required. |
+| P2-5 unresolved keyed attempt; P2-6 child total bound; S5 strict BSON/discovery; D6auth/enum/config | Source-closed; retain existing success/refusal regressions in final selections. |
 
-The actual worker sweep and loss handler now qualify schema-v2 completed recovery after both sequence-only output and later turn/input/fence progress. Current publication and fresh parent authority are required before and after native IO. Crash/retry and unknown outcomes preserve the original completion/carrier without ordinary input or claim replay. Missing/v1/foreign current proof, stale native confirmation and Retiring-parent races refuse activation. Strict raw format-2 decoding, exact limit32/batchSize32/singleBatch discovery and bounded child enumeration also pass.
+One PR to develop with issue links; no automatic closure claim for unmet
+production acceptance. Final PR-ready checks: fmt, strict CMA and affected-layer
+lint, current source inventory, required core/public/adapter/unit tests, actual
+Mongo scope/capture/schema/isolation/writer/root/recovery/consumer contracts,
+large-history bounded cost/parity, config/manifest/size/structure, secret history,
+reader-floor/rollback documentation and explicit reviewer verdict. Full CI on
+the exact release artifact is the release owner's gate. Merge only on lead relay.
 
-The sequence-only production correction is `00426512f`; the final fixture correction is `2144909ce`. Both previously failing runtime heads and their diagnostics remain separately recorded. The frozen schema/discovery/index contract remains `daf605ab410fc4737633aa3997e67192d4c4112b`; no durable carrier change.
+At09:00, name each missing dependency/owner and whether13:30qualification can
+finish. Do not hide a P1 behind default-off or trade a required gate for16:00.
+Native capacity recovery activation has no defensible ETA until independently
+pinned-runtime confirmation exists. Writer/recovery admission remains closed
+through this PR; release owner handles production, deployment and verification.
 
-Cleanup removed the sole owned Cargo target (3.278 GiB allocated). All owned Mongo containers/volumes and fixture manifest are absent; shared locks and the worktree remain. Gates used a shared lock with -k, two jobs and one target.
+## Resource and source protocol
 
-The integration owner retains the combined PR and exact-head review/merge flow. Author evidence supports review closure of the S5 restart, strict-decoding and discovery findings; it is not a reviewer verdict or production activation. Production native proof remains typed Unsupported, recovery/writer admission stays closed, and Project 9 remains In Progress.
+All heavy steps use one shared slot, `lockf -k -n -t 3600`, at most2Cargo jobs,
+with lock release between gates. Never recreate/delete shared locks. Heavy-1
+still has original inode160080032; own runner verifies device/inode before and
+during execution. One Cargo target per worktree; minimum30GBfree, stop before
+crossing the floor. Remove only owned target exports/containers/volumes after
+use; do not touch others' worktrees. Gate archives pin source independently of
+ongoing merges and clean workspace-package artifacts when source identity changes.
+Actual counts, skipped tests and failures remain tied to their exact source.
 
-### S1 final caller handoff — b24fb1c57
+## Handoff sources and prior ledger
 
-Published branch `tl/cma-log-segments/reader-foundation` at
-`b24fb1c570858392125c8ec6e5eb2d71688b137a`; narrow caller fix
-`982360fa279ba8f633c0fea53ac0cf7389d5ff79`. Fresh corrective execution after
-cleaning four workspace packages and verifying the new test inventory:
-**17 configuration + 2 caller + 104 public response tests passed**, zero failed;
-one existing SDK fixture ignored. Strict CMA reproduced 22/20 shared integration
-errors, with no response-caller/configuration-split diagnostic. Source checksum
-remained unchanged. Fmt, whitespace, size 6,168 and secret scan 3,840 passed.
-
-Detailed handoff is local `2026-11-12-response-caller-handoff.md`; final commands,
-inventory, diagnostics and cleanup readback live in the response-consumer evidence
-directory. The earlier stale-unit attempt is explicitly rejected. Source and
-aggregate evidence are published on GitHub. Actual combined preview 50485e900
-merges all caller files automatically and has only the documented configuration
-ordering/module conflict. Preserve S2's complete flag/test layout and the shared
-reader attachment; avoid an unreferenced duplicate quota test child.
-
-All owned gates ended; target/source exports removed 2.819 GiB, free 56.09 GiB at
-readback. Shared lock inodes preserved. No Mongo resources were created by this
-caller slice. Worktree clean and local/remote heads match. No independent PR;
-S2 owns normal combined integration and strict-green qualification before release.
-
-Final S1 caller evidence comments:
-
-- https://github.com/ChronoAIProject/cma/issues/1349#issuecomment-6809351061
-- https://github.com/ChronoAIProject/cma/issues/1674#issuecomment-6809351610
-
-Both Project 9 items remain In Progress. The final handoff note is
-`2026-11-12-response-caller-handoff.md`; S1's code and validation handoff is
-complete before the 10:00 target. Combined strict lint remains an integration
-requirement; no activation or develop merge is claimed.
+- S1: `2026-11-12-response-caller-handoff.md` and response-consumer-handoff.md.
+- S4: `docs/notes/2026-11-12-s4-later-progress.md` and gate JSON.
+- S5: `2026-11-12-s5-final-handoff.md`.
+- Frozen recovery carrier: `daf605ab410fc4737633aa3997e67192d4c4112b`, format2only.
+- S2 proof: `2026-11-12-current-publication-proof.md`.
+- Prior central ledger (verbatim, split below500lines):
+  [2026-11-12-segments-coordination-history-13.md](2026-11-12-segments-coordination-history-13.md)
+  [2026-11-12-segments-coordination-history-14.md](2026-11-12-segments-coordination-history-14.md)
