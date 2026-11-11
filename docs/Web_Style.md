@@ -2399,8 +2399,10 @@ login URL, including origin and options, must fit the shared 4 KiB budget. If a
 setup draft exceeds that budget, keep it in the current URL and tab storage,
 skip silent sign-in, and use a path-only return for explicit sign-in. Return
 targets are percent-encoded ASCII; unknown or duplicate query keys are excluded
-because they may carry undefined redirect or authority data. Addresses with fragments skip silent sign-in so share tokens stay in the browser. Public Trigger, Launch,
-share-link and document journeys retain their own explicit sign-in.
+because they may carry undefined redirect or authority data. Addresses with
+fragments skip silent sign-in so share tokens stay in the browser. Public
+Trigger, Launch, share-link and document journeys retain their own explicit
+sign-in.
 
 Focus, visibility and online refreshes never navigate. Background identity
 outages preserve mounted authenticated views. Anonymous presentation and a
