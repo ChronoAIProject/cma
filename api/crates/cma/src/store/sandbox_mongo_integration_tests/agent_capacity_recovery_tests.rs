@@ -2,5 +2,6 @@
 use super::*;
 
 mod pacing;
+mod records;
 mod source;
 mod worker;
