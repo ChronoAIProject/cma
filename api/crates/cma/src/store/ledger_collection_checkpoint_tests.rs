@@ -237,7 +237,8 @@ async fn checkpoint_mongo_refuses_legacy_and_malformed_markers_without_writes() 
     let (client, name) = database("checkpoint_compatibility").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     for case in 0..4 {
-        let parent = sandbox(&format!("sbx_checkpoint_compatibility_{case}"));
+        let mut parent = sandbox(&format!("sbx_checkpoint_compatibility_{case}"));
+        parent.name = format!("checkpoint-compatibility-{case}");
         store.create_sandbox(parent.clone()).await.unwrap();
         let marker = match case {
             0 => mongodb::bson::serialize_to_bson(&progress()).unwrap(),
