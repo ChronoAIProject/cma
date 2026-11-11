@@ -15,10 +15,13 @@ async fn command_fixture(
     store: &MongoSandboxStore,
 ) -> (Sandbox, CommandReservation, ProviderBinding) {
     let binding = ready(store).await;
-    let parent = parent(store, &binding).await;
+    parent(store, &binding).await;
     ready_workspace(store, &binding).await;
     let input = agent_request(store, &binding, "command_replay_fixture").await;
     let created = store.admit_agent(input).await.unwrap();
+    // Creation advances the parent; command admission needs that exact result,
+    // not the earlier Sandbox observation used to set up the fixture.
+    let parent = created.creation().sandbox.clone();
     let mut agent = created.creation().agent.clone();
     let revision = agent.revision;
     agent.status = AgentStatus::Ready;
