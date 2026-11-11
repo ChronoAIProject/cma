@@ -124,6 +124,30 @@ acknowledgement, exact binding/revision checks, cancellation-safe ownership and 
 qualified maintenance permit. Restore requires full-home no-newer-effects proof.
 No background collector is scheduled merely by deploying this groundwork.
 
+The executing collector and its coordinator models remain in the separate B2
+slice. This groundwork does not register a production collector worker or claim
+that model tests qualify real V1/V2 storage, physical exclusion or recovery.
+
+The held V2 source core also accepts an explicit bounded-collection evidence
+adapter. It validates the original candidate page, request and authority batch
+against the independently supplied accepted binding, verifies exact page bytes
+and candidate membership, and accepts only `SettledDeleted` for the selected
+group. The group evidence hash keeps its existing B protocol meaning; the
+artifact-bundle fingerprint separately binds all three original byte sequences.
+The adapter never converts a bounded batch into a whole-Sandbox snapshot.
+
+Before source use it checks the active revision, V2 format, Sandbox/home/generation,
+selected group and exact archive identity. It reuses the existing complete-source,
+settled-operation, shared-Worktree and accounting validation. Both input protocols
+consume and close the held source/archive owners; archives remain pending and
+continue refusing replay. The create-only storage probe exercises both protocols.
+
+This adapter retains original artifacts only in memory. Durable publication before
+Selected, stable operation/completion receipts after later groups, C's qualified
+exclusion and an online runtime port remain separate prerequisites. The existing
+immediate-after-state retry is not a durable collector acknowledgement. There is
+no new retained-home command, serving activation, archive schema or writer flag.
+
 Validation covers malformed/private-path input, preservation classifications,
 snapshot/no-DDL behavior, missing/changed/quarantined records, ordered index drift,
 separate manifest receipts, retry, shared-lease exclusion and future-reader refusal.
