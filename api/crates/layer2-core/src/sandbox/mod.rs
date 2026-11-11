@@ -70,9 +70,12 @@ pub use conversation_observation::{
     AgentDescriptionSource, AgentObservations, AgentRuntimeMetadata, AgentTurnUsage,
     AgentUsageCheckpoint,
 };
+pub mod agent_ledger_recovery;
 mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;
+pub mod ledger_census;
+pub mod ledger_maintenance;
 mod ledger_retirement;
 mod lifecycle_bootstrap;
 mod provenance;
