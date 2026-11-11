@@ -57,6 +57,7 @@ impl ProviderHostedControlTransport {
             archive_factory,
             state: Arc::new(Mutex::new(TransportState::default())),
             subscriptions: None,
+            retained_json: false,
             bounded_raw_output: false,
             shared_runtime_output: false,
             native_transport: NativeRuntimeTransport::Direct,
