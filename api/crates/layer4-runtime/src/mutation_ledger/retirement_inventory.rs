@@ -9,6 +9,8 @@ use crate::failure::Result;
 use crate::mutation_authority::ResourceKey;
 use crate::mutation_journal::{Operation, Record, Status};
 
+#[path = "retirement_accounting.rs"]
+mod accounting;
 #[path = "retirement_auxiliary.rs"]
 mod auxiliary;
 #[path = "retirement_context.rs"]
@@ -49,6 +51,7 @@ impl Kind {
 #[derive(Clone)]
 pub(super) struct Cursor {
     context: Context,
+    audit: accounting::Audit,
     kind: Kind,
     after: (Vec<u8>, String),
 }
@@ -164,21 +167,38 @@ impl Ledger {
                 {
                     return Err(invalid());
                 }
-                let (kind, after) = cursor
-                    .map_or((Kind::Operations, (Vec::new(), String::new())), |cursor| {
-                        (cursor.kind, cursor.after)
-                    });
+                let (kind, after, mut audit) = cursor.map_or_else(
+                    || {
+                        (
+                            Kind::Operations,
+                            (Vec::new(), String::new()),
+                            accounting::Audit::default(),
+                        )
+                    },
+                    |cursor| (cursor.kind, cursor.after, cursor.audit),
+                );
                 let (rows, more) = page(&tx, &config, kind, &after, BYTES - context.bytes())?;
+                for row in &rows {
+                    audit.observe(&tx, row)?;
+                }
+                if !more {
+                    audit.end_table(&tx, kind)?;
+                    if kind == Kind::Processes {
+                        audit.finish(&context)?;
+                    }
+                }
                 let next = if more {
                     let (scope, key) = rows.last().ok_or_else(invalid)?.key();
                     Some(Cursor {
                         context: context.clone(),
+                        audit,
                         kind,
                         after: (scope.to_vec(), key.into()),
                     })
                 } else {
                     kind.next().map(|kind| Cursor {
                         context: context.clone(),
+                        audit,
                         kind,
                         after: (Vec::new(), String::new()),
                     })
@@ -339,6 +359,9 @@ fn validate(db: &Connection, config: &RuntimeConfig, row: &SourceRow) -> Result<
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "retirement_accounting_tests.rs"]
+mod accounting_tests;
 #[cfg(test)]
 #[path = "retirement_context_tests.rs"]
 mod context_tests;
