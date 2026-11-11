@@ -118,10 +118,17 @@ impl<S: CapacityRecoveryStore, R: CapacityRecoveryRuntime> CapacityRecoveryServi
             .await?;
         if let CommitOutcome::Recorded(completed) = &outcome {
             completed.validate()?;
-            if completed.phase != RecoveryPhase::Completed
-                || completed.request != claim.work.request
-                || completed.target != claim.work.target
-            {
+            // A receipt for another lease attempt cannot authorize this
+            // attachment, even when it names the same request/native target.
+            let mut expected = claim.work.clone();
+            expected.phase = RecoveryPhase::Completed;
+            expected.revision = expected
+                .revision
+                .checked_add(1)
+                .ok_or(RecoveryError::InvalidEvidence)?;
+            expected.lease = None;
+            expected.completed_at = Some(current);
+            if completed != &expected {
                 return Err(RecoveryError::InvalidEvidence);
             }
             self.runtime.acknowledge(attachment, completed).await?;
