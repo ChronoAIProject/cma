@@ -70,6 +70,7 @@ mod hierarchy;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
+pub(crate) mod ledger_retirement;
 mod legacy_history;
 mod lifecycle_execution;
 pub(crate) mod lifecycle_transaction;
