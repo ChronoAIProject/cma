@@ -271,3 +271,43 @@ fn usage_without_original_turn_and_incomplete_steering_fail_closed() {
     );
     state.validate_aggregate(&agent).unwrap();
 }
+
+#[test]
+fn generation_maxima_certify_each_boundary_kind_after_later_native_changes() {
+    let (mut agent, mut state) = opened();
+    assert_eq!(state.max_opened_generation, 1);
+    assert_eq!(state.max_retired_generation, 0);
+    apply(
+        &mut state,
+        &mut agent,
+        AgentLogKind::RuntimeGenerationRetired {
+            previous_generation: 1,
+            runtime_generation: 2,
+        },
+    );
+    agent.conversation.runtime_generation = Some(2);
+    state.validate_aggregate(&agent).unwrap();
+    assert_eq!(state.max_opened_generation, 1);
+    assert_eq!(state.max_retired_generation, 2);
+    apply(
+        &mut state,
+        &mut agent,
+        AgentLogKind::ConversationOpened {
+            conversation_id: "later-native".into(),
+            runtime_generation: 4,
+        },
+    );
+    agent.conversation.conversation_id = Some("later-native".into());
+    agent.conversation.runtime_generation = Some(4);
+    state.validate_aggregate(&agent).unwrap();
+    assert_eq!(state.max_opened_generation, 4);
+    assert_eq!(state.max_retired_generation, 2);
+    let row = serde_json::to_value(&state).unwrap();
+    for field in ["max_opened_generation", "max_retired_generation"] {
+        let mut missing = row.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(serde_json::from_value::<AgentLogProjectionState>(missing).is_err());
+    }
+    state.max_opened_generation = 0;
+    assert!(state.validate_aggregate(&agent).is_err());
+}
