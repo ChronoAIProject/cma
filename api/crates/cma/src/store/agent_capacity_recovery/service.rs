@@ -170,7 +170,12 @@ impl RecoveryService {
             return Err(RecoveryError::Disabled);
         }
         let authorized = self.authorize(caller, &request.agent_id).await?;
-        let prepared = match preparation::prepare(&self.store, &authorized, request).await? {
+        let prepared = match preparation::prepare(&self.store, &authorized, request)
+            .await
+            .inspect_err(|_error| {
+                #[cfg(test)]
+                eprintln!("capacity recovery preparation refused: {_error:?}");
+            })? {
             CommitOutcome::Recorded(prepared) => prepared,
             CommitOutcome::KnownAbort => return Ok(CommitOutcome::KnownAbort),
             CommitOutcome::Unknown => return Ok(CommitOutcome::Unknown),
@@ -190,7 +195,11 @@ impl RecoveryService {
             },
             self.features,
         )
-        .await?;
+        .await
+        .inspect_err(|_error| {
+            #[cfg(test)]
+            eprintln!("capacity recovery admission transaction refused: {_error:?}");
+        })?;
         Ok(match result {
             CommitOutcome::Recorded(value) => {
                 // The committed receipt must bind the exact proposal. Never
