@@ -30,6 +30,7 @@ mod middleware;
 #[cfg(test)]
 pub(super) mod nyxid_contract_tests;
 pub(crate) mod nyxid_proxy;
+mod oauth_commands;
 pub mod organizations;
 mod permissions;
 pub mod persistence;
@@ -108,6 +109,7 @@ pub struct AuthState {
     platform_settings: Option<Arc<layer2_core::PlatformSettingsService>>,
     bot_father_username: Option<String>,
     agent_key_service_id: Option<String>,
+    oauth_api_resource: Option<String>,
     resource_request_enabled: bool,
     identity_proxy: Option<nyxid_proxy::jwt::Verifier>,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
@@ -180,6 +182,7 @@ impl AuthState {
             bot_father_username: None,
             bindings: None,
             agent_key_service_id: None,
+            oauth_api_resource: None,
             resource_request_enabled: false,
             identity_proxy: None,
             mode,
