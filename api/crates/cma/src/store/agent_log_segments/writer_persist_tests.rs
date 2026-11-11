@@ -34,6 +34,7 @@ async fn transaction(f: &Fixture) -> ClientSession {
     f.client.start_session().await.unwrap()
 }
 
+#[track_caller]
 fn succeeded<T>(result: Result<T, TransactionLogError>) -> T {
     match result {
         Ok(value) => value,
