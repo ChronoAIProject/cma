@@ -145,7 +145,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:5bdfe9f0d4c6c731e4f6fe2daaee84b3d7666d81d3da7174a3cc39cf81c5ab3f
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:9dd19848a67403165777e63db377f9ff129a66052762f0e5efd3fc020d522f36
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
