@@ -148,6 +148,50 @@ async fn checkpoint_mongo_takeover_save_and_atomic_ack_settlement() {
         )
         .await
         .unwrap();
+    let acknowledgement = LedgerCollectionFinalAcknowledgement {
+        operation_id: reference().operation_id,
+        binding_sha256: "a".repeat(64),
+        plan_sha256: "c".repeat(64),
+        group_key: "1".repeat(64),
+        source_sha256: "4".repeat(64),
+        observation_sha256: "3".repeat(64),
+        before_revision: 7,
+        after_revision: 8,
+        receipt_sha256: "5".repeat(64),
+    };
+    let original = first
+        .sandboxes
+        .find_one(doc! {"_id":parent.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    for after_revision in [7, 9, u64::MAX] {
+        let mut changed = acknowledgement.clone();
+        changed.after_revision = after_revision;
+        assert!(first
+            .update_ledger_collection_checkpoint(
+                &parent.id,
+                parent.revision,
+                state.progress.revision,
+                M::Acknowledge {
+                    fence: 2,
+                    now: 21,
+                    acknowledgement: changed
+                }
+            )
+            .await
+            .is_err());
+        assert_eq!(
+            first
+                .sandboxes
+                .find_one(doc! {"_id":parent.id.as_str()})
+                .await
+                .unwrap()
+                .unwrap(),
+            original,
+            "invalid acknowledgement writes nothing"
+        );
+    }
     let state = first
         .update_ledger_collection_checkpoint(
             &parent.id,
@@ -156,17 +200,7 @@ async fn checkpoint_mongo_takeover_save_and_atomic_ack_settlement() {
             M::Acknowledge {
                 fence: 2,
                 now: 21,
-                acknowledgement: LedgerCollectionFinalAcknowledgement {
-                    operation_id: reference().operation_id,
-                    binding_sha256: "a".repeat(64),
-                    plan_sha256: "c".repeat(64),
-                    group_key: "1".repeat(64),
-                    source_sha256: "4".repeat(64),
-                    observation_sha256: "3".repeat(64),
-                    before_revision: 7,
-                    after_revision: 8,
-                    receipt_sha256: "5".repeat(64),
-                },
+                acknowledgement,
             },
         )
         .await

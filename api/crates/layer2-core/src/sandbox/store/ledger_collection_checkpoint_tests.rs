@@ -187,7 +187,7 @@ fn checkpoint_cannot_replace_original_reference_or_select_without_it() {
 
 #[test]
 fn checkpoint_final_ack_matches_every_original_field_and_refuses_changed_replay() {
-    for field in 0..10 {
+    for field in 0..11 {
         let mut changed = ack();
         match field {
             0 => changed.operation_id = uuid::Uuid::from_u128(7).to_string(),
@@ -199,6 +199,7 @@ fn checkpoint_final_ack_matches_every_original_field_and_refuses_changed_replay(
             6 => changed.before_revision = 6,
             7 => changed.after_revision = 7,
             8 => changed.receipt_sha256 = "invalid".into(),
+            9 => changed.after_revision = 9,
             _ => changed.receipt_sha256 = "A".repeat(64),
         }
         assert!(selected()
@@ -375,7 +376,7 @@ fn checkpoint_refuses_malformed_unbounded_and_intermediate_states() {
         &serde_json::to_vec(&initial().progress).unwrap()
     )
     .is_err());
-    for case in 0..8 {
+    for case in 0..9 {
         let mut state = selected();
         match case {
             0 => state.progress.pending.as_mut().unwrap().phase = LedgerCollectionPhase::Prepared,
@@ -390,6 +391,10 @@ fn checkpoint_refuses_malformed_unbounded_and_intermediate_states() {
             4 => state.acknowledged_revision = Some(8),
             5 => state.settled_after = Some("3".repeat(64)),
             6 => state.progress.page.as_mut().unwrap().next_cursor = Some("\n".into()),
+            7 => {
+                state = acknowledged();
+                state.acknowledged_revision = Some(9);
+            }
             _ => {
                 state.progress.page.as_mut().unwrap().remaining_groups =
                     (0..65).map(|i| format!("{i:064x}")).collect()

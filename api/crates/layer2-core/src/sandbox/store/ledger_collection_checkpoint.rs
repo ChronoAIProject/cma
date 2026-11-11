@@ -173,7 +173,7 @@ impl LedgerCollectionCheckpointV2 {
             && match (&p.pending, self.acknowledged_revision) {
                 (Some(pending), Some(revision)) => {
                     pending.phase == LedgerCollectionPhase::Acknowledged
-                        && revision > p.active_revision
+                        && p.active_revision.checked_add(1) == Some(revision)
                 }
                 (Some(pending), None) => pending.phase != LedgerCollectionPhase::Acknowledged,
                 (None, revision) => revision.is_none(),

@@ -194,7 +194,7 @@ impl LedgerCollectionCheckpointV2 {
             || reference.plan_sha256 != ack.plan_sha256
             || self.progress.binding_sha256 != ack.binding_sha256
             || self.progress.active_revision != ack.before_revision
-            || ack.after_revision <= ack.before_revision
+            || ack.before_revision.checked_add(1) != Some(ack.after_revision)
             || !digest(&ack.receipt_sha256)
         {
             return Err(LedgerCollectionProgressError::Invalid);
