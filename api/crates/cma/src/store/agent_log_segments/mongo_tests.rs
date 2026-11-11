@@ -28,5 +28,7 @@ mod capture_tests;
 mod capture_transaction_tests;
 mod ranges;
 mod retention;
+mod schema_controls;
+mod schema_output;
 mod schema_tests;
 mod snapshot;
