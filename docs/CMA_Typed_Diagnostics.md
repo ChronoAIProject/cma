@@ -27,7 +27,27 @@ Equivalence tests compare successful values and failure behavior against the
 legacy decoder, including content, tool metadata, nullable fields, enums,
 permission shapes and terminal usage. Allocation fixtures cover a maximal
 admitted invalid discriminator and a large invalid field whose diagnostic is
-discarded by schema fallback. Final measurements are recorded after gates pass.
+discarded by schema fallback. All 655 focused tests pass, including existing
+startup, permission, recovery, retention and recorder regressions. Workspace
+formatting, strict all-target/all-feature CMA/core/adapter clippy, source-size,
+configuration/documentation and secret-history checks also pass.
+
+The qualified source is Git commit `6bdb1867fdf181fea63ce6952c463242a8bdee37`;
+its API tree is `766674882bf72bf3a600b0e8cfe420834bc7f1fa`.
+Requested allocation measurements on aarch64-apple-darwin with Rust 1.96.1:
+
+| Admitted fixture | Encoded bytes | Legacy peak | Enabled peak | Enabled retained |
+| --- | ---: | ---: | ---: | ---: |
+| Invalid discriminator, three JSON nodes | 4,193,920 | 12,582,115 | 64 | 0 |
+| Invalid location line discarded by fallback | 4,188,112 | 3,034,896 | 747 | 459 |
+
+Both paths return to zero measured outstanding bytes after the result drops.
+The second enabled result retains its valid tool-call fields; the invalid line
+does not become an owned diagnostic. These measurements exclude allocator/OS
+overhead and RSS. The first run rejected an inadequate discriminator fixture:
+Serde formats unknown variant names directly, so escaped wire length did not
+establish a large decoded diagnostic. The final near-limit plain-text fixture
+passes the unchanged legacy and enabled allocation assertions.
 
 This bounds the construction of Serde diagnostics for the specified paths.
 Valid typed values and intermediate schema containers still allocate storage;
