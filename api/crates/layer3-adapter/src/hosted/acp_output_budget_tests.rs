@@ -5,6 +5,9 @@ use crate::{ConversationInput, ConversationSettingsSupport};
 use futures_util::StreamExt as _;
 use std::time::Duration;
 
+#[path = "acp_output_combined_tests.rs"]
+mod combined;
+
 fn stream() -> uuid::Uuid {
     uuid::Uuid::from_u128(1710)
 }
@@ -39,6 +42,17 @@ async fn open(
     ServerSocket,
     mpsc::Receiver<ConversationUpdate>,
 ) {
+    open_with_permissions(bounded, false).await
+}
+
+async fn open_with_permissions(
+    bounded: bool,
+    permissions: bool,
+) -> (
+    OpenedBridge,
+    ServerSocket,
+    mpsc::Receiver<ConversationUpdate>,
+) {
     let (client, mut server) = socket_pair().await;
     server
         .send(Message::Text(
@@ -52,6 +66,7 @@ async fn open(
         .unwrap();
     let mut configured = settings(None, false);
     configured.bounded_raw_output = bounded;
+    configured.bounded_permission_state = permissions;
     let (sender, mut received) = mpsc::channel(4);
     let opening = tokio::spawn(Bridge::open(
         client,
@@ -281,6 +296,16 @@ async fn startup_wire_boundary_and_oversized_frame_refuse_without_more_storage()
     );
     assert!(updates.try_recv().is_err());
     stop(opened).await;
+    // The input writer is detached; wait for its final bridge owner to drop.
+    // Acquiring the entire pool proves actual storage release, not elapsed time.
+    let released = tokio::time::timeout(
+        Duration::from_secs(2),
+        pool.clone().acquire_many_owned(16 * 1024 * 1024),
+    )
+    .await
+    .expect("final bridge owner releases queued storage")
+    .unwrap();
+    drop(released);
     assert_eq!(pool.available_permits(), 16 * 1024 * 1024);
 }
 
