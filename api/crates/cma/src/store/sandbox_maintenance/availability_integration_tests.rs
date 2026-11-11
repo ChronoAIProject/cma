@@ -123,7 +123,7 @@ async fn concurrent_keep_alive_edit_invalidates_stale_inactivity_transaction() {
     profile.availability.always_keep_alive = true;
     profile.draft_version = 2;
     profiles.save_sandbox_draft(1, profile).await.unwrap();
-    let outcome = apply(
+    let outcome = transaction::apply(
         &store,
         &MaintenanceRequest::Inactivity(pause(&sandbox.id)),
         &mut session,
