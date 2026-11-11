@@ -4,6 +4,7 @@ use super::{
     outcomes::TurnOutcome,
     preparation,
     preparation::has_attachments,
+    refusal::{ProviderCall, StartFailure},
     render_media::{self, Audience, RenderMedia},
     sequencer::{Sequencer, Ticket},
     tracker::TurnTracker,
@@ -147,7 +148,9 @@ impl TurnRunner {
             // or not; a later failure is this turn's own.
             ticket.release();
             if custom_replay::eligible(&turn)
-                && started.as_ref().is_err_and(custom_replay::command_conflict)
+                && started
+                    .as_ref()
+                    .is_err_and(|failure| custom_replay::command_conflict(&failure.error))
             {
                 // Both first deliveries may have observed absence. The losing
                 // command reads the winner's admitted context before answering.
@@ -157,7 +160,8 @@ impl TurnRunner {
                     .map(Some);
                 return Ok(custom_replay::answer(replay, &mut admitted).unwrap());
             }
-            let stream = started.map_err(super::refusal::classify)?;
+            let stream = started
+                .map_err(|failure| super::refusal::classify_start_failure(&provider, failure))?;
             consume::consume(
                 stream,
                 turn.clone(),
@@ -224,13 +228,15 @@ impl TurnRunner {
         turn: &LaunchRequest,
         media: &RenderMedia,
         audience: Audience,
-    ) -> Result<TurnStream, ProviderError> {
+    ) -> Result<TurnStream, StartFailure> {
         let consumer = turn
             .channel
             .consumer(turn.consumer.as_ref())
-            .ok_or_else(unconfigured)?;
+            .ok_or_else(|| ProviderCall::Responses.failed(unconfigured()))?;
         let credential = consumer.credential.ok_or_else(|| {
-            ProviderError::InvalidRequest("channel has no provider credential".into())
+            ProviderCall::Responses.failed(ProviderError::InvalidRequest(
+                "channel has no provider credential".into(),
+            ))
         })?;
         let rendered = preparation::render(turn, media, audience, None);
         let request = TurnRequest {
@@ -261,6 +267,11 @@ impl TurnRunner {
             )
             .await;
         loop {
+            let call = if ensure_pending {
+                ProviderCall::Conversation
+            } else {
+                ProviderCall::Responses
+            };
             let result = if ensure_pending {
                 match self
                     .providers
@@ -279,7 +290,7 @@ impl TurnRunner {
                     // Keep the same pending conversation and event while the
                     // provider explicitly asks us to wait before admission.
                     Err(error @ ProviderError::Busy { .. }) => Err(error),
-                    Err(error) => return Err(error),
+                    Err(error) => return Err(call.failed(error)),
                 }
             } else {
                 self.providers
@@ -294,7 +305,7 @@ impl TurnRunner {
                 Err(ProviderError::Busy { retry_after }) => {
                     let remaining = retry_deadline.saturating_duration_since(Instant::now());
                     if remaining.is_zero() {
-                        return Err(ProviderError::Busy { retry_after });
+                        return Err(call.failed(ProviderError::Busy { retry_after }));
                     }
                     let minimum = retry_after
                         .unwrap_or(Duration::from_millis(500))
@@ -306,10 +317,10 @@ impl TurnRunner {
                         .min(remaining);
                     tokio::time::sleep(delay).await;
                     if Instant::now() >= retry_deadline {
-                        return Err(ProviderError::Busy { retry_after });
+                        return Err(call.failed(ProviderError::Busy { retry_after }));
                     }
                 }
-                result => return result,
+                result => return result.map_err(|error| call.failed(error)),
             }
         }
     }
