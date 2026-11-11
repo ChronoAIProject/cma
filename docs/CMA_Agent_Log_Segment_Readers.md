@@ -173,3 +173,12 @@ drift refuses before further DDL.
 The immutable migration checksum must include `schema.rs`,
 `schema/validators.rs` and `schema/controls.rs`. The migration adapter and shared
 operator registration remain an integration gate; startup still performs no DDL.
+
+The pure `audit_command` parser accepts exactly one of
+`--agent-log-audit-unit`, `--agent-log-audit-cancel`, or
+`--agent-log-audit-install`, followed by one Agent identifier and one audit
+identifier. It rejects missing/extra arguments, unknown actions, unbounded or
+ambiguous identifiers and wildcard scope. The shared operator dispatcher must
+verify its explicit maintenance authority and deadline before calling
+`audit::run_unit` (cancel false/true) or `audit::install`. The parser itself
+performs no I/O; its existence does not make the CLI mounted or authorized.
