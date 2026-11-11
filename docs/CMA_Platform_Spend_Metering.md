@@ -418,10 +418,12 @@ amounts).
   configured, which is `MeteringUnavailable` once `enabled` is true.
 - `POST /api/v1/admin/spend/observations`
   `{ source: "cloud", observed_through, units }`
-  Appends an immutable observation row `observation:cloud:<observed_through>`
-  in the same collection and updates the period row in one transaction. A
-  repeated identical post is idempotent; a conflicting one for the same
-  `observed_through` is refused. `observed_through` must be ≤ now and ≥ the
+  Appends an immutable observation row
+  `observation:cloud:<period_start>:<observed_through>` in the same collection
+  and updates the period row in one transaction. The key is scoped to its
+  period, because adjacent periods share their boundary instant and each may
+  record an observation there. A repeated identical post is idempotent; a
+  conflicting one for the same period and `observed_through` is refused. `observed_through` must be ≤ now and ≥ the
   period start. The `model_provider` and `adjustment` sources of section 2.3
   are deferred.
 - `GET /api/v1/admin/spend`

@@ -238,9 +238,13 @@ async fn observe_in(
     if input.observed_through < start || input.observed_through > end {
         return Err(invalid());
     }
+    // Period-scoped: adjacent periods share their boundary instant, and each
+    // may record its own observation there.
+    let at = |seconds| layer2_core::rfc3339_at(UNIX_EPOCH + Duration::from_secs(seconds));
     let key = format!(
-        "observation:cloud:{}",
-        layer2_core::rfc3339_at(UNIX_EPOCH + Duration::from_secs(input.observed_through))
+        "observation:cloud:{}:{}",
+        at(start),
+        at(input.observed_through)
     );
     if let Some(document) = store
         .model_budget
