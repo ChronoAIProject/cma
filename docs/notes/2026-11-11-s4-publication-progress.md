@@ -92,7 +92,12 @@ PR. The staging producer is source-complete but awaits its Mongo gate.
 
 ## Resource discipline
 
-All heavy work uses `lockf` on the assigned heavy-0 with CARGO_BUILD_JOBS=2.
+Heavy commands invoked `lockf` on assigned heavy-0 with CARGO_BUILD_JOBS=2.
+The earlier runner incorrectly omitted `-k`, so macOS could remove the shared
+lock file on exit. This was reported immediately after checking the platform
+manual. Future gates must use `lockf -k -n` to preserve the existing file and
+refuse to create a missing one. The gate note records this resource-rule failure;
+no active S4 build or lock waiter remains.
 Only one target, `api/target`, was used; no per-gate copies or Mongo containers/
 volumes were created. The first cleanup removed 5,604 bytes of completed comment
 drafts: `CLEANED 0.00 GB`. After gates finished, the target was removed, freeing
