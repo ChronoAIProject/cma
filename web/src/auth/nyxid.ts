@@ -14,7 +14,7 @@
 import type { AuthProvider, AuthState, Capability, SignInOptions } from './types';
 import { isCapability } from './types';
 import { parseRoute, routePath } from '../routing/routes';
-import { MAX_LOGIN_URL_BYTES } from '../../../sdk/typescript/src/auth';
+import { MAX_LOGIN_URL_BYTES } from '@chronoai/cma-sdk';
 import { retainFatherDraftForSignIn } from '../bots/fatherDraft';
 
 /** Where the control plane answers questions about the current browser identity. */
