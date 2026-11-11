@@ -242,14 +242,18 @@ fn token_units_and_period_changes_fail_closed_under_liability() {
     ledger.admit(&policy(), 1, UNITS, 10, now).unwrap();
     let refusal = ledger.admit(&policy(), 1, [2, 1], 10, now).unwrap_err();
     assert_eq!(refusal.reason, BudgetError::Unavailable);
-    assert_eq!(
-        reasons(&refusal.closures),
-        vec![ClosureReason::MeteringUnavailable]
+    assert!(
+        refusal.closures.is_empty(),
+        "one owner's valuation is not a platform metering fact"
     );
     let mut moved = policy();
     moved.period_end = "2023-12-24T22:13:20Z".into();
     let refusal = ledger.admit(&moved, 2, UNITS, 10, now).unwrap_err();
     assert_eq!(refusal.reason, BudgetError::Unavailable);
+    assert_eq!(
+        reasons(&refusal.closures),
+        vec![ClosureReason::MeteringUnavailable]
+    );
     assert_eq!(ledger.reserved, 10);
     let mut empty = observed_at(now);
     assert_eq!(empty.admit(&moved, 2, [2, 1], 10, now), Ok(vec![]));
@@ -304,4 +308,19 @@ fn missing_cloud_policy_is_unavailable_not_zero() {
         reasons(&entered.entered),
         vec![ClosureReason::MeteringUnavailable]
     );
+}
+
+#[test]
+fn a_valuation_mismatch_refuses_only_that_admission_and_keeps_the_platform_open() {
+    let now = START + 100;
+    let mut ledger = observed_at(now);
+    ledger.admit(&policy(), 1, UNITS, 10, now).unwrap();
+    let before = ledger.clone();
+    let refusal = ledger.admit(&policy(), 1, [3, 3], 10, now).unwrap_err();
+    assert_eq!(refusal.reason, BudgetError::Unavailable);
+    assert!(refusal.closures.is_empty());
+    assert_eq!(ledger, before);
+    assert!(!ledger.evaluate(&policy(), 1, now).unwrap().changed());
+    assert_eq!(ledger.admit(&policy(), 1, UNITS, 0, now), Ok(vec![]));
+    assert_eq!(ledger.admit(&policy(), 1, UNITS, 10, now), Ok(vec![]));
 }
