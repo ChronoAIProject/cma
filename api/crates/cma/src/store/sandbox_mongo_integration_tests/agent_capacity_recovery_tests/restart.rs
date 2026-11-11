@@ -4,7 +4,7 @@ use super::*;
 use crate::sandbox::binding_lifecycle_test_support::{
     AgentWorker, AgentWorkerConfig, AgentWorkerDependencies, CapacityRecoveryReconnect,
     DurableAgentConnectionLossHandler, EmptyAgentSkillResolver, LiveAgentAttachmentIdentity,
-    LiveAgentConnectionLossHandler, RecoveryReconnect,
+    LiveAgentConnectionLossHandler, ReconnectAction, RecoveryReconnect,
 };
 use crate::sandbox::LiveAgentRegistry;
 use crate::store::agent_capacity_recovery::{records, RecoveryService, RestartDecision};
@@ -113,12 +113,18 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
         failure_seq: agent.conversation.last_seq,
         requested_at: layer2_core::now_rfc3339(),
     };
-    let service = RecoveryService::new(store.clone(), transactions::access(&store))
-        .with_features(CapacityRecoveryFeatures { enabled: true });
-    assert!(matches!(
-        service.restart_decision(&agent.id).await.unwrap(),
-        RestartDecision::Legacy
-    ));
+    let service = Arc::new(
+        RecoveryService::new(store.clone(), transactions::access(&store))
+            .with_features(CapacityRecoveryFeatures { enabled: true }),
+    );
+    let legacy_native = Native::default();
+    let legacy_router =
+        RecoveryReconnect::new(service.clone(), legacy_native.clone(), "legacy".into());
+    assert_eq!(
+        legacy_router.route(&agent.id).await.unwrap(),
+        ReconnectAction::Ordinary
+    );
+    assert_eq!(legacy_native.attaches.load(Ordering::SeqCst), 0);
     assert_eq!(
         service
             .run_accepted(&Native::default(), &request, "no-receipt")
