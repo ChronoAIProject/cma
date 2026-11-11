@@ -73,7 +73,7 @@ fn fixture(
     }
 }
 
-fn opened() -> (Agent, Head, AgentLogProjectionState) {
+pub(in crate::store::agent_log_segments) fn opened() -> (Agent, Head, AgentLogProjectionState) {
     let mut agent = fixture(
         "agt_delta_fixture",
         "wt_fixture",

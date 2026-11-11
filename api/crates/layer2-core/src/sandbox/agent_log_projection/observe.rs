@@ -60,6 +60,7 @@ impl AgentLogProjectionState {
                     return Err("Agent conversation boundary is invalid".into());
                 }
                 self.latest_conversation = Some((conversation_id.clone(), *runtime_generation));
+                self.max_opened_generation = self.max_opened_generation.max(*runtime_generation);
                 self.usage.open_generation(*runtime_generation)?;
             }
             AgentLogKind::RuntimeGenerationRetired {
@@ -77,6 +78,7 @@ impl AgentLogProjectionState {
                     return Err("Agent retirement boundary is invalid".into());
                 }
                 *generation = *runtime_generation;
+                self.max_retired_generation = self.max_retired_generation.max(*runtime_generation);
             }
             AgentLogKind::WorkStepCompleted {
                 step: super::super::AgentWorkStep::OpenConversation,

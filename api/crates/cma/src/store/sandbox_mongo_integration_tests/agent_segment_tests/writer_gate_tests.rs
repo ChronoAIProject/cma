@@ -19,7 +19,7 @@ async fn commit(session: &mut mongodb::ClientSession) {
 async fn fixture(prefix: &str) -> (Client, String, MongoSandboxStore, Agent) {
     let (client, name) = database(prefix).await;
     let db = client.database(&name);
-    segments::migrate(&db).await.unwrap();
+    segments::schema::migrate(&db).await.unwrap();
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let (_, agent) = worktree_and_agent(&SandboxId("sbx_gate_fixture".into()));
     store.create_agent(agent.clone()).await.unwrap();
