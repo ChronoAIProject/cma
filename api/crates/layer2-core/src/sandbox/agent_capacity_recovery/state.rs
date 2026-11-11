@@ -28,6 +28,7 @@ pub struct RecoveryRequest {
 impl RecoveryRequest {
     pub fn validate(&self) -> Result<(), Error> {
         if self.agent_id.as_str().is_empty()
+            || self.agent_id.as_str().len() > 512
             || self.creation_key.trim().is_empty()
             || self.creation_key.len() > 256
             || !valid_sha256(&self.creation_fingerprint)

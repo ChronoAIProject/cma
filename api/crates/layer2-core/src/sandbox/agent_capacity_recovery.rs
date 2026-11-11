@@ -15,6 +15,7 @@ use super::{
 use crate::seconds_from_rfc3339;
 
 pub mod ports;
+pub mod preflight;
 pub mod service;
 pub mod state;
 
