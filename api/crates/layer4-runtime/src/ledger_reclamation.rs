@@ -86,6 +86,18 @@ impl CollectionEvidence {
         &self.observation_sha256
     }
 
+    pub(crate) fn group_key(&self) -> &str {
+        &self.group_key
+    }
+
+    pub(crate) fn active_revision(&self) -> u64 {
+        self.active_revision
+    }
+
+    pub(crate) fn into_originals(self) -> [Vec<u8>; 3] {
+        self.originals
+    }
+
     /// These original page/request/batch bytes must be durably retained before
     /// Selected. Re-encoding a decoded value cannot replace any of these bytes.
     pub(crate) fn originals(&self) -> [&[u8]; 3] {
