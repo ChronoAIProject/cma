@@ -1,21 +1,33 @@
 use super::*;
 use crate::store::agent_log_integrity::TransactionLogError;
+use crate::store::agent_log_segment_reads;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Agent, AgentLogEntry, AgentLogKind, Sandbox};
 
 async fn bounded_log(
     store: &MongoSandboxStore,
-    agent: &AgentId,
+    expected: &Agent,
     after: u64,
     through: u64,
     session: &mut ClientSession,
+    snapshot: bool,
 ) -> Result<Vec<AgentLogEntry>, AgentReadError> {
     if through.saturating_sub(after) > MAX_CONTEXT_EVENTS as u64 {
         return Ok(Vec::new());
     }
+    if let Some(entries) = agent_log_segment_reads::range_with_snapshot(
+        store, expected, session, after, through, snapshot,
+    )
+    .await
+    .map_err(unavailable)?
+    {
+        return Ok(entries);
+    }
     let mut cursor = store
         .agent_log
-        .find(doc! {"agent_id":agent.as_str(),"seq":{"$gt":after as i64,"$lte":through as i64}})
+        .find(
+            doc! {"agent_id":expected.id.as_str(),"seq":{"$gt":after as i64,"$lte":through as i64}},
+        )
         .sort(doc! {"seq":1})
         .limit(MAX_CONTEXT_EVENTS as i64)
         .session(&mut *session)
@@ -37,6 +49,7 @@ pub(super) async fn current(
     store: &MongoSandboxStore,
     work: &SuggestionWork,
     session: &mut ClientSession,
+    snapshot: bool,
 ) -> Result<bool, AgentReadError> {
     let Some(row) = store
         .agents
@@ -70,10 +83,11 @@ pub(super) async fn current(
         .is_some();
     let tail = bounded_log(
         store,
-        &agent.id,
+        &agent,
         work.completed_sequence,
         agent.conversation.last_seq,
         session,
+        snapshot,
     )
     .await?;
     Ok(work_is_current(work, &agent, &sandbox, &tail, newer))
@@ -110,9 +124,16 @@ pub(in crate::store) async fn enqueue(
             "suggestion outbox unavailable".into(),
         ))
     };
-    let entries = bounded_log(store, &agent.id, turn_sequence - 1, completed.seq, session)
-        .await
-        .map_err(map_error)?;
+    let entries = bounded_log(
+        store,
+        agent,
+        turn_sequence - 1,
+        completed.seq,
+        session,
+        false,
+    )
+    .await
+    .map_err(map_error)?;
     let Some(row) = store
         .sandboxes
         .find_one(doc! {"_id":agent.sandbox_id.as_str()})

@@ -253,19 +253,19 @@ pub(super) fn fold_agent_log(
 }
 
 #[derive(Default)]
-struct TranscriptFold {
-    turns: Vec<AgentTranscriptTurn>,
-    active: Option<ActiveTurn>,
-    queued_owner_messages: BTreeMap<u64, QueuedOwnerMessage>,
+pub(super) struct TranscriptFold {
+    pub(super) turns: Vec<AgentTranscriptTurn>,
+    pub(super) active: Option<ActiveTurn>,
+    pub(super) queued_owner_messages: BTreeMap<u64, QueuedOwnerMessage>,
 }
 
-struct QueuedOwnerMessage {
-    message: AgentTranscriptMessage,
-    used: bool,
+pub(super) struct QueuedOwnerMessage {
+    pub(super) message: AgentTranscriptMessage,
+    pub(super) used: bool,
 }
 
 impl TranscriptFold {
-    fn start(
+    pub(super) fn start(
         &mut self,
         turn_sequence: u64,
         origin_key: Option<String>,
@@ -311,7 +311,7 @@ impl TranscriptFold {
         Ok(())
     }
 
-    fn owner_message(
+    pub(super) fn owner_message(
         &mut self,
         message: AgentTranscriptMessage,
         steering: bool,
@@ -339,7 +339,7 @@ impl TranscriptFold {
             .ok_or_else(|| "agent log contains a duplicate queued owner message".into())
     }
 
-    fn validate_queued_messages(&self, agent: &Agent) -> Result<(), String> {
+    pub(super) fn validate_queued_messages(&self, agent: &Agent) -> Result<(), String> {
         let queued = agent
             .conversation
             .queued_messages
@@ -363,7 +363,7 @@ impl TranscriptFold {
             .ok_or_else(|| "queued owner messages disagree with durable queue state".into())
     }
 
-    fn agent_message(&mut self, message: AgentTranscriptMessage) -> Result<(), String> {
+    pub(super) fn agent_message(&mut self, message: AgentTranscriptMessage) -> Result<(), String> {
         let turn = self
             .active
             .as_mut()
@@ -376,7 +376,7 @@ impl TranscriptFold {
         Ok(())
     }
 
-    fn gap(&mut self, frames: u64) -> Result<(), String> {
+    pub(super) fn gap(&mut self, frames: u64) -> Result<(), String> {
         // A declared transport gap does not invalidate the surrounding durable
         // log. Preserve it for event readers and scope incomplete output to the
         // active turn; an idle gap cannot fail a later, independent turn.
@@ -389,7 +389,11 @@ impl TranscriptFold {
         Ok(())
     }
 
-    fn finish(&mut self, turn_sequence: u64, outcome: AgentTurnOutcome) -> Result<(), String> {
+    pub(super) fn finish(
+        &mut self,
+        turn_sequence: u64,
+        outcome: AgentTurnOutcome,
+    ) -> Result<(), String> {
         let turn = self
             .active
             .take()
@@ -401,7 +405,7 @@ impl TranscriptFold {
         Ok(())
     }
 
-    fn finish_active(&mut self) -> Result<(), String> {
+    pub(super) fn finish_active(&mut self) -> Result<(), String> {
         if let Some(turn) = self.active.take() {
             self.turns
                 .push(turn.into_transcript(AgentTurnOutcome::Active)?);
@@ -410,15 +414,15 @@ impl TranscriptFold {
     }
 }
 
-struct ActiveTurn {
-    turn_sequence: u64,
-    started_at: String,
-    origin_key: Option<String>,
-    owner_message: Option<String>,
-    agent_messages: Vec<String>,
-    messages: Vec<AgentTranscriptMessage>,
-    metadata: Option<BTreeMap<String, String>>,
-    lost_frames: u64,
+pub(super) struct ActiveTurn {
+    pub(super) turn_sequence: u64,
+    pub(super) started_at: String,
+    pub(super) origin_key: Option<String>,
+    pub(super) owner_message: Option<String>,
+    pub(super) agent_messages: Vec<String>,
+    pub(super) messages: Vec<AgentTranscriptMessage>,
+    pub(super) metadata: Option<BTreeMap<String, String>>,
+    pub(super) lost_frames: u64,
 }
 
 impl ActiveTurn {
@@ -453,7 +457,7 @@ impl ActiveTurn {
     }
 }
 
-fn transcript_message(entry: &AgentLogEntry) -> AgentTranscriptMessage {
+pub(super) fn transcript_message(entry: &AgentLogEntry) -> AgentTranscriptMessage {
     let (role, content) = match &entry.kind {
         AgentLogKind::OwnerMessage { content } => (AgentTranscriptRole::Owner, content),
         AgentLogKind::AgentMessage { content } => (AgentTranscriptRole::Agent, content),

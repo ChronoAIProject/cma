@@ -90,7 +90,7 @@ impl CapacityRecoveryRuntime for RestrictedRecoveryRuntime {
         activation.require_confirmation(&attached.1)?;
         Ok(CompletedAttachment::Reattached {
             attachment: attached.0,
-            confirmation: attached.1,
+            confirmation: Box::new(attached.1),
         })
     }
 
