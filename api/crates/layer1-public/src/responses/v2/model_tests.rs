@@ -289,7 +289,18 @@ fn deferred_source_attempt_stays_queued_only_with_exact_paired_no_write_proof() 
         {
             failure.detail = "This Agent turn failed.".into();
         }
+        let bounded = project(
+            AgentResponseReading {
+                deferred_failure_detail: value.deferred_failure_detail.clone(),
+                command: value.command.clone(),
+                metadata: value.metadata.clone(),
+            },
+            &response_window_tests::window(&history, 1, history.history.len()),
+        )
+        .unwrap();
         let projected = project(value, &history).unwrap();
+        assert_eq!(bounded, projected);
+        assert_eq!(events(&bounded, true), events(&projected, true));
         if paired && exact && !terminal && same_commit {
             assert_eq!(projected.status, V2ResponseStatus::Queued);
             assert!(projected.error.is_none());

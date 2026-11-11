@@ -12,7 +12,7 @@ async fn bounded_response_source_matches_the_turn_and_reduces_total_checkouts() 
         let turn = count - 9;
         let f = Fixture::new(count, turn, None, Some("retained-model"), 64).await;
         let before = f.reset();
-        let (legacy, legacy_rows) = reads::isolated_test(async {
+        let (legacy, legacy_reads) = reads::isolated_test(async {
             let entries = f.store.agent_log_prefix(&f.agent.id, count).await.unwrap();
             assert!(f
                 .store
@@ -20,19 +20,19 @@ async fn bounded_response_source_matches_the_turn_and_reduces_total_checkouts() 
                 .await
                 .unwrap()
                 .is_empty());
-            (entries, reads::snapshot(AGENT_LOG)[2])
+            (entries, reads::snapshot(AGENT_LOG))
         })
         .await;
         let legacy_checkouts = f.used(before);
         let before = f.reset();
-        let (window, bounded_rows) = reads::isolated_test(async {
+        let (window, bounded_reads) = reads::isolated_test(async {
             let window = f
                 .store
                 .agent_response_log_window(&f.agent, Some(turn))
                 .await
                 .unwrap()
                 .unwrap();
-            (window, reads::snapshot(AGENT_LOG)[2])
+            (window, reads::snapshot(AGENT_LOG))
         })
         .await;
         let bounded_checkouts = f.used(before);
@@ -44,10 +44,14 @@ async fn bounded_response_source_matches_the_turn_and_reduces_total_checkouts() 
             "shared head/tail/extra-tail proof plus interval"
         );
         assert!(legacy_checkouts > bounded_checkouts);
+        let [_, _, legacy_rows, legacy_bytes] = legacy_reads;
+        let [_, _, bounded_rows, bounded_bytes] = bounded_reads;
         assert_eq!(bounded_rows, 11, "ten turn rows plus shared tail proof");
         assert!(legacy_rows >= count);
+        assert!(bounded_bytes < 40_000);
+        assert!(legacy_bytes > bounded_bytes * 50);
         f.assert_snapshot();
-        eprintln!("response_source history={count} turn_rows=10 legacy_checkouts={legacy_checkouts} bounded_checkouts={bounded_checkouts} legacy_rows={legacy_rows} bounded_rows={bounded_rows}");
+        eprintln!("response_source history={count} turn_rows=10 legacy_checkouts={legacy_checkouts} bounded_checkouts={bounded_checkouts} legacy_rows={legacy_rows} bounded_rows={bounded_rows} legacy_bson_bytes={legacy_bytes} bounded_bson_bytes={bounded_bytes}");
         f.cleanup().await;
     }
 }

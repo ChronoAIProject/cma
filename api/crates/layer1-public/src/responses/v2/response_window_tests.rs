@@ -1,6 +1,10 @@
 use super::*;
 
-fn window(full: &AgentEventStreamSnapshot, start: usize, end: usize) -> AgentEventStreamSnapshot {
+pub(super) fn window(
+    full: &AgentEventStreamSnapshot,
+    start: usize,
+    end: usize,
+) -> AgentEventStreamSnapshot {
     AgentEventStreamSnapshot {
         id: full.id.clone(),
         created_at: full.created_at.clone(),
