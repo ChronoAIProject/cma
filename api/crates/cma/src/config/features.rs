@@ -9,6 +9,7 @@ pub(crate) struct FeatureFlags {
     pub sandbox_snapshot_reads: bool,
     pub sandbox_detail_timings: bool,
     pub bounded_response_reads: bool,
+    pub paged_response_events: bool,
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
     pub nyxid_resource_request: bool,
@@ -45,6 +46,7 @@ impl FeatureFlags {
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
+            paged_response_events: flag(lookup, "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")?,
             v2_ui_transport: flag(lookup, "CHRONO_V2_UI_TRANSPORT_ENABLED")?,
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
@@ -214,6 +216,30 @@ mod permission_bound_tests {
             assert!(FeatureFlags::from_lookup(&mut |key| {
                 Ok((key == "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED").then(|| value.into()))
             })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod paged_event_tests {
+    use super::*;
+    #[test]
+    fn paged_events_are_default_off_and_require_their_own_strict_boolean() {
+        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.paged_response_events, enabled);
+            assert!(!flags.bounded_response_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
+                == "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")
+                .then(|| value.into())))
             .is_err());
         }
     }
