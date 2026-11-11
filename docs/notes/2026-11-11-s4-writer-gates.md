@@ -90,3 +90,52 @@ The next CMA check refused to start because `.heavy-0.lock` was absent.
 The existing 942 MB target is retained for the immediately pending CMA/Mongo
 gates. No disposable Mongo resources exist. Output evidence and caller wiring
 remain in progress; no PR/review-ready or activation claim.
+
+## Output and caller checkpoint gate disposition
+
+Published source checkpoint: `2777afa105da8cd516ffe7d6d9795b47c6013aeb`.
+The next source fix renews bootstrap permits every 64 source rows even when no
+evidence is emitted.
+
+The corrected CMA/unit gate could not execute: two 600-second heavy-0 waits
+expired, and a final nonblocking lock attempt also refused the occupied lock.
+The earlier CMA check found one missing test import, which was fixed; no
+corrected executable pass is claimed. New Mongo cases remain unexecuted.
+Core 10-test and core-Clippy passes are limited to the earlier core checkpoint.
+Formatting, whitespace, repository size and staged secret scans passed.
+
+Cleanup removed 1,343,286,598 bytes (1.34 GB) of owned target, local
+nextest tool and temporary logs. No Mongo container or volume was created. No
+S4 gate process or waiter remains. Shared lock files were neither removed nor
+created; requested notes and the dedicated worktree remain.
+
+Required next handoff: an available assigned heavy-lock slot; S1 output numeric
+DDL and transaction certification; a narrow S2 canonical runner dependency and
+remaining scoped caller contracts. Other publication families are still pending.
+No PR or production activation is claimed.
+
+## Qualified dependency and lifecycle root follow-up
+
+Source `0513eae62` adds lifecycle checkpoint scope dispatch and two registered
+Mongo cases: success with a segmented child, quiet-period refusal and rollback
+of the child fence after a later domain failure. These cases are not executed.
+All caller log publication families are still required before writer readiness.
+
+Normally merged S1 `d5d934731` and the plan-authorized Mongo registration
+`9011a3796`, including its S5 scoped helper base. S1 records 8 unit/36 real-Mongo
+passes at `bb6b4f801`; these certify that dependency, not the combined S4 source.
+The reader fix rejects ordinary sessions with a cached snapshot timestamp.
+
+Two further nonblocking `lockf -k -n -t 0` CMA-check attempts returned status75
+with the lock occupied. Cargo did not start and no new target was created.
+Both lock inodes remained unchanged. No S4 Mongo container was created.
+
+The size gate passed 5,948 files. Owned changes pass formatting and whitespace;
+the workspace format gate fails solely at the inherited S1
+`agent_log_segments/mongo_tests/capture_tests.rs:207` assertion. Its owner must
+publish that routine formatting fix. Staged source secret scan passed.
+
+All 31 canonical Mongo runner harness tests passed with source and archive
+selection, refusal, cancellation and fixture ownership/cleanup coverage
+(`node --test .github/scripts/mongo-contract-tests.test.mjs`). This harness
+uses mock Cargo/Docker commands; it is not a real-Mongo publication pass.

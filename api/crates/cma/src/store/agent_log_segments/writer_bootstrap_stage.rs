@@ -130,6 +130,21 @@ pub(in crate::store) async fn stage(
             }
             batch.insert(row, size)?;
         }
+        // Diagnostic-only source can produce no evidence rows. Bound the
+        // lease renewal interval by source work as well as buffered writes.
+        if sequence % BATCH_ROWS as u64 == 0 {
+            permit = persist_batch(
+                store,
+                current,
+                operation,
+                admission,
+                &permit,
+                &mut writer,
+                batch,
+            )
+            .await?;
+            batch = Batch::default();
+        }
     }
     let state = fold.finish(current).map_err(SandboxStoreError::Corrupt)?;
     if state != *captured.projection() {
