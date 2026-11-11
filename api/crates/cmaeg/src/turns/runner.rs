@@ -154,10 +154,14 @@ impl TurnRunner {
             {
                 // Both first deliveries may have observed absence. The losing
                 // command reads the winner's admitted context before answering.
-                let replay = custom_replay::lookup(&self.providers, &turn)
-                    .await
-                    .and_then(|outcome| outcome.ok_or_else(custom_replay::conflict))
-                    .map(Some);
+                let replay = custom_replay::lookup(
+                    &self.providers,
+                    &turn,
+                    self.config.context_retry_enabled,
+                )
+                .await
+                .and_then(|outcome| outcome.ok_or_else(custom_replay::conflict))
+                .map(Some);
                 return Ok(custom_replay::answer(replay, &mut admitted).unwrap());
             }
             let stream = started
@@ -344,7 +348,13 @@ impl TurnRunner {
             // Authority/retained-admission reads have their own bounded
             // deadline. Do not turn a slow denied lookup into Deferred/202:
             // at this point no new work has been submitted.
-            match custom_replay::lookup(&self.providers, &request).await {
+            match custom_replay::lookup(
+                &self.providers,
+                &request,
+                self.config.context_retry_enabled,
+            )
+            .await
+            {
                 Ok(Some(outcome)) => return outcome,
                 Err(error) => return LaunchOutcome::Refused(error),
                 Ok(None) => {}
