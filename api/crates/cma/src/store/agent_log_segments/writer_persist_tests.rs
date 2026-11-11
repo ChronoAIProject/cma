@@ -6,8 +6,19 @@ use mongodb::ClientSession;
 mod fixture;
 use fixture::*;
 
+#[path = "writer_bootstrap_mongo_tests.rs"]
+mod bootstrap;
+
 async fn transaction(f: &Fixture) -> ClientSession {
     f.client.start_session().await.unwrap()
+}
+
+fn succeeded<T>(result: Result<T, TransactionLogError>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(TransactionLogError::Domain(error)) => panic!("publication domain error: {error}"),
+        Err(TransactionLogError::Driver(error)) => panic!("publication driver error: {error}"),
+    }
 }
 
 fn update(plan: &PreparedPublication) -> AggregateUpdate {
@@ -54,7 +65,7 @@ async fn writer_rollover_commits_original_batch_head_projection_and_receipt_toge
     let plan = f.prepared(&scope);
     let expected = plan.next.clone();
     let mutation = update(&plan);
-    let receipt = persist(&f.store, &mut scope, plan, mutation).await.unwrap();
+    let receipt = succeeded(persist(&f.store, &mut scope, plan, mutation).await);
     assert!(matches!(
         commit_transaction(scope.release()).await,
         CommitOutcome::Committed
@@ -117,7 +128,7 @@ async fn writer_abort_after_rollover_and_late_receipt_conflict_leave_no_partial_
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
     let plan = f.prepared(&scope);
     let mutation = update(&plan);
-    let receipt = persist(&f.store, &mut scope, plan, mutation).await.unwrap();
+    let receipt = succeeded(persist(&f.store, &mut scope, plan, mutation).await);
     scope.release().abort_transaction().await.unwrap();
     unchanged(&f).await;
     assert_eq!(
