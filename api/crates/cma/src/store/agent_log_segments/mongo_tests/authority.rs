@@ -192,3 +192,45 @@ async fn segmented_history_never_enters_the_legacy_preparation_scanner() {
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable replica set"]
+async fn unsealed_creation_lineage_is_checked_when_the_page_does_not_deliver_it() {
+    let (client, name) = database("creation_lineage").await;
+    schema::migrate(&client.database(&name)).await.unwrap();
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (agent, entries) = segmented(&store, 0).await;
+    assert_eq!(
+        store.agent_log_range(&agent.id, 1, 2, 1).await.unwrap(),
+        entries[1..]
+    );
+    let original = log_document(&entries[0]).unwrap();
+    let mut changed = entries[0].clone();
+    if let AgentLogKind::Created { workspace_id, .. } = &mut changed.kind {
+        workspace_id.0 = workspace_id.0.to_uppercase();
+    }
+    let corrupted = log_document(&changed).unwrap();
+    assert_eq!(
+        bson::serialize_to_vec(&original).unwrap().len(),
+        bson::serialize_to_vec(&corrupted).unwrap().len()
+    );
+    store
+        .agent_log
+        .replace_one(
+            doc! {"agent_id":agent.id.as_str(),"seq":1_i64},
+            corrupted.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(store.agent_log_range(&agent.id, 1, 2, 1).await.is_err());
+    assert!(store.agent_log_range(&agent.id, 2, 2, 1).await.is_err());
+    assert_eq!(
+        store
+            .agent_log
+            .find_one(doc! {"agent_id":agent.id.as_str(),"seq":1_i64})
+            .await
+            .unwrap(),
+        Some(corrupted)
+    );
+    client.database(&name).drop().await.unwrap();
+}
