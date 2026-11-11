@@ -97,6 +97,24 @@ pub(super) async fn run(path: &Path) -> Result<()> {
     }
     let archive =
         Archive::open_version(path.to_owned(), config, id, false, 256, Version::Indexed).await?;
+    let selected = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = selected.clone();
+    let expected = context.clone();
+    archive
+        .visit_indexed_sources(proof.clone(), move |context, row| {
+            let mut rows = captured.lock().map_err(|_| invalid())?;
+            // This create-only fixture has one resource and fits one page.
+            if context != &expected || rows.len() == 64 {
+                return Err(invalid());
+            }
+            rows.push(row);
+            Ok(())
+        })
+        .await?;
+    let rows = std::mem::take(&mut *selected.lock().map_err(|_| invalid())?);
+    ledger
+        .verify_retirement_sources(context.clone(), rows)
+        .await?;
     if archive.verify_indexed(proof.clone()).await? != receipt
         || archive
             .prepare_indexed(proof, context, |_| Err(invalid()))

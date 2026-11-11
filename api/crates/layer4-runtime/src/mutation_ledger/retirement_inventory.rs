@@ -20,6 +20,8 @@ mod binary;
 mod context;
 #[path = "retirement_encoding.rs"]
 mod encoding;
+#[path = "retirement_source_check.rs"]
+mod source_check;
 pub(crate) use auxiliary::Auxiliary;
 pub(crate) use context::Context;
 

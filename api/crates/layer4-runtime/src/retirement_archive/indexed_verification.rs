@@ -10,7 +10,7 @@ pub(super) fn group(
     proof: &GroupProof,
     receipt: &Receipt,
     expected_context: Option<&Context>,
-) -> Result<()> {
+) -> Result<Context> {
     let (size, expected, payload): (i64, String, Vec<u8>) = db.query_row(
         "SELECT length(payload),sha256,CASE WHEN length(payload)<=2097152 THEN payload ELSE NULL END
          FROM indexed_contexts WHERE group_key=?", [&proof.key],
@@ -94,6 +94,30 @@ pub(super) fn group(
         || format!("{:x}", source.finalize()) != proof.source_sha256
     {
         return Err(invalid());
+    }
+    Ok(context)
+}
+
+/// The caller holds one read transaction across verification and visitation.
+/// No callback sees a prefix before the complete archive and replay indexes pass.
+pub(super) fn visit(
+    db: &Connection,
+    config: &RuntimeConfig,
+    proof: &GroupProof,
+    receipt: &Receipt,
+    mut inspect: impl FnMut(&Context, SourceRow) -> Result<()>,
+) -> Result<()> {
+    let context = group(db, config, proof, receipt, None)?;
+    let scoped = context.scoped_config(config)?;
+    let mut statement = db
+        .prepare(
+            "SELECT payload FROM indexed_records WHERE group_key=? ORDER BY kind,scope,source_key",
+        )
+        .map_err(|_| storage_error())?;
+    let mut rows = statement.query([&proof.key]).map_err(|_| storage_error())?;
+    while let Some(row) = rows.next().map_err(|_| storage_error())? {
+        let bytes: Vec<u8> = row.get(0).map_err(|_| invalid())?;
+        inspect(&context, SourceRow::decode(&bytes, &scoped)?)?;
     }
     Ok(())
 }
