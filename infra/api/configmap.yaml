@@ -78,10 +78,14 @@ data:
   # Additional gates still require their own canary verification.
   # New file admissions only; supporting readers/workers must precede enablement.
   CHRONO_V2_UI_TRANSPORT_ENABLED: "true"
+  CHRONO_AGENT_LOG_ADMISSION_AGENTS: ""
   CHRONO_TASK_EXPERIENCE_POLICY: '{"mode":"disabled","accounts":[],"capabilities":[]}'
   # Independent placement rollout selections; these do not attest continuity.
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
   CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED: "false"
+  # Saving any nonempty budget policy requires compatible serving/rollback readers.
+  # Release operators enable writes only after establishing that reader baseline.
+  CHRONO_MODEL_BUDGET_WRITES_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
   CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS: "600"
   CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS: "1800"
@@ -201,12 +205,20 @@ data:
   CHRONO_MONGODB_DATABASE: "chrono-bot"
   # Shared database deployment; each service retains its own schema and collections.
   CHRONO_MONGODB_AUTHORITY_MODE: "shared-schema"
+  # Agent Manager also owns model_budget_reservations. Isolated deployments must
+  # include it in scoped schema/runtime grants before this image is activated.
+  # Private model_budget settings have no manifest defaults; keep general rollout
+  # disabled pending request-level enforcement. See CMA_Model_Budget_Controls.md.
+  # Admin Operations settings supply all platform/owner/turn controls, including
+  # explicit period, thresholds, reserve, lag, call limit and IANA day timezone.
   # TTL applies to existing Activity records; lowering it can remove history.
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
   # Canonical platform origin for scoped runtime service proxying.
   CHRONO_PLATFORM_BASE_URL: "https://nyx-api.chrono-ai.fun"
   # Durable personal documents use the existing S3-backed storage service.
   # Objects live only under documents/<owner-hash>/<document-id>/<source-hash>.md.
+  # Activate in a later train only after compatible readers are the rollback floor.
+  CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED: "false"
   CHRONO_DOCUMENT_BUCKET: "chrono-platform-bot"
   CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
   # Agent model calls use the scoped AgentKey through this platform proxy.

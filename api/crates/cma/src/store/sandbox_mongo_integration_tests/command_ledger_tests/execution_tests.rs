@@ -21,6 +21,15 @@ mod resource_execution;
 #[path = "capacity_execution_tests.rs"]
 mod capacity_execution;
 
+mod bounded_admission_tests;
+mod bounded_audit_tests;
+mod bounded_compatibility_tests;
+mod bounded_dispatch_tests;
+mod bounded_fixtures;
+mod bounded_message_tests;
+mod bounded_read_proof_tests;
+mod bounded_receipt_tests;
+
 struct Authority(Mutex<Result<Caller, CommandAuthorizationError>>);
 #[async_trait::async_trait]
 impl AgentCommandAuthorizer for Authority {
@@ -156,6 +165,23 @@ async fn composed_with_credentials(
     Arc<Authority>,
     Arc<AtomicUsize>,
 ) {
+    composed_with_history(client, name, credentials, parent, None).await
+}
+
+async fn composed_with_history(
+    client: &Client,
+    name: &str,
+    credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    parent: Sandbox,
+    history: Option<(u64, bool)>,
+) -> (
+    Arc<MongoSandboxStore>,
+    Agent,
+    Sandbox,
+    Arc<crate::commands::ResourceCommandExecution>,
+    Arc<Authority>,
+    Arc<AtomicUsize>,
+) {
     let store = MongoSandboxStore::open(client, name).await.unwrap();
     let agent = ready_agent(&parent, "agt_commands");
     store.create_sandbox(parent.clone()).await.unwrap();
@@ -167,6 +193,15 @@ async fn composed_with_credentials(
     worktree.agent_id = Some(agent.id.clone());
     store.create_workspace(workspace).await.unwrap();
     store.create_worktree(worktree).await.unwrap();
+    let (store, agent) = if let Some((count, enabled)) = history {
+        let (mut store, agent) = bounded_fixtures::prepare_history(store, agent, count).await;
+        if !enabled {
+            store.bounded_admission_agents.clear();
+        }
+        (store, agent)
+    } else {
+        (store, agent)
+    };
     let store = Arc::new(store);
     let caller = Caller::new(
         agent.owner.clone(),
@@ -439,3 +474,6 @@ async fn operation_command_lookup_is_exact_and_rejects_duplicate_bindings() {
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "budget_execution_tests.rs"]
+mod budget_execution;
