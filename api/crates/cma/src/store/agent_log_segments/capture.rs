@@ -20,6 +20,9 @@ use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::Mong
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::store) enum CaptureMode {
     Snapshot,
+    // Production transaction capture requires the exclusive TransactionScope.
+    // Retain the invalid raw-mode token only for refusal qualification tests.
+    #[cfg(test)]
     Transaction,
 }
 
