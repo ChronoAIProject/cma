@@ -7,11 +7,13 @@ use mongodb::{
 };
 use serde_json::{json, Value};
 
-use super::{activity_indexes, Result, IO};
+use super::{
+    steps::{unsupported, Step},
+    Result, IO,
+};
 use crate::store::sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome};
 
 pub(super) const COLLECTION: &str = "agent_manager_migrations";
-const MANIFEST: &str = "manifest:am-activity-query-indexes-v1";
 const LOCK: &str = "runner";
 const LEASE_MS: i64 = 30_000;
 
@@ -51,29 +53,21 @@ pub(super) struct Ledger {
     client: Client,
     database: Database,
     rows: Collection<Document>,
-}
-
-fn unsupported() -> Document {
-    doc! {"$or":[
-        {"schema":{"$ne":1_i64}},
-        {"schema":{"$not":{"$type":["int","long"]}}},
-        {"schema":{"$type":"array"}},
-        {"kind":{"$nin":["manifest","lease","attempt"]}},
-        {"kind":{"$not":{"$type":"string"}}},
-        {"kind":{"$type":"array"}},
-        {"kind":"manifest","_id":{"$ne":MANIFEST}},
-        {"kind":"lease","_id":{"$ne":LOCK}},
-        {"kind":"attempt","migration":{"$ne":activity_indexes::ID}},
-        {"kind":"attempt","checksum":{"$ne":activity_indexes::checksum()}}
-    ]}
+    pub(super) step: Step,
 }
 
 impl Ledger {
+    #[cfg(test)]
     pub(super) fn new(client: Client, database: Database) -> Self {
+        Self::for_step(client, database, Step::Activity)
+    }
+
+    pub(super) fn for_step(client: Client, database: Database, step: Step) -> Self {
         Self {
             rows: super::super::durability::majority_collection(&database, COLLECTION),
             client,
             database,
+            step,
         }
     }
 
@@ -88,14 +82,16 @@ impl Ledger {
         {
             return Err("unknown migration history; older migrator refused");
         }
-        if let Some(row) = self
-            .rows
-            .find_one(doc! {"_id":MANIFEST})
-            .max_time(IO)
-            .await
-            .map_err(|_| "migration manifest unavailable")?
-        {
-            validate_manifest(&row)?;
+        for step in Step::ALL {
+            if let Some(row) = self
+                .rows
+                .find_one(doc! {"_id":step.manifest()})
+                .max_time(IO)
+                .await
+                .map_err(|_| "migration manifest unavailable")?
+            {
+                validate_manifest(&row, step)?;
+            }
         }
         if let Some(row) = self
             .rows
@@ -118,17 +114,17 @@ impl Ledger {
                 return Err("migration ledger bootstrap unavailable");
             }
         }
-        let manifest = doc! {"_id":MANIFEST,"schema":1_i64,"kind":"manifest",
-        "migration":activity_indexes::ID,"checksum":activity_indexes::checksum(),"completed":false};
+        let manifest = doc! {"_id":self.step.manifest(),"schema":1_i64,"kind":"manifest",
+        "migration":self.step.id(),"checksum":self.step.checksum(),"completed":false};
         if self.rows.insert_one(manifest).await.is_err() {
             let row = self
                 .rows
-                .find_one(doc! {"_id":MANIFEST})
+                .find_one(doc! {"_id":self.step.manifest()})
                 .max_time(IO)
                 .await
                 .map_err(|_| "manifest insertion outcome uncertain")?
                 .ok_or("manifest insertion outcome uncertain")?;
-            validate_manifest(&row)?;
+            validate_manifest(&row, self.step)?;
         }
         let lock = doc! {"_id":LOCK,"schema":1_i64,"kind":"lease","fence":0_i64,
         "holder":"","expires_at":DateTime::from_millis(0),"acquired_at":DateTime::from_millis(0)};
@@ -148,22 +144,27 @@ impl Ledger {
     pub(super) async fn completed(&self) -> Result<bool> {
         let row = self
             .rows
-            .find_one(doc! {"_id":MANIFEST})
+            .find_one(doc! {"_id":self.step.manifest()})
             .max_time(IO)
             .await
             .map_err(|_| "migration completion unavailable")?;
         let Some(row) = row else {
             return Ok(false);
         };
-        if !validate_manifest(&row)? {
+        if !validate_manifest(&row, self.step)? {
             return Ok(false);
         }
         let receipt = row
             .get_str("completion_attempt")
             .map_err(|_| "completion receipt missing")?;
-        if self.rows.find_one(doc! {"_id":receipt,"schema":1_i64,"kind":"attempt",
-            "migration":activity_indexes::ID,"checksum":activity_indexes::checksum(),"outcome":"completed"})
-            .max_time(IO).await.map_err(|_| "completion receipt unavailable")?.is_none()
+        if self
+            .rows
+            .find_one(doc! {"_id":receipt,"schema":1_i64,"kind":"attempt",
+            "migration":self.step.id(),"checksum":self.step.checksum(),"outcome":"completed"})
+            .max_time(IO)
+            .await
+            .map_err(|_| "completion receipt unavailable")?
+            .is_none()
         {
             return Err("completion receipt missing");
         }
@@ -193,12 +194,12 @@ impl Ledger {
         }
         let manifest = self
             .rows
-            .find_one(doc! {"_id":MANIFEST})
+            .find_one(doc! {"_id":self.step.manifest()})
             .session(&mut session)
             .await
             .map_err(|_| "migration manifest unavailable")?
             .ok_or("migration manifest missing")?;
-        if validate_manifest(&manifest)? {
+        if validate_manifest(&manifest, self.step)? {
             return Err("migration completed concurrently; verify status");
         }
         let lock = self
@@ -222,7 +223,7 @@ impl Ledger {
             .get_datetime("acquired_at")
             .map_err(|_| "migration timestamp malformed")?;
         let row = doc! {"_id":&attempt,"schema":1_i64,"kind":"attempt",
-        "migration":activity_indexes::ID,"checksum":activity_indexes::checksum(),
+        "migration":self.step.id(),"checksum":self.step.checksum(),
         "source":&identity.source,"image":&identity.image,"fence":fence,
         "started_at":started_at,"outcome":"running"};
         self.rows
@@ -296,7 +297,7 @@ impl Ledger {
             .update_one(
                 doc! {"_id":&lease.attempt,"schema":1_i64,
                 "kind":"attempt","fence":lease.fence,"outcome":"running",
-                "migration":activity_indexes::ID,"checksum":activity_indexes::checksum()},
+                "migration":self.step.id(),"checksum":self.step.checksum()},
                 doc! {"$set":{"outcome":state,"changed":outcome.ok(),"reason":outcome.err()},
                 "$currentDate":{"finished_at":true}},
             )
@@ -310,8 +311,8 @@ impl Ledger {
             let result = self
                 .rows
                 .update_one(
-                    doc! {"_id":MANIFEST,"schema":1_i64,
-                    "checksum":activity_indexes::checksum(),"completed":false},
+                    doc! {"_id":self.step.manifest(),"schema":1_i64,
+                    "checksum":self.step.checksum(),"completed":false},
                     doc! {"$set":{"completed":true,"completion_attempt":&lease.attempt}},
                 )
                 .session(&mut session)
@@ -328,8 +329,8 @@ impl Ledger {
                     .read_at(
                         session.operation_time(),
                         doc! {"_id":&lease.attempt,
-                        "schema":1_i64,"kind":"attempt","migration":activity_indexes::ID,
-                        "checksum":activity_indexes::checksum(),"fence":lease.fence,
+                        "schema":1_i64,"kind":"attempt","migration":self.step.id(),
+                        "checksum":self.step.checksum(),"fence":lease.fence,
                         "outcome":state,"changed":outcome.ok(),"reason":outcome.err()},
                     )
                     .await?;
@@ -363,7 +364,7 @@ impl Ledger {
     pub(super) async fn status(&self) -> Result<Value> {
         let rows: Vec<_> = self
             .rows
-            .find(doc! {"kind":"attempt"})
+            .find(doc! {"kind":"attempt", "migration":self.step.id()})
             .sort(doc! {"started_at":-1,"fence":-1})
             .limit(20)
             .max_time(IO)
@@ -389,7 +390,7 @@ impl Ledger {
             Identity::new(source, image)?;
             let changed = row.get_i64("changed").ok();
             if (outcome == "completed" && changed.is_none())
-                || changed.is_some_and(|count| !(0..=2).contains(&count))
+                || changed.is_some_and(|count| !(0..=self.step.max_changes()).contains(&count))
             {
                 return Err("migration effect count malformed");
             }
@@ -400,18 +401,18 @@ impl Ledger {
                 "finished_at":row.get_datetime("finished_at").ok().map(|time|time.timestamp_millis())}));
         }
         Ok(
-            json!({"migration":activity_indexes::ID,"checksum":activity_indexes::checksum(),
+            json!({"migration":self.step.id(),"checksum":self.step.checksum(),
             "completed":self.completed().await?,"recent_attempts":attempts,
             "history_limit":20,"running_means":"unfinished; may require takeover after lease expiry"}),
         )
     }
 }
 
-fn validate_manifest(row: &Document) -> Result<bool> {
+fn validate_manifest(row: &Document, step: Step) -> Result<bool> {
     if row.get_i64("schema").ok() != Some(1)
         || row.get_str("kind").ok() != Some("manifest")
-        || row.get_str("migration").ok() != Some(activity_indexes::ID)
-        || row.get_str("checksum").ok() != Some(activity_indexes::checksum().as_str())
+        || row.get_str("migration").ok() != Some(step.id())
+        || row.get_str("checksum").ok() != Some(step.checksum().as_str())
         || row.keys().any(|key| {
             ![
                 "_id",
