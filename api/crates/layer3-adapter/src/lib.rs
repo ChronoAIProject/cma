@@ -52,6 +52,7 @@ pub mod runtime_ledger_maintenance;
 pub mod runtime_ledger_retirement;
 mod runtime_ledger_status;
 mod runtime_output;
+mod runtime_output_update;
 mod runtime_recovery;
 mod runtime_status;
 mod tool_proxy;
@@ -100,9 +101,9 @@ pub use checkpoint::{
     RestoreBootstrapRequest, RestoreRequest, WriterState,
 };
 pub use conversation::{
-    has_reported_file_changes, reported_tool_text, AvailableCommand, AvailableCommandsUpdate,
-    ContentBlock, ContentChunk, ConversationChannel, ConversationId, ConversationInput,
-    ConversationInputGuard, ConversationInputSender, ConversationSendOutcome,
+    has_reported_file_changes, reported_tool_call_text, reported_tool_text, AvailableCommand,
+    AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel, ConversationId,
+    ConversationInput, ConversationInputGuard, ConversationInputSender, ConversationSendOutcome,
     ConversationSettingsSupport, ConversationUpdate, MessageId, PermissionDecision,
     PermissionLocator, PermissionOption, PermissionOptionId, PermissionOptionKind,
     PermissionRequest, PromptResponse, RequestPermissionRequest, SessionUpdate, ToolCall,
@@ -152,6 +153,7 @@ pub use runtime_ledger_status::{
     RUNTIME_LEDGER_STATUS_MEDIA_TYPE,
 };
 pub use runtime_output::{RuntimeOutputReceipt, RuntimeOutputSource};
+pub use runtime_output_update::RuntimeOutputUpdate;
 pub use runtime_recovery::{
     NonexecutingRecoveryVerification, RecoveryConversation, RecoveryConversationHistory,
     RuntimeRecovery, RuntimeRecoveryInspection, RuntimeRecoveryInspectionRequest,
