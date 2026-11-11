@@ -64,7 +64,10 @@ pub(super) fn failure_error(failure: WireFailure) -> AdapterError {
         AdapterError::RuntimeLedgerHold(detail)
     } else if failure.retryable {
         AdapterError::Unavailable(detail)
-    } else if failure.code == "attachment_upload_conflict" {
+    } else if matches!(
+        failure.code.as_str(),
+        "attachment_upload_conflict" | "agent_skill_upgrade_conflict"
+    ) {
         AdapterError::OperationIdentityConflict(detail)
     } else if failure.code == "at_capacity" {
         AdapterError::AtCapacity(detail)
