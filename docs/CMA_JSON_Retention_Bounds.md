@@ -102,9 +102,34 @@ this to `batch_semaphore::Semaphore::release`, not retained JSON. Tests initiali
 that pool infrastructure before frame measurement; both mutexes remain pool
 metadata until pool drop. Their bytes are excluded from frame samples and must
 be included with accounting infrastructure in the aggregate/RSS qualification.
-Measurements are samples supporting the source
-calculation; they are not an RSS proof. The measurement table will be recorded
-from the required gate before this change is declared review-ready.
+Measurements support the source calculation; they are not an RSS proof.
+The following results were recorded on aarch64 macOS with Rust 1.96.1 at
+`5e88b61a67573f2f3b6e0a70c80d15cbf1f5e379` (API tree
+`bfdb5266c0df09fb007602a97fc33f0d6f340a05`). All 181 selected contracts passed.
+All byte columns measure requested allocation storage or its allowance; none
+measure allocator residency. Every fixture returned to exactly zero measured
+frame bytes and restored both pools after its final owner dropped. Result
+projection and cloning added no retained storage and kept the original root
+charged through the last consumer.
+
+| Fixture | Encoded bytes | Nodes | Retained bytes | Peak bytes | Tree allowance | Scratch allowance |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| max-string | 4194304 | 1 | 4194422 | 4194422 | 8390656 | 12583936 |
+| max-escaped | 4194304 | 1 | 2097271 | 4194303 | 8390656 | 12583936 |
+| small-objects | 21841 | 6826 | 636246 | 636246 | 7034530 | 66547 |
+| wide-map | 35746 | 8191 | 834598 | 1205174 | 8460100 | 108262 |
+| wide-array | 16383 | 8192 | 589944 | 884736 | 8422398 | 50173 |
+| nested | 129 | 65 | 18552 | 18552 | 67842 | 1411 |
+| duplicates | 69616 | 8191 | 480 | 480 | 8527840 | 209872 |
+
+The large string fixtures reach the 4 MiB encoded boundary. The wide array
+reaches 8,192 counted nodes; the nested fixture reaches 64 container levels.
+Duplicate entries are charged during preflight even though only the final
+value remains in the parsed tree. Success and refusal contracts additionally
+cover escaped private parser keys, malformed JSON, limits, simultaneous
+attachments, delayed replies, cancellation and receiver loss. The initial
+partial test run is retained separately from this qualified result.
+
 
 Typed domain/prepared updates, derived persistent strings and diagnostic
 formatting, pending RPC bookkeeping, fold/serialization copies, codec fragments,
