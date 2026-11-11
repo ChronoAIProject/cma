@@ -9,20 +9,22 @@ pub(in crate::store) enum Event {
     Busy,
     Fallback,
     Quarantined,
+    QuarantineWritten,
     WriteScanAvoided,
     WindowScanAvoided,
 }
-const NAMES: [&str; 8] = [
+const NAMES: [&str; 9] = [
     "prepared",
     "reused",
     "preparation_failed",
     "preparation_busy",
     "fallback",
     "quarantined",
+    "quarantine_written",
     "write_scan_avoided",
     "window_scan_avoided",
 ];
-static VALUES: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
+static VALUES: [AtomicU64; 9] = [const { AtomicU64::new(0) }; 9];
 static CHANGED: AtomicBool = AtomicBool::new(false);
 
 pub(in crate::store) fn record(event: Event) {

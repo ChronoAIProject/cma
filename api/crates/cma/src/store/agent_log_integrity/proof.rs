@@ -181,6 +181,7 @@ pub(in crate::store) async fn quarantine_row(
         )
         .into());
     }
+    fleet::telemetry::record(fleet::telemetry::Event::QuarantineWritten);
     Ok(())
 }
 
