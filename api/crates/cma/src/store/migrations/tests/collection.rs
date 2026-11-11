@@ -1,5 +1,6 @@
 use super::*;
 use crate::store::migrations::{collection_indexes, steps::Step};
+use mongodb::bson::Bson;
 
 #[test]
 fn collection_indexes_require_complete_ordered_unfiltered_keys() {
@@ -30,6 +31,8 @@ fn collection_indexes_require_complete_ordered_unfiltered_keys() {
         let keys = drift[0].get_document("key").unwrap();
         let reversed: Document = keys
             .iter()
+            .collect::<Vec<_>>()
+            .into_iter()
             .rev()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
