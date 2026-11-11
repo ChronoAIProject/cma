@@ -1,6 +1,7 @@
 use super::*;
-use axum::{http::StatusCode, routing::get, Router};
-use futures_util::StreamExt;
+use axum::{body::Body, http::StatusCode, routing::get, Router};
+use futures_util::{stream, StreamExt};
+use std::convert::Infallible;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tower::ServiceExt;
 
@@ -9,6 +10,7 @@ const URL: &str = "/api/v1/agents/a/history";
 
 fn budget(slots: usize, bytes: usize) -> Arc<ReadBudget> {
     Arc::new(ReadBudget {
+        retain_frames: false,
         slots: Arc::new(Semaphore::new(slots)),
         response_bytes: bytes,
         timeout: Duration::from_secs(2),
@@ -35,7 +37,7 @@ async fn request(router: &Router, method: Method, url: &str) -> Response {
 
 #[tokio::test]
 async fn burst_refuses_before_work_and_buffers_keep_their_slots() {
-    let budget = ReadBudget::new();
+    let budget = ReadBudget::new(false);
     let calls = Arc::new(AtomicUsize::new(0));
     let observed = calls.clone();
     let router = protected(
@@ -289,7 +291,7 @@ async fn admission_does_not_turn_authorization_denial_into_success() {
 
 #[tokio::test]
 async fn metadata_has_a_smaller_byte_budget_than_explicit_downloads() {
-    let budget = ReadBudget::new();
+    let budget = ReadBudget::new(false);
     for (template, url, expected) in [
         (
             "/api/v1/agents/{id}/artifacts",
@@ -345,3 +347,6 @@ async fn cancellation_during_body_collection_releases_the_slot() {
     assert!(task.await.unwrap_err().is_cancelled());
     assert_eq!(budget.slots.available_permits(), 1);
 }
+
+#[path = "frame_lifetime_tests.rs"]
+mod frame_lifetime;

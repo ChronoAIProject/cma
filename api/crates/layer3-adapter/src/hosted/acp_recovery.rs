@@ -100,11 +100,13 @@ impl Bridge {
         recovery.expected = None;
         let outcome = crate::hosted::acp_turn::turn_outcome(frame);
         if recovery.verified {
-            updates.send(crate::hosted::acp_turn::scoped_turn_outcome(
-                outcome,
-                true,
-                Some(prompt_id),
-            ));
+            updates
+                .send(crate::hosted::acp_turn::scoped_turn_outcome(
+                    outcome,
+                    true,
+                    Some(prompt_id),
+                ))
+                .await;
         } else {
             recovery.outcome = Some((prompt_id, outcome));
         }
@@ -115,11 +117,13 @@ impl Bridge {
         let mut recovery = self.recovery.lock().await;
         recovery.verified = true;
         if let Some((prompt_id, outcome)) = recovery.outcome.take() {
-            updates.send(crate::hosted::acp_turn::scoped_turn_outcome(
-                outcome,
-                true,
-                Some(prompt_id),
-            ));
+            updates
+                .send(crate::hosted::acp_turn::scoped_turn_outcome(
+                    outcome,
+                    true,
+                    Some(prompt_id),
+                ))
+                .await;
         }
     }
 }

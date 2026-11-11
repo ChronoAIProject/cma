@@ -250,6 +250,7 @@ impl ControlPlaneComposition {
                 funding: runtime::funding(config, &stores, adapter.clone())?,
             },
             SandboxLifecycleConfig {
+                bounded_live_fragments: config.features.bounded_live_fragments,
                 parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
                 access_transport_migration: config.agent_access_transport_migration.clone(),
                 managed_documents_enabled: config.document_storage.is_some(),
