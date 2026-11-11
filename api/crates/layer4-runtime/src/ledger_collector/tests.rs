@@ -240,6 +240,36 @@ fn both_format_model_drivers_exercise_the_lifecycle_harness_past_legacy_bounds()
 }
 
 #[test]
+fn lifecycle_harness_preserves_live_and_unresolved_baselines() {
+    for format in [SourceFormat::V1, SourceFormat::V2] {
+        let model = Model::new(
+            format,
+            &[
+                (0, Decision::RetainLive),
+                (u64::MAX, Decision::RetainUnknown),
+            ],
+        );
+        let metrics = run(lifecycle_harness::lifetime(model.clone(), 1_400)).unwrap();
+        assert_eq!(metrics.active_operations, 12);
+        assert_eq!(metrics.active_authority, 6);
+        assert_eq!(metrics.reclaimed_operations, 8_400);
+        assert_eq!(metrics.reclaimed_authority, 4_200);
+        assert_eq!(model.state.lock().unwrap().groups.len(), 2);
+    }
+}
+
+#[test]
+fn lifecycle_harness_does_not_qualify_an_insufficient_campaign() {
+    assert_eq!(
+        run(lifecycle_harness::lifetime(
+            Model::new(SourceFormat::V2, &[]),
+            1
+        )),
+        Err(Refusal::InvalidEvidence)
+    );
+}
+
+#[test]
 fn completed_sweep_wakes_on_changed_source_and_revisits_earlier_keys() {
     let m = Model::new(SourceFormat::V1, &[(100, Decision::SettledDeleted)]);
     run(until_complete(&m, 16)).unwrap();
