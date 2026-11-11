@@ -2,6 +2,7 @@ use super::*;
 use crate::agent_v2::fixtures::*;
 use axum::http::{Method, StatusCode};
 use futures_util::StreamExt;
+use layer2_core::sandbox::AgentLiveFragment;
 use layer2_core::{
     resource_access::*,
     sandbox::{
@@ -195,12 +196,12 @@ async fn live_fragments_require_exact_runtime_turn_and_caught_up_anchor() {
             "future" => value.after_seq += 1,
             _ => unreachable!(),
         }
-        open.held = Some(value);
+        open.held = Some(value.into());
         open.queue_live();
         assert!(open.pending.is_empty(), "{fault}");
         assert_eq!(open.held.is_some(), fault == "future");
     }
-    open.held = Some(valid);
+    open.held = Some(valid.into());
     open.queue_live();
     assert_eq!(open.pending.len(), 1);
     assert!(open.pending[0].live);
@@ -212,11 +213,11 @@ async fn turn_change_does_not_drop_a_held_fragment_for_the_new_turn() {
     let mut held = fragment(&open);
     held.turn_sequence += 1;
     open.header.active_turn = Some(held.turn_sequence);
-    open.held = Some(held);
+    open.held = Some(held.into());
     open.pending.push_back(Frame {
         event: Event::default().event("cma.agent.live").data("{}"),
         live: true,
-        fragment: Some(fragment(&open)),
+        fragment: Some(fragment(&open).into()),
     });
     open.live_batch_needs_validation = true;
     let frame = open.pending.pop_front().unwrap();
@@ -230,7 +231,7 @@ async fn live_observation_time_is_real_and_negotiated_without_changing_old_frame
         let (mut open, _) = following().await;
         open.live_timestamps = preferred;
         let before = layer2_core::now_rfc3339();
-        open.held = Some(fragment(&open));
+        open.held = Some(fragment(&open).into());
         open.queue_live();
         let after = layer2_core::now_rfc3339();
         let mut body = response(open).into_body().into_data_stream();
@@ -264,7 +265,7 @@ async fn live_observation_time_is_real_and_negotiated_without_changing_old_frame
 #[tokio::test]
 async fn buffered_live_text_survives_a_commit_and_follows_durable_catch_up() {
     let (mut open, f) = following().await;
-    open.held = Some(fragment(&open));
+    open.held = Some(fragment(&open).into());
     open.queue_live();
     let frame = open.pending.pop_front().unwrap();
     append(
@@ -304,16 +305,19 @@ async fn deferred_live_batch_preserves_current_first_and_coalesced_order() {
             .to_string(),
         ),
         live: true,
-        fragment: Some(AgentLiveFragment {
-            delta: delta.into(),
-            message_id: message_id.into(),
-            kind: if kind == "text_delta" {
-                AgentLiveFragmentKind::Message
-            } else {
-                AgentLiveFragmentKind::Thought
-            },
-            ..source.clone()
-        }),
+        fragment: Some(
+            AgentLiveFragment {
+                delta: delta.into(),
+                message_id: message_id.into(),
+                kind: if kind == "text_delta" {
+                    AgentLiveFragmentKind::Message
+                } else {
+                    AgentLiveFragmentKind::Thought
+                },
+                ..source.clone()
+            }
+            .into(),
+        ),
     };
     open.pending.extend([
         frame("first", "reply", "text_delta"),
@@ -353,7 +357,7 @@ async fn deferred_live_batch_preserves_current_first_and_coalesced_order() {
 #[tokio::test]
 async fn deferred_fill_failure_reaches_the_typed_stream_error() {
     let (mut open, f) = following().await;
-    open.held = Some(fragment(&open));
+    open.held = Some(fragment(&open).into());
     open.queue_live();
     let frame = open.pending.pop_front().unwrap();
     append(
@@ -373,7 +377,7 @@ async fn deferred_fill_failure_reaches_the_typed_stream_error() {
 }
 
 async fn defer_live(open: &mut Following, f: &Fixture) {
-    open.held = Some(fragment(open));
+    open.held = Some(fragment(open).into());
     open.queue_live();
     let frame = open.pending.pop_front().unwrap();
     append(
@@ -453,7 +457,7 @@ async fn deferred_live_rechecks_committed_messages_and_preserves_remaining_order
         let mut value = fragment(&open);
         value.delta = delta.into();
         value.kind = AgentLiveFragmentKind::Thought;
-        open.held = Some(value);
+        open.held = Some(value.into());
         open.queue_live();
         open.deferred_live.extend(std::mem::take(&mut open.pending));
     }
@@ -473,82 +477,5 @@ async fn deferred_live_rechecks_committed_messages_and_preserves_remaining_order
     assert!(!wire.contains("cma.agent.live_gap"));
 }
 
-#[tokio::test]
-async fn live_fragments_before_broadcast_lag_precede_the_gap_and_later_fragments() {
-    let (mut open, f) = following().await;
-    let mut assembly = AgentMessageAssembly::default();
-    for _ in 0..300 {
-        f.state
-            .updates
-            .as_ref()
-            .unwrap()
-            .record_update(
-                &open.header.id,
-                open.header.runtime_generation.unwrap(),
-                &mut assembly,
-                AgentRuntimeUpdate::Said(
-                    serde_json::from_value(serde_json::json!({
-                        "sessionUpdate": "agent_message_chunk", "messageId": "later",
-                        "content": {"type": "text", "text": "after lag"}
-                    }))
-                    .unwrap(),
-                ),
-                "2026-11-06T00:00:00Z".into(),
-            )
-            .await
-            .unwrap();
-    }
-    open.header = open
-        .state
-        .reads
-        .event_stream_header(&open.authorization)
-        .await
-        .unwrap();
-    let mut first = fragment(&open);
-    first.delta = "before lag".into();
-    open.held = Some(first);
-    open.queue_live();
-    open.ended = true;
-    let bytes = axum::body::to_bytes(response(open).into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let wire = String::from_utf8(bytes.to_vec()).unwrap();
-    let before = wire.find("before lag").unwrap();
-    let gap = wire.find("event: cma.agent.live_gap\n").unwrap();
-    let after = wire.find("after lag").unwrap();
-    assert!(before < gap && gap < after, "{wire}");
-}
-
-#[tokio::test]
-async fn serialized_pages_stop_before_byte_limit_without_acknowledging_omitted_rows() {
-    let f = fixture(false, false).await;
-    for _ in 0..5 {
-        append(
-            &f.store,
-            AgentLogKind::AgentMessage {
-                content: "a".repeat(1024 * 1024),
-            },
-        )
-        .await;
-    }
-    let (status, page) = call(&f.router, Method::GET, SNAPSHOT, "owner-a", None, None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(serde_json::to_vec(&page).unwrap().len() <= projection::MAX_BYTES);
-    let items = page["items"].as_array().unwrap();
-    assert_eq!(items.last().unwrap()["sequence"], 5);
-    let (status, next) = call(
-        &f.router,
-        Method::GET,
-        &format!(
-            "{SNAPSHOT}?page_cursor={}",
-            page["next_page_cursor"].as_str().unwrap()
-        ),
-        "owner-a",
-        None,
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(next["items"][0]["sequence"], 6);
-    assert!(next["next_page_cursor"].is_null());
-}
+#[path = "stream_lag_tests.rs"]
+mod lag;
