@@ -297,7 +297,9 @@ impl CapacityRecoveryContext<'_> {
                         .boot_id
                         .as_ref()
                         .is_none_or(|id| id.trim().is_empty())
-                    || runtime.provision_generation != agent.conversation.runtime_generation
+                    // Provider allocation and native conversation generations
+                    // are independent counters; pin both, never equate them.
+                    || runtime.provision_generation.is_none_or(|generation| generation == 0)
             })
         {
             return D::NativeIdentityRequired;
@@ -323,7 +325,7 @@ impl CapacityRecoveryContext<'_> {
             .iter()
             .filter(|r| r.step == AgentWorkStep::OpenConversation);
         if open.next().is_none_or(|receipt| {
-            receipt.operation_id != agent.operation_id(AgentWorkStep::OpenConversation)
+            receipt.operation_id != format!("agent:{}:open:v1", agent.id)
                 || !valid_sha256(&receipt.request_sha256)
                 || seconds_from_rfc3339(&receipt.completed_at).is_none_or(|at| at > now)
         }) || open.next().is_some()
