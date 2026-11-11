@@ -56,7 +56,7 @@ pub(super) async fn capacity_fixture(store: &MongoSandboxStore) -> Agent {
         .unwrap()
         .unwrap();
     worktree.path = format!("{}/.worktrees/{}", workspace.path, worktree.name);
-    worktree.base_commit = workspace.resolved_commit.unwrap();
+    worktree.base_commit = workspace.resolved_commit.clone().unwrap();
     worktree.revision += 1;
     replace_worktree_fixture(store, &worktree).await;
     agent.status = AgentStatus::Failed;
@@ -80,6 +80,27 @@ pub(super) async fn capacity_fixture(store: &MongoSandboxStore) -> Agent {
         .await
         .unwrap();
     agent = store.get_agent(&agent.id).await.unwrap().unwrap();
+    sandbox.validate().expect("valid recovery parent fixture");
+    agent
+        .validate_prerequisites(&worktree)
+        .expect("valid recovery Agent prerequisites");
+    worktree
+        .validate_prerequisites(&workspace)
+        .expect("valid recovery Worktree prerequisites");
+    workspace
+        .validate_prerequisites(&sandbox)
+        .expect("valid recovery Workspace prerequisites");
+    let context = layer2_core::sandbox::agent_capacity_recovery::CapacityRecoveryContext {
+        agent: &agent,
+        sandbox: &sandbox,
+        workspace: &workspace,
+        worktree: &worktree,
+    };
+    assert_eq!(
+        context.classify(&layer2_core::now_rfc3339()),
+        layer2_core::sandbox::agent_capacity_recovery::CapacityRecoveryDisposition::EvidenceRequired,
+        "fixture must reach evidence admission"
+    );
     let db = store.client.database(&store.agents.namespace().db);
     schema::migrate(&db).await.unwrap();
     let mut session = store.client.start_session().await.unwrap();
