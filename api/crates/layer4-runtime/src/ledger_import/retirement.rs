@@ -19,6 +19,7 @@ type Resource = (u64, ResourceKey);
 
 #[derive(Default)]
 struct Group {
+    entries: Vec<usize>,
     journals: u64,
     authority: u64,
     current_journals: u64,
@@ -55,21 +56,26 @@ impl Group {
     }
 }
 
-pub(super) fn preview(
+pub(super) struct Analysis {
+    pub(super) summary: serde_json::Value,
+    pub(super) candidates: BTreeMap<String, Vec<usize>>,
+}
+
+pub(super) fn observation(
     config: &RuntimeConfig,
     snapshot_path: &Path,
     expected_snapshot_sha256: &str,
-) -> Result<serde_json::Value> {
+    budget: &mut Budget,
+) -> Result<(RuntimeLedgerRetirementSnapshot, Vec<u8>)> {
     let parent = snapshot_path.parent().ok_or_else(invalid)?;
     let name = snapshot_path
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(invalid)?;
-    let mut budget = Budget::new(Limits::default());
     let (_, bytes) = super::io::Directory::open(parent)?.read(
         name,
         MAX_LEDGER_RETIREMENT_SNAPSHOT_BYTES as u64,
-        &mut budget,
+        budget,
     )?;
     let snapshot_sha256 = format!("{:x}", Sha256::digest(&bytes));
     if snapshot_sha256 != expected_snapshot_sha256 {
@@ -84,10 +90,40 @@ pub(super) fn preview(
     {
         return Err(invalid());
     }
+    Ok((snapshot, bytes))
+}
+
+pub(super) fn preview(
+    config: &RuntimeConfig,
+    snapshot_path: &Path,
+    expected_snapshot_sha256: &str,
+) -> Result<serde_json::Value> {
+    let mut budget = Budget::new(Limits::default());
+    let (snapshot, _) = observation(config, snapshot_path, expected_snapshot_sha256, &mut budget)?;
     let inventory = inventory::scan(config, budget.remaining_limits()?)?;
+    let analysis = analyze(
+        config,
+        &snapshot,
+        expected_snapshot_sha256,
+        &inventory,
+        &mut budget,
+    )?;
+    if inventory::scan(config, budget.remaining_limits()?)?.digest != inventory.digest {
+        return Err(changed());
+    }
+    Ok(analysis.summary)
+}
+
+pub(super) fn analyze(
+    config: &RuntimeConfig,
+    snapshot: &RuntimeLedgerRetirementSnapshot,
+    snapshot_sha256: &str,
+    inventory: &inventory::Inventory,
+    budget: &mut Budget,
+) -> Result<Analysis> {
     let mut summary =
-        validation::analyze_budget(config, &inventory, Budget::new(budget.remaining_limits()?))?
-            .summary(&inventory);
+        validation::analyze_budget(config, inventory, Budget::new(budget.remaining_limits()?))?
+            .summary(inventory);
     // Drop the validation indexes before allocating the retirement index.
     // Bound even deliberately repetitive input independently of file bytes.
     budget.limits.metadata_bytes = 8 * 1024 * 1024;
@@ -104,7 +140,7 @@ pub(super) fn preview(
         if root.scope != 0 {
             scoped.generation = root.scope;
         }
-        let bytes = inventory.read(index, &mut budget)?;
+        let bytes = inventory.read(index, budget)?;
         budget.path(512)?;
         let current = root.scope == 0 || root.scope == config.generation;
         match root.kind {
@@ -113,7 +149,8 @@ pub(super) fn preview(
                 let operation = record.operation();
                 let (resource, disposition) =
                     crate::mutation_authority::resource_operation(&operation);
-                let group = group(&mut groups, &snapshot, &operation);
+                let group = group(&mut groups, snapshot, &operation);
+                group.entries.push(index);
                 group.journals += 1;
                 group.current_journals += u64::from(current);
                 group.resources.insert((root.scope, resource.clone()));
@@ -126,7 +163,8 @@ pub(super) fn preview(
                 let record =
                     Authority::decode_inventory(&bytes, &scoped, &root.path.join(&entry.name))
                         .map_err(|_| invalid())?;
-                let group = group(&mut groups, &snapshot, &record.operation());
+                let group = group(&mut groups, snapshot, &record.operation());
+                group.entries.push(index);
                 group.authority += 1;
                 group.current_authority += u64::from(current);
                 group
@@ -148,17 +186,16 @@ pub(super) fn preview(
     let mut candidate_groups = 0_u64;
     let mut candidate_current_journals = 0_u64;
     let mut candidate_current_authority = 0_u64;
-    for group in groups.values() {
+    let mut candidates = BTreeMap::new();
+    for (key, group) in groups {
         if !temporary && group.closed() {
             candidate_groups += 1;
             candidate_journals += group.journals;
             candidate_authority += group.authority;
             candidate_current_journals += group.current_journals;
             candidate_current_authority += group.current_authority;
+            candidates.insert(key, group.entries);
         }
-    }
-    if inventory::scan(config, budget.remaining_limits()?)?.digest != inventory.digest {
-        return Err(changed());
     }
     summary["format"] = "runtime-ledger-retirement-preview-v1".into();
     summary["capacity"] = inventory.capacity_summary(config.generation);
@@ -174,7 +211,10 @@ pub(super) fn preview(
     summary["apply_authority"] = false.into();
     summary["stale_replay_protection"] = "required_before_archival".into();
     summary["api_observation_is_maintenance_authority"] = false.into();
-    Ok(summary)
+    Ok(Analysis {
+        summary,
+        candidates,
+    })
 }
 
 fn group<'a>(
