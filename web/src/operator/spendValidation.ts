@@ -1,4 +1,4 @@
-import { ownerAmounts, platformAmounts, type SpendBudget } from './spendBudget';
+import { ownerAmounts, platformAmounts, type OwnerBudget, type SpendBudget } from './spendBudget';
 
 export type SpendErrors = Record<string, string>;
 const safe = (value: unknown): value is number =>
@@ -88,11 +88,10 @@ export function validateSpendBudget(budget: SpendBudget): SpendErrors {
     )
       errors['platform.period_end'] = 'Period end must be after period start.';
   }
-  if (budget.default_policy) {
-    const policy = budget.default_policy;
+  function ownerPolicy(policy: OwnerBudget, path: string) {
     for (const key of Object.keys(ownerAmounts) as (keyof typeof ownerAmounts)[])
       integer(
-        `default_policy.${key}`,
+        `${path}.${key}`,
         policy[key],
         1,
         key === 'max_calls_per_turn'
@@ -106,16 +105,47 @@ export function validateSpendBudget(budget: SpendBudget): SpendErrors {
       safe(policy.owner_day_limit) &&
       policy.turn_limit > policy.owner_day_limit
     )
-      errors['default_policy.turn_limit'] = 'The turn cap must not exceed the daily cap.';
+      errors[`${path}.turn_limit`] = 'The turn cap must not exceed the daily cap.';
     if (
       safe(policy.max_unobserved_units) &&
       safe(policy.turn_limit) &&
       policy.max_unobserved_units >= policy.turn_limit
     )
-      errors['default_policy.max_unobserved_units'] =
-        'Unobserved allowance must be below the turn cap.';
-    if (!timezone(policy.day_timezone))
-      errors['default_policy.day_timezone'] = 'Enter a valid IANA timezone name.';
+      errors[`${path}.max_unobserved_units`] = 'Unobserved allowance must be below the turn cap.';
+    if (
+      new TextEncoder().encode(policy.day_timezone).length > 128 ||
+      !timezone(policy.day_timezone)
+    )
+      errors[`${path}.day_timezone`] = 'Enter a valid IANA timezone name.';
   }
+  if (budget.default_policy) ownerPolicy(budget.default_policy, 'default_policy');
+  if (budget.owners.length > 1024)
+    errors.owners = 'The policy supports at most 1024 owner overrides.';
+  const owners = new Set<string>();
+  budget.owners.forEach((entry, index) => {
+    const path = `owners.${index}`;
+    if (!entry.owner.trim() || entry.owner.trim() !== entry.owner)
+      errors[`${path}.owner`] = 'Enter an owner ID without surrounding whitespace.';
+    else if (owners.has(entry.owner))
+      errors[`${path}.owner`] = 'Each owner may have only one override.';
+    owners.add(entry.owner);
+    ownerPolicy(entry.policy, `${path}.policy`);
+  });
+  if ((budget.request_models?.length ?? 0) > 64)
+    errors.request_models = 'The policy supports at most 64 request models.';
+  const models = new Set<string>();
+  budget.request_models?.forEach((entry, index) => {
+    const path = `request_models.${index}`;
+    if (
+      !entry.model.trim() ||
+      entry.model.trim() !== entry.model ||
+      new TextEncoder().encode(entry.model).length > 128
+    )
+      errors[`${path}.model`] =
+        'Enter a model name without surrounding whitespace, up to 128 UTF-8 bytes.';
+    else if (models.has(entry.model)) errors[`${path}.model`] = 'Each model may appear only once.';
+    models.add(entry.model);
+    integer(`${path}.input_overhead_tokens`, entry.input_overhead_tokens, 1, 1_048_576);
+  });
   return errors;
 }

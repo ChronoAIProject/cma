@@ -22,6 +22,7 @@ const selections = [
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~binary::compiled_binary_)', 'all', true],
   ['package(=cmaeg) and kind(test) and binary(=relay_ingress) and test(~runner_binary::)', 'only', true],
   ['package(=cma) and test(~gateway::tests::)', 'only', false],
+  ['package(=cma) and test(~sender_context_tests::)', 'only', true],
 ];
 
 function fixture(reuse, scenario = 'success') {
@@ -76,7 +77,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 14);
+      assert.equal(selections.length, 15);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];
@@ -87,7 +88,11 @@ for (const reuse of [false, true]) {
         assert.deepEqual(row.args, args);
         assert.match(row.uri, /^mongodb:\/\/contract-admin:[a-f0-9]+@127\.0\.0\.1:32778\/admin\?directConnection=true$/);
       }
-      assert.ok(calls.every(row => row.caller === undefined && row.failpoint === undefined));
+      for (const row of calls) {
+        const sender = row.command === 'cargo' && row.args.includes('package(=cma) and test(~sender_context_tests::)');
+        assert.equal(row.caller, sender ? row.uri : undefined, 'only sender contracts receive the owned replica-set authority');
+        assert.equal(row.failpoint, undefined);
+      }
       assert.ok(calls.filter(row => row.command === 'docker' && row.args[0] !== 'rm' && row.args[0] !== 'container' && row.args[0] !== 'inspect').every(row => row.uri === undefined));
       const created = calls.find(row => row.command === 'docker' && row.args[0] === 'run');
       const name = `cma-im-mongo-${'ab'.repeat(12)}`;

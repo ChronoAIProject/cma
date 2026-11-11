@@ -126,7 +126,7 @@ pub(super) async fn reserve(
     {
         return Err(domain(BudgetError::TurnExhausted));
     }
-    let timestamp = now().map_err(domain)?;
+    let timestamp = now(store).map_err(domain)?;
     let mut owner = super::super::owner_budget(store, &agent, &policy, timestamp, session).await?;
     owner
         .reserve_liability(&policy, liability, timestamp)

@@ -83,6 +83,14 @@ pub(super) fn finish(db: &Connection, scope: &[u8; 8], normal: bool) -> Result<(
     {
         return Err(invalid());
     }
+    // A missing scope row means zero in every admission/recovery reader. Keep
+    // the derived working set tied to pending work or logical processes, not
+    // the number of past generations. Receipts and authority stay retained.
+    db.execute(
+        "DELETE FROM scope_budget WHERE scope=? AND pending=0 AND processes=0",
+        [scope.as_slice()],
+    )
+    .map_err(|_| storage_error())?;
     Ok(())
 }
 
