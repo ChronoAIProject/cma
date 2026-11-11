@@ -57,6 +57,8 @@ struct RequestFixture {
 #[serde(deny_unknown_fields)]
 struct ResponseFixture {
     status: u16,
+    #[serde(default, rename = "setCookies", skip_serializing_if = "Vec::is_empty")]
+    set_cookies: Vec<String>,
     headers: BTreeMap<String, String>,
     body: Value,
     #[serde(rename = "bodyKind")]
@@ -81,6 +83,7 @@ async fn scenario(name: &str) -> Scenario {
             name,
             "auth_trusted"
                 | "auth_anonymous"
+                | "auth_anonymous_disabled"
                 | "auth_visitor"
                 | "auth_expired"
                 | "auth_missing_authority"
@@ -93,6 +96,7 @@ async fn scenario(name: &str) -> Scenario {
                 | "auth_options_ambient_failure"
                 | "auth_callback_expired"
                 | "auth_callback_cancelled"
+                | "auth_callback_silent_declined"
                 | "auth_callback_code_missing"
         ),
         "unknown auth scenario {name}"
@@ -182,7 +186,10 @@ async fn scenario(name: &str) -> Scenario {
     }
     if matches!(
         name,
-        "auth_callback_expired" | "auth_callback_cancelled" | "auth_callback_code_missing"
+        "auth_callback_expired"
+            | "auth_callback_cancelled"
+            | "auth_callback_code_missing"
+            | "auth_callback_silent_declined"
     ) {
         store
             .put_login_attempt(LoginAttempt {
@@ -191,7 +198,8 @@ async fn scenario(name: &str) -> Scenario {
                 verifier: SecretValue::new("contract-verifier".into()),
                 return_to: Some("/t/public-contract/placement-contract".into()),
                 actor_link_intent: None,
-                silent: false,
+                silent: name == "auth_callback_silent_declined",
+                consent_requested: false,
                 expires_at: if name == "auth_callback_expired" {
                     SystemTime::UNIX_EPOCH
                 } else {
@@ -222,7 +230,8 @@ async fn scenario(name: &str) -> Scenario {
         None,
         store,
         Some("https://identity.example.test".into()),
-    ).with_silent_sign_in(true);
+    )
+    .with_silent_sign_in(name != "auth_anonymous_disabled");
     if matches!(
         name,
         "auth_visitor" | "auth_store_unavailable" | "auth_identity_unavailable"
@@ -349,6 +358,12 @@ async fn replay(scenario: &Scenario, case: &mut Case, record: bool) {
         "{} status",
         case.id
     );
+    let set_cookies = response
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
     let headers = response_headers(response.headers());
     let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     let body: Value = match case.response.body_kind.as_str() {
@@ -363,9 +378,15 @@ async fn replay(scenario: &Scenario, case: &mut Case, record: bool) {
     assert!(!body.to_string().contains("must-not-cross-cma-boundary"));
     if record {
         case.response.headers = headers;
+        case.response.set_cookies = set_cookies;
         case.response.body = body;
     } else {
         assert_eq!(headers, case.response.headers, "{} headers", case.id);
+        assert_eq!(
+            set_cookies, case.response.set_cookies,
+            "{} Set-Cookie values",
+            case.id
+        );
         assert_eq!(body, case.response.body, "{} body", case.id);
     }
 }
@@ -373,6 +394,9 @@ async fn replay(scenario: &Scenario, case: &mut Case, record: bool) {
 fn response_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
     let mut values = BTreeMap::new();
     for (name, value) in headers {
+        if name == "set-cookie" {
+            continue;
+        }
         assert!(
             values
                 .insert(name.as_str().to_owned(), value.to_str().unwrap().to_owned())
@@ -386,7 +410,7 @@ fn response_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
 
 #[test]
 fn repeated_response_headers_cannot_hide_earlier_values() {
-    for name in ["set-cookie", "cache-control"] {
+    for name in ["cache-control", "location"] {
         let mut headers = HeaderMap::new();
         headers.append(name, "unexpected=earlier".parse().unwrap());
         headers.append(name, "expected=last".parse().unwrap());
@@ -397,10 +421,34 @@ fn repeated_response_headers_cannot_hide_earlier_values() {
 #[test]
 fn single_value_response_headers_keep_exact_values_except_derived_length() {
     let mut headers = HeaderMap::new();
-    headers.insert("set-cookie", "expected=last".parse().unwrap());
+    headers.insert("location", "/expected".parse().unwrap());
     headers.insert("content-length", "0".parse().unwrap());
     assert_eq!(
         response_headers(&headers),
-        BTreeMap::from([("set-cookie".into(), "expected=last".into())])
+        BTreeMap::from([("location".into(), "/expected".into())])
+    );
+}
+
+#[test]
+fn repeated_cookie_headers_are_kept_separately_without_comma_folding() {
+    let mut headers = HeaderMap::new();
+    headers.append(
+        "set-cookie",
+        "first=1; Expires=Wed, 11 Nov 2026 12:00:00 GMT"
+            .parse()
+            .unwrap(),
+    );
+    headers.append("set-cookie", "second=2; HttpOnly".parse().unwrap());
+    assert!(response_headers(&headers).is_empty());
+    assert_eq!(
+        headers
+            .get_all("set-cookie")
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "first=1; Expires=Wed, 11 Nov 2026 12:00:00 GMT",
+            "second=2; HttpOnly"
+        ]
     );
 }

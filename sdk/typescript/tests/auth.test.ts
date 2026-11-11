@@ -148,3 +148,20 @@ describe('public authentication helpers', () => {
     expect(t.fetch).not.toHaveBeenCalled();
   });
 });
+
+it('preserves allowed return queries and rejects the complete forbidden or oversized suffix', () => {
+  const t = transport();
+  for (const returnTo of ['/bots/new?setup=x?y', '/sandboxes/sbx_1?tab=access']) {
+    expect(new URL(t.client.auth.loginUrl({ returnTo })).searchParams.get('return_to')).toBe(
+      returnTo,
+    );
+  }
+  for (const returnTo of [
+    '/bots/new?setup=x?y&token=authority',
+    '/bots/new?setup=' + '界'.repeat(9000),
+    '/sandboxes/sbx_1?tab=a&tab=b',
+  ]) {
+    expect(() => t.client.auth.loginUrl({ returnTo })).toThrow(ValidationError);
+  }
+  expect(t.calls).toHaveLength(0);
+});

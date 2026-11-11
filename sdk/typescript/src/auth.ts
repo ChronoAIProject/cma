@@ -118,15 +118,41 @@ export class Authentication {
 }
 
 function validateReturnTarget(value: string): void {
+  if (typeof value !== 'string')
+    throw new ValidationError('returnTo must be a canonical CMA workflow path');
+  const split = value.indexOf('?');
+  const path = split < 0 ? value : value.slice(0, split);
+  const query = split < 0 ? undefined : value.slice(split + 1);
   const id = '[A-Za-z0-9_.~-]+';
   const workflow = new RegExp(
-    `^/(?:t/${id}(?:/${id})?|triggers/manage(?:/${id}(?:/embed)?)?|agents/${id}|sandboxes/${id}|(?:profiles|marketplace)(?:/(?:agent|workspace|sandbox)/${id})?)$`,
+    `^/(?:agent-manager|event-gateway|image-manager|bots(?:/${id})?|auth/bot-father/link/${id}/complete|t/${id}(?:/${id})?|triggers/manage(?:/${id}(?:/embed)?)?|agents/${id}|sandboxes/${id}|(?:profiles|marketplace)(?:/(?:agent|workspace|sandbox)/${id})?)$`,
   );
+  const keys = new Set<string>();
+  let validQuery = true;
+  for (const [key] of new URLSearchParams(query)) {
+    if (
+      keys.has(key) ||
+      !(
+        (path === '/bots/new' && key === 'setup') ||
+        (path.startsWith('/sandboxes/') && key === 'tab')
+      )
+    )
+      validQuery = false;
+    keys.add(key);
+  }
   if (
-    typeof value !== 'string' ||
-    value.length > 256 ||
-    value.split('/').some((segment) => segment === '.' || segment === '..') ||
-    (value !== '/' && !workflow.test(value))
+    new TextEncoder().encode(value).length > 25064 ||
+    path.length > 256 ||
+    Array.from(value).some(
+      (character) =>
+        character.charCodeAt(0) <= 32 ||
+        character.charCodeAt(0) === 127 ||
+        character === '#' ||
+        character === '\\',
+    ) ||
+    !validQuery ||
+    path.split('/').some((segment) => segment === '.' || segment === '..') ||
+    (path !== '/' && !workflow.test(path))
   )
     throw new ValidationError('returnTo must be a canonical CMA workflow path');
 }
