@@ -33,8 +33,30 @@ cursor-preserving retry, active and bootstrap notices, disabled and malformed
 input, blocked-delivery cancellation and final-clone release. A maximal admitted
 string fixture measures requested allocation against the explicit layout
 allowance. Existing startup tests also exercise the transparent wrapper on
-successful authentication and timeout. Final values and gate results will be
-recorded after those tests complete.
+successful authentication and timeout. The combined local gate passed 650 focused
+tests, workspace formatting, strict all-target/all-feature CMA/core/adapter
+clippy, source-size, configuration/documentation, whitespace and history scans.
+Measurements use Rust 1.96.1 on aarch64-apple-darwin. The qualified identifiers
+are recorded below; subsequent documentation changes preserve the compiled tree.
+
+```text
+revision c50151a2cbb0a4e460f03240d2eb85c661957287
+tree 3653d5a2f5fd671c31e9f707f20ace3c53961888
+```
+
+| Maximal notice fixture | Requested bytes |
+| --- | ---: |
+| Encoded outer frame | 4,193,921 |
+| Reservation | 4,194,387 |
+| Peak and retained effect | 4,194,387 |
+| After final effect clone drops | 0 |
+
+The refusal fixture keeps its peak below 1 KiB while refusing a 1 MiB URL,
+verifies both pools recover their capacity, and returns all tracked bytes after
+the actual shared pool owners drop. On macOS, the first rollback can initialize
+64 bytes in a pool's wait-list mutex; that allocation follows the pool lifetime.
+The initial lifetime assertion failure is preserved separately from the final
+passing qualification. These measurements are requested allocations, not RSS.
 
 This slice covers the adapter's independently owned sign-in notice strings and
 their immutable envelope. It does not account general typed schema decoding,
