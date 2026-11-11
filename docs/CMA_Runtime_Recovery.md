@@ -6,6 +6,45 @@ conversation. Treating every already-initialized response as either a successful
 open or a reason to close the process is unsafe: the former invents authority,
 and the latter can discard an unflushed conversation tail.
 
+## Retained-history deadlines and retry continuity
+
+Recovery `initialize` (with a retained conversation ID) and handshake `session/load`
+allow five minutes idle, renewed only by durable output ACK progress, with the
+existing sixteen-minute absolute RPC bound. Legacy sockets without ACKs get a
+fixed five minutes. This covers cold reopen and prepared tool rebinding.
+Fresh `initialize` keeps thirty seconds idle; `session/new` and ordinary control
+RPCs keep thirty seconds. Existing shorter optional-probe bounds are unchanged.
+
+The fifteen-minute lifecycle lease still bounds the whole sequential reopen
+step. Socket loss stops its relay, while Layer 4 retains the process, in-flight
+load and unacknowledged output. A full journal backpressures stdout until the
+next attachment ACKs it. Retry reuses the bridge and completed loads; retained
+process state does not prove that an unfinished load succeeded.
+
+The shipped patched ACP 1.4.0 bridge dispatches requests concurrently. The pinned
+Codex 0.147.0 regression receives `Already initialized` while a load is blocked
+in required MCP initialization. Before session installation, both mode-setting
+and prompts return JSON-RPC -32603 (`Session … not found`). The normal Codex
+handshake requires the mode acknowledgement before publication. After installation,
+prompts use that native session without waiting for ACP history replay. Required
+tool completion receipts remain separate checks; `Greeting::Existing` alone is
+not a load-completion receipt.
+
+A prompt refusal becomes `FailedForPrompt`, durable `TurnFailed` with class
+`agent_turn_failed`, and AG-UI `RUN_ERROR`. The Agent returns to Ready with its
+active turn cleared; the failed input is neither reported complete nor resent.
+A failed load still requires successful reload/recovery of the same conversation.
+The native regression proves refusal during and after failed loading, then
+successful explicit reload of the original ID.
+
+Revive REST returns HTTP 202 with durable `reviving` state without awaiting the
+worker. REST reads expose the recorded lifecycle purpose, phase and start time;
+the AG-UI sandbox companion exposes status only. The Agent UI polls public REST,
+shows “Reopening your agents”, and never advances phases from elapsed time.
+Ordinary AG-UI input is disabled with a reason; Responses v2 can accept durably
+queued input during revival. The caller therefore has an admitted in-progress
+result while a worker exceeds 120 seconds, not a 120-second completion guarantee.
+
 ## Preventing and recovering lost confirmation
 
 The open runner retains its original channel and immutable binding while retrying

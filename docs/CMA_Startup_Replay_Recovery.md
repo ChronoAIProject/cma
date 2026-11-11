@@ -33,9 +33,18 @@ stdout reader; attached consumers retain the bridge long enough to drain final
 output after process exit. Cancelling an adapter open aborts its reader and relay
 tasks.
 
-A startup RPC has an idle deadline that advances only on successful cumulative
-ACK progress, plus an absolute recovery deadline. Producer activity alone does
-not extend it. Lifecycle draining is also bounded by the current lease expiry.
+Recovery initialize and retained-history load have a five-minute idle deadline
+that advances only on successful cumulative ACK progress, plus a sixteen-minute
+absolute per-call bound. Fresh initialize keeps its thirty-second idle window;
+new-conversation and ordinary control RPCs keep thirty seconds. Producer activity
+alone does not extend these windows. Lifecycle draining remains bounded
+by the current lease expiry, shared across sequential Agent opens. The runtime
+keeps bridge processes and unacknowledged output across socket loss, allowing
+retry to rejoin completed loads and drain retained replay. The pinned bridge
+dispatches initialize concurrently with load; an already-initialized response
+does not prove load completion. See
+[Runtime Recovery](CMA_Runtime_Recovery.md#retained-history-deadlines-and-retry-continuity)
+for the delivery bounds and limits of retry continuity.
 
 ## Already-invalidated output journals
 
