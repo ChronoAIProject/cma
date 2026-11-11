@@ -29,7 +29,7 @@ impl Refusal {
 }
 
 pub(super) fn validate(payload: &[u8]) -> Result<(), Refusal> {
-    inspect_with_limits(payload, MAX_BYTES, MAX_NODES, MAX_DEPTH, false).map(|_| ())
+    inspect(payload).map(|_| ())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,7 +38,7 @@ pub(super) struct Shape {
 }
 
 pub(super) fn inspect(payload: &[u8]) -> Result<Shape, Refusal> {
-    inspect_with_limits(payload, MAX_BYTES, MAX_NODES, MAX_DEPTH, true)
+    inspect_with_limits(payload, MAX_BYTES, MAX_NODES, MAX_DEPTH)
 }
 
 #[cfg(test)]
@@ -48,7 +48,7 @@ fn validate_with_limits(
     max_nodes: usize,
     max_depth: usize,
 ) -> Result<(), Refusal> {
-    inspect_with_limits(payload, max_bytes, max_nodes, max_depth, false).map(|_| ())
+    inspect_with_limits(payload, max_bytes, max_nodes, max_depth).map(|_| ())
 }
 
 fn inspect_with_limits(
@@ -56,7 +56,6 @@ fn inspect_with_limits(
     max_bytes: usize,
     max_nodes: usize,
     max_depth: usize,
-    reject_private_keys: bool,
 ) -> Result<Shape, Refusal> {
     if payload.len() > max_bytes {
         return Err(Refusal::Bytes);
@@ -65,7 +64,6 @@ fn inspect_with_limits(
         remaining: max_nodes,
         max_depth,
         refusal: None,
-        reject_private_keys,
     };
     let mut decoder = serde_json::Deserializer::from_slice(payload);
     let result = Node {
@@ -85,7 +83,6 @@ struct Budget {
     remaining: usize,
     max_depth: usize,
     refusal: Option<Refusal>,
-    reject_private_keys: bool,
 }
 
 impl Budget {
@@ -207,12 +204,10 @@ impl Visitor<'_> for KeyVisitor<'_> {
     fn visit_str<E: de::Error>(self, key: &str) -> Result<(), E> {
         // Value's raw_value/arbitrary_precision deserializers interpret these
         // keys as nested parsers. Refuse before they can bypass this node count.
-        if self.budget.reject_private_keys
-            && matches!(
-                key,
-                "$serde_json::private::RawValue" | "$serde_json::private::Number"
-            )
-        {
+        if matches!(
+            key,
+            "$serde_json::private::RawValue" | "$serde_json::private::Number"
+        ) {
             return Err(self.budget.refuse(Refusal::PrivateKey));
         }
         Ok(())

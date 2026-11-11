@@ -89,3 +89,28 @@ fn malformed_trailing_and_invalid_utf8_are_refused_without_payload_diagnostics()
         crate::AdapterError::Rejected("runtime output JSON is malformed".into()).to_string()
     );
 }
+
+#[test]
+fn embedded_parser_keys_cannot_bypass_the_opt_in_structural_budget() {
+    let inner = format!("[{}]", vec!["0"; 8192].join(","));
+    let payload =
+        serde_json::to_vec(&serde_json::json!({"$serde_json::private::RawValue":inner})).unwrap();
+    // Document why a valid three-node outer document is not safe to decode.
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&payload)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        8192
+    );
+    assert_eq!(validate(&payload), Err(Refusal::PrivateKey));
+    assert_eq!(
+        validate(br#"{"\u0024serde_json::private::RawValue":"[]"}"#),
+        Err(Refusal::PrivateKey)
+    );
+    assert_eq!(
+        validate(br#"{"value":"$serde_json::private::RawValue"}"#),
+        Ok(())
+    );
+}

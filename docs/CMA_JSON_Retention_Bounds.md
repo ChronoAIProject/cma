@@ -14,8 +14,7 @@ before admission does not advance the accepted cursor or publish a receipt.
 
 The parser accepts at most 4 MiB encoded bytes, 8,192 nodes (including object
 keys and overwritten duplicate entries), and 64 nested containers. Invalid
-JSON and excess shape are rejected before owned tree parsing. The enabled
-policy also refuses Serde's private RawValue and Number keys, including escaped
+JSON and excess shape are rejected before owned tree parsing. Both opt-in JSON policies also refuse Serde's private RawValue and Number keys, including escaped
 spellings. The pinned `raw_value` feature otherwise interprets a matching key
 as an embedded parser, bypassing an outer JSON node count. Ordinary duplicate
 keys retain the pinned parser's last-value behavior.
@@ -29,8 +28,9 @@ There is no public mutable access or operation that extracts the tree separately
 from its owner. Intermediate tree clones before typed session/permission/turn
 conversion have been replaced by borrowed deserialization.
 
-The off path keeps legacy parsing, reply/error/missing-result behavior and its
-existing result projection. Durable progress deadlines, original payload hashes,
+With both JSON policies off, legacy parsing is preserved. The new retention
+flag off path keeps reply/error/missing-result behavior and result projection.
+The existing structural-budget opt-in also receives the reserved-key fix. Durable progress deadlines, original payload hashes,
 source identity and receipt ACK semantics are unchanged. The new policy shares
 admission with all enabled attachments; it supplies no per-tenant fairness claim.
 
