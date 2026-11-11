@@ -32,7 +32,7 @@ impl Fixture {
         agent.work.next_fence = 8;
         agent.work.receipts.push(AgentWorkReceipt {
             step: AgentWorkStep::OpenConversation,
-            operation_id: agent.operation_id(AgentWorkStep::OpenConversation),
+            operation_id: format!("agent:{}:open:v1", agent.id),
             request_sha256: "e".repeat(64),
             completed_at: agent.created_at.clone(),
         });
@@ -356,7 +356,7 @@ fn retained_native_and_home_authority_are_required() {
         CapacityRecoveryDisposition::NativeIdentityRequired
     );
     let mut f = Fixture::new();
-    f.sandbox.runtime.as_mut().unwrap().provision_generation = Some(3);
+    f.sandbox.runtime.as_mut().unwrap().provision_generation = None;
     assert_eq!(
         f.classify(),
         CapacityRecoveryDisposition::NativeIdentityRequired
@@ -372,6 +372,22 @@ fn retained_native_and_home_authority_are_required() {
     assert_eq!(
         f.classify(),
         CapacityRecoveryDisposition::HomeIdentityRequired
+    );
+}
+
+#[test]
+fn provider_and_conversation_generations_are_independent() {
+    let mut f = Fixture::new();
+    // Ordinary initial open assigns native generation 1 independently of the
+    // parent provider's persisted allocation generation.
+    f.agent.conversation.runtime_generation = Some(1);
+    f.sandbox.runtime.as_mut().unwrap().provision_generation = Some(7);
+    f.sandbox.lifecycle.runtime_generation_high_water = 7;
+    assert_eq!(f.classify(), CapacityRecoveryDisposition::EvidenceRequired);
+    f.agent.work.receipts[0].operation_id = f.agent.operation_id(AgentWorkStep::OpenConversation);
+    assert_eq!(
+        f.classify(),
+        CapacityRecoveryDisposition::OpenReceiptRequired
     );
 }
 

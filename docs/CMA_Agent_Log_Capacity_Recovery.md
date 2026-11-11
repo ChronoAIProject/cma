@@ -234,15 +234,16 @@ are registered and all required local gates pass.
 ## Initial domain implementation and integration handoff
 
 The current implementation provides read-only preflight and a transient,
-exact-source admission proposal. It is not registered in the production module
-tree yet, exposes no public recovery route, and performs no database or runtime
-mutation. Registration and the executable S1/S4 contracts are required before
-this becomes a review-ready recovery candidate. The proposal preserves Failed
+exact-source admission proposal. S2 registered it in the shared integration
+branch at `b24da1bc8`. It exposes no public recovery route and performs no
+database or runtime mutation. The executable S1/S4 contracts and remaining
+store/worker/API integration are required before a review-ready recovery candidate. The proposal preserves Failed
 status, conversation, command facts, receipts and global sequence; it only
 advances the Agent revision/work fence and clears an expired work lease.
 
 
-S2 owns `api/crates/layer2-core/src/sandbox/mod.rs`. Add:
+S2 owns `api/crates/layer2-core/src/sandbox/mod.rs` and added the following
+registration in `b24da1bc8`, consumed by normal merge:
 
 ```rust
 pub mod agent_capacity_recovery;
@@ -264,9 +265,11 @@ legitimate original publication to S4 without changing its input/effect key.
 No `Eligible` result exists before source proof, gate and fence checks.
 
 The first unit fixtures use real existing domain types and lifecycle fixture
-builders. Until this registration arrives, a temporary external test harness
-compiles the module against the real core crate. Such a result is preliminary;
-it does not satisfy the registered integrated candidate or real-Mongo gates.
+builders. Preliminary tests used a temporary harness; registered core tests
+now exercise the module directly. Provider allocation and native conversation
+generations are independent pinned authorities. The original open receipt key
+is `agent:<id>:open:v1`; the generic work-step name is not its effect identity.
+Real-Mongo and runtime integration gates remain required.
 
 ## S1 captured evidence required by owned consumers
 
@@ -297,8 +300,10 @@ seal original valid `[1,H]`, successor starts `H+1`, no synthetic events,
 unchanged global head, independent writer/recovery gate CAS, immutable exact
 receipt and the durable recovery work carrier in the same transaction.
 
-Please provide the concrete helper signature and the selected durable work
-carrier before storage/worker integration. The current draft `Admission` has
+The published S4 `PublicationInput` / `AggregateUpdate` interface supplies the
+atomic storage boundary. S5 owns recovery work/runtime semantics and coordinates
+its durable carrier with the shared schema/registration owners. The current
+draft `Admission` has
 no recovery phase/lease/native target payload; ordinary `AgentWorkStep` has no
 recovery step. Reusing `PublishConnection` on a Failed Agent is not valid:
 current validators reject it, and ordinary completion can schedule first-message
@@ -338,8 +343,9 @@ flag must not silently rewrite that baseline under the label of default-off.
 
 ## Next gates
 
-After shared registrations and executable S1/S4 contracts land, normal merge
+After the executable S1/S4 contracts land, normal merge
 from `integration-20261111`, implement store/worker/API and consumer wiring,
 then exact-head fmt, warning-free clippy, domain/worker/real-Mongo tests,
 under-500-line checks and complete-history secret scan. No PR is review-ready
-while these contracts are absent; the domain handoff is not a recovery delivery.
+while executable storage/runtime integration is absent; the domain handoff is
+not a recovery delivery.
