@@ -128,3 +128,93 @@ pub(super) fn change(
     }
     Ok(())
 }
+
+pub(super) fn point(
+    metadata: &AgentOutputMetadata,
+    row: &AgentLogEntry,
+) -> Result<(), AgentReadError> {
+    use crate::sandbox::{
+        AgentLogKind, AgentOperationDelivery, AgentOperationKind, AgentTurnOutcome,
+    };
+    let Some(turn) = &metadata.turn else {
+        return Ok(());
+    };
+    let facts = &turn.facts;
+    let sequence = facts.turn_sequence;
+    if row.seq == sequence
+        && (!matches!(&row.kind,AgentLogKind::TurnStarted {turn_sequence,model,origin_key}
+        if *turn_sequence==sequence && model==&facts.model && origin_key==&facts.origin_key)
+            || row.appended_at != facts.started_at)
+    {
+        return Err(corrupt("turn start differs from its certified facts"));
+    }
+    if turn.usage_sequence == Some(row.seq) {
+        let tokens = match &row.kind {
+            AgentLogKind::Usage {
+                input_tokens,
+                output_tokens,
+                ..
+            } => Some((*input_tokens, *output_tokens)),
+            AgentLogKind::UsageUpdated {
+                turn_sequence: Some(observed),
+                turn_input_tokens,
+                turn_output_tokens,
+                ..
+            } if *observed == sequence => Some((*turn_input_tokens, *turn_output_tokens)),
+            _ => None,
+        };
+        if tokens
+            != facts
+                .response_usage
+                .map(|v| (v.input_tokens, v.output_tokens))
+        {
+            return Err(corrupt("usage source differs from its certified facts"));
+        }
+    }
+    if facts.metadata_sequence == Some(row.seq)
+        && !matches!(&row.kind,AgentLogKind::TurnMetadataSet {turn_sequence,..} if *turn_sequence==sequence)
+    {
+        return Err(corrupt("metadata source belongs to another turn"));
+    }
+    let ended_at = match &facts.outcome {
+        AgentTurnOutcome::Active => None,
+        AgentTurnOutcome::Completed { at }
+        | AgentTurnOutcome::Failed { at, .. }
+        | AgentTurnOutcome::Interrupted { at } => Some(at),
+    };
+    if turn.terminal_sequence == Some(row.seq) {
+        let matches = match (&row.kind, &facts.outcome) {
+            (AgentLogKind::TurnCompleted { turn_sequence }, _) => {
+                *turn_sequence == sequence && facts.source_completed
+            }
+            (
+                AgentLogKind::TurnFailed {
+                    turn_sequence,
+                    failure,
+                },
+                AgentTurnOutcome::Failed {
+                    failure: expected, ..
+                },
+            ) => *turn_sequence == sequence && failure == expected && !facts.source_completed,
+            (
+                AgentLogKind::TurnInterrupted { turn_sequence },
+                AgentTurnOutcome::Interrupted { .. },
+            ) => *turn_sequence == sequence && !facts.source_completed,
+            _ => false,
+        };
+        if !matches || ended_at != Some(&row.appended_at) {
+            return Err(corrupt("terminal source differs from its certified facts"));
+        }
+    }
+    if turn.prewrite_sequence == Some(row.seq)
+        && (!matches!(&row.kind,AgentLogKind::OperationDeliveryChanged {
+        operation_sequence,operation:AgentOperationKind::SendMessage,state:AgentOperationDelivery::PreWriteFailed
+    } if operation_sequence.checked_add(1)==Some(sequence))
+            || ended_at != Some(&row.appended_at))
+    {
+        return Err(corrupt(
+            "prewrite failure is not adjacent to its original terminal",
+        ));
+    }
+    Ok(())
+}

@@ -73,3 +73,54 @@ async fn invalid_tool_references_cannot_change_current_output_or_replay() {
         ));
     }
 }
+
+#[tokio::test]
+async fn source_metadata_must_match_its_certified_reference_and_payload() {
+    for damage in 0..4 {
+        let mut kinds = beginning();
+        kinds.extend([
+            message("answer"),
+            AgentLogKind::TurnCompleted { turn_sequence: 3 },
+            AgentLogKind::Usage {
+                input_tokens: 7,
+                output_tokens: 11,
+                context_used: 18,
+                context_window: None,
+            },
+        ]);
+        let mut f = make(kinds).await;
+        f.mutate(|data| match damage {
+            0 => data.metadata.turn.as_mut().unwrap().facts.model = Some("wrong-model".into()),
+            1 => {
+                data.metadata
+                    .turn
+                    .as_mut()
+                    .unwrap()
+                    .facts
+                    .response_usage
+                    .as_mut()
+                    .unwrap()
+                    .output_tokens += 1
+            }
+            2 => data.rows.get_mut(&6).unwrap().appended_at = "2026-09-06T00:00:00Z".into(),
+            _ => {
+                data.rows.get_mut(&7).unwrap().kind = AgentLogKind::ModeChanged {
+                    mode: "wrong-kind".into(),
+                }
+            }
+        });
+        let reading = f.reading.clone();
+        assert!(matches!(
+            f.observe(move |source| Box::pin(async move {
+                projection::indexed::complete(
+                    source,
+                    &crate::agent_page::AgentPageOrigin::test(),
+                    reading,
+                )
+                .await
+            }))
+            .await,
+            Err(AgentReadError::Corrupt(_))
+        ));
+    }
+}
