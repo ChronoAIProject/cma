@@ -74,7 +74,8 @@ async fn profile_resolved_skill_upgrade_preserves_original_material() {
     let service = AgentOperationService::new(
         store.clone(),
         TestRuntimeRegistry::new(full_capabilities(), sender),
-    );
+    )
+    .with_skill_upgrades_enabled(true);
 
     let mut requested = reference();
     requested.version = Some("1.1".into());

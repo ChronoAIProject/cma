@@ -37,7 +37,8 @@ async fn live_upgrade_is_idempotent_busy_refusal_is_accurate_and_retry_keeps_his
     let service = AgentOperationService::new(
         store.clone(),
         TestRuntimeRegistry::new(full_capabilities(), sender),
-    );
+    )
+    .with_skill_upgrades_enabled(true);
     assert_eq!(
         service
             .install_skill(&owner(), &busy.id, reference("1.1"))
@@ -161,4 +162,43 @@ fn skill_slots_count_effective_identifiers_not_upgrade_history() {
     item.status = AgentSkillInstallStatus::Failed;
     item.error = Some("failed".into());
     assert_eq!(agent_live_skills::capacity(&ready), (false, false));
+}
+
+#[tokio::test]
+async fn closed_upgrade_gate_preserves_ordinary_installs_and_accepted_work() {
+    let ready = installed();
+    let store = Arc::new(InMemorySandboxStore::with_agent_fixture(ready.clone()));
+    seed_active_parent(&store).await;
+    let (sender, _) = recording_sender(Ok(()));
+    let closed = AgentOperationService::new(
+        store.clone(),
+        TestRuntimeRegistry::new(full_capabilities(), sender),
+    );
+    assert!(!closed.skill_upgrades_enabled());
+    assert_eq!(
+        closed
+            .install_skill(&owner(), &ready.id, reference("1.1"))
+            .await,
+        Err(AgentOperationError::SkillUpgradeDisabled)
+    );
+    assert_eq!(
+        closed
+            .install_skill(&owner(), &ready.id, reference("1.0"))
+            .await
+            .unwrap(),
+        ready
+    );
+    let opened = closed.with_skill_upgrades_enabled(true);
+    let pending = opened
+        .install_skill(&owner(), &ready.id, reference("1.1"))
+        .await
+        .unwrap();
+    assert_eq!(
+        closed
+            .install_skill(&owner(), &ready.id, reference("1.1"))
+            .await
+            .unwrap(),
+        pending
+    );
+    assert_eq!(store.agent_log(&ready.id, 0, 100).await.unwrap().len(), 1);
 }

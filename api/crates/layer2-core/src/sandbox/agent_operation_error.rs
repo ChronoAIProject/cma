@@ -41,6 +41,8 @@ pub enum AgentOperationError {
         installed: String,
         requested: String,
     },
+    #[error("new skill upgrade admission is disabled")]
+    SkillUpgradeDisabled,
     #[error("agent changed while the operation was being fenced")]
     Conflict,
     #[error("sandbox checkpoint is in progress; input was not admitted")]
@@ -85,6 +87,7 @@ impl AgentOperationError {
             Self::SkillVersionUpgradeUnsupported { .. } => {
                 "agent_skill_version_upgrade_unsupported"
             }
+            Self::SkillUpgradeDisabled => "agent_skill_upgrade_disabled",
             Self::Conflict => "agent_operation_conflict",
             Self::CheckpointInProgress => "sandbox_checkpoint_in_progress",
             Self::PreviousTurnConflict => "agent_previous_turn_conflict",

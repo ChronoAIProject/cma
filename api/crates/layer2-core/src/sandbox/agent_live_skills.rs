@@ -223,6 +223,23 @@ pub fn is_install_admission(current: &Agent, next: &Agent) -> bool {
 }
 
 impl AgentOperationService {
+    /// Default-closed admission policy. Existing work and exact accepted retries remain readable.
+    pub fn with_skill_upgrades_enabled(&self, enabled: bool) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            skill_upgrades_enabled: enabled,
+            instruction_policy: self.instruction_policy.clone(),
+            settings_authority: self.settings_authority.clone(),
+            command_claim: self.command_claim.clone(),
+            execution_authority: self.execution_authority.clone(),
+            trigger_authority: self.trigger_authority.clone(),
+            connections: self.connections.clone(),
+            store: self.store.clone(),
+            runtimes: self.runtimes.clone(),
+        })
+    }
+    pub fn skill_upgrades_enabled(&self) -> bool {
+        self.skill_upgrades_enabled
+    }
     pub async fn install_skill(
         &self,
         caller: &Caller,
@@ -237,18 +254,22 @@ impl AgentOperationService {
         }
         for _ in 0..super::agent_operation_service::MAX_OPERATION_COMMIT_RETRIES {
             let current = self.owned_agent(caller, id).await?;
-            if let Some(existing) = current.work.live_skills.last().filter(|item| {
+            if current.work.live_skills.last().is_some_and(|item| {
                 item.status == AgentSkillInstallStatus::Pending && item.reference == reference
             }) {
-                let _ = existing;
                 return Ok(current);
+            }
+            let previous = effective(&current.work, &reference.id);
+            if previous.is_some_and(|m| Some(&m.version) != reference.version.as_ref())
+                && !self.skill_upgrades_enabled
+            {
+                return Err(AgentOperationError::SkillUpgradeDisabled);
             }
             if !idle(&current) {
                 return Err(AgentOperationError::StatusConflict {
                     status: current.status,
                 });
             }
-            let previous = effective(&current.work, &reference.id);
             if previous.is_some_and(|m| {
                 m.source == reference.source && Some(&m.version) == reference.version.as_ref()
             }) {

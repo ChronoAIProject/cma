@@ -76,7 +76,11 @@ async fn settle(store: &InMemorySandboxStore, id: &AgentId, version: &str, fail:
 }
 #[tokio::test]
 async fn upgrade_routes_keep_one_effective_row_replay_keys_and_name_runtime_and_busy_refusals() {
-    let fixture = fixture().await;
+    let mut fixture = fixture().await;
+    fixture.state.agent_operations = fixture
+        .state
+        .agent_operations
+        .with_skill_upgrades_enabled(true);
     let agent = seeded_agent("agt_upgrade", AgentStatus::Ready, 0, None);
     fixture
         .store
@@ -296,4 +300,72 @@ fn profile_overlay_has_one_row_and_keeps_the_installed_version_until_confirmatio
     assert_eq!(view.items.len(), 1);
     assert_eq!(view.items[0].version, "1.0");
     assert!(view.pending);
+}
+
+#[tokio::test]
+async fn upgrade_gate_closure_preserves_reads_settlement_and_global_exact_replays() {
+    let fixture = fixture().await;
+    let agent = seeded_agent("agt_gate", AgentStatus::Ready, 0, None);
+    fixture
+        .store
+        .create_worktree(seeded_worktree(&agent))
+        .await
+        .unwrap();
+    fixture.store.create_agent(agent.clone()).await.unwrap();
+    let closed = agent_router(fixture.state.clone().with_skill_support(Arc::new(Upgrades)));
+    let mut state = fixture.state.clone().with_skill_support(Arc::new(Upgrades));
+    state.agent_operations = state.agent_operations.with_skill_upgrades_enabled(true);
+    let open = agent_router(state);
+    let path = "/api/v1/agents/agt_gate/skills";
+    let install = |key: &str, version: &str| {
+        request(
+            Method::POST,
+            path,
+            OWNER,
+            Some(key),
+            Some(json!({"id":"research", "version":version})),
+        )
+    };
+    assert_eq!(
+        json_response(&closed, install("add", "1.0")).await.0,
+        StatusCode::ACCEPTED
+    );
+    settle(&fixture.store, &agent.id, "1.0", false).await;
+    let refused = json_response(&closed, install("refused", "1.1")).await;
+    assert_eq!(refused.0, StatusCode::CONFLICT);
+    assert_eq!(refused.1["code"], "agent_skill_upgrade_disabled");
+    assert_eq!(
+        json_response(&open, install("refused", "1.1")).await,
+        refused
+    );
+    let accepted = json_response(&open, install("accepted", "1.1")).await;
+    assert_eq!(accepted.0, StatusCode::ACCEPTED);
+    assert_eq!(
+        json_response(&closed, install("accepted", "1.1")).await,
+        accepted
+    );
+    settle(&fixture.store, &agent.id, "1.1", false).await;
+    let read = json_response(&closed, request(Method::GET, path, OWNER, None, None)).await;
+    assert_eq!(read.0, StatusCode::OK);
+    assert_eq!(read.1["items"][0]["version"], "1.1");
+    assert_eq!(
+        json_response(&closed, install("accepted", "1.1")).await,
+        accepted
+    );
+    assert_eq!(
+        json_response(&closed, install("next", "1.2")).await.1["code"],
+        "agent_skill_upgrade_disabled"
+    );
+    assert_eq!(
+        fixture
+            .store
+            .get_agent(&agent.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .work
+            .live_skills
+            .len(),
+        2
+    );
 }
