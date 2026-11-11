@@ -203,6 +203,19 @@
           "observed_at": "2026-10-29T00:00:00Z"
         }
       ]
+    },
+    {
+      "consumer_id": "default",
+      "state": "refused",
+      "display_name": "Fixture Agent",
+      "provider": "cma",
+      "agent_id": "agt_0123456789abcdef0123456789abcdef",
+      "conversation_id": "fixture-conversation",
+      "dispatched_at": "2026-10-27T03:00:01Z",
+      "completed_at": "2026-10-27T03:00:05Z",
+      "deliveries": [],
+      "refusal_code": "verified_sender_context_invalid",
+      "last_non_admission_code": "verified_sender_context_unavailable"
     }
   ],
   "ActivityDelivery": [
