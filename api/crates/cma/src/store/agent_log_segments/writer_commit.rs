@@ -4,14 +4,12 @@
 //! contract. They perform no writes and cannot produce a prepared publication
 //! or completed receipt. Executable planning/persistence replaces them in place.
 use layer2_core::sandbox::{store::SandboxStoreError, Agent, AgentLogEntry};
-use mongodb::{
-    bson::{Binary, Document},
-    ClientSession,
-};
+use mongodb::bson::{Binary, Document};
 
 use super::{
     capture::CapturedLog,
     publication::{Publication, PublicationIdentity},
+    transaction_scope::TransactionScope,
     writer_admission::Admission,
     writer_bootstrap::BootstrapPlan,
 };
@@ -42,7 +40,7 @@ pub(in crate::store) struct PreparedPublication {
 /// Refuse pending source/bootstrap certification before any durable side effect.
 pub(in crate::store) async fn prepare(
     _store: &MongoSandboxStore,
-    _session: &mut ClientSession,
+    _scope: &mut TransactionScope<'_>,
     _captured: &CapturedLog,
     _input: PublicationInput<'_>,
     _bootstrap: Option<&BootstrapPlan>,
@@ -55,7 +53,7 @@ pub(in crate::store) async fn prepare(
 /// transaction. The caller must abort that transaction on any helper error.
 pub(in crate::store) async fn persist(
     _store: &MongoSandboxStore,
-    _session: &mut ClientSession,
+    _scope: &mut TransactionScope<'_>,
     _prepared: PreparedPublication,
     _aggregate: AggregateUpdate,
 ) -> Result<Publication, TransactionLogError> {
