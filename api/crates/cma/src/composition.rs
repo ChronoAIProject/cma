@@ -115,6 +115,7 @@ impl ControlPlaneComposition {
             sandbox_policy.clone(),
             connection_prerequisite.clone(),
         );
+        sandbox_service.attach_platform_spend(stores.sandbox_model.clone());
         let workspace_service = WorkspaceService::new(
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),

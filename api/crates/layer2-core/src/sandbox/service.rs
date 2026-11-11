@@ -121,6 +121,8 @@ pub enum SandboxServiceError {
     SandboxLimitReached { limit: u16, live: u16 },
     #[error("global sandbox capacity is unavailable")]
     GlobalCapacityReached,
+    #[error("model budget refused the commitment: {0}")]
+    Budget(crate::budget::BudgetError),
     #[error("sandbox name is invalid")]
     InvalidName,
     #[error("sandbox name is already in use")]
@@ -152,6 +154,7 @@ impl SandboxServiceError {
             Self::TrustConfirmationRequired { .. } => "trust_confirmation_required",
             Self::SandboxLimitReached { .. } => "sandbox_limit_reached",
             Self::GlobalCapacityReached => "sandbox_capacity_unavailable",
+            Self::Budget(reason) => reason.code(),
             Self::InvalidName => "invalid_sandbox_name",
             Self::NameConflict => "sandbox_name_conflict",
             Self::InvalidOrigin => "invalid_sandbox_origin",
@@ -172,6 +175,7 @@ pub struct SandboxService {
     pub(super) profile_uses: Arc<dyn ProfileUseRecorder>,
     pub(super) policy: Arc<dyn SandboxPolicySource>,
     pub(super) credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    pub(super) platform_spend: std::sync::OnceLock<Arc<dyn crate::budget::PlatformSpendLedger>>,
 }
 
 impl SandboxService {
@@ -229,7 +233,26 @@ impl SandboxService {
             profile_uses,
             policy,
             credentials,
+            platform_spend: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Revival reads the platform admission state at the service entry; it
+    /// carries no model liability and the turn admission behind it is exact.
+    pub fn attach_platform_spend(&self, spend: Arc<dyn crate::budget::PlatformSpendLedger>) {
+        let _ = self.platform_spend.set(spend);
+    }
+
+    pub(super) async fn require_platform_open(&self) -> Result<(), crate::budget::BudgetError> {
+        let Some(spend) = self.platform_spend.get() else {
+            return Ok(());
+        };
+        let now = crate::seconds_from_rfc3339(&crate::now_rfc3339())
+            .ok_or(crate::budget::BudgetError::Unavailable)?;
+        match spend.admission_state(now).await?.commitment_refusal() {
+            Some(reason) => Err(reason),
+            None => Ok(()),
+        }
     }
 
     pub async fn list_own(
@@ -401,6 +424,7 @@ pub(super) fn store_error(error: SandboxStoreError) -> SandboxServiceError {
             SandboxServiceError::SandboxLimitReached { limit, live }
         }
         SandboxStoreError::GlobalCapacityReached => SandboxServiceError::GlobalCapacityReached,
+        SandboxStoreError::Budget(reason) => SandboxServiceError::Budget(reason),
         SandboxStoreError::SandboxOriginConflict => SandboxServiceError::SandboxOriginConflict,
         SandboxStoreError::Corrupt(detail) => SandboxServiceError::Corrupt(detail),
         SandboxStoreError::InvalidPage => SandboxServiceError::InvalidState,
