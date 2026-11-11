@@ -371,9 +371,14 @@ impl CapacityRecoveryRuntime for Runtime {
     async fn reattach_completed(
         &self,
         activation: &RecoveryActivation,
-    ) -> Result<(Self::Attachment, RecoveryConfirmation), RecoveryError> {
+    ) -> Result<CompletedAttachment<Self::Attachment>, RecoveryError> {
         let mut s = self.0.lock().unwrap();
         let work = activation.completed();
+        if s.activated
+            .contains(&(work.request.key()?, activation.writer_fence()))
+        {
+            return Ok(CompletedAttachment::AlreadyActivated);
+        }
         s.reconnects.push(work.target.clone());
         if s.unavailable {
             return Err(RecoveryError::Unavailable);
@@ -389,13 +394,13 @@ impl CapacityRecoveryRuntime for Runtime {
                 _ => return Err(RecoveryError::InvalidEvidence),
             },
         };
-        Ok((
-            (
+        Ok(CompletedAttachment::Reattached {
+            attachment: (
                 confirmation.operation_key.clone(),
                 confirmation.authority_fence,
             ),
             confirmation,
-        ))
+        })
     }
 
     async fn acknowledge(

@@ -41,13 +41,55 @@ impl Authority {
     }
 }
 
+pub(in crate::store) trait RecoveryAuthority: Send + Sync {
+    fn snapshot(&self) -> &ResourceAccessSnapshot;
+    fn require(&self) -> Result<(), TransactionLogError>;
+    fn require_request(
+        &self,
+        request: &layer2_core::sandbox::agent_capacity_recovery::state::RecoveryRequest,
+    ) -> Result<(), TransactionLogError>;
+}
+
+impl RecoveryAuthority for AuthorizedResource {
+    fn snapshot(&self) -> &ResourceAccessSnapshot {
+        &self.snapshot
+    }
+    fn require(&self) -> Result<(), TransactionLogError> {
+        self.decision
+            .require(ResourceCapability::OperateAgent)
+            .map_err(|_| {
+                SandboxStoreError::InvalidTransaction(
+                    "current capacity recovery authorization is required",
+                )
+                .into()
+            })
+    }
+    fn require_request(
+        &self,
+        _: &layer2_core::sandbox::agent_capacity_recovery::state::RecoveryRequest,
+    ) -> Result<(), TransactionLogError> {
+        self.require()
+    }
+}
+
 pub(super) async fn capture(
     store: &MongoSandboxStore,
-    authorized: &AuthorizedResource,
+    authorized: &dyn RecoveryAuthority,
     id: &AgentId,
     scope: &mut TransactionScope<'_>,
 ) -> Result<Authority, TransactionLogError> {
     require(authorized)?;
+    capture_snapshot(store, authorized.snapshot(), id, scope).await
+}
+
+// Used to verify a candidate accepted-work proof before issuing its opaque
+// authority. This helper alone grants no mutation or runtime permission.
+pub(super) async fn capture_snapshot(
+    store: &MongoSandboxStore,
+    snapshot: &ResourceAccessSnapshot,
+    id: &AgentId,
+    scope: &mut TransactionScope<'_>,
+) -> Result<Authority, TransactionLogError> {
     let target = ResourceTarget::Agent {
         agent_id: id.clone(),
     };
@@ -87,17 +129,17 @@ pub(super) async fn capture(
         .map(read_inventory_policy)
         .transpose()
         .map_err(|_| SandboxStoreError::Conflict)?;
-    if policy != authorized.snapshot.policy {
+    if policy != snapshot.policy {
         return Err(SandboxStoreError::Conflict.into());
     }
     // Every share mutation advances the policy revision and fences the Sandbox.
     // Read each previously authorized share as well; the bounded policy snapshot
     // and exact revision equality also reject additions outside this list.
-    let mut shares = Vec::with_capacity(authorized.snapshot.shares.len());
-    if authorized.snapshot.shares.len() > layer2_core::resource_access::MAX_ACTIVE_RESOURCE_SHARES {
+    let mut shares = Vec::with_capacity(snapshot.shares.len());
+    if snapshot.shares.len() > layer2_core::resource_access::MAX_ACTIVE_RESOURCE_SHARES {
         return Err(SandboxStoreError::Conflict.into());
     }
-    for share in &authorized.snapshot.shares {
+    for share in &snapshot.shares {
         let row = scope
             .find_one(&store.resource_shares, doc! {"_id": &share.id})
             .await
@@ -115,32 +157,23 @@ pub(super) async fn capture(
         policy,
         shares,
     };
-    if current.fence() != authorized.snapshot.fence()
+    if current.fence() != snapshot.fence()
         || current
             .scope(&target)
             .map_err(|_| SandboxStoreError::Conflict)?
-            != authorized
-                .snapshot
+            != snapshot
                 .scope(&target)
                 .map_err(|_| SandboxStoreError::Conflict)?
-        || current.lineage != authorized.snapshot.lineage
-        || current.shares != authorized.snapshot.shares
+        || current.lineage != snapshot.lineage
+        || current.shares != snapshot.shares
     {
         return Err(SandboxStoreError::Conflict.into());
     }
     Ok(Authority { resource: current })
 }
 
-pub(super) fn require(authorized: &AuthorizedResource) -> Result<(), TransactionLogError> {
-    authorized
-        .decision
-        .require(ResourceCapability::OperateAgent)
-        .map_err(|_| {
-            SandboxStoreError::InvalidTransaction(
-                "current capacity recovery authorization is required",
-            )
-            .into()
-        })
+pub(super) fn require(authorized: &dyn RecoveryAuthority) -> Result<(), TransactionLogError> {
+    authorized.require()
 }
 
 /// Resource-policy mutations also fence the Sandbox. These real parent writes
