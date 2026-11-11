@@ -28,7 +28,7 @@ fn failed_sampling_keeps_last_good_values_and_freshness() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
-async fn durable_summaries_exclude_live_leases_future_retries_and_terminals() {
+async fn durable_summaries_separate_admission_states_and_exclude_not_due_work() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let client = mongodb::Client::with_uri_str(uri).await.unwrap();
     let database = client.database(&format!(
@@ -97,13 +97,13 @@ async fn durable_summaries_exclude_live_leases_future_retries_and_terminals() {
         doc! { "status": "queued", "queue_deadline": &old_text, "record": { "receipt": { "admitted_at": &old_text } } },
         doc! { "status": "in_progress", "queue_deadline": &old_text, "record": { "receipt": { "admitted_at": &old_text } } },
         doc! { "status": "waiting_action", "queue_deadline": &old_text, "record": { "receipt": { "admitted_at": &old_text } } },
-        doc! { "status": "completed", "queue_deadline": &old_text },
+        doc! { "status": "completed", "queue_deadline": &old_text, "record": { "receipt": { "admitted_at": &old_text } } },
     ]).await.unwrap();
     for spec in specifications(now) {
         let summary = observations.read(&spec).await.unwrap();
         let expected = match (spec.worker, spec.state) {
             ("agents", _) => 2,
-            ("sandbox_commands", _) => 0,
+            ("sandbox_commands", _) | ("agent_commands", "failed" | "cancelled") => 0,
             _ => 1,
         };
         assert_eq!(summary.count, expected, "{} / {}", spec.worker, spec.state);
@@ -111,5 +111,37 @@ async fn durable_summaries_exclude_live_leases_future_retries_and_terminals() {
             assert!((summary.oldest - old.timestamp_millis() as f64 / 1000.).abs() < 1.);
         }
     }
+    // Exercise the actual background exporter: expired_queue overlaps queued
+    // and must never become a seventh mutually exclusive admission status.
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    let _metrics = metrics::set_default_local_recorder(&recorder);
+    let (shutdown, receiver) = tokio::sync::watch::channel(false);
+    let task = observations.spawn(receiver);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let text = handle.render();
+            let populations: Vec<_> = text
+                .lines()
+                .filter(|line| line.starts_with("cma_admission_durable_commands{"))
+                .collect();
+            let expired_sampled = text.lines().any(|line| {
+                line.starts_with("cma_worker_durable_items{")
+                    && line.contains("expired_queue")
+                    && line.ends_with(" 1")
+            });
+            if populations.len() == 6 && expired_sampled {
+                assert!(!populations
+                    .iter()
+                    .any(|line| line.contains("expired_queue")));
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    shutdown.send(true).unwrap();
+    task.await.unwrap();
     database.drop().await.unwrap();
 }
