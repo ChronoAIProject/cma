@@ -18,7 +18,18 @@ pub use agent_client_protocol_schema::v1::{
 };
 
 pub fn reported_tool_text(fields: &ToolCallUpdateFields) -> Vec<std::borrow::Cow<'_, str>> {
-    if let Some(content) = &fields.content {
+    reported_tool_text_parts(fields.content.as_deref(), fields.raw_output.as_ref())
+}
+
+pub fn reported_tool_call_text(call: &ToolCall) -> Vec<std::borrow::Cow<'_, str>> {
+    reported_tool_text_parts(Some(&call.content), call.raw_output.as_ref())
+}
+
+fn reported_tool_text_parts<'a>(
+    content: Option<&'a [ToolCallContent]>,
+    raw_output: Option<&'a serde_json::Value>,
+) -> Vec<std::borrow::Cow<'a, str>> {
+    if let Some(content) = content {
         let diffs = crate::tool_diff::reported_diffs(content).map(std::borrow::Cow::Owned);
         return diffs
             .into_iter()
@@ -33,9 +44,7 @@ pub fn reported_tool_text(fields: &ToolCallUpdateFields) -> Vec<std::borrow::Cow
             }))
             .collect();
     }
-    fields
-        .raw_output
-        .as_ref()
+    raw_output
         .and_then(|output| output.get("formatted_output"))
         .and_then(serde_json::Value::as_str)
         .into_iter()
@@ -155,7 +164,7 @@ pub enum ConversationUpdate {
     /// One ordered runtime frame. A protocol-only frame still needs a durable cursor.
     RuntimeOutput {
         receipt: crate::RuntimeOutputReceipt,
-        update: Option<Box<ConversationUpdate>>,
+        update: Option<crate::RuntimeOutputUpdate>,
     },
     WithoutPromptEvidence(Box<ConversationUpdate>),
     Said(SessionUpdate),
