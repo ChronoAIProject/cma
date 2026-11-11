@@ -7,6 +7,10 @@ use layer2_core::sandbox::{
 
 pub(super) async fn database(prefix: &str) -> (Client, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable replica set required");
+    assert!(prefix.is_ascii());
+    // Keep the random identity intact and leave room for the cross-database
+    // proof fixtures' `_other` suffix within Mongo's database-name limit.
+    let prefix = &prefix[..prefix.len().min(11)];
     (
         Client::with_uri_str(uri).await.unwrap(),
         format!("cma_segments_{prefix}_{}", uuid::Uuid::new_v4().simple()),
