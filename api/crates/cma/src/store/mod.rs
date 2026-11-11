@@ -21,6 +21,7 @@ mod agent_log;
 mod agent_log_codec;
 mod agent_log_integrity;
 mod agent_log_reads;
+mod agent_log_segment_reads;
 pub(crate) mod agent_log_segments;
 mod agent_log_store;
 pub(crate) mod agent_log_telemetry;
