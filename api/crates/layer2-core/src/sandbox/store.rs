@@ -20,6 +20,8 @@ mod agent;
 pub use agent::AgentStore;
 mod agent_log;
 pub use agent_log::AgentLogStore;
+mod agent_response_log;
+pub use agent_response_log::{AgentResponseLogStore, AgentResponseLogWindow};
 mod workspace_worker;
 pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore};
 
