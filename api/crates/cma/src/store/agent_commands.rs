@@ -198,6 +198,17 @@ impl AgentCommandStore for MongoSandboxStore {
     ) -> Result<CommandReservationResult, CommandLedgerError> {
         request.require_non_channel()?;
         request.validate()?;
+        if self
+            .fleet_log_activation
+            .selected(&request.envelope.agent_id)
+            && matches!(
+                request.envelope.command,
+                layer2_core::sandbox::agent_io::AgentCommand::Message { .. }
+            )
+        {
+            request.require_current_authority()?;
+            self.prepare_fleet_log(&request.envelope.agent_id).await;
+        }
         let mut retries = retry::CommandAdmissionRetries::new(request.authority_deadline);
         while retries.next().await {
             request.require_current_authority()?;
