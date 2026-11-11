@@ -110,3 +110,72 @@ async fn retired_sandbox_retains_segmented_and_damaged_history_without_mutation(
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable replica set"]
+async fn exact_admission_retains_legacy_lineage_but_global_policy_does_not() {
+    use segments::{
+        publication::PublicationIdentity,
+        writer_admission::{self, AdmissionKind},
+        writer_gate::{self, GateName, Policy},
+    };
+    let (client, name) = database("admit_hold").await;
+    let db = client.database(&name);
+    schema::migrate(&db).await.unwrap();
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let current = agent();
+    let sandbox = retired(current.sandbox_id.as_str());
+    store.create_sandbox(sandbox.clone()).await.unwrap();
+    store.create_agent(current.clone()).await.unwrap();
+    let mut session = client.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    writer_gate::replace(
+        &db,
+        GateName::Segments,
+        0,
+        Policy {
+            enabled: true,
+            agents: vec![current.id.0.clone()],
+            ..Policy::default()
+        },
+        &mut session,
+    )
+    .await
+    .unwrap();
+    session.commit_transaction().await.unwrap();
+    assert!(
+        !segments::retention::required(&store, sandbox.id.as_str(), &mut session)
+            .await
+            .unwrap()
+    );
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    writer_admission::admit(
+        &db,
+        &current,
+        &PublicationIdentity {
+            key: "retained-admission-fixture".into(),
+            fingerprint: digest::binary(vec![4; 32]),
+            appended_at: NOW.into(),
+        },
+        AdmissionKind::Activation,
+        NOW,
+        &mut session,
+    )
+    .await
+    .unwrap();
+    session.commit_transaction().await.unwrap();
+    let before = contents(&client, &name).await;
+    assert_eq!(
+        store
+            .purge_sandbox(&sandbox.id, sandbox.revision, NOW)
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(contents(&client, &name).await, before);
+    assert!(store.get_agent(&current.id).await.unwrap().is_some());
+    db.drop().await.unwrap();
+}
