@@ -97,6 +97,7 @@ pub(super) fn authentication(
         config.nyxid_proxy_audience.clone(),
     )?
     .with_binding_store(stores.sandbox_model.clone())
+    .with_platform_spend(stores.sandbox_model.clone())
     .with_bot_father_username(
         config
             .bot_father
