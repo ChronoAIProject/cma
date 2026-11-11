@@ -1,6 +1,7 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub bounded_raw_output: bool,
     pub output_json_budget: bool,
     pub bounded_update_relay: bool,
     pub bounded_live_fragments: bool,
@@ -23,6 +24,7 @@ pub(crate) struct FeatureFlags {
     pub document_quotas: bool,
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
+    pub event_driven_reconciliation: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -39,6 +41,7 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
             output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
             bounded_update_relay: flag(lookup, "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED")?,
             bounded_live_fragments: flag(lookup, "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED")?,
@@ -51,6 +54,10 @@ impl FeatureFlags {
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
+            event_driven_reconciliation: flag(
+                lookup,
+                "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
+            )?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
             model_request_budget_writes_enabled: flag(
@@ -232,6 +239,35 @@ mod sandbox_read_tests {
 }
 
 #[cfg(test)]
+mod reconciliation_tests {
+    use super::*;
+
+    #[test]
+    fn event_driven_reconciliation_requires_an_explicit_boolean_opt_in() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok(
+                    if key == "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED" {
+                        value.map(str::to_owned)
+                    } else {
+                        None
+                    },
+                )
+            })
+            .unwrap();
+            assert_eq!(flags.event_driven_reconciliation, expected);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED")
+                    .then(|| value.to_owned()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
 mod sandbox_batch_tests {
     use super::*;
     #[test]
@@ -403,6 +439,30 @@ mod output_json_tests {
         for value in ["", "1", "TRUE", " true "] {
             assert!(FeatureFlags::from_lookup(&mut |key| {
                 Ok((key == KEY).then(|| value.to_owned()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod raw_output_tests {
+    use super::*;
+
+    #[test]
+    fn raw_output_bounds_require_their_own_strict_opt_in() {
+        let key = "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED";
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |name| {
+                Ok((name == key).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_raw_output, expected);
+            assert!(!flags.retained_reopen_enabled && !flags.bounded_approval_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |name| {
+                Ok((name == key).then(|| value.to_owned()))
             })
             .is_err());
         }
