@@ -1,6 +1,11 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub shared_runtime_output: bool,
+    pub retain_read_frames: bool,
+    pub bounded_live_fragments: bool,
+    pub bounded_update_relay: bool,
+    pub output_json_budget: bool,
     pub parent_not_ready_pacing_enabled: bool,
     pub bounded_permission_state: bool,
     pub retained_reopen_enabled: bool,
@@ -34,6 +39,11 @@ impl FeatureFlags {
             }
         }
         Ok(Self {
+            shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
+            retain_read_frames: flag(lookup, "CHRONO_READ_FRAME_BUDGET_ENABLED")?,
+            bounded_live_fragments: flag(lookup, "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED")?,
+            bounded_update_relay: flag(lookup, "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED")?,
+            output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
             parent_not_ready_pacing_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED",
@@ -271,6 +281,127 @@ mod paged_event_tests {
             assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
                 == "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")
                 .then(|| value.into())))
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod shared_output_tests {
+    use super::*;
+
+    #[test]
+    fn shared_runtime_output_requires_its_own_strict_opt_in() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.shared_runtime_output, expected);
+            assert!(!flags.bounded_response_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED").then(|| value.into()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod read_frame_tests {
+    use super::*;
+
+    #[test]
+    fn read_frame_ownership_requires_an_independent_strict_boolean() {
+        const KEY: &str = "CHRONO_READ_FRAME_BUDGET_ENABLED";
+        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.retain_read_frames, enabled);
+            assert!(!flags.bounded_response_reads && !flags.bounded_title_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.to_owned()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod live_buffer_tests {
+    use super::*;
+
+    #[test]
+    fn live_buffer_budget_requires_its_own_strict_boolean() {
+        const KEY: &str = "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED";
+        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_live_fragments, enabled);
+            assert!(!flags.bounded_close_retries);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.to_owned()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod relay_tests {
+    use super::*;
+
+    #[test]
+    fn bounded_update_relay_requires_a_separate_strict_boolean() {
+        const KEY: &str = "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED";
+        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_update_relay, enabled);
+            assert!(!flags.bounded_close_retries);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.to_owned()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod output_json_tests {
+    use super::*;
+
+    #[test]
+    fn output_json_budget_requires_a_separate_strict_boolean() {
+        const KEY: &str = "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED";
+        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.output_json_budget, enabled);
+            assert!(!flags.bounded_response_reads && !flags.bounded_close_retries);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.to_owned()))
+            })
             .is_err());
         }
     }
