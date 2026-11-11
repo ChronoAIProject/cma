@@ -203,3 +203,61 @@ async fn preparation_attempts_survive_restart_and_exhaust_before_any_exchange() 
         .matches(&retry));
     cleanup(&config);
 }
+
+#[tokio::test]
+async fn reproducible_trees_do_not_consume_retention_after_more_than_thirty_two_upgrades() {
+    for profile in [true, false] {
+        let (config, mut request) = fixture(profile).await;
+        let parent = config.agent_home(request.agent_id.as_str()).join("skills");
+        for index in 0..36 {
+            let receipt = install(&config, &reqwest::Client::new(), &request)
+                .await
+                .unwrap();
+            assert!(!staging(&parent, &request).exists());
+            assert!(install(&config, &reqwest::Client::new(), &request)
+                .await
+                .unwrap()
+                .matches(&request));
+            request = AgentSkillInstallRequest::upgrade(
+                request.agent_id.clone(),
+                skill(&config, &format!("version-{index}")),
+                request.skill.clone(),
+                Some(receipt),
+                index + 3,
+            );
+        }
+        cleanup(&config);
+    }
+}
+
+#[tokio::test]
+async fn legacy_proof_without_retention_policy_never_deletes_unclassified_old_content() {
+    let (config, request) = fixture(true).await;
+    let parent = config.agent_home(request.agent_id.as_str()).join("skills");
+    std::fs::write(parent.join("research/owner-note"), b"legacy retained data").unwrap();
+    FAULTS
+        .lock()
+        .unwrap()
+        .insert(config.state_root.clone(), "proof_published");
+    assert_eq!(
+        install(&config, &reqwest::Client::new(), &request)
+            .await
+            .unwrap_err()
+            .code,
+        "injected_crash"
+    );
+    let path = proof_path(&config, &request).unwrap();
+    let mut proof: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    proof.as_object_mut().unwrap().remove("retain_previous");
+    std::fs::write(&path, serde_json::to_vec(&proof).unwrap()).unwrap();
+    assert!(install(&config, &reqwest::Client::new(), &request)
+        .await
+        .unwrap()
+        .matches(&request));
+    assert_eq!(
+        std::fs::read(staging(&parent, &request).join("new/owner-note")).unwrap(),
+        b"legacy retained data"
+    );
+    cleanup(&config);
+}
