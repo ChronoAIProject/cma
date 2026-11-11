@@ -222,7 +222,7 @@ async fn expired_pending_is_durable_and_replayed_without_preparing_or_starting()
 }
 
 #[tokio::test]
-async fn expiry_preserves_frozen_and_ambiguous_provider_starts() {
+async fn expiry_settles_proven_unstarted_requests_and_preserves_ambiguous_starts() {
     for phase in [Phase::Prepared, Phase::Starting, Phase::Unknown] {
         let setup = Setup::new(supported()).await;
         let mut lease = setup.prepared().await;
@@ -237,12 +237,22 @@ async fn expiry_preserves_frozen_and_ambiguous_provider_starts() {
             .memory
             .clock
             .store(fixture::NOW + 900, Ordering::SeqCst);
-        assert!(matches!(
-            setup.dispatch().await,
-            Err(ExecutionError::Expired)
-        ));
+        let result = setup.dispatch().await;
         let retained = stored(&setup).await;
-        assert_eq!(retained.phase, phase);
+        if phase == Phase::Prepared {
+            assert!(
+                matches!(result, Ok(DispatchOutcome::Terminal(Phase::Refused { code })) if code == EXPIRED_BEFORE_START)
+            );
+            assert_eq!(
+                retained.phase,
+                Phase::Refused {
+                    code: EXPIRED_BEFORE_START.into()
+                }
+            );
+        } else {
+            assert!(matches!(result, Err(ExecutionError::Expired)));
+            assert_eq!(retained.phase, phase);
+        }
         assert!(retained.body == original_body);
         assert!(setup.port.starts.lock().unwrap().is_empty());
     }
