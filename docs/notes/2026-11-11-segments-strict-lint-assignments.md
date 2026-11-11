@@ -3,10 +3,10 @@
 Pre-review 2 baseline: `34bcc3667`, including normal slice/develop merges; branch
 `tl/cma-log-segments/integration-20261111`; develop `8167d01d8` is included.
 Mechanical follow-ups are `efc880523` and `3cb7a3348`, detailed below.
-Latest code assembly `b3052f1b6` includes proof/schema pin `c4e4b995a`,
+Latest code assembly `05e4f4634` includes proof/schema pin `c4e4b995a`,
 S1 `f0d9746ef`, S4/S5 `2dbb5d81c`, config split `3fc57ec55` and develop
-`ce72ee311`;
-combined gates are queued against that immutable source.
+`cece32bf4`. Interim combined gates stay fixed at immutable `b3052f1b6`;
+the final assembled head still requires its own complete qualification.
 No integration PR is ready. Pre-review 2 has four unresolved P1s; P1-2 is
 closed in source, while exact combined qualification remains a release gate.
 The source remains default-off. Production was not touched.
@@ -327,27 +327,8 @@ response callers. S1 will execute strict CMA and report its exact disposition
 without altering other allocations. Target:10:00 for the16:00 combined merge.
 
 
-### Integration source and gate queue — c3ca9e3aa
-
-Normally merged develop `cf1d6ce54` and resolved three overlapping declarations
-by preserving both sides: configuration documentation inventories, default-off
-reconciliation and pacing flags, and accepted recovery plus event-driven Agent
-scheduler composition. Source fmt and config documentation passed. The one
-combined branch is published at `c3ca9e3aa`; no develop merge occurred.
-
-After the current-proof Mongo run completes, the immutable combined export
-queues strict CMA, scheduler/config, adapter, canonical authenticated Mongo and
-retained-fixture Mongo separately under heavy-1. A failure stops this batch for
-inspection. These are pending checks, not source-head passes. Actual proof unit
-results remain at `44ad38198`. Both shared lock files are preserved.
-
-
-Runner qualification at `c3ca9e3aa`: **31 passed, 0 failed, 0 skipped**,
-172.707s. These are mocked Cargo/Docker orchestration, selection and cleanup
-contracts; they are not actual Mongo evidence. Formatting/config checks passed;
-base-to-working-tree whitespace passes after trimming the history6 EOF blank.
-The canonical secret scan at `b0b4943c5` passed3,977commits with zero findings.
-
+Earlier c3ca integration/runner evidence is preserved in
+[coordination history 12](2026-11-12-segments-coordination-history-12.md).
 
 ### S5 lint correction and develop synchronization —3aaa5539512ac97440fb665b4e3352bc0f56ae8e
 
@@ -492,3 +473,25 @@ authenticated Mongo, all current capacity-recovery Mongo (including the3S5 and
 step separately uses the existing heavy-1 with -k -n -t3600 and2jobs.
 One target retained; no combined heavy pass claimed. The S1 handoff is
 [config-test-split](2026-11-12-config-test-split-handoff.md).
+
+S1 response suite at published `b24fb1c57`: **104 passed, 0 failed,
+1 ignored** (existing SDK loopback fixture), 504 filtered. This includes the
+large-history, long-turn, pagination, authority and stream-error regressions.
+Source checksum remained unchanged. Formatting, whitespace, source-size
+(6,168 files) and canonical history secret scan (3,840 commits) also passed.
+Strict CMA and final configuration/factory execution remain pending.
+
+
+### Retained-context develop merge —05e4f4634
+
+Normally merged develop `cece32bf4` (#1693). Retained both default-off flags,
+builder methods, constructor defaults and ConfigMap keys. The shared
+`composition::bindings::responses` helper now takes the existing
+`crate::config::FeatureFlags` as its final argument, reading both named fields;
+its one production call passes `config.features`. This preserves both behaviors
+and avoids an eight-argument lint failure without suppression. S1 retains all
+response caller semantics and can keep this mechanical signature when merging.
+Formatting/config/whitespace pass; features root475lines. No caller test is
+claimed for this new merged head. Final qualification must include retained
+context success/refusal and paged-response tests as well as the recorded gates.
+The current b305 gate source remains frozen while integration continues.
