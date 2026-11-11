@@ -126,7 +126,7 @@ pub(crate) async fn command(args: &[String]) -> Result<String> {
     {
         crate::config::DocumentStorageConfig::from_lookup(&mut |name| Ok(std::env::var(name).ok()))
             .map_err(|_| REFUSED)?
-            .map(crate::document_storage::StorageDocuments::new)
+            .map(crate::document_storage::StorageDocuments::read_only)
             .transpose()
             .map_err(|_| REFUSED)?
             .map(|s| s as Arc<dyn DocumentBlobStore>)
