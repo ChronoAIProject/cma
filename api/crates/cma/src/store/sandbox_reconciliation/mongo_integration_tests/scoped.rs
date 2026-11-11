@@ -145,11 +145,16 @@ async fn unchanged(
         agent.conversation.last_seq
     );
     assert_eq!(publication_count(store).await, 1); // adoption only
-    assert!(store
-        .sandbox_events(&sandbox.id, 0, 100)
-        .await
-        .unwrap()
-        .is_empty());
+                                                   // Raw absence remains checkable when the test deliberately corrupts the
+                                                   // event head; the public reader must refuse that incomplete stream.
+    assert_eq!(
+        store
+            .sandbox_events
+            .count_documents(doc! {"sandbox_id":sandbox.id.as_str()})
+            .await
+            .unwrap(),
+        0
+    );
 }
 
 #[tokio::test]
