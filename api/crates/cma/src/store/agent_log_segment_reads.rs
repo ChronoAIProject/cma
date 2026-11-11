@@ -111,7 +111,7 @@ where
             session,
             true,
             |entry| {
-                head.validate_lineage(&entry)?;
+                validate_lineage(expected, &entry)?;
                 if entry.agent_id != expected.id || entry.seq != expected_seq {
                     return Err(SandboxStoreError::SequenceConflict);
                 }
@@ -268,7 +268,7 @@ pub(super) async fn range_with_snapshot(
     let mut expected_seq = after + 1;
     segments::visit_range(
         store,
-        segmented,
+        &segmented,
         LogRange {
             after,
             through,
@@ -323,7 +323,7 @@ pub(super) async fn selected<F>(
     store: &MongoSandboxStore,
     expected: &Agent,
     session: &mut ClientSession,
-    mut keep: F,
+    keep: F,
 ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError>
 where
     F: FnMut(&AgentLogKind) -> bool + Send,
@@ -378,7 +378,7 @@ where
             session,
             true,
             |entry| {
-                head.validate_lineage(&entry)?;
+                validate_lineage(expected, &entry)?;
                 if entry.agent_id != expected.id || entry.seq != expected_seq {
                     return Err(SandboxStoreError::SequenceConflict);
                 }
