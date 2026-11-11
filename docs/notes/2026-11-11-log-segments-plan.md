@@ -424,3 +424,21 @@ Existing runtime-unavailable pacing stays as configured. No ledger behavior chan
 Next checkpoint: owner signature commits before Wed 2026-11-11 19:10 SGT;
 shared executable contract freeze still Wed21:00. Develop merge freeze remains
 binding, and no production change is part of this handoff.
+
+## Signature delivery receipt
+
+Both owner signature commits are pushed and remote-readback verified:
+
+| Owner | Branch | Exact signature commit |
+| --- | --- | --- |
+| S1 | `tl/cma-log-segments/reader-foundation` | `5ed7eaae1cc1cb357a1649a7773a24956adf2518` |
+| S4 | `tl/cma-log-segments/writer-publication` | `453b417426e015459d24cc4e95d9f13586949a03` |
+
+The Rust signatures match this freeze. Pending bodies return typed Unavailable
+without writes; proof/plan types have no public constructor. S5 may normally
+merge the exact dependencies. They do not establish executable success/atomicity.
+S2 root/schema dependency `ec6002898d2329e744ea3a26513f500941461593` is published
+on `tl/cma-log-segments/reader-registrations`. Shared projection/root declarations
+and S3's supporting fold exports are the remaining compile integration, followed
+by actual source/persistence implementations and their local/Mongo gates. The
+common integration lane combines these checkpoints; it is not a deployable PR.
