@@ -39,7 +39,10 @@ pub(super) fn spawn(
                             tracing::error!("negotiated runtime output arrived without a receipt");
                             break;
                         }
-                        reader.receive(payload, &reader_updates).await;
+                        if let Err(error) = reader.receive(payload, &reader_updates).await {
+                            tracing::error!(%error, "runtime conversation was rejected");
+                            break;
+                        }
                     }
                     Some((LANE_RETAINED_OUTPUT, payload)) => {
                         if let Err(error) = reader.receive_output(payload, &reader_updates).await {
