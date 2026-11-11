@@ -28,8 +28,8 @@ pub(super) async fn assemble(
 ) -> Result<PreparedPublication, TransactionLogError> {
     captured.validate_transaction(store, scope)?;
     let transaction = scope.identity();
-    let session = scope.session();
     input.operation.validate()?;
+    crate::store::agent_log_integrity::ensure_append_batch_size(input.logs.len())?;
     let current = input.current;
     let next = input.next;
     if current != captured.agent()
@@ -61,7 +61,7 @@ pub(super) async fn assemble(
         .find_one(doc! {"_id":super::super::publication::identity(
             current.id.as_str(), captured.incarnation(), &input.operation.key,
         )})
-        .session(&mut *session)
+        .session(scope.session())
         .await
         .map_err(TransactionLogError::Driver)?
     {
@@ -77,7 +77,7 @@ pub(super) async fn assemble(
     };
     let stored_admission = if let Some(supplied) = admission {
         let database = store.client.database(&store.agents.namespace().db);
-        let stored = writer_admission::read(&database, current, input.operation, session)
+        let stored = writer_admission::read(&database, current, input.operation, scope.session())
             .await?
             .ok_or(SandboxStoreError::Conflict)?;
         if bson::serialize_to_document(&stored).map_err(|_| corrupt())?
@@ -135,6 +135,7 @@ pub(super) async fn assemble(
             )
         }
     };
+    certify_queued_sources(store, scope, captured, &before, input.logs).await?;
     let batch = EncodedBatch::new(&before, input.logs)?;
     let plan = writer_plan::plan(
         &before,
@@ -163,7 +164,7 @@ pub(super) async fn assemble(
     )?;
     let evidence = certify_evidence(
         store,
-        session,
+        scope.session(),
         &before,
         captured,
         std::mem::take(&mut delta.evidence),
@@ -184,6 +185,46 @@ pub(super) async fn assemble(
         admission: stored_admission,
         permit,
     })
+}
+
+async fn certify_queued_sources(
+    store: &MongoSandboxStore,
+    scope: &mut TransactionScope<'_>,
+    captured: &CapturedLog,
+    head: &Head,
+    logs: &[AgentLogEntry],
+) -> Result<(), TransactionLogError> {
+    use layer2_core::sandbox::AgentLogProjectionState;
+    let sources = logs
+        .iter()
+        .filter_map(AgentLogProjectionState::queued_owner)
+        .filter(|seq| *seq <= captured.through())
+        .collect::<std::collections::BTreeSet<_>>();
+    for sequence in sources {
+        let entries =
+            super::super::capture::points_transaction(store, captured, &[sequence], scope).await?;
+        let entry = entries.first().ok_or_else(corrupt)?;
+        captured
+            .projection()
+            .validate_queued_source(entry)
+            .map_err(SandboxStoreError::Corrupt)?;
+        match projection::evidence(
+            store,
+            head,
+            "queued",
+            &sequence.to_string(),
+            scope.session(),
+        )
+        .await?
+        {
+            Some(projection::EvidenceRecord::Queued {
+                sequence: stored,
+                consumed_by: None,
+            }) if stored == sequence => {}
+            _ => return Err(corrupt().into()),
+        }
+    }
+    Ok(())
 }
 
 async fn certify_evidence(
