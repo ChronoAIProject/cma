@@ -29,6 +29,7 @@ mod ledger_hold_tests;
 mod managed_context;
 mod memory;
 mod nonexecuting;
+mod output_json_budget;
 mod permission_state;
 mod provider_backend;
 mod provider_endpoint;
