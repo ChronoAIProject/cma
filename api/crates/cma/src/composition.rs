@@ -140,6 +140,7 @@ impl ControlPlaneComposition {
         )))
         .with_sessions(stores.sandbox_model.clone())
         .with_resource_access(resource_access.clone())
+        .with_response_logs(stores.sandbox_model.response_log_reader())
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
         let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
             config.image_manager_base_url.clone(),
