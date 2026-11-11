@@ -1,6 +1,6 @@
 use super::*;
 
-async fn failpoint(admin: &Client, app: &str, mode: &str) {
+pub(super) async fn failpoint(admin: &Client, app: &str, mode: &str) {
     let mut data = match mode {
         "committed" => doc! {
             "failCommands":["commitTransaction"],
@@ -23,7 +23,7 @@ async fn failpoint(admin: &Client, app: &str, mode: &str) {
         .unwrap();
 }
 
-async fn disable(admin: &Client) {
+pub(super) async fn disable(admin: &Client) {
     admin
         .database("admin")
         .run_command(doc! {
@@ -33,7 +33,7 @@ async fn disable(admin: &Client) {
         .unwrap();
 }
 
-async fn clients() -> (Client, Client, String, String) {
+pub(super) async fn clients() -> (Client, Client, String, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let suffix = uuid::Uuid::new_v4().simple().to_string();
