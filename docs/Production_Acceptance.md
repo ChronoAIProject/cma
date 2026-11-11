@@ -34,7 +34,7 @@ allowlist of protocol problem codes. Unknown response codes become
 
 ## Review and execution
 
-The current security hold remains in force. After the lead relays reviewer GO,
+After the lead relays reviewer GO,
 a private `review-go.json` receipt must contain `verdict: GO`, `source_sha256`
 from `review_gate.source_fingerprint()` and `manifest_sha256` from the canonical
 approval manifest. Only that exact reviewed source can run non-baseline phases.
@@ -62,7 +62,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/acceptance/runner.py \
 | --- | --- |
 | `baseline` | Identity/capability checks, admin denial, inventory, invalid/anonymous authentication; GET only |
 | `documents` | Retained owned documents; allowed/foreign read, write and list; grant/revoke/stale replay |
-| `updates` | One retained owner edit per account and stale-revision denial |
+| `updates` | One permanent owner edit per account; consumed slots permit source reads only |
 | `usage` | One bounded retained report per account, foreign concealment, expiration handling |
 | `domains` | Discovery, REST and exact CORS on current and retained origins |
 | `consent` | Supported ordinary CMA sign-in with only the approved scopes and client |
@@ -115,7 +115,13 @@ mismatched history refuses writes; the runner cannot initialize blank history:
   and have sharing revoked. There is no supported document deletion API.
   Reports record server logical expiry; later reads verify expiration without
   admitting replacements. Physical Mongo TTL is asynchronous, not certified
-  by a public 404. Unknown retained-write replies also have a 23-hour fence.
+  by a public 404. Document and source-edit slots are permanent: never reset or replace them.
+  After consumption, use only the exact existing fixture for reads and reversible
+  grants/revocations; do not send further source-write attempts. Preflight both
+  actors before either document phase. Missing local fixtures, missing live
+  documents and uncertain document creation refuse with zero document/source
+  mutations. Recover an uncertain document through read-only reconciliation by
+  its owner, never another POST. Report receipt recovery keeps its 23-hour fence.
 - `grant-cleanup.json`: obligation persisted before grants and stale replays;
   cleanup rechecks reader denial, reads the owner's current revision if needed,
   and revokes with the original bounded cleanup operation.
