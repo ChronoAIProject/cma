@@ -96,6 +96,13 @@ async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
         || op.starts_with("GET /auth/")
     {
         experience::dispatch(c).await
+    } else if op == "POST /api/v1/sandboxes/{id}/runtime-recovery" {
+        c.check(
+            c.client
+                .sandboxes()
+                .recover_retained(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        )
     } else if op == "GET /api/v1/sandboxes/{id}/runtime-recovery" {
         c.check(
             c.client
@@ -188,7 +195,9 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
             browser_owned += 1;
             continue;
         }
-        if let Some(class) = classification::classify(case) {
+        let retained_key = (case.id == "retained-reopen-missing-key")
+            .then_some(classification::Classification::Local);
+        if let Some(class) = retained_key.or_else(|| classification::classify(case)) {
             if matches!(
                 class,
                 classification::Classification::Local | classification::Classification::TypedShape

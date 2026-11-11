@@ -23,7 +23,7 @@ pub struct RetainedRecoveryAssessment {
 }
 
 /// Explicit consent bound to the exact Failed-parent revision.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct RecoverRetainedRequest {
     /// Revision the owner reviewed before confirming recovery.
     pub expected_revision: u64,
@@ -32,7 +32,7 @@ pub struct RecoverRetainedRequest {
 }
 
 /// Immutable admission receipt. Lifecycle progress remains on the same Sandbox.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct RetainedReopenReceipt {
     /// Durable lifecycle authority accepted by the transaction.
     pub operation_id: String,
