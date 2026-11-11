@@ -3,6 +3,7 @@ use super::*;
 use layer2_core::budget::{BudgetPolicy, RequestHold};
 
 struct Fixture {
+    clock: Arc<AtomicU64>,
     admin: Client,
     name: String,
     app: String,
@@ -24,13 +25,34 @@ impl Fixture {
         options.app_name = Some(app.clone());
         let client = Client::with_options(options).unwrap();
         let (store, scope, request) = completed(&admin, &name).await;
+        // Freeze requests at noon in the fixture's recorded UTC budget day.
+        // Every independent client and reopened store shares this explicit clock;
+        // wall-clock midnight during a failpoint cannot change the test oracle.
+        let owner = store
+            .model_budget
+            .find_one(doc! {"_id": "owner:owner"})
+            .await
+            .unwrap()
+            .unwrap();
+        let day = owner
+            .get_document("record")
+            .unwrap()
+            .get_i64("day")
+            .unwrap() as u64;
+        let clock = Arc::new(AtomicU64::new(day * 86_400 + 43_200));
+        let mut store = (*store).clone();
+        store.request_budget_clock = Some(clock.clone());
+        let store = Arc::new(store);
         let hold = store
             .reserve_request(&scope, &request)
             .await
             .unwrap()
             .unwrap();
-        let peer = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+        let mut peer = MongoSandboxStore::open(&client, &name).await.unwrap();
+        peer.request_budget_clock = Some(clock.clone());
+        let peer = Arc::new(peer);
         Self {
+            clock,
             admin,
             name,
             app,
@@ -52,6 +74,14 @@ impl Fixture {
             .try_collect()
             .await
             .unwrap()
+    }
+
+    async fn reopen(&self) -> MongoSandboxStore {
+        let mut store = MongoSandboxStore::open(&self.admin, &self.name)
+            .await
+            .unwrap();
+        store.request_budget_clock = Some(self.clock.clone());
+        store
     }
 
     async fn pause_settlement(&self) -> (i64, tokio::task::JoinHandle<Result<(), BudgetError>>) {
@@ -105,6 +135,62 @@ fn usage() -> RequestUsage {
         input_tokens: 7,
         output_tokens: 1,
     }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn controlled_day_rollover_retains_other_holds_and_refuses_backward_time() {
+    let f = Fixture::new().await;
+    let mut next = f.scope.clone();
+    next.request_id = "retained-across-day".into();
+    let mut small = f.request.clone();
+    small.input_bytes = 1;
+    let second = f
+        .store
+        .reserve_request(&next, &small)
+        .await
+        .unwrap()
+        .unwrap();
+    let before = f.rows().await;
+    let initial = f.clock.load(Ordering::SeqCst);
+    f.clock.store(initial - 86_400, Ordering::SeqCst);
+    assert_eq!(
+        f.peer.settle_request(&f.hold, usage()).await,
+        Err(BudgetError::Unavailable)
+    );
+    next.request_id = "backward-day-refused".into();
+    assert_eq!(
+        f.peer.reserve_request(&next, &small).await,
+        Err(BudgetError::Unavailable)
+    );
+    assert_eq!(f.rows().await, before);
+
+    f.clock.store(initial + 86_400, Ordering::SeqCst);
+    f.peer.settle_request(&f.hold, usage()).await.unwrap();
+    let mut rolled = before;
+    let owner = rolled
+        .iter_mut()
+        .find(|row| row.get_str("_id").unwrap() == "owner:owner")
+        .unwrap();
+    let record = owner.get_document_mut("record").unwrap();
+    record.insert("day", record.get_i64("day").unwrap() + 1);
+    record.insert("spent", 0_i64);
+    let expected = expected_settlement(rolled, &f.hold);
+    assert_eq!(f.rows().await, expected);
+    let reopened = f.reopen().await;
+    reopened.settle_request(&f.hold, usage()).await.unwrap();
+    assert_eq!(
+        reopened.reserve_request(&second.scope, &small).await,
+        Err(BudgetError::Unavailable)
+    );
+    assert_eq!(f.rows().await, expected);
+    next.request_id = "new-day-new-intent".into();
+    assert!(reopened
+        .reserve_request(&next, &f.request)
+        .await
+        .unwrap()
+        .is_some());
+    f.cleanup().await;
 }
 
 // Compare the complete budget collection: only this hold's exact debit and
@@ -270,7 +356,7 @@ async fn unknown_settlement_commit_replays_once_after_restart_without_another_se
         .unwrap();
     let expected = expected_settlement(before, &f.hold);
     assert_eq!(f.rows().await, expected);
-    let reopened = MongoSandboxStore::open(&f.admin, &f.name).await.unwrap();
+    let reopened = f.reopen().await;
     reopened.settle_request(&f.hold, usage()).await.unwrap();
     assert_eq!(
         reopened.reserve_request(&f.scope, &f.request).await,

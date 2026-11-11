@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "origin": "https://cma.nyxid.ai",
+  "identity_origin": "https://nyx-api.chrono-ai.fun",
+  "actors": {
+    "a": {
+      "subject_sha256": "178cfaeab7beae16dc4870afdcc94a8f47f18fad91c67bbef2286b8bbfec9f98",
+      "email_sha256": "208066029ca5d27633241c875af0013f5daf02be1aac97b12f7b24693143ff96"
+    },
+    "b": {
+      "subject_sha256": "4a7ffeec320edc97edd3e99a39560a176a2e0d6c1bb2b847c5d694399d2e2b9a",
+      "email_sha256": "5c9efee99541480458f8ef5c9553b70e384e2b7c23a1f7c3fd1497610f872c2e"
+    }
+  },
+  "capabilities": [
+    "create_sandbox",
+    "delete_own_sandbox",
+    "launch_triggers",
+    "use_own_sandboxes"
+  ],
+  "cma_client_sha256": "a6ce7b70888780baebdc54eba376dc2ae20f504d7a9abe38c4a5f547be82952f",
+  "trigger": {
+    "name": "nightly-smoke-readonly",
+    "public_id_sha256": "f1a7f2f0265fca288a748e33ff24b9ca1673c311e606347dd553c634cd77bdf1",
+    "descriptor_sha256": "62dc9907a0526a41554b7a8e4e02c45b0bd4064a0c8a6addef8345f1d9dfb91a",
+    "revision_digest": "a0324b025832dd056b888ba779ead7a4a3d5c468315b96717d9d39125f416378",
+    "policy": {
+      "always_review": true,
+      "provider": "codex",
+      "effort": "minimal",
+      "services": [
+        "chrono-llm-public"
+      ],
+      "first_message": "",
+      "disclosures": []
+    },
+    "owner_attested_private_policy": {
+      "sandbox": "read-only",
+      "approval": "on-request",
+      "reasoning": "minimal",
+      "optional_services": false,
+      "skills": false,
+      "repository": false
+    }
+  },
+  "limits": {
+    "sandboxes_per_actor": 1,
+    "launch_attempts_per_actor_sgt_day": 5,
+    "documents_per_actor": 1,
+    "reports_per_actor": 1,
+    "document_edits_per_actor": 1
+  }
+}
