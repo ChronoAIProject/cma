@@ -8,7 +8,10 @@ use mongodb::{
     ClientSession,
 };
 
-mod snapshot;
+mod legacy;
+mod point_reads;
+mod segmented;
+use super::transaction_scope::{TransactionIdentity, TransactionScope};
 
 use super::Head;
 use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::MongoSandboxStore};
@@ -35,7 +38,7 @@ pub(in crate::store) struct CapturedLog {
     max_retired_generation: u64,
     active_head: Head,
     active_leaf_digests: Binary,
-    context: SnapshotContext,
+    context: SourceContext,
 }
 
 impl CapturedLog {
@@ -71,13 +74,16 @@ impl CapturedLog {
     }
 }
 
-// The public driver cannot identify successive transactions on one session.
-// Transaction mode remains closed until the shared transaction-scope contract
-// is amended; a session ID alone must never authorize publication.
-struct SnapshotContext {
-    session_id: Document,
-    at: Timestamp,
-    database: String,
+enum SourceContext {
+    Snapshot {
+        session_id: Document,
+        at: Timestamp,
+        database: String,
+    },
+    Transaction {
+        identity: TransactionIdentity,
+        database: String,
+    },
 }
 
 pub(in crate::store) async fn capture(
@@ -102,17 +108,12 @@ pub(in crate::store) async fn capture(
     if &actual != current {
         return Err(SandboxStoreError::SequenceConflict.into());
     }
-    if super::read_format(&row)?.is_some() {
-        // Certified generation maxima and the registered projection reader
-        // are required before segmented capture can establish absence facts.
-        return Err(pending());
-    }
-    let context = SnapshotContext {
+    let context = SourceContext::Snapshot {
         session_id: session.id().clone(),
         at,
         database: store.agents.namespace().db,
     };
-    snapshot::legacy(store, current, &row, session, context).await
+    source(store, current, &row, session, context, true).await
 }
 
 pub(in crate::store) async fn points(
@@ -123,6 +124,14 @@ pub(in crate::store) async fn points(
     mode: CaptureMode,
 ) -> Result<Vec<AgentLogEntry>, TransactionLogError> {
     captured.validate_snapshot(store, session, mode)?;
+    validate_sequences(captured, sequences)?;
+    point_reads::read(store, captured, sequences, session, true).await
+}
+
+fn validate_sequences(
+    captured: &CapturedLog,
+    sequences: &[u64],
+) -> Result<(), TransactionLogError> {
     if sequences.is_empty()
         || sequences.len() > 32
         || sequences
@@ -132,7 +141,22 @@ pub(in crate::store) async fn points(
     {
         return Err(SandboxStoreError::InvalidPage.into());
     }
-    snapshot::points(store, captured, sequences, session).await
+    Ok(())
+}
+
+async fn source(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    row: &Document,
+    session: &mut ClientSession,
+    context: SourceContext,
+    snapshot: bool,
+) -> Result<CapturedLog, TransactionLogError> {
+    if super::read_format(row)?.is_some() {
+        segmented::read(store, current, row, session, context, snapshot).await
+    } else {
+        legacy::read(store, current, row, session, context, snapshot).await
+    }
 }
 
 impl CapturedLog {
@@ -142,13 +166,22 @@ impl CapturedLog {
         session: &ClientSession,
         mode: CaptureMode,
     ) -> Result<(), TransactionLogError> {
+        let SourceContext::Snapshot {
+            session_id,
+            at,
+            database,
+        } = &self.context
+        else {
+            return Err(pending());
+        };
         if mode != CaptureMode::Snapshot
-            || session.id() != &self.context.session_id
-            || session.snapshot_time() != Some(self.context.at)
-            || store.agents.namespace().db != self.context.database
+            || session.id() != session_id
+            || session.snapshot_time() != Some(*at)
+            || store.agents.namespace().db != *database
         {
             return Err(pending());
         }
+
         Ok(())
     }
 }
@@ -160,32 +193,51 @@ fn pending() -> TransactionLogError {
     .into()
 }
 
-/// Transaction capture uses the exclusive scope; a raw session/mode cannot
-/// establish transaction identity. S1 fills this refusal body after wiring the
-/// same source validation as snapshot capture.
+/// Only the exclusive scope can establish transaction identity.
 pub(in crate::store) async fn capture_transaction(
-    _store: &MongoSandboxStore,
-    _current: &Agent,
-    _scope: &mut super::transaction_scope::TransactionScope<'_>,
+    store: &MongoSandboxStore,
+    current: &Agent,
+    scope: &mut TransactionScope<'_>,
 ) -> Result<CapturedLog, TransactionLogError> {
-    Err(pending())
+    let row = scope
+        .find_one(&store.agents, doc! {"_id":current.id.as_str()})
+        .await
+        .map_err(TransactionLogError::Driver)?
+        .ok_or_else(super::corrupt)?;
+    if crate::store::agents::read_agent(&row)? != *current {
+        return Err(SandboxStoreError::SequenceConflict.into());
+    }
+    let context = SourceContext::Transaction {
+        identity: scope.identity(),
+        database: store.agents.namespace().db,
+    };
+    source(store, current, &row, scope.session(), context, false).await
 }
 
 pub(in crate::store) async fn points_transaction(
-    _store: &MongoSandboxStore,
-    _captured: &CapturedLog,
-    _sequences: &[u64],
-    _scope: &mut super::transaction_scope::TransactionScope<'_>,
+    store: &MongoSandboxStore,
+    captured: &CapturedLog,
+    sequences: &[u64],
+    scope: &mut TransactionScope<'_>,
 ) -> Result<Vec<AgentLogEntry>, TransactionLogError> {
-    Err(pending())
+    captured.validate_transaction(store, scope)?;
+    validate_sequences(captured, sequences)?;
+    point_reads::read(store, captured, sequences, scope.session(), false).await
 }
 
 impl CapturedLog {
     pub(super) fn validate_transaction(
         &self,
-        _store: &MongoSandboxStore,
-        _scope: &super::transaction_scope::TransactionScope<'_>,
+        store: &MongoSandboxStore,
+        scope: &TransactionScope<'_>,
     ) -> Result<(), TransactionLogError> {
-        Err(pending())
+        let SourceContext::Transaction { identity, database } = &self.context else {
+            return Err(pending());
+        };
+        if store.agents.namespace().db != *database {
+            return Err(pending());
+        }
+        scope.require(identity)?;
+        Ok(())
     }
 }
