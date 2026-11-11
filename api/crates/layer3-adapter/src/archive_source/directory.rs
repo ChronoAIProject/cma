@@ -62,6 +62,28 @@ impl Directory {
     pub(super) fn metadata(&self) -> Result<Metadata> {
         self.0.metadata().map_err(|_| INVALID)
     }
+    pub(super) fn create_private(&self, name: &[u8]) -> Result<Option<File>> {
+        let name = CString::new(name).map_err(|_| INVALID)?;
+        let fd = unsafe {
+            libc::openat(
+                self.0.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if fd >= 0 {
+            return Ok(Some(unsafe { File::from_raw_fd(fd) }));
+        }
+        if std::io::Error::last_os_error().raw_os_error() == Some(libc::EEXIST) {
+            Ok(None)
+        } else {
+            Err(INVALID)
+        }
+    }
+    pub(super) fn sync(&self) -> Result<()> {
+        self.0.sync_all().map_err(|_| INVALID)
+    }
     pub(super) fn names(&self) -> Result<Vec<Vec<u8>>> {
         // fdopendir owns this independent descriptor, so enumeration never
         // changes the offset or lifetime of the retained source handle.
