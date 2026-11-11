@@ -200,6 +200,60 @@ async fn failed_quarantine_commit_does_not_publish_the_marker_or_parent_fence() 
 }
 
 #[tokio::test]
+#[ignore = "requires an owned disposable MongoDB replica set with failpoints and integrity hooks"]
+async fn unknown_quarantine_commit_does_not_start_another_write_or_report_confirmation() {
+    for committed in [false, true] {
+        let (client, name, store) = database().await;
+        let input = support::fixture(&store, true).await;
+        let source = &input.accepted.plan().source;
+        let observed = row(&store, &source.agents[0]).await;
+        let before = support::all_rows(&store).await;
+        let data = if committed {
+            doc! {"failCommands":["commitTransaction"], "writeConcernError":{
+                "code":50, "codeName":"MaxTimeMSExpired",
+                "errmsg":"injected uncertain integrity commit",
+            }}
+        } else {
+            doc! {"failCommands":["commitTransaction"], "errorCode":251,
+            "errorLabels":["UnknownTransactionCommitResult"]}
+        };
+        client
+            .database("admin")
+            .run_command(doc! {"configureFailPoint":"failCommand","mode":{"times":5},"data":data})
+            .await
+            .unwrap();
+        let outcome = proof::quarantine_row(&store, &observed).await;
+        client
+            .database("admin")
+            .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
+            .await
+            .unwrap();
+        assert!(matches!(outcome, Err(TransactionLogError::Driver(error))
+            if error.contains_label("UnknownTransactionCommitResult")));
+        if committed {
+            assert!(row(&store, &source.agents[0])
+                .await
+                .contains_key(QUARANTINE_FIELD));
+            let parent = store
+                .sandboxes
+                .find_one(doc! {"_id":source.sandbox.id.as_str()})
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                parent.get_i64("ledger_writer_admission_fence_v1").unwrap(),
+                1
+            );
+        } else {
+            // Restarting the logical update after the fifth failed commit would
+            // succeed once the failpoint is exhausted and make this comparison fail.
+            assert_eq!(support::all_rows(&store).await, before);
+        }
+        client.database(&name).drop().await.unwrap();
+    }
+}
+
+#[tokio::test]
 #[ignore = "requires an owned disposable MongoDB replica set and integrity hooks"]
 async fn committed_quarantine_invalidates_an_inflight_maintenance_snapshot() {
     use crate::store::ledger_maintenance::{ApplyError, Change};
