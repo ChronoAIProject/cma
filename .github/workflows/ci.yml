@@ -80,15 +80,15 @@ jobs:
         with:
           # Playwright 1.58.2 stalls extracting its Chromium archive on Node 26.
           node-version: 24.15.0
-      - name: Select official Ubuntu archive for browser dependencies
-        # The hosted Azure mirror repeatedly stalled package downloads before tests.
-        run: sudo python3 .github/scripts/select-ubuntu-archive.py
       - name: Install pinned local browser
         timeout-minutes: 10
         working-directory: web
         env:
           DEBUG: pw:install
-        run: npx --no-install playwright install --with-deps chromium
+        # Validate installed Chrome/Chromium before any bounded dependency repair.
+        run: |
+          node --test ../.github/scripts/install-contract-browser.test.mjs
+          node ../.github/scripts/install-contract-browser.mjs
       - name: Local browser guard mechanics
         working-directory: web
         run: npm run e2e:mechanics
@@ -712,13 +712,13 @@ jobs:
           npm ci --prefix web
           npm ci --prefix sdk/typescript --omit=dev --ignore-scripts
           npm run build --prefix web
-      - name: Select official Ubuntu archive for browser dependencies
-        working-directory: .
-        run: sudo python3 .github/scripts/select-ubuntu-archive.py
       - name: Install gateway contract browser
         timeout-minutes: 10
         working-directory: web
-        run: npx --no-install playwright install --with-deps chromium
+        # An apt outage must not block a runner with a working browser already.
+        run: |
+          node --test ../.github/scripts/install-contract-browser.test.mjs
+          node ../.github/scripts/install-contract-browser.mjs
       - name: Image Manager authenticated Mongo isolation
         # Allow fixture setup/cleanup, all 14 archived groups and the browser
         # contract to finish with headroom while retaining a finite deadline.
