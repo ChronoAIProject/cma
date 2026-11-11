@@ -11,8 +11,12 @@ use crate::mutation_journal::{Operation, Record, Status};
 
 const ROWS: usize = 64;
 const BYTES: usize = 2 * 1024 * 1024;
-const OPERATIONS: &str = "SELECT scope,operation_id,identity,status,normal,record FROM operations WHERE (scope,operation_id)>(?,?) ORDER BY scope,operation_id LIMIT 65";
-const AUTHORITY: &str = "SELECT scope,resource,high_water,present,first_absent,last_absent FROM authority WHERE (scope,resource)>(?,?) ORDER BY scope,resource LIMIT 65";
+const OPERATIONS: &str = "SELECT scope,operation_id,identity,status,normal,record,
+    length(scope)+length(CAST(operation_id AS BLOB))+length(identity)+coalesce(length(record),0)
+    FROM operations WHERE (scope,operation_id)>(?,?) ORDER BY scope,operation_id LIMIT 65";
+const AUTHORITY: &str = "SELECT scope,resource,high_water,present,first_absent,last_absent,
+    length(scope)+length(CAST(resource AS BLOB))+length(high_water)+coalesce(length(present),0)+coalesce(length(first_absent),0)+coalesce(length(last_absent),0)
+    FROM authority WHERE (scope,resource)>(?,?) ORDER BY scope,resource LIMIT 65";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Stamp {
@@ -199,13 +203,23 @@ fn page(
         if rows.len() == ROWS {
             return Ok((rows, true));
         }
+        // Check SQLite's byte lengths before copying raw payloads into Rust.
+        // A damaged row must not defeat the page budget or disappear from it.
+        let source_bytes: i64 = row.get(6).map_err(|_| invalid())?;
+        if !(0..=BYTES as i64).contains(&source_bytes) {
+            return Err(invalid());
+        }
         let source = match kind {
             Kind::Operations => SourceRow::Operation {
                 scope: row.get(0).map_err(|_| invalid())?,
                 id: row.get(1).map_err(|_| invalid())?,
                 identity: row.get(2).map_err(|_| invalid())?,
                 status: row.get(3).map_err(|_| invalid())?,
-                normal: row.get(4).map_err(|_| invalid())?,
+                normal: match row.get::<_, i64>(4).map_err(|_| invalid())? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(invalid()),
+                },
                 record: row.get(5).map_err(|_| invalid())?,
             },
             Kind::Authority => SourceRow::Authority {
