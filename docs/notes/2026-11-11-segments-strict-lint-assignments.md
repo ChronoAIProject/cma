@@ -114,3 +114,31 @@ S5's existing `restart/later.rs` tests remain unchanged and run in the same batc
 Shared slots only; two build jobs; 60-minute lock wait; pause below 10% RAM.
 Target caller SHA plus actual gates by 06:30. No missing signature; production
 native Unsupported and default-off admission remain explicit. Part of #1351.
+
+
+### P1-3 actual result and sequence-only boundary — 06:15 checkpoint
+
+Caller/test source is pushed at `76dcfb4a16d3dfc6e143ffb409fcc325fe0393c2`.
+Develop `3aee1ff68` is normally merged; independent retained-JSON/raw-output/
+recovery policies survive. Imported config tests are extracted unchanged so
+`features.rs` stays492lines. The new exact-sequence service test establishes
+successful activation before faulting the later witness, then checks missing,
+legacy and foreign evidence refuse without native IO, and restoration succeeds.
+It never selects a receipt by Agent revision alone. Part of #1351/#1350.
+
+Actual heavy results at earlier `2dbb5d81c`: strict CMA0diagnostics,
+164/164units (115CMA+49core), Mongo66passed/4failed of70executed. All six
+current-publication proof tests passed. Keyed append advances sequence without
+Agent revision; current S5 `receipts::{verify_binding,require_current_result}`
+incorrectly treats equal revision as unchanged. S4's revision expectation is
+corrected; S5 needs both revision+sequence for the unchanged fast path, permits
+monotonic equal-revision/later-sequence progress only through positive proof,
+and corrects `restart/later.rs`'s assertion/ambiguous revision-only selector.
+Exact ownership delegation or a narrow S5 pin is requested in #1351; these
+reserved helper/test paths are not edited by S4. No signature is missing.
+
+The new head passes formatting, whitespace,6204-file size and configuration
+coverage. Final strict/units/Mongo on corrected source remain pending. Shared
+slot1 retains inode160080032; every owned lockf uses-k and3600second wait.
+First failed fixture and volume were removed; the one reusable target is kept
+only for immediate corrected-source qualification. Project9 remains In Progress.
