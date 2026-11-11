@@ -4,7 +4,9 @@ mod commands;
 mod credential;
 mod existing;
 mod inspection;
-pub use access::{BindingAccessService, BindingConversationAuthority, BindingPrincipal};
+pub use access::{
+    BindingAccessService, BindingConversationAuthority, BindingPrincipal, BindingSubmissionPolicy,
+};
 pub use inspection::BindingConversationInspection;
 mod fence;
 mod model;
