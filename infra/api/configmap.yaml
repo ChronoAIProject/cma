@@ -89,6 +89,8 @@ data:
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
   CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED: "false"
+  # Reconciliation remains on the existing cadence until a measured rollout.
+  CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED: "false"
   # Keep expensive-read admission charged through final returned frame drop.
   CHRONO_READ_FRAME_BUDGET_ENABLED: "false"
   # Independent fleet mode: 0 disables; stable percentage stages require rollout.
