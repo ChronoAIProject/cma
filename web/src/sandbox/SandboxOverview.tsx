@@ -42,29 +42,31 @@ export function SandboxOverview({
         {onAlwaysOnChange === undefined ? null : (
           <div>
             <h2>Sandbox controls</h2>
-            <label className="operator-switch">
-              <input
-                type="checkbox"
-                checked={sandbox.alwaysOn === true}
+            <h3>Always on</h3>
+            <p className="sandbox-page__hint">
+              {sandbox.alwaysOn === true
+                ? 'An administrator approved Always on, so automatic pause skips this Sandbox.'
+                : 'Always on is off. Only an administrator can approve an exception.'}
+            </p>
+            {sandbox.alwaysOn === true ? (
+              <Button
+                size="sm"
                 disabled={alwaysOnBusy || busy || stale}
-                onChange={(event) => {
-                  const value = event.target.checked;
+                onClick={() => {
                   setAlwaysOnBusy(true);
                   setAlwaysOnError(undefined);
-                  void onAlwaysOnChange(value)
+                  void onAlwaysOnChange(false)
                     .catch((error: unknown) => {
                       setAlwaysOnError(
-                        error instanceof Error ? error.message : 'Could not save this control.',
+                        error instanceof Error ? error.message : 'Could not turn off Always on.',
                       );
                     })
                     .finally(() => setAlwaysOnBusy(false));
                 }}
-              />
-              Always on
-            </label>
-            <p className="sandbox-page__hint">
-              Always-on Sandboxes stay running when the administrator enables automatic pause.
-            </p>
+              >
+                Turn off Always on
+              </Button>
+            ) : null}
             {alwaysOnError === undefined ? null : <p role="alert">{alwaysOnError}</p>}
           </div>
         )}
