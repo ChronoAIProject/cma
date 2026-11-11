@@ -46,7 +46,7 @@ impl RetainedRecoveryDisposition {
 }
 
 /// The store must read complete child sets and validate every complete Agent log.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetainedRecoverySnapshot {
     pub sandbox: Sandbox,
     pub agents: Vec<Agent>,

@@ -9,6 +9,31 @@ use crate::{SandboxId, SubjectId};
 
 #[async_trait]
 pub trait SandboxStore: Send + Sync {
+    async fn retained_reopen_snapshot(
+        &self,
+        _id: &SandboxId,
+    ) -> Result<crate::sandbox::RetainedReopenSnapshot, SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "retained reopening is unavailable",
+        ))
+    }
+
+    async fn retained_reopen_receipt(
+        &self,
+        _id: &SandboxId,
+    ) -> Result<Option<crate::sandbox::RetainedReopenReceipt>, SandboxStoreError> {
+        Ok(None)
+    }
+
+    async fn admit_retained_reopen(
+        &self,
+        _request: crate::sandbox::RetainedReopenRequest,
+    ) -> Result<crate::sandbox::RetainedReopenAccepted, SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "retained reopening is unavailable",
+        ))
+    }
+
     /// Read-only complete retained recovery evidence, including published logs.
     /// This endpoint never grants the unpublished admission's stronger predicate.
     async fn retained_runtime_recovery_snapshot(
