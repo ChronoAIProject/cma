@@ -115,7 +115,9 @@ mismatched history refuses writes; the runner cannot initialize blank history:
   and have sharing revoked. There is no supported document deletion API.
   Reports record server logical expiry; later reads verify expiration without
   admitting replacements. Physical Mongo TTL is asynchronous, not certified
-  by a public 404. Document and source-edit slots are permanent: never reset or replace them.
+  by a public 404. Logical expiry is `410 / report_expired`; an absent expired
+  report is `404 / not_found`. Both require the recorded deadline to have elapsed.
+  Document and source-edit slots are permanent: never reset or replace them.
   After consumption, use only the exact existing fixture for reads and reversible
   grants/revocations; do not send further source-write attempts. Preflight both
   actors before either document phase. Missing local fixtures, missing live

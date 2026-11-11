@@ -18,6 +18,7 @@ PROBLEM_CODES = frozenset({
     "sandbox_not_found", "agent_not_found", "sandbox_credential_setup_required",
     "connections_required", "connection_unavailable", "resource_quota_exceeded",
     "model_budget_writes_unavailable", "model_request_budget_writes_unavailable",
+    "report_expired", "document_unavailable", "usage_unavailable",
 })
 
 

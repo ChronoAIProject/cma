@@ -145,7 +145,9 @@ def verify_expiration(p):
         resource_id = fixture.get("report_id", "")
         check_fixture(p, actor, "report", resource_id)
         response = p.request(actor, "/api/v1/usage/metrics/reports/" + resource_id)
-        if response[0] == 404 and int(time.time()) >= entry["expires_at"]:
+        code = decode(response[2]).get("code")
+        expired = (response[0], code) in {(404, "not_found"), (410, "report_expired")}
+        if expired and int(time.time()) >= entry["expires_at"]:
             p.record("retained_report_expired_" + actor, "PASS", [1320], response)
             ledger = load(p); ledger["slots"][actor + ":report"]["expiry_verified"] = True
             write_private(NAME, ledger)
