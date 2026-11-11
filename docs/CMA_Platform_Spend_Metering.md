@@ -1,7 +1,9 @@
 # Platform spend metering and stop contract
 
-Status: **draft for #1496**, revised after implementation planning
-(`docs/plans/platform-spend/IMPLEMENTATION.md`); not yet implemented. Related
+Status: **implemented on `feat/platform-spend`, activation off** (#1496;
+plan `docs/plans/platform-spend/IMPLEMENTATION.md`, implementation notes
+`docs/plans/platform-spend/NOTES.md`). Decisions 19–28 record where the
+implementation settled details this contract left open. Related
 work: #1496 (this contract), #1489/#1621 (owner and turn reservations), #1631
 (request holds), #1603 (typed credit failures), #1478 (global admission and the
 60-second stop switch, which extends the closure model defined here), #1566
@@ -547,3 +549,38 @@ Marked so they can be overturned without re-reading:
     and at `/auth/login?screen=register` (advisory, proceeds when the state is
     unreadable).
 18. A finished period is `MeteringUnavailable` until the policy is rotated.
+
+Recorded during implementation:
+
+19. A refused commitment carries `platform_budget_exhausted` when `SpendStop`
+    is present and `budget_unavailable` when only `MeteringUnavailable` is,
+    for admissions, zero-liability commitments and revival alike.
+20. The evaluator enters `SpendStop` at `committed ≥ disposable` (section 5);
+    admission refuses at `committed + L > disposable` (section 3). A row with
+    no liability adopts a changed `period_end` of the same period; a changed
+    `period_start` is a different row.
+21. Inside a snapshot transaction a concurrent period-row writer surfaces as a
+    retried write conflict, so a residual revision-filter miss (section 4.1)
+    is treated as an inconsistency and fails closed with `budget_unavailable`
+    instead of re-running.
+22. The `platform_spend_closure` event fires from the writer whose guarded
+    update inserted the closure (refusals and the evaluator) and from a
+    successful admission that enters `SpendWarning` in its transaction; a
+    retried admission transaction can emit that warning event twice.
+23. A refusal that follows the same transaction's insert of a missing period
+    row aborts that transaction before the guarded closure write, and every
+    refusal pre-creates the row outside it, so the closure is not lost.
+24. Only owners with a model budget policy reserve liability; their messages
+    and queued turn starts read the platform state. Zero-liability
+    commitments read it for every owner.
+25. Registration reads the user directory only while a closure exists;
+    without a configured directory a closure refuses the callback.
+26. The pause sweep keeps an owner's Always keep alive preference and does
+    not pause Sandboxes with no live Agents (the quiet-pause predicate's
+    existing rule). Whether a platform pause should override keep-alive is
+    left to #1478.
+27. A failed evaluation is logged and leaves pausing to the inactivity policy
+    for that sweep; admission keeps failing closed on its own.
+28. The two admin spend routes are served behind `ConfigurePlatform` and the
+    third gate but are not yet in the published OpenAPI document or the
+    public-contract corpus.
