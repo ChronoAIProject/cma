@@ -1,4 +1,4 @@
-import { boolean, enumeration, object, type Output } from '../schema.js';
+import { boolean, enumeration, object, positiveInteger, text, type Output } from '../schema.js';
 
 /** Read-only facts. No returned value is permission to interrupt or recover work. */
 export const retainedRecoveryAssessment = object({
@@ -18,3 +18,16 @@ export const retainedRecoveryAssessment = object({
   admission_enabled: boolean,
 });
 export type RetainedRecoveryAssessment = Output<typeof retainedRecoveryAssessment>;
+
+export const recoverRetainedRequest = object({
+  expected_revision: positiveInteger,
+  confirm_same_image_recovery: boolean,
+});
+export type RecoverRetainedRequest = Output<typeof recoverRetainedRequest>;
+
+export const retainedReopenReceipt = object({
+  operation_id: text,
+  revision: positiveInteger,
+  accepted_at: text,
+});
+export type RetainedReopenReceipt = Output<typeof retainedReopenReceipt>;

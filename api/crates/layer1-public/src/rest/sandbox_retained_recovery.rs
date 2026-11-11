@@ -1,10 +1,12 @@
-//! Owner-visible read-only recovery facts, never a repair or admission endpoint.
+//! Owner-visible recovery facts and explicit, proof-bound reopening.
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
     Json,
 };
 use layer2_core::{sandbox::RetainedRecoveryError, SandboxId};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 
 use super::{instances::HierarchyState, instances_problem::HierarchyProblem};
@@ -12,7 +14,10 @@ use crate::AuthenticatedCaller;
 
 pub(super) fn document() -> utoipa::openapi::OpenApi {
     #[derive(OpenApi)]
-    #[openapi(paths(inspect), components(schemas(RetainedRecoveryView)))]
+    #[openapi(
+        paths(inspect, recover),
+        components(schemas(RetainedRecoveryView, RecoverRetainedRequest, RetainedReopenView))
+    )]
     struct AssessmentApi;
     AssessmentApi::openapi()
 }
@@ -21,7 +26,7 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
 pub struct RetainedRecoveryView {
     /// Fixed classification of the latest complete assessment; never dispatch authority.
     pub disposition: String,
-    /// False: this diagnostic slice does not schedule recovery or interrupt work.
+    /// Explicit owner reopening is enabled; admission still requires fresh proof.
     pub admission_enabled: bool,
 }
 
@@ -49,6 +54,87 @@ pub(super) async fn inspect(
         })?;
     Ok(Json(RetainedRecoveryView {
         disposition: assessment.disposition.as_str().into(),
-        admission_enabled: assessment.admission_enabled,
+        admission_enabled: state
+            .retained_reopening
+            .as_ref()
+            .is_some_and(|service| service.enabled()),
     }))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecoverRetainedRequest {
+    pub expected_revision: u64,
+    pub confirm_same_image_recovery: bool,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RetainedReopenView {
+    pub operation_id: String,
+    pub revision: u64,
+    pub accepted_at: String,
+}
+
+#[utoipa::path(post, path = "/api/v1/sandboxes/{id}/runtime-recovery", tag = "sandboxes",
+    params(("id" = String, Path), ("Idempotency-Key" = String, Header)),
+    request_body = RecoverRetainedRequest,
+    responses((status = 202, body = RetainedReopenView),
+        (status = 403, body = crate::rest::ProblemDocument),
+        (status = 404, body = crate::rest::ProblemDocument),
+        (status = 409, body = crate::rest::ProblemDocument),
+        (status = 422, body = crate::rest::ProblemDocument),
+        (status = 503, body = crate::rest::ProblemDocument)))]
+pub(super) async fn recover(
+    State(state): State<HierarchyState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    key: super::idempotency::IdempotencyKey,
+    body: Result<super::idempotency::RequestBody<RecoverRetainedRequest>, super::BodyProblem>,
+) -> Response {
+    use layer2_core::{sandbox::RetainedReopenError as E, Capability};
+    if !caller.authorization.allows(Capability::UseOwnSandboxes) {
+        return HierarchyProblem::Forbidden.into_response();
+    }
+    let key = match key.into_required_value() {
+        Ok(key) => key,
+        Err(error) => return error.into_response(),
+    };
+    let body = match body.and_then(|body| body.into_parts().0) {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
+    };
+    let Some(service) = state.retained_reopening.as_ref() else {
+        return HierarchyProblem::Unavailable.into_response();
+    };
+    match service
+        .request(
+            &caller,
+            &SandboxId(id),
+            body.expected_revision,
+            &key,
+            body.confirm_same_image_recovery,
+        )
+        .await
+    {
+        Ok(accepted) => (
+            StatusCode::ACCEPTED,
+            Json(RetainedReopenView {
+                operation_id: accepted.operation_id,
+                revision: accepted.revision,
+                accepted_at: accepted.accepted_at,
+            }),
+        )
+            .into_response(),
+        Err(error) => match error {
+            E::Forbidden => HierarchyProblem::Forbidden,
+            E::NotFound => HierarchyProblem::SandboxNotFound,
+            E::InvalidConsent => HierarchyProblem::Invalid("retained_recovery_consent_required"),
+            E::Conflict => HierarchyProblem::Conflict("retained_recovery_authority_changed"),
+            E::Refused => HierarchyProblem::Conflict("retained_recovery_not_proved"),
+            E::Unavailable => {
+                HierarchyProblem::SandboxLifecycleUnavailable("retained_recovery_unavailable")
+            }
+        }
+        .into_response(),
+    }
 }
