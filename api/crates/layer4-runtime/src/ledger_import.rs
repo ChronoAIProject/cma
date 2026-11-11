@@ -7,6 +7,7 @@ mod json;
 mod plan;
 mod plan_io;
 mod publication;
+mod retirement;
 mod sealed;
 mod stage;
 #[cfg(test)]
@@ -28,11 +29,30 @@ pub(crate) async fn inspect_command() -> std::result::Result<(), String> {
     let config = crate::config::RuntimeConfig::from_environment()
         .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
     let summary = tokio::task::spawn_blocking(move || {
-        inventory::scan(&config, Limits::default()).map(|inventory| inventory.summary())
+        inventory::scan(&config, Limits::default()).map(|inventory| {
+            let mut summary = inventory.summary();
+            summary["capacity"] = inventory.capacity_summary(config.generation);
+            summary
+        })
     })
     .await
     .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
     .map_err(|error| error.to_string())?;
+    println!("{summary}");
+    Ok(())
+}
+
+pub(crate) async fn retirement_preview_command(
+    snapshot: std::path::PathBuf,
+    digest: String,
+) -> std::result::Result<(), String> {
+    let config = crate::config::RuntimeConfig::from_environment()
+        .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
+    let summary =
+        tokio::task::spawn_blocking(move || retirement::preview(&config, &snapshot, &digest))
+            .await
+            .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
+            .map_err(|error| error.to_string())?;
     println!("{summary}");
     Ok(())
 }

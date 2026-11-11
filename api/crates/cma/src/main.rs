@@ -71,6 +71,18 @@ const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
 #[tokio::main]
 async fn main() {
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments.len() == 3 && arguments[0] == "--ledger-retirement-snapshot" {
+        if let Err(error) =
+            store::ledger_retirement::command(&arguments[1], std::path::Path::new(&arguments[2]))
+                .await
+        {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+
     tracing_subscriber::fmt()
         // Keep container text fields stable for the existing log sink's queries.
         .with_ansi(false)
@@ -80,7 +92,6 @@ async fn main() {
         )
         .init();
 
-    let arguments: Vec<_> = std::env::args().skip(1).collect();
     if store::migrations::is_command(&arguments) {
         match store::migrations::command(&arguments).await {
             Ok(result) => println!("{result}"),
@@ -102,7 +113,7 @@ async fn main() {
         return;
     }
     if !arguments.is_empty() {
-        eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role]");
+        eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {
