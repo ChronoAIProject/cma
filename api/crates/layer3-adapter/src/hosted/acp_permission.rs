@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use std::sync::atomic::Ordering;
 
 use super::acp::{Blocked, Bridge};
@@ -8,21 +9,20 @@ use crate::{ConversationUpdate, PermissionDecision, PermissionLocator, Permissio
 impl Bridge {
     pub(super) async fn blocked_on(
         &self,
-        frame: serde_json::Value,
+        frame: &serde_json::Value,
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
         let Some(params) = frame.get("params") else {
             return Ok(());
         };
-        let Ok(request) = serde_json::from_value::<crate::RequestPermissionRequest>(params.clone())
-        else {
+        let Ok(request) = crate::RequestPermissionRequest::deserialize(params) else {
             tracing::warn!("ACP permission request has an unreadable shape");
             return Ok(());
         };
         let session = request.session_id.0.to_string();
         if self.session().await.as_deref() != Ok(session.as_str()) {
             tracing::warn!("discarding permission request for another conversation");
-            self.refuse_invalid_call(&frame).await;
+            self.refuse_invalid_call(frame).await;
             return Ok(());
         }
         let Some(call) = frame.get("id").cloned().filter(valid_call) else {

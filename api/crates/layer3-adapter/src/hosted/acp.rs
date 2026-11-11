@@ -65,7 +65,7 @@ mod output;
 mod reader;
 
 pub(super) struct PendingCall {
-    pub(super) answer: tokio::sync::oneshot::Sender<serde_json::Value>,
+    pub(super) answer: tokio::sync::oneshot::Sender<super::retained_json::JsonFrame>,
     pub(super) prompt: bool,
 }
 
@@ -83,6 +83,8 @@ struct ConversationState {
 }
 
 pub(super) struct Bridge {
+    pub(super) json_pools: Option<super::retained_json::JsonPools>,
+    pub(super) bounded_raw_output: bool,
     pub(super) permission_state: Option<Mutex<super::permission_state::PermissionState>>,
     output_json_budget: bool,
     shared_runtime_output: bool,
@@ -208,7 +210,7 @@ impl Bridge {
         &self,
         method: &str,
         params: serde_json::Value,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
         self.begin_inner(method, params, false).await
     }
 
@@ -216,7 +218,7 @@ impl Bridge {
         &self,
         params: serde_json::Value,
         prompt_id: Option<PromptIdentity>,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
         self.begin_with_id("session/prompt", params, true, prompt_id)
             .await
     }
@@ -226,7 +228,7 @@ impl Bridge {
         method: &str,
         params: serde_json::Value,
         prompt: bool,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
         self.begin_with_id(method, params, prompt, None).await
     }
 
@@ -236,7 +238,7 @@ impl Bridge {
         params: serde_json::Value,
         prompt: bool,
         prompt_id: Option<PromptIdentity>,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
         if self.retired.load(Ordering::SeqCst) {
             return Err(write::retired_before_write(prompt));
         }

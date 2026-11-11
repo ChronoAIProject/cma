@@ -4,6 +4,8 @@ mod segmentation_tests;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub retained_json: bool,
+    pub bounded_raw_output: bool,
     pub output_json_budget: bool,
     pub bounded_update_relay: bool,
     pub bounded_live_fragments: bool,
@@ -15,6 +17,7 @@ pub(crate) struct FeatureFlags {
     pub model_request_budget_writes_enabled: bool,
     pub bounded_title_reads: bool,
     pub sandbox_snapshot_reads: bool,
+    pub sandbox_batched_reads: bool,
     pub sandbox_detail_timings: bool,
     pub bounded_response_reads: bool,
     pub bounded_transcript_reads: bool,
@@ -30,6 +33,8 @@ pub(crate) struct FeatureFlags {
     pub bounded_close_retries: bool,
     pub shared_runtime_output: bool,
     pub document_quotas: bool,
+    pub retained_context_lookup: bool,
+    pub event_driven_reconciliation: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -45,7 +50,9 @@ impl FeatureFlags {
                 _ => Err(format!("{key} must be true or false")),
             }
         }
-        Ok(Self {
+        let flags = Self {
+            retained_json: flag(lookup, "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED")?,
+            bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
             output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
             bounded_update_relay: flag(lookup, "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED")?,
             bounded_live_fragments: flag(lookup, "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED")?,
@@ -57,8 +64,14 @@ impl FeatureFlags {
             bounded_permission_state: flag(lookup, "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED")?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
+            sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
             sandbox_detail_timings: flag(lookup, "CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
+            retained_context_lookup: flag(lookup, "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED")?,
+            event_driven_reconciliation: flag(
+                lookup,
+                "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
+            )?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
             model_request_budget_writes_enabled: flag(
@@ -84,7 +97,16 @@ impl FeatureFlags {
             )?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
-        })
+            retained_context_lookup: flag(lookup, "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED")?,
+            event_driven_reconciliation: flag(
+                lookup,
+                "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
+            )?,
+        };
+        if flags.sandbox_batched_reads && !flags.sandbox_snapshot_reads {
+            return Err("CHRONO_SANDBOX_BATCHED_READS_ENABLED requires CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED".into());
+        }
+        Ok(flags)
     }
 }
 
@@ -227,6 +249,67 @@ mod sandbox_read_tests {
 }
 
 #[cfg(test)]
+mod reconciliation_tests {
+    use super::*;
+
+    #[test]
+    fn event_driven_reconciliation_requires_an_explicit_boolean_opt_in() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok(
+                    if key == "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED" {
+                        value.map(str::to_owned)
+                    } else {
+                        None
+                    },
+                )
+            })
+            .unwrap();
+            assert_eq!(flags.event_driven_reconciliation, expected);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED")
+                    .then(|| value.to_owned()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod sandbox_batch_tests {
+    use super::*;
+    #[test]
+    fn batching_is_default_off_strict_and_requires_snapshot_sessions() {
+        for snapshot in [false, true] {
+            for value in [
+                None,
+                Some("false"),
+                Some("true"),
+                Some("TRUE"),
+                Some("1"),
+                Some(" true "),
+                Some(""),
+            ] {
+                let flags = FeatureFlags::from_lookup(&mut |key| {
+                    Ok(match key {
+                        "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED" => Some(snapshot.to_string()),
+                        "CHRONO_SANDBOX_BATCHED_READS_ENABLED" => value.map(str::to_owned),
+                        _ => None,
+                    })
+                });
+                match value {
+                    None | Some("false") => assert!(!flags.unwrap().sandbox_batched_reads),
+                    Some("true") if snapshot => assert!(flags.unwrap().sandbox_batched_reads),
+                    _ => assert!(flags.is_err()),
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod response_tests {
     use super::*;
 
@@ -319,6 +402,53 @@ mod transcript_tests {
             assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
                 == "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED")
                 .then(|| value.into())))
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod raw_output_tests {
+    use super::*;
+
+    #[test]
+    fn raw_output_bounds_require_their_own_strict_opt_in() {
+        let key = "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED";
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |name| {
+                Ok((name == key).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_raw_output, expected);
+            assert!(!flags.retained_reopen_enabled && !flags.bounded_approval_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |name| {
+                Ok((name == key).then(|| value.to_owned()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod retained_json_tests {
+    use super::*;
+    #[test]
+    fn json_retention_requires_its_own_strict_opt_in() {
+        let key = "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED";
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |name| {
+                Ok((name == key).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.retained_json, expected);
+            assert!(!flags.bounded_raw_output && !flags.output_json_budget);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |name| {
+                Ok((name == key).then(|| value.to_owned()))
+            })
             .is_err());
         }
     }
