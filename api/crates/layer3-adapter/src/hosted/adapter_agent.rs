@@ -141,16 +141,18 @@ pub(super) async fn install_skill(
 ) -> crate::Result<()> {
     validate_fence(authority_fence)?;
     adapter.known_state(handle).await?;
-    if !request.has_valid_sha256()
-        || request.operation_id
-            != format!(
-                "agent:{}:skill:{}:install:v1",
-                request.agent_id.as_str(),
-                request.skill.id
-            )
-    {
+    if !request.has_valid_sha256() || request.operation_id != request.expected_operation_id() {
         return Err(AdapterError::Rejected(
             "invalid skill installation identity".into(),
+        ));
+    }
+    if request.upgrade.is_some()
+        && !crate::SandboxAdapter::runtime_status(adapter, handle)
+            .await?
+            .agent_skill_upgrade
+    {
+        return Err(AdapterError::Unsupported(
+            "agent_skill_version_upgrade_unsupported".into(),
         ));
     }
     match adapter
