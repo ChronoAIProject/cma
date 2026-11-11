@@ -56,12 +56,15 @@ impl ControlPlaneComposition {
         let profile_scanner = Arc::clone(&profile_policy.public_value_scanner);
         profiles::seed_profiles(&stores, config, &profile_policy).await?;
         let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
-        let sandbox_operators = Arc::new(SandboxOperatorService::new(
-            stores.sandbox_model.clone(),
-            stores.sandbox_profiles.clone(),
-            retirement,
-            Arc::clone(&activity),
-        ));
+        let sandbox_operators = Arc::new(
+            SandboxOperatorService::new(
+                stores.sandbox_model.clone(),
+                stores.sandbox_profiles.clone(),
+                retirement,
+                Arc::clone(&activity),
+            )
+            .with_maintenance(stores.sandbox_model.clone()),
+        );
         let settings = Arc::new(
             PlatformSettingsService::new(stores.settings.clone(), Arc::clone(&activity))
                 .with_model_budget_writes_enabled(config.features.model_budget_writes_enabled)
