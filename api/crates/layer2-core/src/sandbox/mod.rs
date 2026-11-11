@@ -68,6 +68,7 @@ mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;
 pub mod ledger_census;
+pub mod ledger_collection_artifact;
 pub mod ledger_maintenance;
 mod ledger_retirement;
 mod lifecycle_bootstrap;
