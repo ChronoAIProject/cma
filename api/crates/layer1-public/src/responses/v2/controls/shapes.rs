@@ -117,9 +117,10 @@ impl From<layer2_core::sandbox::agent_io::CommandFailureCode> for V2CommandFailu
             Core::RuntimeUnavailable => Self::RuntimeUnavailable,
             Core::RuntimeLost => Self::RuntimeLost,
             Core::ExecutionFailed => Self::ExecutionFailed,
-            Core::OwnerBudgetExhausted | Core::TurnBudgetExhausted | Core::BudgetUnavailable => {
-                Self::ExecutionFailed
-            }
+            Core::OwnerBudgetExhausted
+            | Core::TurnBudgetExhausted
+            | Core::BudgetUnavailable
+            | Core::PlatformBudgetExhausted => Self::ExecutionFailed,
         }
     }
 }

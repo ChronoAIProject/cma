@@ -154,6 +154,7 @@ impl From<PlatformBudgetPolicyBody> for PlatformBudgetPolicy {
             stop_percent: value.stop_percent,
             protected_reserve: value.protected_reserve,
             lag_allowance: value.lag_allowance,
+            cloud: None,
         }
     }
 }

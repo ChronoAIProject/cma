@@ -14,6 +14,7 @@ async fn budget_writer_defaults_closed_and_refuses_before_any_store_write() {
         stop_percent: 100,
         protected_reserve: 0,
         lag_allowance: 0,
+        cloud: None,
     });
     assert!(!configured.model_budget.enabled);
     assert_eq!(

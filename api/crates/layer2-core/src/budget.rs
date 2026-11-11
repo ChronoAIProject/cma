@@ -10,10 +10,16 @@ mod request;
 pub use request::{
     ModelRequest, RequestBudget, RequestHold, RequestModelPolicy, RequestScope, RequestUsage,
 };
+mod period;
+#[cfg(test)]
+mod period_tests;
+pub use period::{
+    Closure, ClosureReason, CloudObservation, Evaluation, PlatformPeriodLedger, Refusal,
+};
 mod platform;
 #[cfg(test)]
 mod request_tests;
-pub use platform::PlatformBudgetPolicy;
+pub use platform::{CloudSpendPolicy, PlatformBudgetPolicy, SpendLevels};
 #[cfg(test)]
 mod controls_tests;
 
@@ -195,6 +201,8 @@ pub enum BudgetError {
     Unavailable,
     #[error("budget policy is invalid")]
     InvalidPolicy,
+    #[error("platform spend limit is reached")]
+    PlatformExhausted,
 }
 
 impl BudgetError {
@@ -203,6 +211,7 @@ impl BudgetError {
             Self::OwnerExhausted => "owner_budget_exhausted",
             Self::TurnExhausted => "turn_budget_exhausted",
             Self::Unavailable | Self::InvalidPolicy => "budget_unavailable",
+            Self::PlatformExhausted => "platform_budget_exhausted",
         }
     }
 
@@ -211,6 +220,7 @@ impl BudgetError {
             Self::OwnerExhausted => "HTTP 402: The owner's model budget is exhausted. After the budget is restored or its daily window resets, send a new message to continue. Completed work is preserved; this turn will not replay automatically.",
             Self::TurnExhausted => "HTTP 402: This turn reached its model budget. Send a new message with a smaller scope after budget is available. Completed work is preserved; this turn will not replay automatically.",
             Self::Unavailable | Self::InvalidPolicy => "HTTP 402: Model budget accounting is unavailable. After accounting is restored, send a new message to continue. Completed work is preserved; this turn will not replay automatically.",
+            Self::PlatformExhausted => "The platform's spend limit for this period has been reached. Completed work is preserved and your Sandbox is paused, not lost. After the limit is raised, send a new message to continue; this turn will not replay automatically.",
         }
     }
 }
