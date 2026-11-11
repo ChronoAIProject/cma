@@ -14,7 +14,8 @@ before admission does not advance the accepted cursor or publish a receipt.
 
 The parser accepts at most 4 MiB encoded bytes, 8,192 nodes (including object
 keys and overwritten duplicate entries), and 64 nested containers. Invalid
-JSON and excess shape are rejected before owned tree parsing. Both opt-in JSON policies also refuse Serde's private RawValue and Number keys, including escaped
+JSON and excess shape are rejected before owned tree parsing. Both opt-in JSON
+policies also refuse Serde's private RawValue and Number keys, including escaped
 spellings. The pinned `raw_value` feature otherwise interprets a matching key
 as an embedded parser, bypassing an outer JSON node count. Ordinary duplicate
 keys retain the pinned parser's last-value behavior.
@@ -88,13 +89,20 @@ No task waits for a capacity upgrade.
 
 ## Qualification and remaining scope
 
-The test-only `tracking-allocator` 0.4.0 dependency measures requested allocation
+The test-only `tracking-allocator` 0.4.0 dependency, with optional tracing
+features disabled, measures requested allocation
 bytes by allocation group without counting unrelated test threads. Fixtures
 cover maximal plain/escaped strings, wide arrays/maps, many small objects,
 maximum depth, duplicate keys, malformed/over-limit/private-key refusal, shared
 capacity, startup retention, delayed RPC receivers, projections, receiver loss
 and cancellation. Requested live bytes, peak bytes, allowances and final release
-are checked separately. Measurements are samples supporting the source
+are checked separately. On macOS, the first permit release lazily allocates a
+64-byte pthread mutex for each semaphore. A captured allocation stack traced
+this to `batch_semaphore::Semaphore::release`, not retained JSON. Tests initialize
+that pool infrastructure before frame measurement; both mutexes remain pool
+metadata until pool drop. Their bytes are excluded from frame samples and must
+be included with accounting infrastructure in the aggregate/RSS qualification.
+Measurements are samples supporting the source
 calculation; they are not an RSS proof. The measurement table will be recorded
 from the required gate before this change is declared review-ready.
 
