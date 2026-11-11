@@ -13,7 +13,19 @@ use super::AgentWorker;
 #[path = "capacity_recovery.rs"]
 pub(crate) mod recovery;
 
+#[path = "recovery_commands.rs"]
+pub(crate) mod commands;
+
 impl AgentWorker {
+    pub(crate) fn capacity_recovery_commands(
+        self: std::sync::Arc<Self>,
+        service: std::sync::Arc<crate::store::agent_capacity_recovery::RecoveryService>,
+    ) -> std::sync::Arc<
+        dyn layer2_core::sandbox::agent_capacity_recovery::commands::CapacityRecoveryCommands,
+    > {
+        std::sync::Arc::new(commands::AuthorizedRecoveryCommands::new(service, self))
+    }
+
     /// Authenticated accepted-work entry for shared composition. The caller is
     /// reauthorized by the service on every store operation; a discovery row
     /// must never be converted into a fabricated owner identity.

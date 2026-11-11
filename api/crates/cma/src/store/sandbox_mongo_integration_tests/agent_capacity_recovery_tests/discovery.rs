@@ -5,7 +5,7 @@ use layer2_core::sandbox::{
     agent_capacity_recovery::{ports::RecoveryError, state::RecoveryPhase},
     AgentWorkLease,
 };
-use mongodb::{bson, IndexModel};
+use mongodb::bson;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -13,11 +13,9 @@ async fn capacity_discovery_keysets_are_bounded_separate_and_grant_no_authority(
     let (client, name) = database("capacity_discovery").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let collection = records::collection(&store);
-    let indexes: Vec<IndexModel> = serde_json::from_str(include_str!(
-        "../../agent_capacity_recovery/format2.indexes.json"
-    ))
-    .unwrap();
-    collection.create_indexes(indexes).await.unwrap();
+    crate::store::agent_log_segments::schema::migrate(&client.database(&name))
+        .await
+        .unwrap();
     let mut expected = Vec::new();
     for index in 0..69 {
         let mut work = records::test_support::work();
@@ -48,7 +46,10 @@ async fn capacity_discovery_keysets_are_bounded_separate_and_grant_no_authority(
         collection
             .insert_one(doc! {"_id": key, "format_version": version,
             "agent_id": work.request.agent_id.as_str(),
-            "work": bson::serialize_to_bson(&work).unwrap()})
+            "work": bson::serialize_to_bson(&work).unwrap(),
+            "result": bson::serialize_to_bson(&records::test_support::stored().result).unwrap()})
+            // Only the intentional obsolete-format row bypasses validation.
+            .bypass_document_validation(version == 1)
             .await
             .unwrap();
     }
