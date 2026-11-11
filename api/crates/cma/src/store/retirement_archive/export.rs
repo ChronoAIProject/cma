@@ -62,7 +62,7 @@ pub(crate) async fn capture(
         }
         let mut cursor = store
             .database
-            .collection::<Document>(name)
+            .collection::<mongodb::bson::RawDocumentBuf>(name)
             .find(selected)
             .sort(doc! {"_id":1})
             .batch_size(64)
@@ -80,10 +80,8 @@ pub(crate) async fn capture(
         let mut hasher = Sha256::new();
         let mut chunk = Vec::new();
         while cursor.advance(&mut session).await.map_err(|_| REFUSED)? {
-            let mut document = cursor.deserialize_current().map_err(|_| REFUSED)?;
-            if *name == "sandboxes" {
-                document = original.clone();
-            }
+            let raw = cursor.deserialize_current().map_err(|_| REFUSED)?;
+            let document = Document::try_from(&raw).map_err(|_| REFUSED)?;
             // The retired checkpoint transport must not be silently reactivated.
             // Every source object must have a supported reader before retirement.
             if [
@@ -98,7 +96,11 @@ pub(crate) async fn capture(
             if *name == crate::document_artifacts::COLLECTION {
                 external.extend(document_objects(&document, custody, blobs, request).await?);
             }
-            let data = mongodb::bson::serialize_to_vec(&document).map_err(|_| REFUSED)?;
+            let data = if *name == "sandboxes" {
+                mongodb::bson::serialize_to_vec(&original).map_err(|_| REFUSED)?
+            } else {
+                raw.as_bytes().to_vec()
+            };
             record.documents += 1;
             document_count += 1;
             record.bytes += data.len() as u64;
