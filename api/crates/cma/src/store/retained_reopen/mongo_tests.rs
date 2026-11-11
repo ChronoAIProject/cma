@@ -1,15 +1,12 @@
 use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::database;
-use crate::store::sandbox_unpublished_recovery::mongo_integration_tests::fixture;
 use layer2_core::sandbox::store::{AgentStore, SandboxStore};
 use layer2_core::sandbox::*;
 const NOW: &str = "2026-09-05T00:30:00Z";
 use crate::store::sandbox_mongo::start_transaction;
 use layer2_core::sandbox::store::{SandboxEventStore, SandboxWorkerStore};
 
-#[path = "mongo_fixtures.rs"]
-mod fixtures;
-use fixtures::reopen_fixture;
+use super::mongo_fixtures::reopen_fixture;
 
 #[path = "mongo_refusal_tests.rs"]
 mod refusals;
