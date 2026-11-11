@@ -9,8 +9,14 @@ use fixture::*;
 #[path = "writer_bootstrap_mongo_tests.rs"]
 mod bootstrap;
 
+#[path = "writer_atomicity_mongo_tests.rs"]
+mod atomicity;
 #[path = "writer_capture_tests.rs"]
 mod capture_contract;
+#[path = "writer_output_mongo_tests.rs"]
+mod output_index;
+#[path = "writer_unknown_mongo_tests.rs"]
+mod uncertain_commit;
 
 async fn transaction(f: &Fixture) -> ClientSession {
     f.client.start_session().await.unwrap()
