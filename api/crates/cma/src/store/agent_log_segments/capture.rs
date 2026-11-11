@@ -1,12 +1,14 @@
-//! Frozen source-proof port. Unsupported captures refuse before any write.
-//!
-//! The opaque proof cannot be constructed by callers. The executable capture
-//! will replace these refusal bodies after projection and snapshot integration;
-//! this signature checkpoint cannot authorize publication or recovery.
+//! Read-only captured source. Unsupported contexts refuse before any write.
 use layer2_core::sandbox::{
     store::SandboxStoreError, Agent, AgentLogEntry, AgentLogProjectionState,
 };
-use mongodb::{bson::Binary, ClientSession};
+use mongodb::{
+    bson::{doc, Binary, Document, Timestamp},
+    options::ReadConcern,
+    ClientSession,
+};
+
+mod snapshot;
 
 use super::Head;
 use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::MongoSandboxStore};
@@ -33,6 +35,7 @@ pub(in crate::store) struct CapturedLog {
     max_retired_generation: u64,
     active_head: Head,
     active_leaf_digests: Binary,
+    context: SnapshotContext,
 }
 
 impl CapturedLog {
@@ -68,28 +71,121 @@ impl CapturedLog {
     }
 }
 
+// The public driver cannot identify successive transactions on one session.
+// Transaction mode remains closed until the shared transaction-scope contract
+// is amended; a session ID alone must never authorize publication.
+struct SnapshotContext {
+    session_id: Document,
+    at: Timestamp,
+    database: String,
+}
+
 pub(in crate::store) async fn capture(
-    _store: &MongoSandboxStore,
-    _current: &Agent,
-    _session: &mut ClientSession,
-    _mode: CaptureMode,
+    store: &MongoSandboxStore,
+    current: &Agent,
+    session: &mut ClientSession,
+    mode: CaptureMode,
 ) -> Result<CapturedLog, TransactionLogError> {
-    Err(pending())
+    if mode != CaptureMode::Snapshot {
+        return Err(pending());
+    }
+    let row = store
+        .agents
+        .find_one(doc! {"_id": current.id.as_str()})
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut *session)
+        .await
+        .map_err(TransactionLogError::Driver)?
+        .ok_or_else(super::corrupt)?;
+    let at = session.snapshot_time().ok_or_else(pending)?;
+    let actual = crate::store::agents::read_agent(&row)?;
+    if &actual != current {
+        return Err(SandboxStoreError::SequenceConflict.into());
+    }
+    if super::read_format(&row)?.is_some() {
+        // Certified generation maxima and the registered projection reader
+        // are required before segmented capture can establish absence facts.
+        return Err(pending());
+    }
+    let context = SnapshotContext {
+        session_id: session.id().clone(),
+        at,
+        database: store.agents.namespace().db,
+    };
+    snapshot::legacy(store, current, &row, session, context).await
 }
 
 pub(in crate::store) async fn points(
-    _store: &MongoSandboxStore,
-    _captured: &CapturedLog,
-    _sequences: &[u64],
-    _session: &mut ClientSession,
-    _mode: CaptureMode,
+    store: &MongoSandboxStore,
+    captured: &CapturedLog,
+    sequences: &[u64],
+    session: &mut ClientSession,
+    mode: CaptureMode,
 ) -> Result<Vec<AgentLogEntry>, TransactionLogError> {
-    Err(pending())
+    captured.validate_snapshot(store, session, mode)?;
+    if sequences.is_empty()
+        || sequences.len() > 32
+        || sequences
+            .iter()
+            .any(|seq| *seq == 0 || *seq > captured.through())
+        || sequences.windows(2).any(|pair| pair[0] >= pair[1])
+    {
+        return Err(SandboxStoreError::InvalidPage.into());
+    }
+    snapshot::points(store, captured, sequences, session).await
+}
+
+impl CapturedLog {
+    fn validate_snapshot(
+        &self,
+        store: &MongoSandboxStore,
+        session: &ClientSession,
+        mode: CaptureMode,
+    ) -> Result<(), TransactionLogError> {
+        if mode != CaptureMode::Snapshot
+            || session.id() != &self.context.session_id
+            || session.snapshot_time() != Some(self.context.at)
+            || store.agents.namespace().db != self.context.database
+        {
+            return Err(pending());
+        }
+        Ok(())
+    }
 }
 
 fn pending() -> TransactionLogError {
     SandboxStoreError::Unavailable(
-        "certified Agent log capture is not available in this reader checkpoint".into(),
+        "certified Agent log capture is not available in this source context".into(),
     )
     .into()
+}
+
+/// Transaction capture uses the exclusive scope; a raw session/mode cannot
+/// establish transaction identity. S1 fills this refusal body after wiring the
+/// same source validation as snapshot capture.
+pub(in crate::store) async fn capture_transaction(
+    _store: &MongoSandboxStore,
+    _current: &Agent,
+    _scope: &mut super::transaction_scope::TransactionScope<'_>,
+) -> Result<CapturedLog, TransactionLogError> {
+    Err(pending())
+}
+
+pub(in crate::store) async fn points_transaction(
+    _store: &MongoSandboxStore,
+    _captured: &CapturedLog,
+    _sequences: &[u64],
+    _scope: &mut super::transaction_scope::TransactionScope<'_>,
+) -> Result<Vec<AgentLogEntry>, TransactionLogError> {
+    Err(pending())
+}
+
+impl CapturedLog {
+    pub(super) fn validate_transaction(
+        &self,
+        _store: &MongoSandboxStore,
+        _scope: &super::transaction_scope::TransactionScope<'_>,
+    ) -> Result<(), TransactionLogError> {
+        Err(pending())
+    }
 }
