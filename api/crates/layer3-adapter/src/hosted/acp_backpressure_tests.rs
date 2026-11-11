@@ -18,7 +18,7 @@ async fn retained(server: &mut ServerSocket, cursor: u64, body: serde_json::Valu
 
 async fn next_update(
     receiver: &mut mpsc::Receiver<ConversationUpdate>,
-) -> (RuntimeOutputReceipt, Option<Box<ConversationUpdate>>) {
+) -> (RuntimeOutputReceipt, Option<crate::RuntimeOutputUpdate>) {
     let update = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
         .await
         .unwrap()
