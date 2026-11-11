@@ -17,6 +17,7 @@ mod channel_tools;
 mod checkpoint_store;
 mod checkpoint_transport;
 mod control_correlation;
+mod credit_error_json;
 mod deployment;
 mod home;
 #[cfg(test)]
