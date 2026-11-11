@@ -72,7 +72,8 @@ pub(super) async fn production_adapter(
             .map_err(|e| e.to_string())?
             .with_subscriptions(subscriptions.clone())
             .with_bounded_permission_state(config.features.bounded_permission_state)
-            .with_bounded_update_relay(config.features.bounded_update_relay);
+            .with_bounded_update_relay(config.features.bounded_update_relay)
+            .with_output_json_budget(config.features.output_json_budget);
         backends.opensandbox = Some(Arc::new(
             ProviderHostedBackend::new(client, Arc::new(transport), &config.deployment_id)
                 .map_err(|e| e.to_string())?,
@@ -144,7 +145,8 @@ pub(super) async fn production_adapter(
         .map_err(|e| e.to_string())?
         .with_subscriptions(subscriptions)
         .with_bounded_permission_state(config.features.bounded_permission_state)
-        .with_bounded_update_relay(config.features.bounded_update_relay);
+        .with_bounded_update_relay(config.features.bounded_update_relay)
+        .with_output_json_budget(config.features.output_json_budget);
         backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(
             client,
             Arc::new(transport),

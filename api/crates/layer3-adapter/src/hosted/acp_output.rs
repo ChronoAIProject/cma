@@ -112,6 +112,10 @@ impl Bridge {
         {
             return Err(fail());
         }
+        if self.output_json_budget {
+            super::super::output_json_budget::validate(&bytes[HEADER_BYTES..])
+                .map_err(|error| error.adapter_error())?;
+        }
         state.last_received = Some(cursor);
         let mut held = HeldOutput {
             cursor,
