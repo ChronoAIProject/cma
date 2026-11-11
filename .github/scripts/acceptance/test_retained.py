@@ -153,6 +153,28 @@ class RetainedTests(unittest.TestCase):
             self.assertTrue(retained.load(p)["slots"]["a:report"]["expiry_verified"])
             with self.assertRaises(Refusal): retained.reserve(p, "a", "replacement", intent)
 
+    def test_logical_expiry_requires_exact_code_and_elapsed_deadline(self):
+        for code, expiry, allowed in (("report_expired", 1, True),
+                                      ("unexpected", 1, False),
+                                      ("report_expired", 9999999999, False)):
+            with self.subTest(code=code, expiry=expiry), context() as p, contextlib.redirect_stdout(io.StringIO()):
+                intent = {"tenant": "a", "path": "/api/v1/usage/metrics/reports", "method": "POST", "body": {}}
+                retained.reserve(p, "a", "report-key", intent)
+                retained.observed(p, "a", "report-key", intent, 202, {"report_id": "test-report", "expires_at": expiry})
+                p.fixture("report_a", {"report_id": "test-report"})
+                methods = []
+                def request(origin, path, method="GET", **kwargs):
+                    methods.append(method)
+                    return 410, {}, json.dumps({"code": code}).encode(), 0
+                p.http.request = request
+                if allowed:
+                    retained.verify_expiration(p)
+                    self.assertTrue(retained.load(p)["slots"]["a:report"]["expiry_verified"])
+                else:
+                    with self.assertRaises(Refusal): retained.verify_expiration(p)
+                    self.assertNotIn("expiry_verified", retained.load(p)["slots"]["a:report"])
+                self.assertEqual(methods, ["GET"])
+
 
 if __name__ == "__main__":
     unittest.main()
