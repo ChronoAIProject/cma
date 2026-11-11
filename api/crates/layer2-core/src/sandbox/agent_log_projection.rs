@@ -15,6 +15,10 @@ pub use legacy::BoundedAgentLogFold;
 #[serde(deny_unknown_fields)]
 pub struct AgentLogProjectionState {
     pub through_seq: u64,
+    /// Max event.runtime_generation, independently for each native boundary kind.
+    /// Zero is a certified absence only when this state covers the captured head.
+    pub max_opened_generation: u64,
+    pub max_retired_generation: u64,
     #[serde(deserialize_with = "required_nullable")]
     pub latest_conversation: Option<(String, u64)>,
     #[serde(deserialize_with = "required_nullable")]
@@ -253,6 +257,12 @@ impl AgentLogProjectionState {
             .validate_worktree_recoveries()
             .map_err(|e| e.to_string())?;
         if self.through_seq != agent.conversation.last_seq
+            || self
+                .latest_conversation
+                .as_ref()
+                .map_or(0, |(_, generation)| *generation)
+                != self.max_opened_generation.max(self.max_retired_generation)
+            || (self.latest_conversation.is_some() && self.max_opened_generation == 0)
             || self.steering.is_some()
             || self.active.as_ref().map(|turn| turn.turn_sequence) != agent.conversation.active_turn
             || (self.active.is_none()
