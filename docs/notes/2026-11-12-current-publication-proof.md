@@ -1,7 +1,10 @@
 # Current publication proof for recovery after later progress
 
-Owner: S2; S4 publication invariant coordination requested through the lead.
-Target: source pin 2026-11-12 06:30 SGT, latest 07:00. S5 owns activation callers.
+Owner: S2 API/schema/publisher; S4 invariant confirmation and service caller.
+Published narrow source pin: `c4e4b995a`, branch
+`tl/cma-log-segments/current-publication-proof`. S4 caller target: 06:30 SGT.
+S5 owns current activation domain/native helpers and restart/loss qualification.
+S4 agreement remains pending; the exact boundary is in the assignments note.
 This is a dependency contract, not P1-3 closure or permission to activate writers.
 
 ## Frozen API
