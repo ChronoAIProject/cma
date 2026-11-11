@@ -208,3 +208,65 @@ async fn capacity_later_service_unknown_claim_never_activates_and_retry_uses_ori
         client.database(&name).drop().await.unwrap();
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn capacity_later_service_requires_the_exact_sequence_only_publication() {
+    let (client, name) = database("capacity_service_sequence_proof").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (_, request, completed) = completed_before_ack(&store).await;
+    let original = snapshot(&store, &request).await;
+    let receipt = completion_receipt(&store, &completed).await;
+    progress(&store, &request).await;
+    let current = snapshot(&store, &request).await;
+    assert_eq!(current.agent.revision, original.agent.revision);
+    assert!(current.agent.conversation.last_seq > original.agent.conversation.last_seq);
+    let publications = &store.segment_logs.publications;
+    let witness = publications
+        .find_one(doc! {
+            "agent_id": request.agent_id.as_str(),
+            "result_revision": current.agent.revision as i64,
+            "last_seq": current.agent.conversation.last_seq as i64,
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(witness.get_str("_id").unwrap(), receipt.get_str("_id").unwrap());
+    let id = witness.get_str("_id").unwrap();
+    let service = service(&store, false);
+    let native = CurrentNative::default();
+    // Establish a usable witness before fault injection so refusal cannot pass
+    // merely because another prerequisite already makes activation impossible.
+    service.run_accepted(&native, &request, "before").await.unwrap();
+    for variant in 0..3 {
+        publications.delete_one(doc! {"_id": id}).await.unwrap();
+        if variant != 0 {
+            let mut changed = witness.clone();
+            if variant == 1 {
+                changed.insert("format_version", 1_i64);
+                changed.remove("agent_digest");
+            } else {
+                changed.insert("agent_digest", mongodb::bson::Binary {
+                    subtype: mongodb::bson::spec::BinarySubtype::Generic,
+                    bytes: vec![0; 32],
+                });
+            }
+            publications.insert_one(changed).await.unwrap();
+        }
+        assert!(service.run_accepted(&native, &request, "unproved").await.is_err());
+        assert_eq!(native.attaches.load(Ordering::SeqCst), 1);
+        assert_eq!(native.acknowledges.load(Ordering::SeqCst), 1);
+        publications.delete_one(doc! {"_id": id}).await.unwrap();
+        publications.insert_one(witness.clone()).await.unwrap();
+        assert_eq!(snapshot(&store, &request).await, current);
+    }
+    assert_eq!(
+        service.run_accepted(&native, &request, "restored").await.unwrap(),
+        CommitOutcome::Recorded(completed.clone())
+    );
+    assert_eq!(native.attaches.load(Ordering::SeqCst), 2);
+    assert_eq!(native.acknowledges.load(Ordering::SeqCst), 2);
+    assert_eq!(snapshot(&store, &request).await, current);
+    assert_eq!(completion_receipt(&store, &completed).await, receipt);
+    client.database(&name).drop().await.unwrap();
+}
