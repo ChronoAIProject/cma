@@ -160,22 +160,10 @@ pub(crate) async fn install(
         .state_root
         .join("skill-upgrades")
         .join(format!("{}.json", request.request_sha256));
-    let before_proof = std::fs::symlink_metadata(&evidence)
-        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
-    let result = if before_proof
-        && result.as_ref().is_err_and(|error| error.retryable)
-        && preparation::exhausted(&evidence, request)?
+    if result.as_ref().is_err_and(|error| !error.retryable)
+        && std::fs::symlink_metadata(&evidence).is_ok()
     {
-        Err(preparation::refusal())
-    } else if !before_proof && result.as_ref().is_err_and(|error| !error.retryable) {
-        Err(recovery_conflict())
-    } else {
-        result
-    };
-    if before_proof && result.as_ref().is_err_and(|error| !error.retryable) {
-        if let Ok(parent) = root(config, request) {
-            let _ = clean(&staging(&parent, request));
-        }
+        return Err(recovery_conflict());
     }
     result
 }
@@ -216,50 +204,7 @@ async fn replace(
     let evidence = proof_path(config, request)?;
     let proof = match load_proof(&evidence, request).map_err(|_| recovery_conflict())? {
         Some(proof) => proof,
-        None => {
-            preflight(config, request)?;
-            preparation::begin(&evidence, request)?;
-            retention::prepare(&stage)?;
-            clean(&stage)?;
-            crate::fs_durability::create_dir(&stage).map_err(io)?;
-            crate::skills::install_prepared(config, client, &upgrade.previous, &expected)
-                .await.map_err(|error| {
-                    if error.code == "skill_unavailable" {
-                        RuntimeError::rejected("agent_skill_upgrade_previous_unavailable",
-                            "Previous archive is absent from the warm cache and cannot be fetched; restore access to that exact version or its checksum-verified cache before a new attempt.")
-                    } else { error }
-                })?;
-            point(config, "previous_extracted")?;
-            // A profile installation has no marker. Live installations must carry
-            // the exact previous receipt; a marker alone never proves its files.
-            if std::fs::symlink_metadata(expected.join(MARKER)).is_ok() {
-                return Err(conflict("previous archive contains a reserved receipt"));
-            }
-            let previous =
-                tree::prove_previous(&expected, &target, upgrade.previous_receipt.as_ref())?;
-            if previous.has_extra {
-                retention::reserve(&stage, previous.bytes)?;
-            }
-            let previous_tree = previous.digest();
-            crate::skills::install_prepared(config, client, &request.skill, &candidate).await?;
-            point(config, "new_extracted")?;
-            let new_tree = tree::digest(&candidate, None)?;
-            write_new(
-                &candidate.join(MARKER),
-                &serde_json::to_vec(&receipt).expect("serializable receipt"),
-            )?;
-            crate::fs_durability::sync_tree(&stage).map_err(io)?;
-            point(config, "receipt_staged")?;
-            let proof = Proof {
-                request_sha256: request.request_sha256.clone(),
-                previous_tree,
-                new_tree,
-                retain_previous: previous.has_extra,
-            };
-            publish_proof(&evidence, &proof)?;
-            point(config, "proof_published")?;
-            proof
-        }
+        None => prepare(config, client, request, &target, &stage, &evidence).await?,
     };
     // Without this request's receipt, only the two proved trees permit exchange.
     // Every other observed state fails terminally with the previous version;
@@ -290,6 +235,80 @@ async fn replace(
         Some(&proof),
         receipt,
     )
+}
+
+// This function cannot exchange directories. Its terminal budget therefore cannot
+// misclassify a published target, even if the proof file is subsequently lost.
+async fn prepare(
+    config: &RuntimeConfig,
+    client: &reqwest::Client,
+    request: &AgentSkillInstallRequest,
+    target: &Path,
+    stage: &Path,
+    evidence: &Path,
+) -> Result<Proof> {
+    let result: Result<Proof> = async {
+        let upgrade = request.upgrade.as_ref().expect("upgrade intent checked");
+        let receipt = AgentSkillInstallReceipt::from_request(request);
+        let candidate = stage.join("new");
+        let expected = stage.join("previous");
+        preflight(config, request)?;
+        preparation::begin(evidence, request)?;
+        retention::prepare(stage)?;
+        clean(stage)?;
+        crate::fs_durability::create_dir(stage).map_err(io)?;
+        crate::skills::install_prepared(config, client, &upgrade.previous, &expected)
+            .await.map_err(|error| {
+                if error.code == "skill_unavailable" {
+                    RuntimeError::rejected("agent_skill_upgrade_previous_unavailable",
+                        "Previous archive is absent from the warm cache and cannot be fetched; restore access to that exact version or its checksum-verified cache before a new attempt.")
+                } else { error }
+            })?;
+        point(config, "previous_extracted")?;
+        // A profile installation has no marker. Live installations must carry
+        // the exact previous receipt; a marker alone never proves its files.
+        if std::fs::symlink_metadata(expected.join(MARKER)).is_ok() {
+            return Err(conflict("previous archive contains a reserved receipt"));
+        }
+        let previous =
+            tree::prove_previous(&expected, target, upgrade.previous_receipt.as_ref())?;
+        if previous.has_extra {
+            retention::reserve(stage, previous.bytes)?;
+        }
+        let previous_tree = previous.digest();
+        crate::skills::install_prepared(config, client, &request.skill, &candidate).await?;
+        point(config, "new_extracted")?;
+        let new_tree = tree::digest(&candidate, None)?;
+        write_new(
+            &candidate.join(MARKER),
+            &serde_json::to_vec(&receipt).expect("serializable receipt"),
+        )?;
+        crate::fs_durability::sync_tree(stage).map_err(io)?;
+        point(config, "receipt_staged")?;
+        let proof = Proof {
+            request_sha256: request.request_sha256.clone(),
+            previous_tree,
+            new_tree,
+            retain_previous: previous.has_extra,
+        };
+        publish_proof(evidence, &proof)?;
+        point(config, "proof_published")?;
+        Ok(proof)
+    }.await;
+    let before_proof = std::fs::symlink_metadata(evidence)
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
+    let result = if before_proof
+        && result.as_ref().is_err_and(|error| error.retryable)
+        && preparation::exhausted(evidence, request)?
+    {
+        Err(preparation::refusal())
+    } else {
+        result
+    };
+    if before_proof && result.as_ref().is_err_and(|error| !error.retryable) {
+        let _ = clean(stage);
+    }
+    result
 }
 
 fn finish_published(

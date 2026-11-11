@@ -261,3 +261,38 @@ async fn legacy_proof_without_retention_policy_never_deletes_unclassified_old_co
     );
     cleanup(&config);
 }
+
+#[tokio::test]
+async fn missing_proof_after_publication_cannot_turn_the_spent_preparation_budget_into_failure() {
+    let (config, request) = fixture(true).await;
+    let evidence = proof_path(&config, &request).unwrap();
+    for _ in 1..layer3_adapter::MAX_AGENT_SKILL_UPGRADE_PREPARATION_ATTEMPTS {
+        preparation::begin(&evidence, &request).unwrap();
+    }
+    FAULTS
+        .lock()
+        .unwrap()
+        .insert(config.state_root.clone(), "exchanged");
+    assert_eq!(
+        install(&config, &reqwest::Client::new(), &request)
+            .await
+            .unwrap_err()
+            .code,
+        "injected_crash"
+    );
+    std::fs::remove_file(evidence).unwrap();
+    FAULTS
+        .lock()
+        .unwrap()
+        .insert(config.state_root.clone(), "exchange_synced");
+    let error = install(&config, &reqwest::Client::new(), &request)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "injected_crash");
+    assert!(error.retryable);
+    assert!(install(&config, &reqwest::Client::new(), &request)
+        .await
+        .unwrap()
+        .matches(&request));
+    cleanup(&config);
+}
