@@ -53,6 +53,7 @@ impl Selection {
             match descriptor.version {
                 1 => Version::Legacy,
                 2 => Version::Indexed,
+                3 => Version::Collection,
                 _ => return Err(hold()),
             },
         )
@@ -93,8 +94,14 @@ impl Reader {
     }
 
     pub(crate) async fn authorize(&self, operations: &[Operation]) -> Result<()> {
-        self.verify()?;
+        self.require_ready().await?;
         self.archive.authorize(operations).await?;
+        self.verify()
+    }
+
+    pub(crate) async fn require_ready(&self) -> Result<()> {
+        self.verify()?;
+        self.archive.require_ready().await?;
         self.verify()
     }
 }
