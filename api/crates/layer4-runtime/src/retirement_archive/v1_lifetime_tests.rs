@@ -111,16 +111,18 @@ async fn v1_real_files_reuse_both_bounds_and_preserve_originals_over_1400_lifecy
     let mut original = None;
     for cycle in 0..1400 {
         let name = format!("cycle-{cycle}");
+        // V1 keeps separate present/absent authority files for each of the
+        // three resources; V2 instead groups their original bytes into rows.
         let rows = records(&fixture, &name, true);
         assert_eq!(
             (
                 rows.iter().filter(|r| r.kind == 1).count(),
                 rows.iter().filter(|r| r.kind == 2).count()
             ),
-            (6, 3)
+            (6, 6)
         );
         add(&fixture.root, &rows);
-        assert_eq!(counts(&fixture.root, false), [8, 5]);
+        assert_eq!(counts(&fixture.root, false), [8, 8]);
         for operation in [
             lifecycle(&fixture.config, &name)[0].0.clone(),
             lifecycle(&fixture.config, &name)[1].0.clone(),
@@ -179,7 +181,7 @@ async fn v1_real_files_reuse_both_bounds_and_preserve_originals_over_1400_lifecy
             );
         }
     }
-    assert_eq!(counts(&fixture.root, true), [8400, 4200]);
+    assert_eq!(counts(&fixture.root, true), [8400, 8400]);
     let archive = fixture.open(false).await;
     archive.require_ready().await.unwrap();
     let archived = archive
@@ -197,7 +199,7 @@ async fn v1_real_files_reuse_both_bounds_and_preserve_originals_over_1400_lifecy
         })
         .await
         .unwrap();
-    assert_eq!(archived, [2800, 8400, 4200]);
+    assert_eq!(archived, [2800, 8400, 8400]);
     let (proof, receipt) = original.unwrap();
     let root = fixture.root.clone();
     assert_eq!(
@@ -222,5 +224,5 @@ async fn v1_real_files_reuse_both_bounds_and_preserve_originals_over_1400_lifecy
         }
     }
     archive.close().await.unwrap();
-    println!("V1_STORAGE_PROOF cycles=1400 retired_operations=8400 retired_authority=4200 active_operations=2 active_authority=2 groups=2800 originals_exact=true cold_retry=true replay_refused=true synthetic_exclusion=true");
+    println!("V1_STORAGE_PROOF cycles=1400 retired_operations=8400 retired_authority=8400 active_operations=2 active_authority=2 groups=2800 originals_exact=true cold_retry=true replay_refused=true synthetic_exclusion=true");
 }
