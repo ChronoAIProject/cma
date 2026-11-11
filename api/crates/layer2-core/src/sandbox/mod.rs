@@ -15,6 +15,7 @@ pub mod agent_io;
 pub mod agent_live_skills;
 mod agent_managed_context;
 mod agent_operation;
+pub mod agent_output_index;
 mod agent_preferences;
 mod agent_settings;
 pub mod desktop_creation;
