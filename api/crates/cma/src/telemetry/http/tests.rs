@@ -199,3 +199,44 @@ async fn long_quiet_sse_is_not_closed_or_classified_as_a_terminal_by_elapsed_tim
         .render()
         .contains("cma_sse_observation_closed_total{route=\"/long\",reason=\"dropped\"} 1"));
 }
+
+#[tokio::test]
+async fn trusted_auth_attribution_reaches_outer_metrics_and_forged_headers_do_not() {
+    use crate::telemetry::request::{Consumer, Resolution};
+    async fn verified(request: axum::extract::Request, next: Next) -> Response {
+        let mut resolution = Resolution::start(&request, "ambient");
+        resolution.finish("resolved", Consumer::Nyxid);
+        drop(resolution);
+        next.run(request).await
+    }
+    let recorder = recorder();
+    let handle = recorder.handle();
+    let _recording = metrics::set_default_local_recorder(&recorder);
+    let app = Router::new()
+        .route(
+            "/api/v2/responses/{id}",
+            get(|| async { "ok" }).layer(axum::middleware::from_fn(verified)),
+        )
+        .route(
+            "/api/v1/defaults",
+            get(|| async { StatusCode::UNAUTHORIZED }),
+        )
+        .layer(axum::middleware::from_fn(observe));
+    for uri in ["/api/v2/responses/private-id", "/api/v1/defaults"] {
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("x-consumer", "internal")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    let text = handle.render();
+    assert!(text.contains("route=\"/api/v2/responses/{id}\",method=\"GET\",status=\"200\",consumer=\"nyxid\",protocol=\"responses\""));
+    assert!(text.contains("route=\"/api/v1/defaults\",method=\"GET\",status=\"401\",consumer=\"unknown\",protocol=\"rest\""));
+    assert!(!text.contains("consumer=\"internal\""));
+    assert!(!text.contains("private-id"));
+}

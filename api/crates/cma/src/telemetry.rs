@@ -1,6 +1,7 @@
 //! Bounded process observations. Durable admission/terminal accounting belongs
 //! to the Mongo ledger; these counters never assert exactly-once work effects.
 pub(crate) mod http;
+pub(crate) mod request;
 pub(crate) mod server;
 pub(crate) mod worker;
 
