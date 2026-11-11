@@ -174,7 +174,7 @@ impl Bridge {
             self.route_update(session, update, updates).await;
             return;
         }
-        match SessionUpdate::deserialize(value) {
+        match super::runtime_decode::decode::<SessionUpdate>(value, self.json_pools.is_some()) {
             Ok(update) => {
                 self.route_update(session, ConversationUpdate::Said(update), updates)
                     .await;
