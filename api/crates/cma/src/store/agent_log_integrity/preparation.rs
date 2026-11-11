@@ -30,7 +30,7 @@ impl MongoSandboxStore {
     }
 }
 
-async fn prepare(store: &MongoSandboxStore, id: &AgentId) -> Result<(), String> {
+pub(super) async fn prepare(store: &MongoSandboxStore, id: &AgentId) -> Result<(), String> {
     let mut session = store
         .client
         .start_session()
