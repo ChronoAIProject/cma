@@ -91,14 +91,18 @@ async fn retirement_source_comparison_refuses_raw_column_drift_without_revision_
         let (context, rows) = capture(&ledger).await;
         let config = fixture.config.clone();
         let expected = context.clone();
-        ledger
+        let context = ledger
             .storage
             .call(move |db| {
                 assert!(db.execute(sql, []).unwrap() > 0);
-                // These edits keep the inventory context: exact column comparison,
-                // rather than revision or counters alone, must detect the drift.
-                assert!(Context::read(db, &config)? == expected);
-                Ok(())
+                // Page geometry may change when a raw record shrinks. Keep the
+                // post-edit geometry so exact column checks must detect drift
+                // even though identity, revision and counters did not change.
+                let current = Context::read(db, &config)?;
+                assert_eq!(current.store, expected.store);
+                assert_eq!(current.generation, expected.generation);
+                assert_eq!(current.accounting, expected.accounting);
+                Ok(current)
             })
             .await
             .unwrap();
@@ -206,4 +210,57 @@ async fn retirement_source_comparison_rechecks_after_an_unrelated_admitted_effec
         .await
         .unwrap();
     ledger.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn retirement_source_query_failure_preserves_database_and_emergency_reserve() {
+    for table in ["metadata", "operations"] {
+        let fixture = Fixture::new();
+        let ledger = fixture.open(true).await;
+        live(&ledger, &fixture).await;
+        let (context, rows) = capture(&ledger).await;
+        ledger
+            .storage
+            .call(move |db| {
+                // Shadow the source on this connection, causing a real query
+                // error without changing the durable schema or page geometry.
+                db.execute_batch(&format!("CREATE TEMP TABLE {table} (unavailable INTEGER)"))
+                    .unwrap();
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let database = fixture.database().join("ledger.sqlite3");
+        let reserve = fixture.database().join("emergency.reserve");
+        let before = std::fs::read(&database).unwrap();
+        let reserve_before = std::fs::read(&reserve).unwrap();
+        assert_eq!(
+            ledger
+                .verify_retirement_sources(context, rows.clone())
+                .await
+                .unwrap_err()
+                .code,
+            "mutation_ledger_invalid"
+        );
+        assert_eq!(std::fs::read(&database).unwrap(), before);
+        assert_eq!(std::fs::read(&reserve).unwrap(), reserve_before);
+        crate::ledger_storage::reserve::require(&fixture.database()).unwrap();
+        ledger
+            .storage
+            .call(move |db| {
+                db.execute_batch(&format!("DROP TABLE temp.{table}"))
+                    .unwrap();
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let (context, after) = capture(&ledger).await;
+        assert_eq!(digest(&after), digest(&rows));
+        ledger
+            .verify_retirement_sources(context, after)
+            .await
+            .unwrap();
+        ledger.close().await.unwrap();
+        fixture.open(false).await.close().await.unwrap();
+    }
 }

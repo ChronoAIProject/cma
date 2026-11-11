@@ -234,6 +234,9 @@ original columns in one read transaction, without collecting the whole history
 in memory. Corruption in the final row refuses before any callback. Inspection
 errors or cancellation never mark the group complete; an owned guard captured by
 the storage callback remains held until that admitted worker finishes.
+Inspection query and callback errors return a fixed refusal without consuming
+the archive or active-store emergency reserve. A failed observation therefore
+does not itself persist a new storage-capacity hold.
 
 Active-source comparison accepts pages of at most 64 rows and 2 MiB including
 context. Each comparison rechecks the exact store, generation, revision and page
