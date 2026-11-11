@@ -125,12 +125,15 @@ async fn title_candidates(
         let agent = read_agent(&document).map_err(map_store_error)?;
         last_raw_id = Some(agent.id.to_string());
         let title_state = read_title_state(&document, &agent)?;
+        let segmented = crate::store::agent_log_segments::read_format(&document)
+            .map_err(map_store_error)?
+            .is_some();
         if title_state.retry.eligible(mongodb::bson::DateTime::now())
             && title_state
                 .stored
                 .as_ref()
                 .is_none_or(|title| title.source == AgentTitleSource::Fallback)
-            && transcript_at_snapshot(store, &agent, &mut session)
+            && transcript_at_snapshot_with_format(store, &agent, &mut session, segmented)
                 .await?
                 .is_some()
         {
@@ -158,21 +161,34 @@ async fn title_transcript(
         .ok_or(AgentTitleStoreError::NotFound)?;
     let agent = read_agent(&document).map_err(map_store_error)?;
     read_title_state(&document, &agent)?;
-    transcript_at_snapshot(store, &agent, &mut session).await
+    let segmented = crate::store::agent_log_segments::read_format(&document)
+        .map_err(map_store_error)?
+        .is_some();
+    transcript_at_snapshot_with_format(store, &agent, &mut session, segmented).await
 }
 
+#[cfg(test)]
 pub(super) async fn transcript_at_snapshot(
     store: &MongoSandboxStore,
     agent: &Agent,
     session: &mut mongodb::ClientSession,
 ) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
-    if let Some(transcript) = bounded::segmented_read(store, agent, session).await? {
-        return Ok(Some(transcript));
-    }
-    if crate::store::agent_log_segment_reads::is_segmented(store, agent, session)
+    let segmented = crate::store::agent_log_segment_reads::is_segmented(store, agent, session)
         .await
-        .map_err(map_store_error)?
-    {
+        .map_err(map_store_error)?;
+    transcript_at_snapshot_with_format(store, agent, session, segmented).await
+}
+
+async fn transcript_at_snapshot_with_format(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    session: &mut mongodb::ClientSession,
+    segmented: bool,
+) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
+    if segmented {
+        if let Some(transcript) = bounded::segmented_read(store, agent, session).await? {
+            return Ok(Some(transcript));
+        }
         // A certified segmented projection may prove that no title-eligible
         // turn exists. Do not route that valid result through the legacy
         // complete reader, which intentionally rejects format-2 metadata.
