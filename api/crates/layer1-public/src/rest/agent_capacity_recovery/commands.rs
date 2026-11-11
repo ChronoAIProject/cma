@@ -44,9 +44,10 @@ struct RequestAuthority {
 impl<S: Send + Sync> FromRequestParts<S> for RequestAuthority {
     type Rejection = Response;
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let AuthenticatedCaller(caller) = AuthenticatedCaller::from_request_parts(parts, state)
-            .await
-            .map_err(IntoResponse::into_response)?;
+        let AuthenticatedCaller(caller) =
+            <AuthenticatedCaller as FromRequestParts<S>>::from_request_parts(parts, state)
+                .await
+                .map_err(IntoResponse::into_response)?;
         let context =
             <AuthenticatedResourceCaller as OptionalFromRequestParts<S>>::from_request_parts(
                 parts, state,
