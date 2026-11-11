@@ -1,4 +1,3 @@
-use serde::Deserialize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -349,7 +348,7 @@ pub(super) fn turn_outcome_with_policy(
             };
         }
     }
-    match PromptResponse::deserialize(result) {
+    match super::runtime_decode::decode::<PromptResponse>(result, bounded_error_json) {
         Ok(response) => Outcome::Ended(response),
         Err(error) => {
             tracing::warn!(%error, "turn ended in a newer ACP shape");
