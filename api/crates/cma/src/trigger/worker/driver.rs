@@ -377,6 +377,10 @@ fn sandbox_service_error(error: SandboxServiceError) -> LaunchResourceError {
             "sandbox_credential_setup_required",
             "Sign in to CMA with this same account before starting a new Launch",
         ),
+        SandboxServiceError::GlobalCapacityReached => LaunchResourceError::retryable(
+            "sandbox_capacity_unavailable",
+            "Sandbox capacity is temporarily unavailable; the original Launch will retry",
+        ),
         SandboxServiceError::Unavailable(_) => dependency_unavailable(),
         SandboxServiceError::InvalidState => LaunchResourceError::retryable(
             "sandbox_state_changed",
