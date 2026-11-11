@@ -351,7 +351,7 @@ async fn bounded_transcript_projection_matches_the_complete_fold_and_keeps_denia
         service(store)
             .transcript_bounded(&caller("owner", false), &current.id)
             .await,
-        Err(AgentReadError::Unauthorized)
+        Err(AgentReadError::Forbidden)
     ));
 }
 
@@ -393,6 +393,6 @@ async fn bounded_usage_projection_matches_the_complete_fold_and_keeps_denials() 
         reads
             .usage_bounded(&caller("owner", false), &current.id)
             .await,
-        Err(AgentReadError::Unauthorized)
+        Err(AgentReadError::Forbidden)
     ));
 }
