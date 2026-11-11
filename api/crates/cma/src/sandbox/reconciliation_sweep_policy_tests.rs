@@ -199,3 +199,34 @@ async fn the_platform_spend_phase_drives_a_pause_of_quiet_sandboxes_and_leaves_b
             && request.requested_at == rfc3339_at(now())
     ));
 }
+
+#[derive(Default)]
+struct Counting(std::sync::atomic::AtomicUsize);
+
+#[async_trait::async_trait]
+impl crate::sandbox::reconciliation::platform::PlatformSpendSweep for Counting {
+    async fn evaluate_platform_spend(
+        &self,
+        _: u64,
+    ) -> Result<Option<bool>, layer2_core::budget::BudgetError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Some(false))
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn platform_spend_is_evaluated_even_when_an_earlier_sweep_phase_keeps_failing() {
+    let (store, reconciler, _) = live().await;
+    let platform = Arc::new(Counting::default());
+    let reconciler = reconciler.with_platform_spend(platform.clone());
+    let evaluations = || platform.0.load(std::sync::atomic::Ordering::SeqCst);
+    let at = now();
+    for (offset, expected) in [(0, 1), (5, 1), (15, 2), (31, 3)] {
+        store.fail("authority", "start", Failure::Corrupt);
+        assert!(reconciler
+            .run_due(at + Duration::from_secs(offset))
+            .await
+            .is_err());
+        assert_eq!(evaluations(), expected, "after {offset}s");
+    }
+}
