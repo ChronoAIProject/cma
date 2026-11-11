@@ -57,6 +57,9 @@ pub use window::{
 #[path = "agent_reads/answer.rs"]
 mod answer;
 pub use answer::AgentFinalAnswer;
+#[path = "agent_reads/usage.rs"]
+mod usage;
+use usage::fold_agent_usage;
 
 impl AgentReadService {
     pub async fn list(
@@ -154,10 +157,7 @@ impl AgentReadService {
         caller: &Caller,
         id: &AgentId,
     ) -> Result<AgentUsageReading, AgentReadError> {
-        let projection = self
-            .projection(caller, id, crate::RuntimeCapability::Usage)
-            .await?;
-        Ok(projection.usage)
+        self.usage_bounded(caller, id).await
     }
 
     pub async fn resources(
