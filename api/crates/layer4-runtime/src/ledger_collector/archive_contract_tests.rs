@@ -224,7 +224,7 @@ fn changed_or_lost_cold_receipt_after_recording_keeps_cursor_pinned() {
 
 #[test]
 fn nonfinal_or_mismatched_receipt_fields_never_advance_progress() {
-    for case in 0..13 {
+    for case in 0..14 {
         let model = Model::new(SourceFormat::V2, &[(1, Decision::SettledDeleted)]);
         selected(&model);
         run(step(enabled(), &model)).unwrap();
@@ -246,6 +246,7 @@ fn nonfinal_or_mismatched_receipt_fields_never_advance_progress() {
                 9 => r.before_revision += 1,
                 10 => r.after_revision = r.before_revision,
                 11 => r.before_sha256 = [0; 32],
+                12 => r.after_revision += 1,
                 _ => r.sha256 = [0; 32],
             }
         }

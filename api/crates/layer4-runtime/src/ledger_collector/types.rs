@@ -134,7 +134,7 @@ impl Receipt {
             && self.source_sha256 == intent.source_sha256
             && self.observation_sha256 == intent.observation_sha256
             && self.before_revision == intent.before_revision
-            && self.after_revision > self.before_revision
+            && self.before_revision.checked_add(1) == Some(self.after_revision)
             && [self.before_sha256, self.after_sha256, self.sha256]
                 .iter()
                 .all(nonzero)
