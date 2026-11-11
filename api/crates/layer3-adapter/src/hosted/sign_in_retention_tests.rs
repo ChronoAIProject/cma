@@ -37,7 +37,6 @@ fn local_and_shared_refusal_roll_back_before_string_copies() {
         Err(AdapterError::AtCapacity(_))
     ));
     assert!(probe.peak() < 1024, "refusal cannot copy the large URL");
-    assert_eq!(probe.live(), 0);
     assert_eq!(pool.available_permits(), weight);
     assert_eq!(root.available_bytes(), weight - 1);
     let blocker = pool.clone().try_acquire_owned().unwrap();
@@ -61,6 +60,13 @@ fn local_and_shared_refusal_roll_back_before_string_copies() {
     )
     .unwrap()
     .is_none());
+    // Rolling back the component permit first locks Tokio's shared wait-list
+    // mutex. On macOS its lazy storage lives with the pool, not the refusal.
+    // Preserve the allocation ceiling above and check final release after the
+    // actual infrastructure owners have also dropped.
+    drop(pool);
+    drop(root);
+    assert_eq!(probe.live(), 0);
 }
 
 #[test]
