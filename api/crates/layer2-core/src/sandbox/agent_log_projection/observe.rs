@@ -9,6 +9,7 @@ impl AgentLogProjectionState {
         queued_owner: Option<u64>,
     ) -> Result<Vec<Change>, String> {
         let mut changes = Vec::new();
+        self.observe_response(entry, &mut changes);
         if matches!(
             entry.kind,
             AgentLogKind::TurnStarted { .. }
@@ -124,6 +125,10 @@ impl AgentLogProjectionState {
                     started_at: entry.appended_at.clone(),
                     origin_key: origin_key.clone(),
                     model: model.clone(),
+                    legacy_model_known: !self.settings_changed,
+                    response_usage: None,
+                    response_usage_sequence: None,
+                    prewrite_failure_sequence: None,
                     conversation_id: self
                         .latest_conversation
                         .as_ref()
