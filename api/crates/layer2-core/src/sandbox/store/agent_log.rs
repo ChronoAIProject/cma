@@ -234,7 +234,7 @@ pub trait AgentLogStore: Send + Sync {
     async fn agent_log_transcript_projection(
         &self,
         _agent: &Agent,
-    ) -> Result<Option<super::AgentTranscript>, SandboxStoreError> {
+    ) -> Result<Option<crate::sandbox::AgentTranscript>, SandboxStoreError> {
         Ok(None)
     }
 
@@ -258,7 +258,7 @@ pub trait AgentLogStore: Send + Sync {
     async fn agent_log_usage_projection(
         &self,
         _agent: &Agent,
-    ) -> Result<Option<super::AgentUsageReading>, SandboxStoreError> {
+    ) -> Result<Option<crate::sandbox::AgentUsageReading>, SandboxStoreError> {
         Ok(None)
     }
 }
