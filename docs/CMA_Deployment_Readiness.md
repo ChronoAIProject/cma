@@ -1062,14 +1062,18 @@ measurements enter these summaries: no query, reply, database/collection name,
 owner, server address, credential or driver error is recorded. The observer sends
 no diagnostic queries and changes no connection-pool, durability or retry policy.
 
-The singleton Agent Manager requests two CPU cores, permits a four-core burst and
-uses four Tokio workers. Production observations on the prior two-core limit
+The singleton Agent Manager requests four CPU cores and permits an eight-core
+burst. Its Tokio worker count is supplied from container `api`'s `limits.cpu`
+through the downward API with divisor `"1"`, giving eight workers at the current
+limit. Production observations on the prior two-core limit
 averaged approximately 1.56 cores without command monitoring and 1.84 cores with
 it over separate 49/48-second windows. These overlapping application workloads
 are not a controlled benchmark. The additional scheduler capacity must still be
 validated against actual creation timings; it does not establish a five-second
-startup guarantee. Keep one Recreate replica while rate/quota counters remain
-process-local, and verify retained conversations and homes across the API rollout.
+startup guarantee. The Deployment retains one desired replica with maxSurge 1
+and maxUnavailable 0; shared request budgets and transactional visitor quotas
+permit the rolling overlap. Verify retained conversations and homes across the
+API rollout, and assess the settled worker measurement before the next train.
 
 Connection reconciliation carries the applied managed-guidance revision from the
 Agent record that its discovery scan already validated. For an attached Agent at
