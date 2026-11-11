@@ -127,6 +127,63 @@ pub type OutputReadFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, AgentReadError>> + Send + 'a>>;
 
 impl AgentReadService {
+    /// Personal compatibility reads retain their actual authenticated caller.
+    /// They neither synthesize a resource credential nor create a shared grant.
+    pub async fn with_owned_output_observation<T: Send, F: Send>(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+        turn: u64,
+        operation: F,
+    ) -> Result<Option<T>, AgentReadError>
+    where
+        F: for<'a, 'b> FnOnce(&'a mut AgentOutputObservation<'b>) -> OutputReadFuture<'a, T>,
+    {
+        require(caller)?;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+        let original = tokio::time::timeout_at(deadline, self.owned_lineage(caller, id))
+            .await
+            .map_err(|_| AgentReadError::Unavailable("output authorization timed out".into()))??;
+        let result = tokio::time::timeout_at(deadline, async {
+            let Some(store) = &self.response_logs else {
+                return Ok(None);
+            };
+            let Some(reader) = store
+                .agent_output_reader(&original.agent, Some(turn))
+                .await
+                .map_err(log_store_error)?
+            else {
+                return Ok(None);
+            };
+            let metadata = reader.metadata();
+            if metadata.agent_id != original.agent.id
+                || metadata.through != original.agent.conversation.last_seq
+                || metadata.turn.as_ref().map(|t| t.facts.turn_sequence) != Some(turn)
+            {
+                return Err(corrupt("personal output does not match its capture"));
+            }
+            let mut observation = AgentOutputObservation {
+                reader,
+                personal: true,
+            };
+            operation(&mut observation).await.map(Some)
+        })
+        .await
+        .map_err(|_| AgentReadError::Unavailable("output read timed out".into()))?;
+        let current = tokio::time::timeout_at(deadline, self.owned_lineage(caller, id))
+            .await
+            .map_err(|_| AgentReadError::Unavailable("output release timed out".into()))??;
+        if current.agent.created_at != original.agent.created_at
+            || current.sandbox.id != original.sandbox.id
+            || current.sandbox.created_at != original.sandbox.created_at
+            || current.workspace.id != original.workspace.id
+            || current.workspace.created_at != original.workspace.created_at
+            || current.worktree.id != original.worktree.id
+        {
+            return Err(AgentReadError::NotFound);
+        }
+        result
+    }
     pub async fn output_is_indexed(
         &self,
         authorization: &AgentEventStreamAuthorization,

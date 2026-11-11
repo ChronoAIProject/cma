@@ -16,12 +16,17 @@ use super::{
 };
 use crate::{conversation::read_failure, AgentConversationState, AuthenticatedCaller};
 
+#[path = "legacy_indexed.rs"]
+pub(super) mod indexed;
+
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(super) struct RetrieveQuery {
     stream: Option<bool>,
     starting_after: Option<u64>,
     include: Option<String>,
+    output_page: Option<bool>,
+    output_after: Option<u64>,
 }
 
 #[utoipa::path(get, path = "/api/v1/responses/{response_id}", tag = "responses",
@@ -31,6 +36,7 @@ pub(super) async fn retrieve(
     State(state): State<AgentConversationState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(response): Path<String>,
+    resource: Option<crate::AuthenticatedResourceCaller>,
     query: Result<Query<RetrieveQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Response {
     let Query(query) = match query {
@@ -43,11 +49,112 @@ pub(super) async fn retrieve(
     let Some((id, turn)) = parse_response_id(&response) else {
         return not_found();
     };
-    let (agent, history) = match state.reads.log_snapshot(&caller, &id).await {
-        Ok(snapshot) => snapshot,
+    if query.output_after.is_some() && query.output_page != Some(true) {
+        return field_refusal(
+            "output_after",
+            "Use output_page=true with a returned output cursor.",
+        );
+    }
+    let agent = match state.reads.read(&caller, &id).await {
+        Ok(agent) => agent,
         Err(error) => return read_failure(error, "response_not_found"),
     };
-    match project(&state.agent_page_origin, &agent, &history, turn) {
+    let origin = state.agent_page_origin.clone();
+    let paged = query.output_page == Some(true);
+    let from = query.output_after.unwrap_or(0);
+    let held = if let Some(resource) = resource {
+        if resource.context.caller != caller {
+            return not_found();
+        }
+        Some(
+            match state
+                .reads
+                .authorize_event_stream(
+                    &resource.context,
+                    resource.credential.as_ref().map(|c| c.value()),
+                    &id,
+                )
+                .await
+            {
+                Ok(held) => held,
+                Err(error) => return read_failure(error, "response_not_found"),
+            },
+        )
+    } else {
+        None
+    };
+    let result = if let Some(held) = &held {
+        state
+            .reads
+            .with_output_observation(held, Some(turn), move |source| {
+                Box::pin(async move {
+                    indexed::retrieve_value(source, &origin, &agent, turn, paged, from).await
+                })
+            })
+            .await
+    } else {
+        state
+            .reads
+            .with_owned_output_observation(&caller, &id, turn, move |source| {
+                Box::pin(async move {
+                    indexed::retrieve_value(source, &origin, &agent, turn, paged, from).await
+                })
+            })
+            .await
+    };
+    match result {
+        Ok(Some(Some(value)))=>return Json(value).into_response(),
+        Ok(Some(None))=>return (axum::http::StatusCode::UNPROCESSABLE_ENTITY,Json(json!({"error":{"code":"response_pagination_required","message":"Read this response with output_page=true and its returned cursor; output was not truncated."}}))).into_response(),
+        Err(error)=>return read_failure(error,"response_not_found"),
+        Ok(None)=>{},
+    }
+    let (agent, history) = if let Some(held) = &held {
+        let snapshot = match state.reads.event_stream_snapshot(held).await {
+            Ok(snapshot) => snapshot,
+            Err(error) => return read_failure(error, "response_not_found"),
+        };
+        let mut agent = match state.reads.read(&caller, &id).await {
+            Ok(agent) => agent,
+            Err(error) => return read_failure(error, "response_not_found"),
+        };
+        agent.profile.content.model = snapshot.initial_model;
+        agent.conversation.last_seq = snapshot.head;
+        let history = snapshot
+            .history
+            .into_iter()
+            .filter_map(|row| {
+                Some(AgentLogEntry {
+                    agent_id: id.clone(),
+                    seq: row.seq,
+                    appended_at: row.appended_at,
+                    kind: row.kind?,
+                })
+            })
+            .collect::<Vec<_>>();
+        (agent, history)
+    } else {
+        match state.reads.log_snapshot(&caller, &id).await {
+            Ok(snapshot) => snapshot,
+            Err(error) => return read_failure(error, "response_not_found"),
+        }
+    };
+    let response = project(&state.agent_page_origin, &agent, &history, turn);
+    if let Some(held) = &held {
+        if let Err(error) = state.reads.validate_event_stream(held).await {
+            return read_failure(error, "response_not_found");
+        }
+    }
+    match response {
+        Some(response) if paged => {
+            let Ok(from) = usize::try_from(from) else {
+                return field_refusal("output_after", "The output cursor is invalid.");
+            };
+            if from > response.output.len() {
+                return field_refusal("output_after", "The output cursor is beyond the response.");
+            }
+            let next = response.output.len().min(from.saturating_add(8));
+            Json(json!({"object":"cma.response.output_page","response_id":response.id,"data":&response.output[from..next],"has_more":next<response.output.len(),"next_after":(next<response.output.len()).then_some(next)})).into_response()
+        }
         Some(response) => Json(response).into_response(),
         None => not_found(),
     }
@@ -185,7 +292,7 @@ pub(super) fn project(
     Some(response)
 }
 
-fn output_message(agent: &Agent, turn: u64, index: usize, text: &str) -> OutputMessage {
+pub(super) fn output_message(agent: &Agent, turn: u64, index: usize, text: &str) -> OutputMessage {
     OutputMessage {
         id: output_id(&agent.id, turn, index),
         kind: "message",

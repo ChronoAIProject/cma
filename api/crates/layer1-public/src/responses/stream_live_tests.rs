@@ -29,6 +29,8 @@ async fn opening() -> (Open, Agent) {
             ended: false,
             live: LiveState::new(watching),
             authorization: None,
+            indexed: false,
+            pagination_required: false,
         },
         agent,
     )
