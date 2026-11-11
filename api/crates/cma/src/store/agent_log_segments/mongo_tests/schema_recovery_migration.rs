@@ -57,11 +57,16 @@ async fn recovery_index_drift_refuses_before_effects_without_relaxing_unique_con
         changed.options.as_mut().unwrap().unique = Some(true);
         refuse_drift(&db, RECOVERY_WORK, &original, changed).await;
     }
-    let original = named_index(&db, SEGMENTS, "agent_log_segment_ordinal").await;
-    assert_eq!(original.options.as_ref().unwrap().unique, Some(true));
-    let mut changed = original.clone();
-    changed.options.as_mut().unwrap().unique = Some(false);
-    refuse_drift(&db, SEGMENTS, &original, changed).await;
+    for (collection, index_name) in [
+        (SEGMENTS, "agent_log_segment_ordinal"),
+        (writer_admission::COLLECTION, "agent_log_admission_key"),
+    ] {
+        let original = named_index(&db, collection, index_name).await;
+        assert_eq!(original.options.as_ref().unwrap().unique, Some(true));
+        let mut changed = original.clone();
+        changed.options.as_mut().unwrap().unique = Some(false);
+        refuse_drift(&db, collection, &original, changed).await;
+    }
 
     let original = named_index(&db, RECOVERY_WORK, "agent_capacity_recovery_due").await;
     for case in 0..6 {
