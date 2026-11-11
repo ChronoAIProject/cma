@@ -29,6 +29,13 @@ failure, private raw-result reference and teardown receipt. Aggregate GitHub tex
 contains no identities, resource IDs, credentials, private payloads or session links.
 Local contracts and production observations are separate evidence classes.
 
+The security execution update at issue comment 6791429823 reports denied
+invalid/anonymous and observed foreign-document requests, with no access restored
+by stale grant replay. Owner-read 503/429 responses stopped bounded attempts;
+revision and broader acceptance remain uncertified. These first failures must
+be explained before repeating the affected phase; retries are not fresh proof.
+The harness cleanup correction is tracked separately in #1662.
+
 ## Acceptance matrix
 
 | Acceptance item | Done, with evidence | Missing / gap class | Exact next work and owner | Train or window |
@@ -50,10 +57,10 @@ slices, not hostile/load/outage qualification of the future final candidate.
 
 ## Small PR sequence and gates
 
-1. `tl/cma-abuse/global-admission` -> develop: global allocation ceiling with
+1. #1660, `tl/cma-abuse/global-admission` -> develop: global allocation ceiling with
    default-off config, infra parity, typed capacity refusal, success/replay and
    cross-owner failure/race coverage. Include this durable planning document.
-2. `tl/cma-abuse/document-quotas` -> develop: owner document/source reservations,
+2. #1661, `tl/cma-abuse/document-quotas` -> develop: owner document/source reservations,
    strict default-off config, infra parity, legacy-baseline refusal and storage
    timeout/ambiguous-effect/concurrency coverage. Split further only if the
    count and byte boundaries can remain independently sound and reviewable.
