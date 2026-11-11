@@ -85,6 +85,7 @@ impl SandboxLifecycleComposition {
         )
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_runtime_version(config.runtime_version.clone())
+        .with_platform_spend(dependencies.store.clone())
         .with_failed_runtime_recovery(Arc::new(
             layer2_core::sandbox::SandboxRuntimeUpdateService::new(
                 dependencies.store.clone(),

@@ -38,6 +38,8 @@ mod authority;
 mod binding_holds;
 #[path = "reconciliation_diagnostics.rs"]
 mod diagnostics;
+#[path = "reconciliation_platform.rs"]
+pub(crate) mod platform;
 #[path = "reconciliation_sweep.rs"]
 mod sweep;
 #[path = "reconciliation_telemetry.rs"]
@@ -64,6 +66,7 @@ pub(crate) struct SandboxReconciler {
     recovery_schedule: tokio::sync::Mutex<recovery::Schedule>,
     progress: tokio::sync::Mutex<Option<sweep::Progress>>,
     binding_holds: binding_holds::BindingHolds,
+    platform_spend: Option<Arc<dyn platform::PlatformSpendSweep>>,
 }
 
 impl SandboxReconciler {
@@ -89,6 +92,7 @@ impl SandboxReconciler {
             recovery_schedule: tokio::sync::Mutex::new(recovery::Schedule::default()),
             progress: tokio::sync::Mutex::new(None),
             binding_holds: Default::default(),
+            platform_spend: None,
         }
     }
 
