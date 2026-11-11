@@ -231,13 +231,19 @@ async fn capacity_later_service_requires_the_exact_sequence_only_publication() {
         .await
         .unwrap()
         .unwrap();
-    assert_ne!(witness.get_str("_id").unwrap(), receipt.get_str("_id").unwrap());
+    assert_ne!(
+        witness.get_str("_id").unwrap(),
+        receipt.get_str("_id").unwrap()
+    );
     let id = witness.get_str("_id").unwrap();
     let service = service(&store, false);
     let native = CurrentNative::default();
     // Establish a usable witness before fault injection so refusal cannot pass
     // merely because another prerequisite already makes activation impossible.
-    service.run_accepted(&native, &request, "before").await.unwrap();
+    service
+        .run_accepted(&native, &request, "before")
+        .await
+        .unwrap();
     for variant in 0..3 {
         publications.delete_one(doc! {"_id": id}).await.unwrap();
         if variant != 0 {
@@ -246,14 +252,20 @@ async fn capacity_later_service_requires_the_exact_sequence_only_publication() {
                 changed.insert("format_version", 1_i64);
                 changed.remove("agent_digest");
             } else {
-                changed.insert("agent_digest", mongodb::bson::Binary {
-                    subtype: mongodb::bson::spec::BinarySubtype::Generic,
-                    bytes: vec![0; 32],
-                });
+                changed.insert(
+                    "agent_digest",
+                    mongodb::bson::Binary {
+                        subtype: mongodb::bson::spec::BinarySubtype::Generic,
+                        bytes: vec![0; 32],
+                    },
+                );
             }
             publications.insert_one(changed).await.unwrap();
         }
-        assert!(service.run_accepted(&native, &request, "unproved").await.is_err());
+        assert!(service
+            .run_accepted(&native, &request, "unproved")
+            .await
+            .is_err());
         assert_eq!(native.attaches.load(Ordering::SeqCst), 1);
         assert_eq!(native.acknowledges.load(Ordering::SeqCst), 1);
         publications.delete_one(doc! {"_id": id}).await.unwrap();
@@ -261,7 +273,10 @@ async fn capacity_later_service_requires_the_exact_sequence_only_publication() {
         assert_eq!(snapshot(&store, &request).await, current);
     }
     assert_eq!(
-        service.run_accepted(&native, &request, "restored").await.unwrap(),
+        service
+            .run_accepted(&native, &request, "restored")
+            .await
+            .unwrap(),
         CommitOutcome::Recorded(completed.clone())
     );
     assert_eq!(native.attaches.load(Ordering::SeqCst), 2);
