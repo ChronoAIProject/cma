@@ -132,10 +132,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         } else {
             None
         };
-        settings.bounded_raw_output = self.bounded_raw_output;
-        settings.bounded_permission_state = self.bounded_permission_state;
-        settings.output_json_budget = self.output_json_budget;
-        settings.shared_runtime_output = self.shared_runtime_output;
+        self.pin_output_policy(&mut settings);
         let recovered_prompt = settings.recovered_prompt.take();
         let opened = Bridge::open_with_relay_policy(
             socket,

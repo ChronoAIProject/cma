@@ -20,13 +20,17 @@ pub(super) fn validate_ready(
     message: Message,
     expected_agent: &str,
     json_budget: bool,
+    pools: Option<&crate::hosted::retained_json::JsonPools>,
 ) -> crate::Result<Option<uuid::Uuid>> {
     let Message::Text(text) = message else {
         return Err(AdapterError::Rejected(
             "runtime sent a non-text Ready declaration".into(),
         ));
     };
-    if json_budget {
+    let _admission = pools
+        .map(|pools| pools.admit(text.as_bytes()))
+        .transpose()?;
+    if json_budget && pools.is_none() {
         super::super::output_json_budget::validate(text.as_bytes())
             .map_err(|error| error.adapter_error())?;
     }
