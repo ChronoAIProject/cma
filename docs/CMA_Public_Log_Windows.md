@@ -50,6 +50,13 @@ An untrusted head always runs the existing complete validator with `ScanCaller::
 
 Existing complete-scan telemetry remains authoritative for fallbacks. Bounded reads count consumed BSON through `mongo_read_telemetry`, including partial failure. They are not labelled as complete scans. This slice changes neither pool size nor runtime/user-input authority.
 
+The [fleet selector](CMA_Fleet_Log_Activation.md) extends activation with
+default-off stable percentage buckets. Selected reads still require matching
+durable proof and never perform lazy preparation themselves. An unprepared
+read-only Agent keeps the complete fallback until an eligible write establishes
+valid metadata. Percentage changes and the zero-percent kill switch require a
+same-image API rollout; the explicit ID cohort must be empty in fleet mode.
+
 ## Verification and integration gates
 
 - Preserve the original legacy prefix regression, including out-of-window gaps, malformed tail identity, extra tail, missing Agent and zero-length prefix behavior.

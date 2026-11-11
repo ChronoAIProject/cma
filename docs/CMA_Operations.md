@@ -2090,7 +2090,8 @@ pressure returns Retry-After without changing conversation/lifecycle pools.
 
 `CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED` defaults to `false` and accepts only
 `true` or `false`. It independently enables the [bounded title-input reader](CMA_Bounded_Title_Transcript.md)
-for Agents already prepared in `CHRONO_AGENT_LOG_ADMISSION_AGENTS`. Enable it only
+for Agents selected by `CHRONO_AGENT_LOG_ADMISSION_AGENTS` or
+`CHRONO_AGENT_LOG_FLEET_PERCENT` with matching trusted metadata. Enable it only
 after admission/public-window qualification. Disable it and restart the API to
 restore complete title reads while preserving the admission/public-window cohort
 and all retained history. No title or metadata write is part of this reader.
