@@ -394,13 +394,14 @@ impl IndexedFixture {
         self.reads = self.reads.with_response_logs(Some(self.source.clone()));
     }
 
-    pub async fn observe<T: Send, F: Send>(&self, operation: F) -> Result<T, AgentReadError>
+    pub async fn observe<T: Send, F>(&self, operation: F) -> Result<T, AgentReadError>
     where
-        F: for<'a, 'b> FnOnce(
-            &'a mut AgentOutputObservation<'b>,
-        ) -> Pin<
-            Box<dyn Future<Output = Result<T, AgentReadError>> + Send + 'a>,
-        >,
+        F: Send
+            + for<'a, 'b> FnOnce(
+                &'a mut AgentOutputObservation<'b>,
+            ) -> Pin<
+                Box<dyn Future<Output = Result<T, AgentReadError>> + Send + 'a>,
+            >,
     {
         self.reads
             .with_owned_output_observation(
