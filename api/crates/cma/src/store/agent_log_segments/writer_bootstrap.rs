@@ -12,6 +12,19 @@ use super::{
     Head,
 };
 
+#[path = "writer_bootstrap_stage.rs"]
+mod staging;
+/// Build a fenced invisible generation before entering the publication scope.
+pub(in crate::store) async fn stage(
+    store: &crate::store::sandbox_mongo::MongoSandboxStore,
+    current: &Agent,
+    operation: &PublicationIdentity,
+    admission: &Admission,
+    permit: Permit,
+) -> Result<BootstrapPlan, crate::store::agent_log_integrity::TransactionLogError> {
+    staging::stage(store, current, operation, admission, permit).await
+}
+
 pub(in crate::store) struct BootstrapPlan {
     current: Agent,
     head: Head,
@@ -33,6 +46,9 @@ impl BootstrapPlan {
     ) -> Result<(Head, Permit), SandboxStoreError> {
         self.head.validate()?;
         let mut source_head = captured.active_head().clone();
+        // A new segmented generation starts at revision one independently of
+        // the legacy Agent revision. Staged facts use that same head revision.
+        source_head.revision = 1;
         source_head.evidence_generation = self.head.evidence_generation.clone();
         if captured.format() != CapturedFormat::Legacy
             || self.current != *captured.agent()
