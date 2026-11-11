@@ -1,9 +1,20 @@
 //! Real-Mongo recovery fixtures use complete creation/publication history.
-use super::*;
-use crate::store::{agent_log::log_document, agents::agent_document};
-use layer2_core::sandbox::store::{WorkspaceStore, WorktreeStore};
+use crate::store::{
+    agent_log::log_document, agents::agent_document, sandbox_mongo::MongoSandboxStore,
+    sandbox_unpublished_recovery::mongo_integration_tests::fixture,
+};
+use layer2_core::sandbox::{
+    store::{SandboxStore, WorkspaceStore, WorktreeStore},
+    *,
+};
+use mongodb::bson::doc;
 
-pub(super) async fn reopen_fixture(store: &MongoSandboxStore, id: &str) -> RetainedReopenRequest {
+const NOW: &str = "2026-09-05T00:30:00Z";
+
+pub(in crate::store) async fn reopen_fixture(
+    store: &MongoSandboxStore,
+    id: &str,
+) -> RetainedReopenRequest {
     let original = fixture(store, id).await;
     let mut parent = original.snapshot.sandbox;
     parent.runtime.as_mut().unwrap().runtime_version =
