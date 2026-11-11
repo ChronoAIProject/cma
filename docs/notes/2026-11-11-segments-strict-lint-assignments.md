@@ -1,6 +1,6 @@
 # Segmentation combined PR: current assignments and gate ledger
 
-Updated Thu 2026-11-12 07:27 SGT. S2 owns
+Updated Thu 2026-11-12 07:40 SGT. S2 owns
 `tl/cma-log-segments/integration-20261111`. One default-off combined PR to develop;
 strict-green and PR by14:00, reviewer3 by15:30, explicit relay/merge by16:00,
 evening train19:00–22:00. Writer and recovery activation remain closed.
@@ -76,7 +76,8 @@ feature-gate suppression or fake call is an acceptable closure.
 | `44ad38198` | Positive publication API | 13units +9actual Mongo passed; schema checksum-only delta c4e4b995a. |
 | `c3ca9e3aa` | Mongo orchestration runner | 31mocked tests passed; not actual Mongo evidence. |
 | `557c07593` | Secret history | 3992commits,zero findings; later final head needs scan. |
-| `e28cb6beb` | New assembled gates | Queued next; no inherited exact-head pass. |
+| `e28cb6beb` | Strict CMA all targets/features, -D warnings | PASS, zero diagnostics, 2m36s. Final S1/S4/S5 assembled source. |
+| `e28cb6beb` | Strict core/public/adapter all targets/features, -D warnings | PASS, zero diagnostics, 1m04s. Behavioral gates continue. |
 
 Original failed recovery cases: S4
 `capacity_later_service_retries_crash_and_refuses_foreign_or_stale_activation`,
@@ -149,3 +150,11 @@ counts/meaning unchanged. The combined PR body is prepared locally at
 Current exact-source gate inventory verifies both new production factory tests,
 raw-output and retained-JSON flags, reconciliation flag, and all7capacity scheduler
 tests before executing them. No stale-target attempt will be accepted.
+
+Strict CMA on the assembled final handoffs now passes without suppressions.
+The historical S1 22/20 diagnostics are resolved by integration. Affected-layer
+lint also explicitly selects Layer3. Remaining source findings retain the owner
+assignments above; strict lint is not their behavioral closure. Supplemental
+selection covers remaining segment/operator/proof units, recovery HTTP cases and
+the partitioned real-Mongo inventory after the ten-step batch succeeds.
+All changed Rust/TypeScript files are independently confirmed below500lines.
