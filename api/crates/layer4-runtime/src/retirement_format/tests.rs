@@ -4,6 +4,10 @@ mod fixture;
 use crate::mutation_store::{Begin, Store};
 use fixture::*;
 use std::sync::Arc;
+#[path = "v1_descriptor.rs"]
+mod v1_descriptor;
+#[path = "version_tests.rs"]
+mod version_tests;
 
 #[tokio::test]
 async fn unactivated_home_stays_absent_and_a_late_publication_holds() {
