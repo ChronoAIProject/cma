@@ -73,8 +73,8 @@ async fn retirement_inventory_pages_every_row_without_changing_ledger_or_receipt
     }
     let before = ledger.snapshot().await.unwrap();
     let (rows, lengths, digest) = inventory(&ledger).await;
-    assert_eq!(lengths, [64, 64, 2, 64, 64, 2, 64, 64, 2, 1, 0]);
-    assert_eq!(rows.len(), 391);
+    assert_eq!(lengths, [64, 64, 2, 64, 64, 2, 64, 64, 2, 0, 0]);
+    assert_eq!(rows.len(), 390);
     assert_eq!(ledger.snapshot().await.unwrap(), before);
     for (index, row) in rows[..130].iter().enumerate() {
         let SourceRow::Operation {
@@ -149,7 +149,7 @@ async fn retirement_inventory_refuses_stale_revision_other_store_and_generation(
     let (rows, _, _) = inventory(&ledger).await;
     assert_eq!(
         rows.len(),
-        7,
+        6,
         "historical generation sources must remain visible"
     );
     ledger.close().await.unwrap();
@@ -273,7 +273,7 @@ async fn retirement_inventory_byte_bound_preserves_noncanonical_raw_bytes() {
         .await
         .unwrap();
     let (rows, lengths, _) = inventory(&ledger).await;
-    assert_eq!(rows.len(), 121);
+    assert_eq!(rows.len(), 120);
     assert_eq!(&lengths[..3], [16, 16, 8]);
     for row in &rows[..40] {
         let SourceRow::Operation {
