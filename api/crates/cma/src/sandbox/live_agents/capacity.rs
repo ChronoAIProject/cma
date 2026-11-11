@@ -4,6 +4,10 @@ use super::{LiveAgentRegistry, LiveAgentTarget};
 impl LiveAgentRegistry {
     /// A current published connection is an idempotency observation only. The
     /// recovery service must still prove its original receipt and current access.
+    #[allow(
+        dead_code,
+        reason = "recovery attachment activation remains closed until qualification"
+    )]
     pub(crate) fn recovery_attachment_is_active(
         &self,
         target: &LiveAgentTarget,

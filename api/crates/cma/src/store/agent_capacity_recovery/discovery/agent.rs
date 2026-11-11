@@ -3,6 +3,10 @@
 use super::*;
 use layer2_core::AgentId;
 
+#[allow(
+    dead_code,
+    reason = "capacity recovery discovery remains closed until qualification"
+)]
 pub(in crate::store::agent_capacity_recovery) async fn page(
     store: &MongoSandboxStore,
     agent_id: &AgentId,

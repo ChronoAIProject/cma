@@ -14,6 +14,10 @@ impl RecoveryService {
     /// Discovery supplies only the original request. Every store operation
     /// independently proves current personal ownership and the exact result;
     /// no Caller, admission, ordinary reconnect or input dispatch is available.
+    #[allow(
+        dead_code,
+        reason = "accepted recovery service remains closed until qualification"
+    )]
     pub(crate) async fn run_accepted<R: CapacityRecoveryRuntime>(
         &self,
         runtime: &R,
@@ -31,6 +35,10 @@ impl RecoveryService {
     }
 }
 
+#[allow(
+    dead_code,
+    reason = "accepted recovery service remains closed until qualification"
+)]
 struct DurableAcceptedWork<'a>(&'a RecoveryService);
 
 #[async_trait::async_trait]
