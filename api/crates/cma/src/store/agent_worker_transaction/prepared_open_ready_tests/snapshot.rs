@@ -45,7 +45,13 @@ async fn prepared_open_ready_reads_eligibility_once_inside_its_publication_trans
                 || collection.as_str() == store.native_prepared.name()
         })
         .collect();
-    assert_eq!(relevant.len(), 2, "one Agent read and one preparation read");
+    // Eligibility consumes the first Agent/preparation pair once. The shared
+    // complete-log audit then rereads the Agent to check integrity/quarantine;
+    // that read must remain in the very same publication snapshot as well.
+    assert_eq!(relevant.len(), 3);
+    assert_eq!(relevant[0].0, store.agents.name());
+    assert_eq!(relevant[1].0, store.native_prepared.name());
+    assert_eq!(relevant[2].0, store.agents.name());
     let (_, session, transaction, autocommit) = relevant[0];
     assert!(session.is_some() && transaction.is_some());
     assert_eq!(*autocommit, Some(false));

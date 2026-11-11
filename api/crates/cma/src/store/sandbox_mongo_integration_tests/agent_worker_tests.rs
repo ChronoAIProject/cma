@@ -285,3 +285,5 @@ mod receipt_tests;
 mod retired_runtime_tests;
 mod rollback_tests;
 mod sign_in_tests;
+
+mod bounded_close_retries;
