@@ -42,12 +42,12 @@ Weekly rotation also bounds reuse across changes behind upstream base tags.
 
 GitHub scopes caches to the key, archive version and ref, with default-branch
 fallback. A PR merge-ref cache cannot seed `develop` or another PR. The workflow
-and script restrict cache restore/injection to same-repository PR merge refs into
-`develop`/`main`, or pushes to `develop` and `tl/release/**`. Release refs run the
-full image qualification in their own concurrency group and may restore a
-compatible default-branch cache. Only `develop` pushes can extract and save a
-cache; the helper rejects extraction from release and PR refs before any cache
-operation. Fork PRs build without this bridge.
+and script both restrict the bridge to same-repository PR merge refs into
+`develop`/`main`, or pushes to `develop`. Fork PRs and `tl/release/**` pushes
+build without this bridge. Release-ref pushes skip cache prepare/restore/inject
+and extraction/save; they retain the complete image build, native load, scan
+and exact artifact export. The helper still rejects non-develop pushes, and
+CI must never relabel a release event to enter the develop cache path.
 No token or credential is passed into the cache-transfer containers.
 
 Archives are limited to 1 GiB compressed, 4 GiB expanded and 200,000 members.
