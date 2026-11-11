@@ -4,6 +4,7 @@ mod segmentation_tests;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub retained_json: bool,
     pub bounded_raw_output: bool,
     pub output_json_budget: bool,
     pub bounded_update_relay: bool,
@@ -50,6 +51,7 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            retained_json: flag(lookup, "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED")?,
             bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
             output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
             bounded_update_relay: flag(lookup, "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED")?,
@@ -473,3 +475,6 @@ mod rollout_tail_tests;
 
 #[cfg(test)]
 mod raw_output_tests;
+
+#[cfg(test)]
+mod retained_json_tests;

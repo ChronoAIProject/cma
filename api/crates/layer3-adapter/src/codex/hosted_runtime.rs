@@ -20,6 +20,7 @@ impl HostedAgentRuntime for CodexRuntime {
             crate::PermissionLevel::Autonomous => "agent-full-access",
         };
         Ok(HostedAgentOpenSettings {
+            retained_json: false,
             bounded_raw_output: false,
             bounded_permission_state: false,
             output_json_budget: false,
