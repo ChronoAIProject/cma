@@ -58,8 +58,11 @@ async fn message_projection(
     let AgentLogKind::AgentMessage { content } = kind else {
         return Err(corrupt());
     };
-    if change.after.nonempty_messages - change.before.nonempty_messages
-        != u64::from(!content.is_empty())
+    if change
+        .after
+        .nonempty_messages
+        .checked_sub(change.before.nonempty_messages)
+        != Some(u64::from(!content.is_empty()))
     {
         return Err(corrupt());
     }

@@ -5,7 +5,7 @@ use layer2_core::sandbox::{
     agent_io::AgentResponseReading, AgentOutputObservation, AgentReadError,
 };
 
-pub(super) struct Page {
+pub(in crate::responses::v2) struct Page {
     pub events: Vec<Value>,
     pub through: u64,
     pub last: u64,
@@ -14,7 +14,7 @@ pub(super) struct Page {
     pub pagination_required: bool,
 }
 
-pub(super) async fn read(
+pub(in crate::responses::v2) async fn read(
     source: &mut AgentOutputObservation<'_>,
     origin: &crate::agent_page::AgentPageOrigin,
     reading: AgentResponseReading,
