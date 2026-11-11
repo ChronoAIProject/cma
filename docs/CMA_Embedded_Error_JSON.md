@@ -14,9 +14,12 @@ unrelated values without allocating their containers.
 
 Unknown values descend through the normal parser, preserving its recursion
 limit. Recognized keys and string values are compared while borrowed; escaped
-strings may use the parser's reusable unescape scratch. The helper refuses an
+strings may use reusable unescape scratch, and oversized numeric tokens may use
+parser scratch. The helper refuses an
 embedded body over 4 MiB; admitted outer frames are already limited to 4 MiB.
-No allocation is proportional to the number of embedded container nodes.
+No retained container storage grows with the number of embedded nodes. The
+ordinary diagnostic String copy still belongs to the separate typed-effect
+ownership work; this parser change does not charge that copy to the coordinator.
 
 The enabled path preserves:
 
@@ -40,7 +43,29 @@ bytes after the final outcome is dropped. The existing seven parsed-JSON
 allocation fixtures still run through shared, serialized test instrumentation.
 Requested allocations are not process RSS or allocator/OS overhead.
 
-Final measurement and combined-gate results are recorded after qualification.
+The combined local gate passed 210 focused tests, including the seven existing
+JSON allocation fixtures, plus formatting, strict all-target/all-feature clippy
+for CMA/core/adapter, file-size/configuration/documentation checks and the full
+history secret scan. Measurements use Rust 1.96.1 on aarch64-apple-darwin with
+the pinned schema/parser. The validated revision and compiled tree identifiers
+are recorded below; subsequent documentation changes preserve that tree.
+
+```text
+revision 201f24a192e757771572d7adb9fc74181a205c82
+tree d15f0857a2d2c3248d8e2df7832738a3b5bc4ec5
+```
+
+| Fixture / policy | Encoded outer bytes | Peak requested bytes | Retained outcome bytes | After final drop |
+| --- | ---: | ---: | ---: | ---: |
+| Nested container / OFF | 4,193,927 | 230,686,709 | 271 | 0 |
+| Nested container / ON | 4,193,927 | 4,194,166 | 271 | 0 |
+| Escaped unknown key / ON | 1,572,995 | 1,835,107 | 271 | 0 |
+
+The nested container has 2,096,896 numeric elements inside an outer shape of
+only five nodes. The enabled result includes the existing diagnostic String
+copy. The escaped-key fixture exercises parser scratch separately. These are
+specific allocation regressions, not a general typed-effect or process bound.
+
 This slice removes one nested-tree amplification path. It does not establish
 admission or final-owner accounting for all typed effects, metadata/correlation
 copies, codec storage, desktop, assemblies or fold/serialization work. Those
