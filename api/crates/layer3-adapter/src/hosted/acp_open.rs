@@ -108,7 +108,8 @@ impl Bridge {
             .map_err(|_| AdapterError::Unavailable("runtime sent no Ready declaration".into()))?
             .ok_or_else(|| AdapterError::Unavailable("runtime closed before Ready".into()))?
             .map_err(|error| AdapterError::Unavailable(format!("Ready read failed: {error}")))?;
-        let output_stream = validate_ready(declaration, expected_agent)?;
+        let output_json_budget = settings.output_json_budget;
+        let output_stream = validate_ready(declaration, expected_agent, output_json_budget)?;
         if bounded && output_stream.is_none() {
             return Err(AdapterError::Unavailable(
                 "bounded output requires retained runtime acknowledgements".into(),
@@ -131,6 +132,7 @@ impl Bridge {
         let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
+            output_json_budget,
             permission_state,
             subscription,
             sink: Arc::new(Mutex::new(sink)),

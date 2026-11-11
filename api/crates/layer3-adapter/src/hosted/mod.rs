@@ -30,6 +30,7 @@ mod managed_context;
 mod memory;
 mod nonexecuting;
 mod permission_state;
+mod output_json_budget;
 mod provider_backend;
 mod provider_endpoint;
 mod provider_http;

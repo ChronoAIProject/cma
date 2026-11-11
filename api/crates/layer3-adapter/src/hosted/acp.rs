@@ -84,6 +84,7 @@ struct ConversationState {
 
 pub(super) struct Bridge {
     pub(super) permission_state: Option<Mutex<super::permission_state::PermissionState>>,
+    output_json_budget: bool,
     pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
     sink: Arc<Mutex<Sink>>,
     pub(super) pending: Pending,
