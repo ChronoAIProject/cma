@@ -9,24 +9,13 @@ use crate::seconds_from_rfc3339;
 /// when a trusted reader visits selected source rows page by page; the fold
 /// retains only the public transcript being built and never a second copy of
 /// the complete Agent log.
+#[derive(Default)]
 pub struct AgentTranscriptFold {
     transcript: TranscriptFold,
     latest_conversation: Option<(String, u64)>,
     previous_seq: u64,
     pending_steering: Option<(u64, String)>,
     saw_creation: bool,
-}
-
-impl Default for AgentTranscriptFold {
-    fn default() -> Self {
-        Self {
-            transcript: TranscriptFold::default(),
-            latest_conversation: None,
-            previous_seq: 0,
-            pending_steering: None,
-            saw_creation: false,
-        }
-    }
 }
 
 impl AgentTranscriptFold {
