@@ -2,7 +2,6 @@ use super::*;
 
 const START: u64 = 1_700_000_000;
 const END: u64 = 1_702_592_000;
-const UNITS: [u64; 2] = [1, 1];
 
 fn policy() -> PlatformBudgetPolicy {
     PlatformBudgetPolicy {
@@ -101,17 +100,16 @@ fn cloud_projection_rounds_up_and_goes_stale() {
 fn admission_mirrors_reserved_and_enters_warning_once() {
     let now = START + 100;
     let mut ledger = observed_at(now);
-    assert_eq!(ledger.admit(&policy(), 1, UNITS, 500_000, now), Ok(vec![]));
+    assert_eq!(ledger.admit(&policy(), 1, 500_000, now), Ok(vec![]));
     assert_eq!(ledger.reserved, 500_000);
-    let entered = ledger.admit(&policy(), 1, UNITS, 300_000, now).unwrap();
+    let entered = ledger.admit(&policy(), 1, 300_000, now).unwrap();
     assert_eq!(reasons(&entered), vec![ClosureReason::SpendWarning]);
     assert_eq!(entered[0].since, now);
     assert_eq!(entered[0].settings_revision, 1);
     assert_eq!(entered[0].committed_at_entry, 800_000);
-    assert_eq!(ledger.admit(&policy(), 1, UNITS, 50_000, now), Ok(vec![]));
+    assert_eq!(ledger.admit(&policy(), 1, 50_000, now), Ok(vec![]));
     assert_eq!(reasons(&ledger.closures), vec![ClosureReason::SpendWarning]);
     assert_eq!(ledger.reserved, 850_000);
-    assert_eq!(ledger.token_units, Some(UNITS));
     assert!(ledger.closed_for_registration());
     assert!(!ledger.closed_for_commitments());
 }
@@ -121,7 +119,7 @@ fn refusal_at_disposable_returns_the_stop_closure_without_mutating_the_ledger() 
     let now = START + 100;
     let mut ledger = observed_at(now);
     let before = ledger.clone();
-    let refusal = ledger.admit(&policy(), 3, UNITS, 900_001, now).unwrap_err();
+    let refusal = ledger.admit(&policy(), 3, 900_001, now).unwrap_err();
     assert_eq!(refusal.reason, BudgetError::PlatformExhausted);
     assert_eq!(
         reasons(&refusal.closures),
@@ -134,7 +132,7 @@ fn refusal_at_disposable_returns_the_stop_closure_without_mutating_the_ledger() 
     assert!(ledger.closures.is_empty());
     assert_eq!(
         ledger
-            .admit(&policy(), 3, UNITS, 900_000, now)
+            .admit(&policy(), 3, 900_000, now)
             .map(|c| reasons(&c)),
         Ok(vec![ClosureReason::SpendWarning])
     );
@@ -145,7 +143,7 @@ fn refusal_at_disposable_returns_the_stop_closure_without_mutating_the_ledger() 
         settings_revision: 3,
         committed_at_entry: 900_000,
     });
-    let refusal = stopped.admit(&policy(), 3, UNITS, 0, now).unwrap_err();
+    let refusal = stopped.admit(&policy(), 3, 0, now).unwrap_err();
     assert_eq!(refusal.reason, BudgetError::PlatformExhausted);
     assert!(refusal.closures.is_empty());
     assert!(stopped.closed_for_commitments());
@@ -155,7 +153,7 @@ fn refusal_at_disposable_returns_the_stop_closure_without_mutating_the_ledger() 
 fn a_finished_period_is_metering_unavailable() {
     let mut ledger = observed_at(END - 10);
     let before = ledger.clone();
-    let refusal = ledger.admit(&policy(), 1, UNITS, 1, END).unwrap_err();
+    let refusal = ledger.admit(&policy(), 1, 1, END).unwrap_err();
     assert_eq!(refusal.reason, BudgetError::Unavailable);
     assert_eq!(
         reasons(&refusal.closures),
@@ -168,7 +166,7 @@ fn a_finished_period_is_metering_unavailable() {
         vec![ClosureReason::MeteringUnavailable]
     );
     assert!(ledger.closed_for_commitments());
-    let refusal = ledger.admit(&policy(), 1, UNITS, 0, END).unwrap_err();
+    let refusal = ledger.admit(&policy(), 1, 0, END).unwrap_err();
     assert_eq!(refusal.reason, BudgetError::Unavailable);
     assert!(refusal.closures.is_empty());
 }
@@ -180,7 +178,7 @@ fn evaluation_reports_whether_anything_changed() {
     assert!(!quiet.evaluate(&policy(), 1, now).unwrap().changed());
     assert_eq!(quiet.evaluated_at, now);
     let mut ledger = observed_at(now);
-    ledger.admit(&policy(), 1, UNITS, 700_000, now).unwrap();
+    ledger.admit(&policy(), 1, 700_000, now).unwrap();
     ledger.reserved = 800_000;
     let first = ledger.evaluate(&policy(), 1, now).unwrap();
     assert!(first.changed());
@@ -194,7 +192,7 @@ fn evaluation_reports_whether_anything_changed() {
 fn closures_are_monotonic_within_a_revision_and_lift_only_under_a_newer_one() {
     let now = START + 100;
     let mut ledger = observed_at(now);
-    ledger.admit(&policy(), 1, UNITS, 900_000, now).unwrap();
+    ledger.admit(&policy(), 1, 900_000, now).unwrap();
     let entered = ledger.evaluate(&policy(), 1, now).unwrap();
     assert_eq!(reasons(&entered.entered), vec![ClosureReason::SpendStop]);
     assert_eq!(
@@ -236,19 +234,13 @@ fn metering_unavailable_lifts_on_a_fresh_observation_without_a_new_revision() {
 }
 
 #[test]
-fn token_units_and_period_changes_fail_closed_under_liability() {
+fn period_changes_fail_closed_under_liability() {
     let now = START + 100;
     let mut ledger = observed_at(now);
-    ledger.admit(&policy(), 1, UNITS, 10, now).unwrap();
-    let refusal = ledger.admit(&policy(), 1, [2, 1], 10, now).unwrap_err();
-    assert_eq!(refusal.reason, BudgetError::Unavailable);
-    assert!(
-        refusal.closures.is_empty(),
-        "one owner's valuation is not a platform metering fact"
-    );
+    ledger.admit(&policy(), 1, 10, now).unwrap();
     let mut moved = policy();
     moved.period_end = "2023-12-24T22:13:20Z".into();
-    let refusal = ledger.admit(&moved, 2, UNITS, 10, now).unwrap_err();
+    let refusal = ledger.admit(&moved, 2, 10, now).unwrap_err();
     assert_eq!(refusal.reason, BudgetError::Unavailable);
     assert_eq!(
         reasons(&refusal.closures),
@@ -256,21 +248,20 @@ fn token_units_and_period_changes_fail_closed_under_liability() {
     );
     assert_eq!(ledger.reserved, 10);
     let mut empty = observed_at(now);
-    assert_eq!(empty.admit(&moved, 2, [2, 1], 10, now), Ok(vec![]));
+    assert_eq!(empty.admit(&moved, 2, 10, now), Ok(vec![]));
     assert_eq!(empty.period_end, END + 864_000);
-    assert_eq!(empty.token_units, Some([2, 1]));
 }
 
 #[test]
 fn settle_release_and_retain_keep_spent_plus_reserved_consistent() {
     let now = START + 100;
     let mut ledger = observed_at(now);
-    ledger.admit(&policy(), 1, UNITS, 100, now).unwrap();
+    ledger.admit(&policy(), 1, 100, now).unwrap();
     ledger.retain(20).unwrap();
     assert_eq!(ledger.reserved, 120);
     ledger.settle(120, 150).unwrap();
     assert_eq!((ledger.spent, ledger.reserved), (150, 0));
-    ledger.admit(&policy(), 1, UNITS, 50, now).unwrap();
+    ledger.admit(&policy(), 1, 50, now).unwrap();
     ledger.release(50).unwrap();
     assert_eq!((ledger.spent, ledger.reserved), (150, 0));
     assert_eq!(ledger.committed(&policy(), now), Ok(150));
@@ -292,7 +283,7 @@ fn missing_cloud_policy_is_unavailable_not_zero() {
         ledger.cloud_committed(&unconfigured, now),
         Err(BudgetError::Unavailable)
     );
-    let refusal = ledger.admit(&unconfigured, 1, UNITS, 0, now).unwrap_err();
+    let refusal = ledger.admit(&unconfigured, 1, 0, now).unwrap_err();
     assert_eq!(refusal.reason, BudgetError::Unavailable);
     assert_eq!(
         reasons(&refusal.closures),
@@ -311,16 +302,16 @@ fn missing_cloud_policy_is_unavailable_not_zero() {
 }
 
 #[test]
-fn a_valuation_mismatch_refuses_only_that_admission_and_keeps_the_platform_open() {
+fn the_period_row_sums_valued_amounts_and_pins_no_valuation() {
     let now = START + 100;
     let mut ledger = observed_at(now);
-    ledger.admit(&policy(), 1, UNITS, 10, now).unwrap();
-    let before = ledger.clone();
-    let refusal = ledger.admit(&policy(), 1, [3, 3], 10, now).unwrap_err();
-    assert_eq!(refusal.reason, BudgetError::Unavailable);
-    assert!(refusal.closures.is_empty());
-    assert_eq!(ledger, before);
-    assert!(!ledger.evaluate(&policy(), 1, now).unwrap().changed());
-    assert_eq!(ledger.admit(&policy(), 1, UNITS, 0, now), Ok(vec![]));
-    assert_eq!(ledger.admit(&policy(), 1, UNITS, 10, now), Ok(vec![]));
+    // Two owners priced differently: each admits an already valued amount.
+    assert_eq!(ledger.admit(&policy(), 1, 300, now), Ok(vec![]));
+    assert_eq!(ledger.admit(&policy(), 1, 700, now), Ok(vec![]));
+    assert_eq!(ledger.reserved, 1_000);
+    let persisted = serde_json::to_value(&ledger).unwrap();
+    assert!(persisted.get("token_units").is_none());
+    let mut legacy = persisted;
+    legacy["token_units"] = serde_json::json!([1, 1]);
+    assert!(serde_json::from_value::<PlatformPeriodLedger>(legacy).is_err());
 }
