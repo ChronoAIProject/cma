@@ -115,6 +115,11 @@ impl Bridge {
                 "bounded output requires retained runtime acknowledgements".into(),
             ));
         }
+        if settings.bounded_raw_output && output_stream.is_none() {
+            return Err(AdapterError::Rejected(
+                "raw output bounds require retained runtime output".into(),
+            ));
+        }
         let permission_state = if settings.bounded_permission_state {
             if output_stream.is_none() {
                 return Err(AdapterError::Rejected(
@@ -132,6 +137,7 @@ impl Bridge {
         let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
+            bounded_raw_output: settings.bounded_raw_output,
             shared_runtime_output: settings.shared_runtime_output,
             output_json_budget,
             permission_state,
@@ -142,8 +148,13 @@ impl Bridge {
             next_id: AtomicI64::new(1),
             recovery: Mutex::new(recovery::PromptRecovery::new(recovered_prompt)),
             conversation: Mutex::new(ConversationState::default()),
-            output: output_stream
-                .map(|stream| Mutex::new(output::ReliableOutput::new(stream, acknowledgements))),
+            output: output_stream.map(|stream| {
+                Mutex::new(output::ReliableOutput::new(
+                    stream,
+                    acknowledgements,
+                    settings.bounded_raw_output,
+                ))
+            }),
             blocked: Mutex::new(HashMap::new()),
             answered: Arc::new(Mutex::new(HashMap::new())),
             owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
