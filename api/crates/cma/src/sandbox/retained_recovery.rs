@@ -48,6 +48,20 @@ impl RetainedRuntimeInspector {
             &self.deployment,
         )
         .map_err(classify)?;
+        // Running-runtime adoption rejects a suspended graph before returning
+        // status. Prove this read-only case through its exact native seam;
+        // failure of this probe is never absence or admission authority.
+        if !reopening
+            && snapshot.agents.is_empty()
+            && self
+                .adapter
+                .verify_suspended_runtime(&request)
+                .await
+                .is_ok()
+        {
+            volumes.verify(&home).await.map_err(classify)?;
+            return Ok((D::ExactSuspendedRuntime, None));
+        }
         let before = self
             .adapter
             .inspect_runtime(&request)
