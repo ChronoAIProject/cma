@@ -862,4 +862,56 @@ mod evaluation {
         assert!(state.committed.is_some());
         client.database(&name).drop().await.unwrap();
     }
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+    async fn adjacent_periods_each_record_an_observation_at_their_shared_boundary() {
+        use layer2_core::budget::{CloudObservationInput, PlatformSpendLedger};
+        let (client, name) = database("platform_boundary").await;
+        let (store, agent, _) = fixture(&name, &client).await;
+        let first = PlatformBudgetPolicy {
+            period_end: "2026-06-01T00:00:00Z".into(),
+            ..open_platform()
+        };
+        let second = PlatformBudgetPolicy {
+            period_start: "2026-06-01T00:00:00Z".into(),
+            ..open_platform()
+        };
+        configure_with_platform(&store, &agent.owner, first.clone(), 1).await;
+        let boundary = seconds("2026-06-01T00:00:00Z");
+        let now = seconds(NOW);
+        store
+            .record_cloud_observation(
+                CloudObservationInput {
+                    observed_through: boundary,
+                    units: 5,
+                },
+                now,
+            )
+            .await
+            .unwrap();
+        save_platform(&store, &second).await;
+        let state = store
+            .record_cloud_observation(
+                CloudObservationInput {
+                    observed_through: boundary,
+                    units: 9,
+                },
+                now,
+            )
+            .await
+            .unwrap();
+        assert_eq!(state.ledger.unwrap().cloud.unwrap().units, 9);
+        let closed = period_row(&store, &first).await.unwrap();
+        assert_eq!(closed.cloud.unwrap().units, 5);
+        assert_eq!(
+            store
+                .model_budget
+                .count_documents(doc! {"_id": {"$regex": "^observation:cloud:"}})
+                .await
+                .unwrap(),
+            2
+        );
+        client.database(&name).drop().await.unwrap();
+    }
 }
