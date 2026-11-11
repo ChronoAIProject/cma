@@ -80,6 +80,38 @@ async fn native_creation_seeds_only_default_routing_and_retries_preserve_identit
         created["native_discord_activation"]["state"],
         "pending_discovery"
     );
+    let connection = &created["native_discord_activation"]["connection"];
+    assert_eq!(connection["scope"], "serving_instance");
+    assert_eq!(connection["stage"], "unobserved");
+    assert!(connection["connected"].is_null());
+    let channel = created["channel_id"].as_str().unwrap();
+    for path in [format!("/v1/channels/{channel}"), "/v1/channels".into()] {
+        let response = Client::new()
+            .get(format!("{base}{path}"))
+            .bearer_auth("token-alice")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let value: Value = response.json().await.unwrap();
+        let value = if path == "/v1/channels" {
+            &value["items"][0]
+        } else {
+            &value
+        };
+        assert_eq!(
+            &value["native_discord_activation"]["connection"],
+            connection
+        );
+    }
+    let denied = Client::new()
+        .get(format!("{base}/v1/channels/{channel}"))
+        .bearer_auth("token-bob")
+        .send()
+        .await
+        .unwrap();
+    assert!(!denied.status().is_success());
+    assert!(!denied.text().await.unwrap().contains("serving_instance"));
     assert!(!created.to_string().contains("native-owner-private-token"));
     let binds = provider.requests().len();
     stop.send(()).unwrap();

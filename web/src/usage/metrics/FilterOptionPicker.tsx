@@ -4,6 +4,7 @@ import { Button } from '../../ui/Button';
 import { Menu } from '../../ui/Menu';
 import { IconChevronDownOutline14 } from '../../ui/icons';
 import { useUsageRead } from './useReport';
+import { MetricsNotice } from './MetricsNotice';
 import type { MetricsClient } from './model';
 
 /** One bounded page at a time, independent of every report/polling lifecycle. */
@@ -54,7 +55,7 @@ export function FilterOptionPicker({
       }),
     [api, kind, owner, query.search, cursor],
   );
-  const page = useUsageRead(load, active && open && search === query.search);
+  const page = useUsageRead(load, active && open && search === query.search, api);
   const resolve = useCallback(
     (signal: AbortSignal) =>
       api.options({
@@ -66,7 +67,7 @@ export function FilterOptionPicker({
       }),
     [api, kind, owner, value],
   );
-  const selected = useUsageRead(resolve, active && !!value && chosen?.value !== value);
+  const selected = useUsageRead(resolve, active && !!value && chosen?.value !== value, api);
   const current =
     chosen?.value === value ? chosen : selected.data?.items.find((item) => item.value === value);
   const currentLabel = !value
@@ -128,18 +129,11 @@ export function FilterOptionPicker({
         footer={
           <div className="usage-option-footer">
             {waiting && <p role="status">Loading {label.toLowerCase()} choices…</p>}
-            {failure && (
-              <div role="alert">
-                <p>
-                  {failure.denied
-                    ? 'Filter choices are unavailable for your current access.'
-                    : `Could not load ${label.toLowerCase()} choices. Try again.`}
-                </p>
-                <Button size="sm" onClick={retry}>
-                  Retry choices
-                </Button>
-              </div>
-            )}
+            <MetricsNotice
+              failure={failure || undefined}
+              onRetry={retry}
+              retryLabel="Retry choices"
+            />
             {!waiting && !failure && options.length === 0 && (
               <p role="status">No matching {label.toLowerCase()} choices.</p>
             )}
