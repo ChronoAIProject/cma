@@ -7,6 +7,8 @@ use crate::sandbox::agent_capacity_recovery::{ports::*, service::*, state::*};
 
 const EXPIRES: &str = "2026-09-05T00:32:01Z";
 
+mod current;
+
 #[tokio::test]
 async fn live_completion_restart_activates_exact_receipt_without_replaying_input() {
     // Crash before runtime ack, lost commit ack, and failed runtime ack.

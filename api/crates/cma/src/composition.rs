@@ -254,6 +254,7 @@ impl ControlPlaneComposition {
                 bounded_live_fragments: config.features.bounded_live_fragments,
                 access_transport_migration: config.agent_access_transport_migration.clone(),
                 managed_documents_enabled: config.document_storage.is_some(),
+                event_driven_reconciliation: config.features.event_driven_reconciliation,
                 home_policy: config
                     .runtime
                     .home_policy
