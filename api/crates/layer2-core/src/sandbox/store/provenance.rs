@@ -66,9 +66,26 @@ pub enum ProvenanceBackfillOutcome {
     Retained,
 }
 
+/// A bounded durable observation. Sweep completion does not prove a fixed cohort.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProvenanceBackfillProgress {
+    Advanced,
+    Busy,
+    SweepFinished,
+}
+
 /// Internal migration port. It never grants caller access or changes aggregates.
 #[async_trait::async_trait]
 pub trait AgentProvenanceBackfillStore: Send + Sync {
+    /// Atomically advance one observation when explicitly activated. None means
+    /// this adapter has no activated durable progress. Errors never fall back.
+    async fn durable_provenance_backfill_step(
+        &self,
+        _worker: &str,
+    ) -> Result<Option<ProvenanceBackfillProgress>, SandboxStoreError> {
+        Ok(None)
+    }
+
     /// Stable ID scan, bounded independently of missing/corrupt provenance rows.
     async fn scan_agent_provenance_backfill(
         &self,

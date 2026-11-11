@@ -1,4 +1,6 @@
 use super::*;
+#[path = "transfer_tests.rs"]
+mod transfer_tests;
 use crate::mutation_authority::Record as Authority;
 use crate::mutation_journal::Record as Journal;
 use layer3_adapter::{AgentHomeRemoveRequest, AgentSlot};
@@ -303,6 +305,7 @@ async fn changed_binding_missing_archive_and_replaced_path_fail_closed() {
 async fn indexed_retirements_cross_both_legacy_bounds_without_replay_growth() {
     let fixture = Fixture::new();
     let archive = fixture.open(true).await;
+    let sources = Arc::new(probe_sources::Sources::create(&fixture.path, &[]).unwrap());
     let maximum = crate::mutation_journal::MAX_JOURNAL_ENTRIES + 1;
     for index in 0..maximum {
         let (operation, mut records, mut proof) = fixture.records(&format!("agent-{index}"));
@@ -330,6 +333,8 @@ async fn indexed_retirements_cross_both_legacy_bounds_without_replay_growth() {
         }
         proof.source_sha256 = format!("{:x}", digest.finalize());
         proof.records = records.len() as u32;
+        sources.add(&records).unwrap();
+        assert_eq!(sources.counts().unwrap(), (5, 5 * index));
         archive
             .authorize(std::slice::from_ref(&operation))
             .await
@@ -338,10 +343,14 @@ async fn indexed_retirements_cross_both_legacy_bounds_without_replay_growth() {
             .prepare(proof.clone(), move |row| Ok(records[row as usize].clone()))
             .await
             .unwrap();
+        let selected = sources.clone();
         archive
-            .complete(proof.key, proof.source_sha256)
+            .transfer_group(proof, Direction::Deactivate, move |record| {
+                selected.transfer(record, false)
+            })
             .await
             .unwrap();
+        assert_eq!(sources.counts().unwrap(), (0, 5 * (index + 1)));
         if matches!(index + 1, 1024 | 1025) {
             assert_eq!(
                 archive.authorize(&[operation]).await.unwrap_err().code,
