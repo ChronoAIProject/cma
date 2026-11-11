@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use super::{hash, invalid, storage_error, Context, GroupProof, Receipt, Result, SourceRow};
 use crate::config::RuntimeConfig;
 
-pub(super) fn group(
+pub(in crate::retirement_archive) fn group(
     db: &Connection,
     config: &RuntimeConfig,
     proof: &GroupProof,

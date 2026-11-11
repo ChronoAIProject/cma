@@ -21,8 +21,12 @@ pub(super) fn open(
         let tx = db.transaction().map_err(|_| storage_error())?;
         tx.execute_batch(include_str!("schema.sql"))
             .map_err(|_| storage_error())?;
-        if version == Version::Indexed {
+        if matches!(version, Version::Indexed | Version::Collection) {
             tx.execute_batch(include_str!("indexed.sql"))
+                .map_err(|_| storage_error())?;
+        }
+        if version == Version::Collection {
+            tx.execute_batch(include_str!("collection.sql"))
                 .map_err(|_| storage_error())?;
         }
         tx.pragma_update(None, "application_id", APPLICATION_ID)
@@ -54,24 +58,30 @@ pub(super) fn open(
             return Err(invalid());
         }
     }
-    let sql = if version == Version::Indexed {
-        concat!(
+    let sql = match version {
+        Version::Collection => concat!(
+            include_str!("schema.sql"),
+            "\n",
+            include_str!("indexed.sql"),
+            "\n",
+            include_str!("collection.sql")
+        ),
+        Version::Indexed => concat!(
             include_str!("schema.sql"),
             "\n",
             include_str!("indexed.sql")
-        )
-    } else {
-        include_str!("schema.sql")
+        ),
+        Version::Legacy => include_str!("schema.sql"),
     };
     let mut expected = sql
         .split(';')
         .map(str::trim)
         .filter(|sql| !sql.is_empty())
         .map(|sql| {
-            (
-                sql.split_whitespace().nth(2).unwrap().to_owned(),
-                sql.to_owned(),
-            )
+            let mut words = sql.split_whitespace();
+            words.find(|word| matches!(*word, "TABLE" | "INDEX"));
+            let name = words.next().unwrap().split('(').next().unwrap();
+            (name.to_owned(), sql.to_owned())
         })
         .collect::<Vec<_>>();
     expected.sort();
