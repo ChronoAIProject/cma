@@ -73,12 +73,16 @@ impl Fixture {
         }
         agent.conversation.last_seq = entries.len() as u64;
         agent.revision += 1;
-        let fields = crate::store::agents::agent_replacement_fields(&agent).unwrap();
+        let mut fields = crate::store::agents::agent_replacement_fields(&agent).unwrap();
+        fields.insert("last_seq", entries.len() as i64);
         store
             .agents
             .update_one(
                 doc! { "_id": agent.id.as_str() },
-                doc! { "$set": fields, "$unset": { INTEGRITY_FIELD: "" } },
+                doc! {
+                    "$set": fields,
+                    "$unset": { INTEGRITY_FIELD: "" },
+                },
             )
             .await
             .unwrap();

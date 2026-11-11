@@ -37,11 +37,24 @@ impl MongoSandboxStore {
         // 10,128-row or 4 MiB cap; the exact fold remains the semantic check in
         // layer2-core. Legacy histories continue through the trusted proof and
         // compatibility query below.
-        if let Some(entries) =
-            agent_log_segment_reads::selected(self, expected, &mut session, is_transcript_entry)
-                .await?
+        let segmented = agent_log_segment_reads::is_segmented(self, expected, &mut session).await?;
+        match agent_log_segment_reads::selected(self, expected, &mut session, is_transcript_entry)
+            .await
         {
-            return Ok(validate_selected(expected, entries));
+            Ok(Some(entries)) => return Ok(validate_selected(expected, entries)),
+            Ok(None) if segmented => return Ok(None),
+            Ok(None) => {}
+            Err(SandboxStoreError::Corrupt(_))
+            | Err(SandboxStoreError::SequenceConflict)
+            | Err(SandboxStoreError::AgentLogCapacityExceeded)
+                if segmented =>
+            {
+                return Ok(None)
+            }
+            Err(SandboxStoreError::Corrupt(_))
+            | Err(SandboxStoreError::SequenceConflict)
+            | Err(SandboxStoreError::AgentLogCapacityExceeded) => return Ok(None),
+            Err(error) => return Err(error),
         }
 
         let Some((agent, trusted)) = read_proven_agent(self, &expected.id, &mut session).await?
