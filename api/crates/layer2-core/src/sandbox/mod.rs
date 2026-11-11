@@ -114,11 +114,26 @@ mod pending_approvals;
 mod provision;
 mod queued_message;
 mod restored_connection;
+mod retained_recovery;
+mod retained_reopen;
+mod retained_reopen_service;
+#[cfg(test)]
+mod retained_reopen_tests;
+pub use retained_reopen::{
+    apply_retained_reopen, RetainedReopenAccepted, RetainedReopenProof, RetainedReopenReceipt,
+    RetainedReopenRequest, RetainedReopenSnapshot, RetainedReopenVerifier,
+};
+pub use retained_reopen_service::{RetainedReopenError, RetainedReopenService};
 mod revive;
 mod rotate;
 mod runtime_generation;
 mod runtime_health;
 mod runtime_recovery;
+pub use retained_recovery::{
+    RetainedRecoveryAssessment, RetainedRecoveryDisposition, RetainedRecoveryError,
+    RetainedRecoveryInspector, RetainedRecoveryService, RetainedRecoverySnapshot,
+    RetainedRecoverySource,
+};
 mod runtime_update;
 mod runtime_update_resume;
 pub use runtime_update::{
