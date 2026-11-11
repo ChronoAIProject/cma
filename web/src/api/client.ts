@@ -208,6 +208,15 @@ export interface CmaWebClient {
     targetVersion: string,
     options: CommandOptions,
   ) => Promise<{ readonly runtimeUpdate: SandboxRuntimeUpdate; readonly revision: number }>;
+  readonly inspectSandboxRecovery?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<import('@chronoai/cma-sdk').RetainedRecoveryAssessment>;
+  readonly recoverSandboxRetained?: (
+    id: string,
+    expectedRevision: number,
+    options: CommandOptions,
+  ) => Promise<import('@chronoai/cma-sdk').RetainedReopenReceipt>;
   readonly uploadAgentAttachment?: (
     id: string,
     file: File,
