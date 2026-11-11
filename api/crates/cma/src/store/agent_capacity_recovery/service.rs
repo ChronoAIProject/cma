@@ -163,7 +163,12 @@ impl RecoveryService {
         request: &RecoveryRequest,
     ) -> Result<CommitOutcome<RecoveryWork>, RecoveryError> {
         request.validate()?;
-        if let RecoveryLookup::Recorded(work) = self.lookup(caller, request).await? {
+        if let RecoveryLookup::Recorded(work) =
+            self.lookup(caller, request).await.inspect_err(|_error| {
+                #[cfg(test)]
+                eprintln!("capacity recovery original lookup refused: {_error:?}");
+            })?
+        {
             return Ok(CommitOutcome::Recorded(*work));
         }
         if !self.features.enabled {
