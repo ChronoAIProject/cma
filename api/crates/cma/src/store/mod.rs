@@ -201,3 +201,6 @@ mod ledger_maintenance_snapshot;
 mod ledger_maintenance_test_support;
 mod ledger_maintenance_transaction;
 mod ledger_maintenance_writer;
+
+#[cfg(test)]
+mod ledger_integration_tests;

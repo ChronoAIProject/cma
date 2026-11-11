@@ -28,6 +28,7 @@ export const requiredPrefixes = [
   'store::schema_mongo_integration_tests::',
   'store::migrations::tests::',
   'store::sandbox_mongo_integration_tests::ledger_retirement_tests::',
+  'store::ledger_integration_tests::',
   'store::ledger_maintenance::',
   'store::ledger_maintenance_pre_exclusion::',
   'store::sandbox_mongo_integration_tests::ledger_census_tests::',
