@@ -9,11 +9,18 @@ async fn close_retry_restart_mixed_writers_and_kill_switch_preserve_the_claim() 
         .unwrap()
         .with_fleet_log_percentage(100)
         .with_bounded_close_retries(true);
+    // Independent stores have separate local writer locks, as separate API
+    // processes do. Mongo revision/lease fences must decide the winning retry.
+    let peer = MongoSandboxStore::open(&f.client, &f.name)
+        .await
+        .unwrap()
+        .with_fleet_log_percentage(100)
+        .with_bounded_close_retries(true);
     scans::isolated_test(async {
         let mutation = retry(&f.agent);
         let (left, right) = tokio::join!(
             f.store.commit_agent_work(mutation.clone()),
-            f.store.commit_agent_work(mutation)
+            peer.commit_agent_work(mutation)
         );
         assert_eq!(
             [left.is_ok(), right.is_ok()].iter().filter(|v| **v).count(),
@@ -95,21 +102,19 @@ async fn close_retry_unknown_commit_uses_complete_receipt_proof_without_reappend
         "data": { "failCommands": ["commitTransaction"], "appName": &f.app,
             "writeConcernError": { "code": 50, "codeName": "MaxTimeMSExpired", "errmsg": "injected ambiguous commit" } }
     }).await.unwrap();
-    let (result, unknown_scans) = scans::isolated_test(async {
-        let result = f.store.commit_agent_work(retry(&f.agent)).await;
-        (
-            result,
-            scans::snapshot(ScanCaller::UnknownCommitProof, true)[0],
-        )
-    })
-    .await;
+    // Reconciliation runs in a spawned task that intentionally outlives caller
+    // cancellation. Observe this client's commands across tasks, not task-local
+    // scan counters, to prove the real unknown-commit path read all history.
+    let before_reads = f.complete_reads.load(Ordering::SeqCst);
+    let result = f.store.commit_agent_work(retry(&f.agent)).await;
     admin
         .database("admin")
         .run_command(doc! { "configureFailPoint": "failCommand", "mode": "off" })
         .await
         .unwrap();
     result.unwrap();
-    assert_eq!(unknown_scans, 1);
+    assert_eq!(f.ambiguous_commits.load(Ordering::SeqCst), 5);
+    assert_eq!(f.complete_reads.load(Ordering::SeqCst) - before_reads, 1);
     assert_eq!(
         f.store
             .agent_log
