@@ -49,7 +49,7 @@ impl ContextGoal {
         }
         // Native work vetoes maintenance until reconnection, even if a later
         // observation reports null while that work can still be running.
-        let safe = goal.is_null() && !observed.as_ref().is_some_and(|goal| !goal.safe);
+        let safe = goal.is_null() && observed.as_ref().is_none_or(|goal| goal.safe);
         let session = match frame.shared() {
             Some(frame) => Session::Admitted(frame),
             None => Session::Legacy(session.to_owned()),
