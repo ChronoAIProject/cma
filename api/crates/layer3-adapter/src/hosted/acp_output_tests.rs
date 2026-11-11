@@ -161,11 +161,11 @@ fn output_capability_is_optional_and_rejects_unknown_versions() {
             "t": "ready", "wireVersion": 1, "lanes": ["ctl", "conv"], "agentId": "agent-1",
             "outputAcknowledgement": {"version": version, "streamId": stream()},
         });
-        assert!(validate_ready(Message::Text(ready.to_string()), "agent-1", false).is_err());
+        assert!(validate_ready(Message::Text(ready.to_string()), "agent-1", false, None).is_err());
     }
     let ready = serde_json::json!({"t":"ready", "wireVersion":1, "lanes":["ctl","conv"], "agentId":"agent-1"});
     assert_eq!(
-        validate_ready(Message::Text(ready.to_string()), "agent-1", false).unwrap(),
+        validate_ready(Message::Text(ready.to_string()), "agent-1", false, None).unwrap(),
         None
     );
 }
