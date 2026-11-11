@@ -54,6 +54,7 @@ pub(super) async fn configure(
                 lag_allowance: 0,
             }),
             default_policy: None,
+            request_models: Vec::new(),
             owners: vec![OwnerBudgetPolicy {
                 owner: owner.clone(),
                 policy: policy.clone(),
