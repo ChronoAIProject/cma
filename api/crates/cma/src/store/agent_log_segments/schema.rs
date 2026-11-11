@@ -15,6 +15,9 @@ mod recovery;
 mod validators;
 use validators::validator;
 
+// Keep this identity inside the canonical migration checksum boundary.
+pub(super) const PUBLICATION_HEAD_INDEX: &str = "agent_log_publication_head";
+
 fn failed() -> StoreError {
     StoreError::Malformed("Agent log segment DDL is absent, partial or incompatible; run the reviewed additive migration".into())
 }
@@ -38,10 +41,16 @@ fn indexes(name: &str) -> Vec<IndexModel> {
                 doc! {"agent_id":1,"incarnation":1,"start_seq":1},
             ),
         ],
-        PUBLICATIONS => vec![(
-            "agent_log_publication_key",
-            doc! {"agent_id":1,"incarnation":1,"publication_key":1},
-        )],
+        PUBLICATIONS => vec![
+            (
+                "agent_log_publication_key",
+                doc! {"agent_id":1,"incarnation":1,"publication_key":1},
+            ),
+            (
+                PUBLICATION_HEAD_INDEX,
+                doc! {"agent_id":1,"incarnation":1,"head_revision":1},
+            ),
+        ],
         EVIDENCE => vec![
             (
                 "agent_log_evidence_generation",
