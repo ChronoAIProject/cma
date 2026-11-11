@@ -227,6 +227,10 @@ async fn file_collection_reader_refuses_pending_work_and_never_adopts_v2() {
         .open(&fixture.config)
         .await
         .is_err());
+    // Create the incompatible source separately: the pending V1 fixture must
+    // itself refuse initialization, and its descriptor is create-only.
+    drop(fixture);
+    let fixture = Fixture::new();
     let ledger = fixture.ledger(true).await.unwrap();
     let mut descriptor = fixture.descriptor();
     descriptor.version = 4;
