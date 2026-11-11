@@ -62,6 +62,7 @@ pub(crate) struct SandboxLifecycleComposition {
     workspace: SandboxScheduler,
     agent: AgentScheduler,
     capacity_worker: Arc<AgentWorker>,
+    capacity_recovery: Option<SandboxScheduler>,
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
     updates: Arc<dyn AgentUpdateRecorder>,
@@ -191,6 +192,7 @@ impl SandboxLifecycleComposition {
             sandbox: SandboxScheduler::new(sandbox_worker).with_admission_wake(sandbox_admitted),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
             capacity_worker: agent_worker.clone(),
+            capacity_recovery: None,
             agent: AgentScheduler::new(agent_worker, agent_admitted),
             titles,
             funding_renewal,
@@ -203,10 +205,22 @@ impl SandboxLifecycleComposition {
     }
 
     pub(crate) fn capacity_recovery_commands(
-        &self,
+        &mut self,
+        store: Arc<MongoSandboxStore>,
         service: Arc<crate::store::agent_capacity_recovery::RecoveryService>,
     ) -> Arc<dyn layer2_core::sandbox::agent_capacity_recovery::commands::CapacityRecoveryCommands>
     {
+        assert!(
+            self.capacity_recovery.is_none(),
+            "capacity recovery is assembled once"
+        );
+        self.capacity_recovery = Some(SandboxScheduler::for_capacity_recovery(
+            super::capacity_scheduler::CapacityRecoverySweep::new(
+                store,
+                service.clone(),
+                self.capacity_worker.clone(),
+            ),
+        ));
         self.capacity_worker
             .clone()
             .capacity_recovery_commands(service)
@@ -220,6 +234,9 @@ impl SandboxLifecycleComposition {
     }
 
     pub(crate) fn spawn(self, shutdown: &mut ShutdownCoordinator) {
+        if let Some(scheduler) = self.capacity_recovery {
+            shutdown.push(scheduler.spawn(shutdown.subscribe()));
+        }
         shutdown.push(self.warmup.spawn(shutdown.subscribe()));
         let signal = shutdown.subscribe();
         shutdown.push(self.reconciliation.spawn(signal));
