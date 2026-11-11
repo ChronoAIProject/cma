@@ -1,6 +1,7 @@
 //! Durable Agent history reads and append operations.
 
 use super::*;
+#[cfg(test)]
 use crate::sandbox::{AgentOperationDelivery, AgentOperationKind};
 
 #[async_trait]
