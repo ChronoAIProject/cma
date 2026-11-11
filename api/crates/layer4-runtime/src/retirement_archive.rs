@@ -1,12 +1,13 @@
 //! Exact retained bytes and indexed permanent replay refusal. Active-ledger
 //! deactivation is a separate, ordered step after this archive has committed.
+pub(crate) mod collection_probe;
 mod probe;
 mod probe_sources;
 mod transfer;
 pub(crate) use transfer::Direction;
 mod indexed;
 mod indexed_deactivation;
-pub(crate) use indexed_deactivation::deactivate_held;
+pub(crate) use indexed_deactivation::{deactivate_collected_held, deactivate_held};
 mod record;
 mod schema;
 #[cfg(test)]
@@ -34,6 +35,7 @@ pub(crate) struct Archive {
     identity: [(u64, u64); 3],
     anchor: Option<Arc<std::fs::File>>,
     version: Version,
+    archive_id: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,6 +82,7 @@ impl Archive {
     ) -> Result<Self> {
         let storage = Storage::open(path.clone(), create, pages).await?;
         let expected = config.clone();
+        let retained_id = archive_id.clone();
         let storage = storage
             .validate(move |db| schema::open(db, &expected, &archive_id, create, version))
             .await?;
@@ -97,6 +100,7 @@ impl Archive {
             identity,
             anchor: None,
             version,
+            archive_id: retained_id,
         })
     }
 
@@ -108,6 +112,7 @@ impl Archive {
     ) -> Result<Self> {
         let storage = Storage::open_anchored(Arc::clone(&directory), pages).await?;
         let expected = config.clone();
+        let retained_id = archive_id.clone();
         let storage = storage
             .validate(move |db| schema::open(db, &expected, &archive_id, true, Version::Legacy))
             .await?;
@@ -118,6 +123,7 @@ impl Archive {
             identity: [(0, 0); 3],
             anchor: Some(directory),
             version: Version::Legacy,
+            archive_id: retained_id,
         })
     }
 
