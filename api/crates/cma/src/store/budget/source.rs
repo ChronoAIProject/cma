@@ -5,6 +5,29 @@ use mongodb::bson::doc;
 
 use super::{decode, owner_key, turn_key, MongoSandboxStore, TurnRecord, DOCUMENT_SCHEMA_VERSION};
 
+/// Process-local hints from platform settings reads (concurrency rules 3, 5).
+/// Scheduling and early refusal only; never authority to admit.
+#[derive(Default)]
+pub(in crate::store) struct PlatformStopCache {
+    platform_enabled: Option<bool>,
+}
+
+impl MongoSandboxStore {
+    /// Whether period-row writers should be scheduled; unknown counts as enabled.
+    pub(in crate::store) fn platform_enabled_hint(&self) -> bool {
+        self.platform_stop_cache
+            .lock()
+            .map(|cache| cache.platform_enabled.unwrap_or(true))
+            .unwrap_or(true)
+    }
+
+    pub(super) fn note_platform_enabled(&self, enabled: bool) {
+        if let Ok(mut cache) = self.platform_stop_cache.lock() {
+            cache.platform_enabled = Some(enabled);
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl SpendSource for MongoSandboxStore {
     async fn stop_requested(

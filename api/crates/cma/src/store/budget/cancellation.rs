@@ -41,10 +41,15 @@ pub(in crate::store) async fn release_unexecuted(
         .map(decode)
         .transpose()?
         .ok_or_else(|| domain(BudgetError::Unavailable))?;
+    let units = record.reservation.reserved_units;
     owner.reserved = owner
         .reserved
-        .checked_sub(record.reservation.reserved_units)
+        .checked_sub(units)
         .ok_or_else(|| domain(BudgetError::Unavailable))?;
+    super::period::mirror(store, record.period_start, session, |ledger| {
+        ledger.release(units)
+    })
+    .await?;
     record.reservation.settled = true;
     save(store, &owner_key, &owner, session).await?;
     save(store, &key, &record, session).await
