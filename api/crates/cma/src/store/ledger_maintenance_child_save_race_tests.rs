@@ -169,7 +169,14 @@ async fn unknown_commit_never_restarts_save_or_claims_confirmed_success() {
                 .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
                 .await
                 .unwrap();
-            assert!(matches!(result, Err(SandboxStoreError::Unavailable(_))));
+            let Err(SandboxStoreError::Unavailable(error)) = result else {
+                panic!("uncertain save must not report confirmed success");
+            };
+            assert!(
+                error.contains("UnknownTransactionCommitResult"),
+                "wrong failure path: agent={agent}, expected_committed={committed}, write_conflict={}, missing_transaction={}",
+                error.contains("WriteConflict"), error.contains("NoSuchTransaction"),
+            );
             if committed {
                 assert_saved(&store, agent, &next).await;
                 let after = all_rows(&store).await;

@@ -43,9 +43,13 @@ async fn port(
 
 async fn assert_saved(store: &MongoSandboxStore, agent: bool, next: &(Agent, Workspace)) {
     if agent {
-        assert!(store.get_agent(&next.0.id).await.unwrap().unwrap() == next.0);
+        let actual = store.get_agent(&next.0.id).await.unwrap().unwrap();
+        assert_eq!(actual.revision, next.0.revision, "saved Agent revision");
+        assert!(actual == next.0);
     } else {
-        assert!(store.get_workspace(&next.1.id).await.unwrap().unwrap() == next.1);
+        let actual = store.get_workspace(&next.1.id).await.unwrap().unwrap();
+        assert_eq!(actual.revision, next.1.revision, "saved Workspace revision");
+        assert!(actual == next.1);
     }
     let parent = store.sandboxes.find_one(doc! {}).await.unwrap().unwrap();
     assert_eq!(
