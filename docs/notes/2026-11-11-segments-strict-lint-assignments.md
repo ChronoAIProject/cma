@@ -3,8 +3,8 @@
 Pre-review 2 baseline: `34bcc3667`, including normal slice/develop merges; branch
 `tl/cma-log-segments/integration-20261111`; develop `8167d01d8` is included.
 Mechanical follow-ups are `efc880523` and `3cb7a3348`, detailed below.
-Latest code assembly `41c74a702` includes proof/schema pin `c4e4b995a`,
-S1 `f0d9746ef`, S4 `984d881ee`, S5 `3aaa55395` and develop `cf1d6ce54`;
+Latest code assembly `8c44436f7` includes proof/schema pin `c4e4b995a`,
+S1 `f0d9746ef`, S4 `984d881ee`, S5 `3aaa55395` and develop `ce72ee311`;
 combined gates are queued against that immutable source.
 No integration PR is ready. Pre-review 2 has four unresolved P1s; P1-2 is
 closed in source, while exact combined qualification remains a release gate.
@@ -186,50 +186,13 @@ GitHub REST reports #1696 base `tl/cma-log-segments/integration-20261111`, head 
 Scheduler/config gate at `e7e4cdda0` exited 101 during compilation: the borrowed request iterator produced three Send/FnOnce diagnostics, with zero tests executed. Own commit `541c3f7f2` moves each request into its future and retains the two-attempt bound. The exact corrected-head gate is queued; source/HEAD stay fixed until completion. This correction is not yet pushed or test-qualified.
 
 
-## Lead allocation 2026-11-12 02:35 — S4 runtime-loss wiring
+## S4 runtime-loss ownership
 
-S4 now owns the production `sandbox_reconciliation::transaction::apply_scoped`
-entry, its scoped publisher and `capture_segmented_scoped`, including their
-success/failure qualification. S2 stops editing those semantic paths and retains
-integration, shared registrations and P1-2. S5 retains capacity recovery service,
-codec, discovery and native proof. S1 owns the underlying captured-proof contract.
-
-Handoff source is already pushed: `c13eff3b58edcc70b6ac08b52676ba5a1790f162`
-contains the production dispatch in `api/crates/cma/src/store/sandbox_reconciliation.rs`.
-The published combined reference is `e7e4cdda0eb94ca04ff977a442b25ddc1a4b8e8a`.
-S4 at `8958e69ff31ed235e3bf25a58218cb807f2e99a0` already contains
-`ecd84ecd3` and `5c255dfd9`; its four supporting files below are byte-identical to
-that reference. The only missing production delta is the root dispatch (33 lines
-in the original commit). S4 can consume that exact root delta in its own narrow
-wiring commit; it need not reimplement the scoped helpers or import unrelated
-preflight/unpublished-recovery edits from the three-file `c13eff3b5` commit.
-
-Transferred exact paths, all under `api/crates/cma/src/store/`:
-
-- `sandbox_reconciliation.rs`
-- `sandbox_reconciliation/transaction.rs`
-- `sandbox_reconciliation/transaction/scoped.rs`
-- `sandbox_reconciliation/agents.rs`
-- `sandbox_reconciliation/agents/scoped.rs`
-- `agent_capacity_recovery/source.rs`
-
-The source file includes raw/scoped capture and envelope-fence helpers shared
-with S5. S4 owns edits to this whole file; S5 requests changes through S4, rather
-than editing it concurrently. `agent_capacity_recovery/lineage.rs` stays S5-owned.
-
-Preserve one owned transaction scope from captured v2 source through
-`writer_commit::{prepare,persist}`; release it only before unchanged legacy work
-in the same transaction. The format lookup is a dispatch hint, never proof or
-adoption authority. Legacy races must refuse v2; terminal children are fenced;
-all domain and driver failures abort the transaction at the root. Keep the
-original commit/unknown-outcome reconciliation and no read-side audit writes.
-
-S4 qualification: actual runtime-loss root with a mixed v1/v2 Sandbox and
-nonempty segmented child changes, unchanged terminal child, malformed/stale
-capture refusal with unchanged durable state, parent CAS race and lost commit
-reply. No helper-only or empty-child test qualifies this production root.
-Target source checkpoint Thu 04:00 SGT, focused Mongo result by 08:00 if the shared
-slot permits; these are integration targets awaiting S4 confirmation, not passes.
+The exact transferred paths, pins and root qualification contract are retained
+in [coordination history 10](2026-11-12-segments-coordination-history-10.md).
+S4 retains scoped reconciliation/publication and recovery source capture; S5
+retains lineage/native correctness. The later 03:25 service ownership supersedes
+the older general service assignment. S2 retains shared registration and integration.
 
 ## #1696 delta6 disposition
 
@@ -489,3 +452,42 @@ registry suppression or synthetic consumer was added. The prior combined
 any Cargo, lock acquisition or fixture allocation. Its unused export was removed.
 The replacement immutable source is `41c74a702`, with the same separately
 locked gate list. No heavy result is attributed to either combined head yet.
+
+
+### S5 strict/light PASS —3aaa5539512ac97440fb665b4e3352bc0f56ae8e
+
+Current-source strict four-package/all-target/all-feature Clippy with -D warnings passed in2m28s, exit0; exact log2026-11-12-s5-strict-pass-3aaa55395.log. Formatting, whitespace, configuration-doc coverage, canonical file-size6192files and history3884commits/zero-findings pass. Native/worker/test code is compiled, including the later-progress fixtures. No current-head runtime pass is inferred from compile/lint.
+
+The following CMA capacity gate initially refused before execution because heavy-0 was removed after release. Heavy-1 remains the original160080032; the acquire wrapper now skips missing/replaced locks and queues only original inodes, without recreating files. Lead coordination was requested after observing queued no-k probes; full evidence2026-11-12-s5-lock-probe-observation.md. CMA gate5 is queued on the intact slot. One reusable target retained, two jobs. A separate optional existing-only Mongo selection is prepared (gate11, explicit --skip restart::later::); the default full selection remains unchanged. Any such run will be reported as25existingcases only, with all3new later-progress functions still required after S4's caller pin.
+
+Latest S2 source pin c4e4b995a adds the lookup name to canonical migration checksum without API change; consume normally after the executing/queued source gate. S2's latest handoff assigns S4 caller/invariant checkpoint by06:30. S5 remains active on owned gates; no activation or PR-ready claim.
+
+S1 post-develop source-size gate at `74dfc3406`: shared
+`api/crates/cma/src/config/features.rs` is 506 lines after retaining both parents'
+flags and tests; its cohesive test-module split belongs to S2's shared-root
+integration. S1's four caller files are 409/489/123/452 lines. The earlier size
+pass preceded this normal develop merge and is not a pass for the merged head.
+No flag or test has been removed to satisfy the limit. Heavy gates remain queued.
+
+
+### P1-3 proof actual-Mongo PASS and current combined queue
+
+At exact `44ad38198`, actual disposable Mongo **9 passed, 0 failed, 2,639
+skipped**, 19.476s. Includes six current-proof cases, canonical publication
+schema and two abort/unknown-outcome cases. The same source passed13units.
+The source guard and owned fixture cleanup completed successfully. This is API
+qualification, not S5 later-progress worker/native activation or combined lint.
+
+Normal integration source `8c44436f7` includes develop `ce72ee311` raw-output
+policy. Its conflict resolution preserves the original output-JSON test and
+moves the new raw-output test unchanged into the existing rollout child; root
+496lines, child99. Fmt, config and whitespace pass. The unused41c export/queue
+was removed before any gate started. Strict CMA on immutable8c is now queued
+under heavy-1, followed by scheduler/adapter/authenticated and retained Mongo.
+The completed44ad export is removed; one Cargo target is retained for this run.
+
+Operational risk: heavy-0 was observed absent while heavy-1 retained inode
+160080032. Three earlier non-keeping lock probes are queued against heavy-1;
+lead notified. Own gates use `lockf -k -n -t 3600` and now verify the expected
+heavy-1 device/inode before Cargo and throughout execution. No shared lock was
+created, removed or repaired here. Combined gates stop if its identity changes.
