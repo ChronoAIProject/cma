@@ -76,6 +76,9 @@ mod hierarchy;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
+pub(crate) mod ledger_census;
+pub(crate) mod ledger_collection;
+mod ledger_collection_progress;
 pub(crate) mod ledger_retirement;
 mod legacy_history;
 mod lifecycle_execution;
@@ -106,6 +109,7 @@ mod profile_references;
 mod profiles;
 pub(crate) mod request_limits;
 mod resource_access;
+mod retained_reopen;
 mod sandbox_admission;
 #[cfg(test)]
 mod sandbox_admission_mongo_integration_tests;
