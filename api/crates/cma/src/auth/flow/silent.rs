@@ -10,8 +10,8 @@ use axum::{
 };
 use serde::Deserialize;
 
-use super::{begin_login_with_intent, request_cookie, LoginAttempt};
-use crate::auth::{AuthState, SIGNED_OUT_COOKIE};
+use super::{begin_login_with_intent, LoginAttempt};
+use crate::auth::{silent_preference, AuthState};
 
 /// OIDC `prompt`. Only `none` is accepted.
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -21,7 +21,8 @@ pub(super) enum LoginPrompt {
 }
 
 /// Answers a silent entry that must not reach the provider, if any.
-pub(super) fn refuse_entry(
+pub(super) async fn refuse_entry(
+    auth: &AuthState,
     with_screen: bool,
     headers: &HeaderMap,
     return_to: Option<&str>,
@@ -39,8 +40,9 @@ pub(super) fn refuse_entry(
         );
     }
     // Signed out of CMA: decline without asking the provider.
-    request_cookie(headers, SIGNED_OUT_COOKIE)
-        .map(|_| Redirect::to(return_to.unwrap_or("/")).into_response())
+    silent_preference::suppressed(auth, headers)
+        .await
+        .then(|| Redirect::to(return_to.unwrap_or("/")).into_response())
 }
 
 /// Ends a bound silent attempt the provider declined, or that a CMA sign-out
@@ -52,7 +54,7 @@ pub(super) async fn declined_callback(
     headers: &HeaderMap,
     binding: &str,
 ) -> Option<Response> {
-    let signed_out = request_cookie(headers, SIGNED_OUT_COOKIE).is_some();
+    let signed_out = silent_preference::suppressed(auth, headers).await;
     let back = || Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response();
     let response = match error {
         // Signed in to the provider, which only needs this person to approve
