@@ -59,6 +59,8 @@ pub(super) async fn open<'a>(
             agent_id: agent.id.clone(),
             through: agent.conversation.last_seq,
             created_at: agent.created_at.clone(),
+            runtime_generation: agent.conversation.runtime_generation,
+            active_turn: agent.conversation.active_turn,
             initial_model: agent.profile.content.model.clone(),
             turn: None,
             index: None,
