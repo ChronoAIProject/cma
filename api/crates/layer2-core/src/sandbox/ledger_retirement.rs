@@ -25,11 +25,12 @@ impl SandboxHierarchyRecord {
     ) -> Result<layer3_adapter::runtime_ledger_collection::CollectionObservation, SandboxModelError>
     {
         use layer3_adapter::runtime_ledger_collection::{
-            binding_hash, CollectionGroup, CollectionObservation, LedgerGroupAuthorityV1,
-            LedgerGroupDecisionV1, LedgerGroupEvidenceV1, LedgerResourceRevisionV1,
+            CollectionGroup, CollectionObservation, LedgerGroupAuthorityV1, LedgerGroupDecisionV1,
+            LedgerGroupEvidenceV1, LedgerResourceRevisionV1,
         };
         use sha2::{Digest, Sha256};
         let request_sha256 = request.fingerprint().ok_or_else(invalid)?;
+        let binding_sha256 = request.binding.binding_sha256().map_err(|_| invalid())?;
         let snapshot =
             self.ledger_retirement_observation(observed_at.clone(), source_sha256.clone())?;
         if snapshot.sandbox_id != request.binding.sandbox_id
@@ -109,7 +110,7 @@ impl SandboxHierarchyRecord {
             let evidence = LedgerGroupEvidenceV1 {
                 format: "runtime-ledger-group-evidence-v1".into(),
                 request_sha256: request_sha256.clone(),
-                binding_sha256: binding_hash(&request.binding),
+                binding_sha256: binding_sha256.clone(),
                 group_key: group.key(),
                 sandbox_revision: self.sandbox.revision,
                 resource_revisions: revisions.clone(),
