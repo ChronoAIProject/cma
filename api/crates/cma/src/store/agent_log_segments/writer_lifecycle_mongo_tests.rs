@@ -46,7 +46,7 @@ fn workspace(f: &Fixture, parent: &Sandbox) -> layer2_core::sandbox::Workspace {
         name: "receipt".into(),
         path: "/home/cma/receipt".into(),
         source: WorkspaceSource::Empty,
-        resolved_commit: None,
+        resolved_commit: Some("a".repeat(40)),
         status: WorkspaceStatus::Ready,
         work: WorkspaceWorkState::new(WorkspaceWorkStep::None, NOW.into()),
         next_worktree_number: 1,
