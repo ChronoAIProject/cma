@@ -1,5 +1,6 @@
 //! Accepted-work mutations within the caller's exclusive transaction. These
 //! helpers never commit, infer an unknown outcome, or activate a runtime.
+use super::authority::RecoveryAuthority;
 use super::{authority, receipts, records, source};
 use crate::store::{
     agent_log_integrity::{AppendCapacity, TransactionLogError},
@@ -12,7 +13,6 @@ use crate::store::{
     agents::agent_replacement_fields,
     sandbox_mongo::MongoSandboxStore,
 };
-use layer2_core::resource_access::AuthorizedResource;
 use layer2_core::sandbox::{
     agent_capacity_recovery::{
         ports::ClaimOutcome,
@@ -26,7 +26,7 @@ use layer2_core::sandbox::{
 };
 
 pub(in crate::store) struct ClaimRequest<'a> {
-    pub authorized: &'a AuthorizedResource,
+    pub authorized: &'a dyn RecoveryAuthority,
     pub request: &'a RecoveryRequest,
     pub holder: &'a str,
     pub now: &'a str,
@@ -41,6 +41,7 @@ pub(in crate::store) async fn claim(
     input: ClaimRequest<'_>,
     scope: &mut TransactionScope<'_>,
 ) -> Result<ClaimOutcome, TransactionLogError> {
+    input.authorized.require_request(input.request)?;
     let current =
         authority::capture(store, input.authorized, &input.request.agent_id, scope).await?;
     let work = read_work(store, input.request, current.context()?.agent, scope).await?;
@@ -104,12 +105,13 @@ pub(in crate::store) async fn claim(
 
 pub(in crate::store) async fn complete(
     store: &MongoSandboxStore,
-    authorized: &AuthorizedResource,
+    authorized: &dyn RecoveryAuthority,
     claim: &RecoveryClaim,
     confirmation: &RecoveryConfirmation,
     now: &str,
     scope: &mut TransactionScope<'_>,
 ) -> Result<RecoveryWork, TransactionLogError> {
+    authorized.require_request(&claim.work.request)?;
     let current =
         authority::capture(store, authorized, &claim.work.request.agent_id, scope).await?;
     let work = read_work(store, &claim.work.request, current.context()?.agent, scope).await?;
@@ -141,12 +143,13 @@ pub(in crate::store) async fn complete(
 
 pub(in crate::store) async fn retry(
     store: &MongoSandboxStore,
-    authorized: &AuthorizedResource,
+    authorized: &dyn RecoveryAuthority,
     claim: &RecoveryClaim,
     now: &str,
     retry_at: &str,
     scope: &mut TransactionScope<'_>,
 ) -> Result<RecoveryWork, TransactionLogError> {
+    authorized.require_request(&claim.work.request)?;
     let current =
         authority::capture(store, authorized, &claim.work.request.agent_id, scope).await?;
     let work = read_work(store, &claim.work.request, current.context()?.agent, scope).await?;
@@ -205,7 +208,7 @@ fn advance(current: &Agent, now: &str) -> Result<Agent, SandboxStoreError> {
 }
 
 struct Step<'a> {
-    authorized: &'a AuthorizedResource,
+    authorized: &'a dyn RecoveryAuthority,
     current: &'a authority::Authority,
     work: &'a RecoveryWork,
     next_work: &'a RecoveryWork,
