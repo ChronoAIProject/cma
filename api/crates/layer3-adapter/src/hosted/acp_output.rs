@@ -2,10 +2,11 @@
 
 use std::sync::Arc;
 
+use crate::ingress_budget::{IngressBudget, IngressReservation};
 use futures_util::SinkExt as _;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
-use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{mpsc, Semaphore};
 use tokio_tungstenite::tungstenite::Message;
 
 use super::{Bridge, LANE_OUTPUT_ACK, MAX_FRAME_BYTES};
@@ -44,7 +45,7 @@ struct HeldOutput {
     /// Bootstrap RPCs must run now; their domain effect still owns this cursor.
     prepared: Option<Option<ConversationUpdate>>,
     // Last field: release only after the payload and queued node are gone.
-    _storage: Option<OwnedSemaphorePermit>,
+    _storage: Option<IngressReservation>,
 }
 
 impl HeldOutput {
@@ -64,6 +65,7 @@ pub(super) struct ReliableOutput {
     session: Option<String>,
     queued: OutputQueue,
     raw_budget: Option<Arc<Semaphore>>,
+    aggregate: Option<IngressBudget>,
     json_pools: Option<crate::hosted::retained_json::JsonPools>,
     queued_bytes: usize,
     acknowledgements: mpsc::Sender<RuntimeOutputSource>,
@@ -81,10 +83,12 @@ impl ReliableOutput {
         acknowledgements: mpsc::Sender<RuntimeOutputSource>,
         bounded: bool,
         json_pools: Option<crate::hosted::retained_json::JsonPools>,
+        aggregate: Option<IngressBudget>,
     ) -> Self {
         Self {
             stream,
             json_pools,
+            aggregate,
             last_received: None,
             session: None,
             queued: OutputQueue::new(bounded),
@@ -147,7 +151,11 @@ impl Bridge {
             ));
         }
         // Refuse before copying, queue allocation, accepted cursor, or effects.
-        let storage = memory::reserve(state.raw_budget.as_ref(), bytes.len() - HEADER_BYTES)?;
+        let storage = memory::reserve(
+            state.raw_budget.as_ref(),
+            bytes.len() - HEADER_BYTES,
+            state.aggregate.as_ref(),
+        )?;
         let decoded = state
             .json_pools
             .as_ref()
@@ -319,3 +327,7 @@ mod budget_tests;
 #[cfg(test)]
 #[path = "acp_output_json_retention_tests.rs"]
 mod json_retention_tests;
+
+#[cfg(test)]
+#[path = "acp_output_coordinator_tests.rs"]
+mod coordinator_tests;

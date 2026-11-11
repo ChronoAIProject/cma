@@ -7,8 +7,9 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use crate::ingress_budget::{IngressBudget, IngressReservation};
 use serde_json::Value;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Semaphore;
 
 use super::output_json_budget;
 use crate::AdapterError;
@@ -22,6 +23,7 @@ const FIXED_ALLOWANCE: usize = 1024;
 pub(super) struct JsonPools {
     trees: Arc<Semaphore>,
     scratch: Arc<Semaphore>,
+    aggregate: Option<IngressBudget>,
 }
 
 impl JsonPools {
@@ -36,7 +38,13 @@ impl JsonPools {
         Self {
             trees: Arc::new(Semaphore::new(trees)),
             scratch: Arc::new(Semaphore::new(scratch)),
+            aggregate: None,
         }
+    }
+
+    pub(super) fn with_aggregate(mut self, aggregate: Option<IngressBudget>) -> Self {
+        self.aggregate = aggregate;
+        self
     }
 
     pub(super) fn admit(&self, payload: &[u8]) -> crate::Result<JsonAdmission> {
@@ -45,9 +53,17 @@ impl JsonPools {
         }
         // The borrowed preflight may allocate an unescape scratch Vec. Reserve
         // its complete allowance before running even that first parse.
-        let scratch = acquire(&self.scratch, scratch_allowance(payload.len())?)?;
+        let scratch = acquire(
+            &self.scratch,
+            self.aggregate.as_ref(),
+            scratch_allowance(payload.len())?,
+        )?;
         let shape = output_json_budget::inspect(payload).map_err(|e| e.adapter_error())?;
-        let tree = acquire(&self.trees, tree_allowance(payload.len(), shape.nodes)?)?;
+        let tree = acquire(
+            &self.trees,
+            self.aggregate.as_ref(),
+            tree_allowance(payload.len(), shape.nodes)?,
+        )?;
         Ok(JsonAdmission {
             tree,
             _scratch: scratch,
@@ -69,8 +85,8 @@ impl JsonPools {
 }
 
 pub(super) struct JsonAdmission {
-    tree: OwnedSemaphorePermit,
-    _scratch: OwnedSemaphorePermit,
+    tree: IngressReservation,
+    _scratch: IngressReservation,
 }
 
 fn scratch_allowance(bytes: usize) -> crate::Result<usize> {
@@ -93,11 +109,12 @@ fn tree_allowance(bytes: usize, nodes: usize) -> crate::Result<usize> {
         .ok_or_else(capacity)
 }
 
-fn acquire(pool: &Arc<Semaphore>, bytes: usize) -> crate::Result<OwnedSemaphorePermit> {
-    let bytes = u32::try_from(bytes).map_err(|_| capacity())?;
-    pool.clone()
-        .try_acquire_many_owned(bytes)
-        .map_err(|_| capacity())
+fn acquire(
+    pool: &Arc<Semaphore>,
+    aggregate: Option<&IngressBudget>,
+    bytes: usize,
+) -> crate::Result<IngressReservation> {
+    IngressReservation::try_acquire(pool, aggregate, bytes).ok_or_else(capacity)
 }
 
 fn capacity() -> AdapterError {
@@ -109,7 +126,7 @@ struct JsonOwner {
     // Each clone holds both private owners. Field order deallocates the final
     // tree Arc (including its header) before releasing the last reservation.
     value: Arc<Value>,
-    _storage: Arc<OwnedSemaphorePermit>,
+    _storage: Arc<IngressReservation>,
 }
 
 #[derive(Clone)]
