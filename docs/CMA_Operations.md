@@ -2087,6 +2087,13 @@ pressure returns Retry-After without changing conversation/lifecycle pools.
 
 ## API read and stream diagnostics
 
+`CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED` defaults to `false` and accepts only
+`true` or `false`. It independently enables the [bounded title-input reader](CMA_Bounded_Title_Transcript.md)
+for Agents already prepared in `CHRONO_AGENT_LOG_ADMISSION_AGENTS`. Enable it only
+after admission/public-window qualification. Disable it and restart the API to
+restore complete title reads while preserving the admission/public-window cohort
+and all retained history. No title or metadata write is part of this reader.
+
 The API emits content-free structured log metrics every ten seconds and once
 after the background-worker drain completes. The final sample follows all joined
 workers, including cancellation cleanup at the thirty-second worker deadline,
