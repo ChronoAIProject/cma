@@ -134,7 +134,9 @@ mod tests {
     #[test]
     fn only_agent_envelopes_accept_the_additive_reader_version() {
         let versions = |name| {
-            unknown_version_filter(name)["$or"][0]["document_schema_version"]["$nin"].clone()
+            unknown_version_filter(name).get_array("$or").unwrap()[0]["document_schema_version"]
+                ["$nin"]
+                .clone()
         };
         assert_eq!(versions("agents"), mongodb::bson::bson!([1_i64, 2_i64]));
         assert_eq!(versions("agent_log"), mongodb::bson::bson!([1_i64]));
@@ -142,8 +144,8 @@ mod tests {
         // Scalar integer and no-array predicates remain present for both paths.
         for guard in [1_usize, 2] {
             assert_eq!(
-                unknown_version_filter("agents")["$or"][guard],
-                unknown_version_filter("other")["$or"][guard]
+                unknown_version_filter("agents").get_array("$or").unwrap()[guard],
+                unknown_version_filter("other").get_array("$or").unwrap()[guard]
             );
         }
     }
