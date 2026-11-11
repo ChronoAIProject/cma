@@ -153,6 +153,15 @@ test('Agent open, send, active stream and cached return', async ({ page, baseURL
     await page.waitForTimeout(60_000);
     clearInterval(events);
     observed.mark('streamingEnd');
+    if (process.env.CMA_REQUEST_BASELINE !== '1') {
+      const queueReads = observed.requests.filter(
+        (read) => read.phase === 'streaming' && read.path.endsWith('/queued-inputs'),
+      );
+      expect(queueReads.length).toBeLessThanOrEqual(7);
+      expect(
+        observed.requests.filter((read) => /^\/api\/v2\/responses\/[^/]+$/.test(read.path)),
+      ).toEqual([]);
+    }
     fixture.append({ type: 'message', role: 'assistant', content: 'Retained recorded answer' });
     fixture.append({ type: 'turn_completed', turn_sequence: 5 });
     await page.getByText('Retained recorded answer', { exact: true }).waitFor();
@@ -164,13 +173,30 @@ test('Agent open, send, active stream and cached return', async ({ page, baseURL
     await input.fill('Unsent draft');
     await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
     observed.mark('cachedInteractive');
-    await observed.save(info);
     expect(fixture.writes).toHaveLength(1);
     expect(fixture.errors).toEqual([]);
     expect(fixture.boundary.errors).toEqual([]);
     expect(fixture.boundary.unexpected).toEqual([]);
+  } catch (error) {
+    await info.attach('local-fixture-surface', {
+      body: await page.locator('.agent-surface').innerText(),
+      contentType: 'text/plain',
+    });
+    throw error;
   } finally {
     clearInterval(events);
+    await observed.save(info);
+    await info.attach('fixture-boundary', {
+      body: JSON.stringify({
+        writes: fixture.writes.length,
+        streams: fixture.streams.size,
+        reads: fixture.reads,
+        errors: fixture.errors,
+        scriptErrors: fixture.boundary.errors,
+        unexpected: fixture.boundary.unexpected,
+      }),
+      contentType: 'application/json',
+    });
     await fixture.close(page);
   }
 });
