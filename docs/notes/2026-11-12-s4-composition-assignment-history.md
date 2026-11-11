@@ -410,5 +410,3 @@ Project 9 stays In Progress. No slice PR; S2 owns integration/review/merge. This
 does not close the remaining P1 activation findings or open writer/recovery
 activation. The Thursday train cutoff is acknowledged; this source is available
 for integration qualification before the assigned 04:00 source checkpoint.
-
-
