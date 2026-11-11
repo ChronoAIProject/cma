@@ -1,8 +1,10 @@
 # Owner-key identifier Secret cutover
 
 This is the train handoff for #1588, coordinated with parity issue #1587 / PR
-#1589. Only **cma-web-hotfix**, in the approved release execution context, runs
-production commands. Merge/review does not authorize this cutover. The target is
+#1589. **cma-web-hotfix coordinates the train; cmaeg-release executes the CMAEG step**
+under the coordinator's active bridge lock, in the approved execution context.
+Record any executor substitution before the first write. Merge/review does not
+authorize this cutover; the train GO and current execution gates are still required. The target is
 the first eligible evening train on 2026-11-11, with code merged by 14:00 SGT and
 at least three hours before the train. The last fallback is the 2026-11-13 morning
 train, with production verification complete by 15:00 SGT. A missed review/train
@@ -34,6 +36,13 @@ then the two ConfigMap fields and any last-applied annotation containing them.
 It never changes an image, native flag, runtime pin, API resource or database.
 Do not invoke an attestation command, an old migrator, an old repository image,
 credential rotation, a master-key resolver or a Pod exec/env dump.
+
+**Secret-first release gate:** after this change lands, create and verify the
+Secret before **any** CMAEG deployment/config application from develop. The
+committed ConfigMap no longer supplies these keys; enabled mode fails closed
+without valid identifiers. Do not rely on legacy fallback during rolling overlap.
+The train coordinator must record the Secret prerequisite as VERIFIED before
+releasing the CMAEG image/config write gate.
 
 ## Preconditions and evidence
 
@@ -79,8 +88,10 @@ not secret values. Populate them through the train's normal setup. Do not execut
 these commands from an unapproved workstation or as part of CI.
 
 ```sh
+set -euo pipefail
 set +x
 umask 077
+ulimit -c 0
 python3 .github/scripts/cmaeg-owner-key-cutover.py capture \
   --context "$train_context" > "$train_evidence/owner-keys-before.json"
 python3 .github/scripts/cmaeg-owner-key-cutover.py seed \
@@ -93,6 +104,37 @@ memory. CREATE is exclusive: an existence race fails. An existing exact match is
 a no-op; mismatched, extra, missing or malformed keys are refused. It compares the
 Secret and ConfigMap in memory, emitting no values. No Pod restarts at this phase.
 A lost creation response is recoverable by recapture and the matching no-op path.
+
+After `seed` succeeds, perform this bounded key-presence-only readback before
+any Deployment change. The helper already compared the original and copied values
+in memory and validated their shape. This independent projection records only
+key presence/count and resource identity, without values or identifier hashes:
+
+```sh
+secret_presence_template='{"uid":{{printf "%q" .metadata.uid}},"resourceVersion":{{printf "%q" .metadata.resourceVersion}},"key_count":{{len .data}},"service_id_present":{{if index .data "CMAEG_OWNER_KEY_SERVICE_ID"}}true{{else}}false{{end}},"cutover_id_present":{{if index .data "CMAEG_OWNER_KEY_CUTOVER_ID"}}true{{else}}false{{end}}}'
+kubectl --context "$train_context" --namespace chrono-bot --request-timeout=10s \
+  get secret cma-event-gateway-owner-keys -o "go-template=$secret_presence_template" \
+  2>/dev/null > "$train_evidence/owner-keys-presence.json"
+python3 - "$train_evidence/owner-keys-seeded.json" \
+  "$train_evidence/owner-keys-presence.json" <<'PY'
+import json, sys
+with open(sys.argv[1]) as stream:
+    seeded = json.load(stream)["state"]["secret"]
+with open(sys.argv[2]) as stream:
+    observed = json.load(stream)
+assert seeded is not None
+assert observed["uid"] == seeded["uid"]
+assert observed["resourceVersion"] == seeded["resourceVersion"]
+assert observed["key_count"] == 2
+assert observed["service_id_present"] is True
+assert observed["cutover_id_present"] is True
+print("Secret key presence and identity verified")
+PY
+```
+
+A failed read, absent/extra key or changed Secret fence is a HOLD. Do not recapture
+through a mismatch to force acceptance. The Secret prerequisite is VERIFIED only
+after both the successful seed/equality check and this presence readback.
 
 Immediately before switching, capture again and review the public fences:
 
@@ -137,7 +179,10 @@ The train operator records the successful result in a 0600 JSON receipt with onl
 {
   "deployment_uid": "<from the public fence>",
   "generation": 0,
-  "secret": {"uid": "<from the public fence>", "resourceVersion": "<from the public fence>"},
+  "secret": {
+    "uid": "<from the public fence>",
+    "resourceVersion": "<from the public fence>"
+  },
   "owner_key_read_passed": true,
   "existing_channels_passed": true,
   "observation_passed": true,
@@ -188,21 +233,19 @@ image-only rollback if its data boundary permits it; keep these Secret reference
 and unchanged values in place. CMAEG's current forward-fix-only boundary still
 applies. Never use the pre-GitHub repository pin or run an old migrator.
 
-## Native typing drift and parity handoff
+## Native typing decision and parity handoff
 
-The recorded flag is `CMAEG_NATIVE_TYPING_ENABLED`, not a new WhatsApp intake
-activation. It controls Discord typing and private WhatsApp typing plus a read
-receipt. The **CMAEG feature/release owner**, **Discord integration/product owner**,
-and **WhatsApp integration/product/connection owner** must confirm intended
-activation and recipient/read-receipt behavior. The lead routes that decision;
-this repository has no CODEOWNERS mapping that identifies those people. NyxID's
-catalogue owner is needed only for an independent identity/introspection change,
-which this migration does not request. Keep the existing guarded repository flag
-and tests unchanged pending that decision.
+`CMAEG_NATIVE_TYPING_ENABLED` controls Discord typing and private WhatsApp typing
+plus a read receipt; it is not a new WhatsApp intake activation. The owner decision
+relayed on 2026-11-11 preserves production ON behavior. #1627 / #1624 deliberately
+align the repository ConfigMap and manifest contract to `true`; the absent-value
+application default remains `false`. See [native typing](CMAEG_Native_Typing.md)
+for the existing custody/writer gates and provider-acceptance limits.
 
-#1588 remains open until the train cutover/verification and activation decision
-are recorded. If this change lands before #1589, merge develop into the parity
-branch, retain these Secret references, remove its obsolete empty-placeholder
-apply guard and update the parity description with actual migration status. Only
-use cma-web-hotfix's final API handover for the image, generation, provenance and
-`TOKIO_WORKER_THREADS` downward-API stanza; a prior rollback report is insufficient.
+#1588 remains open until the Secret cutover and production verification are
+recorded. The separately resolved typing decision is not a Secret-cutover gate.
+#1589 integrates the Secret references and removes the obsolete empty-placeholder
+apply guard. Its Train E API generation 177 and Web generation 209 pins and
+provenance follow the verified release handover and fresh bounded readback,
+including the `TOKIO_WORKER_THREADS` downward-API stanza. Future train changes
+require another verified parity capture; a prior rollback report is insufficient.
