@@ -72,8 +72,16 @@ pub(super) async fn ready_source(store: &MongoSandboxStore, suffix: &str) -> Age
         .unwrap();
     let claimed = store.get_agent(&claimed.id).await.unwrap().unwrap();
     let conversation_id = format!("retained-conversation-{suffix}");
-    let claimed = ready_publication_claim(claimed, &conversation_id);
-    replace_agent_fixture(store, &claimed).await;
+    let mut claimed = ready_publication_claim(claimed, &conversation_id);
+    // Preparing the runtime conversation changes semantic state before its
+    // publication. Advance the revision through the normal store boundary so
+    // the previous Created checkpoint is stale, never falsely current.
+    let expected_revision = claimed.revision;
+    claimed.revision += 1;
+    store
+        .save_agent(expected_revision, claimed.clone())
+        .await
+        .unwrap();
     let fence = claimed.work.lease.as_ref().unwrap().fence;
     let mut ready = claimed.clone();
     ready
