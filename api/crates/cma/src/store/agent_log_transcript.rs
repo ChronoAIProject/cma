@@ -9,10 +9,7 @@ use super::agent_log::read_entry;
 use super::agent_log_integrity::read::read_proven_agent;
 use super::sandbox_mongo::{signed, MongoSandboxStore};
 
-const ROLLOUT_FLAG: &str = "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED";
-
 impl MongoSandboxStore {
-    #[cfg(test)]
     pub(crate) fn with_bounded_transcript_reads(mut self, enabled: bool) -> Self {
         self.bounded_transcript_reads = enabled;
         self
@@ -22,9 +19,7 @@ impl MongoSandboxStore {
         &self,
         expected: &Agent,
     ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
-        // S2 owns process-config registration. Until that contract is wired,
-        // an absent flag is deliberately closed and preserves complete reads.
-        if !self.bounded_transcript_reads && std::env::var(ROLLOUT_FLAG).as_deref() != Ok("true") {
+        if !self.bounded_transcript_reads {
             return Ok(None);
         }
         let mut session = self

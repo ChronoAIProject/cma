@@ -1,11 +1,19 @@
 //! Independent rollout policy for the current CMA interfaces.
+#[cfg(test)]
+mod segmentation_tests;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub parent_not_ready_pacing_enabled: bool,
     pub retained_reopen_enabled: bool,
     pub model_budget_writes_enabled: bool,
     pub model_request_budget_writes_enabled: bool,
     pub bounded_title_reads: bool,
     pub bounded_response_reads: bool,
+    pub bounded_transcript_reads: bool,
+    pub bounded_usage_reads: bool,
+    pub capacity_recovery_enabled: bool,
+    pub paged_response_events: bool,
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
     pub nyxid_resource_request: bool,
@@ -29,6 +37,10 @@ impl FeatureFlags {
             }
         }
         Ok(Self {
+            parent_not_ready_pacing_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED",
+            )?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
@@ -39,6 +51,13 @@ impl FeatureFlags {
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
+            bounded_transcript_reads: flag(
+                lookup,
+                "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED",
+            )?,
+            bounded_usage_reads: flag(lookup, "CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED")?,
+            capacity_recovery_enabled: flag(lookup, "CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED")?,
+            paged_response_events: flag(lookup, "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")?,
             v2_ui_transport: flag(lookup, "CHRONO_V2_UI_TRANSPORT_ENABLED")?,
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
@@ -48,6 +67,32 @@ impl FeatureFlags {
                 "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
             )?,
         })
+    }
+}
+
+#[cfg(test)]
+mod parent_pacing_tests {
+    use super::*;
+
+    #[test]
+    fn parent_readiness_pacing_is_independent_and_default_off() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.parent_not_ready_pacing_enabled, expected);
+            assert!(!flags.bounded_close_retries);
+            assert!(!flags.bounded_response_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED").then(|| value.into()))
+            })
+            .is_err());
+        }
     }
 }
 
@@ -148,6 +193,54 @@ mod response_tests {
         for value in ["", "1", "TRUE", " true "] {
             assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
                 == "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")
+                .then(|| value.into())))
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod paged_event_tests {
+    use super::*;
+    #[test]
+    fn paged_events_are_default_off_and_require_their_own_strict_boolean() {
+        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.paged_response_events, enabled);
+            assert!(!flags.bounded_response_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
+                == "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")
+                .then(|| value.into())))
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod transcript_tests {
+    use super::*;
+    #[test]
+    fn transcript_reads_require_an_independent_strict_opt_in() {
+        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_transcript_reads, enabled);
+            assert!(!flags.bounded_response_reads && !flags.bounded_title_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
+                == "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED")
                 .then(|| value.into())))
             .is_err());
         }
