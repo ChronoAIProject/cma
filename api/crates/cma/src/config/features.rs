@@ -4,6 +4,7 @@ mod segmentation_tests;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub bounded_permission_state: bool,
     pub parent_not_ready_pacing_enabled: bool,
     pub retained_reopen_enabled: bool,
     pub model_budget_writes_enabled: bool,
@@ -37,6 +38,7 @@ impl FeatureFlags {
             }
         }
         Ok(Self {
+            bounded_permission_state: flag(lookup, "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED")?,
             parent_not_ready_pacing_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED",
@@ -242,6 +244,31 @@ mod transcript_tests {
             assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
                 == "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED")
                 .then(|| value.into())))
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod permission_bound_tests {
+    use super::*;
+
+    #[test]
+    fn permission_state_requires_its_own_strict_opt_in() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_permission_state, expected);
+            assert!(!flags.bounded_response_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED").then(|| value.into()))
+            })
             .is_err());
         }
     }
