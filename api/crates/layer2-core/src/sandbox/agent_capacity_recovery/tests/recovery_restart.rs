@@ -1,5 +1,5 @@
-//! Receipt/no-replay model tests. These do not certify production registry
-//! activation after completion; that needs the restricted runtime adapter.
+//! Completed activation restart/no-replay model tests. These exercise the
+//! resumed protocol, not the still-Unsupported production native proof producer.
 use super::recovery::enabled;
 use super::recovery_store::{Fault, Runtime, Store};
 use super::*;
@@ -8,7 +8,7 @@ use crate::sandbox::agent_capacity_recovery::{ports::*, service::*, state::*};
 const EXPIRES: &str = "2026-09-05T00:32:01Z";
 
 #[tokio::test]
-async fn live_completion_restart_returns_exact_receipt_without_replaying_input() {
+async fn live_completion_restart_activates_exact_receipt_without_replaying_input() {
     // Crash before runtime ack, lost commit ack, and failed runtime ack.
     for boundary in 0..3 {
         for active in [false, true] {
@@ -72,6 +72,7 @@ async fn live_completion_restart_returns_exact_receipt_without_replaying_input()
                 s.work = Some(serde_json::from_slice(&encoded).unwrap());
                 (receipt, s.fixture.agent.clone(), s.logs.clone())
             };
+            runtime.0.lock().unwrap().acknowledgement_unavailable = false;
             let restarted = CapacityRecoveryService::new(store.clone(), runtime.clone());
             for _ in 0..2 {
                 assert_eq!(
@@ -112,11 +113,11 @@ async fn live_completion_restart_returns_exact_receipt_without_replaying_input()
             assert_eq!(s.successors, 1);
             assert_eq!(s.publications, 1);
             let r = runtime.0.lock().unwrap();
-            assert_eq!(r.reconnects.len(), 1);
-            assert_eq!(r.acknowledgement_attempts, usize::from(boundary == 2));
-            assert_eq!(r.acknowledgements, 0);
-            // Receipt idempotence is proven here. Live registry activation after
-            // an unacknowledged completion remains a production acceptance gate.
+            assert_eq!(r.reconnects.len(), 3);
+            assert_eq!(r.acknowledgement_attempts, 2 + usize::from(boundary == 2));
+            assert_eq!(r.acknowledgements, 1);
+            assert_eq!(r.activated.len(), 1);
+            assert!(r.reconnects.iter().all(|target| target == &r.reconnects[0]));
         }
     }
 }
@@ -175,9 +176,9 @@ async fn unknown_completion_blocks_reconnect_until_exact_reconciliation() {
         assert_eq!(s.publications, 1);
         assert_eq!(s.fixture.agent.work.step, AgentWorkStep::None);
         let r = runtime.0.lock().unwrap();
-        assert_eq!(r.reconnects.len(), if committed { 1 } else { 2 });
+        assert_eq!(r.reconnects.len(), 2);
         assert!(r.reconnects.iter().all(|target| target == &r.reconnects[0]));
-        assert_eq!(r.acknowledgements, usize::from(!committed));
+        assert_eq!(r.acknowledgements, 1);
     }
 }
 
@@ -206,5 +207,38 @@ async fn completion_from_another_attempt_cannot_acknowledge_this_attachment() {
         assert_eq!(store.0.lock().unwrap().publications, 1);
         assert_eq!(runtime.0.lock().unwrap().acknowledgement_attempts, 0);
         assert_eq!(runtime.0.lock().unwrap().acknowledgements, 0);
+    }
+}
+
+#[tokio::test]
+async fn completed_restart_refuses_changed_parent_or_fence_before_native_io() {
+    for changed_parent in [true, false] {
+        let store = Store::new(Fixture::new());
+        let runtime = Runtime::default();
+        let service = enabled(store.clone(), runtime.clone());
+        let caller = store.caller();
+        let request = store.request();
+        service.admit(&caller, &request).await.unwrap();
+        service
+            .resume(&caller, &request, "original", NOW, LATER, EXPIRES)
+            .await
+            .unwrap();
+        {
+            let mut s = store.0.lock().unwrap();
+            if changed_parent {
+                s.fixture.sandbox.status = SandboxStatus::Retiring;
+            } else {
+                s.fixture.agent.work.next_fence += 1;
+            }
+        }
+        assert_eq!(
+            service
+                .resume(&caller, &request, "restart", LATER, EXPIRES, EXPIRES)
+                .await,
+            Err(RecoveryError::Conflict)
+        );
+        assert_eq!(runtime.0.lock().unwrap().reconnects.len(), 1);
+        assert_eq!(runtime.0.lock().unwrap().acknowledgements, 1);
+        assert_eq!(store.0.lock().unwrap().publications, 1);
     }
 }
