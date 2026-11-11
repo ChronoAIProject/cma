@@ -12,7 +12,7 @@ use crate::store::{
     agent_log_integrity::TransactionLogError,
     agent_log_segments::{
         capture::{self, CapturedFormat, CapturedLog},
-        incarnation,
+        current_publication, incarnation,
         publication::{self, Publication, PublicationIdentity},
         transaction_scope::TransactionScope,
         Seal,
@@ -64,6 +64,37 @@ pub(super) async fn read(
     };
     stored.result.require_logs(&stored.work, &logs)?;
     Ok(Some(stored))
+}
+
+/// Call only with an original witness verified by `read` in this same scope.
+/// A later Completed result needs positive current publication evidence; a
+/// revision increase or matching incarnation alone never grants this proof.
+pub(super) async fn require_current_result(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    stored: &StoredRecovery,
+    scope: &mut TransactionScope<'_>,
+) -> Result<(), TransactionLogError> {
+    if stored.result.agent_revision == current.revision {
+        if stored.result.agent_digest != publication::result_digest(current)? {
+            return Err(SandboxStoreError::Conflict.into());
+        }
+        return Ok(());
+    }
+    if stored.work.phase != RecoveryPhase::Completed
+        || stored.result.agent_revision >= current.revision
+        || stored.result.through_seq > current.conversation.last_seq
+    {
+        return Err(SandboxStoreError::Conflict.into());
+    }
+    let proof = current_publication::capture(store, current, scope).await?;
+    let latest = proof.require_current(store, current, scope)?;
+    if u64::try_from(latest.result_revision).ok() != Some(current.revision)
+        || u64::try_from(latest.last_seq).ok() != Some(current.conversation.last_seq)
+    {
+        return Err(SandboxStoreError::Conflict.into());
+    }
+    Ok(())
 }
 
 fn verify_binding(
