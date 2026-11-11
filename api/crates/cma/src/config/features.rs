@@ -77,6 +77,9 @@ impl FeatureFlags {
 }
 
 #[cfg(test)]
+mod capacity_tests;
+
+#[cfg(test)]
 mod parent_pacing_tests {
     use super::*;
 

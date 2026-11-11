@@ -1,5 +1,7 @@
 use super::*;
 
+mod shape;
+
 #[test]
 fn capacity_recovery_carrier_roundtrips_only_the_versioned_bounded_binding() {
     let original = test_support::stored();
