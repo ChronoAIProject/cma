@@ -1,0 +1,206 @@
+//! Durable keyed append. Admission/staging precede the caller's publication
+//! transaction; an unknown publication outcome never starts another append.
+use super::*;
+use crate::store::agent_log_segments::{
+    self as segments, capture,
+    publication::{self, PublicationIdentity},
+    transaction_scope::TransactionScope,
+    writer_admission::{Admission, AdmissionKind},
+    writer_bootstrap::BootstrapPlan,
+    writer_commit::{self, AggregateUpdate, PublicationInput},
+    writer_plan, writer_reconcile,
+};
+use layer2_core::sandbox::{store::AgentLogPublicationIdentity, Agent};
+use mongodb::bson::{spec::BinarySubtype, Binary};
+
+mod preparation;
+
+pub(super) async fn append(
+    store: &MongoSandboxStore,
+    id: &AgentId,
+    identity: &AgentLogPublicationIdentity,
+    kind: AgentLogKind,
+) -> Result<AgentLogEntry, SandboxStoreError> {
+    let operation = PublicationIdentity {
+        key: identity.key.clone(),
+        fingerprint: Binary {
+            subtype: BinarySubtype::Generic,
+            bytes: identity.fingerprint.to_vec(),
+        },
+        appended_at: identity.appended_at.clone(),
+    };
+    operation.validate()?;
+    let _writer = store.agent_writes.lock(id).await;
+    for _ in 0..TRANSACTION_ATTEMPTS {
+        if let Some(entry) = writer_reconcile::replay(store, id, &operation, &kind).await? {
+            return Ok(entry);
+        }
+        let (current, entry, admission_kind) = source(store, id, &operation, &kind).await?;
+        let (admission, bootstrap) =
+            preparation::prepare(store, &current, &operation, admission_kind).await?;
+        let mut session = store.client.start_session().await.map_err(driver)?;
+        let mut scope = TransactionScope::start(&mut session)
+            .await
+            .map_err(driver)?;
+        let result = publish(
+            store,
+            &mut scope,
+            &current,
+            &entry,
+            &operation,
+            admission.as_ref(),
+            bootstrap.as_ref(),
+        )
+        .await;
+        let next = match result {
+            Ok(next) => next,
+            Err(error) => {
+                let _ = scope.release().abort_transaction().await;
+                if let Some(entry) = writer_reconcile::replay(store, id, &operation, &kind).await? {
+                    return Ok(entry);
+                }
+                if matches!(
+                    &error,
+                    TransactionLogError::Domain(SandboxStoreError::Conflict)
+                ) || matches!(&error, TransactionLogError::Driver(error) if is_transient(error))
+                {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+                return Err(domain(error));
+            }
+        };
+        // All captured/prepared capabilities are consumed before raw-session
+        // domain work. Any domain error still aborts the entire transaction.
+        let session = scope.release();
+        if matches!(entry.kind, AgentLogKind::TurnCompleted { .. }) {
+            if let Err(error) = crate::store::suggestions::enqueue(
+                store,
+                &next,
+                std::slice::from_ref(&entry),
+                session,
+            )
+            .await
+            {
+                let _ = session.abort_transaction().await;
+                return Err(domain(error));
+            }
+        }
+        match commit_transaction(session).await {
+            CommitOutcome::Committed => return Ok(entry),
+            CommitOutcome::Retry(_) => {
+                let _ = session.abort_transaction().await;
+            }
+            CommitOutcome::Unknown(_) => {
+                return writer_reconcile::replay(store, id, &operation, &kind).await?
+                    .ok_or_else(|| SandboxStoreError::Unavailable("keyed Agent log publication remains unknown; retain its original identity".into()));
+            }
+            CommitOutcome::Failed(error) => return Err(driver(error)),
+        }
+    }
+    Err(SandboxStoreError::Unavailable(
+        "keyed Agent log publication exhausted its known-abort retry budget".into(),
+    ))
+}
+
+async fn source(
+    store: &MongoSandboxStore,
+    id: &AgentId,
+    operation: &PublicationIdentity,
+    kind: &AgentLogKind,
+) -> Result<(Agent, AgentLogEntry, Option<AdmissionKind>), SandboxStoreError> {
+    let mut snapshot = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .await
+        .map_err(driver)?;
+    let row = store
+        .agents
+        .find_one(doc! {"_id":id.as_str()})
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut snapshot)
+        .await
+        .map_err(driver)?
+        .ok_or(SandboxStoreError::NotFound)?;
+    let current = read_agent(&row)?;
+    let entry = AgentLogEntry {
+        agent_id: id.clone(),
+        seq: current
+            .conversation
+            .last_seq
+            .checked_add(1)
+            .ok_or(SandboxStoreError::SequenceConflict)?,
+        appended_at: operation.appended_at.clone(),
+        kind: kind.clone(),
+    };
+    let admission = if segments::read_format(&row)?.is_some() {
+        let head = segments::read_head(store, &row, &mut snapshot, true)
+            .await
+            .map_err(domain)?;
+        writer_plan::needs_normal_rollover(&head, std::slice::from_ref(&entry))?
+            .then_some(AdmissionKind::Rollover)
+    } else {
+        Some(AdmissionKind::Activation)
+    };
+    Ok((current, entry, admission))
+}
+
+async fn publish(
+    store: &MongoSandboxStore,
+    scope: &mut TransactionScope<'_>,
+    current: &Agent,
+    entry: &AgentLogEntry,
+    operation: &PublicationIdentity,
+    admission: Option<&Admission>,
+    bootstrap: Option<&BootstrapPlan>,
+) -> Result<Agent, TransactionLogError> {
+    let row = scope
+        .find_one(&store.agents, doc! {"_id":current.id.as_str()})
+        .await
+        .map_err(TransactionLogError::Driver)?
+        .ok_or(SandboxStoreError::NotFound)?;
+    if read_agent(&row)? != *current {
+        return Err(SandboxStoreError::Conflict.into());
+    }
+    let captured = capture::capture_transaction(store, current, scope).await?;
+    let mut next = current.clone();
+    next.conversation.last_seq = entry.seq;
+    let plan = writer_commit::prepare(
+        store,
+        scope,
+        &captured,
+        PublicationInput {
+            operation,
+            current,
+            next: &next,
+            logs: std::slice::from_ref(entry),
+            capacity: AppendCapacity::Normal,
+            result_digest: publication::result_digest(entry)?,
+        },
+        bootstrap,
+        admission,
+    )
+    .await?;
+    writer_commit::persist(
+        store,
+        scope,
+        plan,
+        AggregateUpdate {
+            filter: doc! {"_id":current.id.as_str()},
+            fields: crate::store::agents::agent_replacement_fields(&next)?,
+        },
+    )
+    .await?;
+    Ok(next)
+}
+
+fn driver(_: mongodb::error::Error) -> SandboxStoreError {
+    SandboxStoreError::Unavailable("keyed Agent log publication storage is unavailable".into())
+}
+fn domain(error: TransactionLogError) -> SandboxStoreError {
+    match error {
+        TransactionLogError::Domain(error) => error,
+        TransactionLogError::Driver(error) => driver(error),
+    }
+}

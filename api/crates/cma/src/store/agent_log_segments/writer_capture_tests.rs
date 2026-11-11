@@ -4,7 +4,7 @@ use crate::store::agent_log_segments::{capture, publication, writer_commit};
 use layer2_core::sandbox::AgentLogKind;
 use mongodb::Collection;
 
-fn proposed(f: &Fixture) -> (Agent, Vec<AgentLogEntry>, PublicationIdentity) {
+pub(super) fn proposed(f: &Fixture) -> (Agent, Vec<AgentLogEntry>, PublicationIdentity) {
     let logs = vec![AgentLogEntry {
         agent_id: f.agent.id.clone(),
         seq: f.agent.conversation.last_seq + 1,
@@ -22,7 +22,7 @@ fn proposed(f: &Fixture) -> (Agent, Vec<AgentLogEntry>, PublicationIdentity) {
     (next, logs, operation)
 }
 
-fn input<'a>(
+pub(super) fn input<'a>(
     f: &'a Fixture,
     next: &'a Agent,
     logs: &'a [AgentLogEntry],
