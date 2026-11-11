@@ -51,32 +51,83 @@ client uses CMA's HttpOnly browser cookie. `GET /auth/login` begins OAuth,
 authenticated subject and capabilities, and `GET /auth/logout` ends browser
 sign-in. Do not put a bearer credential in URLs, local storage or embed markup.
 
-`GET /auth/login?prompt=none` asks NyxID to reuse an existing provider session
-without showing anything. A signed-in browser that has already approved CMA
-returns with a code and is signed in. `consent_required` continues to an
-ordinary interactive authorization, which shows NyxID's consent screen and
-starts no work. Any other provider refusal, including `login_required`, redirects
-to the validated `return_to` without a cookie instead of reporting a failed
-sign-in; the provider's `error_description` is accepted and ignored. `prompt=none`
-cannot be combined with `screen=register`, and no other `prompt` value is
-accepted. An anonymous `GET /auth/session` reports `"silent_sign_in": true`, and the
-web client attempts the silent form only when it is reported, so a web release
-deployed ahead of its API, or left running after an API rollback, does not use
-it. The report cannot coordinate requests within one API rollout: while old and
-new replicas overlap, an attempt that reaches an old replica is refused with that
-replica's error once, and that tab does not try again. Deploy the API first.
+`GET /auth/login?prompt=none` asks NyxID to reuse an existing provider session.
+The server always accepts this protocol, including ignored `error_description`
+and `error_uri` fields. The anonymous session response reports
+`silent_sign_in: true` only when the strict startup boolean
+`CHRONO_SILENT_SIGN_IN_ENABLED` is enabled; its code and ConfigMap defaults are
+`false`. Disabling the hint does not break an already started exchange.
 
-CMA logout ends the CMA cookie, not the NyxID session. The web client therefore
-sets a `cma_signed_out` cookie as it signs out. While a browser presents it, CMA
-declines a silent sign-in at entry and on its callback, so an attempt in another
-tab whose callback arrives after the sign-out issues no CMA login; the next
-completed interactive sign-in clears it. The cookie can only decline a silent
-sign-in, so it carries no authority. Two cases are outside this guarantee: a
-callback CMA is already processing when the sign-out happens, and a navigation
-to `/auth/logout` that does not go through the web client's Sign out, which sets
-no marker. The web client tries the silent form once per tab before showing the
-signed-out landing, only on pages that are valid return targets without a query
-or fragment, and only on its first identity read.
+A valid code completes the existing browser-bound, single-use PKCE exchange.
+`login_required` and other provider refusals return to the stored validated
+address without authenticating. `consent_required` can start one fresh state/PKCE
+exchange for NyxID consent, retaining the original logout fence and automatic
+failure behavior. Discovery, token, identity and store failures of a bound
+automatic attempt also return without issuing a session. Invalid/unbound states
+never authenticate or trust a callback-supplied return address. Automatically
+initiated states have a non-authorizing presentation prefix: when state or
+binding cannot be recovered they safely return to `/` without an error page;
+bound failures, including expiry before TTL cleanup, retain the validated target.
+`prompt=none` with `screen=register`, other prompts and duplicate/unknown fields
+are rejected. Cross-site/same-site Fetch Metadata or a foreign Origin cannot
+start silent login. Non-browser clients may call these same public routes.
+
+`GET /auth/logout` itself sets a host-only, HttpOnly, SameSite=Lax
+`cma_signed_out` marker (Secure on HTTPS) for 30 days and expires `cma_session`.
+This is an automatic-sign-in opt-out, not identity authority. Explicit sign-in
+and registration remain available; they deliberately do not clear the opt-out.
+That prevents a delayed callback response from erasing a newer logout.
+
+Before sending the initiating-browser binding cookie, CMA reserves non-authorized
+custody in `auth_browser_logins`. The callback atomically promotes only that
+unexpired reservation, without upsert; logout removes the active session and
+all reservations identified by its browser binding cookies. Promotion and logout
+therefore serialize on the same durable record across replicas. Consent reuses
+the reservation. A replay never clears a binding cookie that may still fence an
+in-flight callback. Successful responses set the session before clearing the
+binding; failed valid attempts revoke custody before clearing it. A failed store
+revocation returns 503, still sends suppression and expires only successfully revoked cookies, retains
+failed revocation handles for retry, and never
+reports successful logout. No callback or navigation creates resources or submits
+input. Existing sessions still require the live authorization and bounded
+session-inspection policy in [Identity interruption policy](Identity_Outage_Policy.md).
+
+The web checks once per tab, on the opening identity read or later navigation to
+an eligible SPA page. Focus, visibility and online refreshes never initiate a
+navigation. A stopped/failed navigation returns to the ordinary signed-out view;
+the attempt marker prevents a loop. Authentication uncertainty and signed-out
+presentation retain owner-scoped drafts and command keys; explicit logout or a
+verified different owner clears them before that owner's view mounts.
+
+Return paths remain canonical and relative, at most 256 bytes. The server and
+both SDKs additionally preserve one `setup` query on `/bots/new` or one `tab`
+query on `/sandboxes/{id}`, with the whole target bounded to 25,064 bytes. These
+are the UI's existing non-authorizing query states; values remain untrusted and
+are validated by the destination. Unknown/duplicate query keys are rejected so
+redirect/authority parameters cannot acquire meaning across authentication.
+Fragments remain excluded from automatic sign-in because they may contain share
+credentials that must not be sent to the server. Public Trigger/Launch/share/
+document flows keep their explicit authority-preserving sign-in. `/` returns to
+`/` on both success and refusal. Browser identity/flow responses are no-store; anonymous signup-options retains its public five-minute cache.
+
+### Silent sign-in rollout
+
+1. Keep `CHRONO_SILENT_SIGN_IN_ENABLED=false`. Deploy the compatible API image to
+   every serving replica, and deploy its web image. Record image digests, source
+   SHA and config. Pin a compatible API image as the rollback baseline.
+2. Verify every replica serves the new image and `silent_sign_in: false`. Allow
+   pre-upgrade attempts to expire (10 minutes); an old unfenced attempt is refused
+   and the person can explicitly restart sign-in. Do not enable while any older
+   replica can receive a request.
+3. Enable the flag in a separate operator-controlled ConfigMap rollout/restart.
+   Verify `silent_sign_in: true`, then execute the
+   [acceptance matrix](CMA_Silent_Sign_In_Acceptance.md). The flag advertises
+   eligibility only; it grants no authority and creates no resources.
+4. Roll back activation by setting the flag to `false` and restarting the API
+   fleet. Keep the compatible callback/logout implementation so in-flight
+   attempts finish safely. A web rollback is independent. Keep existing sessions,
+   reserved-custody records and user resources; never restore a pre-fence API
+   image as the live rollback target. No database migration or cleanup is needed.
 
 `GET /auth/signup-options` is anonymous and returns exactly
 `email_signup`, `social_providers`, `invite_code_required` and

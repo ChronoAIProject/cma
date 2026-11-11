@@ -91,3 +91,10 @@ navigating. Treat the hosted URL as sensitive handoff data: do not log it or put
 in the return destination. Poll `readConnection` with the authenticated owner;
 CMA does not inspect cross-origin window contents. Manual connection metadata
 does not imply that a hosted handoff is available.
+
+Browser return URLs preserve one `setup` query on `/bots/new` or one `tab` query
+on `/sandboxes/{id}`. Paths remain canonical and relative (256 bytes); complete
+targets are bounded to 25,064 UTF-8 bytes. Unknown/duplicate query keys and
+fragments are refused. The startup-gated `silent_sign_in` hint defaults to false;
+the SDK still projects `{ authenticated: false }`. Server logout sets a 30-day
+automatic-sign-in opt-out; explicit sign-in remains available.
