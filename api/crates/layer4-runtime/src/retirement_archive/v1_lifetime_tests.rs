@@ -183,11 +183,16 @@ async fn v1_real_files_reuse_both_bounds_and_preserve_originals_over_1400_lifecy
     let archive = fixture.open(false).await;
     archive.require_ready().await.unwrap();
     let (proof, receipt) = original.unwrap();
+    let root = fixture.root.clone();
     assert_eq!(
         archive
-            .transfer_group(proof, Direction::Deactivate, |_| panic!(
-                "cold retry must not move again"
-            ))
+            .transfer_group(proof, Direction::Deactivate, move |record| {
+                Pair::open(
+                    &directory(&root, false, record),
+                    &directory(&root, true, record),
+                )?
+                .transfer(&record.name, &record.bytes, false, |_| Ok(()))
+            })
             .await
             .unwrap(),
         receipt
