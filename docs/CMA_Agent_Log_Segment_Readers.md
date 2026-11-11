@@ -134,3 +134,13 @@ executable predecessor/rollback qualification and the full integrated foreground
 caller inventory remain required before #1348 closes. Release-owner production
 verification must observe real boundary replay and natural rollover without
 synthetic user input; elapsed time alone cannot satisfy that evidence.
+
+`.github/scripts/agent-log-predecessor-tests.py` archives the original pinned
+pre-segmentation store and injects a test module only. It exercises unchanged
+legacy reads/writes, then verifies that the segmented envelope tripwire refuses
+reads and appends without changing the original source BSON. Run it under an
+existing shared heavy lock with two Cargo jobs and the worktree's single explicit
+Cargo target. It reuses the canonical disposable Mongo runner's image, cache,
+resource bounds and cleanup; its temporary source archive is removed afterward.
+This predecessor check does not certify the release's permitted rollback image
+or prove that an already-running old writer has been drained.
