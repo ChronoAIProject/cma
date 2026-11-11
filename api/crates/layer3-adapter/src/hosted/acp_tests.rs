@@ -12,6 +12,9 @@ use crate::{
 
 type ServerSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
 
+#[path = "acp_permission_tests.rs"]
+mod permission_tests;
+
 #[path = "acp_access_tool_tests.rs"]
 mod access_tool_tests;
 #[path = "acp_channel_tool_tests.rs"]
@@ -132,6 +135,7 @@ async fn reject(server: &mut ServerSocket, request: &serde_json::Value) {
 
 fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentOpenSettings {
     HostedAgentOpenSettings {
+        bounded_permission_state: false,
         already_initialized_error: Some(serde_json::json!({
             "code": -32603, "message": "Internal error",
             "data": { "details": "Already initialized" },
