@@ -104,12 +104,14 @@ pub(super) fn responses(
     agent_page_origin: layer1_public::agent_page::AgentPageOrigin,
     bindings: &BindingComposition,
     gateway: Option<&crate::config::GatewayConfig>,
+    retained_context_lookup: bool,
 ) -> Result<Router, String> {
     let mut state =
         layer1_public::responses::v2::ResponsesV2State::new(agent_page_origin, commands, reads)
             .with_bindings(layer2_core::sandbox::binding::BindingAccessService::new(
                 stores.sandbox_model.clone(),
-            ));
+            ))
+            .with_retained_context_lookup(retained_context_lookup);
     if let Some(gateway) = gateway {
         state = state.with_event_router(super::event_routing::CmaEventRouter::new(
             stores.sandbox_model.clone(),
