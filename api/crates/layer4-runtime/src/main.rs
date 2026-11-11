@@ -28,6 +28,9 @@ mod lanes;
 mod ledger_format;
 mod ledger_import;
 mod ledger_reclamation;
+#[cfg(test)]
+#[path = "ledger_collector/storage_tests.rs"]
+pub mod ledger_collector_storage_tests;
 mod ledger_storage;
 mod link;
 mod mutation_authority;
