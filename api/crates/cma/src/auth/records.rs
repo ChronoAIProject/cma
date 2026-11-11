@@ -57,12 +57,12 @@ pub(super) fn registration_decision(
     state: &PlatformAdmissionState,
     existing: bool,
 ) -> RegistrationDecision {
-    if !state.closed_for_registration() {
-        RegistrationDecision::Admitted
-    } else if existing {
+    if existing {
         RegistrationDecision::Existing
-    } else {
+    } else if state.closed_for_registration() {
         RegistrationDecision::Closed
+    } else {
+        RegistrationDecision::Admitted
     }
 }
 
@@ -86,18 +86,18 @@ impl AuthState {
         let Some(spend) = self.spend.as_ref() else {
             return Ok(RegistrationDecision::Admitted);
         };
+        // An existing owner signs in without the platform state: closures
+        // close registration, and an unreadable state must not lock owners out.
+        if let Some(records) = self.records.as_ref() {
+            if records.users.user(subject).await?.is_some() {
+                return Ok(RegistrationDecision::Existing);
+            }
+        }
         let state = spend
             .admission_state(now_seconds())
             .await
             .map_err(|error| StoreError::Unavailable(error.to_string()))?;
-        if !state.closed_for_registration() {
-            return Ok(RegistrationDecision::Admitted);
-        }
-        let existing = match self.records.as_ref() {
-            Some(records) => records.users.user(subject).await?.is_some(),
-            None => false,
-        };
-        Ok(registration_decision(&state, existing))
+        Ok(registration_decision(&state, false))
     }
 
     /// Advisory, at the sign-up entry: an unreadable state proceeds and the
