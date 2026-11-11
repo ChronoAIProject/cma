@@ -52,6 +52,7 @@ pub(super) async fn configure(
                 stop_percent: 100,
                 protected_reserve: 0,
                 lag_allowance: 0,
+                cloud: None,
             }),
             default_policy: None,
             request_models: Vec::new(),

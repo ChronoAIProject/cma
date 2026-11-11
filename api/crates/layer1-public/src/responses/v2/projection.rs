@@ -239,6 +239,7 @@ fn failure_code(code: CommandFailureCode) -> &'static str {
         CommandFailureCode::OwnerBudgetExhausted => "owner_budget_exhausted",
         CommandFailureCode::TurnBudgetExhausted => "turn_budget_exhausted",
         CommandFailureCode::BudgetUnavailable => "budget_unavailable",
+        CommandFailureCode::PlatformBudgetExhausted => "platform_budget_exhausted",
         CommandFailureCode::QueueTimeout => "agent_command_queue_timeout",
         CommandFailureCode::AuthorityRevoked => "agent_command_authority_revoked",
         CommandFailureCode::AuthorityUnavailable => "agent_command_authority_unavailable",
