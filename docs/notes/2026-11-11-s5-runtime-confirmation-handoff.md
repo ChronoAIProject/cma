@@ -68,15 +68,10 @@ must bind that exact request and independently produced native state to a retain
 output interval with no acknowledgement gap. A native terminal result for a still
 admitted active turn is refused for separate durable output reconciliation.
 
-The concrete minimal shared-file patch is
-`docs/notes/2026-11-11-s5-adapter-shared.patch`, mirrored at the lead's absolute
-notes path `2026-11-11-1351-adapter-shared.patch`. `git apply --check` passes against
-this source. It is supplied for S2 integration and has not been applied to shared
-files here. It additionally identifies `hosted/backend.rs::HostedBackend`'s optional
-native-transport hook and `codex/adapter.rs`'s forwarding method; S2 must route
-those shared-file edits to their owner. Current shared roots are already 495,
-500 and 499 lines, so their owner must keep the final implementation below the
-500-line limit when integrating the patch.
+The shared trait/export/dispatch edits have been integrated by S2. The consumed
+patch is replaced by the executable source. Shared roots delegate runtime inspection,
+finality checks and protected filesystem operations to focused children so the
+adapter roots remain below 500 lines. Registration does not enable a native producer.
 
 This checkpoint validates a producer result; it does not invent the producer.
 The backend hook defaults absent and the restricted call returns typed Unsupported
