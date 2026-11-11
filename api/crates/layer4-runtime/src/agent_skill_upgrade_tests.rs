@@ -415,3 +415,6 @@ async fn upgrade_ledger_replay_is_fenced_and_home_removal_dominates_both_store_f
 
 #[path = "agent_skill_upgrade_compatibility_tests.rs"]
 mod compatibility;
+
+#[path = "agent_skill_upgrade_recovery_tests.rs"]
+mod recovery;

@@ -198,7 +198,30 @@ impl AgentWorker {
         }
     }
     async fn retry_skill(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
+        // Lifecycle reconnection can reset work-step attempts; the admitted skill
+        // owns its preparation budget. Pinned material requires runtime evidence.
+        let preparing = agent
+            .work
+            .live_skills
+            .last()
+            .filter(|item| item.previous.is_some() && item.material.is_none());
+        if preparing.is_some_and(|item| {
+            item.preparation_retries
+                >= layer3_adapter::MAX_AGENT_SKILL_UPGRADE_PREPARATION_ATTEMPTS - 1
+        }) {
+            let reason = layer3_adapter::AgentSkillUpgradeRefusal::PreparationExhausted;
+            return self
+                .finish_skill(agent, Some(&format!("{}: {reason}", reason.code())), now)
+                .await;
+        }
         let mut next = agent.clone();
+        if preparing.is_some() {
+            next.work
+                .live_skills
+                .last_mut()
+                .expect("present")
+                .preparation_retries += 1;
+        }
         let fence = claimed_fence(&agent, &self.config.holder)?;
         next.work
             .retry(

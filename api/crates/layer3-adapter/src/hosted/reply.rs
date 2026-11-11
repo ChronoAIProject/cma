@@ -75,13 +75,17 @@ pub(super) fn failure_error(failure: WireFailure) -> AdapterError {
             "agent_skill_upgrade_modified"
                 | "agent_skill_upgrade_previous_unavailable"
                 | "agent_skill_upgrade_retention_full"
+                | "agent_skill_upgrade_recovery_conflict"
+                | "agent_skill_upgrade_preparation_exhausted"
         )
     {
         use crate::AgentSkillUpgradeRefusal as Refusal;
         AdapterError::SkillUpgradeRefused(match failure.code.as_str() {
             "agent_skill_upgrade_modified" => Refusal::Modified,
             "agent_skill_upgrade_previous_unavailable" => Refusal::PreviousUnavailable,
-            _ => Refusal::RetentionFull,
+            "agent_skill_upgrade_retention_full" => Refusal::RetentionFull,
+            "agent_skill_upgrade_recovery_conflict" => Refusal::RecoveryConflict,
+            _ => Refusal::PreparationExhausted,
         })
     } else if failure.code == "at_capacity" {
         AdapterError::AtCapacity(detail)
@@ -230,6 +234,8 @@ mod tests {
             crate::AgentSkillUpgradeRefusal::Modified,
             crate::AgentSkillUpgradeRefusal::PreviousUnavailable,
             crate::AgentSkillUpgradeRefusal::RetentionFull,
+            crate::AgentSkillUpgradeRefusal::RecoveryConflict,
+            crate::AgentSkillUpgradeRefusal::PreparationExhausted,
         ] {
             let mut failure = WireFailure {
                 operation: WireOperation::InstallAgentSkill,
