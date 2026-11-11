@@ -135,7 +135,7 @@ The replacement operation follows these durable steps:
 3. Extra regular files/directories, including Python `__pycache__/*.pyc`, are
    allowed and retained with the entire old tree. They are not copied into the
    new version. Symlinks, special entries, hard links, unreadable content, over
-   8,192 entries or over 256 MiB are refused. Live installations also require the
+   8,192 entries, more than 64 directory levels, or over 256 MiB are refused. Live installations also require the
    exact previous `.cma-install-receipt.json`; profile skills must lack that marker.
    Neither a marker alone nor a marker supplied by an archive proves the tree.
 4. Stage under the same Agent home's `.cma-skill-upgrades/{request-sha256}/`,

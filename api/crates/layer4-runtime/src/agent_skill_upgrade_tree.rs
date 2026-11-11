@@ -107,6 +107,9 @@ fn walk(
     entries: &mut usize,
     bytes: &mut u64,
 ) -> Result<()> {
+    if prefix.len() > 4096 || prefix.bytes().filter(|b| *b == b'/').count() > 64 {
+        return Err(conflict("skill tree exceeds comparison bounds"));
+    }
     let mut names = fd::names(directory).map_err(|_| conflict("unreadable skill directory"))?;
     names.sort();
     if prefix.is_empty() && receipt.is_some() && !names.iter().any(|name| name == MARKER) {
@@ -129,7 +132,7 @@ fn walk(
             continue;
         }
         *entries += 1;
-        if *entries > 8192 || prefix.len() > 4096 {
+        if *entries > 8192 {
             return Err(conflict("skill tree exceeds comparison bounds"));
         }
         let metadata =
@@ -175,7 +178,7 @@ fn walk(
             let mut hash = Sha256::new();
             hash.update(before.len().to_be_bytes());
             let mut remaining = before.len();
-            let mut buffer = [0u8; 65536];
+            let mut buffer = vec![0u8; 65536];
             while remaining > 0 {
                 let count = file
                     .read(&mut buffer[..remaining.min(65536) as usize])
