@@ -116,7 +116,7 @@ Target caller SHA plus actual gates by 06:30. No missing signature; production
 native Unsupported and default-off admission remain explicit. Part of #1351.
 
 
-### P1-3 actual result and sequence-only boundary — 06:15 checkpoint
+### P1-3 actual result and sequence-only boundary — interim checkpoint
 
 Caller/test source is pushed at `76dcfb4a16d3dfc6e143ffb409fcc325fe0393c2`.
 Develop `3aee1ff68` is normally merged; independent retained-JSON/raw-output/
@@ -142,3 +142,54 @@ coverage. Final strict/units/Mongo on corrected source remain pending. Shared
 slot1 retains inode160080032; every owned lockf uses-k and3600second wait.
 First failed fixture and volume were removed; the one reusable target is kept
 only for immediate corrected-source qualification. Project9 remains In Progress.
+
+
+### S4 corrected P1-3 source consumed — shared qualification queued
+
+Exact pushed code `570cb11488cb21b7c946052105af381af759b64e` normally consumes
+S5 `00426512f`; its three owned files correct both revision+sequence identity,
+the original receipt unit case and actual worker fixture/selector. No missing
+API or ownership decision remains. The full source includes S4's three service
+regressions and develop `3aee1ff68`. Fmt, whitespace,6204-file size, configuration
+coverage and3907-commit secret scan pass. Shared slot1 wait began about06:17;
+strict CMA, focused units and71selected Mongo cases await acquisition. The old
+compile-only queue was cancelled before source capture or Cargo/Mongo execution.
+Earlier2dbb results remain164units passed and Mongo66passed/4failed; no corrected
+runtime pass is claimed before execution. Source remains pinned while queued.
+
+
+### S4 actual current-receipt result and complete turn fixture
+
+At570cb1148, strict CMA0diagnostics;166units passed (117CMA+49core);71actual
+Mongo executed:70passed/1failed in176.186seconds. All40writer/publication and all
+three service later-progress functions pass. Sole failure: the S5 turn=true
+fixture lacked OwnerMessage evidence and was correctly refused before native IO.
+Normally consumed test-only2144909cede519ed286184a7fffe1af3e645a47b and pushed
+that exact head after current develop merge. Complete batch requeued on shared
+slot1; final-source fmt,6204-file size,configuration and3908-commit scan pass.
+Second fixture/volume removed; minimum24%RAM and zero pauses; lock unchanged.
+
+
+### S4 P1-3 final qualification — 06:54 SGT
+
+Exact pushed executable source: `2144909cede519ed286184a7fffe1af3e645a47b` on
+`tl/cma-log-segments/writer-publication`. Strict CMA all-targets/all-features
+Clippy with `-D warnings` passes with zero diagnostics. All 166 focused units
+pass (117 CMA + 49 core); all 71 actual Mongo contracts pass (40 writer/publication
++ 31 capacity recovery) in 177.547 seconds. This includes all three S4 service and
+three S5 worker/loss later-progress functions, success, refusal, crash, abort,
+committed/uncommitted uncertainty, exact current proof and post-native recapture.
+
+Fmt/whitespace, the 6,204-file check, configuration coverage and source history
+secret scan (3,908 commits) pass. API source stayed unchanged throughout the run.
+No missing interface or ownership decision. Earlier failures stay attributed to
+their original pins in `docs/notes/2026-11-12-s4-later-progress.md`; structured
+gates are in `docs/notes/2026-11-12-s4-later-progress-gates.json`.
+
+Shared slot 1 retained inode 160080032; -k and 3,600-second wait, two jobs, one
+target; minimum 26% available RAM, zero pauses. All three owned Mongo fixtures
+and volumes are confirmed absent. Removed 2.451 GB of owned build/tool artifacts
+and the superseded proposal; shared locks/worktree retained. Raw evidence:
+`notes/2026-11-12-s4-later-progress-evidence/`.
+Project 9 stays In Progress. Production native confirmation remains Unsupported;
+admission stays default-off. S2 owns the combined PR/review/merge. Part of #1351/#1350.
