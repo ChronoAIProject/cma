@@ -12,7 +12,7 @@ fn stream() -> uuid::Uuid {
     uuid::Uuid::from_u128(1710)
 }
 
-fn retained(cursor: u64, payload: &[u8]) -> Vec<u8> {
+pub(super) fn retained(cursor: u64, payload: &[u8]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(HEADER_BYTES + payload.len());
     bytes.extend_from_slice(stream().as_bytes());
     bytes.extend_from_slice(&cursor.to_be_bytes());
@@ -45,7 +45,7 @@ async fn open(
     open_with_permissions(bounded, false).await
 }
 
-async fn open_with_permissions(
+pub(super) async fn open_with_permissions(
     bounded: bool,
     permissions: bool,
 ) -> (
@@ -65,6 +65,7 @@ async fn open_with_permissions(
         .await
         .unwrap();
     let mut configured = settings(None, false);
+    configured.retained_json = permissions;
     configured.bounded_raw_output = bounded;
     configured.bounded_permission_state = permissions;
     configured.output_json_budget = permissions;

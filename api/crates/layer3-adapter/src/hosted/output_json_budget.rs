@@ -12,6 +12,7 @@ pub(super) enum Refusal {
     Nodes,
     Depth,
     InvalidJson,
+    PrivateKey,
 }
 
 impl Refusal {
@@ -21,21 +22,42 @@ impl Refusal {
             Self::Nodes => "runtime output JSON exceeds its node limit",
             Self::Depth => "runtime output JSON exceeds its nesting limit",
             Self::InvalidJson => "runtime output JSON is malformed",
+            Self::PrivateKey => "runtime output JSON contains a reserved parser key",
         };
         crate::AdapterError::Rejected(reason.into())
     }
 }
 
 pub(super) fn validate(payload: &[u8]) -> Result<(), Refusal> {
-    validate_with_limits(payload, MAX_BYTES, MAX_NODES, MAX_DEPTH)
+    inspect_with_limits(payload, MAX_BYTES, MAX_NODES, MAX_DEPTH, false).map(|_| ())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Shape {
+    pub nodes: usize,
+}
+
+pub(super) fn inspect(payload: &[u8]) -> Result<Shape, Refusal> {
+    inspect_with_limits(payload, MAX_BYTES, MAX_NODES, MAX_DEPTH, true)
+}
+
+#[cfg(test)]
 fn validate_with_limits(
     payload: &[u8],
     max_bytes: usize,
     max_nodes: usize,
     max_depth: usize,
 ) -> Result<(), Refusal> {
+    inspect_with_limits(payload, max_bytes, max_nodes, max_depth, false).map(|_| ())
+}
+
+fn inspect_with_limits(
+    payload: &[u8],
+    max_bytes: usize,
+    max_nodes: usize,
+    max_depth: usize,
+    reject_private_keys: bool,
+) -> Result<Shape, Refusal> {
     if payload.len() > max_bytes {
         return Err(Refusal::Bytes);
     }
@@ -43,6 +65,7 @@ fn validate_with_limits(
         remaining: max_nodes,
         max_depth,
         refusal: None,
+        reject_private_keys,
     };
     let mut decoder = serde_json::Deserializer::from_slice(payload);
     let result = Node {
@@ -51,7 +74,9 @@ fn validate_with_limits(
     }
     .deserialize(&mut decoder);
     match result.and_then(|()| decoder.end()) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(Shape {
+            nodes: max_nodes - budget.remaining,
+        }),
         Err(_) => Err(budget.refusal.unwrap_or(Refusal::InvalidJson)),
     }
 }
@@ -60,6 +85,7 @@ struct Budget {
     remaining: usize,
     max_depth: usize,
     refusal: Option<Refusal>,
+    reject_private_keys: bool,
 }
 
 impl Budget {
@@ -164,17 +190,31 @@ impl<'de> DeserializeSeed<'de> for Key<'_> {
 
     fn deserialize<D: de::Deserializer<'de>>(self, decoder: D) -> Result<(), D::Error> {
         self.budget.node()?;
-        decoder.deserialize_str(KeyVisitor)
+        decoder.deserialize_str(KeyVisitor {
+            budget: self.budget,
+        })
     }
 }
 
-struct KeyVisitor;
-impl Visitor<'_> for KeyVisitor {
+struct KeyVisitor<'a> {
+    budget: &'a mut Budget,
+}
+impl Visitor<'_> for KeyVisitor<'_> {
     type Value = ();
     fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("a JSON object key")
     }
-    fn visit_str<E: de::Error>(self, _: &str) -> Result<(), E> {
+    fn visit_str<E: de::Error>(self, key: &str) -> Result<(), E> {
+        // Value's raw_value/arbitrary_precision deserializers interpret these
+        // keys as nested parsers. Refuse before they can bypass this node count.
+        if self.budget.reject_private_keys
+            && matches!(
+                key,
+                "$serde_json::private::RawValue" | "$serde_json::private::Number"
+            )
+        {
+            return Err(self.budget.refuse(Refusal::PrivateKey));
+        }
         Ok(())
     }
 }
