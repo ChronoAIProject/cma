@@ -44,8 +44,13 @@ async fn reconcile(
     next: &Agent,
     logs: &[AgentLogEntry],
     operation: &PublicationIdentity,
+    at: Option<mongodb::bson::Timestamp>,
 ) -> Outcome {
-    let mut snapshot = f.client.start_session().snapshot(true).await.unwrap();
+    let mut start = f.client.start_session().snapshot(true);
+    if let Some(at) = at {
+        start = start.snapshot_time(at);
+    }
+    let mut snapshot = start.await.unwrap();
     writer_reconcile::reconcile(
         &f.store,
         operation,
@@ -78,7 +83,7 @@ async fn unknown_commit_is_reconciled_from_original_receipt_after_later_head_adv
     let receipt = apply(&f, &mut scope, &next, &logs, &operation).await;
     // An uncommitted publication is Unknown, never proof of an abort.
     assert!(matches!(
-        reconcile(&f, &next, &logs, &operation).await,
+        reconcile(&f, &next, &logs, &operation, None).await,
         Outcome::Unknown
     ));
     admin.database("admin").run_command(doc! {
@@ -94,7 +99,7 @@ async fn unknown_commit_is_reconciled_from_original_receipt_after_later_head_adv
     disabled.expect("disable the isolated commit failpoint before assertions");
     assert!(matches!(outcome, CommitOutcome::Unknown(_)));
     assert!(matches!(
-        reconcile(&f, &next, &logs, &operation).await,
+        reconcile(&f, &next, &logs, &operation, session.operation_time()).await,
         Outcome::Recorded(_)
     ));
 
@@ -107,7 +112,9 @@ async fn unknown_commit_is_reconciled_from_original_receipt_after_later_head_adv
         commit_transaction(scope.release()).await,
         CommitOutcome::Committed
     ));
-    let Outcome::Recorded(original) = reconcile(&f, &next, &logs, &operation).await else {
+    let Outcome::Recorded(original) =
+        reconcile(&f, &next, &logs, &operation, session.operation_time()).await
+    else {
         panic!("original outcome must survive later publications")
     };
     assert_eq!(original.id, receipt.id);
@@ -149,7 +156,7 @@ async fn known_abort_can_retry_original_identity_without_partial_evidence() {
     scope.release().abort_transaction().await.unwrap();
     unchanged(&f).await;
     assert!(matches!(
-        reconcile(&f, &next, &logs, &operation).await,
+        reconcile(&f, &next, &logs, &operation, None).await,
         Outcome::Unknown
     ));
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
@@ -163,7 +170,7 @@ async fn known_abort_can_retry_original_identity_without_partial_evidence() {
         CommitOutcome::Committed
     ));
     assert!(matches!(
-        reconcile(&f, &next, &logs, &operation).await,
+        reconcile(&f, &next, &logs, &operation, session.operation_time()).await,
         Outcome::Recorded(_)
     ));
     f.destroy().await;
