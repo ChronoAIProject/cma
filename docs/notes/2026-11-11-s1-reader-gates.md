@@ -107,10 +107,112 @@ source rows/bytes, read commands and timings without changing their assertions.
 Formatting, repository size, all touched Rust files below the sprint line limit,
 and full candidate-history secret scanning passed at this checkpoint.
 
-The corrective executable gates have not run: two shared-lock attempts timed
-out before any child process started. A later idle waiter was explicitly stopped
-before execution. The earlier passing counts do not certify the later changes.
-No review-ready or activation claim is made. Strict production lint, narrow
-operator/migration integration, the format-2 recovery carrier's frozen discovery
-contract and matching schema remain outstanding. The develop merge freeze is
-respected; these checkpoints are published only to the slice branch.
+## Corrective qualification completed
+
+At source `41ef81cabe437c72cacaa02f7a7bba73c9b14dc1`, all 14 selected
+codec/audit/parser/output unit tests and all 40 real-Mongo reader/audit/capture/
+schema/retention tests passed. The four earlier failures are resolved without
+changing the original input, Mongo cache, query or audit time limits. The Mongo
+test execution took 122.574 seconds; all owned containers and volumes were
+verified absent afterward.
+
+| Source case | Source rows | Read commands | Write transactions | Largest write row count | Largest encoded write commands | Audit elapsed |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Many small messages | 10000 | 184 | 392 | 129 | 149614 bytes | 12686 ms |
+| Large messages | 67 | 14 | 5 | 129 | 124191 bytes | 667 ms |
+
+At 1/10/100/1000 sealed segments, the fixed sealed-page request read two source
+rows and 619 bytes, using 7/8/8/8 read commands. Captured point requests used two
+source reads, five rows and 1465 bytes at each size. These are the existing fixed
+small-page cases, not certification of every public page size or lifetime
+consumer. The whole Mongo command maximum resident size was 424460288 bytes;
+that includes test/fixture and launcher overhead and excludes the Mongo daemon.
+
+Strict CMA Clippy at that source failed with 66 production-target diagnostics
+and nine test-target diagnostics, all unused code/imports and no type errors.
+That result preceded the operator/migration dependency below.
+
+## Recovery schema and canonical migration qualification
+
+Source `8ba9d55215b1eeb9dd56f73e27817dc2f967266a` normally merges the narrow
+operator/migration pin `b11107979231ec0da5683d8719722c8b4dfea15e` and recovery
+schema/index pin `daf605ab410fc4737633aa3997e67192d4c4112b`. It registers the
+format-2 recovery carrier in the canonical collection inventory, loads both exact
+JSON definitions, and checksums those sources together with the schema children
+and ordered inventory. Existing unique indexes retain their exact contract;
+each of the three recovery indexes must remain deliberately nonunique with its
+specified key order, options and simple collation.
+
+All 22 selected codec/audit/parser/output/operator/migration unit tests passed at
+that source. At `8b9ec3170606c4dc2cac6f0d8a66826c8d0d9ab1`, all 12 focused
+real-Mongo schema/retention/canonical-migration tests passed, including:
+
+- Recovery index drift refuses before any additive effect, including uniqueness,
+  key order/name, sparse/hidden/partial/collation drift. Existing unique segment
+  indexes cannot become nonunique.
+- Unregistered format-1 and unknown recovery carriers refuse migration without
+  relabeling rows or creating other collections.
+- Canonical migration inspection is read-only; partial DDL resumes under the
+  shared lease, stale holders refuse, and completed-schema drift refuses.
+- Startup performs no sidecar DDL and requires complete schema for v2 Agents.
+- A damaged recovery carrier retains its exact legacy Agent lineage, refuses
+  purge without mutation, and does not prevent unrelated legacy retirement.
+
+All five recorded owned Mongo fixtures and volumes were verified absent. Each
+heavy gate held one existing shared lock and used two Cargo jobs and one reusable
+target. The schema/retention tests use the original bounded fixture resources.
+
+The normal develop sync at `f205616a4e1b14f096067017758a04f7ab17351a`
+includes develop `4411f9b699f7dd632c0868ca92d206a0c9af6da5`; only Layer 4 and its
+documentation changed. The tested CMA and dependency subtrees/manifests were
+verified unchanged by that sync. Strict CMA Clippy on this source failed with nine production diagnostics and
+one test-target diagnostic, all unused code and no type errors. Remaining
+locations are capture/latest-entry and transaction-scope consumer methods,
+request digests, and writer reconciliation. They require real integrated
+production callers; no suppression or fake call was added.
+
+## Frozen storage-shape and discovery qualification
+
+At `853b6cca7f4cd2f986bdadc3041eb9ef1952c35c`, all four focused recovery
+schema/index Mongo cases passed. They accept all four synthetic phase shapes
+and reject twenty malformed variants, preserving the original stored row after
+each refusal. These hand-authored storage fixtures are explicitly not actual
+codec output or recovery authority.
+
+The first discovery test exposed a real query-shape problem: the factored
+cursor predicate matching S5 `discovery::filter` at `2ff67f6cb` examined 64 keys
+and documents to return its second 32-row page. The corrected predicate repeats
+format/phase equality and the time cutoff inside both `$or` arms. No scan,
+byte, row or time bound was relaxed. The original production filter still needs
+this change from its owner; a passing index test is not a production-consumer
+qualification.
+
+Across 1/100/1000 terminal/future-history rows, the corrected covered discovery
+pages and Agent-history page examined exactly their returned keys (zero, one or
+32) and zero documents. Timestamp ties, crossing into a later timestamp, empty
+final pages, both discovery streams and exclusions are exercised. A separate
+pinned-Mongo diagnostic at 65/1024/8192 eligible rows also confirmed bounded
+index seeks for the distributed predicate. These measurements demonstrate the
+index/query contract, not an unbounded-worst-case claim about the old planner.
+
+All nine recorded owned fixtures and volumes were verified absent at this
+checkpoint. The subsequent normal merge of develop `4c65d80e8` preserves both
+independent Mongo-store fields and initializers for segmentation and the
+new default-off global admission limit. A resulting-head qualification follows.
+
+## Open pre-review and release gates
+
+Pre-review P1-2 remains open. Schema/index registration and the tests above are
+S1's portion, not proof of working isolated runtime authority. Required follow-up:
+actual codec-bound four-phase carrier fixtures; adoption and qualification of
+the corrected S5 production discovery predicate; S2's runtime grants/coherent backup inventory
+and actual isolated-role success/missing/foreign-grant tests; final schema and
+codec agreement with resumable attachment activation. Any changed persisted
+activation fields must update the frozen definition and checksum before release.
+
+The actual permitted rollback artifact remains unqualified; the historical
+predecessor executable result above is not a substitute. The combined PR must
+also qualify all ordinary writer and bounded response/transcript consumers.
+Writer and recovery activation remain closed until every P1 is fixed and tested.
+No production calls or mutations ran, and no independent S1 PR was opened. The
+binding integration plan uses one combined default-off PR.
