@@ -123,6 +123,11 @@ async fn missing_agent_log_entry_in_the_durable_range_fails_closed() {
         appended_at: NOW.into(),
         kind: AgentLogKind::Deleted,
     };
+    let agent_before = store
+        .agents
+        .find_one(doc! { "_id": agent.id.as_str() })
+        .await
+        .unwrap();
     store
         .agent_log
         .insert_one(log_document(&orphan).unwrap())
@@ -141,9 +146,12 @@ async fn missing_agent_log_entry_in_the_durable_range_fails_closed() {
         .delete_one(doc! { "agent_id": agent.id.as_str(), "seq": 3_i64 })
         .await
         .unwrap();
-    // Restoring the orphan does not clear quarantine. Reset this synthetic
-    // fixture only after auditing the restored prefix, before the gap case.
-    super::agent_log_read_tests::reset_repaired_prefix(&store, &agent.id, 2).await;
+    // Public reads refuse corruption without writing quarantine. The separate
+    // audit tests cover durable revocation; this fixture restores its own rows.
+    assert_eq!(
+        store.agent_log(&agent.id, 0, 10).await.unwrap(),
+        vec![first, second]
+    );
     store
         .agent_log
         .delete_one(doc! { "agent_id": agent.id.as_str(), "seq": 1_i64 })
@@ -153,9 +161,18 @@ async fn missing_agent_log_entry_in_the_durable_range_fails_closed() {
         store.agent_log(&agent.id, 0, 10).await,
         Err(SandboxStoreError::SequenceConflict)
     );
-    assert!(matches!(
+    assert_eq!(
         store.agent_log(&agent.id, 1, 10).await,
-        Err(SandboxStoreError::Corrupt(_))
-    ));
+        Err(SandboxStoreError::SequenceConflict)
+    );
+    assert_eq!(
+        store
+            .agents
+            .find_one(doc! { "_id": agent.id.as_str() })
+            .await
+            .unwrap(),
+        agent_before,
+        "public corruption refusals must not modify metadata or quarantine"
+    );
     client.database(&name).drop().await.unwrap();
 }

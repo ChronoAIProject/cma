@@ -26,7 +26,12 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                 row
             })
             .collect();
-        seed(&store, &states).await;
+        // Match the other scale fixtures: setup must not hold a reporting
+        // connection for one large insert before option queries begin.
+        for (batch, states) in states.chunks(200).enumerate() {
+            window.phase("seed_states", batch + 1);
+            seed(&store, states).await;
+        }
         let users: Vec<_> = (0..120).filter(|n| *n != 3).map(|n| {
             let name = match n { 0 | 1 => "Alex Chen".into(), 2 => "Priya [Research]".into(), _ => format!("Operator {n}") };
             doc! {"_id":format!("owner-{n}"),"display_name":name,"first_seen_at":format!("2026-11-{:02}T12:30:00Z",n%28+1)}
@@ -40,12 +45,25 @@ async fn metrics_options_search_page_and_resolve_at_scale_without_reports() {
                 doc! {"_id":row.sandbox_id.as_str(),"record":{"lifecycle":{"suspended_runtime":{"runtime_version":"runtime-previous"}}}}
             }
         }).collect();
-        window.phase("seed_inventory", 0);
-        store
-            .collection("sandboxes")
-            .insert_many(inventory)
-            .await
-            .unwrap();
+        for (batch, inventory) in inventory.chunks(200).enumerate() {
+            window.phase("seed_inventory", batch + 1);
+            store
+                .collection("sandboxes")
+                .insert_many(inventory)
+                .await
+                .unwrap();
+        }
+        window.phase("verify_seed_cohort", 0);
+        for collection in [super::super::super::sandbox_usage::STATES, "sandboxes"] {
+            assert_eq!(
+                store
+                    .collection(collection)
+                    .count_documents(doc! {})
+                    .await
+                    .unwrap(),
+                count as u64,
+            );
+        }
         let operator = scope("operator", true);
         let owner_started = std::time::Instant::now();
         let mut owner_ids = std::collections::BTreeSet::new();
