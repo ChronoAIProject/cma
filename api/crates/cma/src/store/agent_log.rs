@@ -2,7 +2,7 @@
 
 use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::ids::AgentId;
-use layer2_core::sandbox::store::{AgentLogStore, SandboxStoreError, MAX_PAGE_SIZE};
+use layer2_core::sandbox::store::{AgentLogStore, SandboxStoreError};
 use layer2_core::sandbox::{AgentLogEntry, AgentLogKind};
 use mongodb::bson::{doc, Document};
 use mongodb::options::{IndexOptions, ReadConcern};
@@ -14,7 +14,7 @@ use super::agent_log_integrity::{
 pub(super) use super::agent_log_integrity::{
     scan_complete_log_with_session, scan_complete_log_with_snapshot_session,
 };
-use super::agent_log_reads::scan_read_log;
+use super::agent_log_reads::{read_window, Window};
 use super::agents::read_agent;
 use super::sandbox_mongo::{
     commit_transaction, i64_field_matches, is_duplicate_key, is_transient, read_record,
@@ -273,6 +273,7 @@ impl AgentLogStore for MongoSandboxStore {
         appended_at: String,
         kind: AgentLogKind,
     ) -> Result<AgentLogEntry, SandboxStoreError> {
+        self.prepare_fleet_log(agent_id).await;
         let mut last_transient = None;
         for attempt in 0..TRANSACTION_ATTEMPTS {
             if attempt > 0 {
@@ -362,18 +363,7 @@ impl AgentLogStore for MongoSandboxStore {
         after: u64,
         limit: u16,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
-        if limit == 0 || limit > MAX_PAGE_SIZE {
-            return Err(SandboxStoreError::InvalidPage);
-        }
-        let mut page = Vec::with_capacity(usize::from(limit));
-        scan_read_log(self, agent_id, |entry| {
-            if entry.seq > after && page.len() < usize::from(limit) {
-                page.push(entry);
-            }
-            Ok(())
-        })
-        .await?;
-        Ok(page)
+        read_window(self, agent_id, Window::Page { after, limit }).await
     }
 
     async fn agent_log_range(
@@ -383,28 +373,16 @@ impl AgentLogStore for MongoSandboxStore {
         through: u64,
         limit: u16,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
-        if limit == 0 || limit > MAX_PAGE_SIZE || after > through {
-            return Err(SandboxStoreError::InvalidPage);
-        }
-        let expected = (through - after).min(u64::from(limit)) as usize;
-        if expected == 0 {
-            // Empty pages still validate the captured snapshot so a cursor at
-            // the high-water mark cannot hide a gap elsewhere in the log.
-            scan_read_log(self, agent_id, |_| Ok(())).await?;
-            return Ok(Vec::new());
-        }
-        let mut page = Vec::with_capacity(expected);
-        scan_read_log(self, agent_id, |entry| {
-            if entry.seq > after && entry.seq <= through && page.len() < expected {
-                page.push(entry);
-            }
-            Ok(())
-        })
-        .await?;
-        if page.len() != expected {
-            return Err(SandboxStoreError::SequenceConflict);
-        }
-        Ok(page)
+        read_window(
+            self,
+            agent_id,
+            Window::Range {
+                after,
+                through,
+                limit,
+            },
+        )
+        .await
     }
 
     async fn agent_log_entry(
@@ -429,19 +407,14 @@ impl AgentLogStore for MongoSandboxStore {
         agent_id: &AgentId,
         through_seq: u64,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
-        let mut entries = Vec::new();
-        // Validate the entire current snapshot once, including records beyond the prefix.
-        scan_read_log(self, agent_id, |entry| {
-            if entry.seq <= through_seq {
-                entries.push(entry);
-            }
-            Ok(())
-        })
-        .await?;
-        if u64::try_from(entries.len()).ok() != Some(through_seq) {
-            return Err(SandboxStoreError::SequenceConflict);
-        }
-        Ok(entries)
+        read_window(
+            self,
+            agent_id,
+            Window::Prefix {
+                through: through_seq,
+            },
+        )
+        .await
     }
 }
 
