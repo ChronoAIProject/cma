@@ -28,7 +28,8 @@ pub struct LedgerCensusAssessment {
     pub cleanup_debt: usize,
     pub lease_present: bool,
     pub conversation_present: bool,
-    pub active_or_queued_input: bool,
+    /// Includes retained terminal records; presence does not mean pending input.
+    pub input_state_present: bool,
     pub attempted_or_recorded_work: bool,
     pub retained_home_present: bool,
     pub runtime_generation: Option<u64>,
@@ -90,7 +91,7 @@ impl Agent {
             });
         let conversation_present =
             self.conversation.conversation_id.is_some() || self.work.warm_conversation_id.is_some();
-        let active_or_queued_input = self.conversation.active_turn.is_some()
+        let input_state_present = self.conversation.active_turn.is_some()
             || !self.conversation.queued_messages.is_empty()
             || self.conversation.first_message.is_some()
             || self.conversation.operation.is_some();
@@ -120,7 +121,7 @@ impl Agent {
             "agent_history_and_operation_keys",
             "configuration_and_artifact_references",
         ];
-        if conversation_present || active_or_queued_input {
+        if conversation_present || input_state_present {
             preserve.push("native_conversation_and_input_state_no_automatic_replay");
         }
         if cleanup_scheduled || !self.work.cleanup_debt.is_empty() {
@@ -137,7 +138,7 @@ impl Agent {
             cleanup_debt: self.work.cleanup_debt.len(),
             lease_present: self.work.lease.is_some(),
             conversation_present,
-            active_or_queued_input,
+            input_state_present,
             attempted_or_recorded_work: self.work.attempts > 0
                 || !self.work.receipts.is_empty()
                 || !self.work.worktree_recoveries.is_empty()
