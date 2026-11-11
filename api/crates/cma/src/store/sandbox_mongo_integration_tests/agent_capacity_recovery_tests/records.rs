@@ -11,7 +11,7 @@ use layer2_core::sandbox::RuntimeBinding;
 
 fn work() -> RecoveryWork {
     let request = RecoveryRequest {
-        agent_id: AgentId::new("carrier-fixture"),
+        agent_id: AgentId("carrier-fixture".into()),
         creation_key: "original-creation".into(),
         creation_fingerprint: "a".repeat(64),
         failure_seq: 10_001,
