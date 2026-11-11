@@ -4,6 +4,7 @@ mod codec;
 #[cfg(test)]
 mod codec_tests;
 mod collections;
+pub(in crate::store) use collections::SegmentCollections;
 pub(in crate::store) mod command;
 mod digest;
 mod envelope;
@@ -12,6 +13,7 @@ pub(in crate::store) mod publication;
 mod reads;
 pub(in crate::store) mod retention;
 pub(in crate::store) mod schema;
+pub(in crate::store) mod transaction_scope;
 pub(in crate::store) mod writer_admission;
 pub(in crate::store) mod writer_bootstrap;
 pub(in crate::store) mod writer_commit;
