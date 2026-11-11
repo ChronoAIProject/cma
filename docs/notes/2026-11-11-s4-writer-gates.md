@@ -113,3 +113,24 @@ Required next handoff: an available assigned heavy-lock slot; S1 output numeric
 DDL and transaction certification; a narrow S2 canonical runner dependency and
 remaining scoped caller contracts. Other publication families are still pending.
 No PR or production activation is claimed.
+
+## Qualified dependency and lifecycle root follow-up
+
+Source `0513eae62` adds lifecycle checkpoint scope dispatch and two registered
+Mongo cases: success with a segmented child, quiet-period refusal and rollback
+of the child fence after a later domain failure. These cases are not executed.
+All caller log publication families are still required before writer readiness.
+
+Normally merged S1 `d5d934731` and the plan-authorized Mongo registration
+`9011a3796`, including its S5 scoped helper base. S1 records 8 unit/36 real-Mongo
+passes at `bb6b4f801`; these certify that dependency, not the combined S4 source.
+The reader fix rejects ordinary sessions with a cached snapshot timestamp.
+
+Two further nonblocking `lockf -k -n -t 0` CMA-check attempts returned status75
+with the lock occupied. Cargo did not start and no new target was created.
+Both lock inodes remained unchanged. No S4 Mongo container was created.
+
+The size gate passed 5,948 files. Owned changes pass formatting and whitespace;
+the workspace format gate fails solely at the inherited S1
+`agent_log_segments/mongo_tests/capture_tests.rs:207` assertion. Its owner must
+publish that routine formatting fix. Staged source secret scan passed.
