@@ -3,6 +3,7 @@ use super::{
     discovery::{DiscordApi, Discovery},
     journal_model::*,
     record_store::Store,
+    status::{FailureCode, Stage, StatusAttempt},
     Checkpoint, Dispatch, GatewayError, NativeDiscordJournal,
 };
 use crate::{
@@ -27,6 +28,7 @@ pub struct DurableJournal {
     epoch: u64,
     pub(super) api: DiscordApi,
     serial: Mutex<()>,
+    pub(super) status: StatusAttempt,
 }
 impl DurableJournal {
     /// Read the actual sealed source and verify its bot before acquiring a lease.
@@ -40,27 +42,57 @@ impl DurableJournal {
     ) -> Result<Arc<Self>, GatewayError> {
         Self::acquire_store(Store::new(records, keys), record, api, activity).await
     }
+    pub(crate) async fn acquire_observed(
+        records: RecordClient,
+        keys: Arc<MasterKeyRing>,
+        record: &str,
+        api: DiscordApi,
+        activity: Arc<dyn ActivityObserver>,
+        status: StatusAttempt,
+    ) -> Result<Arc<Self>, GatewayError> {
+        Self::acquire_store_observed(Store::new(records, keys), record, api, activity, status).await
+    }
     pub(super) async fn acquire_store(
         store: Store,
         record: &str,
         api: DiscordApi,
         activity: Arc<dyn ActivityObserver>,
     ) -> Result<Arc<Self>, GatewayError> {
-        let authority = load_authority(&store, record).await?;
+        Self::acquire_store_observed(store, record, api, activity, StatusAttempt::default()).await
+    }
+    pub(super) async fn acquire_store_observed(
+        store: Store,
+        record: &str,
+        api: DiscordApi,
+        activity: Arc<dyn ActivityObserver>,
+        status: StatusAttempt,
+    ) -> Result<Arc<Self>, GatewayError> {
+        status.step(Stage::Resolve);
+        let api = api.with_status(status.clone());
+        let authority = status.result(load_authority(&store, record).await)?;
         let observed = api.discover(&authority.token, &authority.bot_id).await?;
+        status.step(Stage::Lease);
         let id = index_id("discord-gateway-ownership-v1", &[&authority.bot_id]);
         let now = (store.clock)();
-        let loaded = store.load::<Lease>(&id, false).await?;
+        let loaded = status.result(store.load::<Lease>(&id, false).await)?;
         let expected = loaded.as_ref().map(|(_, version)| *version);
         let worker = uuid::Uuid::new_v4().to_string();
         let mut lease = match loaded {
             Some((mut lease, _)) => {
-                if lease.kind != "discord_gateway_v1"
-                    || lease.bot_id != authority.bot_id
-                    || lease.owner != authority.owner
-                    || lease.channel_record != record
-                    || lease.lease_until > now
-                {
+                let refusal =
+                    if lease.kind != "discord_gateway_v1" || lease.bot_id != authority.bot_id {
+                        Some(FailureCode::LeaseInvalid)
+                    } else if lease.owner != authority.owner {
+                        Some(FailureCode::LeaseOwnerMismatch)
+                    } else if lease.channel_record != record {
+                        Some(FailureCode::LeaseSourceMismatch)
+                    } else if lease.lease_until > now {
+                        Some(FailureCode::LeaseContended)
+                    } else {
+                        None
+                    };
+                if let Some(reason) = refusal {
+                    status.lease_refused(reason);
                     return Err(GatewayError::Authority);
                 }
                 if lease.revision != authority.revision {
@@ -105,6 +137,7 @@ impl DurableJournal {
                 return Err(error);
             }
         }
+        status.lease_acquired(lease_remaining(lease.lease_until, (store.clock)()));
         Ok(Arc::new(Self {
             store,
             authority,
@@ -114,6 +147,7 @@ impl DurableJournal {
             epoch,
             api,
             serial: Mutex::new(()),
+            status,
         }))
     }
     pub async fn checkpoint(&self) -> Result<Option<Checkpoint>, GatewayError> {
@@ -126,7 +160,12 @@ impl DurableJournal {
         self.current_authority().await?;
         let (mut lease, version) = self.fenced().await?;
         lease.lease_until = (self.store.clock)() + LEASE_MS;
-        self.save(&lease, version).await
+        let result = self.save(&lease, version).await;
+        if result.is_ok() {
+            self.status
+                .lease_renewed(lease_remaining(lease.lease_until, (self.store.clock)()));
+        }
+        result
     }
     pub(super) async fn discard_checkpoint(&self) -> Result<(), GatewayError> {
         let _guard = self.serial.lock().await;
@@ -173,12 +212,14 @@ impl DurableJournal {
             .map(|_| ())
     }
     async fn authorize(&self, resume: Option<&Checkpoint>) -> Result<(), GatewayError> {
+        self.status.step(Stage::Authorize);
         let _guard = self.serial.lock().await;
         self.current_authority().await?;
         let observed = self
             .api
             .discover(&self.authority.token, &self.authority.bot_id)
             .await?;
+        self.status.step(Stage::Authorize);
         let (mut lease, version) = self.fenced().await?;
         let now = (self.store.clock)();
         if lease.authorization.is_some() {
@@ -189,11 +230,20 @@ impl DurableJournal {
                 return Err(GatewayError::Authority);
             }
         } else {
-            reserve(&mut lease, &observed, now)?;
+            if let Err(error) = reserve(&mut lease, &observed, now) {
+                self.status.failure(if lease.remaining == 0 {
+                    FailureCode::IdentifyBudgetExhausted
+                } else {
+                    FailureCode::IdentifyBucketWait
+                });
+                return Err(error);
+            }
         }
         lease.authorization = Some(self.worker.clone());
         lease.lease_until = now + LEASE_MS;
-        self.save(&lease, version).await
+        self.save(&lease, version).await?;
+        self.status.identify_reserved(resume.is_some());
+        Ok(())
     }
     async fn commit(&self, checkpoint: &Checkpoint, event: &Dispatch) -> Result<(), GatewayError> {
         let _guard = self.serial.lock().await;
@@ -255,7 +305,7 @@ impl NativeDiscordJournal for DurableJournal {
         &'a self,
         resume: Option<&'a Checkpoint>,
     ) -> BoxFuture<'a, Result<(), GatewayError>> {
-        Box::pin(self.authorize(resume))
+        Box::pin(async move { self.status.result(self.authorize(resume).await) })
     }
     fn admit<'a>(
         &'a self,
@@ -306,4 +356,8 @@ async fn load_authority(store: &Store, record: &str) -> Result<Authority, Gatewa
         return Err(GatewayError::Authority);
     }
     Authority::from_definition(&definition)
+}
+
+fn lease_remaining(until: i64, now: i64) -> std::time::Duration {
+    std::time::Duration::from_millis(until.saturating_sub(now).clamp(0, LEASE_MS) as u64)
 }

@@ -120,15 +120,7 @@ pub(super) async fn read(
         return Err(ResourceAccessStoreError::NotFound.into());
     }
     let row = cursor.deserialize_current()?;
-    let snapshot = decode(id, &row)?;
-    if let Some(snapshot) = &snapshot {
-        let aggregate = row
-            .get_document("agent")
-            .and_then(|wrapper| wrapper.get_document("document"))
-            .map_err(|_| ResourceAccessStoreError::Corrupt)?;
-        super::verify_first_log(store, aggregate, snapshot, session).await?;
-    }
-    Ok(snapshot)
+    decode(id, &row).map_err(Into::into)
 }
 
 fn decode(

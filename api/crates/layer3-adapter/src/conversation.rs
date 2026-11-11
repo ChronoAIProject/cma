@@ -17,17 +17,20 @@ pub use agent_client_protocol_schema::v1::{
     ToolCallUpdate, ToolCallUpdateFields, ToolKind, Usage as TurnUsage, UsageUpdate,
 };
 
-pub fn reported_tool_text(fields: &ToolCallUpdateFields) -> Vec<&str> {
+pub fn reported_tool_text(fields: &ToolCallUpdateFields) -> Vec<std::borrow::Cow<'_, str>> {
     if let Some(content) = &fields.content {
-        return content
-            .iter()
-            .filter_map(|item| match item {
+        let diffs = crate::tool_diff::reported_diffs(content).map(std::borrow::Cow::Owned);
+        return diffs
+            .into_iter()
+            .chain(content.iter().filter_map(|item| match item {
                 ToolCallContent::Content(block) => match &block.content {
-                    ContentBlock::Text(block) => Some(block.text.as_str()),
+                    ContentBlock::Text(block) => {
+                        Some(std::borrow::Cow::Borrowed(block.text.as_str()))
+                    }
                     _ => None,
                 },
                 _ => None,
-            })
+            }))
             .collect();
     }
     fields
@@ -36,7 +39,15 @@ pub fn reported_tool_text(fields: &ToolCallUpdateFields) -> Vec<&str> {
         .and_then(|output| output.get("formatted_output"))
         .and_then(serde_json::Value::as_str)
         .into_iter()
+        .map(std::borrow::Cow::Borrowed)
         .collect()
+}
+
+/// File edits can arrive in the initial call, before its completion update.
+pub fn has_reported_file_changes(call: &ToolCall) -> bool {
+    call.content
+        .iter()
+        .any(|content| matches!(content, ToolCallContent::Diff(_)))
 }
 
 /// Opaque adapter-owned route used to answer a durable permission request.
@@ -152,10 +163,21 @@ pub enum ConversationUpdate {
     Usage(crate::ConversationUsage),
     Asked(PermissionRequest),
     TurnEnded(PromptResponse),
+    /// A terminal response correlated to one already admitted prompt.
+    TurnEndedForPrompt {
+        prompt_id: crate::PromptIdentity,
+        response: PromptResponse,
+    },
     Lost {
         frames: u64,
     },
     Failed {
+        message: String,
+        capability: Option<String>,
+    },
+    /// A terminal failure correlated to one already admitted prompt.
+    FailedForPrompt {
+        prompt_id: crate::PromptIdentity,
         message: String,
         capability: Option<String>,
     },
@@ -191,7 +213,9 @@ impl ConversationUpdate {
                 TurnScopedEvidence::ApprovalRequested,
             )),
             Self::TurnEnded(_) => Some(TurnEvidence::TerminalResult),
+            Self::TurnEndedForPrompt { .. } => Some(TurnEvidence::TerminalResult),
             Self::Failed { .. } => Some(TurnEvidence::TerminalFailure),
+            Self::FailedForPrompt { .. } => Some(TurnEvidence::TerminalFailure),
             Self::Said(_)
             | Self::Metadata(_)
             | Self::Usage(_)

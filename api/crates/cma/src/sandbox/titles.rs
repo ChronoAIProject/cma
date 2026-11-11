@@ -3,6 +3,7 @@
 use std::fmt;
 use std::time::Duration;
 
+use super::model_request_budget::RequestBudgetContext;
 use async_trait::async_trait;
 use futures_util::StreamExt as _;
 use layer2_core::sandbox::{
@@ -20,7 +21,7 @@ const RESPONSES_PATH: &str = "/v1/responses";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
-const MAX_OUTPUT_TOKENS: u32 = 32;
+const MAX_OUTPUT_TOKENS: u32 = 1024;
 
 /// One HTTP client bound to the model-proxy endpoint of a single sandbox.
 #[derive(Clone)]
@@ -30,6 +31,7 @@ pub(crate) struct HttpAgentTitleGenerator {
     client: reqwest::Client,
     maximum_response_body: usize,
     proxy_authorization: Option<HeaderValue>,
+    request_budget: Option<RequestBudgetContext>,
 }
 
 impl fmt::Debug for HttpAgentTitleGenerator {
@@ -67,6 +69,7 @@ impl HttpAgentTitleGenerator {
             return None;
         }
         let client = reqwest::Client::builder()
+            .retry(reqwest::retry::never())
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT.min(request_timeout))
             .timeout(request_timeout)
@@ -78,6 +81,7 @@ impl HttpAgentTitleGenerator {
             client,
             maximum_response_body,
             proxy_authorization: None,
+            request_budget: None,
         })
     }
 
@@ -86,6 +90,11 @@ impl HttpAgentTitleGenerator {
         value.set_sensitive(true);
         self.proxy_authorization = Some(value);
         Some(self)
+    }
+
+    pub(super) fn with_request_budget(mut self, context: RequestBudgetContext) -> Self {
+        self.request_budget = Some(context);
+        self
     }
 
     #[cfg(test)]
@@ -127,6 +136,7 @@ impl HttpAgentTitleGenerator {
             stream: false,
             store: false,
             max_output_tokens: MAX_OUTPUT_TOKENS,
+            reasoning: TitleReasoning { effort: "low" },
         })
         .map_err(|_| AgentTitleGenerationError::unavailable())?;
         if body.len() > MAX_REQUEST_BYTES {
@@ -145,6 +155,14 @@ impl HttpAgentTitleGenerator {
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
 
+        let permit = match &self.request_budget {
+            Some(budget) => budget
+                .reserve(&body)
+                .await
+                .map_err(AgentTitleGenerationError::budget)?,
+            None => None,
+        };
+
         let response = self
             .client
             .post(self.endpoint.clone())
@@ -153,8 +171,19 @@ impl HttpAgentTitleGenerator {
             .send()
             .await
             .map_err(|_| AgentTitleGenerationError::unavailable())?;
-        if response.status() != StatusCode::OK
-            || response.headers().get_all(CONTENT_TYPE).iter().count() != 1
+        if response.status() != StatusCode::OK {
+            let status = response.status();
+            let mut body = Vec::new();
+            let mut stream = response.bytes_stream();
+            while let Some(Ok(chunk)) = stream.next().await {
+                if body.len() + chunk.len() > self.maximum_response_body {
+                    break;
+                }
+                body.extend_from_slice(&chunk);
+            }
+            return Err(generation_failure(status, &body));
+        }
+        if response.headers().get_all(CONTENT_TYPE).iter().count() != 1
             || response
                 .headers()
                 .get(CONTENT_TYPE)
@@ -190,6 +219,12 @@ impl HttpAgentTitleGenerator {
         {
             return Err(AgentTitleGenerationError::unavailable());
         }
+        if let Some(permit) = permit {
+            permit
+                .settle(&body)
+                .await
+                .map_err(AgentTitleGenerationError::budget)?;
+        }
         let title = response_title(&body).ok_or_else(AgentTitleGenerationError::unavailable)?;
         if contains_bytes(title.as_bytes(), request.bearer().as_bytes())
             || self
@@ -221,6 +256,12 @@ struct ResponsesRequest<'a> {
     stream: bool,
     store: bool,
     max_output_tokens: u32,
+    reasoning: TitleReasoning,
+}
+
+#[derive(Serialize)]
+struct TitleReasoning {
+    effort: &'static str,
 }
 
 #[derive(Serialize)]
@@ -304,3 +345,29 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 #[cfg(test)]
 #[path = "titles_tests.rs"]
 mod tests;
+
+fn generation_failure(status: StatusCode, body: &[u8]) -> AgentTitleGenerationError {
+    let denied_quota = serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .is_some_and(|body| {
+            ["code", "type"].iter().any(|key| {
+                matches!(
+                    body.get("error")
+                        .and_then(|e| e.get(key))
+                        .and_then(|v| v.as_str()),
+                    Some(
+                        "insufficient_quota" | "billing_hard_limit_reached" | "billing_not_active"
+                    )
+                )
+            })
+        });
+    if denied_quota
+        || (status.is_client_error()
+            && status != StatusCode::REQUEST_TIMEOUT
+            && status != StatusCode::TOO_MANY_REQUESTS)
+    {
+        AgentTitleGenerationError::permanent()
+    } else {
+        AgentTitleGenerationError::unavailable()
+    }
+}

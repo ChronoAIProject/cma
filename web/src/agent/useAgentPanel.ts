@@ -10,7 +10,7 @@ export function useAgentPanel() {
     query.addEventListener('change', changed);
     return () => query.removeEventListener('change', changed);
   }, []);
-  const panel = selection === 'auto' ? (wide ? 'files' : undefined) : selection;
+  const panel = selection === 'auto' ? (wide ? 'browser' : undefined) : selection;
   return {
     panel,
     setPanel,

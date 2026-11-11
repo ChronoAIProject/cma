@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::{AgentLogEntry, AgentLogKind, FirstMessageDelivery};
 
 /// Terminal refusal before dispatch still closes the preserved first-message
@@ -33,7 +34,6 @@ pub(in crate::store) async fn project_terminal(
     binding
         .require_command(command)
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-    let original = agent.clone();
     let first = agent
         .conversation
         .first_message
@@ -50,17 +50,26 @@ pub(in crate::store) async fn project_terminal(
     first
         .fail_common_before_dispatch(at.clone())
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+    let prior_agent = agent.clone();
     let previous_revision = agent.revision;
     let previous_seq = agent.conversation.last_seq;
-    let summary = super::super::agent_log_context::validate(store, &original, session, false)
-        .await
-        .map_err(|error| match error {
-            super::super::agent_log_integrity::TransactionLogError::Domain(error) => error,
-            super::super::agent_log_integrity::TransactionLogError::Driver(error) => {
-                unavailable(error)
-            }
-        })?
-        .summary;
+    let mut entries = Vec::new();
+    let summary = super::super::agent_log::scan_complete_log_with_session(
+        ScanCaller::ConversationPublication,
+        store,
+        &agent.id,
+        previous_seq,
+        session,
+        |entry| {
+            entries.push(entry);
+            Ok(())
+        },
+    )
+    .await
+    .map_err(|error| match error {
+        super::super::agent_log_integrity::TransactionLogError::Domain(error) => error,
+        super::super::agent_log_integrity::TransactionLogError::Driver(error) => unavailable(error),
+    })?;
     agent.revision = previous_revision
         .checked_add(1)
         .ok_or(SandboxStoreError::Conflict)?;
@@ -77,12 +86,26 @@ pub(in crate::store) async fn project_terminal(
             recovery_generation: 0,
         },
     };
-    super::super::agent_log_integrity::ensure_append_capacity(
+
+    let semantic =
+        crate::store::agent_log_integrity::audit_checkpoint(store, &prior_agent, &entries, session)
+            .await
+            .map_err(|error| match error {
+                super::super::agent_log_integrity::TransactionLogError::Domain(error) => error,
+                super::super::agent_log_integrity::TransactionLogError::Driver(error) => {
+                    unavailable(error)
+                }
+            })?;
+    let integrity = super::super::agent_log_integrity::prepare_append(
+        &agent,
         &summary,
         std::slice::from_ref(&entry),
+        agent.revision,
+        semantic.after_append(std::slice::from_ref(&entry), &agent)?,
         super::super::agent_log_integrity::AppendCapacity::Normal,
     )?;
     let mut fields = super::super::agents::agent_replacement_fields(&agent)?;
+    fields.insert("agent_log_integrity_v1", integrity.integrity);
     fields.insert("last_seq", agent.conversation.last_seq as i64);
     let changed = store.agents.update_one(doc! {"_id":agent.id.as_str(),"revision":previous_revision as i64,"last_seq":previous_seq as i64},
         doc! {"$set":fields}).session(&mut *session).await.map_err(unavailable)?;
@@ -91,7 +114,8 @@ pub(in crate::store) async fn project_terminal(
     }
     store
         .agent_log
-        .insert_one(super::super::agent_log::log_document(&entry)?)
+        .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+        .insert_one(&integrity.documents[0])
         .session(session)
         .await
         .map_err(unavailable)?;

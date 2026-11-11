@@ -1,155 +1,232 @@
-//! Complete-snapshot traversal for Mongo agent log page, range, and prefix reads.
+//! Public windows share one snapshot with their integrity proof.
 
 use layer2_core::ids::AgentId;
-use layer2_core::sandbox::store::SandboxStoreError;
+use layer2_core::sandbox::store::{SandboxStoreError, MAX_PAGE_SIZE};
 use layer2_core::sandbox::AgentLogEntry;
 use mongodb::bson::doc;
 use mongodb::options::ReadConcern;
+use mongodb::ClientSession;
 
-use super::agent_log::scan_complete_log_with_snapshot_session;
-use super::agent_log_integrity::TransactionLogError;
-use super::sandbox_mongo::{unsigned, MongoSandboxStore};
+use super::agent_log::read_entry;
+use super::agent_log_integrity::{scan_collection, TransactionLogError};
+use super::agent_log_telemetry::ScanCaller;
+use super::sandbox_mongo::{signed, MongoSandboxStore};
 
-pub(super) async fn read_point(
+pub(super) mod integrity;
+use integrity::{LogReadIntegrity, PreparedIntegrity, ReadHead};
+
+#[derive(Clone, Copy)]
+pub(super) enum Window {
+    Page {
+        after: u64,
+        limit: u16,
+    },
+    Range {
+        after: u64,
+        through: u64,
+        limit: u16,
+    },
+    Prefix {
+        through: u64,
+    },
+}
+
+impl Window {
+    fn validate(self) -> Result<(), SandboxStoreError> {
+        match self {
+            Self::Page { limit, .. } | Self::Range { limit, .. }
+                if limit == 0 || limit > MAX_PAGE_SIZE =>
+            {
+                Err(SandboxStoreError::InvalidPage)
+            }
+            Self::Range { after, through, .. } if after > through => {
+                Err(SandboxStoreError::InvalidPage)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn contains(self, sequence: u64) -> bool {
+        match self {
+            Self::Page { after, .. } => sequence > after,
+            Self::Range { after, through, .. } => sequence > after && sequence <= through,
+            Self::Prefix { through } => sequence <= through,
+        }
+    }
+
+    fn limit(self) -> u64 {
+        match self {
+            Self::Page { limit, .. } | Self::Range { limit, .. } => u64::from(limit),
+            Self::Prefix { through } => through,
+        }
+    }
+
+    fn bounds(self, head: u64) -> Result<(u64, u64), SandboxStoreError> {
+        let (after, through) = match self {
+            Self::Page { after, limit } => {
+                let after = after.min(head);
+                (after, after.saturating_add(u64::from(limit)).min(head))
+            }
+            Self::Range {
+                after,
+                through,
+                limit,
+            } => (after, after + (through - after).min(u64::from(limit))),
+            Self::Prefix { through } => (0, through),
+        };
+        // An empty range may be beyond the head, but still needs its proof.
+        if after != through && through > head {
+            return Err(SandboxStoreError::SequenceConflict);
+        }
+        Ok((after, through))
+    }
+}
+
+pub(super) async fn read_window(
     store: &MongoSandboxStore,
     agent_id: &AgentId,
-    sequence: u64,
-) -> Result<Option<AgentLogEntry>, SandboxStoreError> {
-    if sequence == 0 {
-        return Ok(None);
-    }
+    window: Window,
+) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+    read_with_integrity(store, agent_id, window, &PreparedIntegrity).await
+}
+
+pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
+    store: &MongoSandboxStore,
+    agent_id: &AgentId,
+    window: Window,
+    integrity: &P,
+) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+    window.validate()?;
     let mut session = store
         .client
         .start_session()
         .snapshot(true)
         .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let Some(aggregate) = store
-        .agents
-        .find_one(doc! {"_id":agent_id.as_str()})
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-    else {
-        return Ok(None);
+        .map_err(unavailable)?;
+    let Some(head) = integrity.read_head(store, agent_id, &mut session).await? else {
+        window.bounds(0)?;
+        return Ok(Vec::new());
     };
-    if super::agent_log_segments::read_format(&aggregate)?.is_some() {
-        let head = super::agent_log_segments::read_head(store, &aggregate, &mut session, true)
-            .await
-            .map_err(transaction_error)?;
-        let through = sequence.min(head.last_seq as u64);
-        let after = if sequence > head.last_seq as u64 {
-            through
-        } else {
-            through - 1
-        };
-        let mut result = None;
-        super::agent_log_segments::visit_range(
+    let entries = if head.trusted {
+        let (after, through) = window.bounds(head.last_seq)?;
+        let entries = read_bounded(
             store,
+            agent_id,
+            after,
+            through,
             &head,
-            super::agent_log_segments::LogRange {
-                after,
-                through,
-                limit: 1,
-            },
+            &mut session,
+            usize::MAX,
+        )
+        .await?
+        .ok_or(SandboxStoreError::AgentLogCapacityExceeded)?;
+        if !matches!(window, Window::Prefix { .. }) {
+            super::agent_log_integrity::fleet::telemetry::record(
+                super::agent_log_integrity::fleet::telemetry::Event::WindowScanAvoided,
+            );
+        }
+        entries
+    } else {
+        if store.bounded_log_enabled(agent_id) {
+            super::agent_log_integrity::fleet::telemetry::record(
+                super::agent_log_integrity::fleet::telemetry::Event::Fallback,
+            );
+        }
+        let mut entries = Vec::new();
+        scan_collection(
+            ScanCaller::PublicWindowPrefix,
+            &store.agent_log,
+            agent_id,
+            head.last_seq,
             &mut session,
             true,
             |entry| {
-                result = Some(entry);
+                head.validate_lineage(&entry)?;
+                if window.contains(entry.seq) && (entries.len() as u64) < window.limit() {
+                    entries.push(entry);
+                }
                 Ok(())
             },
         )
         .await
         .map_err(transaction_error)?;
-        return Ok(result);
+        entries
+    };
+    let (after, through) = window.bounds(head.last_seq)?;
+    if entries.len() as u64 != through - after {
+        return Err(SandboxStoreError::SequenceConflict);
     }
-    store.agent_log.find_one(doc! {"agent_id":agent_id.as_str(),"seq": super::sandbox_mongo::signed(sequence, "Agent log sequence").map_err(SandboxStoreError::Corrupt)?})
-        .read_concern(ReadConcern::snapshot()).session(&mut session).await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref().map(super::agent_log::read_entry).transpose()
+    Ok(entries)
 }
 
-pub(super) async fn scan_read_range<F>(
+pub(super) async fn read_bounded(
     store: &MongoSandboxStore,
     agent_id: &AgentId,
     after: u64,
-    through: Option<u64>,
-    limit: u16,
-    mut visit: F,
-) -> Result<(), SandboxStoreError>
-where
-    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError> + Send,
-{
-    let mut session = store
-        .client
-        .start_session()
-        .snapshot(true)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let aggregate = store
-        .agents
-        .find_one(doc! {"_id":agent_id.as_str()})
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let Some(aggregate) = aggregate else {
-        return if through.is_some_and(|end| end > after) {
-            Err(SandboxStoreError::SequenceConflict)
-        } else {
-            Ok(())
-        };
-    };
-    let last_seq = aggregate
-        .get_i64("last_seq")
-        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
-        .and_then(|n| unsigned(n, "Agent log head").map_err(SandboxStoreError::Corrupt))?;
-    let after = if through.is_none() {
-        after.min(last_seq)
-    } else {
-        after
-    };
-    let through = through.unwrap_or(last_seq);
-    let expected = (through - after).min(u64::from(limit));
-    if super::agent_log_segments::read_format(&aggregate)?.is_some() {
-        let head = super::agent_log_segments::read_head(store, &aggregate, &mut session, true)
-            .await
-            .map_err(transaction_error)?;
-        return super::agent_log_segments::visit_range(
-            store,
-            &head,
-            super::agent_log_segments::LogRange {
-                after,
-                through,
-                limit,
-            },
-            &mut session,
-            true,
-            visit,
-        )
-        .await
-        .map_err(transaction_error);
+    through: u64,
+    head: &ReadHead,
+    session: &mut ClientSession,
+    byte_budget: usize,
+) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+    let count = through - after;
+    if count == 0 {
+        return Ok(Some(Vec::new()));
     }
-    let mut count = 0;
-    scan_complete_log_with_snapshot_session(store, agent_id, last_seq, &mut session, |entry| {
-        if entry.seq > after && entry.seq <= through && count < expected {
-            visit(entry)?;
-            count += 1;
+    let mut read = super::mongo_read_telemetry::Read::find(store.agent_log.name());
+    let mut cursor = store
+        .agent_log
+        .find(doc! {
+            "agent_id": agent_id.as_str(),
+            "seq": {
+                "$gt": signed(after, "window start").map_err(SandboxStoreError::Corrupt)?,
+                "$lte": signed(through, "window end").map_err(SandboxStoreError::Corrupt)?,
+            },
+        })
+        .sort(doc! { "seq": 1 })
+        .limit(signed(count, "window count").map_err(SandboxStoreError::Corrupt)?)
+        .batch_size(u32::try_from(count).map_err(|_| SandboxStoreError::SequenceConflict)?)
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut *session)
+        .await
+        .map_err(unavailable)?;
+    let mut entries = Vec::new();
+    let mut bytes = 0_usize;
+    while let Some(document) = read
+        .next_in_session(&mut cursor, session)
+        .await
+        .map_err(unavailable)?
+    {
+        let entry = read_entry(&document)?;
+        head.validate_lineage(&entry)?;
+        if entry.agent_id != *agent_id || entry.seq != after + entries.len() as u64 + 1 {
+            return Err(SandboxStoreError::SequenceConflict);
         }
-        Ok(())
-    })
-    .await
-    .map_err(transaction_error)?;
-    if count != expected {
+        if byte_budget != usize::MAX {
+            bytes = bytes.saturating_add(cursor.current().as_bytes().len());
+            if bytes > byte_budget {
+                read.complete();
+                return Ok(None);
+            }
+        }
+        entries.push(entry);
+    }
+    if entries.len() as u64 != count {
         return Err(SandboxStoreError::SequenceConflict);
     }
-    Ok(())
+    read.complete();
+    Ok(Some(entries))
+}
+
+fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
+    SandboxStoreError::Unavailable(error.to_string())
 }
 
 fn transaction_error(error: TransactionLogError) -> SandboxStoreError {
     match error {
         TransactionLogError::Domain(error) => error,
-        TransactionLogError::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
+        TransactionLogError::Driver(error) => unavailable(error),
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -9,6 +9,7 @@ mod recovery_request_tests;
 mod recovery_tests;
 mod reserved_recovery_tests;
 mod retirement_tests;
+mod reviewer_boundary_retained;
 mod runtime_update_tests;
 mod scheduling_tests;
 mod service_access;

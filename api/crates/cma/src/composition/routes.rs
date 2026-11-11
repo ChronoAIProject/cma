@@ -29,6 +29,10 @@ pub(super) fn compose(
             crate::rate_limit::enforce,
         ))
         .layer(axum::middleware::from_fn_with_state(
+            crate::expensive_reads::ReadBudget::new(),
+            crate::expensive_reads::enforce,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
             auth,
             crate::auth::attach_subject,
         ));

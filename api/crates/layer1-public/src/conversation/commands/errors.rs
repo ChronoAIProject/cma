@@ -37,6 +37,7 @@ pub(super) fn observation_timeout() -> Response {
 
 pub(crate) fn admission_failure(error: CommandAdmissionError) -> Response {
     match error {
+        CommandAdmissionError::Ledger(CommandLedgerError::Budget(reason)) => InstanceProblem::Budget(reason).into_response(),
         CommandAdmissionError::Access(error) => ResourceProblem(error).into_response(),
         CommandAdmissionError::Input(error) => InstanceProblem::from(error).into_response(),
         CommandAdmissionError::Authority(CommandAuthorizationError::Revoked) => InstanceProblem::Forbidden.into_response(),
@@ -72,6 +73,18 @@ pub(super) fn unbound_failure(command: &AgentCommand, status: &CommandStatusView
                 "The command's target turn is no longer current.",
             ),
         },
+        Some(
+            code @ (CommandFailureCode::OwnerBudgetExhausted
+            | CommandFailureCode::TurnBudgetExhausted
+            | CommandFailureCode::BudgetUnavailable),
+        ) => {
+            let reason = code.budget_error().expect("budget failure variant");
+            (
+                StatusCode::PAYMENT_REQUIRED,
+                reason.code(),
+                reason.guidance(),
+            )
+        }
         Some(CommandFailureCode::QueueTimeout) => (
             StatusCode::GATEWAY_TIMEOUT,
             "agent_command_queue_timeout",
@@ -102,7 +115,11 @@ pub(super) fn unbound_failure(command: &AgentCommand, status: &CommandStatusView
             "runtime_lost",
             "The runtime was lost before this command could dispatch.",
         ),
-        Some(CommandFailureCode::ExecutionFailed) => (
+        Some(
+            CommandFailureCode::CredentialSetupRequired
+            | CommandFailureCode::ConnectionsRequired
+            | CommandFailureCode::ExecutionFailed,
+        ) => (
             StatusCode::CONFLICT,
             "agent_command_execution_failed",
             "The command failed before a turn was bound.",

@@ -44,11 +44,6 @@ pub fn work_from_turn(
     if entries.len() > MAX_CONTEXT_EVENTS || agent.owner != sandbox.owner {
         return None;
     }
-    entries
-        .iter()
-        .try_fold(MAX_CONTEXT_BYTES, |remaining, entry| {
-            remaining.checked_sub(context_entry_bytes(entry)?)
-        })?;
     let first = entries.first()?;
     let AgentLogKind::TurnStarted { turn_sequence, .. } = first.kind else {
         return None;

@@ -16,18 +16,19 @@ use super::{
 
 pub struct AgentReadService {
     store: Arc<dyn AgentReadStore>,
+    sessions: Option<Arc<dyn super::store::SandboxSessionStore>>,
     resources: Arc<dyn SandboxResourceReader>,
     access: Option<Arc<ResourceAccessService>>,
 }
 
 #[path = "agent_reads/authorized.rs"]
 mod authorized;
-#[path = "agent_reads/bounded.rs"]
-mod bounded;
-mod legacy;
 #[path = "agent_reads/recovery.rs"]
 mod recovery;
 pub use authorized::{AgentDetailReading, SharedAgentDetail};
+#[path = "agent_reads/history.rs"]
+mod history;
+pub use history::AgentHistoryReading;
 #[path = "agent_reads/configuration.rs"]
 mod configuration;
 pub use configuration::AgentConfigurationRead;
@@ -37,11 +38,11 @@ pub use source::{AgentSourceReadError, AgentSourceReading, SharedAgentOrigin};
 #[path = "agent_reads/visibility.rs"]
 mod visibility;
 pub use visibility::AgentVisibleLogEntry;
+#[path = "agent_reads/sessions.rs"]
+mod sessions;
 #[path = "agent_reads/stream.rs"]
 mod stream;
 pub use stream::{AgentEventStreamAuthorization, AgentEventStreamSnapshot};
-mod current_state;
-mod history_context;
 #[path = "agent_reads/window.rs"]
 mod window;
 pub use window::{
@@ -60,6 +61,7 @@ impl AgentReadService {
     {
         Arc::new(Self {
             store,
+            sessions: None,
             resources,
             access: None,
         })
@@ -68,8 +70,21 @@ impl AgentReadService {
     pub fn with_resource_access(self: &Arc<Self>, access: Arc<ResourceAccessService>) -> Arc<Self> {
         Arc::new(Self {
             store: self.store.clone(),
+            sessions: self.sessions.clone(),
             resources: self.resources.clone(),
             access: Some(access),
+        })
+    }
+
+    pub fn with_sessions(
+        self: &Arc<Self>,
+        sessions: Arc<dyn super::store::SandboxSessionStore>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            store: self.store.clone(),
+            sessions: Some(sessions),
+            resources: self.resources.clone(),
+            access: self.access.clone(),
         })
     }
 
@@ -100,12 +115,17 @@ impl AgentReadService {
         id: &AgentId,
         sequence: u64,
     ) -> Result<(), AgentReadError> {
-        self.final_answer(caller, None, None, id, sequence)
-            .await
-            .map(|_| ())
+        let transcript = self.transcript(caller, id).await?;
+        if transcript.turns.iter().any(|turn| {
+            turn.final_answer()
+                .is_some_and(|answer| answer.sequence == sequence)
+        }) {
+            Ok(())
+        } else {
+            Err(AgentReadError::NotFound)
+        }
     }
 
-    /// Read the Agent and every parent needed to project its public context.
     pub async fn lineage(
         &self,
         caller: &Caller,
@@ -125,9 +145,13 @@ impl AgentReadService {
         require(caller)?;
         let lineage = self.owned_lineage(caller, id).await?;
         validate_limit(limit)?;
-        let entries = self.bounded_log_page(&lineage.agent, after, limit).await?;
-        self.owned_lineage(caller, id).await?;
-        Ok(entries)
+        let entries = self.complete_log(&lineage.agent).await?;
+        fold_agent_log(&lineage.agent, &entries).map_err(AgentReadError::Corrupt)?;
+        Ok(entries
+            .into_iter()
+            .filter(|entry| entry.seq > after)
+            .take(usize::from(limit))
+            .collect())
     }
 
     pub async fn transcript(
@@ -159,24 +183,10 @@ impl AgentReadService {
         caller: &Caller,
         id: &AgentId,
     ) -> Result<AgentUsageReading, AgentReadError> {
-        require(caller)?;
-        let lineage = self.owned_lineage(caller, id).await?;
-        require_granted(&lineage.agent, crate::RuntimeCapability::Usage)?;
-        if let Some(state) = self
-            .store
-            .agent_log_projection(&lineage.agent)
-            .await
-            .map_err(log_store_error)?
-        {
-            let result = AgentUsageReading {
-                agent_id: id.clone(),
-                through_seq: state.through_seq,
-                usage: state.usage(),
-            };
-            self.owned_lineage(caller, id).await?;
-            return Ok(result);
-        }
-        self.legacy_usage(&lineage.agent).await
+        let projection = self
+            .projection(caller, id, crate::RuntimeCapability::Usage)
+            .await?;
+        Ok(projection.usage)
     }
 
     pub async fn resources(
@@ -352,6 +362,69 @@ impl AgentReadService {
         }
         Ok(())
     }
+
+    async fn complete_log(&self, agent: &Agent) -> Result<Vec<AgentLogEntry>, AgentReadError> {
+        let through_seq = agent.conversation.last_seq;
+        if through_seq == 0 {
+            return Err(corrupt("agent log has no creation record"));
+        }
+        let entries = self
+            .store
+            .agent_log_prefix(&agent.id, through_seq)
+            .await
+            .map_err(log_store_error)?;
+        if u64::try_from(entries.len()).ok() != Some(through_seq) {
+            return Err(corrupt("agent log ended before its high-water mark"));
+        }
+        for (offset, entry) in entries.iter().enumerate() {
+            let expected = u64::try_from(offset)
+                .ok()
+                .and_then(|offset| offset.checked_add(1))
+                .ok_or_else(|| corrupt("agent log sequence overflowed"))?;
+            if entry.agent_id != agent.id || entry.seq != expected || entry.seq > through_seq {
+                return Err(corrupt("agent log identity or sequence is invalid"));
+            }
+        }
+        self.reject_uncommitted_tail(agent, through_seq).await?;
+        Ok(entries)
+    }
+
+    async fn reject_uncommitted_tail(
+        &self,
+        agent: &Agent,
+        through_seq: u64,
+    ) -> Result<(), AgentReadError> {
+        if through_seq == u64::MAX {
+            return Ok(());
+        }
+        let tail = self
+            .store
+            .agent_log_entry(&agent.id, through_seq.saturating_add(1))
+            .await
+            .map_err(log_store_error)?;
+        let Some(extra) = tail else {
+            return Ok(());
+        };
+        if extra.agent_id != agent.id || extra.seq != through_seq.saturating_add(1) {
+            return Err(corrupt("agent log has an invalid tail"));
+        }
+        let current = self
+            .store
+            .get_agent(&agent.id)
+            .await
+            .map_err(log_store_error)?
+            .ok_or_else(|| corrupt("agent disappeared while its log was read"))?;
+        if current.id != agent.id
+            || current.owner != agent.owner
+            || current.worktree_id != agent.worktree_id
+            || current.workspace_id != agent.workspace_id
+            || current.sandbox_id != agent.sandbox_id
+            || current.conversation.last_seq < extra.seq
+        {
+            return Err(corrupt("agent log extends past its aggregate"));
+        }
+        Ok(())
+    }
 }
 
 fn require_granted(
@@ -390,7 +463,11 @@ fn store_error(error: SandboxStoreError) -> AgentReadError {
         SandboxStoreError::SequenceConflict => {
             corrupt("agent store reported an inconsistent sequence")
         }
-        other => AgentReadError::Unavailable(other.to_string()),
+        other => {
+            use crate::dependency_diagnostics::{Dependency, Failure, Reason};
+            Failure::new(Dependency::Storage, Reason::Unavailable).record();
+            AgentReadError::Unavailable(other.to_string())
+        }
     }
 }
 

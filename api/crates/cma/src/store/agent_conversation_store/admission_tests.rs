@@ -76,6 +76,7 @@ async fn conversation_admission_rejects_a_parent_read_from_before_maintenance() 
             sandbox_id: parent.id.clone(),
             requested_at: NOW.into(),
             pause_after_seconds: 900,
+            auto_pause_enabled: false,
         })
         .await
         .unwrap();
@@ -173,7 +174,13 @@ async fn conversation_admission_parent_write_conflicts_with_lifecycle_after_snap
         ))
         .await
         .unwrap();
-    let result = apply_mutation(&store, &request, &mut session).await;
+    let result = apply_mutation(
+        ScanCaller::ConversationPublication,
+        &store,
+        &request,
+        &mut session,
+    )
+    .await;
     assert!(matches!(result, Err(ApplyError::Driver(error)) if is_transient(&error)));
     let _ = session.abort_transaction().await;
     assert_eq!(

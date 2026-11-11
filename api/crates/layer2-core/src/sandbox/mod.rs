@@ -25,18 +25,15 @@ pub use agent_settings_authority::{AgentSettingsAuthorization, AgentSettingsFenc
 mod agent_settings_recovery;
 mod agent_settings_validation;
 pub use agent_settings::AgentSettings;
-mod agent_log_projection;
+mod admission_checkpoint;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
 mod agent_operation_service;
 mod agent_operation_settlement;
 mod agent_read_types;
 mod agent_reads;
+pub use admission_checkpoint::AgentLogCheckpoint;
 mod agent_reads_fold;
-pub use agent_log_projection::{
-    AgentLogAnswerEvidence, AgentLogAnswerLookup, AgentLogEvidenceChange, AgentLogProjectionState,
-    AgentLogQueuedReference, AgentLogTurnFacts, AgentLogTurnLookup, BoundedAgentLogFold,
-};
 mod agent_reads_usage;
 mod agent_runtime;
 mod agent_service;
@@ -69,6 +66,7 @@ pub use conversation_observation::{
 mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;
+mod ledger_retirement;
 mod lifecycle_bootstrap;
 mod provenance;
 mod provenance_inventory;
@@ -197,9 +195,9 @@ pub use agent_read_types::{
 };
 pub use agent_reads::{
     AgentConfigurationRead, AgentDetailReading, AgentEventStreamAuthorization,
-    AgentEventStreamHeader, AgentEventStreamSnapshot, AgentReadService, AgentReplayEntry,
-    AgentReplayWindow, AgentResponseBinding, AgentSourceReadError, AgentSourceReading,
-    AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
+    AgentEventStreamHeader, AgentEventStreamSnapshot, AgentHistoryReading, AgentReadService,
+    AgentReplayEntry, AgentReplayWindow, AgentResponseBinding, AgentSourceReadError,
+    AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,
@@ -259,7 +257,8 @@ pub use hierarchy::{
 };
 pub use home::SandboxHome;
 pub use inactivity::{
-    inactivity_pause_notice, is_inactivity_pause_candidate, SandboxAgentActivity,
+    has_open_desktop_session, inactivity_pause_notice, is_inactivity_pause_candidate,
+    register_open_desktop_session, unregister_open_desktop_session, SandboxAgentActivity,
     SandboxAgentLogActivity,
 };
 pub use interruption::{SandboxInterruption, SandboxInterruptionCause};
@@ -301,7 +300,8 @@ pub use title::{
     AgentTitleGenerationRequest, AgentTitleGenerationResponse, AgentTitleGenerator,
     AgentTitleSource, AgentTitleTranscript, AGENT_TITLE_ATTEMPTS, AGENT_TITLE_CALL_TIMEOUT_SECONDS,
     AGENT_TITLE_CLAIM_SECONDS, AGENT_TITLE_FALLBACK_SCALARS, AGENT_TITLE_INPUT_BYTES,
-    AGENT_TITLE_MAX_SCALARS, AGENT_TITLE_SYSTEM_PROMPT, EMPTY_AGENT_TITLE_FALLBACK,
+    AGENT_TITLE_MAX_ATTEMPTS, AGENT_TITLE_MAX_SCALARS, AGENT_TITLE_RETRY_SECONDS,
+    AGENT_TITLE_SYSTEM_PROMPT, EMPTY_AGENT_TITLE_FALLBACK,
 };
 pub use title_service::{AgentTitleOutcome, AgentTitleService, AgentTitleServiceError};
 pub use title_store::{

@@ -173,8 +173,6 @@ pub enum AgentReadError {
     NotFound,
     #[error("invalid page request")]
     InvalidPage,
-    #[error("history exceeds the complete-response budget; use the paginated Agent v2 snapshot/events API")]
-    PaginationRequired,
     #[error("agent was not granted runtime capability: {capability:?}")]
     CapabilityUnsupported {
         capability: crate::RuntimeCapability,
@@ -194,7 +192,6 @@ impl AgentReadError {
             Self::Forbidden => "forbidden",
             Self::NotFound => "agent_not_found",
             Self::InvalidPage => "invalid_page",
-            Self::PaginationRequired => "history_pagination_required",
             Self::CapabilityUnsupported { .. } => "agent_capability_unsupported",
             Self::ResourcesUnsupported(_) => "agent_resources_unsupported",
             Self::Corrupt(_) => "stored_agent_corrupt",

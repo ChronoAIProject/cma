@@ -92,30 +92,6 @@ impl AgentReadService {
         Ok(transcript)
     }
 
-    /// Authorize access to the runtime-owned history and retain the exact
-    /// Agent/Sandbox lineage needed to reach that runtime.
-    pub async fn history_lineage_authorized(
-        &self,
-        context: &CallerContext,
-        credential: Option<&str>,
-        id: &AgentId,
-    ) -> Result<AgentLineage, AgentReadError> {
-        let authorized = self
-            .authorized(context, credential, id, ResourceCapability::ViewHistory)
-            .await?;
-        let agent = authorized
-            .snapshot
-            .lineage
-            .agent
-            .as_ref()
-            .ok_or_else(|| corrupt("authorized Agent snapshot has no Agent"))?;
-        require_granted(agent, crate::RuntimeCapability::Conversation)?;
-        let lineage = super::authorized::lineage(authorized.snapshot.lineage.clone())?;
-        self.finish_read(&authorized, id, ResourceCapability::ViewHistory)
-            .await?;
-        Ok(lineage)
-    }
-
     pub async fn log_authorized(
         &self,
         context: &CallerContext,
@@ -134,10 +110,13 @@ impl AgentReadService {
             .agent
             .as_ref()
             .ok_or_else(|| corrupt("authorized Agent snapshot has no Agent"))?;
-        let entries = self.bounded_log_page(agent, after, limit).await?;
+        let entries = self.complete_log(agent).await?;
+        fold_agent_log(agent, &entries).map_err(AgentReadError::Corrupt)?;
         let personal = is_personal(&authorized, context);
         let page = entries
             .into_iter()
+            .filter(|entry| entry.seq > after)
+            .take(usize::from(limit))
             .map(|entry| AgentVisibleLogEntry::from_entry(entry, personal))
             .collect();
         self.finish_read(&authorized, id, ResourceCapability::ViewHistory)
@@ -214,20 +193,10 @@ impl AgentReadService {
             .as_ref()
             .ok_or_else(|| corrupt("authorized Agent snapshot has no Agent"))?;
         require_granted(agent, crate::RuntimeCapability::Usage)?;
-        let usage = if let Some(state) = self
-            .store
-            .agent_log_projection(agent)
-            .await
-            .map_err(log_store_error)?
-        {
-            AgentUsageReading {
-                agent_id: agent.id.clone(),
-                through_seq: state.through_seq,
-                usage: state.usage(),
-            }
-        } else {
-            self.legacy_usage(agent).await?
-        };
+        let entries = self.complete_log(agent).await?;
+        let usage = fold_agent_log(agent, &entries)
+            .map_err(AgentReadError::Corrupt)?
+            .usage;
         self.finish_read(&authorized, id, ResourceCapability::ViewDetails)
             .await?;
         Ok(usage)

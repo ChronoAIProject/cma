@@ -3,13 +3,6 @@ use std::collections::BTreeMap;
 #[path = "agent_reads_identity.rs"]
 mod identity;
 
-pub(super) fn validate_projection_identity(
-    agent: &Agent,
-    entries: &[AgentLogEntry],
-) -> Result<(), String> {
-    identity::validate(agent, None, entries)
-}
-
 use crate::seconds_from_rfc3339;
 
 use super::queued_message::queued_message_origin_sequence;
@@ -18,15 +11,11 @@ use super::agent_reads_usage::UsageFold;
 use super::{
     Agent, AgentLogEntry, AgentLogKind, AgentOperationDelivery, AgentOperationKind,
     AgentTranscript, AgentTranscriptMessage, AgentTranscriptRole, AgentTranscriptTurn,
-    AgentTurnOutcome, AgentUsage, TypedFailure,
+    AgentTurnOutcome, AgentUsage, AgentUsageReading, TypedFailure,
 };
-
-#[cfg(test)]
-use super::AgentUsageReading;
 
 pub(super) struct AgentLogProjection {
     pub(super) transcript: AgentTranscript,
-    #[cfg(test)]
     pub(super) usage: AgentUsageReading,
 }
 
@@ -247,7 +236,6 @@ pub(super) fn fold_agent_log(
             through_seq: agent.conversation.last_seq,
             turns: transcript.turns,
         },
-        #[cfg(test)]
         usage: AgentUsageReading {
             agent_id: agent.id.clone(),
             through_seq: agent.conversation.last_seq,

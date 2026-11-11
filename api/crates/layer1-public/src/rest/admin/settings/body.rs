@@ -3,13 +3,14 @@
 use axum::{extract::FromRequest, extract::Request, Json};
 use layer2_core::profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef};
 use layer2_core::{
-    AgentProfileId, InactivitySettings, MarketplaceSettings, PlatformDefaults, PlatformLimits,
-    PlatformSettings, RetentionSettings, SandboxProfileId, StoredPlatformSettings, TriggerSettings,
-    WorkspaceProfileId,
+    platform::UsageReportingSettings, AgentProfileId, InactivitySettings, MarketplaceSettings,
+    PlatformDefaults, PlatformLimits, PlatformSettings, PlatformSettingsService, RetentionSettings,
+    SandboxProfileId, StoredPlatformSettings, TriggerSettings, WorkspaceProfileId,
 };
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
 
+use super::budget::BudgetSettingsBody;
 use super::Failure;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -31,8 +32,12 @@ pub(crate) struct PlatformDefaultsBody {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct InactivitySettingsBody {
+    #[serde(default)]
+    auto_pause_enabled: bool,
     #[schema(minimum = 60, maximum = 86400)]
     pause_after_seconds: u64,
+    #[serde(default)]
+    grace_started_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -62,9 +67,27 @@ pub(crate) struct MarketplaceSettingsBody {
     enabled: bool,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UsageReportingSettingsBody {
+    measured_visible: bool,
+}
+
+impl From<UsageReportingSettingsBody> for UsageReportingSettings {
+    fn from(value: UsageReportingSettingsBody) -> Self {
+        Self {
+            measured_visible: value.measured_visible,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PlatformSettingsBody {
+    #[serde(default, deserialize_with = "super::budget::present")]
+    model_budget: Option<BudgetSettingsBody>,
+    #[serde(default)]
+    usage_reporting: UsageReportingSettingsBody,
     defaults: PlatformDefaultsBody,
     inactivity: InactivitySettingsBody,
     retention: RetentionSettingsBody,
@@ -76,6 +99,8 @@ pub(crate) struct PlatformSettingsBody {
 impl From<PlatformSettingsBody> for PlatformSettings {
     fn from(value: PlatformSettingsBody) -> Self {
         Self {
+            model_budget: value.model_budget.map(Into::into).unwrap_or_default(),
+            usage_reporting: value.usage_reporting.into(),
             defaults: value.defaults.into(),
             inactivity: value.inactivity.into(),
             checkpoints: Default::default(),
@@ -87,9 +112,19 @@ impl From<PlatformSettingsBody> for PlatformSettings {
     }
 }
 
+impl PlatformSettingsBody {
+    pub(super) fn has_model_budget(&self) -> bool {
+        self.model_budget.is_some()
+    }
+}
+
 impl From<PlatformSettings> for PlatformSettingsBody {
     fn from(value: PlatformSettings) -> Self {
         Self {
+            model_budget: Some(value.model_budget.into()),
+            usage_reporting: UsageReportingSettingsBody {
+                measured_visible: value.usage_reporting.measured_visible,
+            },
             defaults: PlatformDefaultsBody {
                 sandbox_profile: ProfileReferenceBody {
                     id: value.defaults.sandbox_profile.id.0,
@@ -105,7 +140,9 @@ impl From<PlatformSettings> for PlatformSettingsBody {
                 },
             },
             inactivity: InactivitySettingsBody {
+                auto_pause_enabled: value.inactivity.auto_pause_enabled,
                 pause_after_seconds: value.inactivity.pause_after_seconds,
+                grace_started_at: value.inactivity.grace_started_at,
             },
             retention: RetentionSettingsBody {
                 agent_log_days: value.retention.agent_log_days,
@@ -148,7 +185,9 @@ impl From<PlatformDefaultsBody> for PlatformDefaults {
 impl From<InactivitySettingsBody> for InactivitySettings {
     fn from(value: InactivitySettingsBody) -> Self {
         Self {
+            auto_pause_enabled: value.auto_pause_enabled,
             pause_after_seconds: value.pause_after_seconds,
+            grace_started_at: value.grace_started_at,
         }
     }
 }
@@ -193,13 +232,17 @@ impl From<MarketplaceSettingsBody> for MarketplaceSettings {
 pub(crate) struct SettingsView {
     revision: u64,
     settings: PlatformSettingsBody,
+    model_budget_writes_available: bool,
+    model_request_budget_writes_available: bool,
 }
 
-impl From<StoredPlatformSettings> for SettingsView {
-    fn from(value: StoredPlatformSettings) -> Self {
+impl SettingsView {
+    pub(crate) fn new(value: StoredPlatformSettings, service: &PlatformSettingsService) -> Self {
         Self {
             revision: value.revision,
             settings: value.settings.into(),
+            model_budget_writes_available: service.model_budget_writes_enabled(),
+            model_request_budget_writes_available: service.model_request_budget_writes_enabled(),
         }
     }
 }
@@ -231,6 +274,12 @@ pub(crate) struct ReplaceRequest {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PatchRequest {
+    #[serde(default)]
+    #[schema(required = false, value_type = BudgetSettingsBody)]
+    model_budget: PatchField<BudgetSettingsBody>,
+    #[serde(default)]
+    #[schema(required = false, value_type = UsageReportingSettingsBody)]
+    usage_reporting: PatchField<UsageReportingSettingsBody>,
     pub(super) expected_revision: u64,
     #[serde(default)]
     #[schema(required = false, value_type = PlatformDefaultsBody)]
@@ -258,6 +307,16 @@ impl PatchRequest {
         mut settings: PlatformSettings,
     ) -> Result<(u64, PlatformSettings), Failure> {
         let mut changed = false;
+        changed |= apply(
+            self.model_budget,
+            &mut settings.model_budget,
+            "model_budget",
+        )?;
+        changed |= apply(
+            self.usage_reporting,
+            &mut settings.usage_reporting,
+            "usage_reporting",
+        )?;
         changed |= apply(self.defaults, &mut settings.defaults, "defaults")?;
         changed |= apply(self.inactivity, &mut settings.inactivity, "inactivity")?;
         changed |= apply(self.retention, &mut settings.retention, "retention")?;
@@ -303,7 +362,11 @@ const DEFAULTS: &[FieldSpec] = &[
     branch("workspace_profile", REF),
     branch("agent_profile", REF),
 ];
-const INACTIVITY: &[FieldSpec] = &[leaf("pause_after_seconds")];
+const INACTIVITY: &[FieldSpec] = &[
+    leaf("auto_pause_enabled"),
+    leaf("pause_after_seconds"),
+    leaf("grace_started_at"),
+];
 const RETENTION: &[FieldSpec] = &[leaf("agent_log_days")];
 const LIMITS: &[FieldSpec] = &[
     leaf("max_sandboxes_per_user"),
@@ -312,7 +375,17 @@ const LIMITS: &[FieldSpec] = &[
 ];
 const TRIGGERS: &[FieldSpec] = &[leaf("enabled"), leaf("orchestration_paused")];
 const MARKETPLACE: &[FieldSpec] = &[leaf("enabled")];
+const USAGE_REPORTING: &[FieldSpec] = &[leaf("measured_visible")];
+const MODEL_BUDGET: &[FieldSpec] = &[
+    leaf("request_models"),
+    leaf("enabled"),
+    leaf("platform"),
+    leaf("owners"),
+    leaf("default_policy"),
+];
 const PLATFORM: &[FieldSpec] = &[
+    branch("model_budget", MODEL_BUDGET),
+    branch("usage_reporting", USAGE_REPORTING),
     branch("defaults", DEFAULTS),
     branch("inactivity", INACTIVITY),
     branch("retention", RETENTION),
@@ -322,6 +395,8 @@ const PLATFORM: &[FieldSpec] = &[
 ];
 const REPLACE: &[FieldSpec] = &[leaf("expected_revision"), branch("settings", PLATFORM)];
 const PATCH: &[FieldSpec] = &[
+    branch("model_budget", MODEL_BUDGET),
+    branch("usage_reporting", USAGE_REPORTING),
     leaf("expected_revision"),
     branch("defaults", DEFAULTS),
     branch("inactivity", INACTIVITY),

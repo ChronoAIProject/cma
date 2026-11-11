@@ -8,6 +8,7 @@ mod adapter;
 mod agent;
 mod agent_attachment;
 mod agent_filesystem;
+pub mod binding_diagnostics;
 mod browser;
 mod browser_control;
 pub use browser::{
@@ -22,6 +23,7 @@ mod capabilities;
 mod checkpoint;
 mod conversation;
 mod conversation_observation;
+mod tool_diff;
 pub use conversation_observation::{
     ConversationDescriptionInput, ConversationDescriptionSource, ConversationMetadata,
     ConversationUsage,
@@ -39,9 +41,12 @@ mod inventory_cursor;
 pub use inventory_cursor::InventoryCursor;
 mod prompt_identity;
 mod provider_finality;
+pub mod recovery_diagnostics;
 mod runtime;
 pub mod runtime_bootstrap;
 pub mod runtime_control_relay;
+pub mod runtime_ledger_retirement;
+mod runtime_ledger_status;
 mod runtime_output;
 mod runtime_recovery;
 mod runtime_status;
@@ -91,14 +96,14 @@ pub use checkpoint::{
     RestoreBootstrapRequest, RestoreRequest, WriterState,
 };
 pub use conversation::{
-    reported_tool_text, AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk,
-    ConversationChannel, ConversationId, ConversationInput, ConversationInputGuard,
-    ConversationInputSender, ConversationSendOutcome, ConversationSettingsSupport,
-    ConversationUpdate, MessageId, PermissionDecision, PermissionLocator, PermissionOption,
-    PermissionOptionId, PermissionOptionKind, PermissionRequest, PromptResponse,
-    RequestPermissionRequest, SessionUpdate, ToolCall, ToolCallContent, ToolCallId, ToolCallStatus,
-    ToolCallUpdate, ToolCallUpdateFields, ToolKind, TurnEvidence, TurnScopedEvidence,
-    TurnStopReason, TurnUsage, UsageUpdate,
+    has_reported_file_changes, reported_tool_text, AvailableCommand, AvailableCommandsUpdate,
+    ContentBlock, ContentChunk, ConversationChannel, ConversationId, ConversationInput,
+    ConversationInputGuard, ConversationInputSender, ConversationSendOutcome,
+    ConversationSettingsSupport, ConversationUpdate, MessageId, PermissionDecision,
+    PermissionLocator, PermissionOption, PermissionOptionId, PermissionOptionKind,
+    PermissionRequest, PromptResponse, RequestPermissionRequest, SessionUpdate, ToolCall,
+    ToolCallContent, ToolCallId, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind,
+    TurnEvidence, TurnScopedEvidence, TurnStopReason, TurnUsage, UsageUpdate,
 };
 pub use error::{AdapterError, Result, RuntimeContractMismatch};
 pub use home_finality::{
@@ -138,6 +143,10 @@ pub use runtime::{
     DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES, DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_HOME_DIRECTORY,
     DEFAULT_SUPERVISOR_PROGRAM, DEFAULT_TOTAL_TIMEOUT_SECONDS,
 };
+pub use runtime_ledger_status::{
+    RuntimeLedgerCounters, RuntimeLedgerObservation, RuntimeLedgerStatus,
+    RUNTIME_LEDGER_STATUS_MEDIA_TYPE,
+};
 pub use runtime_output::{RuntimeOutputReceipt, RuntimeOutputSource};
 pub use runtime_recovery::{
     NonexecutingRecoveryVerification, RecoveryConversation, RecoveryConversationHistory,
@@ -169,3 +178,4 @@ pub use agent_filesystem::{
     AgentFileListReceipt, AgentFileListRequest, AgentFileReadReceipt, AgentFileReadRequest,
     AgentFileWriteReceipt, AgentFileWriteRequest, MAX_AGENT_FILE_BYTES, MAX_AGENT_FILE_ENTRIES,
 };
+pub mod sandbox_metrics;

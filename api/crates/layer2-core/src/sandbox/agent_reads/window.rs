@@ -28,7 +28,6 @@ pub struct AgentReplayEntry {
     pub response_binding: Option<AgentResponseBinding>,
     pub message_command_id: Option<crate::ids::AgentCommandId>,
     pub(in crate::sandbox) command_candidate: Option<String>,
-    pub(in crate::sandbox) steering_operation: Option<u64>,
 }
 
 pub struct AgentReplayWindow {
@@ -38,6 +37,42 @@ pub struct AgentReplayWindow {
 }
 
 impl AgentReadService {
+    /// Only the immediately preceding immutable steering fence can bind this message.
+    pub(in crate::sandbox) async fn steering_operation(
+        &self,
+        authorization: &AgentEventStreamAuthorization,
+        entry: &AgentReplayEntry,
+    ) -> Result<Option<u64>, AgentReadError> {
+        if entry.sequence < 2 {
+            return Ok(None);
+        }
+        let (_, id, _) = authorization.resource();
+        let previous = self
+            .store
+            .agent_log(id, entry.sequence - 2, 1)
+            .await
+            .map_err(log_store_error)?;
+        let previous = previous
+            .first()
+            .ok_or_else(|| corrupt("message predecessor is missing"))?;
+        if &previous.agent_id != id || previous.seq != entry.sequence - 1 {
+            return Err(corrupt("message predecessor identity is invalid"));
+        }
+        match previous.kind {
+            AgentLogKind::OperationDeliveryChanged {
+                operation_sequence,
+                operation: super::super::AgentOperationKind::Steer,
+                state: super::super::AgentOperationDelivery::DispatchFenced,
+            } => {
+                if operation_sequence != previous.seq || previous.appended_at != entry.appended_at {
+                    return Err(corrupt("steering message has no matching operation fence"));
+                }
+                Ok(Some(operation_sequence))
+            }
+            _ => Ok(None),
+        }
+    }
+
     pub async fn event_stream_header(
         &self,
         authorization: &AgentEventStreamAuthorization,
@@ -65,36 +100,6 @@ impl AgentReadService {
         through: Option<u64>,
         limit: u16,
     ) -> Result<AgentReplayWindow, AgentReadError> {
-        self.read_event_window(authorization, after, through, limit, false)
-            .await
-    }
-
-    /// Keep only a bounded suffix ending at the requested immutable cursor.
-    /// Byte trimming moves the lower boundary, never the high-water mark.
-    pub async fn event_history_window(
-        &self,
-        authorization: &AgentEventStreamAuthorization,
-        through: u64,
-        limit: u16,
-    ) -> Result<AgentReplayWindow, AgentReadError> {
-        self.read_event_window(
-            authorization,
-            through.saturating_sub(u64::from(limit)),
-            Some(through),
-            limit,
-            true,
-        )
-        .await
-    }
-
-    async fn read_event_window(
-        &self,
-        authorization: &AgentEventStreamAuthorization,
-        after: u64,
-        through: Option<u64>,
-        limit: u16,
-        suffix: bool,
-    ) -> Result<AgentReplayWindow, AgentReadError> {
         let result = authorization
             .bounded(async {
                 if !(1..=200).contains(&limit) {
@@ -111,125 +116,67 @@ impl AgentReadService {
                     return Err(AgentReadError::InvalidPage);
                 }
                 let count = (through - after).min(u64::from(limit)) as u16;
-                let mut projected = std::collections::VecDeque::with_capacity(usize::from(count));
-                let mut bytes = if suffix { 16 * 1024 } else { 2048 };
-                let mut seen = 0_u64;
-                let source_after = after.saturating_sub(1);
-                let mut previous_fence: Option<(u64, String)> = None;
-                let mut full = false;
-                self.store
-                    .visit_agent_log_page_with_predecessor(
-                        &agent.id,
-                        after,
-                        through,
-                        count.max(1),
-                        &mut |entry| {
-                            seen += 1;
-                            if entry.agent_id != agent.id || entry.seq != source_after + seen {
-                                return Err(SandboxStoreError::SequenceConflict);
-                            }
-                            let steering_operation =
-                                if matches!(entry.kind, AgentLogKind::OwnerMessage { .. }) {
-                                    match previous_fence.take() {
-                                        Some((sequence, ref at))
-                                            if sequence.checked_add(1) == Some(entry.seq)
-                                                && at == &entry.appended_at =>
-                                        {
-                                            Some(sequence)
-                                        }
-                                        Some(_) => {
-                                            return Err(SandboxStoreError::Corrupt(
-                                                "steering message has no matching operation fence"
-                                                    .into(),
-                                            ))
-                                        }
-                                        None => None,
-                                    }
-                                } else {
-                                    None
-                                };
-                            previous_fence = match entry.kind {
-                                AgentLogKind::OperationDeliveryChanged {
-                                    operation_sequence,
-                                    operation: super::super::AgentOperationKind::Steer,
-                                    state: super::super::AgentOperationDelivery::DispatchFenced,
-                                } => Some((operation_sequence, entry.appended_at.clone())),
-                                _ => None,
-                            };
-                            if entry.seq <= after || full {
-                                return Ok(());
-                            }
-                            let command_candidate = match &entry.kind {
-                                AgentLogKind::TurnStarted {
-                                    origin_key: Some(origin),
-                                    ..
-                                } => origin.strip_prefix("command:").map(str::to_owned),
-                                _ => None,
-                            };
-                            let visible =
-                                AgentVisibleLogEntry::from_entry(entry, authorization.resource().2);
-                            let kind = visible.kind.map(|kind| {
-                                AgentEvent::from(AgentLogEntry {
-                                    agent_id: agent.id.clone(),
-                                    seq: visible.seq,
-                                    appended_at: visible.appended_at.clone(),
-                                    kind,
-                                })
-                                .kind
-                            });
-                            let size =
-                                serde_json::to_vec(&(visible.seq, &visible.appended_at, &kind))
-                                    .map_err(|_| {
-                                        SandboxStoreError::Corrupt(
-                                            "event projection is not serializable".into(),
-                                        )
-                                    })?
-                                    .len()
-                                    + 512
-                                    + command_candidate.as_ref().map_or(0, String::len);
-                            if suffix {
-                                while bytes + size > 4 * 1024 * 1024 {
-                                    let Some((removed, _)) = projected.pop_front() else {
-                                        break;
-                                    };
-                                    bytes -= removed;
-                                }
-                            }
-                            if bytes + size > 4 * 1024 * 1024 {
-                                if projected.is_empty() {
-                                    return Err(SandboxStoreError::Corrupt(
-                                        "event exceeds the replay byte bound".into(),
-                                    ));
-                                }
-                                full = true;
-                                return Ok(());
-                            }
-                            bytes += size;
-                            projected.push_back((
-                                size,
-                                AgentReplayEntry {
-                                    sequence: visible.seq,
-                                    appended_at: visible.appended_at,
-                                    kind,
-                                    response_binding: None,
-                                    message_command_id: None,
-                                    command_candidate,
-                                    steering_operation,
-                                },
-                            ));
-                            Ok(())
-                        },
-                    )
+                let entries = self
+                    .store
+                    .agent_log_range(&agent.id, after, through, count.max(1))
                     .await
                     .map_err(log_store_error)?;
-                if seen != u64::from(count) + u64::from(after > 0) {
+                if entries.len() != usize::from(count) {
                     return Err(corrupt("agent log ended before its high-water mark"));
+                }
+                let mut projected = Vec::with_capacity(usize::from(count));
+                let mut bytes = 2048;
+                for (offset, entry) in entries.into_iter().enumerate() {
+                    // The store bounds the source page by row count; enforce the
+                    // public serialized-byte bound before retaining each projection.
+                    let sequence = after + offset as u64 + 1;
+                    if entry.agent_id != agent.id || entry.seq != sequence {
+                        return Err(corrupt("agent log identity or sequence is invalid"));
+                    }
+                    let command_candidate = match &entry.kind {
+                        AgentLogKind::TurnStarted {
+                            origin_key: Some(origin),
+                            ..
+                        } => origin.strip_prefix("command:").map(str::to_owned),
+                        _ => None,
+                    };
+                    let visible =
+                        AgentVisibleLogEntry::from_entry(entry, authorization.resource().2);
+                    let kind = visible.kind.map(|kind| {
+                        AgentEvent::from(AgentLogEntry {
+                            agent_id: agent.id.clone(),
+                            seq: visible.seq,
+                            appended_at: visible.appended_at.clone(),
+                            kind,
+                        })
+                        .kind
+                    });
+                    let size = serde_json::to_vec(&(visible.seq, &visible.appended_at, &kind))
+                        .map_err(|_| corrupt("event projection is not serializable"))?
+                        .len()
+                        + 512
+                        + command_candidate.as_ref().map_or(0, String::len);
+                    if bytes + size > 4 * 1024 * 1024 {
+                        if projected.is_empty() {
+                            return Err(corrupt("event exceeds the replay byte bound"));
+                        }
+                        break;
+                    }
+                    bytes += size;
+                    projected.push(AgentReplayEntry {
+                        sequence: visible.seq,
+                        appended_at: visible.appended_at,
+                        kind,
+                        response_binding: None,
+                        message_command_id: None,
+                        command_candidate,
+                    });
                 }
                 self.reject_uncommitted_tail(&agent, header.head).await?;
                 Ok(AgentReplayWindow {
                     header,
                     through,
-                    entries: projected.into_iter().map(|(_, entry)| entry).collect(),
+                    entries: projected,
                 })
             })
             .await;

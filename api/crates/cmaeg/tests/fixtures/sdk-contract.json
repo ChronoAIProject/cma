@@ -203,6 +203,19 @@
           "observed_at": "2026-10-29T00:00:00Z"
         }
       ]
+    },
+    {
+      "consumer_id": "default",
+      "state": "refused",
+      "display_name": "Fixture Agent",
+      "provider": "cma",
+      "agent_id": "agt_0123456789abcdef0123456789abcdef",
+      "conversation_id": "fixture-conversation",
+      "dispatched_at": "2026-10-27T03:00:01Z",
+      "completed_at": "2026-10-27T03:00:05Z",
+      "deliveries": [],
+      "refusal_code": "verified_sender_context_invalid",
+      "last_non_admission_code": "verified_sender_context_unavailable"
     }
   ],
   "ActivityDelivery": [
@@ -520,7 +533,8 @@
           "fixture"
         ]
       },
-      "schema_version": 1
+      "schema_version": 1,
+      "queue_lifetime_seconds": 86400
     }
   ],
   "ApiType": [
@@ -1662,7 +1676,8 @@
             "fixture"
           ]
         },
-        "schema_version": 1
+        "schema_version": 1,
+        "queue_lifetime_seconds": 86400
       },
       "provider": {
         "slug": "fixture",
@@ -2001,7 +2016,8 @@
               "fixture"
             ]
           },
-          "schema_version": 1
+          "schema_version": 1,
+          "queue_lifetime_seconds": 86400
         },
         "profile_digest": "fixture",
         "provider": {
@@ -2133,7 +2149,8 @@
                     "fixture"
                   ]
                 },
-                "schema_version": 1
+                "schema_version": 1,
+                "queue_lifetime_seconds": 86400
               },
               "profile_digest": "fixture",
               "provider": {
@@ -2306,7 +2323,8 @@
               "fixture"
             ]
           },
-          "schema_version": 1
+          "schema_version": 1,
+          "queue_lifetime_seconds": 86400
         },
         "profile_digest": "fixture",
         "provider": {
@@ -2438,7 +2456,8 @@
                     "fixture"
                   ]
                 },
-                "schema_version": 1
+                "schema_version": 1,
+                "queue_lifetime_seconds": 86400
               },
               "profile_digest": "fixture",
               "provider": {
@@ -2612,7 +2631,8 @@
                   "fixture"
                 ]
               },
-              "schema_version": 1
+              "schema_version": 1,
+              "queue_lifetime_seconds": 86400
             },
             "profile_digest": "fixture",
             "provider": {
@@ -2744,7 +2764,8 @@
                         "fixture"
                       ]
                     },
-                    "schema_version": 1
+                    "schema_version": 1,
+                    "queue_lifetime_seconds": 86400
                   },
                   "profile_digest": "fixture",
                   "provider": {
@@ -2917,7 +2938,8 @@
                   "fixture"
                 ]
               },
-              "schema_version": 1
+              "schema_version": 1,
+              "queue_lifetime_seconds": 86400
             },
             "profile_digest": "fixture",
             "provider": {
@@ -3049,7 +3071,8 @@
                         "fixture"
                       ]
                     },
-                    "schema_version": 1
+                    "schema_version": 1,
+                    "queue_lifetime_seconds": 86400
                   },
                   "profile_digest": "fixture",
                   "provider": {
@@ -3224,7 +3247,8 @@
               "fixture"
             ]
           },
-          "schema_version": 1
+          "schema_version": 1,
+          "queue_lifetime_seconds": 86400
         },
         "profile_digest": "fixture",
         "provider": {
@@ -3356,7 +3380,8 @@
                     "fixture"
                   ]
                 },
-                "schema_version": 1
+                "schema_version": 1,
+                "queue_lifetime_seconds": 86400
               },
               "profile_digest": "fixture",
               "provider": {
@@ -3532,7 +3557,8 @@
               "fixture"
             ]
           },
-          "schema_version": 1
+          "schema_version": 1,
+          "queue_lifetime_seconds": 86400
         },
         "profile_digest": "fixture",
         "provider": {
@@ -3664,7 +3690,8 @@
                     "fixture"
                   ]
                 },
-                "schema_version": 1
+                "schema_version": 1,
+                "queue_lifetime_seconds": 86400
               },
               "profile_digest": "fixture",
               "provider": {
@@ -3851,7 +3878,8 @@
             "fixture"
           ]
         },
-        "schema_version": 1
+        "schema_version": 1,
+        "queue_lifetime_seconds": 86400
       },
       "provider": {
         "slug": "fixture",
@@ -5689,9 +5717,12 @@
   ],
   "ConversationInspection": [
     {
-      "binding_id": "binding-fixture", "generation": 1,
-      "conversation_id": "conversation-fixture", "agent_id": "agt_fixture",
-      "state": "ready", "agent_status": "deleted"
+      "binding_id": "binding-fixture",
+      "generation": 1,
+      "conversation_id": "conversation-fixture",
+      "agent_id": "agt_fixture",
+      "state": "ready",
+      "agent_status": "deleted"
     }
   ],
   "ConversationKind": [
@@ -6283,11 +6314,15 @@
   ],
   "PartitionInspection": [
     {
-      "consumer_id": "default", "transport_conversation_id": "conversation-fixture",
+      "consumer_id": "default",
+      "transport_conversation_id": "conversation-fixture",
       "mapping": {
-        "binding_id": "binding-fixture", "generation": 1,
-        "conversation_id": "conversation-fixture", "agent_id": "agt_fixture",
-        "state": "ready", "agent_status": null
+        "binding_id": "binding-fixture",
+        "generation": 1,
+        "conversation_id": "conversation-fixture",
+        "agent_id": "agt_fixture",
+        "state": "ready",
+        "agent_status": null
       }
     }
   ],
@@ -6358,7 +6393,11 @@
     "github_installation_forbidden",
     "github_resource_not_found",
     "github_delivery_conflict",
-    "github_source_unavailable"
+    "github_source_unavailable",
+    "github_dispatch_unavailable",
+    "github_integration_retired",
+    "github_proof_withdrawn",
+    "github_delivery_expired"
   ],
   "ProfileMetadata": [
     {
@@ -6606,7 +6645,8 @@
             "fixture"
           ]
         },
-        "schema_version": 1
+        "schema_version": 1,
+        "queue_lifetime_seconds": 86400
       },
       "profile_digest": "fixture",
       "provider": {
@@ -6738,7 +6778,8 @@
                   "fixture"
                 ]
               },
-              "schema_version": 1
+              "schema_version": 1,
+              "queue_lifetime_seconds": 86400
             },
             "profile_digest": "fixture",
             "provider": {
@@ -7583,7 +7624,8 @@
           "fixture"
         ]
       },
-      "schema_version": 1
+      "schema_version": 1,
+      "queue_lifetime_seconds": 86400
     }
   ],
   "ProviderTarget": [
@@ -7948,7 +7990,8 @@
             "fixture"
           ]
         },
-        "schema_version": 1
+        "schema_version": 1,
+        "queue_lifetime_seconds": 86400
       },
       "profile_digest": "fixture",
       "provider": {
@@ -8121,7 +8164,8 @@
                 "fixture"
               ]
             },
-            "schema_version": 1
+            "schema_version": 1,
+            "queue_lifetime_seconds": 86400
           },
           "profile_digest": "fixture",
           "provider": {
@@ -8267,7 +8311,8 @@
                 "fixture"
               ]
             },
-            "schema_version": 1
+            "schema_version": 1,
+            "queue_lifetime_seconds": 86400
           },
           "profile_digest": "fixture",
           "provider": {
@@ -8412,7 +8457,8 @@
                 "fixture"
               ]
             },
-            "schema_version": 1
+            "schema_version": 1,
+            "queue_lifetime_seconds": 86400
           },
           "profile_digest": "fixture",
           "provider": {
@@ -9837,6 +9883,14 @@
       "fallback_value": "26 October 2026"
     }
   ],
+  "DispatchProgress": [
+    {
+      "channel_id": "cmaeg1.ch.example",
+      "status": "dispatched",
+      "reason": null,
+      "admission_id": "admission-1"
+    }
+  ],
   "EmptyEffectRequest": [
     {}
   ],
@@ -9905,6 +9959,34 @@
       "detail": "Selected for native Discord intake; connection health is unconfirmed.",
       "capacity": 64,
       "selected_records": 1
+    },
+    {
+      "state": "selected",
+      "detail": "Selected for native Discord intake; connection health is unconfirmed.",
+      "capacity": 64,
+      "selected_records": 1,
+      "connection": {
+        "scope": "serving_instance",
+        "stage": "unobserved",
+        "outcome": "unknown",
+        "connected": null,
+        "authenticated": null,
+        "ready": null,
+        "lease": "unknown",
+        "identify": "not_attempted",
+        "observed_at": null,
+        "valid_until": null,
+        "stale": false,
+        "last_ready_at": null,
+        "last_event_at": null,
+        "last_event_committed_at": null,
+        "last_dispatch_at": null,
+        "last_dispatch_outcome": "unknown",
+        "last_failure_stage": null,
+        "last_failure_code": null,
+        "last_failure_at": null,
+        "retry_at": null
+      }
     }
   ],
   "LarkResourceBinding": [
@@ -10934,6 +11016,24 @@
         "verified_at": 1700000000,
         "evidence_ref": "verification-fixture"
       }
+    },
+    {
+      "app_ref": "app-fixture",
+      "host": "github.com",
+      "app_id": 42,
+      "display_name": "Fixture App",
+      "version": 1,
+      "status": "retired",
+      "webhook_url": "https://gateway.example/v1/github/apps/app-fixture/webhooks",
+      "webhook_credential": {
+        "present": false,
+        "version": null
+      },
+      "verification_credential": {
+        "present": false,
+        "version": null
+      },
+      "retired_at": 1793923200
     }
   ],
   "AppList": [
@@ -10993,6 +11093,14 @@
       "app_ref": "app-fixture",
       "installation_id": 99,
       "proof_ref": "proof-fixture"
+    },
+    {
+      "app_ref": "gha_fixture",
+      "installation_id": 99,
+      "account_id": 123,
+      "repository_ids": [
+        1001
+      ]
     }
   ],
   "Binding": [
@@ -11010,6 +11118,38 @@
       "repository_ids": [
         1001
       ]
+    },
+    {
+      "binding_id": "binding-fixture",
+      "app_ref": "app-fixture",
+      "app_id": 42,
+      "installation_id": 99,
+      "account_id": 123,
+      "status": "active",
+      "authority_revision": 1,
+      "verified_until": 0,
+      "verified_by": "admin-fixture",
+      "verification_ref": "verification-fixture",
+      "repository_ids": [
+        1001
+      ],
+      "version": 2,
+      "requested_repository_ids": [
+        1001
+      ],
+      "approved_repository_ids": [
+        1001
+      ],
+      "excluded_repository_ids": [],
+      "approval": {
+        "verified_by": "fixture-admin",
+        "evidence_ref": "review:installation",
+        "approved_at": 1793923200,
+        "authority_revision": 1,
+        "repository_ids": [
+          1001
+        ]
+      }
     }
   ],
   "CreateAppRequest": [
@@ -11050,6 +11190,16 @@
       "app_identity_verification": true,
       "ownership_verification": false,
       "automatic_reconciliation": false
+    },
+    {
+      "store_ready": true,
+      "dynamic_app_registration": true,
+      "native_app_webhook": true,
+      "webhook_secret_rotation": true,
+      "app_identity_verification": true,
+      "ownership_verification": true,
+      "automatic_reconciliation": false,
+      "durable_dispatch": true
     }
   ],
   "Receipt": [
@@ -11063,7 +11213,15 @@
       "raw_body_expires_at": 1700086400,
       "body_sha256": "fixture-body-digest",
       "task_ids": [],
-      "authority_revision": 0
+      "authority_revision": 0,
+      "dispatch": [
+        {
+          "channel_id": "cmaeg1.ch.example",
+          "status": "dispatched",
+          "reason": null,
+          "admission_id": "admission-1"
+        }
+      ]
     },
     {
       "receipt_id": "receipt-fixture",
@@ -11078,7 +11236,15 @@
       "authority_revision": 0,
       "installation_id": null,
       "repository_id": null,
-      "action": null
+      "action": null,
+      "dispatch": [
+        {
+          "channel_id": "cmaeg1.ch.example",
+          "status": "dispatched",
+          "reason": null,
+          "admission_id": "admission-1"
+        }
+      ]
     },
     {
       "receipt_id": "receipt-fixture",
@@ -11095,7 +11261,37 @@
       "authority_revision": 1,
       "action": "opened",
       "installation_id": 99,
-      "repository_id": 1001
+      "repository_id": 1001,
+      "dispatch": [
+        {
+          "channel_id": "cmaeg1.ch.example",
+          "status": "dispatched",
+          "reason": null,
+          "admission_id": "admission-1"
+        }
+      ]
+    },
+    {
+      "receipt_id": "receipt-fixture",
+      "app_ref": "app-fixture",
+      "delivery_id": "delivery-fixture",
+      "event": "ping",
+      "status": "ignored",
+      "received_at": 1700000000,
+      "raw_body_expires_at": 1700086400,
+      "body_sha256": "fixture-body-digest",
+      "task_ids": [],
+      "authority_revision": 0,
+      "reason": "installation_unbound",
+      "retained_until": 1700604800,
+      "dispatch": [
+        {
+          "channel_id": "cmaeg1.ch.example",
+          "status": "dispatched",
+          "reason": null,
+          "admission_id": "admission-1"
+        }
+      ]
     }
   ],
   "Task": [
@@ -11208,6 +11404,112 @@
       "expected_version": 2,
       "webhook_secret": "fixture-webhook-secret",
       "overlap_seconds": 3600
+    }
+  ],
+  "BindingApproval": [
+    {
+      "verified_by": "fixture-admin",
+      "evidence_ref": "review:installation",
+      "approved_at": 1793923200,
+      "authority_revision": 1,
+      "repository_ids": [
+        1001
+      ]
+    }
+  ],
+  "VerifyBindingRequest": [
+    {
+      "expected_version": 1,
+      "evidence_ref": "review:installation",
+      "repository_ids": [
+        1001
+      ]
+    }
+  ],
+  "RetireAppRequest": [
+    {
+      "expected_version": 2
+    }
+  ],
+  "NativeDiscordConnectionStage": [
+    "unobserved",
+    "resolve",
+    "discovery",
+    "lease",
+    "authorize",
+    "socket",
+    "hello",
+    "identify",
+    "resume",
+    "ready",
+    "renew",
+    "event_commit",
+    "stopped"
+  ],
+  "NativeDiscordConnectionOutcome": [
+    "unknown",
+    "pending",
+    "ok",
+    "retrying",
+    "blocked",
+    "stopped"
+  ],
+  "NativeDiscordConnectionFailureCode": [
+    "unavailable",
+    "authority_refused",
+    "invalid_configuration",
+    "missing_message_content_intent",
+    "rate_limited",
+    "protocol",
+    "discovery_unauthorized",
+    "bot_identity_mismatch",
+    "sharding_unsupported",
+    "session_limit_invalid",
+    "lease_contended",
+    "lease_owner_mismatch",
+    "lease_source_mismatch",
+    "lease_invalid",
+    "identify_budget_exhausted",
+    "identify_bucket_wait",
+    "hello_timeout",
+    "hello_invalid",
+    "authentication_failed",
+    "disallowed_intents",
+    "invalid_intents",
+    "sharding_required",
+    "unsupported_version",
+    "backpressure",
+    "commit_unavailable",
+    "heartbeat_lost",
+    "renew_failed",
+    "renew_timeout",
+    "authority_revoked",
+    "invalid_session",
+    "reconnect",
+    "transport"
+  ],
+  "NativeDiscordConnectionStatus": [
+    {
+      "scope": "serving_instance",
+      "stage": "unobserved",
+      "outcome": "unknown",
+      "connected": null,
+      "authenticated": null,
+      "ready": null,
+      "lease": "unknown",
+      "identify": "not_attempted",
+      "observed_at": null,
+      "valid_until": null,
+      "stale": false,
+      "last_ready_at": null,
+      "last_event_at": null,
+      "last_event_committed_at": null,
+      "last_dispatch_at": null,
+      "last_dispatch_outcome": "unknown",
+      "last_failure_stage": null,
+      "last_failure_code": null,
+      "last_failure_at": null,
+      "retry_at": null
     }
   ]
 }

@@ -9,6 +9,69 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
+pub(super) const VERIFIED_SENDER_CONTEXT: &str = "environment.verified_sender_context";
+
+pub(super) fn sender_context_request(value: &Value) -> Result<Option<bool>, CoreError> {
+    value
+        .get("environment")
+        .and_then(|v| v.get("verified_sender_context"))
+        .map(|v| {
+            v.as_bool()
+                .ok_or_else(|| invalid("environment.verified_sender_context must be a boolean"))
+        })
+        .transpose()
+}
+
+fn remove_sender_context(value: &mut Value) {
+    if let Some(environment) = value.get_mut("environment").and_then(Value::as_object_mut) {
+        environment.remove("verified_sender_context");
+        if environment.is_empty() {
+            value
+                .as_object_mut()
+                .expect("profile object")
+                .remove("environment");
+        }
+    }
+}
+
+/// Compare only independent policy changes, preserving historical absent/null snapshots.
+pub(super) fn same_configuration(current: &BindingProfilePlan, requested: &Value) -> bool {
+    let mut value = requested.clone();
+    remove_sender_context(&mut value);
+    let Some(object) = value.as_object_mut() else {
+        return false;
+    };
+    object.remove("queue_lifetime_seconds");
+    let matches = |v: &Value| {
+        content_digest(v).is_ok_and(|d| format!("sha256:{d}") == current.configuration_digest())
+    };
+    if matches(&value) {
+        return true;
+    }
+    if value.get("environment").is_none_or(Value::is_null) {
+        value["environment"] = Value::Null;
+        if matches(&value) {
+            return true;
+        }
+        value
+            .as_object_mut()
+            .expect("profile object")
+            .remove("environment");
+        return matches(&value);
+    }
+    false
+}
+
+impl BindingProfilePlan {
+    /// The existing negotiation list is also the retained opt-in policy. No new
+    /// persisted field is needed, so previous readers can recover admitted work.
+    pub fn verified_sender_context_enabled(&self) -> bool {
+        self.honoured
+            .iter()
+            .any(|field| field == VERIFIED_SENDER_CONTEXT)
+    }
+}
+
 /// CMA owns agent affinity. Gateway conversation identifiers remain transport context.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -43,6 +106,11 @@ pub struct BindingEnvironmentPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingProfilePlan {
+    /// Caller configuration digest excluding independent input policies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_lifetime_seconds: Option<u32>,
     #[serde(default, skip_serializing_if = "SessionAffinity::is_default")]
     pub session_affinity: SessionAffinity,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -59,7 +127,7 @@ pub struct BindingProfilePlan {
 /// Validate a caller's snapshot and project it into the existing profile model.
 /// Capability policy is supplied by composition, never inferred from client metadata.
 pub fn map_profile(
-    value: Value,
+    mut value: Value,
     expected_digest: &str,
     provider: AgentProvider,
     supported_model_api: &str,
@@ -79,8 +147,31 @@ pub fn map_profile(
     }) {
         return Err(invalid("environment exceeds 64 KiB"));
     }
+    let sender_context = sender_context_request(&value)?;
+    if sender_context.is_some() {
+        remove_sender_context(&mut value);
+    }
+    let configuration_digest =
+        if value.get("queue_lifetime_seconds").is_some() || sender_context.is_some() {
+            let mut configuration = value.clone();
+            configuration
+                .as_object_mut()
+                .expect("profile object")
+                .remove("queue_lifetime_seconds");
+            Some(format!(
+                "sha256:{}",
+                content_digest(&configuration).map_err(invalid)?
+            ))
+        } else {
+            None
+        };
     let input: ExternalProfile =
         serde_json::from_value(value).map_err(|_| invalid("invalid external profile schema"))?;
+    if !valid_queue_lifetime(input.queue_lifetime_seconds) {
+        return Err(invalid(
+            "queue_lifetime_seconds must be between 1 and 86400",
+        ));
+    }
     if input.schema_version != 1 {
         return Err(invalid("unsupported profile schema_version"));
     }
@@ -153,6 +244,8 @@ pub fn map_profile(
         }
     }
     let mut plan = BindingProfilePlan {
+        configuration_digest,
+        queue_lifetime_seconds: input.queue_lifetime_seconds,
         session_affinity,
         organization_owned: input.metadata.owner.kind == "organization",
         owner: SubjectId::new(input.metadata.owner.subject),
@@ -175,6 +268,17 @@ pub fn map_profile(
         .collect(),
         refused: Vec::new(),
     };
+
+    if sender_context.is_some() {
+        plan.refuse(
+            VERIFIED_SENDER_CONTEXT,
+            "supported only for an existing Agent target",
+        );
+    }
+
+    if input.queue_lifetime_seconds.is_some() {
+        plan.honoured.push("queue_lifetime_seconds".into());
+    }
     if plan.agent.isolated_agent {
         plan.honoured.push("environment.isolated_agents".into());
     }
@@ -304,12 +408,25 @@ fn map_environment(
 }
 
 impl BindingProfilePlan {
+    pub(super) fn configuration_digest(&self) -> &str {
+        self.configuration_digest
+            .as_deref()
+            .unwrap_or(&self.profile_digest)
+    }
+    /// Waiting policy for newly admitted messages; retained commands keep their deadline.
+    pub fn effective_queue_lifetime_seconds(&self) -> u32 {
+        self.queue_lifetime_seconds.unwrap_or(300)
+    }
+
     fn refuse(&mut self, field: &str, reason: impl Into<String>) {
         self.refused.push(BindingFieldRefusal {
             field: field.into(),
             reason: reason.into(),
         });
     }
+}
+pub(super) fn valid_queue_lifetime(seconds: Option<u32>) -> bool {
+    seconds.is_none_or(|seconds| (1..=86400).contains(&seconds))
 }
 fn units(value: f64, factor: f64, field: &str) -> Result<u32, CoreError> {
     let units = value * factor;

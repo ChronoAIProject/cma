@@ -9,7 +9,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use layer2_core::sandbox::{OperatorError, SandboxOperatorService};
+use layer2_core::sandbox::{OperatorError, SandboxMaintenanceStore, SandboxOperatorService};
 use layer2_core::{
     ActivityAction, ActivityQuery, ActivityRecord, ActivityService, ActivityTarget, Capability,
     CoreError, PlatformSettingsService, RuntimeInventory, RuntimeStatus, SubjectId,
@@ -22,6 +22,7 @@ use crate::AuthenticatedCaller;
 
 use super::{problem_document, problem_response};
 
+pub(super) mod auto_pause;
 pub(super) mod profiles;
 pub(super) mod runtime_update;
 pub(super) mod sandboxes;
@@ -39,6 +40,7 @@ pub struct AdminState {
     pub(super) activity: Arc<ActivityService>,
     pub(super) runtime_inventory: Option<Arc<dyn RuntimeInventory>>,
     pub(super) runtime_updates: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
+    pub(super) maintenance: Option<Arc<dyn SandboxMaintenanceStore>>,
 }
 
 impl AdminState {
@@ -55,6 +57,7 @@ impl AdminState {
             activity,
             runtime_inventory: None,
             runtime_updates: None,
+            maintenance: None,
         }
     }
 
@@ -81,12 +84,18 @@ impl AdminState {
         self.runtime_inventory = Some(inventory);
         self
     }
+
+    pub fn with_maintenance(mut self, maintenance: Arc<dyn SandboxMaintenanceStore>) -> Self {
+        self.maintenance = Some(maintenance);
+        self
+    }
 }
 
 /// Compose every route beneath the deliberately isolated admin path segment.
 pub fn router(state: AdminState) -> Router {
     Router::new()
         .merge(settings::routes())
+        .merge(auto_pause::routes())
         .merge(sandboxes::routes())
         .merge(runtime_update::routes())
         .merge(profiles::routes())
@@ -130,7 +139,8 @@ impl From<CoreError> for CollectionProblem {
                 Self::InvalidRequest
             }
             CoreError::InvalidState(_) => Self::Conflict,
-            CoreError::RuntimeUnavailable(_)
+            CoreError::ModelBudgetWritesUnavailable
+            | CoreError::RuntimeUnavailable(_)
             | CoreError::RuntimeRefused(_)
             | CoreError::ServiceCatalogUnavailable(_)
             | CoreError::SkillCatalogUnavailable(_) => Self::Unavailable,

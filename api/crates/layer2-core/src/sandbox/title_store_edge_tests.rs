@@ -158,3 +158,67 @@ async fn malformed_claims_sources_and_timestamps_are_rejected() {
         Err(AgentTitleStoreError::InvalidTimestamp)
     );
 }
+
+#[tokio::test]
+async fn retained_fallback_stays_visible_until_one_fenced_generated_title_replaces_it() {
+    let now = SystemTime::now() - Duration::from_secs(60);
+    let store = InMemoryAgentTitleStore::default();
+    let id = id("fallback_upgrade");
+    store.register_agent(id.clone()).unwrap();
+    make_eligible(&store, &id);
+    let claim = store
+        .acquire_agent_title_claim(&AgentTitleClaimRequest::new(id.clone(), "original"), now)
+        .await
+        .unwrap()
+        .unwrap();
+    let fallback = AgentTitle::new("hi，我想做个游戏").unwrap();
+    store
+        .complete_agent_title(&claim, &fallback, AgentTitleSource::Fallback, NOW.into())
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .agent_title_candidates(&PageRequest::default())
+            .await
+            .unwrap()
+            .items,
+        vec![id.clone()]
+    );
+    let retry = store
+        .acquire_agent_title_claim(
+            &AgentTitleClaimRequest::new(id.clone(), "retry"),
+            now + Duration::from_secs(60),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retry.mode(), AgentTitleClaimMode::Generate);
+    assert_eq!(
+        store.agent_title(&id).await.unwrap().unwrap().title,
+        fallback
+    );
+    assert!(store
+        .acquire_agent_title_claim(
+            &AgentTitleClaimRequest::new(id.clone(), "other"),
+            now + Duration::from_secs(61)
+        )
+        .await
+        .unwrap()
+        .is_none());
+    let generated = AgentTitle::new("European cottage game").unwrap();
+    assert!(store
+        .complete_agent_title(&retry, &generated, AgentTitleSource::Generated, NOW.into())
+        .await
+        .unwrap());
+    assert_eq!(
+        store.agent_title(&id).await.unwrap().unwrap().title,
+        generated
+    );
+    assert!(store
+        .agent_title_candidates(&PageRequest::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert_eq!(store.title_event_count(&id).unwrap(), 2);
+}

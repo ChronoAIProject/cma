@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ApiError, ProtocolError } from '@chronoai/cma-sdk';
 import { AgentLifecycleCreateError } from '../api/client';
 import { requireTaskStorage } from './taskIdentity';
+import { discardSubmittedTaskDraft } from './taskDraft';
+import { lifecycleFailure, type LifecycleFailure } from './lifecycleFailure';
 import type {
   AgentLifecycleCreateInput,
   AgentLifecycleCreateReceipt,
@@ -100,7 +102,7 @@ export function useLifecycleIntent(
   const current = useRef(saved.intent);
   const active = useRef<AbortController | undefined>(undefined);
   const [pending, setPending] = useState(false);
-  const [failure, setFailure] = useState<string>();
+  const [failure, setFailure] = useState<LifecycleFailure>();
   const [operation, setOperation] = useState<AgentLifecycleOperationView>();
   const [connection, setConnection] = useState<AgentLifecycleOperationView['connection']>();
   const [pollVersion, setPollVersion] = useState(0);
@@ -179,7 +181,9 @@ export function useLifecycleIntent(
         }
       } catch (error: unknown) {
         if (abort.signal.aborted) return;
-        setFailure(error instanceof Error ? error.message : 'Status unavailable.');
+        setFailure(
+          lifecycleFailure(error, 'status', current.current?.body.initial_message !== undefined),
+        );
         if (
           error instanceof ProtocolError ||
           (error instanceof ApiError && !error.isRetryable && error.status !== 408)
@@ -224,7 +228,7 @@ export function useLifecycleIntent(
       if (error instanceof AgentLifecycleCreateError && error.connection)
         setConnection(error.connection);
       else {
-        setFailure(error instanceof Error ? error.message : 'Agent creation failed.');
+        setFailure(lifecycleFailure(error, 'submit', intent.body.initial_message !== undefined));
         if (
           error instanceof AgentLifecycleCreateError &&
           [400, 422].includes(error.status) &&
@@ -240,13 +244,27 @@ export function useLifecycleIntent(
   return {
     intent: saved.intent,
     pending,
-    failure: saved.error ?? failure,
+    failure:
+      saved.error === undefined ? failure : { kind: 'message' as const, message: saved.error },
     operation,
     connection,
     setConnection,
     submit,
     retryStatus: () => setPollVersion((value) => value + 1),
-    clear: () => retain(),
+    clear: () => {
+      const intent = current.current;
+      if (!retain()) return false;
+      if (
+        owner &&
+        intent &&
+        operation?.status === 'succeeded' &&
+        operation.id === intent.receipt?.id &&
+        operation.agent_id &&
+        (intent.agentId === undefined || intent.agentId === operation.agent_id)
+      )
+        discardSubmittedTaskDraft(owner, intent.body);
+      return true;
+    },
     bindAgent: (agentId: string) => {
       const intent = current.current;
       if (

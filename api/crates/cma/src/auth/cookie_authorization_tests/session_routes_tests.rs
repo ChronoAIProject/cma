@@ -57,6 +57,7 @@ async fn session_verifies_once_per_request_and_observes_changed_permissions_and_
             body,
             json!({
                 "authenticated": true, "subject": "owner", "visitor": false,
+                "usage_reporting": {"measured_visible": false},
                 "capabilities": ["use_own_sandboxes"], "display_name": "Live Owner",
             })
         );
@@ -74,15 +75,8 @@ async fn session_verifies_once_per_request_and_observes_changed_permissions_and_
 
         *fixture.control.introspection.write().await = Reply::json(json!({"active": false}));
         let (status, body) = session(&app, &headers).await;
-        if cookie {
-            // A retained browser identity may remain visible without grants.
-            assert_eq!(status, StatusCode::OK);
-            assert_eq!(body["authenticated"], true);
-            assert_eq!(body["capabilities"], json!([]));
-        } else {
-            assert_eq!(status, StatusCode::UNAUTHORIZED);
-            assert_eq!(body, json!({"authenticated": false}));
-        }
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body, json!({"authenticated": false}));
         assert_eq!(fixture.control.requests.load(Ordering::SeqCst), 6);
         fixture.assert_unchanged(&retained).await;
     }

@@ -21,6 +21,19 @@ mod resource_execution;
 #[path = "capacity_execution_tests.rs"]
 mod capacity_execution;
 
+#[path = "request_budget_tests.rs"]
+mod request_budget;
+
+mod bounded_admission_tests;
+mod bounded_audit_tests;
+mod bounded_compatibility_tests;
+mod bounded_dispatch_tests;
+mod bounded_fixtures;
+mod bounded_message_tests;
+mod bounded_read_proof_tests;
+mod bounded_receipt_tests;
+mod fleet_activation_tests;
+
 struct Authority(Mutex<Result<Caller, CommandAuthorizationError>>);
 #[async_trait::async_trait]
 impl AgentCommandAuthorizer for Authority {
@@ -134,7 +147,49 @@ async fn composed(
     Arc<Authority>,
     Arc<AtomicUsize>,
 ) {
-    let (store, agent, parent) = fixture(name, client).await;
+    composed_with_credentials(
+        client,
+        name,
+        Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+        active_sandbox("sbx_commands"),
+    )
+    .await
+}
+
+async fn composed_with_credentials(
+    client: &Client,
+    name: &str,
+    credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    parent: Sandbox,
+) -> (
+    Arc<MongoSandboxStore>,
+    Agent,
+    Sandbox,
+    Arc<crate::commands::ResourceCommandExecution>,
+    Arc<Authority>,
+    Arc<AtomicUsize>,
+) {
+    composed_with_history(client, name, credentials, parent, None).await
+}
+
+async fn composed_with_history(
+    client: &Client,
+    name: &str,
+    credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    parent: Sandbox,
+    history: Option<(u64, bool)>,
+) -> (
+    Arc<MongoSandboxStore>,
+    Agent,
+    Sandbox,
+    Arc<crate::commands::ResourceCommandExecution>,
+    Arc<Authority>,
+    Arc<AtomicUsize>,
+) {
+    let store = MongoSandboxStore::open(client, name).await.unwrap();
+    let agent = ready_agent(&parent, "agt_commands");
+    store.create_sandbox(parent.clone()).await.unwrap();
+    insert_agent(&store, &agent, NOW).await;
     let workspace = ready_workspace(&parent, agent.workspace_id.as_str(), "project");
     let (mut worktree, _) = worktree_and_agent(&parent.id);
     worktree.id = agent.worktree_id.clone();
@@ -142,6 +197,15 @@ async fn composed(
     worktree.agent_id = Some(agent.id.clone());
     store.create_workspace(workspace).await.unwrap();
     store.create_worktree(worktree).await.unwrap();
+    let (store, agent) = if let Some((count, enabled)) = history {
+        let (mut store, agent) = bounded_fixtures::prepare_history(store, agent, count).await;
+        if !enabled {
+            store.bounded_admission_agents.clear();
+        }
+        (store, agent)
+    } else {
+        (store, agent)
+    };
     let store = Arc::new(store);
     let caller = Caller::new(
         agent.owner.clone(),
@@ -160,7 +224,7 @@ async fn composed(
             store.clone(),
             profiles.clone(),
             SandboxPolicy::default(),
-            Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+            credentials.clone(),
         ),
         WorkspaceService::new(store.clone(), profiles.clone()),
         AgentService::new(
@@ -177,7 +241,8 @@ async fn composed(
         authority: authority.clone(),
         access: Arc::new(ResourceAccessService::new(store.clone(), authority.clone())),
         store: store.clone(),
-        operations: AgentOperationService::new(store.clone(), runtime),
+        operations: AgentOperationService::new(store.clone(), runtime)
+            .with_connections(credentials),
         context,
     });
     (store, agent, parent, execution, authority, sends)
@@ -246,7 +311,7 @@ async fn production_authorization_refuses_missing_authority_and_actor_substituti
     ] {
         *authority.0.lock().unwrap() = answer;
         assert_eq!(execution.check_queued(&admitted).await, readiness);
-        execution.prepare_queued(&admitted).await;
+        assert!(execution.prepare_queued(&admitted).await.is_err());
         assert_eq!(execution.execute(&admitted).await, attempt);
     }
     assert_eq!(sends.load(Ordering::SeqCst), 0);
@@ -413,3 +478,6 @@ async fn operation_command_lookup_is_exact_and_rejects_duplicate_bindings() {
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "budget_execution_tests.rs"]
+mod budget_execution;

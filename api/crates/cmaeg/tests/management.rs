@@ -182,6 +182,8 @@ mod binary_support;
 mod boundaries;
 #[path = "management/github_integrations.rs"]
 mod github_integrations;
+#[path = "management/github_write_gate.rs"]
+mod github_write_gate;
 #[path = "management/health.rs"]
 mod health;
 #[path = "management/lifecycle.rs"]
@@ -275,3 +277,6 @@ mod native_lark;
 
 #[path = "management/custom_execution.rs"]
 mod custom_execution;
+
+#[path = "management/organization_channels.rs"]
+mod organization_channels;

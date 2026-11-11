@@ -5,10 +5,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::failure::{Result, RuntimeError};
 
+#[path = "workspace_journal_inventory.rs"]
+mod inventory;
 #[path = "workspace_journal_io.rs"]
 mod io;
 #[path = "workspace_journal_validation.rs"]
 mod validation;
+pub(crate) use inventory::validate_inventory;
 
 const JOURNAL_VERSION: u32 = 1;
 pub(super) const MAX_JOURNAL_BYTES: u64 = 8 * 1024 * 1024;

@@ -243,7 +243,6 @@ async fn dispatch_transaction_rolls_back_invalid_input_and_binds_one_exact_commi
             .sequence
     );
     let receipt = ConversationReceipt {
-        publication: None,
         agent: valid.agent,
         logs,
         command_dispatch: Some(dispatch),
@@ -341,7 +340,6 @@ async fn identical_control_logs_do_not_prove_a_different_command_committed() {
     let logs = store.commit_agent_conversation(mutation).await.unwrap();
     let bound = store.get_command(&claim.command_id).await.unwrap().unwrap();
     let receipt = ConversationReceipt {
-        publication: None,
         agent: next,
         logs,
         command_dispatch: bound.work.dispatch,

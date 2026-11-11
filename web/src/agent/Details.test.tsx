@@ -70,6 +70,8 @@ it('summarises service access read-only beside skills without duplicating compos
   );
   expect(panel.getAllByRole('heading').map((heading) => heading.textContent)).toEqual([
     'Details',
+    'Sandbox machine',
+    'Agent key scope',
     'Service access',
     'Skills',
   ]);
@@ -155,6 +157,8 @@ it('orders the calm sections and gives every text action the same quiet link', (
   const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
   expect(panel.getAllByRole('heading').map((heading) => heading.textContent)).toEqual([
     'Details',
+    'Sandbox machine',
+    'Agent key scope',
     'Files',
     'Sharing',
     'Service access',

@@ -125,7 +125,7 @@
   width: 100%;
   padding: 0 10px;
   border-radius: 8px;
-  color: var(--dsw-alias-label-primary-foreground);
+  color: var(--dsw-alias-button-primary-foreground);
   background: var(--dsw-alias-button-primary-fill);
   font-size: 0.875rem;
   line-height: 1.25rem;
@@ -288,6 +288,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.navigation-filters__manage,
 .navigation-filters__clear {
   display: inline-flex;
   justify-self: start;
@@ -305,12 +306,14 @@
 }
 .navigation-filters__toggle:hover,
 .navigation-filters__toggle[aria-expanded='true'],
+.navigation-filters__manage:hover,
 .navigation-filters__clear:hover {
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-interactive-bg-hover);
 }
 .navigation-filters__views button:focus-visible,
 .navigation-filters__toggle:focus-visible,
+.navigation-filters__manage:focus-visible,
 .navigation-filters__clear:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
@@ -355,6 +358,7 @@
   .navigation-filters__views button,
   .navigation-filters__toggle,
   .navigation-filters__clear,
+  .navigation-filters__manage,
   .navigation-filters__picker > button {
     min-height: 44px;
   }
@@ -365,4 +369,51 @@
     top: 12px;
     right: 12px;
   }
+}
+
+.sidebar__new[aria-current='page'] {
+  background: var(--dsw-specific-sidebar-new-current);
+}
+.sidebar__new[aria-current='page'] > svg,
+.sidebar__link[aria-current='page'] > svg {
+  color: var(--dsw-alias-brand-primary);
+}
+.sidebar__kbd {
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.sidebar__link[aria-current='page']:hover {
+  background: var(--dsw-specific-sidebar-nav-item-active);
+}
+
+.navigation-filters__actions {
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 8px;
+}
+
+.sidebar__account {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sidebar__account > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.sidebar__settings {
+  flex: none;
+}
+@media (pointer: coarse) {
+  .sidebar__settings .sidebar__toggle {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+.sidebar--collapsed .sidebar__account {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  flex-direction: column;
 }

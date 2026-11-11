@@ -120,6 +120,13 @@
               "null"
             ]
           },
+          "last_non_admission_code": {
+            "description": "Last precise retryable provider refusal, retained even after event expiry.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "media_responses": {
             "description": "Independent appended responses. URLs still require Agent Manager's\nnormal response authorization; this feed grants no conversation access.",
             "items": {
@@ -134,6 +141,13 @@
             ]
           },
           "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refusal_code": {
+            "description": "Named terminal refusal before a provider admitted a turn.",
             "type": [
               "string",
               "null"
@@ -283,7 +297,30 @@
           {
             "allOf": [
               {
-                "$ref": "#/components/schemas/InteractionResult"
+                "additionalProperties": false,
+                "properties": {
+                  "action_id": {
+                    "type": "string"
+                  },
+                  "block_id": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "values": {
+                    "additionalProperties": {},
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "block_id",
+                  "action_id"
+                ],
+                "type": "object"
               },
               {
                 "properties": {
@@ -671,6 +708,13 @@
           "permission": {
             "$ref": "#/components/schemas/PermissionConfig"
           },
+          "queue_lifetime_seconds": {
+            "description": "Binding message queue lifetime; omitted uses 300 seconds, maximum 86400.",
+            "format": "int32",
+            "maximum": 86400,
+            "minimum": 1,
+            "type": "integer"
+          },
           "schema_version": {
             "format": "int32",
             "minimum": 0,
@@ -741,6 +785,13 @@
           },
           "host": {
             "type": "string"
+          },
+          "retired_at": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "status": {
             "type": "string"
@@ -1422,6 +1473,11 @@
       "BindRequest": {
         "additionalProperties": false,
         "properties": {
+          "account_id": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "app_ref": {
             "type": "string"
           },
@@ -1431,13 +1487,22 @@
             "type": "integer"
           },
           "proof_ref": {
+            "description": "Retained for legacy requests; static proofs no longer grant authority.",
             "type": "string"
+          },
+          "repository_ids": {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 256,
+            "type": "array"
           }
         },
         "required": [
           "app_ref",
-          "installation_id",
-          "proof_ref"
+          "installation_id"
         ],
         "type": "object"
       },
@@ -1457,6 +1522,24 @@
           "app_ref": {
             "type": "string"
           },
+          "approval": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BindingApproval"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approved_repository_ids": {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "authority_revision": {
             "format": "int64",
             "minimum": 0,
@@ -1465,12 +1548,28 @@
           "binding_id": {
             "type": "string"
           },
+          "excluded_repository_ids": {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
           "installation_id": {
             "format": "int64",
             "minimum": 0,
             "type": "integer"
           },
           "repository_ids": {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "requested_repository_ids": {
             "items": {
               "format": "int64",
               "minimum": 0,
@@ -1490,6 +1589,11 @@
           "verified_until": {
             "format": "int64",
             "type": "integer"
+          },
+          "version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "required": [
@@ -1503,6 +1607,42 @@
           "verified_until",
           "verified_by",
           "verification_ref",
+          "repository_ids"
+        ],
+        "type": "object"
+      },
+      "BindingApproval": {
+        "additionalProperties": false,
+        "properties": {
+          "approved_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "authority_revision": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "evidence_ref": {
+            "type": "string"
+          },
+          "repository_ids": {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "verified_by": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "verified_by",
+          "evidence_ref",
+          "approved_at",
+          "authority_revision",
           "repository_ids"
         ],
         "type": "object"
@@ -3643,6 +3783,34 @@
           }
         ]
       },
+      "DispatchProgress": {
+        "additionalProperties": false,
+        "properties": {
+          "admission_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "channel_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel_id",
+          "status"
+        ],
+        "type": "object"
+      },
       "EmptyEffectRequest": {
         "additionalProperties": false,
         "type": "object"
@@ -3822,6 +3990,13 @@
           },
           "permission": {
             "$ref": "#/components/schemas/PermissionConfig"
+          },
+          "queue_lifetime_seconds": {
+            "description": "Binding message queue lifetime; omitted uses 300 seconds, maximum 86400.",
+            "format": "int32",
+            "maximum": 86400,
+            "minimum": 1,
+            "type": "integer"
           },
           "schema_version": {
             "format": "int32",
@@ -4114,6 +4289,9 @@
             "type": "boolean"
           },
           "automatic_reconciliation": {
+            "type": "boolean"
+          },
+          "durable_dispatch": {
             "type": "boolean"
           },
           "dynamic_app_registration": {
@@ -4985,6 +5163,16 @@
             "minimum": 0,
             "type": "integer"
           },
+          "connection": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeDiscordConnectionStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "detail": {
             "type": "string"
           },
@@ -5001,6 +5189,200 @@
           "detail",
           "capacity",
           "selected_records"
+        ],
+        "type": "object"
+      },
+      "NativeDiscordConnectionFailureCode": {
+        "enum": [
+          "unavailable",
+          "authority_refused",
+          "invalid_configuration",
+          "missing_message_content_intent",
+          "rate_limited",
+          "protocol",
+          "discovery_unauthorized",
+          "bot_identity_mismatch",
+          "sharding_unsupported",
+          "session_limit_invalid",
+          "lease_contended",
+          "lease_owner_mismatch",
+          "lease_source_mismatch",
+          "lease_invalid",
+          "identify_budget_exhausted",
+          "identify_bucket_wait",
+          "hello_timeout",
+          "hello_invalid",
+          "authentication_failed",
+          "disallowed_intents",
+          "invalid_intents",
+          "sharding_required",
+          "unsupported_version",
+          "backpressure",
+          "commit_unavailable",
+          "heartbeat_lost",
+          "renew_failed",
+          "renew_timeout",
+          "authority_revoked",
+          "invalid_session",
+          "reconnect",
+          "transport"
+        ],
+        "type": "string"
+      },
+      "NativeDiscordConnectionOutcome": {
+        "enum": [
+          "unknown",
+          "pending",
+          "ok",
+          "retrying",
+          "blocked",
+          "stopped"
+        ],
+        "type": "string"
+      },
+      "NativeDiscordConnectionStage": {
+        "enum": [
+          "unobserved",
+          "resolve",
+          "discovery",
+          "lease",
+          "authorize",
+          "socket",
+          "hello",
+          "identify",
+          "resume",
+          "ready",
+          "renew",
+          "event_commit",
+          "stopped"
+        ],
+        "type": "string"
+      },
+      "NativeDiscordConnectionStatus": {
+        "description": "This serving process's observation, never a cluster-wide handover authority.",
+        "properties": {
+          "authenticated": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "connected": {
+            "description": "Null for an unobserved, stale or different source revision.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "identify": {
+            "description": "not_attempted, reserved, sent, resuming or resume_sent.",
+            "type": "string"
+          },
+          "last_dispatch_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_dispatch_outcome": {
+            "description": "unknown, admitted, pending, refused, expired or invalid; not reply delivery.",
+            "type": "string"
+          },
+          "last_event_at": {
+            "description": "Last authenticated MESSAGE_CREATE received, before durable commit.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_event_committed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_failure_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_failure_code": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeDiscordConnectionFailureCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_failure_stage": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NativeDiscordConnectionStage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_ready_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lease": {
+            "description": "unknown, acquired, contended, lost or released.",
+            "type": "string"
+          },
+          "observed_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/NativeDiscordConnectionOutcome"
+          },
+          "ready": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "retry_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "description": "Always `serving_instance`; another replica may own the connection.",
+            "type": "string"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/NativeDiscordConnectionStage"
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "valid_until": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "scope",
+          "stage",
+          "outcome",
+          "lease",
+          "identify",
+          "stale",
+          "last_dispatch_outcome"
         ],
         "type": "object"
       },
@@ -5051,6 +5433,7 @@
       },
       "NativeLarkSource": {
         "additionalProperties": false,
+        "description": "Requires a separate single-tenant native app; never replace a NyxID webhook.",
         "properties": {
           "admission": {
             "$ref": "#/components/schemas/AdmissionPolicy"
@@ -5873,6 +6256,10 @@
           "github_resource_not_found",
           "github_delivery_conflict",
           "github_source_unavailable",
+          "github_dispatch_unavailable",
+          "github_integration_retired",
+          "github_proof_withdrawn",
+          "github_delivery_expired",
           "attachment_not_found",
           "media_unavailable"
         ],
@@ -6323,6 +6710,16 @@
           "delivery_id": {
             "type": "string"
           },
+          "dispatch": {
+            "description": "Per-channel durable dispatch progress. This is additive to the v1 receipt\ncontract and is absent on retained lifecycle/ignored receipts.",
+            "items": {
+              "$ref": "#/components/schemas/DispatchProgress"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "event": {
             "type": "string"
           },
@@ -6338,6 +6735,12 @@
             "format": "int64",
             "type": "integer"
           },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "receipt_id": {
             "type": "string"
           },
@@ -6348,6 +6751,14 @@
           "repository_id": {
             "format": "int64",
             "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "retained_until": {
+            "description": "End of the bounded receipt and duplicate-detection window.",
+            "format": "int64",
             "type": [
               "integer",
               "null"
@@ -7034,6 +7445,20 @@
         ],
         "type": "object"
       },
+      "RetireAppRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "type": "object"
+      },
       "RouteResolution": {
         "description": "How an event's targets were resolved.",
         "enum": [
@@ -7361,7 +7786,33 @@
           {
             "allOf": [
               {
-                "$ref": "#/components/schemas/NativeLarkSource"
+                "additionalProperties": false,
+                "description": "Requires a separate single-tenant native app; never replace a NyxID webhook.",
+                "properties": {
+                  "admission": {
+                    "$ref": "#/components/schemas/AdmissionPolicy"
+                  },
+                  "conversation_history": {
+                    "description": "Owner consent to earlier visible messages in the exact original chat/thread.",
+                    "type": "boolean"
+                  },
+                  "identity": {
+                    "$ref": "#/components/schemas/NativeLarkIdentity"
+                  },
+                  "separate_app": {
+                    "description": "Must be true: this source requires a separate native app and webhook.",
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "separate_app",
+                  "identity",
+                  "admission"
+                ],
+                "type": "object"
               },
               {
                 "properties": {
@@ -7764,7 +8215,32 @@
           {
             "allOf": [
               {
-                "$ref": "#/components/schemas/NativeLarkIdentity"
+                "additionalProperties": false,
+                "properties": {
+                  "app_id": {
+                    "type": "string"
+                  },
+                  "bot_open_id": {
+                    "description": "Independently checked using the app's bot-info endpoint.",
+                    "type": "string"
+                  },
+                  "region": {
+                    "$ref": "#/components/schemas/LarkRegion"
+                  },
+                  "tenant_key": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "region",
+                  "app_id",
+                  "tenant_key",
+                  "bot_open_id"
+                ],
+                "type": "object"
               },
               {
                 "properties": {
@@ -7921,8 +8397,33 @@
           {
             "allOf": [
               {
-                "$ref": "#/components/schemas/NativeLarkSource",
-                "description": "Requires a separate single-tenant native app; never replace a NyxID webhook."
+                "additionalProperties": false,
+                "description": "Requires a separate single-tenant native app; never replace a NyxID webhook.",
+                "properties": {
+                  "admission": {
+                    "$ref": "#/components/schemas/AdmissionPolicy"
+                  },
+                  "conversation_history": {
+                    "description": "Owner consent to earlier visible messages in the exact original chat/thread.",
+                    "type": "boolean"
+                  },
+                  "identity": {
+                    "$ref": "#/components/schemas/NativeLarkIdentity"
+                  },
+                  "separate_app": {
+                    "description": "Must be true: this source requires a separate native app and webhook.",
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "separate_app",
+                  "identity",
+                  "admission"
+                ],
+                "type": "object"
               },
               {
                 "properties": {
@@ -7938,8 +8439,7 @@
                 ],
                 "type": "object"
               }
-            ],
-            "description": "Requires a separate single-tenant native app; never replace a NyxID webhook."
+            ]
           },
           {
             "description": "Native Meta WhatsApp Cloud API; independent of NyxID relay sources.",
@@ -8387,7 +8887,8 @@
           "result": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/TaskResult"
+                "$ref": "#/components/schemas/TaskResult",
+                "description": "Retained v1 compatibility field; the gateway never interprets agent results."
               },
               {
                 "type": "null"
@@ -9045,6 +9546,34 @@
         "required": [
           "expected_version",
           "evidence_ref"
+        ],
+        "type": "object"
+      },
+      "VerifyBindingRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ref": {
+            "type": "string"
+          },
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "repository_ids": {
+            "items": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 256,
+            "type": "array"
+          }
+        },
+        "required": [
+          "expected_version",
+          "evidence_ref",
+          "repository_ids"
         ],
         "type": "object"
       },
@@ -9947,6 +10476,18 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "responses": {
@@ -10380,6 +10921,18 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -11077,6 +11630,18 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         ],
         "requestBody": {
@@ -11140,6 +11705,18 @@
             "schema": {
               "minimum": 0,
               "type": "integer"
+            }
+          },
+          {
+            "description": "Organization owner UUID; caller must be an authorized NyxID organization administrator",
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -12195,6 +12772,69 @@
         ]
       }
     },
+    "/github/apps/{app_ref}/retirement": {
+      "post": {
+        "operationId": "retireGitHubAppIntegration",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetireAppRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppIntegration"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      }
+    },
     "/github/apps/{app_ref}/verification": {
       "post": {
         "operationId": "verifyGitHubAppIntegration",
@@ -12486,6 +13126,19 @@
     "/github/installation-bindings": {
       "post": {
         "operationId": "bindGitHubInstallation",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -12551,6 +13204,69 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Binding"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "github"
+        ]
+      }
+    },
+    "/github/installation-bindings/{binding_id}/verification": {
+      "post": {
+        "operationId": "verifyGitHubInstallationBinding",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "binding_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyBindingRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {

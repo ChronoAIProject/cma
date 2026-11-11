@@ -41,11 +41,52 @@ pub enum CommandFailureCode {
     QueueTimeout,
     AuthorityRevoked,
     AuthorityUnavailable,
+    CredentialSetupRequired,
+    ConnectionsRequired,
     AgentUnavailable,
     TargetTurnChanged,
     RuntimeUnavailable,
     RuntimeLost,
     ExecutionFailed,
+    OwnerBudgetExhausted,
+    TurnBudgetExhausted,
+    BudgetUnavailable,
+}
+
+impl CommandFailureCode {
+    /// Preserve the predecessor reader contract for new failures and default
+    /// public projections. Missing prerequisites prevent execution; they do not
+    /// establish revoked authority, a missing Agent, or a transient outage.
+    /// Keep the precise variants for diagnostics and reading retained records.
+    pub fn budget_error(self) -> Option<crate::budget::BudgetError> {
+        use crate::budget::BudgetError;
+        match self {
+            Self::OwnerBudgetExhausted => Some(BudgetError::OwnerExhausted),
+            Self::TurnBudgetExhausted => Some(BudgetError::TurnExhausted),
+            Self::BudgetUnavailable => Some(BudgetError::Unavailable),
+            _ => None,
+        }
+    }
+
+    pub fn from_budget(reason: crate::budget::BudgetError) -> Self {
+        use crate::budget::BudgetError;
+        match reason {
+            BudgetError::OwnerExhausted => Self::OwnerBudgetExhausted,
+            BudgetError::TurnExhausted => Self::TurnBudgetExhausted,
+            BudgetError::Unavailable | BudgetError::InvalidPolicy => Self::BudgetUnavailable,
+        }
+    }
+
+    pub fn legacy_code(self) -> Self {
+        match self {
+            Self::CredentialSetupRequired
+            | Self::ConnectionsRequired
+            | Self::OwnerBudgetExhausted
+            | Self::TurnBudgetExhausted
+            | Self::BudgetUnavailable => Self::ExecutionFailed,
+            code => code,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -223,7 +264,24 @@ impl AdmittedAgentCommand {
             .ok_or(CommandLedgerError::Corrupt)?;
         self.status = AgentResponseStatus::Failed;
         self.work.lease = None;
-        self.work.failure = Some(CommandFailure { code, at: now });
+        if code != code.legacy_code() {
+            tracing::warn!(
+                event = "command_refusal",
+                command_id = %self.receipt.envelope.command_id.as_str().chars().take(128).collect::<String>(),
+                agent_id = %self.receipt.envelope.agent_id.as_str().chars().take(128).collect::<String>(),
+                error_kind = ?code,
+                "Command prerequisite refused"
+            );
+        }
+        self.work.failure = Some(CommandFailure {
+            // Mongo stores new budget precision in an additive sidecar.
+            code: if code.budget_error().is_some() {
+                code
+            } else {
+                code.legacy_code()
+            },
+            at: now,
+        });
         Ok(())
     }
 }

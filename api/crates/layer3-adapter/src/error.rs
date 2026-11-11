@@ -24,6 +24,9 @@ pub enum AdapterError {
     Rejected(String),
     #[error("runtime rejected conflicting operation identity: {0}")]
     OperationIdentityConflict(String),
+    /// Reachable runtime whose retained mutation ledger cannot admit work.
+    #[error("runtime ledger hold: {0}")]
+    RuntimeLedgerHold(String),
     #[error("no capacity for the requested runtime: {0}")]
     AtCapacity(String),
     #[error("runtime capability is not supported: {0}")]
@@ -47,6 +50,9 @@ impl AdapterError {
             Self::Rejected(message) => Self::Rejected(format!("{context}: {message}")),
             Self::OperationIdentityConflict(message) => {
                 Self::OperationIdentityConflict(format!("{context}: {message}"))
+            }
+            Self::RuntimeLedgerHold(message) => {
+                Self::RuntimeLedgerHold(format!("{context}: {message}"))
             }
             Self::AtCapacity(message) => Self::AtCapacity(format!("{context}: {message}")),
             Self::Unsupported(message) => Self::Unsupported(format!("{context}: {message}")),

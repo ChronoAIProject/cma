@@ -12,8 +12,6 @@ function normalized(kind: V2AgentEventKind) {
       };
     case 'conversation_available':
       return { type: 'conversation_opened' };
-    case 'runtime_changed':
-      return { type: 'runtime_generation_retired' };
     case 'tool_started':
       return { ...kind, type: 'tool_call_started' };
     case 'tool_updated':
@@ -56,10 +54,7 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
       (message) => message.role === 'user' && message.runId === state.activeRunId,
     );
     const commandId =
-      item.message_command_id ??
-      (firstInput && (state.historyStart ?? 0) < (state.responseBinding?.turnSequence ?? 0)
-        ? state.responseBinding?.commandId
-        : undefined);
+      item.message_command_id ?? (firstInput ? state.responseBinding?.commandId : undefined);
     next = {
       ...next,
       messages: next.messages.map((message) =>
@@ -71,6 +66,7 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
   if (item.kind?.type === 'stopped' || item.kind?.type === 'deleted')
     next = {
       ...next,
+      liveGapRuns: undefined,
       activeRunId: undefined,
       activeRunStartedAt: undefined,
       responseBinding: undefined,
@@ -115,10 +111,13 @@ function gap(
   detail: string,
   live = false,
 ): ConversationState {
+  const liveGapRuns =
+    live && state.activeRunId !== undefined
+      ? new Set([...(state.liveGapRuns ?? []), state.activeRunId])
+      : state.liveGapRuns;
   return {
     ...state,
-    messages: state.messages.filter((message) => !message.liveOnly),
-    reasoning: [],
+    liveGapRuns,
     recovery: [
       ...state.recovery.filter(
         (notice) =>
@@ -174,6 +173,7 @@ export function foldV2Frame(
   const event = frame.data;
   if (String(event.turn_sequence) !== state.activeRunId || event.after_sequence > state.cursor)
     throw new Error('A live update did not match the observed Agent turn.');
+  if (state.liveGapRuns?.has(String(event.turn_sequence))) return state;
   if (
     event.kind === 'text_delta' &&
     state.messages.some(

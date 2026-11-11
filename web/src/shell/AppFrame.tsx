@@ -1,3 +1,5 @@
+import { DragHandle } from './ColumnDragHandle';
+import { SidebarContext } from './sidebarContext';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
@@ -89,6 +91,7 @@ export function AppFrame({
   const frameRef = useRef<HTMLDivElement>(null);
   const detailsRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(0);
+  const [taskSidebarChoice, setTaskSidebarChoice] = useState<boolean>();
   const [sidebarWidth, setSidebarWidth] = useState(taskLayout ? SIDEBAR_MIN : SIDEBAR_DEFAULT);
   const [detailsWidth, setDetailsWidth] = useState(DETAILS_MIN);
   const [workspaceWidth, setWorkspaceWidth] = useState<number>();
@@ -162,7 +165,11 @@ export function AppFrame({
     };
   }, []);
 
-  const narrow = viewport > 0 && viewport < SIDEBAR_AUTO_COLLAPSE;
+  const narrow =
+    viewport > 0 &&
+    (taskLayout
+      ? viewport < CENTER_MIN || (detailsOpen && viewport < 1180)
+      : viewport < SIDEBAR_AUTO_COLLAPSE);
   /*
    * Asked for, or forced by the width. Both reach the solver as a preference
    * of zero, which is what `computeColumns` already reads as closed — so the
@@ -173,7 +180,14 @@ export function AppFrame({
    * owner asking a second time for it to close.
    */
   const effectiveSidebarCollapsed =
-    sidebarLocked || sidebarCollapsed || (narrow && !expandedAnyway);
+    sidebarLocked ||
+    (taskLayout
+      ? taskSidebarChoice === undefined
+        ? sidebarCollapsed || narrow
+        : onSidebarCollapsedChange
+          ? sidebarCollapsed
+          : taskSidebarChoice
+      : sidebarCollapsed || (narrow && !expandedAnyway));
   const sidebarPreference = effectiveSidebarCollapsed ? 0 : sidebarWidth;
   /*
    * A phone has no room for a permanent rail: 56px is a seventh of a 375px
@@ -192,6 +206,7 @@ export function AppFrame({
 
   const toggleSidebar = useCallback(() => {
     if (sidebarLocked) return;
+    setTaskSidebarChoice(!effectiveSidebarCollapsed);
     if (effectiveSidebarCollapsed) {
       onSidebarCollapsedChange?.(false);
       if (narrow) {
@@ -210,7 +225,11 @@ export function AppFrame({
         collapsed: effectiveSidebarCollapsed,
         onToggle: toggleSidebar,
         onNavigate: () => {
-          if (narrow) setExpandedAnyway(false);
+          if (narrow && !taskLayout) setExpandedAnyway(false);
+          if (taskLayout && phone) {
+            setTaskSidebarChoice(true);
+            onSidebarCollapsedChange?.(true);
+          }
         },
       })
     : sidebar;
@@ -219,6 +238,7 @@ export function AppFrame({
   useEffect(() => {
     if (!sidebarOverlay) return;
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
       if (event.key === 'Escape' && !event.defaultPrevented) toggleSidebar();
     };
     document.addEventListener('keydown', onKeyDown);
@@ -230,7 +250,7 @@ export function AppFrame({
   }, []);
   const onDetailsDrag = useCallback(
     (to: number) => {
-      if (workspaceDetails) setWorkspaceWidth(clampWidth(to, 360, viewport - solved.sidebar - 360));
+      if (workspaceDetails) setWorkspaceWidth(clampWidth(to, 360, viewport - solved.sidebar - 420));
       else setDetailsWidth(clampWidth(to, DETAILS_MIN, DETAILS_MAX));
     },
     [workspaceDetails, viewport, solved.sidebar],
@@ -244,10 +264,11 @@ export function AppFrame({
     detailsOverlay && onDetailsClose !== undefined,
   );
 
-  return (
+  const content = (
     <div
       ref={frameRef}
       className="frame"
+      data-workspace={taskLayout || undefined}
       data-dragging={dragging ? '' : undefined}
       data-details-collapsed={columns.details === 0 ? '' : undefined}
       data-details-overlay={detailsOverlay ? '' : undefined}
@@ -368,117 +389,9 @@ export function AppFrame({
       ) : null}
     </div>
   );
-}
-
-interface DragHandleProps {
-  readonly side: 'sidebar' | 'details';
-  /** Where the border it straddles currently is. */
-  readonly at: number;
-  readonly label: string;
-  readonly value: number;
-  readonly min: number;
-  readonly max: number;
-  readonly onResize: (width: number) => void;
-  readonly onDrag: (dx: number) => void;
-  readonly onDraggingChange: (dragging: boolean) => void;
-}
-
-function DragHandle({
-  side,
-  at,
-  label,
-  value,
-  min,
-  max,
-  onResize,
-  onDrag,
-  onDraggingChange,
-}: DragHandleProps) {
-  const [dragging, setDragging] = useState(false);
-  const origin = useRef(0);
-  const latest = useRef(0);
-  const frame = useRef<number | null>(null);
-
-  useEffect(
-    () => () => {
-      if (frame.current !== null) cancelAnimationFrame(frame.current);
-    },
-    [],
-  );
-
-  const report = useCallback(() => {
-    frame.current = null;
-    onDrag(latest.current - origin.current);
-  }, [onDrag]);
-
   return (
-    <div
-      className="frame__handle"
-      style={{ left: at }}
-      data-side={side}
-      data-dragging={dragging ? 'true' : undefined}
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={label}
-      tabIndex={value >= min ? 0 : -1}
-      aria-valuenow={value}
-      aria-valuemin={min}
-      aria-valuemax={max}
-      aria-valuetext={`${Math.round(value)} pixels`}
-      onKeyDown={(event) => {
-        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-        event.preventDefault();
-        const step = event.shiftKey ? 48 : 16;
-        const direction = (event.key === 'ArrowRight' ? 1 : -1) * (side === 'details' ? -1 : 1);
-        onResize(
-          event.key === 'Home'
-            ? min
-            : event.key === 'End'
-              ? max
-              : clampWidth(value + direction * step, min, max),
-        );
-      }}
-      onLostPointerCapture={() => {
-        if (frame.current !== null) cancelAnimationFrame(frame.current);
-        frame.current = null;
-        setDragging(false);
-        onDraggingChange(false);
-      }}
-      onPointerDown={(event) => {
-        event.preventDefault();
-        /*
-         * Captured, so the drag survives the pointer leaving the 8px strip.
-         * Without it a fast drag stops the moment the pointer outruns the
-         * column, which is exactly when somebody is dragging fast.
-         */
-        event.currentTarget.setPointerCapture(event.pointerId);
-        origin.current = event.clientX;
-        latest.current = event.clientX;
-        setDragging(true);
-        onDraggingChange(true);
-      }}
-      onPointerMove={(event) => {
-        if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
-          return;
-        }
-        latest.current = event.clientX;
-        // One report per frame. Pointer events arrive faster than layout.
-        frame.current ??= requestAnimationFrame(report);
-      }}
-      onPointerUp={(event) => {
-        if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
-          return;
-        }
-        event.currentTarget.releasePointerCapture(event.pointerId);
-        if (frame.current !== null) {
-          cancelAnimationFrame(frame.current);
-          frame.current = null;
-        }
-        // The last position, which the throttle may not have reported yet.
-        onDrag(latest.current - origin.current);
-        setDragging(false);
-        onDraggingChange(false);
-      }}
-    />
+    <SidebarContext value={{ collapsed: effectiveSidebarCollapsed, toggle: toggleSidebar }}>
+      {content}
+    </SidebarContext>
   );
 }

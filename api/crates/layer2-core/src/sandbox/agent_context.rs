@@ -95,8 +95,28 @@ impl AgentContextService {
         &self,
         authorization: Arc<super::agent_io::CommandRevivalAuthorization>,
     ) -> Result<(), AgentContextError> {
-        self.sandboxes.revive_for_command(authorization).await?;
-        Ok(())
+        use super::store::SandboxLifecycleCommandResult;
+        match self.sandboxes.revive_for_command(authorization).await? {
+            SandboxLifecycleCommandResult::Accepted(_) => Ok(()),
+            SandboxLifecycleCommandResult::NotEligible(sandbox) => {
+                if matches!(
+                    sandbox.status,
+                    SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
+                ) {
+                    return Err(AgentContextError::NotReady);
+                }
+                let reason = sandbox.revive_eligibility().err().ok_or_else(|| {
+                    SandboxLifecycleCommandError::Corrupt(
+                        "eligible sandbox could not schedule revival".into(),
+                    )
+                })?;
+                Err(SandboxLifecycleCommandError::SandboxBusy {
+                    status: sandbox.status,
+                    reason,
+                }
+                .into())
+            }
+        }
     }
 
     pub fn new(

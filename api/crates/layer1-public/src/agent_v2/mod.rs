@@ -5,9 +5,6 @@ use std::sync::Arc;
 
 #[cfg(test)]
 mod binding_tests;
-mod current_state;
-#[cfg(test)]
-mod current_state_tests;
 mod cursor;
 mod eligibility;
 mod error;
@@ -16,9 +13,6 @@ pub(crate) mod fixtures;
 mod head;
 #[cfg(test)]
 mod head_tests;
-mod history;
-#[cfg(test)]
-mod history_tests;
 #[cfg(test)]
 mod message_binding_tests;
 #[cfg(test)]
@@ -89,8 +83,6 @@ pub fn router(state: AgentV2State) -> Router {
         .route("/api/v2/ui/transport", get(eligibility::read))
         .route("/api/v2/ui/task-experience", get(task_experience::read))
         .route("/api/v2/agents/{agent_id}/events/head", get(head::read))
-        .route("/api/v2/agents/{agent_id}/history", get(history::read))
-        .route("/api/v2/agents/{agent_id}/state", get(current_state::read))
         .route(
             "/api/v2/agents/{agent_id}/events/snapshot",
             get(snapshot::read),
@@ -107,15 +99,11 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
             eligibility::read,
             task_experience::read,
             head::read,
-            history::read,
-            current_state::read,
             snapshot::read,
             stream::read
         ),
         components(schemas(
             shapes::EventHead,
-            shapes::HistoryWindow,
-            shapes::StatePage,
             shapes::EventPage,
             shapes::EventItem,
             shapes::ResponseBinding,

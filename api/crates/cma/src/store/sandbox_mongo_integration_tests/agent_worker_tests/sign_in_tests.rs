@@ -109,7 +109,6 @@ async fn startup_sign_in_notice_and_completion_are_atomic_with_parent_state() {
         Some(waiting.clone())
     );
     let repeated_receipt = PublicationReceipt {
-        publication: None,
         agent: next.clone(),
         worktree: None,
         logs: store
@@ -207,7 +206,6 @@ async fn startup_sign_in_notice_and_completion_are_atomic_with_parent_state() {
         .pop()
         .unwrap();
     let receipt = PublicationReceipt {
-        publication: None,
         agent: ready,
         worktree: Some(worktree),
         logs,

@@ -16,7 +16,9 @@ export function updateTool(
   const current = state.toolCalls.find((tool) => tool.id === item.id);
   const tool =
     start && current !== undefined
-      ? current
+      ? current.startedAt || !item.startedAt
+        ? current
+        : { ...current, startedAt: item.startedAt }
       : {
           ...current,
           ...item,
@@ -38,7 +40,7 @@ export function liveTool(state: ConversationState, event: AgentLiveEvent): Conve
   const id = text(event.toolCallId);
   if (id === undefined) return state;
   const current = state.toolCalls.find((tool) => tool.id === id);
-  if (event.type === 'CUSTOM' && current === undefined && state.historyStart === undefined) return state;
+  if (event.type === 'CUSTOM' && current === undefined) return state;
   if (event.type === 'TOOL_CALL_START') {
     return updateTool(
       state,
@@ -48,6 +50,7 @@ export function liveTool(state: ConversationState, event: AgentLiveEvent): Conve
         title: text(event.toolCallName) ?? 'Tool call',
         kind: text(event['cma:toolKind']),
         status: text(event['cma:status']) ?? 'running',
+        startedAt: event.timestamp,
       },
       true,
     );
@@ -61,12 +64,14 @@ export function liveTool(state: ConversationState, event: AgentLiveEvent): Conve
   return updateTool(state, {
     id,
     runId: event.runId,
-    title: text(event.toolCallName) ?? current?.title ?? (state.historyStart === undefined ? 'Tool call' : 'Continued tool activity'),
+    title: text(event.toolCallName) ?? current?.title ?? 'Tool call',
     ...current,
     status:
       text(event['cma:status']) ??
       (event.type === 'TOOL_CALL_END' ? 'completed' : (current?.status ?? 'running')),
     detail,
+    finishedAt:
+      current?.finishedAt ?? (event.type === 'TOOL_CALL_END' ? event.timestamp : undefined),
     output:
       typeof output?.text === 'string' && typeof output.truncated === 'boolean'
         ? { text: output.text, truncated: output.truncated }

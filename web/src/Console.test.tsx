@@ -8,7 +8,7 @@ import { agentClient, AGENT_DETAIL } from './test/agent';
 import { sandboxFixture } from './test/hierarchy';
 import { ApiError, createClient } from '@chronoai/cma-sdk';
 import { WIRE_AGENT } from './test/rest';
-import { chooseOption } from './test/select';
+import { chooseOption, expandNavigationFilters } from './test/select';
 
 const OWNER: User = {
   id: 'owner',
@@ -80,8 +80,8 @@ it('removes an accepted deletion from active navigation before cleanup and keeps
   );
   await actor.click(screen.getByRole('button', { name: 'Delete Sandbox' }));
   expect(screen.getByText('Submitting delete request.')).toBeInTheDocument();
-  await actor.click(screen.getByRole('button', { name: 'Settings' }));
-  await actor.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
+  await expandNavigationFilters(actor);
+  await actor.click(screen.getByRole('button', { name: 'Manage environments' }));
   expect(screen.getByRole('treeitem', { name: /Atlas/ })).toBeInTheDocument();
   await act(async () => accept());
   expect(screen.queryByRole('treeitem', { name: /Atlas/ })).not.toBeInTheDocument();
@@ -126,7 +126,7 @@ it('keeps composer settings available while Details and tree navigation remain u
   ).toHaveTextContent('gpt-6 High');
   expect(composer.getByLabelText('Permission mode')).toHaveTextContent('Autonomous');
   await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
-  await actor.click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
+  await actor.click(screen.getByRole('button', { name: 'Show Agent details' }));
   const panel = within(screen.getByRole('complementary', { name: 'Agent details' }));
   expect(panel.queryByLabelText('Model')).not.toBeInTheDocument();
   expect(panel.queryByLabelText(/Model and reasoning effort/)).not.toBeInTheDocument();
@@ -148,8 +148,8 @@ it('keeps composer settings available while Details and tree navigation remain u
   );
   expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeEnabled();
   await actor.keyboard('{Escape}');
-  await actor.click(screen.getByRole('button', { name: 'Settings' }));
-  await actor.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
+  await expandNavigationFilters(actor);
+  await actor.click(screen.getByRole('button', { name: 'Manage environments' }));
   const sandbox = screen.getByRole('treeitem', { name: /Atlas/ });
   sandbox.focus();
   await actor.keyboard('{Enter}');
@@ -269,7 +269,7 @@ it('disables personal creation with a reason in organization scope without repla
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'New agent' })).not.toHaveAttribute('aria-disabled'),
   );
-  await actor.click(screen.getByRole('button', { name: /^Filter/ }));
+  await expandNavigationFilters(actor);
   await chooseOption(actor, 'Navigation scope', 'Research (Organization)');
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'New agent' })).toHaveAttribute(

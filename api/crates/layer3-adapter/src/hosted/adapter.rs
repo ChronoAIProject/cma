@@ -44,6 +44,8 @@ mod install;
 mod nonexecuting;
 #[path = "adapter_provider_tools.rs"]
 mod provider_tools;
+#[path = "adapter_runtime_identity.rs"]
+mod runtime_identity;
 #[path = "adapter_runtime.rs"]
 mod runtime_lifecycle;
 #[path = "adapter_workspace.rs"]

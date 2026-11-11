@@ -166,7 +166,7 @@ fn every_admin_route_is_documented_and_authenticated() {
         .iter()
         .filter(|(path, _)| path.starts_with("/api/v1/admin/"))
         .collect();
-    assert_eq!(admin.len(), 17);
+    assert_eq!(admin.len(), 28);
     for (_, item) in admin {
         for operation in [
             item.get.as_ref(),
@@ -181,7 +181,7 @@ fn every_admin_route_is_documented_and_authenticated() {
             assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
         }
     }
-    assert_eq!(operation_ids.len(), 20);
+    assert_eq!(operation_ids.len(), 31);
     assert!(document
         .paths
         .paths
@@ -205,6 +205,7 @@ fn every_owner_hierarchy_route_is_documented_and_authenticated() {
         "/api/v1/sandboxes/{id}",
         "/api/v1/sandboxes/{id}/pause",
         "/api/v1/sandboxes/{id}/revive",
+        "/api/v1/sandboxes/{id}/always-on",
         "/api/v1/sandboxes/{id}/events",
         "/api/v1/sandboxes/{id}/workspaces",
         "/api/v1/workspaces/{id}",
@@ -229,7 +230,7 @@ fn every_owner_hierarchy_route_is_documented_and_authenticated() {
                 .flatten(),
         );
     }
-    assert_eq!(operations.len(), 13);
+    assert_eq!(operations.len(), 14);
     assert!(operations
         .iter()
         .all(|operation| operation.security.as_ref().map(Vec::len) == Some(2)));
@@ -557,4 +558,20 @@ fn operation<'a>(
     path: &str,
 ) -> &'a serde_json::Value {
     &document["paths"][path][method]
+}
+
+#[test]
+fn usage_presentation_settings_have_a_strict_boolean_admin_contract() {
+    let document = serde_json::to_value(document()).unwrap();
+    let schemas = &document["components"]["schemas"];
+    let section = &schemas["UsageReportingSettingsBody"];
+    assert_eq!(section["properties"]["measured_visible"]["type"], "boolean");
+    assert_eq!(section["required"], serde_json::json!(["measured_visible"]));
+    assert_eq!(section["additionalProperties"], false);
+    for name in ["PlatformSettingsBody", "PatchRequest"] {
+        assert_eq!(
+            schemas[name]["properties"]["usage_reporting"]["$ref"],
+            "#/components/schemas/UsageReportingSettingsBody"
+        );
+    }
 }

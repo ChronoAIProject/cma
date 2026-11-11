@@ -53,35 +53,6 @@ pub(super) struct EventPage {
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
-pub(super) struct StatePage {
-    pub object: &'static str,
-    pub schema_version: u16,
-    pub agent_id: String,
-    pub incarnation: String,
-    pub through_cursor: String,
-    pub context: Vec<EventItem>,
-    pub approvals: Vec<EventItem>,
-    pub next_approval_cursor: Option<String>,
-}
-
-#[derive(Serialize, utoipa::ToSchema)]
-pub(super) struct HistoryWindow {
-    pub object: &'static str,
-    pub schema_version: u16,
-    pub agent_id: String,
-    pub incarnation: String,
-    /// Exclusive lower boundary; context does not acknowledge earlier events.
-    pub start_cursor: String,
-    pub through_cursor: String,
-    pub context: Option<EventItem>,
-    /// Original first loss event in that turn before the lower boundary.
-    pub gap: Option<EventItem>,
-    pub items: Vec<EventItem>,
-    /// Pass as through_cursor to read the immediately preceding window.
-    pub previous_cursor: Option<String>,
-}
-
-#[derive(Serialize, utoipa::ToSchema)]
 pub(super) struct DurableEvent {
     pub agent_id: String,
     pub incarnation: String,

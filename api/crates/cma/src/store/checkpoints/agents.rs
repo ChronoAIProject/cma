@@ -1,9 +1,11 @@
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::{
     validate_checkpoint_mutation, SandboxCheckpointMutation, SandboxStoreError,
 };
 use layer2_core::sandbox::Sandbox;
 use mongodb::bson::doc;
 
+use super::super::agent_log::scan_complete_log_with_session;
 use super::super::agent_log_integrity::TransactionLogError;
 use super::super::lifecycle_execution::load_sandbox_agents;
 use super::super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
@@ -24,10 +26,16 @@ pub(super) async fn validate_and_fence(
     let mut rows = Vec::with_capacity(agents.len());
     for agent in agents {
         let last_seq = if agent.status.is_live() {
-            super::super::agent_log_context::validate(store, &agent, session, false)
-                .await?
-                .summary
-                .last_sequence()
+            scan_complete_log_with_session(
+                ScanCaller::Checkpoint,
+                store,
+                &agent.id,
+                agent.conversation.last_seq,
+                session,
+                |_| Ok(()),
+            )
+            .await?
+            .entry_count()
         } else {
             agent.conversation.last_seq
         };

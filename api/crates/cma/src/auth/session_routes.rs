@@ -14,6 +14,7 @@ use layer2_core::{Authorization, Capability};
 use super::{entitlements, profile::Profile, AuthState, AUTH_COOKIE};
 
 pub(super) async fn read(
+    State(auth): State<Arc<AuthState>>,
     caller: Option<AuthenticatedCaller>,
     profile: Option<Extension<Profile>>,
 ) -> Response {
@@ -21,8 +22,25 @@ pub(super) async fn read(
     // provider IO without adding a new authorization boundary.
     match caller {
         Some(AuthenticatedCaller(caller)) => {
+            let usage_reporting = match auth.usage_reporting().await {
+                Ok(settings) => settings,
+                Err(_) => {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        [(header::CONTENT_TYPE, "application/problem+json")],
+                        Json(serde_json::json!({
+                            "type": "urn:chrono:problem:settings-unavailable",
+                            "title": "Service Unavailable", "status": 503,
+                            "detail": "Usage presentation settings could not be read.",
+                            "code": "settings_unavailable",
+                        })),
+                    )
+                        .into_response()
+                }
+            };
             let mut body = serde_json::json!({
                 "authenticated": true,
+                "usage_reporting": usage_reporting,
                 "subject": caller.subject.as_str(),
                 "capabilities": entitlements::reported(&caller.authorization),
                 "visitor": is_visitor(&caller.authorization),
@@ -51,6 +69,7 @@ fn is_visitor(authorization: &Authorization) -> bool {
 }
 
 pub(super) async fn logout(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {
+    auth.identity_store.clear();
     if let Some(value) = request_cookie(&headers, AUTH_COOKIE) {
         if let Err(error) = auth.revoke_browser_login(value).await {
             tracing::error!(error = %error, "could not revoke browser authentication");

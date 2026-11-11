@@ -14,6 +14,7 @@ impl From<ResourceAccessError> for ResourceProblem {
 }
 impl IntoResponse for ResourceProblem {
     fn into_response(self) -> Response {
+        super::dependency_diagnostics::resource_failure(&self.0);
         use ResourceAccessError::*;
         let (status, code, detail) = match self.0 {
             Access(AccessError::NotFound) | Store(ResourceAccessStoreError::NotFound) => (StatusCode::NOT_FOUND, "resource_not_found", "Resource not found."),

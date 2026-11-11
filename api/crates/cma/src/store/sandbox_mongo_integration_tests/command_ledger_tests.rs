@@ -1,12 +1,14 @@
 use futures_util::TryStreamExt;
 mod admission_tests;
 mod audit_tests;
+mod budget_tests;
 mod claim_observation_tests;
 mod contextual_suggestions;
 mod discovery_tests;
 mod execution_tests;
 mod queued_cancellation_tests;
 mod queued_input_tests;
+mod refusal_compatibility_tests;
 mod sandbox_controls_tests;
 mod startup_failure_tests;
 mod suggested_reply_tests;

@@ -53,6 +53,7 @@ mod connection_contention_tests;
 mod connection_failure_tests;
 mod first_message_contention_tests;
 mod first_message_publication_tests;
+mod ledger_hold_tests;
 mod lifecycle_connection_tests;
 mod open_publication_recovery_tests;
 mod prepared_pair_tests;
@@ -319,6 +320,7 @@ fn sandbox(id: &SandboxId, owner: SubjectId, stamp: &str) -> Sandbox {
             id: SandboxProfileId::generate(),
             revision: 1,
             digest: "a".repeat(64),
+            always_on: None,
             content: SandboxProfileContent {
                 runtime_image: None,
                 cpu_millis: 1_000,

@@ -1,6 +1,5 @@
 //! Mongo persistence for agent aggregates.
 
-use futures_util::TryStreamExt;
 use layer2_core::ids::{AgentId, SubjectId};
 use layer2_core::sandbox::store::{
     AgentStore, Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE,
@@ -12,7 +11,7 @@ use mongodb::{Collection, IndexModel};
 
 use super::agent_title_state::{initial_title_fields, preserve_title_fields, record_title_value};
 use super::sandbox_mongo::{
-    i64_field_matches, is_duplicate_key, record_bson, require_version, signed,
+    i64_field_matches, is_duplicate_key, read_record, record_bson, require_version, signed,
     string_field_matches, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 
@@ -64,6 +63,21 @@ pub(super) fn agent_indexes() -> Vec<IndexModel> {
             .options(
                 IndexOptions::builder()
                     .name("agents_due_work".to_string())
+                    .build(),
+            )
+            .build(),
+        // Changed parents can wake a paced retry before its ordinary ready_at.
+        IndexModel::builder()
+            .keys(
+                doc! { "work_pending": 1, "worker_failure_pacing_v1.until": 1,
+                "work_lease_expires_at": 1, "_id": 1 },
+            )
+            .options(
+                IndexOptions::builder()
+                    .name("agents_paced_work".to_string())
+                    .partial_filter_expression(
+                        doc! {"worker_failure_pacing_v1.until": {"$exists": true}},
+                    )
                     .build(),
             )
             .build(),
@@ -165,16 +179,7 @@ pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreErro
 }
 
 pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError> {
-    super::agent_log_segments::require_agent_version(document)
-        .map_err(SandboxStoreError::Corrupt)?;
-    let mut agent: Agent = mongodb::bson::deserialize_from_bson(
-        document
-            .get("record")
-            .ok_or_else(|| SandboxStoreError::Corrupt("Agent record is missing".into()))?
-            .clone(),
-    )
-    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-    super::agent_log_segments::validate_identity(document, &agent)?;
+    let mut agent: Agent = read_record(document).map_err(SandboxStoreError::Corrupt)?;
     super::trigger_first_messages::hydrate(document, &mut agent)?;
     agent
         .validate_worktree_recoveries()
@@ -235,8 +240,6 @@ pub(super) fn agent_replacement_fields(agent: &Agent) -> Result<Document, Sandbo
     let mut document = agent_document(agent)?;
     document.remove("_id");
     document.remove("last_seq");
-    // $set replacements retain the original envelope and its sidecar binding.
-    document.remove("document_schema_version");
     preserve_title_fields(&mut document);
     Ok(document)
 }
@@ -323,6 +326,20 @@ impl AgentStore for MongoSandboxStore {
         {
             return Err(SandboxStoreError::Conflict);
         }
+        let current_row = self
+            .agents
+            .find_one(doc! { "_id": agent.id.as_str() })
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+            .ok_or(SandboxStoreError::Conflict)?;
+        let current = read_agent(&current_row)?;
+        let mut fields = agent_replacement_fields(&agent)?;
+        super::agent_log_integrity::carry_integrity_for_revision(
+            &current_row,
+            &current,
+            &agent,
+            &mut fields,
+        )?;
         let result = self
             .agents
             .update_one(
@@ -355,7 +372,7 @@ impl AgentStore for MongoSandboxStore {
                         record_bson(&agent.work.live_skills).map_err(SandboxStoreError::Corrupt)?
                     },
                 },
-                doc! { "$set": agent_replacement_fields(&agent)? },
+                doc! { "$set": fields },
             )
             .await
             .map_err(|error| {
@@ -384,6 +401,7 @@ impl AgentStore for MongoSandboxStore {
         if let Some(cursor) = &page.cursor {
             filter.insert("_id", doc! { "$gt": cursor });
         }
+        let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
         let mut cursor = self
             .agents
             .find(filter)
@@ -392,8 +410,8 @@ impl AgentStore for MongoSandboxStore {
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let mut items = Vec::new();
-        while let Some(document) = cursor
-            .try_next()
+        while let Some(document) = read
+            .next(&mut cursor)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         {
@@ -411,54 +429,10 @@ impl AgentStore for MongoSandboxStore {
                 .0
                 .clone()
         });
+        read.complete();
         Ok(Page { items, next })
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn agent_indexes_include_the_live_worktree_constraint() {
-        let indexes = agent_indexes();
-        assert_eq!(
-            indexes[0].keys,
-            doc! { "owner": 1, "status": 1, "updated_at": -1 }
-        );
-        assert_eq!(indexes[1].keys, doc! { "owner": 1, "creation_key": 1 });
-        let creation_options = indexes[1].options.as_ref().unwrap();
-        assert_eq!(creation_options.unique, Some(true));
-        assert_eq!(
-            creation_options.name.as_deref(),
-            Some("agents_owner_creation_key")
-        );
-        assert_eq!(indexes[2].keys, doc! { "sandbox_id": 1 });
-        assert_eq!(indexes[3].keys, doc! { "workspace_id": 1, "status": 1 });
-        assert_eq!(
-            indexes[4].keys,
-            doc! {
-                "work_pending": 1,
-                "work_ready_at": 1,
-                "work_lease_expires_at": 1,
-                "_id": 1,
-            }
-        );
-        assert_eq!(
-            indexes[4].options.as_ref().unwrap().name.as_deref(),
-            Some("agents_due_work")
-        );
-        assert_eq!(indexes[5].keys, doc! { "status": 1, "_id": 1 });
-        assert_eq!(
-            indexes[5].options.as_ref().unwrap().name.as_deref(),
-            Some("agents_live_connections")
-        );
-        assert_eq!(indexes[6].keys, doc! { "worktree_id": 1 });
-        let options = indexes[6].options.as_ref().unwrap();
-        assert_eq!(options.unique, Some(true));
-        assert_eq!(
-            options.partial_filter_expression,
-            Some(doc! { "status": { "$in": LIVE_STATUSES } })
-        );
-    }
-}
+mod tests;

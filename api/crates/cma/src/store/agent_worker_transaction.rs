@@ -1,18 +1,18 @@
 //! Atomic Mongo publication for one fenced agent work step.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::{
-    validate_agent_cleanup_capacity_log, validate_agent_work_mutation,
-    validate_agent_work_mutation_with_sandbox, AgentWorkMutation, SandboxStoreError,
+    agent_cleanup_capacity_retry, validate_agent_cleanup_capacity_log,
+    validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox, AgentWorkMutation,
+    SandboxStoreError,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogEntry, AgentStatus, AgentWorkStep, Sandbox, SandboxEvent, Worktree,
 };
 use mongodb::bson::{doc, Bson, Document};
 
-use super::agent_log::log_document;
-use super::agent_log_integrity::{
-    ensure_append_batch_size, ensure_append_capacity, TransactionLogError,
-};
+use super::agent_log::scan_complete_log_with_session;
+use super::agent_log_integrity::{ensure_append_batch_size, prepare_append, TransactionLogError};
 use super::agent_worker_capacity::publication_capacity;
 use super::agents::{agent_replacement_fields, read_agent};
 use super::sandbox_events::{append_in_transaction, TransactionEventError};
@@ -27,6 +27,7 @@ mod contention;
 mod prepared_replay;
 #[cfg(test)]
 mod prepared_replay_tests;
+mod publication_history;
 mod publication_log;
 mod publication_transaction;
 mod sign_in;
@@ -37,7 +38,6 @@ mod prepared_open_ready_tests;
 
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct PublicationReceipt {
-    pub(super) publication: Option<super::agent_log_segments::publication::PublicationIdentity>,
     pub(super) agent: Agent,
     pub(super) worktree: Option<Worktree>,
     pub(super) logs: Vec<AgentLogEntry>,
@@ -128,9 +128,17 @@ async fn apply_publication_observed(
         .transpose()
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    let context = super::agent_log_context::validate(store, &current, session, false).await?;
-    let last_log = context.last;
-    let complete_log = context.summary;
+    let history = publication_history::read(
+        store,
+        &current,
+        &current_row,
+        mutation,
+        observed.is_none(),
+        session,
+    )
+    .await?;
+    let complete_log = history.summary;
+    let last_log = history.last;
     validate_agent_cleanup_capacity_log(&current, mutation, last_log.as_ref())
         .map_err(ApplyError::Domain)?;
     if current.work.step == AgentWorkStep::WaitForWorkspace
@@ -182,7 +190,7 @@ async fn apply_publication_observed(
         layer2_core::sandbox::store::validate_prepared_agent_open_ready(
             &current,
             &current_worktree,
-            complete_log.last_sequence(),
+            complete_log.entry_count(),
             mutation,
         )
         .map_err(ApplyError::Domain)?;
@@ -221,7 +229,7 @@ async fn apply_publication_observed(
         validate_agent_work_mutation_with_sandbox(
             &current,
             &current_worktree,
-            complete_log.last_sequence(),
+            complete_log.entry_count(),
             mutation,
             &sandbox,
         )
@@ -248,7 +256,7 @@ async fn apply_publication_observed(
         validate_agent_work_mutation(
             &current,
             &current_worktree,
-            complete_log.last_sequence(),
+            complete_log.entry_count(),
             mutation,
         )
         .map_err(ApplyError::Domain)?;
@@ -257,9 +265,28 @@ async fn apply_publication_observed(
     let sign_in_sandbox = sign_in::apply(store, &current, mutation, session).await?;
     prepared_replay::fence(store, &current, &current_worktree, mutation, session).await?;
     let (final_agent, logs) = final_agent_and_logs(&current, mutation)?;
-    ensure_append_capacity(
+
+    let prior_semantic = match complete_log.semantic() {
+        Some(checkpoint) => checkpoint.clone(),
+        None => {
+            crate::store::agent_log_integrity::audit_checkpoint(
+                store,
+                &current,
+                &history.entries,
+                session,
+            )
+            .await?
+        }
+    };
+    let next_semantic = prior_semantic
+        .after_append(&logs, &final_agent)
+        .map_err(ApplyError::Domain)?;
+    let integrity = prepare_append(
+        &current,
         &complete_log,
         &logs,
+        final_agent.revision,
+        next_semantic,
         publication_capacity(&current, mutation),
     )
     .map_err(ApplyError::Domain)?;
@@ -269,13 +296,14 @@ async fn apply_publication_observed(
         &current,
         &final_agent,
         mutation,
+        integrity.integrity,
         session,
     )
     .await?;
     if let Some(versioned) = mutation.worktree.as_ref() {
         advance_worktree(store, &current_worktree, &versioned.worktree, session).await?;
     }
-    insert_logs(store, &logs, session).await?;
+    insert_logs(store, &integrity.documents, session).await?;
     let event = match mutation.sandbox_event.as_ref() {
         Some(kind) => Some(
             append_in_transaction(
@@ -290,7 +318,6 @@ async fn apply_publication_observed(
         None => None,
     };
     Ok(PublicationReceipt {
-        publication: None,
         agent: final_agent,
         worktree: mutation
             .worktree
@@ -308,6 +335,7 @@ async fn advance_agent(
     current: &Agent,
     next: &Agent,
     mutation: &AgentWorkMutation,
+    integrity: mongodb::bson::Document,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     let lease = current
@@ -323,6 +351,7 @@ async fn advance_agent(
         &mut fields,
     )
     .map_err(ApplyError::Domain)?;
+    fields.insert("agent_log_integrity_v1", integrity);
     fields.insert(
         "last_seq",
         signed(next.conversation.last_seq, "agent log sequence")

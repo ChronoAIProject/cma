@@ -3,7 +3,6 @@ import { HydrationEvents } from '../mergeHydration';
 import { mergeTranscriptSnapshot } from '../chronology';
 import type { ConversationState } from '../model';
 import { foldV2Frame } from './projection';
-import { boundConversation, DISPLAY_BYTES, DISPLAY_ROWS } from '../retention';
 
 /** Rebase a live tail onto rich history without dropping or replaying new output. */
 export class ConversationHydration extends HydrationEvents {
@@ -12,12 +11,10 @@ export class ConversationHydration extends HydrationEvents {
   private baseline?: ConversationState;
   private transcript?: ConversationState;
   private authoritative?: Pick<ConversationState, 'cursor' | 'activeRunId'>;
-  private frameCheckpoint?: ConversationState;
 
   override reset(snapshot?: ConversationState) {
     super.reset(snapshot);
     this.frames = [];
-    this.frameCheckpoint = undefined;
     this.incarnation = snapshot?.agentIncarnation;
     this.baseline = undefined;
     this.transcript = undefined;
@@ -65,20 +62,11 @@ export class ConversationHydration extends HydrationEvents {
           data: { ...frame.data, delta: previous.data.delta + frame.data.delta },
         };
       else this.frames.push(frame);
-      if (
-        this.frames.length > DISPLAY_ROWS ||
-        JSON.stringify(this.frames).length * 2 > DISPLAY_BYTES
-      ) {
-        this.frameCheckpoint = boundConversation({ ...next, displayLimited: true });
-        this.frames = [];
-      }
     }
     return next;
   }
 
   override merge(snapshot: ConversationState, agent: string, complete: boolean) {
-    if (this.frameCheckpoint !== undefined && this.frameCheckpoint.cursor >= snapshot.cursor)
-      snapshot = this.frameCheckpoint;
     if (!complete) {
       if (snapshot.agentIncarnation === undefined) this.transcript = snapshot;
       else this.baseline = snapshot;
@@ -132,8 +120,7 @@ export class ConversationHydration extends HydrationEvents {
       this.frames = [];
       this.baseline = undefined;
       this.transcript = undefined;
-      this.frameCheckpoint = undefined;
     }
-    return boundConversation(conversation);
+    return conversation;
   }
 }

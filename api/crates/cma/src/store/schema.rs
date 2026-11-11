@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use futures_util::TryStreamExt;
 use layer2_core::StoreError;
 use mongodb::bson::{doc, Document};
 use mongodb::Database;
@@ -56,22 +57,38 @@ pub(super) async fn refuse_unknown_versions(
     collections: &[&str],
 ) -> Result<(), StoreError> {
     for name in collections {
-        let unsupported = database
+        let session_leases = *name == super::sandbox_mongo::SANDBOX_SESSIONS;
+        let mut unsupported = database
             .collection::<Document>(name)
-            .find_one(if *name == "agents" {
-                unknown_agent_version_filter()
+            .find(unknown_version_filter())
+            .limit(if session_leases { 0 } else { 1 })
+            .projection(if session_leases {
+                doc! {} // The complete shape must match the known legacy writer.
             } else {
-                unknown_version_filter()
+                doc! { "_id": 1, "document_schema_version": 1 }
             })
-            .projection(doc! { "_id": 1, "document_schema_version": 1 })
             .await
             .map_err(|error| {
                 StoreError::Unavailable(format!("inspect {name} schema version: {error}"))
             })?;
-        if unsupported.is_some() {
-            return Err(StoreError::Malformed(format!(
-                "collection {name} contains an unsupported document schema version"
-            )));
+        let mut legacy_count = 0_u64;
+        while let Some(document) = unsupported.try_next().await.map_err(|error| {
+            StoreError::Unavailable(format!("inspect {name} schema version: {error}"))
+        })? {
+            if session_leases && super::sandbox_sessions::is_legacy_v1(&document) {
+                legacy_count += 1;
+            } else {
+                return Err(StoreError::Malformed(format!(
+                    "collection {name} contains an unsupported document schema version"
+                )));
+            }
+        }
+        if legacy_count > 0 {
+            tracing::warn!(
+                parent: None,
+                count = legacy_count,
+                "accepted legacy v1 sandbox session documents without schema version"
+            );
         }
     }
     Ok(())
@@ -99,14 +116,6 @@ fn unknown_version_filter() -> Document {
             { "document_schema_version": { "$type": "array" } },
         ]
     }
-}
-
-fn unknown_agent_version_filter() -> Document {
-    doc! {"$or":[
-        {"document_schema_version":{"$nin":[1_i64,2_i64]}},
-        {"document_schema_version":{"$not":{"$type":["int","long"]}}},
-        {"document_schema_version":{"$type":"array"}},
-    ]}
 }
 
 #[cfg(test)]

@@ -13,7 +13,6 @@ use super::sandbox_mongo::{
 };
 
 mod context;
-mod source;
 pub(super) use context::enqueue;
 
 pub(super) async fn ensure_indexes(collection: &Collection<Document>) -> Result<(), StoreError> {

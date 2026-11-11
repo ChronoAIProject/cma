@@ -2,14 +2,15 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use layer2_core::sandbox::store::{
-    SandboxMaintenanceStore, SandboxReconciliationStore, SandboxRuntimeLossRequest, SandboxStore,
-    SandboxStoreError,
+    SandboxMaintenanceStore, SandboxReconciliationStore, SandboxRuntimeLossOutcome,
+    SandboxRuntimeLossRequest, SandboxStore, SandboxStoreError,
 };
 use layer2_core::sandbox::{AgentService, Sandbox, SandboxPolicySource, SandboxStatus};
-use layer2_core::{rfc3339_at, SandboxId};
+use layer2_core::{rfc3339_at, seconds_from_rfc3339, SandboxId};
+use layer3_adapter::binding_diagnostics::{adapter_outcome, measure, Outcome, Stage};
 use layer3_adapter::{RuntimeAdoptionRequest, RuntimeObservation, SandboxAdapter};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -28,8 +29,15 @@ mod homes;
 #[path = "reconciliation_updates.rs"]
 mod updates;
 
+#[path = "reconciliation_recovery.rs"]
+mod recovery;
+
 #[path = "reconciliation_authority.rs"]
 mod authority;
+#[path = "reconciliation_binding_holds.rs"]
+mod binding_holds;
+#[path = "reconciliation_diagnostics.rs"]
+mod diagnostics;
 #[path = "reconciliation_sweep.rs"]
 mod sweep;
 #[path = "reconciliation_telemetry.rs"]
@@ -53,11 +61,17 @@ pub(crate) struct SandboxReconciler {
     profile_agents: Option<Arc<AgentService>>,
     runtime_version: Option<String>,
     failed_runtime_recovery: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
-    recovery_schedule_cursor: std::sync::atomic::AtomicUsize,
+    recovery_schedule: tokio::sync::Mutex<recovery::Schedule>,
     progress: tokio::sync::Mutex<Option<sweep::Progress>>,
+    binding_holds: binding_holds::BindingHolds,
 }
 
 impl SandboxReconciler {
+    #[cfg(test)]
+    pub(crate) fn binding_is_held(&self, id: &SandboxId) -> bool {
+        self.binding_holds.contains(id.as_str())
+    }
+
     pub(crate) fn new(
         store: Arc<dyn ReconciliationStore>,
         adapter: Arc<dyn SandboxAdapter>,
@@ -72,8 +86,9 @@ impl SandboxReconciler {
             profile_agents: None,
             runtime_version: None,
             failed_runtime_recovery: None,
-            recovery_schedule_cursor: std::sync::atomic::AtomicUsize::new(0),
+            recovery_schedule: tokio::sync::Mutex::new(recovery::Schedule::default()),
             progress: tokio::sync::Mutex::new(None),
+            binding_holds: Default::default(),
         }
     }
 
@@ -194,7 +209,7 @@ impl SandboxReconciler {
         sandbox: &Sandbox,
         inventory: &[RuntimeObservation],
         now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<bool, SandboxStoreError> {
         // A durable suspension intent may have stopped the Pod before its DB
         // acknowledgement. Let the same worker retry and verify Pod absence.
         if super::runtime_attachment::native_pause_teardown(sandbox)
@@ -207,29 +222,43 @@ impl SandboxReconciler {
         {
             // Native retirement also needs the original UID after CRD disappearance:
             // only its delete waiter can prove the last owned Pod has stopped.
-            return Ok(());
+            return Ok(true);
         }
         let Some(binding) = &sandbox.runtime else {
             if sandbox.requires_runtime_loss_recovery() {
-                self.recover_missing(sandbox, now).await?;
+                // The durable row is the only absence proof on this path. Take
+                // its boundary immediately before the optional diagnostic and
+                // carry that exact evidence into the CAS.
+                let boundary = fresh_recovery_boundary(sandbox, now);
+                if boundary.stale {
+                    return Ok(false);
+                }
+                return self.recover_missing(sandbox, boundary.observed_at).await;
             }
-            return Ok(());
+            return Ok(true);
         };
         if let Some(observation) = inventory
             .iter()
             .find(|item| item.handle.0 == binding.runtime_id)
         {
             if self.adopt(sandbox, observation, now).await? {
-                return Ok(());
+                return Ok(true);
             }
         }
         // The inventory can predate a concurrently persisted runtime binding.
         // Absence is only actionable after a fresh provider observation.
-        let fresh = self
-            .adapter
-            .runtime_inventory()
-            .await
-            .map_err(provider_error)?;
+        // Capture the boundary before that provider read: an Agent update
+        // arriving while it is in flight must supersede this evidence rather
+        // than being hidden by a later wall-clock timestamp.
+        let boundary = fresh_recovery_boundary(sandbox, now);
+        let fresh = measure(
+            Stage::FinalLossObservation,
+            self.adapter.runtime_inventory(),
+            adapter_outcome,
+        )
+        .await
+        .map_err(provider_error)?;
+        self.binding_holds.observe_inventory(sandbox, &fresh);
         if sandbox.status == SandboxStatus::Retiring
             && fresh.iter().any(|item| {
                 item.handle.0 == binding.runtime_id || item.sandbox_id == sandbox.id.as_str()
@@ -237,20 +266,26 @@ impl SandboxReconciler {
         {
             // An unhealthy or terminating runtime can still own processes and
             // writers. Retirement may settle them only after provider absence.
-            return Ok(());
+            return Ok(true);
         }
         if let Some(observation) = fresh
             .iter()
             .find(|item| item.handle.0 == binding.runtime_id)
         {
             if self.adopt(sandbox, observation, now).await? {
-                return Ok(());
+                return Ok(true);
             }
         }
-        if sandbox.requires_runtime_loss_recovery() {
-            self.recover_missing(sandbox, now).await?;
+        if boundary.stale {
+            // A durable writer or caller floor is ahead of the provider read.
+            // That read cannot authorize recovery; retain the hold and retry
+            // after a new boundary instead of dating it in the future.
+            return Ok(false);
         }
-        Ok(())
+        if sandbox.requires_runtime_loss_recovery() {
+            return self.recover_missing(sandbox, boundary.observed_at).await;
+        }
+        Ok(true)
     }
 
     async fn adopt(
@@ -285,12 +320,17 @@ impl SandboxReconciler {
             sandbox_spec(sandbox, &self.deployment_id),
         )
         .with_expected_image(&binding.runtime_version);
-        if self
-            .adapter
-            .adopt_runtime(&request)
-            .await
-            .map_err(provider_error)?
-            .is_none()
+        if measure(
+            Stage::Adoption,
+            self.adapter.adopt_runtime(&request),
+            |result| match result {
+                Ok(None) => Outcome::Absent,
+                _ => adapter_outcome(result),
+            },
+        )
+        .await
+        .map_err(provider_error)?
+        .is_none()
         {
             return Ok(false);
         }
@@ -304,29 +344,64 @@ impl SandboxReconciler {
             .map_err(|error| corrupt(&error.to_string()))?;
         }
         if sandbox.lifecycle.home.is_some() {
-            let status = self
-                .adapter
-                .runtime_status(&observation.handle)
-                .await
-                .map_err(provider_error)?;
-            if !next
-                .runtime_process_matches(&status)
-                .map_err(|error| corrupt(&error.to_string()))?
-                || (matches!(
-                    sandbox.status,
-                    SandboxStatus::Active
-                        | SandboxStatus::CredentialRotating
-                        | SandboxStatus::Pausing
-                ) && (!status.installation_ready || !status.credential_ready))
-            {
+            let accepted = measure(
+                Stage::Status,
+                async {
+                    let status = self
+                        .adapter
+                        .runtime_status(&observation.handle)
+                        .await
+                        .map_err(provider_error)?;
+                    if !next
+                        .runtime_process_matches(&status)
+                        .map_err(|error| corrupt(&error.to_string()))?
+                        || (matches!(
+                            sandbox.status,
+                            SandboxStatus::Active
+                                | SandboxStatus::CredentialRotating
+                                | SandboxStatus::Pausing
+                        ) && (!status.installation_ready || !status.credential_ready))
+                    {
+                        return Ok(false);
+                    }
+                    let expected = next.runtime.clone().expect("adopted runtime is bound");
+                    next.record_runtime_boot(&expected, &status, rfc3339_at(now))
+                        .map_err(|error| corrupt(&error.to_string()))?;
+                    Ok(true)
+                },
+                |result| match result {
+                    Ok(false) => Outcome::Refused,
+                    _ => diagnostics::store_outcome(result),
+                },
+            )
+            .await?;
+            if !accepted {
                 return Ok(false);
             }
-            let expected = next.runtime.clone().expect("adopted runtime is bound");
-            next.record_runtime_boot(&expected, &status, rfc3339_at(now))
-                .map_err(|error| corrupt(&error.to_string()))?;
         }
+
         if next != *sandbox {
-            self.store.save_sandbox(sandbox.revision, next).await?;
+            measure(
+                Stage::Transaction,
+                self.store.save_sandbox(sandbox.revision, next),
+                diagnostics::store_outcome,
+            )
+            .await?;
+        } else {
+            // An already recorded boot needs no write CAS. Still fence the
+            // current attempt before releasing its hold: status may have
+            // completed after another durable writer changed the parent.
+            measure(
+                Stage::DurableRead,
+                async {
+                    if self.store.get_sandbox(&sandbox.id).await?.as_ref() != Some(sandbox) {
+                        return Err(SandboxStoreError::Conflict);
+                    }
+                    Ok(())
+                },
+                diagnostics::store_outcome,
+            )
+            .await?;
         }
         Ok(true)
     }
@@ -334,11 +409,16 @@ impl SandboxReconciler {
     async fn recover_missing(
         &self,
         sandbox: &Sandbox,
-        now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        let interruption_cause = interruption::observe(self.adapter.as_ref(), sandbox, now).await;
-        self.store
-            .recover_runtime_loss(SandboxRuntimeLossRequest {
+        observed_at: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        // The caller captured this boundary before its final absence proof.
+        // Never advance it after provider I/O: doing so would let an older
+        // Pending/absent observation authorize recovery over newer Agent work.
+        let interruption_cause =
+            interruption::observe(self.adapter.as_ref(), sandbox, observed_at).await;
+        let outcome = measure(
+            Stage::Transaction,
+            self.store.recover_runtime_loss(SandboxRuntimeLossRequest {
                 sandbox_id: sandbox.id.clone(),
                 expected_revision: sandbox.revision,
                 expected_runtime: sandbox.runtime.clone(),
@@ -348,10 +428,16 @@ impl SandboxReconciler {
                         .as_ref()
                         .is_some_and(|binding| binding.runtime_id.starts_with("agent-sandbox:")),
                 interruption_cause,
-                observed_at: rfc3339_at(now),
-            })
-            .await?;
-        Ok(())
+                observed_at: rfc3339_at(observed_at),
+            }),
+            diagnostics::loss_outcome,
+        )
+        .await?;
+        tracing::info!(outcome = ?outcome, "runtime loss reconciliation outcome");
+        Ok(matches!(
+            outcome,
+            SandboxRuntimeLossOutcome::RecoveryScheduled | SandboxRuntimeLossOutcome::Failed
+        ))
     }
 
     pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
@@ -374,6 +460,23 @@ impl SandboxReconciler {
                 }
             }
         })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RecoveryBoundary {
+    observed_at: SystemTime,
+    stale: bool,
+}
+
+fn fresh_recovery_boundary(sandbox: &Sandbox, floor: SystemTime) -> RecoveryBoundary {
+    let observed_at = SystemTime::now();
+    let durable = seconds_from_rfc3339(&sandbox.updated_at)
+        .map(|seconds| UNIX_EPOCH + Duration::from_secs(seconds))
+        .unwrap_or(UNIX_EPOCH);
+    RecoveryBoundary {
+        observed_at,
+        stale: floor > observed_at || durable > observed_at,
     }
 }
 

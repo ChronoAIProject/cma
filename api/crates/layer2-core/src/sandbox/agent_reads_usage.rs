@@ -1,7 +1,6 @@
 use super::AgentUsage;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub(super) struct UsageFold {
     pub(super) observed: Option<AgentUsage>,
     closed_input: u64,

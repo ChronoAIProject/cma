@@ -19,7 +19,7 @@ function history(count: number): ConversationState {
   };
 }
 
-it('bounds ten thousand historical rows while preserving recent rows and unrelated groups', () => {
+it('retains ten thousand historical rows and unrelated groups during live text and reasoning', () => {
   const recorded = history(10_000);
   let state = foldLiveEvent(
     recorded,
@@ -46,11 +46,9 @@ it('bounds ten thousand historical rows while preserving recent rows and unrelat
         },
         'agent',
       );
-  expect(state.messages.length + state.toolCalls.length + state.reasoning.length).toBe(200);
-  const retained = state.messages.slice(0, -1);
-  expect(retained).toEqual(recorded.messages.slice(-retained.length));
-  expect(retained.every((item) => recorded.messages.includes(item))).toBe(true);
-  expect(state.displayLimited).toBe(true);
+  expect(
+    state.messages.slice(0, -1).every((item, index) => item === recorded.messages[index]),
+  ).toBe(true);
   expect(state.toolCalls).toBe(baseline.toolCalls);
   expect(state.approvals).toBe(baseline.approvals);
   expect(state.plans).toBe(baseline.plans);

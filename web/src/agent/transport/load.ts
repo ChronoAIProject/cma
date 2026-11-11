@@ -1,4 +1,4 @@
-import { ApiError, TransportError, type V2AgentEventItem } from '@chronoai/cma-sdk';
+import { TransportError, type V2AgentEventItem } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../../api/client';
 import { conversationFromTranscript } from '../conversation';
 import { mergeTranscriptSnapshot } from '../chronology';
@@ -7,7 +7,6 @@ import type { ConversationState } from '../model';
 import { foldV2Item } from './projection';
 import type { AgentV2Session } from './client';
 import { conversationFromHead } from './liveHead';
-import { loadBoundedAgent } from '../loadBoundedAgent';
 
 export async function loadV2Agent(
   client: CmaWebClient,
@@ -24,32 +23,6 @@ export async function loadV2Agent(
   // The same fresh check can publish observed preparation and admit this batch.
   // This synchronous callback cannot supply or retain authorization itself.
   onReadAuthorized?.();
-  if (client.agentHistory !== undefined) {
-    try {
-      return await loadBoundedAgent(
-        client,
-        agentId,
-        signal,
-        v2,
-        allowIncomplete,
-        lineage,
-        onInputReady,
-      );
-    } catch (error) {
-      if (signal.aborted || !(error instanceof ApiError) || error.status !== 404) throw error;
-      return loadV2Agent(
-        { ...client, agentHistory: undefined },
-        agentId,
-        signal,
-        v2,
-        allowIncomplete,
-        onProgress,
-        lineage,
-        onInputReady,
-        onReadAuthorized,
-      );
-    }
-  }
   signal.throwIfAborted();
   v2.journal.read();
   const readHierarchy = async () => {
@@ -205,8 +178,6 @@ export async function loadV2Agent(
     conversation = { ...conversation, agentIncarnation: incarnation };
     for (const item of page.items) conversation = foldV2Item(conversation, item);
     items.push(...page.items);
-    if (items.length > 10_128)
-      throw new Error('This history requires a server with bounded history reads.');
     const pageCursor = page.next_page_cursor ?? undefined;
     if (pageCursor === undefined) {
       conversation = { ...conversation, agentCursor: page.through_cursor };

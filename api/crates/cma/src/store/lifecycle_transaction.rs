@@ -1,6 +1,9 @@
 //! Atomic Mongo publication for one sandbox lifecycle phase.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use std::collections::BTreeMap;
+mod integrity_write;
+use integrity_write::{advance_agent, classify_aggregate_write, classify_log_write};
 
 use layer2_core::sandbox::store::{
     validate_lifecycle_mutation, SandboxLifecycleAgentMutation, SandboxLifecycleMutation,
@@ -10,8 +13,8 @@ use layer2_core::sandbox::{Agent, AgentLogEntry, Sandbox, SandboxEvent};
 use mongodb::bson::{doc, Bson, Timestamp};
 use mongodb::options::ReadConcern;
 
-use super::agent_log::{log_document, read_entry};
-use super::agent_log_integrity::{ensure_append_capacity, AppendCapacity, TransactionLogError};
+use super::agent_log::{read_entry, scan_complete_log_with_session};
+use super::agent_log_integrity::{prepare_append, AppendCapacity, TransactionLogError};
 use super::agents::{agent_replacement_fields, read_agent};
 use super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
 use super::sandbox_events::{
@@ -180,22 +183,64 @@ async fn apply_lifecycle(
         })
         .collect::<Vec<_>>();
     let mut logs = Vec::new();
+    let mut encoded_logs = Vec::new();
+    let mut integrity_by_id = BTreeMap::new();
     for change in &mutation.agents {
         let stored = by_id
             .get(&change.agent.id)
             .copied()
             .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-        let complete = super::agent_log_context::validate(store, stored, session, false)
-            .await?
-            .summary;
+        let mut prior_entries = Vec::new();
+        let complete = scan_complete_log_with_session(
+            ScanCaller::CommandAdmission,
+            store,
+            &stored.id,
+            stored.conversation.last_seq,
+            session,
+            |entry| {
+                prior_entries.push(entry);
+                Ok(())
+            },
+        )
+        .await?;
+        let complete = complete.with_semantic(
+            crate::store::agent_log_integrity::audit_checkpoint(
+                store,
+                stored,
+                &prior_entries,
+                session,
+            )
+            .await?,
+        );
         let batch = materialize_logs(stored, change, &mutation.appended_at)?;
-        ensure_append_capacity(&complete, &batch, AppendCapacity::StopOrFailure)
-            .map_err(ApplyError::Domain)?;
+
         let row = rows
             .iter_mut()
             .find(|(agent, _)| agent.id == stored.id)
             .expect("loaded lifecycle agent has a validation row");
-        row.1 = complete.last_sequence();
+        row.1 = complete.entry_count();
+        let semantic =
+            complete
+                .semantic()
+                .cloned()
+                .ok_or(ApplyError::Domain(SandboxStoreError::Corrupt(
+                    "lifecycle scan did not produce semantic checkpoint".into(),
+                )))?;
+        let next_semantic = semantic
+            .after_append(&batch, &change.agent)
+            .map_err(ApplyError::Domain)?;
+        integrity_by_id.insert(
+            stored.id.clone(),
+            prepare_append(
+                stored,
+                &complete,
+                &batch,
+                change.agent.revision,
+                next_semantic,
+                AppendCapacity::StopOrFailure,
+            )
+            .map_err(ApplyError::Domain)?,
+        );
         logs.extend(batch);
     }
     validate_lifecycle_mutation(&current, &rows, mutation).map_err(ApplyError::Domain)?;
@@ -206,12 +251,19 @@ async fn apply_lifecycle(
             .get(&change.agent.id)
             .copied()
             .expect("validated lifecycle agent exists");
-        advance_agent(store, stored, change, session).await?;
+        let integrity = integrity_by_id
+            .remove(&stored.id)
+            .ok_or(ApplyError::Domain(SandboxStoreError::Corrupt(
+                "lifecycle integrity receipt missing".into(),
+            )))?;
+        encoded_logs.extend(integrity.documents);
+        advance_agent(store, stored, change, integrity.integrity, session).await?;
     }
-    for entry in &logs {
+    for entry in &encoded_logs {
         store
             .agent_log
-            .insert_one(log_document(entry).map_err(ApplyError::Domain)?)
+            .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+            .insert_one(entry)
             .session(&mut *session)
             .await
             .map_err(classify_log_write)?;
@@ -314,80 +366,6 @@ async fn advance_sandbox(
         Ok(())
     } else {
         Err(ApplyError::Domain(SandboxStoreError::Conflict))
-    }
-}
-
-async fn advance_agent(
-    store: &MongoSandboxStore,
-    current: &Agent,
-    change: &SandboxLifecycleAgentMutation,
-    session: &mut mongodb::ClientSession,
-) -> Result<(), ApplyError> {
-    let mut fields = agent_replacement_fields(&change.agent).map_err(ApplyError::Domain)?;
-    let row = store
-        .agents
-        .find_one(doc! { "_id": current.id.as_str() })
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?
-        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    super::agent_conversation_store::carry_checkpoint_fields(
-        &row,
-        current,
-        &change.agent,
-        &mut fields,
-    )
-    .map_err(ApplyError::Domain)?;
-    fields.insert(
-        "last_seq",
-        Bson::Int64(
-            signed(
-                change.agent.conversation.last_seq,
-                "lifecycle agent log sequence",
-            )
-            .map_err(SandboxStoreError::Corrupt)
-            .map_err(ApplyError::Domain)?,
-        ),
-    );
-    let advanced = store
-        .agents
-        .update_one(
-            doc! {
-                "_id": current.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "sandbox_id": current.sandbox_id.as_str(),
-                "owner": current.owner.as_str(),
-                "revision": signed(current.revision, "lifecycle agent revision")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                "last_seq": signed(current.conversation.last_seq, "lifecycle agent log sequence")
-                    .map_err(SandboxStoreError::Corrupt)
-                    .map_err(ApplyError::Domain)?,
-            },
-            doc! { "$set": fields },
-        )
-        .session(session)
-        .await
-        .map_err(classify_aggregate_write)?;
-    if advanced.matched_count == 1 {
-        Ok(())
-    } else {
-        Err(ApplyError::Domain(SandboxStoreError::Conflict))
-    }
-}
-
-fn classify_aggregate_write(error: mongodb::error::Error) -> ApplyError {
-    if is_duplicate_key(&error) {
-        ApplyError::Domain(SandboxStoreError::Duplicate)
-    } else {
-        ApplyError::Driver(error)
-    }
-}
-
-fn classify_log_write(error: mongodb::error::Error) -> ApplyError {
-    if is_duplicate_key(&error) {
-        ApplyError::Domain(SandboxStoreError::SequenceConflict)
-    } else {
-        ApplyError::Driver(error)
     }
 }
 

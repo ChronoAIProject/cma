@@ -12,10 +12,8 @@ import {
   loadSharedAgentTranscript,
   sharedAgentAuthority,
   SharedAgentAccessChangedError,
-  authorizeSharedHistory,
 } from './loadSharedAgent';
 import { MessageStream } from '../agent/MessageStream';
-import { HistoryNavigation } from '../agent/HistoryNavigation';
 import { Composer } from '../agent/Composer';
 import { conversationFromTranscript, type ConversationState } from '../agent/conversation';
 import { HydrationEvents } from '../agent/mergeHydration';
@@ -96,15 +94,17 @@ export function SharedAgent({
   const [live, setLive] = useState<{
     readonly basis: typeof basis;
     readonly conversation: ConversationState;
+    readonly historyLoaded: boolean;
   }>();
   const [hydrationRevision, setHydrationRevision] = useState(0);
   const observed = basis !== undefined && live?.basis === basis ? live.conversation : undefined;
   const observedTools = observed?.toolCalls;
   const observedRun = observed?.activeRunId;
+  const observedLoaded = live?.basis === basis && live?.historyLoaded === true;
   useLayoutEffect(() => {
-    computerObservation?.publish(observedTools, observedRun);
+    computerObservation?.publish(observedTools, observedRun, observedLoaded);
     return () => computerObservation?.publish(undefined);
-  }, [computerObservation, observedTools, observedRun]);
+  }, [computerObservation, observedTools, observedRun, observedLoaded]);
   const [historyError, setHistoryError] = useState<{
     readonly basis: typeof basis;
     readonly revision: number;
@@ -130,6 +130,7 @@ export function SharedAgent({
     const stream = new AbortController();
     let retry: ReturnType<typeof setTimeout> | undefined;
     let buffering = true;
+    let historyLoaded = false;
     let conversation =
       liveRef.current?.basis === basis
         ? liveRef.current.conversation
@@ -137,7 +138,7 @@ export function SharedAgent({
     const buffered = new HydrationEvents();
     let replayStarted = false;
     let liveBaseline = 0;
-    const publish = () => setLive({ basis, conversation });
+    const publish = () => setLive({ basis, conversation, historyLoaded });
     const accessFailure = (cause: unknown) =>
       cause instanceof SharedAgentAccessChangedError ||
       (cause instanceof ApiError && [401, 403, 404, 409].includes(cause.status));
@@ -224,6 +225,7 @@ export function SharedAgent({
             if (stream.signal.aborted) return;
             conversation = buffered.merge(rebuilt, agentId, true);
             buffering = false;
+            historyLoaded = true;
             publish();
           })
           .catch((cause: unknown) => {
@@ -402,21 +404,7 @@ export function SharedAgent({
       </div>
       <div className="agent-surface__conversation">
         {conversation === undefined ? null : (
-          <HistoryNavigation
-            client={web.agentHistory}
-            agentId={agentId}
-            scope={basis}
-            conversation={conversation}
-            disabled={ready === undefined}
-            authorize={(signal) => authorizeSharedHistory(client, ready, signal, onAccessChanged)}
-            approvalReadOnly={!can('resolve_approval')}
-            approvalBusy={busy}
-            onApproval={approve}
-          />
-        )}
-        {conversation === undefined ? null : (
           <MessageStream
-            onReplay={web?.operationReplay ? computerObservation?.selectReplay : undefined}
             deliverables={
               web.deliverables && viewerId && basis
                 ? { agentId, viewerId, client: web.deliverables, authority: basis }
@@ -447,6 +435,7 @@ export function SharedAgent({
             settings={
               can('operate_agent') ? (
                 <SessionSettings
+                  usage={conversation?.usage}
                   agentId={agentId}
                   active
                   runtimeReady={agentInitialized(status, detail.ready_at)}

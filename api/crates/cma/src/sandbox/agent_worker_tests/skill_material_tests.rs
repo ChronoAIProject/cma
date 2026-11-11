@@ -18,7 +18,7 @@ fn restarted(harness: &Harness, skills: Arc<dyn AgentSkillResolver>) -> Arc<Agen
     AgentWorker::new(dependencies, config)
 }
 
-fn runtime_skill(version: &str, hash: char, locator: &str) -> AgentSkill {
+pub(super) fn runtime_skill(version: &str, hash: char, locator: &str) -> AgentSkill {
     AgentSkill {
         id: "research".into(),
         name: None,

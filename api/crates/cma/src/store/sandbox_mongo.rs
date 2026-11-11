@@ -17,6 +17,7 @@ use tokio::sync::Semaphore;
 use super::MongoCheckpointObjectStore;
 use super::{durability::majority_collection, schema::initialize_collections};
 
+pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
 pub(super) const TRANSACTION_ATTEMPTS: usize = 5;
 const COMMIT_ATTEMPTS: usize = 5;
@@ -27,6 +28,7 @@ const MAX_PENDING_RECONCILIATIONS: usize = 16;
 static RECONCILIATION_SLOTS: Semaphore = Semaphore::const_new(MAX_PENDING_RECONCILIATIONS);
 
 pub(super) const SANDBOXES: &str = "sandboxes";
+pub(super) const SANDBOX_SESSIONS: &str = "sandbox_sessions";
 pub(super) const WORKSPACES: &str = "workspaces";
 pub(super) const WORKTREES: &str = "worktrees";
 pub(super) const AGENTS: &str = "agents";
@@ -53,8 +55,11 @@ pub(super) const WARM_SANDBOXES: &str = "warm_sandboxes";
 pub(super) const SANDBOX_BILLING: &str = "sandbox_billing_state";
 
 const SANDBOX_COLLECTIONS: &[&str] = &[
+    super::settings::SETTINGS,
+    super::budget::COLLECTION,
     "sandbox_retained_availability",
     SANDBOXES,
+    SANDBOX_SESSIONS,
     WORKSPACES,
     WORKTREES,
     AGENTS,
@@ -83,25 +88,25 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
     WARM_SANDBOXES,
     super::native_prepared::COLLECTION,
 ];
-const PROFILE_COLLECTIONS: &[&str] = &[
-    AGENT_PROFILES,
-    AGENT_PROFILE_REVISIONS,
-    WORKSPACE_PROFILES,
-    WORKSPACE_PROFILE_REVISIONS,
-    SANDBOX_PROFILES,
-    SANDBOX_PROFILE_REVISIONS,
-];
 
 /// One adapter implements every sandbox-model port so cross-port operations
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    #[cfg(test)]
+    pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    pub(super) bounded_approval_reads: bool,
+    pub(super) bounded_close_retries: bool,
+    pub(super) fleet_log_activation: std::sync::Arc<super::agent_log_integrity::fleet::Activation>,
+    pub(super) bounded_admission_agents: std::collections::BTreeSet<layer2_core::AgentId>,
+    pub(super) bounded_title_reads: bool,
     pub(crate) writer_policy:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub(super) bindings: super::bindings::BindingCollections,
     pub(super) client: Client,
     pub(super) checkpoint_objects: MongoCheckpointObjectStore,
     pub(super) sandboxes: Collection<Document>,
+    pub(super) sandbox_sessions: Collection<Document>,
     pub(super) workspaces: Collection<Document>,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
@@ -110,12 +115,13 @@ pub struct MongoSandboxStore {
     pub(super) agent_access_requests: Collection<Document>,
     pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
-    pub(super) segment_logs: super::agent_log_segments::SegmentCollections,
     pub(super) suggestions: Collection<Document>,
     pub(super) agent_creation_provenance: Collection<Document>,
     pub(super) agent_channel_usage: Collection<Document>,
     pub(super) channel_usage_events: Collection<Document>,
     pub(super) agent_commands: Collection<Document>,
+    pub(super) model_budget: Collection<Document>,
+    pub(super) budget_settings: Collection<Document>,
     pub(super) agent_artifacts: Collection<Document>,
     pub(super) media_uploads: Collection<Document>,
     pub(super) sandbox_controls: Collection<Document>,
@@ -176,15 +182,22 @@ impl MongoSandboxStore {
         let database = client.database(name);
         require_transaction_topology(&database).await?;
         initialize_collections(&database, SANDBOX_COLLECTIONS).await?;
-        super::agent_log_segments::verify(&database).await?;
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            #[cfg(test)]
+            request_budget_clock: None,
+            bounded_admission_agents: Default::default(),
+            bounded_approval_reads: false,
+            bounded_close_retries: false,
+            fleet_log_activation: Default::default(),
+            bounded_title_reads: false,
             writer_policy: Default::default(),
             bindings: super::bindings::BindingCollections::open(&database).await?,
             client: client.clone(),
             checkpoint_objects,
             sandboxes: majority_collection(&database, SANDBOXES),
+            sandbox_sessions: majority_collection(&database, SANDBOX_SESSIONS),
             workspaces: majority_collection(&database, WORKSPACES),
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
@@ -199,12 +212,13 @@ impl MongoSandboxStore {
             ),
             agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
             agent_log: majority_collection(&database, AGENT_LOG),
-            segment_logs: super::agent_log_segments::SegmentCollections::open(&database),
             suggestions: majority_collection(&database, "agent_suggestions"),
             agent_creation_provenance: majority_collection(&database, "agent_creation_provenance"),
             agent_channel_usage: majority_collection(&database, "agent_channel_usage"),
             channel_usage_events: majority_collection(&database, "channel_usage_events"),
             agent_commands: majority_collection(&database, AGENT_COMMANDS),
+            model_budget: majority_collection(&database, super::budget::COLLECTION),
+            budget_settings: majority_collection(&database, "platform_settings"),
             agent_artifacts: majority_collection(&database, AGENT_ARTIFACTS),
             media_uploads: majority_collection(&database, super::media_uploads::COLLECTION),
             sandbox_controls: majority_collection(&database, SANDBOX_CONTROLS),
@@ -241,7 +255,9 @@ impl MongoSandboxStore {
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
+        super::budget::initialize_settings(&store).await?;
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
+        super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;
         super::sandbox_usage::ensure_indexes(&store).await?;
         super::sandbox_billing::ensure_indexes(&store.sandbox_billing).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;
@@ -307,38 +323,6 @@ fn validate_transaction_server(reply: &Document) -> Result<(), StoreError> {
         )));
     }
     Ok(())
-}
-
-/// Profile drafts and revisions are separate from runtime aggregates, but use
-/// the same Mongo client so publication can resolve references transactionally.
-#[derive(Clone)]
-pub struct MongoProfileStore {
-    pub(super) client: Client,
-    pub(super) agent_profiles: Collection<Document>,
-    pub(super) agent_revisions: Collection<Document>,
-    pub(super) workspace_profiles: Collection<Document>,
-    pub(super) workspace_revisions: Collection<Document>,
-    pub(super) sandbox_profiles: Collection<Document>,
-    pub(super) sandbox_revisions: Collection<Document>,
-}
-
-impl MongoProfileStore {
-    pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
-        let database = client.database(name);
-        initialize_collections(&database, PROFILE_COLLECTIONS).await?;
-        let store = Self {
-            client: client.clone(),
-            agent_profiles: majority_collection(&database, AGENT_PROFILES),
-            agent_revisions: majority_collection(&database, AGENT_PROFILE_REVISIONS),
-            workspace_profiles: majority_collection(&database, WORKSPACE_PROFILES),
-            workspace_revisions: majority_collection(&database, WORKSPACE_PROFILE_REVISIONS),
-            sandbox_profiles: majority_collection(&database, SANDBOX_PROFILES),
-            sandbox_revisions: majority_collection(&database, SANDBOX_PROFILE_REVISIONS),
-        };
-        super::profiles::ensure_indexes(&store).await?;
-        tracing::info!(database = name, "sandbox-profile Mongo store ready");
-        Ok(store)
-    }
 }
 
 pub(super) fn record_bson<T: Serialize>(record: &T) -> Result<Bson, String> {

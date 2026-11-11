@@ -3,10 +3,11 @@ use layer3_adapter::{AgentCloseRequest, AgentHomeRemoveRequest, AgentSlot};
 
 use super::Supervisor;
 use crate::failure::{Result, RuntimeError};
-use crate::mutation_journal::{Pending, Subject, Ticket};
+use crate::mutation_journal::Subject;
+use crate::mutation_store::{Pending, Ticket};
 
 impl Supervisor {
-    pub(super) fn recover_agent_home(&self, pending: Pending) -> Result<()> {
+    pub(super) async fn recover_agent_home(&self, pending: Pending) -> Result<()> {
         let Subject::CreateAgentHome { agent_id } = &pending.operation.subject else {
             return Err(corrupt("agent home recovery received another operation"));
         };
@@ -15,19 +16,24 @@ impl Supervisor {
             agent_id,
             &pending.operation.operation_id,
         ) {
-            Ok(Some(path)) => pending.ticket.complete(&AgentHomeReceipt {
-                operation_id: pending.operation.operation_id,
-                request_sha256: pending.operation.request_sha256,
-                agent_id: AgentSlot::new(agent_id),
-                path: path.to_string_lossy().into_owned(),
-            }),
+            Ok(Some(path)) => {
+                pending
+                    .ticket
+                    .complete(&AgentHomeReceipt {
+                        operation_id: pending.operation.operation_id,
+                        request_sha256: pending.operation.request_sha256,
+                        agent_id: AgentSlot::new(agent_id),
+                        path: path.to_string_lossy().into_owned(),
+                    })
+                    .await
+            }
             Ok(None) => Ok(()),
             Err(error) if error.retryable => Err(error),
             Err(error) => {
                 tracing::warn!(detail = %error, "agent home recovery failed closed");
                 pending.ticket.indeterminate(
                     "agent home creation left ambiguous staged or published state; explicit recovery is required",
-                )?;
+                ).await?;
                 Ok(())
             }
         }
@@ -56,20 +62,23 @@ impl Supervisor {
                 ));
             }
             if !process.bridge.is_ended() {
-                return pending.ticket.complete(&AgentOpenReceipt {
-                    operation_id: pending.operation.operation_id,
-                    request_sha256: pending.operation.request_sha256,
-                    agent_id: AgentSlot::new(agent_id),
-                    cwd: cwd.clone(),
-                    home: home.clone(),
-                    conversation_id: None,
-                });
+                return pending
+                    .ticket
+                    .complete(&AgentOpenReceipt {
+                        operation_id: pending.operation.operation_id,
+                        request_sha256: pending.operation.request_sha256,
+                        agent_id: AgentSlot::new(agent_id),
+                        cwd: cwd.clone(),
+                        home: home.clone(),
+                        conversation_id: None,
+                    })
+                    .await;
             }
         }
         drop(agents);
         pending.ticket.indeterminate(
             "agent open may have spawned before runtime restart; a duplicate process will not be started",
-        )?;
+        ).await?;
         Ok(())
     }
 
@@ -86,13 +95,14 @@ impl Supervisor {
             request_sha256: pending.operation.request_sha256,
             agent_id: AgentSlot::new(agent_id),
         };
-        absorb(
-            self.execute_close_agent(authority_fence, request, pending.ticket)
+        let (ticket, terminal) = pending.ticket.track_terminal();
+        terminal.absorb(
+            self.execute_close_agent(authority_fence, request, ticket)
                 .await,
         )
     }
 
-    pub(super) fn recover_agent_home_removal(&self, pending: Pending) -> Result<()> {
+    pub(super) async fn recover_agent_home_removal(&self, pending: Pending) -> Result<()> {
         let Subject::RemoveAgentHome { agent_id } = &pending.operation.subject else {
             return Err(corrupt(
                 "agent home removal recovery received another operation",
@@ -109,26 +119,21 @@ impl Supervisor {
                 request_sha256: request.request_sha256,
                 agent_id: request.agent_id,
             });
-        finish_recovery(pending.ticket, result)
+        finish_recovery(pending.ticket, result).await
     }
 }
 
-fn finish_recovery<T: serde::Serialize>(ticket: Ticket, result: Result<T>) -> Result<()> {
+async fn finish_recovery<T: serde::Serialize + Sync>(
+    ticket: Ticket,
+    result: Result<T>,
+) -> Result<()> {
     match result {
-        Ok(receipt) => ticket.complete(&receipt),
+        Ok(receipt) => ticket.complete(&receipt).await,
         Err(error) if error.retryable => Err(error),
         Err(error) => {
-            ticket.fail(&error)?;
+            ticket.fail(&error).await?;
             Ok(())
         }
-    }
-}
-
-fn absorb(result: Result<layer3_adapter::wire::ResponseFrame>) -> Result<()> {
-    match result {
-        Ok(_) => Ok(()),
-        Err(error) if !error.retryable => Ok(()),
-        Err(error) => Err(error),
     }
 }
 

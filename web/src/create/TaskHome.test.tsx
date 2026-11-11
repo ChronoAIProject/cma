@@ -81,7 +81,9 @@ it('keeps authenticated task text copyable and sends nothing when session storag
   );
   const input = await screen.findByLabelText('Your task');
   fireEvent.change(input, { target: { value: 'Keep this exact task available to copy' } });
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+  await waitFor(() =>
+    expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
+  );
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   expect(input).toHaveValue('Keep this exact task available to copy');
   expect(screen.getByText(/Copy your text and restore browser session storage/)).toBeVisible();
@@ -129,7 +131,8 @@ it('keeps ordinary tasks available when the service does not support repository 
       onCreated={() => {}}
     />,
   );
-  fireEvent.click(screen.getByText('Add a GitHub repo'));
+  expect(screen.getByRole('button', { name: 'Add git repo' })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'An ordinary task' } });
   expect(
     await screen.findByText('Repository tasks are unavailable on this service.'),
   ).toBeVisible();
@@ -145,7 +148,8 @@ it('restores repository drafts and clears only their optional context before sta
   });
   const props = { client, viewerId: 'owner', canCreateSandbox: true, onCreated: vi.fn() };
   const first = render(<TaskHome {...props} />);
-  await screen.findByLabelText('GitHub repository');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Add git repo' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Add git repo' }));
   fireEvent.change(screen.getByLabelText('Your task'), {
     target: { value: 'Keep this exact draft\n ' },
   });
@@ -153,17 +157,25 @@ it('restores repository drafts and clears only their optional context before sta
     target: { value: 'https://github.com/example/project' },
   });
   fireEvent.change(screen.getByLabelText('Repository ref'), { target: { value: 'proof/fixed' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add repo' }));
   first.unmount();
   render(<TaskHome {...props} />);
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'example/project' })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'example/project' }));
   expect(await screen.findByLabelText('GitHub repository')).toHaveValue(
     'https://github.com/example/project',
   );
   expect(screen.getByLabelText('Repository ref')).toHaveValue('proof/fixed');
   expect(screen.getByLabelText('Your task')).toHaveValue('Keep this exact draft\n ');
-  fireEvent.click(screen.getByRole('button', { name: 'Clear repository' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Remove repository' }));
   expect(screen.getByLabelText('Your task')).toHaveValue('Keep this exact draft\n ');
-  expect(screen.getByLabelText('Repository ref')).toHaveValue('');
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+  expect(screen.queryByRole('button', { name: 'Remove repository' })).not.toBeInTheDocument();
+  await waitFor(() =>
+    expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
+  );
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await screen.findByRole('button', { name: 'Recover original task' });
   expect(writes).toEqual([{ name: 'New task', initial_message: 'Keep this exact draft\n ' }]);
@@ -219,7 +231,10 @@ it.each([
       expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
     );
     fireEvent.change(screen.getByLabelText('Your task'), { target: { value: text } });
-    fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+    if (_name === 'blank') {
+      expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+      fireEvent.submit(screen.getByLabelText('Your task').closest('form')!);
+    } else fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
     expect(screen.queryAllByRole('alert').map((element) => element.textContent)).toContain(error);
     expect(transport).not.toHaveBeenCalled();
   },
@@ -239,9 +254,13 @@ it('clears drafts and retained requests on sign-out and account change before re
   fireEvent.change(await screen.findByLabelText('Your task'), {
     target: { value: 'Private owner task' },
   });
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+  await waitFor(() =>
+    expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
+  );
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Response lost');
+  await screen.findByText(
+    "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
+  );
   fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
   await screen.findByText('Signed out');
   first.unmount();
@@ -306,11 +325,13 @@ it('restores an accepted home task after refresh and opens its exact preparing A
   const onCreated = vi.fn();
   const props = { client, viewerId: 'owner', canCreateSandbox: true, onCreated };
   const first = render(<TaskHome {...props} />);
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+  await waitFor(() =>
+    expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
+  );
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: '比较三个工具' } });
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Task accepted. Preparing your Agent.');
+  await screen.findByText('Preparing a cloud computer for your Agent…');
   first.unmount();
   readable = true;
   render(<TaskHome {...props} />);
@@ -351,12 +372,16 @@ it.each([true, false])(
     const client = taskClient(transport);
     const props = { client, viewerId: 'owner', canCreateSandbox: true, onCreated: vi.fn() };
     const first = render(<TaskHome {...props} />);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+    await waitFor(() =>
+      expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
+    );
     fireEvent.change(screen.getByLabelText('Your task'), {
       target: { value: '  比较三个工具\nexact text  ' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-    await screen.findByText('Response lost');
+    await screen.findByText(
+      "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
+    );
     fireEvent.change(screen.getByLabelText('Your task'), {
       target: { value: 'Next independent draft' },
     });
@@ -371,7 +396,7 @@ it.each([true, false])(
       target: { value: 'Newer draft while recovering' },
     });
     resolve(Response.json({ id: 'original-operation', status: 'provisioning' }, { status: 202 }));
-    await screen.findByText('Task accepted. Preparing your Agent.');
+    await screen.findByText('Preparing a cloud computer for your Agent…');
     expect(requests[1]).toEqual(requests[0]);
     expect(screen.getByLabelText('Your task')).toHaveValue('Newer draft while recovering');
   },
@@ -417,10 +442,12 @@ it('opens ordinary contextual creation as editable task templates without admitt
   expect(screen.getByText('Creating in Workspace workspace-owned')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
   expect(screen.getByLabelText('Your task')).toHaveValue(
-    'Compare three tools and summarize their strengths, limitations, and sources.',
+    'Research [topic] and summarize the key findings, with links to sources.',
   );
-  expect(screen.getByLabelText('Your task')).toHaveFocus();
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+  await waitFor(() => expect(screen.getByLabelText('Your task')).toHaveFocus());
+  await waitFor(() =>
+    expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
+  );
   expect(transport).not.toHaveBeenCalled();
 });
 
@@ -458,7 +485,9 @@ it('verifies the Agent even when the first status read already reports preparati
       onCreated={onCreated}
     />,
   );
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+  await waitFor(() =>
+    expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
+  );
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Compare tools' } });
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await waitFor(() =>
@@ -466,7 +495,7 @@ it('verifies the Agent even when the first status read already reports preparati
   );
 });
 
-it('resumes both desktop choices and repository only on explicit connection action with frozen options, body and key after cancel and refresh', async () => {
+it('resumes shared desktop and repository only on explicit connection action with frozen options, body and key after cancel and refresh', async () => {
   const writes: { body: unknown; key: string | null }[] = [];
   let checks = 0;
   let authorized = false;
@@ -509,33 +538,26 @@ it('resumes both desktop choices and repository only on explicit connection acti
       });
     throw new Error('Unexpected read');
   };
-  const client = {
-    ...taskClient(transport),
-    readDesktopCapability: async () => ({
-      state: 'available' as const,
-      reason: 'Verified desktop runtime',
-      runtime_contract: 3,
-      min_memory_mib: 2048,
-      min_cpu_millis: 1000,
-    }),
-  };
+  const client = taskClient(transport);
   const props = { client, viewerId: 'owner', canCreateSandbox: true, onCreated: vi.fn() };
   const first = render(<TaskHome {...props} />);
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
-  const desktop = screen.getByRole('checkbox', { name: 'Enable desktop' });
-  await waitFor(() => expect(desktop).toBeEnabled());
-  fireEvent.click(desktop);
-  const machine = screen.getByRole('checkbox', { name: 'Include a shared desktop' });
+  await waitFor(() =>
+    expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
+  );
+  const machine = computerOption('Shared desktop');
   fireEvent.click(machine);
   fireEvent.change(screen.getByLabelText('Your task'), {
     target: { value: '  Original task\nwith whitespace  ' },
   });
+  fireEvent.keyDown(document, { key: 'Escape' });
+  fireEvent.click(screen.getByRole('button', { name: 'Add git repo' }));
   fireEvent.change(screen.getByLabelText('GitHub repository'), {
     target: { value: 'https://github.com/example/project' },
   });
   fireEvent.change(screen.getByLabelText('Repository ref'), {
     target: { value: 'proof/fixed' },
   });
+  fireEvent.click(screen.getByRole('button', { name: 'Add repo' }));
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await screen.findByRole('button', { name: 'Continue original task' });
   expect(checks).toBe(0);
@@ -544,20 +566,16 @@ it('resumes both desktop choices and repository only on explicit connection acti
   await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus());
   fireEvent.keyDown(document, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-  expect(desktop).toBeChecked();
-  expect(desktop).toBeDisabled();
-  expect(machine).toBeChecked();
-  expect(machine).toBeDisabled();
+  expect(computerOption('Shared desktop')).toBeChecked();
+  expect(computerOption('Shared desktop')).toHaveAttribute('aria-disabled', 'true');
   expect(writes).toHaveLength(1);
   const checksBeforeRefresh = checks;
   first.unmount();
   authorized = true;
   render(<TaskHome {...props} />);
   await screen.findByRole('button', { name: 'Continue original task' });
-  expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toBeChecked();
-  expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toBeDisabled();
-  expect(screen.getByRole('checkbox', { name: 'Include a shared desktop' })).toBeChecked();
-  expect(screen.getByRole('checkbox', { name: 'Include a shared desktop' })).toBeDisabled();
+  expect(computerOption('Shared desktop')).toBeChecked();
+  expect(computerOption('Shared desktop')).toHaveAttribute('aria-disabled', 'true');
   expect(writes).toHaveLength(1);
   expect(checks).toBe(checksBeforeRefresh);
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Next task draft' } });
@@ -567,7 +585,6 @@ it('resumes both desktop choices and repository only on explicit connection acti
   expect(writes[0]?.body).toMatchObject({
     initial_message: '  Original task\nwith whitespace  ',
     repository: { url: 'https://github.com/example/project', ref: 'proof/fixed' },
-    desktop: true,
     machine_included: true,
   });
   expect(checks).toBe(checksBeforeRefresh + 1);
@@ -595,7 +612,9 @@ it.each(['client', 'account', 'context', 'unmount'] as const)(
       onCreated: vi.fn(),
     };
     const view = render(<TaskHome {...props} />);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+    await waitFor(() =>
+      expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
+    );
     fireEvent.change(screen.getByLabelText('Your task'), {
       target: { value: 'Original scope task' },
     });
@@ -616,7 +635,9 @@ it.each(['client', 'account', 'context', 'unmount'] as const)(
     await act(async () =>
       resolve(Response.json({ id: 'old-operation', status: 'provisioning' }, { status: 202 })),
     );
-    expect(screen.queryByText('Task accepted. Preparing your Agent.')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Preparing a cloud computer for your Agent…'),
+    ).not.toBeInTheDocument();
     expect(props.onCreated).not.toHaveBeenCalled();
     expect(writes).toBe(1);
   },
@@ -653,7 +674,9 @@ it('keeps the receipt without opening an Agent whose parent ownership is not pro
       onCreated={onCreated}
     />,
   );
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+  await waitFor(() =>
+    expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
+  );
   fireEvent.change(screen.getByLabelText('Your task'), {
     target: { value: 'Verify exact Agent identity' },
   });
@@ -689,13 +712,15 @@ it('shows terminal preparation failure and requires an explicit new task before 
       onCreated={() => {}}
     />,
   );
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+  await waitFor(() =>
+    expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
+  );
   fireEvent.change(screen.getByLabelText('Your task'), {
     target: { value: 'Keep the task draft' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await screen.findByText('Environment unavailable');
-  expect(screen.queryByText('Task accepted. Preparing your Agent.')).not.toBeInTheDocument();
+  expect(screen.queryByText('Preparing a cloud computer for your Agent…')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: 'Start another task' }));
   expect(keys).toHaveLength(1);
@@ -704,3 +729,9 @@ it('shows terminal preparation failure and requires an explicit new task before 
   await waitFor(() => expect(keys).toHaveLength(2));
   expect(keys[1]).not.toEqual(keys[0]);
 });
+
+function computerOption(name: string) {
+  if (!screen.queryByRole('menu', { name: 'Run this task on' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Cloud computer/ }));
+  return screen.getByRole('menuitemcheckbox', { name });
+}

@@ -15,7 +15,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it('lets an unsupported retained draft clear desktop without changing its task or creating resources', async () => {
+it('drops a legacy desktop draft choice without changing its task or blocking submission', async () => {
   sessionStorage.setItem(
     `cma:task-draft:${JSON.stringify([location.origin, 'owner', null, null])}`,
     JSON.stringify({ version: 1, text: 'Retain my draft', desktop: true }),
@@ -39,13 +39,7 @@ it('lets an unsupported retained draft clear desktop without changing its task o
           },
         },
       });
-    return Response.json({
-      state: 'unsupported',
-      reason: 'The retained runtime requires an explicit upgrade.',
-      runtime_contract: 3,
-      min_memory_mib: 2048,
-      min_cpu_millis: 1000,
-    });
+    throw new Error(`Unexpected read: ${String(input)}`);
   };
   vi.stubGlobal('fetch', transport);
   const client = {
@@ -53,21 +47,32 @@ it('lets an unsupported retained draft clear desktop without changing its task o
     taskExperience: taskExperience('owner'),
   };
   render(<TaskHome client={client} viewerId="owner" canCreateSandbox onCreated={() => {}} />);
-  await screen.findByText(/retained runtime requires an explicit upgrade/);
+  computerOption('Shared desktop');
+  expect(screen.queryByRole('menuitemcheckbox', { name: 'Agent browser' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Your saved task could not be read/)).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
   expect(writes).toHaveLength(0);
-  const checkbox = screen.getByRole('checkbox', { name: 'Enable desktop' });
-  expect(checkbox).toBeChecked();
-  expect(checkbox).toBeEnabled();
-  fireEvent.click(checkbox);
   expect(screen.getByLabelText('Your task')).toHaveValue('Retain my draft');
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Receipt unavailable');
+  await screen.findByText(
+    "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
+  );
   expect(writes).toEqual([{ name: 'New task', initial_message: 'Retain my draft' }]);
+  const saved = sessionStorage.getItem(
+    `cma:task-draft:${JSON.stringify([location.origin, 'owner', null, null])}`,
+  );
+  expect(JSON.parse(saved!)).not.toHaveProperty('desktop');
 });
 
 it('recovers a lost desktop creation receipt after reload into the same task Agent and browser', async () => {
   const task = '  Open the research page\nkeep this exact task  ';
-  const requests: { body: unknown; key: string | null }[] = [];
+  const body = { name: 'New task', initial_message: task, desktop: true };
+  const key = 'recorded-browser-task';
+  sessionStorage.setItem(
+    `cma:agent-creation:${JSON.stringify([location.origin, 'owner'])}`,
+    JSON.stringify({ version: 1, intent: { key, body } }),
+  );
+  const requests: { body: string; key: string | null }[] = [];
   const reads: string[] = [];
   const transport: typeof fetch = async (input, options) => {
     const path = new URL(String(input), location.origin).pathname;
@@ -85,17 +90,9 @@ it('recovers a lost desktop creation receipt after reload into the same task Age
           },
         },
       });
-    if (path.endsWith('/desktop-capability'))
-      return Response.json({
-        state: 'available',
-        reason: 'verified_runtime',
-        runtime_contract: 3,
-        min_memory_mib: 2048,
-        min_cpu_millis: 1000,
-      });
     if (path === '/api/agent-manager/v1/agents' && options?.method === 'POST') {
       requests.push({
-        body: JSON.parse(String(options.body)),
+        body: String(options.body),
         key: new Headers(options.headers).get('Idempotency-Key'),
       });
       if (requests.length === 1) throw new TypeError('Creation receipt lost');
@@ -194,26 +191,39 @@ it('recovers a lost desktop creation receipt after reload into the same task Age
     );
   }
   const first = render(<Journey />);
-  const toggle = await screen.findByRole('checkbox', { name: 'Enable desktop' });
-  await waitFor(() => expect(toggle).toBeEnabled());
-  expect(toggle).not.toBeChecked();
-  fireEvent.click(toggle);
+  const toggle = computerOption('Agent browser');
+  expect(toggle).toBeChecked();
+  expect(toggle).toHaveAttribute('aria-disabled', 'true');
+  expect(toggle).toHaveAccessibleDescription(
+    'Agent browser choice is saved with the submitted task.',
+  );
+  expect(screen.getByRole('button', { name: /^Cloud computer/ })).toHaveTextContent(
+    /^Cloud computer$/,
+  );
   expect(requests).toHaveLength(0);
-  fireEvent.change(screen.getByLabelText('Your task'), { target: { value: task } });
-  fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Creation receipt lost');
+  fireEvent.click(screen.getByRole('button', { name: 'Recover original task' }));
+  await screen.findByText(
+    "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
+  );
   first.unmount();
   render(<Journey />);
-  expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toBeChecked();
-  expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toBeDisabled();
+  expect(computerOption('Agent browser')).toBeChecked();
+  expect(computerOption('Agent browser')).toHaveAttribute('aria-disabled', 'true');
   fireEvent.click(screen.getByRole('button', { name: 'Recover original task' }));
   await waitFor(() =>
     expect(opened).toHaveBeenCalledExactlyOnceWith({ kind: 'agent', agentId: 'agent-1' }),
   );
   expect(await screen.findByAltText('Agent browser page')).toBeInTheDocument();
   expect(requests).toEqual([
-    { body: { name: 'New task', initial_message: task, desktop: true }, key: expect.any(String) },
-    { body: { name: 'New task', initial_message: task, desktop: true }, key: requests[0]?.key },
+    { body: JSON.stringify(body), key },
+    { body: JSON.stringify(body), key },
   ]);
   expect(reads).toContain('/api/v1/agents/agent-1/browser');
+  expect(reads.some((path) => path.endsWith('/desktop-capability'))).toBe(false);
 });
+
+function computerOption(name: string) {
+  if (!screen.queryByRole('menu', { name: 'Run this task on' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Cloud computer/ }));
+  return screen.getByRole('menuitemcheckbox', { name });
+}

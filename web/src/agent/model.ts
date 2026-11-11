@@ -5,6 +5,8 @@ export interface ConversationMessage {
   readonly order?: number;
   readonly sequence?: number;
   readonly id: string;
+  /** Stable DOM identity carried from an ephemeral live row to durable history. */
+  readonly renderKey?: string;
   readonly runId?: string;
   readonly role: 'user' | 'assistant';
   readonly content: string;
@@ -17,6 +19,8 @@ export interface ConversationMessage {
 }
 
 export interface ToolCall {
+  readonly startedAt?: string;
+  readonly finishedAt?: string;
   readonly output?: { readonly text: string; readonly truncated: boolean };
   readonly order?: number;
   readonly sequence?: number;
@@ -76,12 +80,8 @@ export interface RecoveryNotice {
 }
 
 export interface ConversationState {
-  /** Exclusive lower bound of displayed source history, never a replay acknowledgement. */
-  readonly historyStart?: number;
-  readonly incompleteRuns?: readonly string[];
-  readonly historyPreviousCursor?: string;
-  readonly displayLimited?: boolean;
-  readonly approvalsTruncated?: boolean;
+  /** Runs whose live tail is no longer contiguous after a reconnect. */
+  readonly liveGapRuns?: ReadonlySet<string>;
   readonly turnOutcomes?: Readonly<Record<string, 'completed' | 'failed' | 'interrupted'>>;
   readonly agentCursor?: string;
   readonly agentIncarnation?: string;
@@ -110,6 +110,7 @@ export interface ConversationState {
   };
   readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly ownerTitle?: string;
+  readonly title?: string;
   readonly availableCommands?: readonly SessionCommand[];
   readonly activeRunId?: string;
   readonly latestTurnId?: string;

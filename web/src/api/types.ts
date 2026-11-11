@@ -100,6 +100,7 @@ export interface SandboxSummary {
   readonly lifecycle?: SandboxLifecycle;
   readonly runtimeUpdate?: SandboxRuntimeUpdate;
   readonly profile: ProfileReference;
+  readonly alwaysOn?: boolean;
   readonly lastActivityAt: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -179,6 +180,7 @@ export interface AgentRuntimeMetadata {
   readonly descriptionIsSetupPreview?: boolean;
 }
 export interface AgentSummary {
+  readonly taskStartedAt?: string;
   readonly taskStatus?: import('@chronoai/cma-sdk').AgentTaskStatus;
   readonly ownerTitle?: string;
   readonly runtimeMetadata?: AgentRuntimeMetadata;

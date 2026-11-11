@@ -123,6 +123,10 @@ pub struct SandboxView {
     #[schema(value_type = String)]
     pub status: SandboxStatus,
     pub profile: ProfileReferenceView,
+    /// Explicit owner preference; absent means the historical profile policy
+    /// is still in effect until global auto-pause is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub always_on: Option<bool>,
     /// Creation scope plus explicitly authorized instance services.
     pub nyxid_services: Vec<String>,
     pub limits: SandboxLimitsView,
@@ -154,6 +158,7 @@ impl From<&Sandbox> for SandboxView {
                 id: value.profile.id.to_string(),
                 revision: value.profile.revision,
             },
+            always_on: value.profile.always_on,
             nyxid_services: value
                 .credential
                 .effective_reaches()
@@ -390,6 +395,8 @@ impl From<WorktreeHierarchySummary> for WorktreeView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct OwnerAgentSummaryView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_started_at: Option<String>,
     #[schema(value_type = String)]
     pub task_status: layer2_core::sandbox::AgentTaskStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -412,6 +419,7 @@ impl From<AgentHierarchySummary> for OwnerAgentSummaryView {
     fn from(value: AgentHierarchySummary) -> Self {
         Self {
             task_status: value.task_status,
+            task_started_at: value.task_started_at,
             runtime_metadata: value.runtime_metadata.map(Into::into),
             owner_title: value.owner_title,
             id: value.id.to_string(),

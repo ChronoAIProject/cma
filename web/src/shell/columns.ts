@@ -58,8 +58,8 @@ export function computeWorkspaceColumns(
   const sidebarSize =
     sidebar === 0 ? SIDEBAR_COLLAPSED : clampWidth(sidebar, SIDEBAR_MIN, SIDEBAR_MAX);
   const available = Math.max(0, viewport - sidebarSize);
-  if (available < 720) return { sidebar: sidebarSize, center: available, details: 0 };
-  const panelSize = clampWidth(details ?? available / 2, 360, available - 360);
+  if (available < 780) return { sidebar: sidebarSize, center: available, details: 0 };
+  const panelSize = clampWidth(details ?? available / 2, 360, available - 420);
   return { sidebar: sidebarSize, center: available - panelSize, details: panelSize };
 }
 

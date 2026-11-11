@@ -14,12 +14,15 @@ import './styles/components.css';
 import './AppError.css';
 import { lazy, Suspense, useLayoutEffect, useState } from 'react';
 import { Presence } from './ui/Presence';
-import { Button } from './ui/Button';
+import { IdentityNotice, IdentityError } from './auth/IdentityNotice';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
 import type { CreationRequest } from './create/CreationFlow';
 import { ReferenceProvider } from './profiles/ReferenceLink';
 import { retainFatherDraftForSignIn } from './bots/fatherDraft';
 
+const UsageDialog = lazy(() =>
+  import('./usage/UsageDialog').then((module) => ({ default: module.UsageDialog })),
+);
 const CreationFlow = lazy(() =>
   import('./create/CreationFlow').then((module) => ({ default: module.CreationFlow })),
 );
@@ -39,6 +42,22 @@ export function App() {
   const browserRouter = useAppRouter();
   const { state: identity } = useAuth();
   const { navigate } = browserRouter;
+  const client = useCmaClient();
+  const usageOpen = browserRouter.route.kind === 'usage';
+  const [visitedUsage, setVisitedUsage] = useState(usageOpen);
+  if (usageOpen && !visitedUsage) setVisitedUsage(true);
+  const usageDialog =
+    identity.status === 'authenticated' && (usageOpen || visitedUsage) ? (
+      <Suspense fallback={null}>
+        <UsageDialog
+          key={identity.user.id}
+          client={client.usageViews}
+          open={usageOpen}
+          appearanceNotice={browserRouter.usageAppearanceNotice}
+          onClose={() => browserRouter.closeUsage?.()}
+        />
+      </Suspense>
+    ) : null;
   const redirectHome = identity.status === 'authenticated' && browserRouter.route.kind === 'home';
   useLayoutEffect(() => {
     if (redirectHome) navigate(AUTHENTICATED_HOME_ROUTE, { replace: true });
@@ -47,7 +66,9 @@ export function App() {
   // resolving identity never paints the anonymous landing for a signed-in owner.
   const router: AppRouter = redirectHome
     ? { ...browserRouter, route: AUTHENTICATED_HOME_ROUTE }
-    : browserRouter;
+    : usageOpen
+      ? { ...browserRouter, route: browserRouter.backgroundRoute ?? AUTHENTICATED_HOME_ROUTE }
+      : browserRouter;
   const identityKey = identity.status === 'authenticated' ? identity.user.id : identity.status;
   const service =
     router.route.kind === 'event_gateway' || isBotRoute(router.route) ? 'event-gateway' : undefined;
@@ -76,11 +97,20 @@ export function App() {
     setVisitedAgent(true);
   }
   const publicJourney = router.route.kind === 'public_trigger' || router.route.kind === 'launch';
-  if (publicJourney) return <AgentApp router={router} />;
+  if (publicJourney)
+    return (
+      <div className="service-shell">
+        <IdentityNotice />
+        <AgentApp router={router} />
+        {usageDialog}
+      </div>
+    );
   const navigateService = (next: AppRoute) =>
     router.navigate(next.kind === 'agent_manager' ? lastAgentRoute : next);
   return (
     <div className="service-shell">
+      <IdentityNotice />
+      {usageDialog}
       {home ? (
         <ServiceBody>
           <PortalFrame route={router.route} onNavigate={navigateService} {...sidebar}>
@@ -173,18 +203,7 @@ function AgentApp({
   if (state.status === 'checking') {
     return <ShellLoading label="Signing you in" />;
   }
-  if (state.status === 'error') {
-    return (
-      <main className="app-error" role="alert">
-        <h1 className="app-error__title">CMA could not reach its service</h1>
-        <p className="app-error__next">It may be starting up. Reload to try again.</p>
-        <Button variant="primary" onClick={() => window.location.reload()}>
-          Reload
-        </Button>
-        <p className="app-error__what">{state.message}</p>
-      </main>
-    );
-  }
+  if (state.status === 'error') return <IdentityError state={state} />;
   if (state.status === 'anonymous') {
     return (
       <PortalFrame

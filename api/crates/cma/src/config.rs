@@ -12,6 +12,7 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 mod access_migration;
 mod access_origins;
+mod admission_log;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
@@ -29,12 +30,14 @@ pub(crate) use gateway::GatewayConfig;
 mod bot_father;
 mod documents;
 mod sandbox_billing;
+pub(crate) mod sandbox_metrics;
 mod usage_billing;
 pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
 pub(crate) use runtime::RuntimeConfig;
 pub(crate) use sandbox_billing::SandboxBillingConfig;
+pub(crate) use sandbox_metrics::MetricsConfig;
 pub(crate) use usage_billing::UsageBillingConfig;
 
 const DEFAULT_BIND: &str = "0.0.0.0:8080";
@@ -146,6 +149,8 @@ impl TrustedProxyConfig {
 /// Complete process configuration for the temporary discovery boundary.
 #[derive(Clone)]
 pub struct Config {
+    pub(crate) agent_log_fleet_percent: u8,
+    pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
     pub bind: SocketAddr,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
@@ -181,6 +186,7 @@ pub struct Config {
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub gateway: Option<GatewayConfig>,
     pub usage_billing: Option<UsageBillingConfig>,
+    pub(crate) usage_metrics: MetricsConfig,
     pub sandbox_billing: Option<SandboxBillingConfig>,
     pub bot_father: Option<BotFatherConfig>,
     pub document_storage: Option<DocumentStorageConfig>,
@@ -274,6 +280,9 @@ impl Config {
         }
 
         let features = FeatureFlags::from_lookup(&mut lookup)?;
+        let bounded_admission_agents = admission_log::from_lookup(&mut lookup)?;
+        let agent_log_fleet_percent =
+            admission_log::fleet_percent(&mut lookup, &bounded_admission_agents)?;
         let rate_limits = RateLimitConfig::from_lookup(&mut lookup)?;
         let trusted_proxies = TrustedProxyConfig::from_lookup(&mut lookup)?;
         let mongodb_uri = required(&mut lookup, "CHRONO_MONGODB_URI")?;
@@ -400,8 +409,11 @@ impl Config {
             auth_mode,
             features,
             task_experience: task_experience::from_lookup(&mut lookup)?,
+            bounded_admission_agents,
+            agent_log_fleet_percent,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
             usage_billing: UsageBillingConfig::from_lookup(&mut lookup)?,
+            usage_metrics: MetricsConfig::from_lookup(&mut lookup)?,
             sandbox_billing: SandboxBillingConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
             document_storage,

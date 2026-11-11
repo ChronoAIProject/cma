@@ -7,6 +7,9 @@ use tokio::time::Instant;
 mod fixtures;
 use fixtures::{sandbox, setup, Failure, Output};
 
+#[path = "reconciliation_sweep_policy_tests.rs"]
+mod policy_tests;
+
 async fn complete(reconciler: &SandboxReconciler) -> usize {
     for attempt in 1..=30 {
         if reconciler.run_due(SystemTime::now()).await.unwrap() {
@@ -17,16 +20,9 @@ async fn complete(reconciler: &SandboxReconciler) -> usize {
 }
 
 #[tokio::test(start_paused = true)]
-async fn slow_sweep_finishes_over_bounded_attempts_without_replaying_pages_or_candidates() {
+async fn slow_sweep_refreshes_bindings_without_replaying_maintenance_candidates() {
     let (store, reconciler) = setup(8, Duration::from_secs(2)).await;
-    let reconciler = reconciler
-        .with_runtime_version("fixture-image".into())
-        .with_failed_runtime_recovery(std::sync::Arc::new(
-            layer2_core::sandbox::SandboxRuntimeUpdateService::new(
-                store.clone(),
-                "fixture-image".into(),
-            ),
-        ));
+    let reconciler = reconciler.with_runtime_version("fixture-image".into());
     let output = Output::default();
     let subscriber = tracing_subscriber::fmt()
         .without_time()
@@ -56,22 +52,33 @@ async fn slow_sweep_finishes_over_bounded_attempts_without_replaying_pages_or_ca
         if result == Some(true) {
             break;
         }
-        assert!(attempts < 10);
+        assert!(attempts < 30);
     }
     assert!(started.elapsed() > Duration::from_secs(30));
     assert!(attempts > 1);
     let expected = (0..8)
         .map(|i| sandbox(i).id.to_string())
         .collect::<Vec<_>>();
-    assert_eq!(
-        store.keys("get"),
-        [expected.clone(), expected.clone()].concat()
-    );
+    let authority_passes = store.keys("authority").len() / 4;
+    assert!(authority_passes >= 2);
+    // Initial/refresh passes and runtime-update reads each visit every row.
+    for id in &expected {
+        assert_eq!(
+            store.keys("get").iter().filter(|key| *key == id).count(),
+            authority_passes + 1
+        );
+    }
     assert_eq!(store.keys("pause"), expected);
-    assert_eq!(
-        store.keys("authority"),
-        ["start", "sbx_001", "sbx_003", "sbx_005"].repeat(2)
-    );
+    for cursor in ["start", "sbx_001", "sbx_003", "sbx_005"] {
+        assert_eq!(
+            store
+                .keys("authority")
+                .iter()
+                .filter(|key| key.as_str() == cursor)
+                .count(),
+            authority_passes
+        );
+    }
     assert_eq!(
         store.keys("candidates"),
         ["start", "sbx_001", "sbx_003", "sbx_005"]
@@ -89,8 +96,6 @@ async fn slow_sweep_finishes_over_bounded_attempts_without_replaying_pages_or_ca
         "runtime_cleanup",
         "claim_cleanup",
         "home_cleanup",
-        "recovery_authority",
-        "failed_recovery",
         "profiles",
         "runtime_updates",
         "idle_pause",
@@ -119,6 +124,15 @@ async fn slow_sweep_finishes_over_bounded_attempts_without_replaying_pages_or_ca
     assert!(logs
         .lines()
         .any(|line| line.contains("reason=\"complete\"") && line.contains("completed=1")));
+    let decisions = logs
+        .lines()
+        .filter(|line| line.contains("automatic sandbox pause decision"))
+        .collect::<Vec<_>>();
+    assert_eq!(decisions.len(), 8);
+    assert!(decisions.iter().all(|line| line.contains("sandbox_id=sbx_")
+        && line.contains("outcome=NotEligible")
+        && line.contains("threshold_seconds=900")
+        && !line.contains("private fixture content")));
 }
 
 #[tokio::test(start_paused = true)]
@@ -145,7 +159,7 @@ async fn item_deadline_resumes_the_same_candidate_without_repeating_completed_it
         store.keys("pause"),
         ["sbx_000", "sbx_001", "sbx_001", "sbx_002", "sbx_003"]
     );
-    assert_eq!(store.keys("authority"), ["start", "sbx_001"]);
+    assert_eq!(store.keys("authority"), ["start", "sbx_001"].repeat(2));
     assert_eq!(store.keys("candidates"), ["start", "sbx_001"]);
 }
 
@@ -357,3 +371,18 @@ async fn budget_deferral_preserves_an_existing_sweep_without_polling_it() {
 
 #[path = "reconciliation_home_inventory_tests.rs"]
 mod home_inventory;
+
+#[path = "reconciliation_binding_tests.rs"]
+mod binding_tests;
+
+#[path = "reconciliation_schedule_tests.rs"]
+mod schedule_tests;
+
+#[path = "reconciliation_opportunity_tests.rs"]
+mod opportunity_tests;
+
+#[path = "reconciliation_diagnostics_tests.rs"]
+mod diagnostics_tests;
+
+#[path = "reconciliation_recovery_tests.rs"]
+mod recovery_tests;

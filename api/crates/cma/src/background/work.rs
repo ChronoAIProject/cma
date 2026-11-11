@@ -124,8 +124,9 @@ impl BackgroundWork {
         progress.pending_since.get_or_insert(now);
         let Some(permit) = self.budget.try_enter() else {
             progress.next = now + jitter(BUSY_DELAY);
-            tracing::debug!(
-                work = self.name,
+            tracing::info!(parent: None,
+                work = self.name, reason = "shared_budget_denied",
+                attempted = 0_u64, admitted = 0_u64, completed = 0_u64,
                 pending_ms = progress.pending_since.unwrap().elapsed().as_millis() as u64,
                 "background work deferred by shared budget"
             );

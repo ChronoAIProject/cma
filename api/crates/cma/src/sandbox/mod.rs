@@ -20,12 +20,14 @@ pub(crate) mod native_prepared;
 mod policy;
 mod provenance_backfill;
 pub(crate) use provenance_backfill::AgentProvenanceBackfill;
+mod model_request_budget;
 mod reconciliation;
 pub(crate) mod runtime_attachment;
 mod runtime_mapping;
 mod scheduler;
 mod suggestion_worker;
 pub(crate) mod suggestions;
+mod title_budget;
 mod title_scheduler;
 mod title_worker;
 mod titles;
@@ -47,7 +49,7 @@ pub(crate) use credential::{
 pub(crate) use live_agents::LiveAgentRegistry;
 pub(crate) use policy::LiveSandboxPolicy;
 pub(crate) use runtime_mapping::{runtime_capabilities, runtime_options};
-pub(crate) use title_worker::ProviderTitleEndpoint;
+pub(crate) use title_worker::PlatformTitleEndpoint;
 pub(crate) use unavailable_credentials::UnavailableSandboxCredentials;
 
 #[cfg(test)]

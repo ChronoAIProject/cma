@@ -21,9 +21,12 @@ const MAX_CONVERSATION_COMMIT_RETRIES: usize = 8;
 #[path = "conversation_checkpoint.rs"]
 mod checkpoint;
 
+#[path = "conversation_budget.rs"]
+mod budget;
+
 #[path = "conversation_output.rs"]
 mod output;
-use output::output_replayed;
+use output::{is_identity_terminal_for_current, output_replayed, output_source_for_checkpoint};
 
 #[path = "conversation_live.rs"]
 pub(super) mod live;
@@ -34,33 +37,18 @@ pub struct DurableAgentUpdateRecorder {
     store: Arc<dyn AgentConversationUpdateStore>,
     live: live::AgentLiveHub,
     writer_policy: Arc<super::task_experience::TaskExperiencePolicy>,
-}
-
-impl DurableAgentUpdateRecorder {
-    pub fn new<S>(store: Arc<S>) -> Arc<Self>
-    where
-        S: AgentConversationUpdateStore + 'static,
-    {
-        Self::with_writer_policy(store, Arc::default())
-    }
-
-    pub fn with_writer_policy<S>(
-        store: Arc<S>,
-        writer_policy: Arc<super::task_experience::TaskExperiencePolicy>,
-    ) -> Arc<Self>
-    where
-        S: AgentConversationUpdateStore + 'static,
-    {
-        Arc::new(Self {
-            store,
-            writer_policy,
-            live: live::AgentLiveHub::default(),
-        })
-    }
+    spend_source: Option<Arc<dyn crate::budget::SpendSource>>,
 }
 
 #[async_trait::async_trait]
 impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
+    async fn budget_stop(
+        &self,
+        id: &AgentId,
+        runtime_generation: u64,
+    ) -> Result<Option<crate::budget::BudgetStop>, AgentConversationError> {
+        budget::stop(self.spend_source.as_deref(), id, runtime_generation).await
+    }
     fn subscribe_live(&self, id: &AgentId) -> Option<AgentLiveSubscription> {
         Some(self.live.subscribe(id))
     }
@@ -247,8 +235,14 @@ impl DurableAgentUpdateRecorder {
             let recorded = previous
                 .as_ref()
                 .filter(|checkpoint| checkpoint.update_id == update_id);
+            let identity_terminal = is_identity_terminal_for_current(&current, update.as_ref());
             let replayed = if let Some(source) = &source {
-                output_replayed(source, &current, previous.as_ref())?
+                let replayed = output_replayed(source, &current, previous.as_ref())?;
+                // An older observer may have durably recorded this exact
+                // terminal as a quiet receipt. Preserve the validated source
+                // position, but let the replacement observer apply its
+                // identity-bearing terminal meaning to the still-active turn.
+                replayed && !identity_terminal
             } else {
                 false
             };
@@ -352,7 +346,8 @@ impl DurableAgentUpdateRecorder {
                 Some(update) => fold_update(
                     &current,
                     &recovered,
-                    update.clone(),
+                    budget::terminal(self.spend_source.as_deref(), &current, update.clone())
+                        .await?,
                     &appended_at,
                     self.writer_policy.allows_writer(
                         &current.owner,
@@ -419,20 +414,12 @@ impl DurableAgentUpdateRecorder {
                 after_seq: next_agent.conversation.last_seq,
                 assembly: next_assembly.clone(),
                 outcome,
-                output: source.clone().or_else(|| {
-                    previous
-                        .as_ref()
-                        .filter(|checkpoint| {
-                            checkpoint.native_conversation_id
-                                == current
-                                    .conversation
-                                    .conversation_id
-                                    .as_deref()
-                                    .unwrap_or_default()
-                                && checkpoint.runtime_generation == runtime_generation
-                        })
-                        .and_then(|checkpoint| checkpoint.output.clone())
-                }),
+                output: output_source_for_checkpoint(
+                    source.as_ref(),
+                    previous.as_ref(),
+                    runtime_generation,
+                    identity_terminal,
+                ),
             };
             checkpoint.validate().map_err(store_error)?;
             let mutation = (!logs.is_empty()).then(|| AgentConversationMutation {

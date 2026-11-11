@@ -36,7 +36,9 @@ pub use agent_artifacts::agent_artifacts_router;
 #[cfg(test)]
 mod agent_artifacts_tests;
 mod agent_channel_usage;
+pub(crate) mod sandbox_metrics;
 mod sandbox_usage;
+pub use sandbox_metrics::sandbox_metrics_router;
 pub use sandbox_usage::sandbox_usage_router;
 mod agent_provider_associations;
 pub use agent_provider_associations::agent_provider_associations_router;
@@ -49,6 +51,7 @@ mod agent_provider_associations_tests;
 mod agent_settings;
 mod agent_skills;
 mod agent_worktree_recovery;
+mod dependency_diagnostics;
 mod message_feedback;
 mod message_feedback_reasons;
 mod suggestion_shapes;
@@ -88,6 +91,8 @@ pub use documents::documents_router;
 mod embed;
 #[cfg(test)]
 mod embed_tests;
+#[cfg(test)]
+mod history_export_tests;
 pub mod openapi;
 mod openapi_shapes;
 mod organizations;
@@ -152,6 +157,7 @@ mod launch_events;
 mod launch_quota;
 mod launches;
 mod public_names;
+mod sandbox_always_on;
 mod sandbox_colors;
 mod sandbox_commands;
 #[cfg(test)]

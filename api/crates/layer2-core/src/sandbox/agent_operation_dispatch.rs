@@ -289,13 +289,11 @@ impl AgentOperationService {
         parent: SandboxMutationGuard,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
         let turn_sequence = active_turn(&current)?;
-        let (pending, approvals_remain) = AgentConversationStore::pending_agent_approval(
-            self.store.as_ref(),
-            &current.id,
-            &approval_id,
-        )
-        .await
-        .map_err(operation_store_error)?;
+        let pending =
+            AgentConversationStore::pending_agent_approvals(self.store.as_ref(), &current.id)
+                .await
+                .map_err(operation_store_error)?;
+        let approvals_remain = pending.len() > 1;
         let snapshot = pending
             .into_iter()
             .find_map(|entry| match entry.kind {

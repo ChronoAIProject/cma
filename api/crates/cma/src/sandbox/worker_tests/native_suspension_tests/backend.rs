@@ -21,6 +21,10 @@ pub(super) struct NativeBackend {
     pub lose_resume: Arc<AtomicBool>,
     pub lose_delete: Arc<AtomicBool>,
     pub reject_credential: Arc<AtomicBool>,
+    pub recovery_plan: Arc<Mutex<serde_json::Value>>,
+    pub recovery_code: Arc<Mutex<Option<&'static str>>>,
+    pub recovery_response: Arc<Mutex<Option<Vec<u8>>>>,
+    pub replace_after_history: Arc<AtomicBool>,
     pub status_override: Arc<Mutex<Option<layer3_adapter::RuntimeStatus>>>,
     pub nonexecuting: Arc<AtomicBool>,
     pub proof_revision: Arc<AtomicU64>,
@@ -78,6 +82,61 @@ fn absent() -> layer3_adapter::AdapterError {
 
 #[async_trait::async_trait]
 impl HostedBackend for NativeBackend {
+    async fn run_recovery_command(
+        &self,
+        _: &RuntimeHandle,
+        _command: &layer3_adapter::hosted::RuntimeRecoveryCommand,
+    ) -> layer3_adapter::Result<Vec<u8>> {
+        use serde_json::json;
+        self.calls.push("inspect-history");
+        if let Some(response) = self.recovery_response.lock().unwrap().clone() {
+            return Ok(response);
+        }
+        let code = *self.recovery_code.lock().unwrap();
+        if code == Some("unavailable") {
+            return Err(layer3_adapter::AdapterError::Unavailable(
+                "private provider detail".into(),
+            ));
+        }
+        let malformed = matches!(
+            code,
+            Some("plan_missing" | "plan_mismatch" | "digest_mismatch" | "history_set")
+        );
+        if let Some(code) = code.filter(|_| !malformed) {
+            return Ok(serde_json::to_vec(
+                &json!({"version": 1, "status": "refused", "code": code}),
+            )
+            .unwrap());
+        }
+        let mut plan = self.recovery_plan.lock().unwrap().clone();
+        if plan.is_null() {
+            return Err(layer3_adapter::AdapterError::Unsupported(
+                "fixture history not configured".into(),
+            ));
+        }
+        if code == Some("plan_mismatch") {
+            plan["runtime"]["generation"] = json!(42);
+        }
+        if code == Some("history_set") {
+            plan["histories"] = json!([]);
+        }
+        let digest =
+            layer2_core::sandbox::SandboxUnpublishedRecoveryProof::provider_plan_digest(&plan)
+                .unwrap();
+        if self.replace_after_history.swap(false, Ordering::SeqCst) {
+            self.restart_process().await;
+        }
+        let mut output =
+            json!({"version": 1, "status": "inspected", "plan": plan, "planSha256": digest});
+        if code == Some("plan_missing") {
+            output.as_object_mut().unwrap().remove("plan");
+        }
+        if code == Some("digest_mismatch") {
+            output["planSha256"] = json!("0".repeat(64));
+        }
+        Ok(serde_json::to_vec(&output).unwrap())
+    }
+
     async fn suspend_nonexecuting_runtime(
         &self,
         handle: &RuntimeHandle,

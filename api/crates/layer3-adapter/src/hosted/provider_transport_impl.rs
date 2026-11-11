@@ -62,8 +62,19 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame> {
         self.require_supported_operation(&request)?;
+        #[cfg(test)]
+        let status_request = matches!(&request, RequestFrame::RuntimeStatus(_));
+        #[cfg(test)]
+        if status_request {
+            Self::test_status_boundary(false);
+        }
         let endpoint = self.endpoint(handle).await?;
-        self.exchange_at(handle, &endpoint, request).await
+        let response = self.exchange_at(handle, &endpoint, request).await;
+        #[cfg(test)]
+        if status_request && response.is_ok() {
+            Self::test_status_boundary(true);
+        }
+        response
     }
 
     async fn verify_checkpoint_hold(

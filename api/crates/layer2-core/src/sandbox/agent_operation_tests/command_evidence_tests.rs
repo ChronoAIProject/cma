@@ -5,10 +5,15 @@ use layer3_adapter::{
 
 use super::command_work_tests::{admit, fixture, request};
 use super::fixtures::*;
-use super::projected_evidence::assert_equivalent;
 use crate::sandbox::agent_io::*;
 use crate::sandbox::store::{AgentLogStore, AgentStore};
 use crate::sandbox::*;
+
+#[path = "credit_failure_tests.rs"]
+mod credit_failure_tests;
+
+#[path = "budget_recovery_tests.rs"]
+mod budget_recovery_tests;
 
 async fn claimed(store: &InMemorySandboxStore, agent: &Agent) -> AdmittedAgentCommand {
     store
@@ -49,7 +54,6 @@ async fn a_restart_reconstructs_delivery_then_turn_completion_without_changing_a
         drop(service);
         let id = &admitted.receipt.envelope.command_id;
         let running = store.reconcile_command(id).await.unwrap();
-        assert_equivalent(&store, &running).await;
         assert_eq!(running.status, AgentResponseStatus::InProgress);
         assert_eq!(
             running.work.observation.as_ref().unwrap().delivery,
@@ -64,7 +68,6 @@ async fn a_restart_reconstructs_delivery_then_turn_completion_without_changing_a
         };
         end(store.clone(), &agent, reason).await;
         let done = store.reconcile_command(id).await.unwrap();
-        assert_equivalent(&store, &done).await;
         assert_eq!(done.status, status);
         assert_eq!(done.receipt, admitted.receipt);
         assert_eq!(done.work.dispatch, running.work.dispatch);
@@ -73,26 +76,6 @@ async fn a_restart_reconstructs_delivery_then_turn_completion_without_changing_a
             AgentOperationDelivery::ExecutionObserved
         );
         assert_eq!(store.reconcile_command(id).await.unwrap(), done);
-        store
-            .append_agent_log(
-                &agent.id,
-                crate::now_rfc3339(),
-                AgentLogKind::ModeChanged {
-                    mode: "fixture".into(),
-                },
-            )
-            .await
-            .unwrap();
-        let mut current = store.get_agent(&agent.id).await.unwrap().unwrap();
-        let revision = current.revision;
-        current.conversation.last_seq += 1;
-        current.revision += 1;
-        store.save_agent(revision, current).await.unwrap();
-        assert_equivalent(&store, &done).await;
-        let advanced = store.reconcile_command(id).await.unwrap();
-        assert_eq!(advanced.status, done.status);
-        assert_eq!(advanced.receipt, done.receipt);
-        assert_eq!(advanced.work.dispatch, done.work.dispatch);
         assert_eq!(inputs.lock().unwrap().len(), 1);
     }
 }
@@ -113,7 +96,6 @@ async fn ambiguous_dispatch_stays_unresolved_until_runtime_evidence_arrives() {
     ));
     let id = &admitted.receipt.envelope.command_id;
     let ambiguous = store.reconcile_command(id).await.unwrap();
-    assert_equivalent(&store, &ambiguous).await;
     assert_eq!(ambiguous.status, AgentResponseStatus::InProgress);
     assert_eq!(
         ambiguous.work.observation.as_ref().unwrap().delivery,
@@ -151,7 +133,6 @@ async fn pre_write_failure_is_terminal_and_never_returns_to_the_queue() {
         .reconcile_command(&admitted.receipt.envelope.command_id)
         .await
         .unwrap();
-    assert_equivalent(&store, &failed).await;
     assert_eq!(failed.status, AgentResponseStatus::Failed);
     assert_eq!(
         failed.work.failure.unwrap().code,
@@ -236,8 +217,6 @@ async fn approval_wait_and_control_completion_are_recovered_independently() {
             .reconcile_command(&answer.receipt.envelope.command_id)
             .await
             .unwrap();
-        assert_equivalent(&store, &done).await;
-        assert_equivalent(&store, &store.get_command(id).await.unwrap().unwrap()).await;
         assert_eq!(done.status, AgentResponseStatus::Completed);
         let expected = if index == 0 {
             AgentResponseStatus::WaitingAction
@@ -388,7 +367,6 @@ async fn runtime_retirement_preserves_uncertain_writes_when_it_interrupts_the_tu
             .reconcile_command(&admitted.receipt.envelope.command_id)
             .await
             .unwrap();
-        assert_equivalent(&store, &outcome).await;
         if ambiguous {
             assert_eq!(outcome.status, AgentResponseStatus::Failed);
             assert_eq!(

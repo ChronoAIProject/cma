@@ -184,20 +184,6 @@ fn admits_input(current: &Agent, mutation: &AgentConversationMutation) -> bool {
 /// Durable agent conversation state and its gap-free semantic log.
 #[async_trait]
 pub trait AgentConversationStore: Send + Sync {
-    /// Pages are tied to the caller's captured Agent head. A changed head must
-    /// conflict so changes to the outstanding set cannot silently skip a row.
-    async fn pending_agent_approvals_page(
-        &self,
-        _id: &AgentId,
-        _through_seq: u64,
-        _after: u64,
-        _limit: u16,
-    ) -> Result<PendingAgentApprovalPage, SandboxStoreError> {
-        Err(SandboxStoreError::InvalidTransaction(
-            "approval pagination is unsupported",
-        ))
-    }
-
     /// Record a quiet original conversation under the exact current lifecycle lease.
     /// Implementations without a parent write fence must refuse this operation.
     async fn commit_agent_reopen_update(
@@ -237,70 +223,4 @@ pub trait AgentConversationStore: Send + Sync {
         &self,
         id: &AgentId,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError>;
-
-    /// Resolve one original approval and whether another outstanding request
-    /// remains. Indexed stores do not materialize the whole outstanding set.
-    async fn pending_agent_approval(
-        &self,
-        id: &AgentId,
-        approval_id: &str,
-    ) -> Result<(Option<AgentLogEntry>, bool), SandboxStoreError> {
-        let mut found = None;
-        let mut other = false;
-        for entry in self.pending_agent_approvals(id).await? {
-            if matches!(&entry.kind, AgentLogKind::ApprovalRequested { approval_id: key, .. } if key == approval_id)
-            {
-                found = Some(entry);
-            } else {
-                other = true;
-            }
-        }
-        Ok((found, other))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingAgentApprovalPage {
-    pub items: Vec<AgentLogEntry>,
-    pub next_after: Option<u64>,
-}
-
-impl PendingAgentApprovalPage {
-    /// Compatibility for stores whose complete source is already bounded.
-    pub fn from_entries(
-        mut entries: Vec<AgentLogEntry>,
-        after: u64,
-        limit: u16,
-    ) -> Result<Self, SandboxStoreError> {
-        if !(1..=200).contains(&limit) {
-            return Err(SandboxStoreError::InvalidPage);
-        }
-        entries.sort_by_key(|entry| entry.seq);
-        let mut page = Self {
-            items: Vec::new(),
-            next_after: None,
-        };
-        let mut bytes = 0;
-        for entry in entries.into_iter().filter(|entry| entry.seq > after) {
-            let size = serde_json::to_vec(&entry)
-                .map_err(|_| SandboxStoreError::Corrupt("invalid approval event".into()))?
-                .len();
-            if page.items.len() == usize::from(limit) || bytes + size > 2 * 1024 * 1024 {
-                page.next_after = Some(
-                    page.items
-                        .last()
-                        .ok_or_else(|| {
-                            SandboxStoreError::Unavailable(
-                                "approval exceeds page byte budget".into(),
-                            )
-                        })?
-                        .seq,
-                );
-                break;
-            }
-            bytes += size;
-            page.items.push(entry);
-        }
-        Ok(page)
-    }
 }

@@ -10,6 +10,7 @@ use layer2_core::RuntimeCapability;
 use super::{problem_document, problem_response};
 
 pub(crate) enum InstanceProblem {
+    Budget(layer2_core::budget::BudgetError),
     ResourceAccess(layer2_core::resource_access::ResourceAccessError),
     Connection(layer2_core::sandbox::SandboxCredentialPrerequisiteError),
     Forbidden,
@@ -45,7 +46,6 @@ pub(crate) enum InstanceProblem {
     CheckpointInProgress,
     DeliveryAmbiguous,
     ResourcesUnsupported,
-    HistoryPaginationRequired,
     Unavailable,
 }
 
@@ -106,12 +106,12 @@ impl InstanceProblem {
 
 impl From<AgentReadError> for InstanceProblem {
     fn from(error: AgentReadError) -> Self {
+        super::dependency_diagnostics::read_failure(&error);
         match error {
             AgentReadError::Access(error) => Self::ResourceAccess(error),
             AgentReadError::Forbidden => Self::Forbidden,
             AgentReadError::NotFound => Self::AgentNotFound,
             AgentReadError::InvalidPage => Self::InvalidQuery,
-            AgentReadError::PaginationRequired => Self::HistoryPaginationRequired,
             AgentReadError::CapabilityUnsupported { capability } => {
                 Self::CapabilityUnsupported { capability }
             }
@@ -125,6 +125,7 @@ impl From<AgentOperationError> for InstanceProblem {
     fn from(error: AgentOperationError) -> Self {
         match error {
             AgentOperationError::Connection(error) => Self::Connection(error),
+            AgentOperationError::Budget(reason) => Self::Budget(reason),
             AgentOperationError::Forbidden => Self::Forbidden,
             AgentOperationError::NotFound => Self::AgentNotFound,
             AgentOperationError::StatusConflict { .. }
@@ -169,6 +170,7 @@ impl From<AgentOperationError> for InstanceProblem {
 impl IntoResponse for InstanceProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code): (_, _, &str, _) = match &self {
+            Self::Budget(reason) => (StatusCode::PAYMENT_REQUIRED, "model-budget-refused", reason.guidance(), reason.code()),
             Self::ResourceAccess(error) => return super::resource_access_problem::ResourceProblem(error.clone()).into_response(),
             Self::Connection(error) => return super::instances_problem::HierarchyProblem::connection(error.clone()).into_response(),
             Self::Forbidden => (
@@ -290,12 +292,6 @@ impl IntoResponse for InstanceProblem {
                 "agent-delivery-ambiguous",
                 "The operation outcome is ambiguous and requires durable reconciliation.",
                 "agent_delivery_ambiguous",
-            ),
-            Self::HistoryPaginationRequired => (
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "history-pagination-required",
-                "Use the Agent v2 snapshot/events API to read the complete retained history in bounded pages.",
-                "history_pagination_required",
             ),
             Self::ResourcesUnsupported => (
                 StatusCode::UNPROCESSABLE_ENTITY,

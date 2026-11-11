@@ -1,5 +1,6 @@
+import { ComputerContext } from './agent/environment/context';
 import { SkeletonRows } from './ui/Skeleton';
-import { Documents, Operations, Settings, TriggerPublisherPage } from './ConsolePages';
+import { Documents, Operations, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
@@ -11,10 +12,10 @@ import { AgentSidePanel } from './agent/AgentSidePanel';
 import { useAgentPanel } from './agent/useAgentPanel';
 import { AgentComputerObservation } from './agent/environment/observation';
 import { useAgentController } from './agent/controller';
-import type { User } from './auth/types';
+import type { ConsoleProps } from './ConsoleTypes';
 import { ProfileMenu } from './profile/ProfileMenu';
 import { LegacyProfileNotice } from './profile/LegacyProfileNotice';
-import { routePath, type AppRoute } from './routing/routes';
+import { routePath } from './routing/routes';
 import { useViewArrival } from './ui/arrivalMotion';
 import { DeliverablePreviewFrame as AppFrame } from './agent/DeliverablePreviewFrame';
 import { Sidebar } from './shell/Sidebar';
@@ -22,7 +23,7 @@ import { ManagerNavigation } from './shell/ManagerNavigation';
 import { navigationAgent, useNavigation } from './shell/navigation';
 import { CharacterColorContext } from './character/characterColor';
 import { SandboxPage } from './sandbox/SandboxPage';
-import { useResourceActions, type CreateAction } from './ResourceActions';
+import { useResourceActions } from './ResourceActions';
 import { Button } from './ui/Button';
 import { consoleLinks } from './ConsoleLinks';
 import { ShellCommandMenu } from './shell/ShellCommandMenu';
@@ -43,18 +44,6 @@ import { useNavigationScope } from './resources/NavigationScope';
 import { useConsoleScope } from './resources/useConsoleScope';
 import { OwnerViewsProvider, useOwnerViews } from './resources/retainedOwnerViews';
 import { DocsPage } from './services/DocsPage';
-
-interface ConsoleProps {
-  readonly user: User;
-  readonly sidebarCollapsed?: boolean;
-  readonly onSidebarCollapsedChange?: (collapsed: boolean) => void;
-  readonly onServiceNavigate?: (route: AppRoute) => void;
-  readonly route: AppRoute;
-  readonly onSignOut: () => void;
-  readonly onNavigate: (route: AppRoute) => void;
-  readonly onCreate?: (action: CreateAction) => void;
-  readonly hierarchyRevision?: number;
-}
 
 export function Console(props: ConsoleProps) {
   return (
@@ -223,7 +212,7 @@ function ConsoleContent({
         detail={shared}
         onAccessChanged={agentAccess.reload}
         filesOpen={panel !== undefined && panel !== 'details'}
-        onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
+        onFilesOpenChange={(open) => setPanel(open ? 'browser' : undefined)}
         detailsOpen={detailsOpen}
         onDetailsOpenChange={setDetailsOpen}
         onNavigate={onNavigate}
@@ -248,7 +237,7 @@ function ConsoleContent({
     ) : route.kind === 'agent' ? (
       <CharacterColorContext value={located?.sandbox.color}>
         <AgentSurface
-          computerObservation={client.operationReplay ? computerObservation : undefined}
+          computerObservation={computerObservation}
           key={route.agentId}
           user={user}
           lifecycleClient={client}
@@ -260,13 +249,14 @@ function ConsoleContent({
           accessUncertain={accessUncertain}
           accessAuthorized={agentAccess.personalReady && !accessUncertain}
           filesOpen={panel !== undefined && panel !== 'details'}
-          onFilesOpenChange={(open) => setPanel(open ? 'files' : undefined)}
+          onFilesOpenChange={(open) => setPanel(open ? 'browser' : undefined)}
           detailsOpen={detailsOpen}
           onDetailsOpenChange={setDetailsOpen}
           onNavigate={onNavigate}
           permissions={permissions}
           actionsBusy={actions.pending}
           onAgentAction={actions.select}
+          onViewDeletionStatus={actions.viewDeletionStatus}
         />
       </CharacterColorContext>
     ) : route.kind === 'sandbox' ? (
@@ -313,8 +303,6 @@ function ConsoleContent({
       <LegacyProfileNotice />
     ) : route.kind === 'marketplace' || route.kind === 'marketplace_profile' ? (
       <LegacyProfileNotice />
-    ) : route.kind === 'settings' && operator ? (
-      <Settings client={operator.usage} tab={route.tab} onNavigate={onNavigate} />
     ) : route.kind === 'operations' ? (
       operator !== undefined && canOpenOperations(user.capabilities) ? (
         <Suspense
@@ -370,127 +358,138 @@ function ConsoleContent({
       />
     );
   return (
-    <AppFrame
-      previewScope={`${user.id}:${selectedAgent}:${accessUncertain}`}
-      onPreviewOpen={() => setPanel(undefined)}
-      phoneTitle="Agent Manager"
-      taskLayout
-      workspaceDetails={panel !== 'details'}
-      detailsOpen={
-        !accessUncertain &&
-        (personalAgentId !== undefined || shared !== undefined) &&
-        panel !== undefined
-      }
-      compactDetailsOverlay
-      onDetailsClose={() => setPanel(undefined)}
-      details={
-        route.kind === 'agent' && !accessUncertain && (personalAgentId || shared) ? (
-          <AgentSidePanel
-            key={route.agentId}
-            agentId={route.agentId}
-            viewerId={user.id}
-            shared={shared !== undefined}
-            detail={ready?.detail}
-            panel={panel}
-            onSelect={setPanel}
-            conversation={ready?.conversation}
-            observation={computerObservation}
-            onClose={() => setPanel(undefined)}
-            onAccessChanged={agentAccess.reload}
-            publicationScope={artifactPublicationScope}
-            historyLoading={ready?.historyLoading}
-            pending={agent.pending}
-            onOpenSandbox={
-              ready === undefined
-                ? undefined
-                : () => onNavigate({ kind: 'sandbox', sandboxId: ready.detail.sandbox.id })
+    <ComputerContext value={computerObservation}>
+      <AppFrame
+        previewScope={`${user.id}:${selectedAgent}:${accessUncertain}`}
+        onPreviewOpen={() => setPanel(undefined)}
+        phoneTitle="Agent Manager"
+        taskLayout
+        workspaceDetails={panel !== 'details'}
+        detailsOpen={
+          !accessUncertain &&
+          (personalAgentId !== undefined || shared !== undefined) &&
+          panel !== undefined
+        }
+        compactDetailsOverlay
+        onDetailsClose={() => setPanel(undefined)}
+        details={
+          route.kind === 'agent' && !accessUncertain && (personalAgentId || shared) ? (
+            <AgentSidePanel
+              key={route.agentId}
+              agentId={route.agentId}
+              viewerId={user.id}
+              shared={shared !== undefined}
+              detail={ready?.detail}
+              onStopForControl={agent.interruptForControl}
+              resourceAvailability={agent.resourceAvailability}
+              panel={panel}
+              onSelect={setPanel}
+              conversation={ready?.conversation}
+              observation={computerObservation}
+              onClose={() => setPanel(undefined)}
+              onAccessChanged={agentAccess.reload}
+              publicationScope={artifactPublicationScope}
+              historyLoading={ready?.historyLoading || !!ready?.historyUnavailable}
+              pending={agent.pending}
+              onOpenSandbox={
+                ready === undefined
+                  ? undefined
+                  : () => onNavigate({ kind: 'sandbox', sandboxId: ready.detail.sandbox.id })
+              }
+            />
+          ) : undefined
+        }
+        overlay={accessUncertain ? undefined : actions.overlay}
+        sidebarCollapsed={sharedCollapsed ?? sidebarCollapsed}
+        onSidebarCollapsedChange={onSidebarCollapsedChange ?? setSidebarCollapsed}
+        sidebar={({ collapsed, onToggle, onNavigate: onSidebarNavigate }) => (
+          <Sidebar
+            collapsed={collapsed}
+            onToggleCollapsed={onToggle}
+            route={route}
+            onNavigate={(next) => {
+              onSidebarNavigate();
+              (onServiceNavigate ?? onNavigate)(next);
+            }}
+            newAgent={
+              canStartNewAgent
+                ? {
+                    current:
+                      canCreateInScope && (route.kind === 'home' || route.kind === 'agent_manager'),
+                    onCreate: () => onCreate?.({ kind: 'new_agent' }),
+                    unavailableReason: newAgentUnavailable,
+                  }
+                : undefined
+            }
+            onSearch={user.visitor ? undefined : () => setCommandsOpen(true)}
+            links={consoleLinks(
+              route,
+              canOpenTriggers,
+              client.documents !== undefined && !user.visitor,
+            )}
+            onHome={() => {
+              setDetailsOpen(false);
+              onSidebarNavigate();
+              onNavigate({ kind: 'home' });
+            }}
+            navigation={
+              <ManagerNavigation
+                client={scopeClient}
+                scope={navigationScope}
+                choices={scopeChoices}
+                onScope={setNavigationScope}
+                route={route}
+                viewerId={user.id}
+                navigation={navigation}
+                currentAgent={ready?.detail}
+                permissions={permissions}
+                pending={actions.pending}
+                busySandboxIds={actions.busySandboxIds}
+                deletingSandboxIds={actions.deletingSandboxIds}
+                onViewDeletion={actions.viewDeletion}
+                onNavigate={(next) => {
+                  if (next.kind !== 'usage') onSidebarNavigate();
+                  onNavigate(next);
+                }}
+                onAction={actions.select}
+              />
+            }
+            account={
+              <ProfileMenu
+                user={user}
+                collapsed={collapsed}
+                onSignOut={onSignOut}
+                onNavigate={(next) => {
+                  if (next.kind !== 'usage') onSidebarNavigate();
+                  onNavigate(next);
+                }}
+              />
             }
           />
-        ) : undefined
-      }
-      overlay={accessUncertain ? undefined : actions.overlay}
-      sidebarCollapsed={sharedCollapsed ?? sidebarCollapsed}
-      onSidebarCollapsedChange={onSidebarCollapsedChange ?? setSidebarCollapsed}
-      sidebar={({ collapsed, onToggle, onNavigate: onSidebarNavigate }) => (
-        <Sidebar
-          collapsed={collapsed}
-          onToggleCollapsed={onToggle}
-          route={route}
-          onNavigate={(next) => {
-            onSidebarNavigate();
-            (onServiceNavigate ?? onNavigate)(next);
-          }}
-          newAgent={
-            canStartNewAgent
-              ? {
-                  onCreate: () => onCreate?.({ kind: 'new_agent' }),
-                  unavailableReason: newAgentUnavailable,
-                }
-              : undefined
-          }
-          onSearch={user.visitor ? undefined : () => setCommandsOpen(true)}
-          links={consoleLinks(
-            route,
-            canOpenTriggers,
-            client.documents !== undefined && !user.visitor,
-          )}
-          onHome={() => {
-            setDetailsOpen(false);
-            onSidebarNavigate();
-            onNavigate({ kind: 'home' });
-          }}
-          navigation={
-            <ManagerNavigation
-              client={scopeClient}
-              scope={navigationScope}
-              choices={scopeChoices}
-              onScope={setNavigationScope}
-              route={route}
-              viewerId={user.id}
+        )}
+        center={
+          <main className="console__surface" ref={surfaceRef}>
+            <ShellCommandMenu
+              open={commandsOpen}
+              onOpenChange={setCommandsOpen}
+              enabled={!user.visitor}
               navigation={navigation}
-              currentAgent={ready?.detail}
-              permissions={permissions}
-              pending={actions.pending}
-              busySandboxIds={actions.busySandboxIds}
-              deletingSandboxIds={actions.deletingSandboxIds}
-              onViewDeletion={actions.viewDeletion}
-              onNavigate={(next) => {
-                onSidebarNavigate();
-                onNavigate(next);
-              }}
-              onAction={actions.select}
+              onNavigate={onNavigate}
+              onNewAgent={canCreateInScope ? newAgent : undefined}
+              canOpenTriggers={canOpenTriggers}
+              canOpenOperations={canOpenOperations(user.capabilities)}
             />
-          }
-          account={
-            <ProfileMenu
-              user={user}
-              collapsed={collapsed}
-              onSignOut={onSignOut}
-              onNavigate={(next) => {
-                onSidebarNavigate();
-                onNavigate(next);
-              }}
-            />
-          }
-        />
-      )}
-      center={
-        <main className="console__surface" ref={surfaceRef}>
-          <ShellCommandMenu
-            open={commandsOpen}
-            onOpenChange={setCommandsOpen}
-            enabled={!user.visitor}
-            navigation={navigation}
-            onNavigate={onNavigate}
-            onNewAgent={canCreateInScope ? newAgent : undefined}
-            canOpenTriggers={canOpenTriggers}
-            canOpenOperations={canOpenOperations(user.capabilities)}
-          />
-          {actions.notice}
-          <ConsoleActionError error={actions.error} />
-          {content}
-        </main>
-      }
-    />
+            {actions.notice}
+            {route.kind !== 'agent' && actions.viewDeletionStatus ? (
+              <Button size="sm" onClick={actions.viewDeletionStatus}>
+                View deletion status
+              </Button>
+            ) : null}
+            <ConsoleActionError error={actions.error} />
+            {content}
+          </main>
+        }
+      />
+    </ComputerContext>
   );
 }

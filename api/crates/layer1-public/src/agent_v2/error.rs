@@ -13,7 +13,6 @@ pub(super) enum Error {
     History,
     Unavailable,
     Missing,
-    StateChanged,
 }
 impl Error {
     pub fn code(self) -> &'static str {
@@ -25,7 +24,6 @@ impl Error {
             Self::History => "agent_history_unavailable",
             Self::Unavailable => "agent_read_unavailable",
             Self::Missing => "agent_not_found",
-            Self::StateChanged => "agent_state_changed",
         }
     }
     pub fn message(self) -> &'static str {
@@ -37,15 +35,12 @@ impl Error {
             Self::History => "The requested Agent history cannot be verified.",
             Self::Unavailable => "Agent history is temporarily unavailable.",
             Self::Missing => "The Agent is unavailable to this caller.",
-            Self::StateChanged => {
-                "The Agent state changed. Restart approval pagination from the current head."
-            }
         }
     }
     pub fn response(self) -> Response {
         let status = match self {
             Self::Query | Self::Cursor | Self::BeyondHead => StatusCode::BAD_REQUEST,
-            Self::Incarnation | Self::StateChanged => StatusCode::CONFLICT,
+            Self::Incarnation => StatusCode::CONFLICT,
             Self::Missing => StatusCode::NOT_FOUND,
             Self::History | Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         };

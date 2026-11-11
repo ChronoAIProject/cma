@@ -30,11 +30,38 @@ pub trait PlatformSettingsStore: Send + Sync {
 pub struct PlatformSettingsService {
     store: Arc<dyn PlatformSettingsStore>,
     activity: Arc<ActivityService>,
+    model_budget_writes_enabled: bool,
+    model_request_budget_writes_enabled: bool,
 }
 
 impl PlatformSettingsService {
     pub fn new(store: Arc<dyn PlatformSettingsStore>, activity: Arc<ActivityService>) -> Self {
-        Self { store, activity }
+        Self {
+            store,
+            activity,
+            model_budget_writes_enabled: false,
+            model_request_budget_writes_enabled: false,
+        }
+    }
+
+    /// Enable only after compatible serving and rollback readers are established.
+    pub fn with_model_budget_writes_enabled(mut self, enabled: bool) -> Self {
+        self.model_budget_writes_enabled = enabled;
+        self
+    }
+
+    pub fn model_budget_writes_enabled(&self) -> bool {
+        self.model_budget_writes_enabled
+    }
+
+    /// Request policy needs its own compatible rollback reader after the foundation.
+    pub fn with_model_request_budget_writes_enabled(mut self, enabled: bool) -> Self {
+        self.model_request_budget_writes_enabled = enabled;
+        self
+    }
+
+    pub fn model_request_budget_writes_enabled(&self) -> bool {
+        self.model_budget_writes_enabled && self.model_request_budget_writes_enabled
     }
 
     /// Read policy for another application service, without opening an
@@ -64,10 +91,34 @@ impl PlatformSettingsService {
         settings: &PlatformSettings,
     ) -> Result<StoredPlatformSettings, CoreError> {
         caller.require(Capability::ConfigurePlatform)?;
-        settings.validate()?;
+        if !self.model_budget_writes_enabled && !settings.model_budget.is_empty_disabled() {
+            return Err(CoreError::ModelBudgetWritesUnavailable);
+        }
+        if !self.model_request_budget_writes_enabled()
+            && !settings.model_budget.request_models.is_empty()
+        {
+            return Err(CoreError::ModelBudgetWritesUnavailable);
+        }
+        let current = self.current().await?;
+        let mut effective = settings.clone();
+        let policy_changed = current.settings.inactivity.auto_pause_enabled
+            != settings.inactivity.auto_pause_enabled
+            || current.settings.inactivity.pause_after_seconds
+                != settings.inactivity.pause_after_seconds;
+        if settings.inactivity.auto_pause_enabled {
+            effective.inactivity.grace_started_at =
+                if policy_changed || current.settings.inactivity.grace_started_at.is_none() {
+                    Some(crate::now_rfc3339())
+                } else {
+                    current.settings.inactivity.grace_started_at.clone()
+                };
+        } else {
+            effective.inactivity.grace_started_at = None;
+        }
+        effective.validate()?;
         let stored = self
             .store
-            .replace(expected_revision, settings)
+            .replace(expected_revision, &effective)
             .await
             .map_err(store_failed)?;
         self.audit(

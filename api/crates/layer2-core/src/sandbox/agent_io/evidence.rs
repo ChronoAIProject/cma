@@ -28,58 +28,28 @@ pub struct CommandEvidence {
     deferred: Option<(u64, String)>,
 }
 
-/// Exact original references loaded from a projection covering `through_seq`.
-/// Storage verifies their immutable source bytes and the captured projection
-/// identity before constructing this proof. No missing dispatch is inferred.
-pub struct CommandLogReferences {
-    pub through_seq: u64,
-    pub turn: AgentLogEntry,
-    pub fence: AgentLogEntry,
-    pub latest_delivery: AgentLogEntry,
-    pub terminal: Option<AgentLogEntry>,
-    pub has_pending_approvals: bool,
-}
-
 impl CommandEvidence {
-    pub fn from_projection(
+    /// Begin at an ordinary message's exact dispatch fence after the store has
+    /// independently proved the immutable prefix through trusted integrity
+    /// metadata. Before this fence, message evidence observes no delivery,
+    /// approvals or outcome; its own TurnStarted follows the fence. Controls
+    /// need the preceding active turn and must use the complete fold.
+    pub fn from_trusted_message_prefix(
         command: &AdmittedAgentCommand,
-        proof: CommandLogReferences,
     ) -> Result<Self, CommandLedgerError> {
         let mut evidence = Self::new(command)?;
-        if proof.turn.seq != evidence.dispatch.turn_sequence
-            || proof.fence.seq != evidence.dispatch.operation_sequence
-            || !matches!(proof.turn.kind, AgentLogKind::TurnStarted { turn_sequence, .. } if turn_sequence == proof.turn.seq)
-            || !matches!(proof.latest_delivery.kind, AgentLogKind::OperationDeliveryChanged { operation_sequence, .. } if operation_sequence == proof.fence.seq)
-            || proof.latest_delivery.seq < proof.fence.seq
-            || proof.terminal.as_ref().is_some_and(|entry| !matches!(entry.kind,
-                AgentLogKind::TurnCompleted { turn_sequence } | AgentLogKind::TurnFailed { turn_sequence, .. }
-                | AgentLogKind::TurnInterrupted { turn_sequence } if turn_sequence == evidence.dispatch.turn_sequence))
-        { return Err(CommandLedgerError::Corrupt); }
-        let mut entries = vec![proof.turn, proof.fence, proof.latest_delivery];
-        entries.extend(proof.terminal);
-        entries.sort_by_key(|entry| entry.seq);
-        for pair in entries.windows(2) {
-            if pair[0].seq == pair[1].seq && pair[0] != pair[1] {
-                return Err(CommandLedgerError::Corrupt);
-            }
+        if !evidence.message
+            || evidence.trigger_first
+            || evidence.dispatch.operation_sequence.checked_add(1)
+                != Some(evidence.dispatch.turn_sequence)
+        {
+            return Err(CommandLedgerError::Invalid);
         }
-        entries.dedup_by_key(|entry| entry.seq);
-        for entry in entries {
-            if entry.seq == 0 || entry.seq > proof.through_seq {
-                return Err(CommandLedgerError::Corrupt);
-            }
-            // Contiguity was certified by the immutable segment and incremental
-            // projection, so only the selected original facts are folded here.
-            evidence.cursor = entry.seq - 1;
-            evidence.observe(&entry)?;
-        }
-        if !evidence.fence_seen || !evidence.turn_seen {
-            return Err(CommandLedgerError::Corrupt);
-        }
-        if proof.has_pending_approvals && evidence.message && !evidence.status.is_terminal() {
-            evidence.status = AgentResponseStatus::WaitingAction;
-        }
-        evidence.cursor = proof.through_seq;
+        evidence.cursor = evidence
+            .dispatch
+            .operation_sequence
+            .checked_sub(1)
+            .ok_or(CommandLedgerError::Corrupt)?;
         Ok(evidence)
     }
 

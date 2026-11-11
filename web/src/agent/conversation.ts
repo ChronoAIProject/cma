@@ -2,7 +2,7 @@ import type { AgentEvent, AgentLiveEvent, AgentStatus, AgentUsage } from '../api
 import { orderEntries } from './chronology';
 export { conversationFromTranscript } from './transcript';
 import { durableUsage } from './usage';
-import { consumeLiveMessage, liveMessage } from './liveMessage';
+import { clearLiveGapRun, durableAssistantMessage, liveMessage } from './liveMessage';
 import { liveTool, updateTool } from './toolCalls';
 import { setPlan } from './plans';
 import { descriptionSource, durableRuntimeMetadata, mergeRuntimeMetadata } from './runtimeMetadata';
@@ -10,31 +10,23 @@ import { sessionCommands } from './slashCommands';
 import { number, object, text, upsert } from './conversationValues';
 import { liveReasoning } from './liveReasoning';
 import { startTurn, finishTurn } from './turnTiming';
-import { boundConversation } from './retention';
-import { hasRecordedGap, recordedGapRuns } from './completeness';
-import type { ApprovalRequest, ConversationState, RecoveryNotice } from './model';
+import { hasRecordedGap, recover } from './recovery';
+import type { ApprovalRequest, ConversationState } from './model';
 export type {
   ApprovalRequest,
   ConversationMessage,
   ConversationState,
   RecoveryNotice,
 } from './model';
-function recover(state: ConversationState, notice: RecoveryNotice): ConversationState {
-  return { ...state, recovery: upsert(state.recovery, notice) };
-}
 
 export function foldAgentEvent(state: ConversationState, event: AgentEvent): ConversationState {
-  return boundConversation(orderEntries(state, foldDurableEvent(state, event), event.seq));
+  return orderEntries(state, foldDurableEvent(state, event), event.seq);
 }
 
 function foldDurableEvent(state: ConversationState, event: AgentEvent): ConversationState {
   if (event.seq <= state.cursor) return state;
   const kind = event.kind;
-  const next = {
-    ...state,
-    cursor: event.seq,
-    incompleteRuns: recordedGapRuns(state, kind.type),
-  };
+  const next = { ...state, cursor: event.seq };
   switch (kind.type) {
     case 'available_commands_set':
       return { ...next, availableCommands: sessionCommands(kind.commands) };
@@ -54,21 +46,31 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     case 'agent_message': {
       const content = text(kind.content);
       if (content === undefined) return next;
-      const reconciled =
+      const messages =
         kind.type === 'agent_message'
-          ? consumeLiveMessage(next.messages, next.activeRunId)
-          : { messages: next.messages, order: undefined };
+          ? durableAssistantMessage(next.messages, next.activeRunId, {
+              id: `event:${String(event.seq)}`,
+              runId: next.activeRunId,
+              role: 'assistant',
+              content,
+              status: 'complete',
+              at: event.appendedAt,
+            })
+          : upsert(next.messages, {
+              id: `event:${String(event.seq)}`,
+              runId: next.activeRunId,
+              role: 'user',
+              content,
+              status: 'complete',
+              at: event.appendedAt,
+            });
       return {
         ...next,
-        messages: upsert(reconciled.messages, {
-          id: `event:${String(event.seq)}`,
-          runId: next.activeRunId,
-          role: kind.type === 'owner_message' ? 'user' : 'assistant',
-          content,
-          status: 'complete',
-          at: event.appendedAt,
-          order: reconciled.order,
-        }),
+        messages,
+        liveGapRuns:
+          kind.type === 'agent_message' && next.activeRunId !== undefined
+            ? clearLiveGapRun(next.liveGapRuns, next.activeRunId)
+            : next.liveGapRuns,
       };
     }
     case 'tool_call_started': {
@@ -83,6 +85,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
           sequence: event.seq,
           kind: text(kind.kind),
           status: text(kind.status) ?? 'running',
+          startedAt: event.appendedAt,
         },
         true,
       );
@@ -91,28 +94,19 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     case 'tool_call_updated': {
       const id = text(kind.call_id);
       const current = next.toolCalls.find((tool) => tool.id === id);
-      if (id === undefined) return next;
-      const retained =
-        current ??
-        (state.historyStart === undefined
-          ? undefined
-          : {
-              id,
-              runId: next.activeRunId,
-              title: 'Continued tool activity',
-              status: 'running',
-              sequence: event.seq,
-            });
-      if (retained === undefined) return next;
+      if (id === undefined || current === undefined) return next;
       const output = object(kind.output);
       return updateTool(next, {
-        ...retained,
-        title: text(kind.title) ?? retained.title,
-        status: text(kind.status) ?? retained.status,
+        ...current,
+        title: text(kind.title) ?? current.title,
+        status: text(kind.status) ?? current.status,
+        finishedAt: ['completed', 'failed', 'cancelled', 'error'].includes(text(kind.status) ?? '')
+          ? (current.finishedAt ?? event.appendedAt)
+          : current.finishedAt,
         output:
           typeof output?.text === 'string' && typeof output.truncated === 'boolean'
             ? { text: output.text, truncated: output.truncated }
-            : current?.output,
+            : current.output,
       });
     }
     case 'approval_requested': {
@@ -150,9 +144,10 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
     case 'usage_updated':
       return durableUsage(next, kind);
     case 'title_set':
-      return kind.source === 'owner_override' && text(kind.title) !== undefined
+      if (text(kind.title) === undefined) return next;
+      return kind.source === 'owner_override'
         ? { ...next, ownerTitle: text(kind.title) }
-        : next;
+        : { ...next, title: text(kind.title) };
     case 'runtime_metadata_changed':
       return {
         ...next,
@@ -205,6 +200,8 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
       );
       return {
         ...finishTurn(next, runId, event.appendedAt),
+        liveGapRuns:
+          runId === undefined ? next.liveGapRuns : clearLiveGapRun(next.liveGapRuns, runId),
         turnOutcomes: {
           ...next.turnOutcomes,
           [runId ?? 'unattributed']: incomplete ? 'failed' : 'completed',
@@ -234,12 +231,17 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
           [number(kind.turn_sequence)?.toString() ?? next.activeRunId ?? 'unattributed']:
             'interrupted',
         },
+        liveGapRuns: clearLiveGapRun(
+          next.liveGapRuns,
+          number(kind.turn_sequence)?.toString() ?? next.activeRunId ?? '',
+        ),
         activeRunId: undefined,
         activeRunStartedAt: undefined,
         reasoning: [],
       };
     case 'turn_failed': {
       const failure = object(kind.failure);
+      const runId = number(kind.turn_sequence)?.toString() ?? next.activeRunId;
       return recover(
         {
           ...finishTurn(
@@ -247,6 +249,8 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
             number(kind.turn_sequence)?.toString() ?? next.activeRunId,
             event.appendedAt,
           ),
+          liveGapRuns:
+            runId === undefined ? next.liveGapRuns : clearLiveGapRun(next.liveGapRuns, runId),
           turnOutcomes: {
             ...next.turnOutcomes,
             [number(kind.turn_sequence)?.toString() ?? next.activeRunId ?? 'unattributed']:
@@ -314,6 +318,7 @@ function patchState(
       : { ...state, approvals: upsert(state.approvals, approval) };
   }
   if (path === '/ownerTitle') return { ...state, ownerTitle: text(item.value) };
+  if (path === '/title') return { ...state, title: text(item.value) };
   if (path === '/runtimeMetadata') {
     const metadata = object(item.value);
     return metadata === undefined
@@ -420,9 +425,7 @@ export function foldLiveEvent(
   event: AgentLiveEvent,
   threadId: string,
 ): ConversationState {
-  return boundConversation(
-    orderEntries(state, foldLive(state, event, threadId), number(event.cursor)),
-  );
+  return orderEntries(state, foldLive(state, event, threadId), number(event.cursor));
 }
 
 function foldLive(

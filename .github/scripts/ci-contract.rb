@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "yaml"
+require_relative "backend-ci-contract"
+require_relative "ledger-ci-contract"
 
 module CIContract
   ROOT = File.expand_path("../..", __dir__)
@@ -68,7 +70,7 @@ module CIContract
     require!(prepare["id"] == "api-cargo-cache", "API cache identity changed")
     inject = step(images, "Inject API Cargo cache mounts", "python3 .github/scripts/api-cargo-cache.py inject", base)
     extract = step(images, "Extract API Cargo cache before pruning", "python3 .github/scripts/api-cargo-cache.py extract",
-      "#{base} && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'")
+      "github.event_name == 'push' && github.ref == 'refs/heads/develop' && #{base} && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'")
     require!(extract["id"] == "api-cargo-cache-export", "API cache extraction output changed")
     require!([inject, extract].all? { |row| row["timeout-minutes"] == 3 }, "API cache transfers must be bounded")
     revision = "0057852bfaa89a56745cba8c7296529d2fc39830"
@@ -79,7 +81,7 @@ module CIContract
         "uses" => "actions/cache/restore@#{revision}", "timeout-minutes" => 3, "continue-on-error" => true,
         "with" => shared.merge("restore-keys" => "${{ steps.api-cargo-cache.outputs.prefix }}", "fail-on-cache-miss" => false) },
       { "name" => "Save accepted API Cargo cache archive",
-        "if" => "success() && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'",
+        "if" => "success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'",
         "uses" => "actions/cache/save@#{revision}", "timeout-minutes" => 3, "continue-on-error" => true, "with" => shared },
     ]
     expected.each do |wanted|
@@ -105,6 +107,7 @@ module CIContract
   end
 
   def self.release(inputs)
+    ledger_images(inputs)
     ci = inputs.fetch("ci")
     publish = inputs.fetch("publish")
     gate = job(ci, "trigger-release-contract", "Trigger release contract")
@@ -112,6 +115,11 @@ module CIContract
     step(gate, "Release workflow and Gateway source contracts", "ruby .github/scripts/ci-contract.rb release")
     step(gate, "Release contract mutation regressions", "ruby .github/scripts/ci-contract-tests.rb release")
     step(gate, "Runtime image evidence and provenance regressions", "node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs")
+    step(gate, "Migration matrix evidence regressions", "node --test .github/scripts/migration-matrix.test.mjs")
+    step(gate, "Debian desktop fixture regressions", <<~SH)
+      python3 .github/scripts/desktop-browser-input-tests.py
+      node --test .github/scripts/desktop-browser-page.test.cjs
+    SH
     images = job(ci, "images", "Images")
     require!(!images.key?("if") && images.dig("strategy", "matrix", "component") == %w[api web runtime runtime-desktop cmaeg image-manager], "all image gates must execute")
     %w[images image-exports].each do |id|
@@ -125,6 +133,10 @@ module CIContract
     desktop = step(images, "Retain desktop image evidence", nil, "always() && matrix.component == 'runtime-desktop'")
     require!(desktop["uses"] == "actions/upload-artifact@v4" && desktop.dig("with", "if-no-files-found") == "error", "desktop execution evidence must be retained")
     order(images, ["Load native image for scanning", "Vulnerability scan", "Execute desktop image contract", "Retain desktop image evidence", "Export tested native image"])
+    build = step(images, "Build image for all target platforms")
+    require!(build.dig("with", "cache-from") == "type=gha,scope=${{ matrix.component }}" &&
+      build.dig("with", "cache-to") == "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,mode=max,scope={0}', matrix.component) || '' }}",
+      "image caches must restore per component and export only on develop pushes")
     native_image_artifacts(images)
     api_cargo_cache(ci, images)
     runtime = job(publish, "runtime-image-gate", "Runtime image evidence")
@@ -176,36 +188,32 @@ module CIContract
 
   def self.provider(inputs)
     ci = inputs.fetch("ci")
+    require_relative "omarchy-ci-contract"
+    OmarchyCIContract.validate(ci)
     workflow = inputs.fetch("nightly-staging")
     gate = job(ci, "trigger-provider-smoke-contract", "Trigger provider smoke contract")
     require!(!gate.key?("if") && !gate.key?("needs"), "provider contract must execute on every PR")
     {
       "Provider workflow authority contract" => "ruby .github/scripts/ci-contract.rb provider",
       "Provider contract mutation regressions" => "ruby .github/scripts/ci-contract-tests.rb provider",
+      "Backend capacity preparation regressions" => "python3 .github/scripts/backend-capacity-tests.py",
       "Staging authority and evidence regressions" => "node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs",
-      "Authenticated Mongo startup regressions" => "node --test .github/scripts/authenticated-mongo-readiness.test.mjs",
+      "Authenticated Mongo startup regressions" => "node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/image-manager-mongo-contract.test.mjs",
       "Typecheck every harness entry point" => "npm run e2e:typecheck",
       "Exact remote campaign inventory remains mandatory" => "node .github/scripts/staging-authority.mjs inventory",
       "Fail-closed fixtures and cleanup mechanics" => "npm run test -- e2e/environment.test.ts e2e/owner-mechanics.test.ts",
       "Install pinned local browser" => "npx --no-install playwright install --with-deps chromium",
       "Local browser guard mechanics" => "npm run e2e:mechanics",
     }.each { |name, command| step(gate, name, command) }
-    backend = job(ci, "backend", "Backend")
-    step(backend, "Image normalization budgets", "cargo nextest run --workspace --locked -E 'binary(=media_image_peak)' --test-threads 1 --success-output final")
-    step(backend, "Tests", "cargo nextest run --workspace --locked --no-fail-fast -E 'not (binary(=media_image_peak) or binary(=turn_metrics))'")
-    step(backend, "Gateway socket latency budget", "cargo nextest run --workspace --locked -E 'binary(=turn_metrics)' --test-threads 1 --success-output final")
-    order(backend, ["Image normalization budgets", "Tests", "Gateway socket latency budget"])
-    mongo = step(backend, "Disposable real Mongo persistence contracts", "bash ../.github/scripts/mongo-contract-tests.sh")
-    require!(mongo["timeout-minutes"] == 75, "Mongo proof must retain its 75-minute bound")
-    step(backend, "Prepare compiled gateway browser contract", "npm ci --prefix web\nnpm ci --prefix sdk/typescript --omit=dev --ignore-scripts\nnpm run build --prefix web\n")
-    step(backend, "Install gateway contract browser", "npx --no-install playwright install --with-deps chromium")
-    order(backend, ["Prepare compiled gateway browser contract", "Install gateway contract browser", "Image Manager authenticated Mongo isolation"])
-    sandbox_mongo = step(backend, "Image Manager authenticated Mongo isolation", "bash ../.github/scripts/image-manager-mongo-contract.sh")
-    require!(sandbox_mongo["timeout-minutes"] == 10, "Sandbox Manager isolation proof must remain bounded")
+    backend_jobs(ci)
+    step(gate, "Backend resource sampling regressions", "python3 .github/scripts/backend-resource-sampler-tests.py")
     require!(workflow["permissions"] == { "contents" => "read" }, "remote workflow permissions broadened")
     require!(workflow.dig("concurrency", "cancel-in-progress") == false, "remote writers cannot be cancelled by a newer run")
     triggers = workflow["on"] || workflow[true]
     require!(triggers.keys.sort == %w[schedule workflow_dispatch], "remote campaign cannot execute on PR code")
+    require!(workflow.dig("jobs", "smoke", "env", "CMA_E2E_PUBLIC_ID") ==
+      "${{ vars.CMA_E2E_PUBLIC_ID == secrets.CMA_E2E_PUBLIC_ID && secrets.CMA_E2E_PUBLIC_ID || '' }}",
+      "smoke public ID must match its referenced redaction mirror")
     %w[smoke journeys].each do |id|
       row = workflow.fetch("jobs").fetch(id)
       require!(!row.fetch("env").key?("CMA_E2E_OUTPUT_DIR"), "runner evidence path must be initialized at step runtime")

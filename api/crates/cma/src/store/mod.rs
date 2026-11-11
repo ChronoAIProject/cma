@@ -14,14 +14,12 @@ mod agent_control_receipt;
 mod agent_control_store;
 mod agent_control_transaction;
 mod agent_conversation_store;
+mod agent_failure_pacing;
 mod agent_lifecycle_operations;
 mod agent_log;
-mod agent_log_context;
 mod agent_log_integrity;
 mod agent_log_reads;
-mod agent_log_receipts;
-pub(crate) mod agent_log_segments;
-mod agent_log_store;
+pub(crate) mod agent_log_telemetry;
 mod agent_profiles;
 mod agent_provenance;
 mod agent_provenance_backfill;
@@ -29,6 +27,7 @@ mod agent_provenance_inventory;
 mod agent_reads;
 mod agent_task_status;
 mod agent_title_claims;
+mod agent_title_retry;
 mod agent_title_state;
 mod agent_title_writes;
 mod agent_titles;
@@ -47,6 +46,7 @@ pub(crate) mod bot_setups;
 pub(crate) mod bots;
 #[cfg(test)]
 mod bots_mongo_integration_tests;
+mod budget;
 mod channel_storage_retention;
 mod checkpoint_capture;
 mod checkpoint_objects;
@@ -59,6 +59,7 @@ pub mod directory;
 mod durability;
 mod encryption;
 mod media_uploads;
+pub(crate) mod provenance_progress;
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
 #[cfg(test)]
@@ -71,6 +72,7 @@ mod hierarchy;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
+pub(crate) mod ledger_retirement;
 mod legacy_history;
 mod lifecycle_execution;
 pub(crate) mod lifecycle_transaction;
@@ -82,8 +84,10 @@ mod marketplace_query;
 mod marketplace_support;
 mod marketplace_visibility;
 mod message_feedback;
+pub(crate) mod migrations;
 pub mod mongo;
 mod mongo_latency;
+pub(crate) mod mongo_read_telemetry;
 pub(crate) mod native_prepared;
 pub mod operation;
 mod operator_profiles;
@@ -91,6 +95,7 @@ mod operator_sandboxes;
 mod profile_documents;
 #[cfg(test)]
 mod profile_index_tests;
+mod profile_mongo;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;
 mod profile_references;
@@ -113,6 +118,7 @@ mod sandbox_mongo_integration_tests;
 mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
 mod sandbox_reconciliation;
+mod sandbox_sessions;
 mod sandbox_transactions;
 mod sandbox_unpublished_recovery;
 pub(crate) mod sandbox_usage;
@@ -172,3 +178,9 @@ mod legacy_sandbox;
 pub(crate) mod runtime_routing;
 
 pub(crate) mod native_warm_pools;
+
+// Measured reporting read models (#1332); independent of lifecycle writes.
+pub(crate) mod sandbox_metric_bindings;
+pub(crate) mod sandbox_metric_rollups;
+pub(crate) mod sandbox_usage_rollups;
+pub(crate) mod usage_reports;

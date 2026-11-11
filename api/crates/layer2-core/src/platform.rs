@@ -58,13 +58,23 @@ impl Default for PlatformDefaults {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InactivitySettings {
+    /// Omit disabled policy so predecessor strict readers accept ordinary saves.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto_pause_enabled: bool,
     pub pause_after_seconds: u64,
+    /// The instant from which the current policy is allowed to pause. This is
+    /// written when enablement or the threshold changes, so existing Sandboxes
+    /// receive a complete grace period after an operator change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grace_started_at: Option<String>,
 }
 
 impl Default for InactivitySettings {
     fn default() -> Self {
         Self {
+            auto_pause_enabled: false,
             pause_after_seconds: 900,
+            grace_started_at: None,
         }
     }
 }
@@ -122,9 +132,30 @@ impl Default for MarketplaceSettings {
     }
 }
 
+/// Controls presentation only; metrics collection has a separate deployment switch.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UsageReportingSettings {
+    pub measured_visible: bool,
+}
+
+impl UsageReportingSettings {
+    fn is_disabled(&self) -> bool {
+        !self.measured_visible
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlatformSettings {
+    #[serde(
+        default,
+        skip_serializing_if = "crate::budget::BudgetSettings::is_empty_disabled"
+    )]
+    pub model_budget: crate::budget::BudgetSettings,
+    /// Presentation policy; omit the complete disabled section for strict predecessors.
+    #[serde(default, skip_serializing_if = "UsageReportingSettings::is_disabled")]
+    pub usage_reporting: UsageReportingSettings,
     pub defaults: PlatformDefaults,
     pub inactivity: InactivitySettings,
     #[serde(default)]
@@ -137,6 +168,9 @@ pub struct PlatformSettings {
 
 impl PlatformSettings {
     pub fn validate(&self) -> Result<(), CoreError> {
+        self.model_budget
+            .validate()
+            .map_err(|_| CoreError::InvalidRequest("model_budget policy is invalid".into()))?;
         if !(60..=86_400).contains(&self.checkpoints.interval_seconds) {
             return Err(CoreError::InvalidRequest(
                 "checkpoints.interval_seconds must be between 60 and 86400".into(),
@@ -148,6 +182,13 @@ impl PlatformSettings {
             return Err(CoreError::InvalidRequest(format!(
                 "inactivity.pause_after_seconds must be between {MIN_PAUSE_AFTER_SECONDS} and {MAX_PAUSE_AFTER_SECONDS}"
             )));
+        }
+        if let Some(started_at) = &self.inactivity.grace_started_at {
+            if crate::seconds_from_rfc3339(started_at).is_none() {
+                return Err(CoreError::InvalidRequest(
+                    "inactivity.grace_started_at must be RFC3339".into(),
+                ));
+            }
         }
         for (field, revision) in [
             (
@@ -178,6 +219,31 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::*;
+
+    #[test]
+    fn usage_visibility_defaults_off_and_omits_the_disabled_section() {
+        let mut settings = PlatformSettings::default();
+        assert!(!settings.usage_reporting.measured_visible);
+        for visible in [false, true, false] {
+            settings.usage_reporting.measured_visible = visible;
+            let value = serde_json::to_value(&settings).unwrap();
+            assert_eq!(value.get("usage_reporting").is_some(), visible);
+            assert_eq!(
+                serde_json::from_value::<PlatformSettings>(value).unwrap(),
+                settings
+            );
+        }
+        let mut value = serde_json::to_value(settings).unwrap();
+        for invalid in [
+            json!(null),
+            json!({}),
+            json!({"measured_visible": "true"}),
+            json!({"measured_visible": true, "extra": true}),
+        ] {
+            value["usage_reporting"] = invalid;
+            assert!(serde_json::from_value::<PlatformSettings>(value.clone()).is_err());
+        }
+    }
 
     #[test]
     fn shipped_settings_match_the_platform_contract() {

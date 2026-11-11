@@ -7,6 +7,7 @@ use std::{
 
 use futures_util::StreamExt as _;
 use layer1_public::rest::{AgentModelCatalog, AgentModelCatalogError, AgentModelView};
+use layer2_core::dependency_diagnostics::{Dependency, Failure, Reason};
 use layer2_core::{sandbox::Sandbox, seconds_from_rfc3339};
 use serde::Deserialize;
 
@@ -46,7 +47,7 @@ impl ChronoAgentModels {
     ) -> Result<Vec<AgentModelView>, AgentModelCatalogError> {
         let mut url = self.origin.clone();
         url.path_segments_mut()
-            .map_err(|_| unavailable())?
+            .map_err(|_| unavailable(Dependency::Local, Reason::Configuration))?
             .extend(["api", "v1", "proxy", "s", service, "models"]);
         let response = self
             .http
@@ -55,20 +56,43 @@ impl ChronoAgentModels {
             .bearer_auth(bearer)
             .send()
             .await
-            .map_err(|_| unavailable())?;
-        if response.status() != reqwest::StatusCode::OK
-            || response
-                .content_length()
-                .is_some_and(|n| n > MAX_BYTES as u64)
+            .map_err(|error| unavailable(Dependency::ModelGateway, transport_reason(&error)))?;
+        if response.status() != reqwest::StatusCode::OK {
+            let reason = match response.status().as_u16() {
+                502 => Reason::BadGateway,
+                503 => Reason::UpstreamUnavailable,
+                429 => Reason::RateLimited,
+                _ => Reason::UnexpectedStatus,
+            };
+            return Err(unavailable(Dependency::ModelGateway, reason));
+        }
+        if response
+            .content_length()
+            .is_some_and(|n| n > MAX_BYTES as u64)
         {
-            return Err(unavailable());
+            return Err(unavailable(
+                Dependency::ModelGateway,
+                Reason::ResponseTooLarge,
+            ));
         }
         let mut body = Vec::new();
         let mut chunks = response.bytes_stream();
         while let Some(chunk) = chunks.next().await {
-            let chunk = chunk.map_err(|_| unavailable())?;
+            let chunk = chunk.map_err(|error| {
+                unavailable(
+                    Dependency::ModelGateway,
+                    if error.is_timeout() {
+                        Reason::BodyTimeout
+                    } else {
+                        Reason::ResponseBody
+                    },
+                )
+            })?;
             if body.len().saturating_add(chunk.len()) > MAX_BYTES {
-                return Err(unavailable());
+                return Err(unavailable(
+                    Dependency::ModelGateway,
+                    Reason::ResponseTooLarge,
+                ));
             }
             body.extend_from_slice(&chunk);
         }
@@ -82,31 +106,53 @@ impl AgentModelCatalog for ChronoAgentModels {
         &self,
         sandbox: &Sandbox,
     ) -> Result<Vec<AgentModelView>, AgentModelCatalogError> {
-        if sandbox.validate().is_err() || !sandbox.credential.delivered {
-            return Err(unavailable());
+        if sandbox.validate().is_err() {
+            return Err(unavailable(Dependency::Storage, Reason::Corrupt));
+        }
+        if !sandbox.credential.delivered {
+            return Err(unavailable(
+                Dependency::AuthenticationAuthority,
+                Reason::CredentialMissing,
+            ));
         }
         let reaches = sandbox.credential.effective_reaches();
         let service = ["chrono-llm-public", "chrono-llm"]
             .into_iter()
             .find(|name| reaches.iter().any(|s| s.as_str() == *name))
-            .ok_or_else(unavailable)?;
-        let current = sandbox
-            .credential
-            .current
-            .as_ref()
-            .ok_or_else(unavailable)?;
+            .ok_or_else(|| {
+                unavailable(Dependency::AuthenticationAuthority, Reason::ScopeMissing)
+            })?;
+        let current = sandbox.credential.current.as_ref().ok_or_else(|| {
+            unavailable(
+                Dependency::AuthenticationAuthority,
+                Reason::CredentialMissing,
+            )
+        })?;
         if sandbox.credential.source.is_managed() {
-            let expiry = seconds_from_rfc3339(&current.expires_at).ok_or_else(unavailable)?;
+            let expiry = seconds_from_rfc3339(&current.expires_at).ok_or_else(|| {
+                unavailable(Dependency::AuthenticationAuthority, Reason::InvalidEvidence)
+            })?;
             if SystemTime::now() >= SystemTime::UNIX_EPOCH + Duration::from_secs(expiry) {
-                return Err(unavailable());
+                return Err(unavailable(
+                    Dependency::AuthenticationAuthority,
+                    Reason::CredentialExpired,
+                ));
             }
         }
         let material = self
             .credentials
             .material(&sandbox.id, current.generation)
             .await
-            .map_err(|_| unavailable())?
-            .ok_or_else(unavailable)?;
+            .map_err(|error| {
+                unavailable(
+                    Dependency::Storage,
+                    match error {
+                        crate::sandbox::CredentialError::Security(_) => Reason::Corrupt,
+                        _ => Reason::Unavailable,
+                    },
+                )
+            })?
+            .ok_or_else(|| unavailable(Dependency::Storage, Reason::CredentialMissing))?;
         if material.owner != sandbox.owner
             || material.sandbox_id != sandbox.id
             || &material.authority != current
@@ -114,7 +160,10 @@ impl AgentModelCatalog for ChronoAgentModels {
             || !material.matches_source()
             || material.value.expose().is_empty()
         {
-            return Err(unavailable());
+            return Err(unavailable(
+                Dependency::AuthenticationAuthority,
+                Reason::CredentialMismatch,
+            ));
         }
         self.fetch(service, material.value.expose()).await
     }
@@ -134,15 +183,22 @@ struct Model {
 }
 
 fn parse(body: &[u8]) -> Result<Vec<AgentModelView>, AgentModelCatalogError> {
-    let listing: Listing = serde_json::from_slice(body).map_err(|_| unavailable())?;
+    let listing: Listing = serde_json::from_slice(body)
+        .map_err(|_| unavailable(Dependency::ModelGateway, Reason::InvalidEvidence))?;
     if listing.data.len() > MAX_MODELS {
-        return Err(unavailable());
+        return Err(unavailable(
+            Dependency::ModelGateway,
+            Reason::InvalidEvidence,
+        ));
     }
     let mut ids = BTreeSet::new();
     let mut models = Vec::with_capacity(listing.data.len());
     for model in listing.data {
         if !valid_text(&model.id) || !ids.insert(model.id.clone()) {
-            return Err(unavailable());
+            return Err(unavailable(
+                Dependency::ModelGateway,
+                Reason::InvalidEvidence,
+            ));
         }
         if !agent_model(&model.id) {
             continue;
@@ -181,9 +237,23 @@ fn valid_text(value: &str) -> bool {
         && value.trim() == value
         && !value.chars().any(char::is_control)
 }
-fn unavailable() -> AgentModelCatalogError {
+fn unavailable(dependency: Dependency, reason: Reason) -> AgentModelCatalogError {
+    Failure::new(dependency, reason).record();
     AgentModelCatalogError::Unavailable
 }
 
+fn transport_reason(error: &reqwest::Error) -> Reason {
+    if error.is_timeout() {
+        Reason::Timeout
+    } else if error.is_connect() {
+        Reason::Connection
+    } else {
+        Reason::Transport
+    }
+}
+
+#[cfg(test)]
+#[path = "agent_models/diagnostic_tests.rs"]
+mod diagnostic_tests;
 #[cfg(test)]
 mod tests;

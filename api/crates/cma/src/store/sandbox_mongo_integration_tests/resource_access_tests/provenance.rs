@@ -37,7 +37,6 @@ fn assert_snapshot_commands(trace: &Trace, fallback: bool, extra_batches: usize)
             "find",
             "find",
             "find",
-            "find",
             "abortTransaction",
         ]
     } else {

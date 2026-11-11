@@ -38,6 +38,7 @@ mod inventory;
 mod inventory_cases;
 mod lifecycle_cases;
 mod message_feedback_cases;
+mod metrics_cases;
 mod provenance_cases;
 mod provider_association_cases;
 mod queued_cancellation_cases;
@@ -45,6 +46,7 @@ mod queued_input_cases;
 mod replay;
 mod response_control_cases;
 mod responses_v2_cases;
+mod retained_clients;
 mod runtime_update_cases;
 mod sandbox_command_cases;
 mod sandbox_inventory_cases;
@@ -59,6 +61,7 @@ mod state_cases;
 mod suggestion_cases;
 mod symbols;
 mod task_experience_cases;
+mod tenant_isolation;
 mod trigger_cases;
 mod usage_cases;
 mod warm_pool_cases;
@@ -165,6 +168,9 @@ async fn scenario(name: &str) -> Scenario {
         return scenario;
     }
     if let Some(scenario) = Box::pin(deliverable_cases::scenario(name)).await {
+        return scenario;
+    }
+    if let Some(scenario) = metrics_cases::scenario(name) {
         return scenario;
     }
     if let Some(scenario) = usage_cases::scenario(name) {
@@ -318,9 +324,17 @@ async fn scenario(name: &str) -> Scenario {
 
 #[tokio::test]
 async fn shared_public_contract_matches_real_backend() {
+    run_contracts(false).await;
+}
+
+async fn run_contracts(isolation: bool) {
     let record = ["CMA_RECORD_PUBLIC_CONTRACT", "CMA_UPDATE_PUBLIC_CONTRACT"]
         .iter()
         .any(|key| std::env::var_os(key).is_some_and(|value| value == "1"));
+    assert!(
+        !isolation || !record,
+        "isolation proof must compare immutable expected results"
+    );
     let selected = std::env::var("CMA_PUBLIC_CONTRACT_FILE").ok();
     let mut total = 0;
     for path in paths() {
@@ -340,67 +354,11 @@ async fn shared_public_contract_matches_real_backend() {
         }
         let mut corpus: Corpus = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(corpus.version, 1);
-        let mut canonical: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
-        for case in &corpus.cases {
-            for (name, header) in &case.header_captures {
-                let value = Value::String(
-                    case.response
-                        .headers
-                        .get(header)
-                        .expect("declared header capture")
-                        .clone(),
-                );
-                if let Some(previous) = canonical
-                    .entry(case.scenario.clone())
-                    .or_default()
-                    .insert(name.clone(), value.clone())
-                {
-                    assert_eq!(
-                        previous, value,
-                        "conflicting canonical header capture {name}"
-                    );
-                }
-            }
-            for (name, pointer) in &case.captures {
-                let value = case
-                    .response
-                    .body
-                    .pointer(pointer)
-                    .unwrap_or_else(|| panic!("{} undeclared canonical capture {pointer}", case.id))
-                    .clone();
-                if let Some(previous) = canonical
-                    .entry(case.scenario.clone())
-                    .or_default()
-                    .insert(name.clone(), value.clone())
-                {
-                    assert_eq!(
-                        previous, value,
-                        "conflicting canonical declaration for {name}"
-                    );
-                }
-            }
+        if isolation && !corpus.cases.iter().any(tenant_isolation::included) {
+            continue;
         }
-        let mut scenarios = BTreeMap::new();
-        for case in &mut corpus.cases {
-            if !scenarios.contains_key(&case.scenario) {
-                let scene = scenario(&case.scenario).await;
-                let mut symbols = Symbols::default();
-                for (name, actual) in &scene.symbols {
-                    let canonical = canonical
-                        .get(&case.scenario)
-                        .and_then(|values| values.get(name))
-                        .unwrap_or_else(|| panic!("undeclared seeded capture {name}"));
-                    symbols.seed(name, actual, canonical);
-                }
-                scenarios.insert(case.scenario.clone(), (scene, symbols));
-            }
-            let (scenario, symbols) = scenarios.get_mut(&case.scenario).unwrap();
-            replay::run(scenario, symbols, case, record).await;
-            total += 1;
-        }
-        for (_, symbols) in scenarios.values() {
-            symbols.assert_complete();
-        }
+        replay_corpus(&mut corpus, record, isolation).await;
+        total += corpus.cases.len();
         if record {
             let mut encoded = serde_json::to_string_pretty(&corpus).unwrap();
             encoded.push('\n');
@@ -409,4 +367,70 @@ async fn shared_public_contract_matches_real_backend() {
     }
     assert!(total > 0, "no public contract cases selected");
     eprintln!("Replayed {total} shared public contract cases against real handlers");
+}
+
+async fn replay_corpus(corpus: &mut Corpus, record: bool, isolation: bool) {
+    let mut canonical: BTreeMap<String, BTreeMap<String, Value>> = BTreeMap::new();
+    for case in &corpus.cases {
+        for (name, header) in &case.header_captures {
+            let value = Value::String(
+                case.response
+                    .headers
+                    .get(header)
+                    .expect("declared header capture")
+                    .clone(),
+            );
+            if let Some(previous) = canonical
+                .entry(case.scenario.clone())
+                .or_default()
+                .insert(name.clone(), value.clone())
+            {
+                assert_eq!(
+                    previous, value,
+                    "conflicting canonical header capture {name}"
+                );
+            }
+        }
+        for (name, pointer) in &case.captures {
+            let value = case
+                .response
+                .body
+                .pointer(pointer)
+                .unwrap_or_else(|| panic!("{} undeclared canonical capture {pointer}", case.id))
+                .clone();
+            if let Some(previous) = canonical
+                .entry(case.scenario.clone())
+                .or_default()
+                .insert(name.clone(), value.clone())
+            {
+                assert_eq!(
+                    previous, value,
+                    "conflicting canonical declaration for {name}"
+                );
+            }
+        }
+    }
+    let mut scenarios = BTreeMap::new();
+    for case in &mut corpus.cases {
+        if !scenarios.contains_key(&case.scenario) {
+            let scene = scenario(&case.scenario).await;
+            let mut symbols = Symbols::default();
+            for (name, actual) in &scene.symbols {
+                let canonical = canonical
+                    .get(&case.scenario)
+                    .and_then(|values| values.get(name))
+                    .unwrap_or_else(|| panic!("undeclared seeded capture {name}"));
+                symbols.seed(name, actual, canonical);
+            }
+            scenarios.insert(case.scenario.clone(), (scene, symbols));
+        }
+        let (scenario, symbols) = scenarios.get_mut(&case.scenario).unwrap();
+        if isolation && tenant_isolation::selected(case) {
+            tenant_isolation::probe(scenario, symbols, case).await;
+        }
+        replay::run(scenario, symbols, case, record).await;
+    }
+    for (_, symbols) in scenarios.values() {
+        symbols.assert_complete();
+    }
 }

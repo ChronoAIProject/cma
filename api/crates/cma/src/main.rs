@@ -12,8 +12,11 @@ mod commands;
 mod composition;
 mod config;
 mod connections;
+#[cfg(test)]
+mod dependency_test_support;
 mod document_artifacts;
 mod document_storage;
+mod expensive_reads;
 mod gateway;
 mod health;
 mod media_continuations;
@@ -23,7 +26,9 @@ mod profile_policy;
 mod projections;
 mod provider_tool_relay;
 mod rate_limit;
+mod read_telemetry;
 mod sandbox;
+mod sandbox_metrics;
 mod shutdown;
 mod store;
 mod trigger;
@@ -66,6 +71,18 @@ const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
 #[tokio::main]
 async fn main() {
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments.len() == 3 && arguments[0] == "--ledger-retirement-snapshot" {
+        if let Err(error) =
+            store::ledger_retirement::command(&arguments[1], std::path::Path::new(&arguments[2]))
+                .await
+        {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+
     tracing_subscriber::fmt()
         // Keep container text fields stable for the existing log sink's queries.
         .with_ansi(false)
@@ -75,19 +92,13 @@ async fn main() {
         )
         .init();
 
-    let arguments: Vec<_> = std::env::args().skip(1).collect();
-    if arguments.first().is_some_and(|arg| {
-        matches!(
-            arg.as_str(),
-            "--migrate-agent-log-segments"
-                | "--audit-agent-log-segments"
-                | "--cancel-agent-log-audit"
-                | "--install-agent-log-projection"
-        )
-    }) {
-        if let Err(error) = store::agent_log_segments::command(&arguments).await {
-            eprintln!("{error}");
-            std::process::exit(1);
+    if store::migrations::is_command(&arguments) {
+        match store::migrations::command(&arguments).await {
+            Ok(result) => println!("{result}"),
+            Err(reason) => {
+                eprintln!("migration refused: {reason}");
+                std::process::exit(2);
+            }
         }
         return;
     }
@@ -101,8 +112,18 @@ async fn main() {
         }
         return;
     }
+    if store::provenance_progress::is_command(&arguments) {
+        match store::provenance_progress::command(&arguments).await {
+            Ok(result) => println!("{result}"),
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if !arguments.is_empty() {
-        eprintln!("usage: cma [--print-runtime-role | --migrate-agent-log-segments]");
+        eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {
@@ -142,6 +163,7 @@ async fn serve() -> Result<(), String> {
         "CMA listening"
     );
     let mut shutdown = ShutdownCoordinator::new();
+    shutdown.push(read_telemetry::spawn(shutdown.subscribe()));
     shutdown.push(
         composition
             .auth
@@ -168,6 +190,7 @@ async fn serve() -> Result<(), String> {
     composition.sandbox_lifecycle.spawn(&mut shutdown);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
     composition.usage.spawn(&mut shutdown);
+    composition.usage_metrics.spawn(&mut shutdown);
     let (http_stop, http_signal) = tokio::sync::watch::channel(false);
     let server_result = {
         let server = axum::serve(

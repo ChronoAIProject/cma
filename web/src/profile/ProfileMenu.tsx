@@ -1,13 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { User } from '../auth/types';
 import { canOpenOperations } from '../operator/capabilities';
 import type { AppRoute } from '../routing/routes';
 import { Menu, type MenuEntry } from '../ui/Menu';
 import {
-  IconDarkOutline16,
   IconBrowseOutline16,
-  IconFollowsystemOutline16,
-  IconLightOutline16,
   IconCopyOutline16,
   IconRightUpOutline16,
   IconSettingsOutline16,
@@ -16,10 +13,9 @@ import {
   APPEARANCE_ORDER,
   appearanceLabel,
   setAppearance,
-  storedAppearance,
-  type Appearance,
+  useAppearance,
 } from '../theme/appearance';
-import { BUILD } from '../shell/build';
+import { BUILD_INFO } from '../shell/build';
 import './ProfileMenu.css';
 import {
   SYSTEM_TEXT_SIZES,
@@ -38,7 +34,7 @@ interface ProfileMenuProps {
 const MENU_ROUTES: Readonly<Record<string, AppRoute>> = {
   docs: { kind: 'docs' },
   operations: { kind: 'operations' },
-  settings: { kind: 'settings', tab: 'general' },
+  usage: { kind: 'usage' },
 };
 
 export function initialsFor(user: Pick<User, 'displayName' | 'email' | 'handle'>): string {
@@ -51,30 +47,44 @@ export function initialsFor(user: Pick<User, 'displayName' | 'email' | 'handle'>
     : source.slice(0, 2).toUpperCase();
 }
 
-function appearanceIcon(appearance: Appearance) {
-  if (appearance === 'light') return <IconLightOutline16 />;
-  if (appearance === 'dark') return <IconDarkOutline16 />;
-  return <IconFollowsystemOutline16 />;
-}
-
 export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: ProfileMenuProps) {
   const [open, setOpen] = useState(false);
-  const [appearance, setLocalAppearance] = useState<Appearance>(() => storedAppearance());
+  const appearance = useAppearance();
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [avatarBroken, setAvatarBroken] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const fallbackRef = useRef<HTMLElement>(null);
+  const copyAttempt = useRef(0);
+  const clearCopy = () => {
+    copyAttempt.current += 1;
+    setCopyState('idle');
+  };
+  useEffect(() => {
+    if (copyState !== 'failed' || !fallbackRef.current) return;
+    const range = document.createRange();
+    range.selectNodeContents(fallbackRef.current);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }, [copyState]);
   const textSize = useSystemTextSize();
   const canOperate = canOpenOperations(user.capabilities);
   const items: MenuEntry[] = [
     { id: 'docs', icon: <IconBrowseOutline16 />, label: 'Docs' },
-    { id: 'settings', icon: <IconSettingsOutline16 />, label: 'Settings' },
+    { id: 'usage', icon: <IconSettingsOutline16 />, label: 'Usage' },
     ...(canOperate
       ? [{ id: 'operations', icon: <IconSettingsOutline16 />, label: 'Operations' }]
       : []),
     { type: 'separator', id: 'before-preferences' },
     {
+      type: 'choices',
       id: 'appearance',
-      icon: appearanceIcon(appearance),
-      label: `Appearance: ${appearanceLabel(appearance)}`,
+      text: 'Appearance',
+      selectedId: `appearance-${appearance}`,
+      choices: APPEARANCE_ORDER.map((value) => ({
+        id: `appearance-${value}`,
+        label: appearanceLabel(value),
+      })),
     },
     {
       type: 'choices',
@@ -90,7 +100,19 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
     {
       id: 'build',
       icon: <IconCopyOutline16 />,
-      label: copied ? 'Build revision copied' : `Build ${BUILD}`,
+      label: (
+        <span className="profile__build">
+          {copyState === 'copied'
+            ? 'Build version copied'
+            : `Copy build version · ${BUILD_INFO.label}`}
+          {copyState === 'failed' && (
+            <span className="profile__build-fallback">
+              Could not copy. Select the build version to copy it manually.
+              <code ref={fallbackRef}>{BUILD_INFO.copyText}</code>
+            </span>
+          )}
+        </span>
+      ),
     },
     { id: 'sign-out', icon: <IconRightUpOutline16 />, label: 'Sign out' },
   ];
@@ -104,23 +126,27 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
     const route = MENU_ROUTES[id];
     if (route !== undefined) {
       setOpen(false);
+      triggerRef.current?.focus();
       onNavigate?.(route);
       return;
     }
-    if (id === 'appearance') {
-      const at = APPEARANCE_ORDER.indexOf(appearance);
-      const next = APPEARANCE_ORDER[(at + 1) % APPEARANCE_ORDER.length] ?? 'system';
-      setLocalAppearance(next);
-      setAppearance(next);
+    const chosenAppearance = APPEARANCE_ORDER.find((value) => id === `appearance-${value}`);
+    if (chosenAppearance) {
+      setAppearance(chosenAppearance);
       return;
     }
     if (id === 'build') {
-      // The revision is what a bug report needs, so it copies in one step.
-      // A refused clipboard leaves the visible text, which can be read out.
-      void navigator.clipboard?.writeText(BUILD).then(
-        () => setCopied(true),
-        () => setCopied(false),
-      );
+      const attempt = ++copyAttempt.current;
+      const copy = async () => {
+        try {
+          if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+          await navigator.clipboard.writeText(BUILD_INFO.copyText);
+          if (attempt === copyAttempt.current) setCopyState('copied');
+        } catch {
+          if (attempt === copyAttempt.current) setCopyState('failed');
+        }
+      };
+      void copy();
       return;
     }
     if (id === 'sign-out') {
@@ -130,51 +156,63 @@ export function ProfileMenu({ user, onSignOut, onNavigate, collapsed = false }: 
   };
 
   return (
-    <Menu
-      open={open}
-      side="top"
-      align="start"
-      label="Account"
-      placement={`profile${collapsed ? ' profile--collapsed' : ''}`}
-      matchAnchorWidth
-      items={items}
-      onSelect={choose}
-      onClose={() => {
-        setOpen(false);
-        setCopied(false);
-      }}
-      anchor={
-        <button
-          type="button"
-          className="profile__trigger"
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-label={`Account menu for ${user.displayName ?? user.handle}`}
-          onClick={() => {
-            if (!open) setLocalAppearance(storedAppearance());
-            setOpen((wasOpen) => !wasOpen);
-          }}
-        >
-          <span className="profile__face" aria-hidden="true">
-            {user.avatarUrl === undefined || avatarBroken ? (
-              initialsFor(user)
-            ) : (
-              <img
-                className="profile__avatar"
-                src={user.avatarUrl}
-                alt=""
-                onError={() => {
-                  setAvatarBroken(true);
-                }}
-              />
-            )}
-          </span>
-          <span className="profile__who">
-            <span className="profile__name">{user.displayName ?? user.handle}</span>
-            {user.email === undefined ? null : <span className="profile__email">{user.email}</span>}
-          </span>
-        </button>
-      }
-    />
+    <>
+      <span className="sr-only" role="status" aria-live="polite">
+        {copyState === 'copied'
+          ? 'Build version copied'
+          : copyState === 'failed'
+            ? 'Could not copy. Select the build version to copy it manually.'
+            : ''}
+      </span>
+      <Menu
+        open={open}
+        side="top"
+        align="start"
+        label="Account"
+        placement={`profile${collapsed ? ' profile--collapsed' : ''}`}
+        matchAnchorWidth
+        items={items}
+        onSelect={choose}
+        onClose={() => {
+          setOpen(false);
+          clearCopy();
+        }}
+        anchor={
+          <button
+            type="button"
+            className="profile__trigger"
+            ref={triggerRef}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            aria-label={`Account menu for ${user.displayName ?? user.handle}`}
+            onClick={() => {
+              clearCopy();
+              setOpen((wasOpen) => !wasOpen);
+            }}
+          >
+            <span className="profile__face" aria-hidden="true">
+              {user.avatarUrl === undefined || avatarBroken ? (
+                initialsFor(user)
+              ) : (
+                <img
+                  className="profile__avatar"
+                  src={user.avatarUrl}
+                  alt=""
+                  onError={() => {
+                    setAvatarBroken(true);
+                  }}
+                />
+              )}
+            </span>
+            <span className="profile__who">
+              <span className="profile__name">{user.displayName ?? user.handle}</span>
+              {user.email === undefined ? null : (
+                <span className="profile__email">{user.email}</span>
+              )}
+            </span>
+          </button>
+        }
+      />
+    </>
   );
 }

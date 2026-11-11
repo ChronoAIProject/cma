@@ -142,15 +142,15 @@ it('shares setup filtering and live native titles across header, document and si
   );
   expectTitle(configuredTitle);
   await publish({ description: setup, descriptionSource: 'provider_title' });
-  expectTitle(setup);
+  expectTitle(configuredTitle);
   await publish({ description: 'Native investigation title', descriptionSource: 'provider_title' });
-  expectTitle('Native investigation title');
+  expectTitle(configuredTitle);
   await publish({
     description: 'Retained setup text after resume',
     descriptionSource: 'prompt_preview',
     descriptionIsSetupPreview: true,
   });
-  expectTitle('Native investigation title');
+  expectTitle(configuredTitle);
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
   expect(composer).toHaveValue('Keep this unsent draft');
   expect([...document.querySelectorAll('article.message')]).toEqual(messages);
