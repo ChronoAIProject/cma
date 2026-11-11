@@ -287,3 +287,34 @@ it('queues an explicit navigation check behind a background read without overlap
   expect(silent).toHaveBeenCalledTimes(2);
   expect(screen.getByText('checking')).toBeInTheDocument();
 });
+
+it('clears private drafts before calling the navigation-producing sign-out provider', async () => {
+  sessionStorage.setItem('cma:task-viewer', 'owner-a');
+  sessionStorage.setItem('cma:task-draft:owner-a', 'private input');
+  sessionStorage.setItem('cma:agent-creation:owner-a', 'private command');
+  let finish = () => {};
+  const signOut = vi.fn(() => {
+    expect(sessionStorage.getItem('cma:task-draft:owner-a')).toBeNull();
+    expect(sessionStorage.getItem('cma:agent-creation:owner-a')).toBeNull();
+    expect(sessionStorage.getItem('cma:task-viewer')).toBeNull();
+    return new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+  });
+  function SignOut() {
+    const auth = useAuth();
+    return <button onClick={() => void auth.signOut()}>Sign out</button>;
+  }
+  render(
+    <AuthContextProvider provider={{ ...provider(), signOut }}>
+      <SignOut />
+    </AuthContextProvider>,
+  );
+  await act(async () => {
+    screen.getByRole('button').click();
+  });
+  expect(signOut).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    finish();
+  });
+});
