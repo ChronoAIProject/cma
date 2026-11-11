@@ -238,3 +238,24 @@ async fn answer_policy(
         answer_websocket(socket, request, result).await;
     }
 }
+
+async fn answer_websocket(
+    socket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    request: &serde_json::Value,
+    result: serde_json::Value,
+) {
+    let mut frame = vec![super::super::acp::LANE_CONVERSATION];
+    frame.extend(
+        serde_json::to_vec(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request["id"].clone(),
+            "result": result,
+        }))
+        .expect("ACP response serializes"),
+    );
+    socket
+        .send(Message::Binary(frame))
+        .await
+        .expect("ACP response sends");
+}
+
