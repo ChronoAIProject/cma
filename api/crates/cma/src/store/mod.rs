@@ -25,6 +25,7 @@ pub(crate) mod agent_log_segments;
 mod agent_log_store;
 pub(crate) mod agent_log_telemetry;
 mod agent_log_transcript;
+mod agent_log_usage;
 mod agent_profiles;
 mod agent_provenance;
 mod agent_provenance_backfill;

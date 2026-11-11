@@ -1,6 +1,8 @@
 //! Durable Agent history reads and append operations.
 
 use super::*;
+#[cfg(test)]
+use crate::sandbox::{AgentOperationDelivery, AgentOperationKind};
 
 #[async_trait]
 pub trait AgentLogStore: Send + Sync {
@@ -220,8 +222,10 @@ pub trait AgentLogStore: Send + Sync {
             ));
         }
         #[cfg(not(test))]
-        let _ = agent;
-        Ok(None)
+        {
+            let _ = agent;
+            Ok(None)
+        }
     }
 
     /// Read only rows that can change usage through a captured Agent head.
@@ -229,8 +233,33 @@ pub trait AgentLogStore: Send + Sync {
     /// requested format, so callers must use the complete compatibility read.
     async fn agent_log_usage(
         &self,
-        _agent: &Agent,
+        agent: &Agent,
     ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
-        Ok(None)
+        #[cfg(test)]
+        {
+            let entries = self
+                .agent_log_prefix(&agent.id, agent.conversation.last_seq)
+                .await?;
+            return Ok(Some(
+                entries
+                    .into_iter()
+                    .filter(|entry| {
+                        matches!(
+                            entry.kind,
+                            AgentLogKind::Created { .. }
+                                | AgentLogKind::ConversationOpened { .. }
+                                | AgentLogKind::RuntimeGenerationRetired { .. }
+                                | AgentLogKind::Usage { .. }
+                                | AgentLogKind::UsageUpdated { .. }
+                        )
+                    })
+                    .collect(),
+            ));
+        }
+        #[cfg(not(test))]
+        {
+            let _ = agent;
+            Ok(None)
+        }
     }
 }
