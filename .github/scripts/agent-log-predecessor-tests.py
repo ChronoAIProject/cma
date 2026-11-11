@@ -31,10 +31,12 @@ async fn predecessor_refuses_segmented_reads_and_writes_without_source_changes()
     let (_, agent) = worktree_and_agent(&SandboxId("sbx_predecessor".into()));
     store.create_agent(agent.clone()).await.unwrap();
     assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent.clone()));
-    store.append_agent_log(&agent.id, NOW.into(), AgentLogKind::ModeChanged {
+    assert!(store.agent_log(&agent.id, 0, 10).await.unwrap().is_empty());
+    let appended = store.append_agent_log(&agent.id, NOW.into(), AgentLogKind::ModeChanged {
         mode: "code".into(),
     }).await.unwrap();
-    assert_eq!(store.agent_log(&agent.id, 0, 10).await.unwrap().len(), 2);
+    assert_eq!(appended.seq, 1);
+    assert_eq!(store.agent_log(&agent.id, 0, 10).await.unwrap(), vec![appended]);
     store.agents.update_one(doc! {"_id":agent.id.as_str()}, doc! {"$set":{
         "document_schema_version":2_i64, "agent_log_format":"segmented_v1",
         "agent_log_incarnation":"a".repeat(64), "agent_log_head_revision":1_i64,
@@ -66,13 +68,19 @@ def fixture_runner(scratch):
     if source.count(marker) != 1:
         raise RuntimeError("Canonical Mongo runner changed; review the fixture adapter")
     fixture = source[source.index(marker):]
+    identity = 'readonly contract_name="cma-mongo-ci-${contract_suffix}"'
+    if fixture.count(identity) != 1:
+        raise RuntimeError("Canonical fixture identity changed; review the adapter")
+    fixture = fixture.replace(identity,
+        'readonly contract_name="cma-mongo-ci-predecessor-${contract_suffix}"\n'
+        'printf "Predecessor fixture: %s\\n" "$contract_name"')
     return "\n".join([
         "#!/usr/bin/env bash", "set -euo pipefail",
         "unset CHRONO_TEST_MONGODB_URI CHRONO_TEST_MONGODB_FAILPOINT_URI CMA_NEXTEST_REUSE",
         f"readonly repo_root={shlex.quote(str(scratch))}",
         "selection=ordinary", "partition=count:1/1",
         "nextest_contracts() {",
-        '  cargo nextest "$@" --locked -p cma --run-ignored only --no-tests fail \\\n    -E ' + shlex.quote(f"test(={TEST_PATH}::{TEST_NAME})"),
+        '  cargo nextest "$@" --locked -p cma --bin cma --run-ignored only --no-tests fail \\\n    -E ' + shlex.quote(f"test(={TEST_PATH}::{TEST_NAME})"),
         "}", fixture,
     ])
 
@@ -99,8 +107,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix="predecessor-source-", dir=target) as temp:
         scratch = Path(temp)
         archive = scratch / "source.tar"
+        # Cma's dependency graph embeds documentation at compile time. Keep
+        # those inputs and manifests at the same predecessor revision too.
         subprocess.run(
-            ["git", "archive", "--format=tar", f"--output={archive}", commit, "api"],
+            ["git", "archive", "--format=tar", f"--output={archive}", commit,
+             "api", "docs", "infra"],
             cwd=ROOT, check=True,
         )
         with tarfile.open(archive) as source:
@@ -117,6 +128,13 @@ def main():
         script = scratch / "mongo-predecessor.sh"
         script.write_text(fixture_runner(scratch))
         print(f"Testing original predecessor store at {commit}", flush=True)
+        # Build before allocating Mongo resources. The subsequent test run
+        # reuses these artifacts in the same caller-owned target directory.
+        subprocess.run(
+            ["cargo", "nextest", "list", "--locked", "-p", "cma", "--bin", "cma",
+             "--run-ignored", "only", "-E", f"test(={TEST_PATH}::{TEST_NAME})"],
+            cwd=scratch / "api", check=True,
+        )
         subprocess.run(["bash", str(script)], cwd=ROOT, check=True)
 
 
