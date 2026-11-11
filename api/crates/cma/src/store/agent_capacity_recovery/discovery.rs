@@ -111,13 +111,15 @@ fn filter(stream: Stream, after: Option<&Cursor>, now: &str) -> Result<Document,
         {
             return Err(RecoveryError::InvalidEvidence);
         }
-        filter.insert(
-            "$or",
-            vec![
-                doc! {field: {"$gt": &after.at}},
-                doc! {field: &after.at, "_id": {"$gt": &after.key}},
-            ],
-        );
+        // Each seek carries its equality prefix and due-time bound. Factoring
+        // these outside $or lets Mongo filter the cursor after fetching earlier
+        // pages, so examined work grows with history despite the result limit.
+        filter = doc! {"$or": [
+            {"format_version": 2_i64, "work.phase": phase,
+                field: {"$gt": &after.at, "$lte": now}},
+            {"format_version": 2_i64, "work.phase": phase,
+                field: {"$eq": &after.at, "$lte": now}, "_id": {"$gt": &after.key}},
+        ]};
     }
     Ok(filter)
 }

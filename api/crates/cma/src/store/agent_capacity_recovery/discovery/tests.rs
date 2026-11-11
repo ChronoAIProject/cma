@@ -25,8 +25,10 @@ fn streams_have_independent_due_predicates_and_cursor_bindings() {
         assert_eq!(
             query.get_array("$or").unwrap(),
             &vec![
-                bson::Bson::Document(doc! {field: {"$gt": NOW}}),
-                bson::Bson::Document(doc! {field: NOW, "_id": {"$gt": &cursor.key}})
+                bson::Bson::Document(doc! {"format_version": 2_i64, "work.phase": phase,
+                field: {"$gt": NOW, "$lte": NOW}}),
+                bson::Bson::Document(doc! {"format_version": 2_i64, "work.phase": phase,
+                field: {"$eq": NOW, "$lte": NOW}, "_id": {"$gt": &cursor.key}})
             ]
         );
         let other = if stream == Stream::Admitted {
