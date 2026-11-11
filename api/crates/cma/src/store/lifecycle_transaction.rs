@@ -2,7 +2,9 @@
 
 use crate::store::agent_log_telemetry::ScanCaller;
 use std::collections::BTreeMap;
+mod checkpoint_receipt;
 mod integrity_write;
+pub(super) mod reconciliation;
 use integrity_write::{advance_agent, classify_aggregate_write, classify_log_write};
 
 use layer2_core::sandbox::store::{
@@ -28,14 +30,16 @@ use super::sandbox_mongo::{
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 
 #[derive(Clone)]
-struct LifecycleReceipt {
-    sandbox: Sandbox,
-    agents: Vec<Agent>,
-    logs: Vec<AgentLogEntry>,
-    events: Vec<SandboxEvent>,
+pub(super) struct LifecycleReceipt {
+    pub(super) sandbox: Sandbox,
+    pub(super) agents: Vec<Agent>,
+    pub(super) logs: Vec<AgentLogEntry>,
+    pub(super) events: Vec<SandboxEvent>,
+    pub(super) checkpoint_children: Option<checkpoint_receipt::Children>,
 }
 
-enum ApplyError {
+#[derive(Debug)]
+pub(super) enum ApplyError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
 }
@@ -125,7 +129,7 @@ pub(super) async fn commit_lifecycle(
                 let unresolved = commit_error.clone();
                 let store = store.clone();
                 return wait_for_reconciliation("sandbox lifecycle commit", async move {
-                    if reconcile_lifecycle(&store, &receipt, snapshot_time).await? {
+                    if reconciliation::after_unknown(&store, &receipt, snapshot_time).await? {
                         Ok(())
                     } else {
                         Err(SandboxStoreError::Unavailable(format!(
@@ -156,7 +160,7 @@ pub(super) async fn commit_lifecycle(
     Err(SandboxStoreError::Conflict)
 }
 
-async fn apply_lifecycle(
+pub(super) async fn apply_lifecycle(
     store: &MongoSandboxStore,
     mutation: &SandboxLifecycleMutation,
     mut scope: TransactionScope<'_>,
@@ -186,6 +190,11 @@ async fn apply_lifecycle(
         )
         .await?;
     }
+    let checkpoint_children = if segmented {
+        checkpoint_receipt::capture(store, &current, &mutation.sandbox, &agents, &mut scope).await?
+    } else {
+        None
+    };
     // Checkpoint proofs remain inside the exclusive scope. The completed
     // checkpoint fence and all later domain writes still share this transaction;
     // any later validation/write error is aborted by the root above.
@@ -320,6 +329,7 @@ async fn apply_lifecycle(
             .collect(),
         logs,
         events,
+        checkpoint_children,
     })
 }
 
@@ -395,74 +405,4 @@ async fn advance_sandbox(
     } else {
         Err(ApplyError::Domain(SandboxStoreError::Conflict))
     }
-}
-
-async fn reconcile_lifecycle(
-    store: &MongoSandboxStore,
-    receipt: &LifecycleReceipt,
-    snapshot_time: Timestamp,
-) -> Result<bool, SandboxStoreError> {
-    let mut session = store
-        .client
-        .start_session()
-        .snapshot(true)
-        .snapshot_time(snapshot_time)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let sandbox = store
-        .sandboxes
-        .find_one(doc! { "_id": receipt.sandbox.id.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_sandbox)
-        .transpose()?;
-    if sandbox.as_ref() != Some(&receipt.sandbox) {
-        return Ok(false);
-    }
-    for expected in &receipt.agents {
-        let actual = store
-            .agents
-            .find_one(doc! { "_id": expected.id.as_str() })
-            .read_concern(ReadConcern::snapshot())
-            .session(&mut session)
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-            .as_ref()
-            .map(read_agent)
-            .transpose()?;
-        if actual.as_ref() != Some(expected) {
-            return Ok(false);
-        }
-    }
-    for expected in &receipt.logs {
-        let actual = store
-            .agent_log
-            .find_one(doc! {
-                "agent_id": expected.agent_id.as_str(),
-                "seq": signed(expected.seq, "reconciled lifecycle log sequence")
-                    .map_err(SandboxStoreError::Corrupt)?,
-            })
-            .read_concern(ReadConcern::snapshot())
-            .session(&mut session)
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-            .as_ref()
-            .map(read_entry)
-            .transpose()?;
-        if actual.as_ref() != Some(expected) {
-            return Ok(false);
-        }
-    }
-    for expected in &receipt.events {
-        if reconcile_event_with_snapshot_session(store, expected, &mut session)
-            .await?
-            .is_none()
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }

@@ -3,7 +3,7 @@
 use super::*;
 use crate::store::agent_log_segments::{
     self as segments, capture,
-    publication::{self, PublicationIdentity},
+    publication::{self, Publication, PublicationIdentity},
     transaction_scope::TransactionScope,
     writer_admission::{Admission, AdmissionKind},
     writer_bootstrap::BootstrapPlan,
@@ -14,6 +14,12 @@ use layer2_core::sandbox::{store::AgentLogPublicationIdentity, Agent};
 use mongodb::bson::{spec::BinarySubtype, Binary};
 
 mod preparation;
+pub(in crate::store) mod settlement;
+
+pub(in crate::store) struct Attempt {
+    pub(in crate::store) next: Agent,
+    pub(in crate::store) publication: Publication,
+}
 
 pub(super) async fn append(
     store: &MongoSandboxStore,
@@ -52,8 +58,8 @@ pub(super) async fn append(
             bootstrap.as_ref(),
         )
         .await;
-        let next = match result {
-            Ok(next) => next,
+        let attempted = match result {
+            Ok(attempted) => attempted,
             Err(error) => {
                 let _ = scope.release().abort_transaction().await;
                 if let Some(entry) = writer_reconcile::replay(store, id, &operation, &kind).await? {
@@ -76,7 +82,7 @@ pub(super) async fn append(
         if matches!(entry.kind, AgentLogKind::TurnCompleted { .. }) {
             if let Err(error) = crate::store::suggestions::enqueue(
                 store,
-                &next,
+                &attempted.next,
                 std::slice::from_ref(&entry),
                 session,
             )
@@ -92,8 +98,14 @@ pub(super) async fn append(
                 let _ = session.abort_transaction().await;
             }
             CommitOutcome::Unknown(_) => {
-                return writer_reconcile::replay(store, id, &operation, &kind).await?
-                    .ok_or_else(|| SandboxStoreError::Unavailable("keyed Agent log publication remains unknown; retain its original identity".into()));
+                return settlement::after_unknown(
+                    store,
+                    &operation,
+                    &entry,
+                    &attempted,
+                    session.operation_time(),
+                )
+                .await;
             }
             CommitOutcome::Failed(error) => return Err(driver(error)),
         }
@@ -154,7 +166,7 @@ async fn publish(
     operation: &PublicationIdentity,
     admission: Option<&Admission>,
     bootstrap: Option<&BootstrapPlan>,
-) -> Result<Agent, TransactionLogError> {
+) -> Result<Attempt, TransactionLogError> {
     let row = scope
         .find_one(&store.agents, doc! {"_id":current.id.as_str()})
         .await
@@ -182,7 +194,7 @@ async fn publish(
         admission,
     )
     .await?;
-    writer_commit::persist(
+    let publication = writer_commit::persist(
         store,
         scope,
         plan,
@@ -192,7 +204,7 @@ async fn publish(
         },
     )
     .await?;
-    Ok(next)
+    Ok(Attempt { next, publication })
 }
 
 fn driver(_: mongodb::error::Error) -> SandboxStoreError {
