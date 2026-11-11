@@ -6154,3 +6154,23 @@ request-policy gate when request models are retained. Refresh and explicit revie
 must not reopen Save without an available response for that policy.
 
 | 2026-11-11 | Align settings save availability with retained foundation/request policy gates and keep empty-policy unrelated saves available. |
+
+### 2026-11-11 — Explicit owner and request-model policies
+
+Spend controls includes editable owner overrides and request-model lists in the
+existing operator section. Reuse the same field, grid and Button primitives;
+number each group for distinct accessible labels. Add starts blank. Remove changes
+only the unsaved draft; the existing Save applies the revision-checked transaction.
+Explain the default-policy fallback when an owner override is removed. Removing
+the default policy allows an explicit-owner scope; never prepopulate policy values.
+
+Request-model editing requires both existing write-availability gates. A closed
+request gate leaves a foundation-only policy editable and exposes explicit refresh.
+Retained models behind a closed gate continue to block the full settings save.
+
+If both the retained draft and the server changed the same policy list, retain the
+draft visibly and require loading current values and reapplying list edits. Do not
+silently replace concurrent list changes. Independent field edits still use the
+existing explicit revision review. Disabled policies retain every entered value.
+
+| 2026-11-11 | Complete owner-override and request-model editing with blank inputs, independent availability, validation and conservative list-conflict recovery. |
