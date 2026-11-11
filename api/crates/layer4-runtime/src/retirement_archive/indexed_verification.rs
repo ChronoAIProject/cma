@@ -49,7 +49,11 @@ pub(super) fn group(
             return Err(invalid());
         }
         let size: i64 = record.get(4).map_err(|_| invalid())?;
-        if !(1..=8 * 1024 * 1024).contains(&size) {
+        if !(1..=8 * 1024 * 1024).contains(&size)
+            || bytes
+                .checked_add(size as u64)
+                .is_none_or(|next| next > receipt.bytes)
+        {
             return Err(invalid());
         }
         let payload: Vec<u8> = record.get(5).map_err(|_| invalid())?;
