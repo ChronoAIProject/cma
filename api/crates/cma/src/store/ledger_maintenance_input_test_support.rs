@@ -1,5 +1,4 @@
 use super::*;
-use futures_util::TryStreamExt;
 use layer2_core::sandbox::store::SandboxMutationGuard;
 use layer2_core::sandbox::{Agent, Sandbox};
 
@@ -78,26 +77,8 @@ pub(super) async fn refresh(store: &MongoSandboxStore, input: &mut LedgerPreExcl
         LedgerPreExclusionArtifactV1::parse(&serde_json::to_vec_pretty(&plan).unwrap()).unwrap();
 }
 
-/// Compare all fixture collections, including command, budget, audit and log
-/// sidecars, so a refusal cannot pass after partially persisting another record.
 pub(super) async fn all_rows(store: &MongoSandboxStore) -> Vec<(String, Vec<Document>)> {
-    let database = store.client.database(&store.sandboxes.namespace().db);
-    let mut names = database.list_collection_names().await.unwrap();
-    names.sort();
-    let mut result = Vec::new();
-    for name in names {
-        let rows = database
-            .collection::<Document>(&name)
-            .find(doc! {})
-            .sort(doc! {"_id":1})
-            .await
-            .unwrap()
-            .try_collect()
-            .await
-            .unwrap();
-        result.push((name, rows));
-    }
-    result
+    support::all_rows(store).await
 }
 
 pub(super) async fn control_fixture(

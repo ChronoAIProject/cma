@@ -34,26 +34,7 @@ pub(super) async fn fixture(store: &MongoSandboxStore, lane: bool) -> LedgerMain
     use layer2_core::profiles::*;
     let mut sandbox = active_sandbox("ledger-fixture-parent");
     sandbox.runtime.as_mut().unwrap().boot_id = Some("b".repeat(32));
-    let mut home = SandboxHome::reserve(
-        &sandbox.id,
-        HomeVolumePolicy {
-            mode: Default::default(),
-            storage_class: "fixture-home".into(),
-            capacity_gib: 8,
-            template_name: "seed".into(),
-            template_generation: "seed-generation".into(),
-        },
-    )
-    .unwrap();
-    home.bind(HomeVolumeReceipt {
-        native_authority: None,
-        volume_id: home.request.volume_id.clone(),
-        request_sha256: home.request.computed_sha256(),
-        storage_reference: "fixture-pvc".into(),
-        storage_generation: "fixture-pvc-generation".into(),
-    })
-    .unwrap();
-    sandbox.lifecycle.home = Some(Box::new(home));
+    retain_home(&mut sandbox);
     let caller = Caller::new(
         sandbox.owner.clone(),
         Authorization::new([Capability::UseOwnSandboxes]),
@@ -213,4 +194,123 @@ pub(super) async fn documents(store: &MongoSandboxStore) -> Vec<Vec<Document>> {
         );
     }
     result
+}
+
+/// Synthetic retained volume for disposable persistence tests only.
+pub(super) fn retain_home(sandbox: &mut Sandbox) {
+    let mut home = SandboxHome::reserve(
+        &sandbox.id,
+        HomeVolumePolicy {
+            mode: Default::default(),
+            storage_class: "fixture-home".into(),
+            capacity_gib: 8,
+            template_name: "seed".into(),
+            template_generation: "seed-generation".into(),
+        },
+    )
+    .unwrap();
+    home.bind(HomeVolumeReceipt {
+        native_authority: None,
+        volume_id: home.request.volume_id.clone(),
+        request_sha256: home.request.computed_sha256(),
+        storage_reference: "fixture-pvc".into(),
+        storage_generation: "fixture-pvc-generation".into(),
+    })
+    .unwrap();
+    sandbox.lifecycle.home = Some(Box::new(home));
+}
+
+/// Compare all fixture collections, including command, budget, audit and log
+/// sidecars, so a refusal cannot pass after partially persisting another record.
+pub(super) async fn all_rows(store: &MongoSandboxStore) -> Vec<(String, Vec<Document>)> {
+    use futures_util::TryStreamExt;
+    let database = store.client.database(&store.sandboxes.namespace().db);
+    let mut names = database.list_collection_names().await.unwrap();
+    names.sort();
+    let mut result = Vec::new();
+    for name in names {
+        let rows = database
+            .collection::<Document>(&name)
+            .find(doc! {})
+            .sort(doc! {"_id":1})
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        result.push((name, rows));
+    }
+    result
+}
+
+/// Propose E1 from the current disposable database, before admission only.
+/// This contains no execution binding and proves no provider/storage exclusion.
+pub(super) async fn pre_exclusion(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    now: &str,
+) -> (
+    layer2_core::sandbox::ledger_maintenance_pre_exclusion_progress::LedgerPreExclusionPolicy,
+    layer2_core::sandbox::ledger_maintenance_pre_exclusion_progress::LedgerPreExclusionAdmission,
+) {
+    use layer2_core::sandbox::agent_ledger_recovery::LedgerRecoveryDispositionV1;
+    use layer2_core::sandbox::ledger_maintenance_pre_exclusion::*;
+    use layer2_core::sandbox::ledger_maintenance_pre_exclusion_progress::{
+        LedgerPreExclusionAdmission, LedgerPreExclusionPolicy,
+    };
+    use layer2_core::sandbox::store::ledger_maintenance_pre_exclusion::*;
+    let caller = Caller::new(
+        sandbox.owner.clone(),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    let source = store
+        .inspect_pre_exclusion(&caller, &sandbox.id)
+        .await
+        .unwrap()
+        .source;
+    let runtime = source.sandbox.retained_runtime_binding().unwrap();
+    let plan = LedgerPreExclusionPlanV1 {
+        format: "ledger-pre-exclusion-plan-v1".into(),
+        operation_id: "creation-fixture-maintenance".into(),
+        sandbox_id: sandbox.id.clone(),
+        home_identity: source
+            .sandbox
+            .lifecycle
+            .home
+            .as_ref()
+            .unwrap()
+            .attachment()
+            .unwrap()
+            .identity()
+            .unwrap(),
+        generation: runtime.provision_generation.unwrap(),
+        boot_id: runtime.boot_id.clone().unwrap(),
+        roots_sha256: "a".repeat(64),
+        source,
+        disposition: LedgerRecoveryDispositionV1::PreserveHeld,
+        authorized_by: sandbox.owner.clone(),
+        consent_receipt_sha256: "b".repeat(64),
+        writer_barrier_epoch: 1,
+        compatible_floor: LedgerMaintenanceFloorV1 {
+            reader_manifest_sha256: "c".repeat(64),
+            writer_manifest_sha256: "d".repeat(64),
+        },
+        requested_at: now.into(),
+    };
+    let policy = LedgerPreExclusionPolicy {
+        enabled: true,
+        qualified_floor: Some(plan.compatible_floor.clone()),
+    };
+    let expires = layer2_core::rfc3339_at(
+        std::time::UNIX_EPOCH
+            + std::time::Duration::from_secs(layer2_core::seconds_from_rfc3339(now).unwrap() + 60),
+    );
+    let input = LedgerPreExclusionAdmission {
+        caller,
+        accepted: LedgerPreExclusionArtifactV1::parse(&serde_json::to_vec_pretty(&plan).unwrap())
+            .unwrap(),
+        lease: lease(&expires),
+        now: now.into(),
+    };
+    (policy, input)
 }

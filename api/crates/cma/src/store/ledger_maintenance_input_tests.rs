@@ -14,6 +14,9 @@ use helpers::*;
 #[path = "ledger_maintenance_command_tests.rs"]
 mod command_mutations;
 
+#[path = "ledger_maintenance_creation_tests.rs"]
+mod creations;
+
 #[tokio::test]
 #[ignore = "requires an owned disposable MongoDB replica set and shared input hooks"]
 async fn new_input_refuses_after_hold_restart_and_lease_expiry_without_any_writes() {
