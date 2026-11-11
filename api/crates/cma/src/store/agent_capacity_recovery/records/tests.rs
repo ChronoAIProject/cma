@@ -70,3 +70,23 @@ fn capacity_recovery_result_requires_original_identity_and_no_admission_events()
     };
     assert!(StoredRecovery::new(&agent, work, &[event], test_support::NOW).is_err());
 }
+
+#[test]
+fn capacity_recovery_carrier_rejects_noncanonical_and_impossible_result_times() {
+    for timestamp in [
+        "2026-11-11T00:00:00+00:00",
+        "2026-11-11T00:00:00.1Z",
+        "2026-02-29T00:00:00Z",
+        "2026-11-31T00:00:00Z",
+        "2026-11-11T24:00:00Z",
+    ] {
+        let mut stored = test_support::stored();
+        stored.result.published_at = timestamp.into();
+        assert!(encode(&stored).is_err(), "encoded {timestamp}");
+        let mut row = encode(&test_support::stored()).unwrap();
+        row.get_document_mut("result")
+            .unwrap()
+            .insert("published_at", timestamp);
+        assert!(decode(row).is_err(), "decoded {timestamp}");
+    }
+}
