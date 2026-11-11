@@ -86,6 +86,8 @@ data:
   # Saving any nonempty budget policy requires compatible serving/rollback readers.
   # Release operators enable writes only after establishing that reader baseline.
   CHRONO_MODEL_BUDGET_WRITES_ENABLED: "false"
+  # Request model policies need a later reader baseline even if foundation writes are on.
+  CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
   CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS: "600"
   CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS: "1800"
@@ -209,6 +211,8 @@ data:
   # include it in scoped schema/runtime grants before this image is activated.
   # Private model_budget settings have no manifest defaults; keep general rollout
   # disabled pending request-level enforcement. See CMA_Model_Budget_Controls.md.
+  # CMA auxiliary requests also require privately approved request_models bounds;
+  # no model/rate is enabled by default. See CMA_Model_Request_Reservations.md.
   # Admin Operations settings supply all platform/owner/turn controls, including
   # explicit period, thresholds, reserve, lag, call limit and IANA day timezone.
   # TTL applies to existing Activity records; lowering it can remove history.
@@ -217,6 +221,8 @@ data:
   CHRONO_PLATFORM_BASE_URL: "https://nyx-api.chrono-ai.fun"
   # Durable personal documents use the existing S3-backed storage service.
   # Objects live only under documents/<owner-hash>/<document-id>/<source-hash>.md.
+  # Activate in a later train only after compatible readers are the rollback floor.
+  CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED: "false"
   CHRONO_DOCUMENT_BUCKET: "chrono-platform-bot"
   CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
   # Agent model calls use the scoped AgentKey through this platform proxy.
