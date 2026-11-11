@@ -4,7 +4,7 @@ use super::*;
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
 async fn full_data_archive_hold_keeps_unconfirmed_uploads_and_refuses_purge() {
     use layer2_core::sandbox::{retirement_archive::RetirementArchiveRequirement, SandboxStatus};
-    let (client, _, database) = test_store("full_archive_hold").await;
+    let (client, _, database) = test_store("archive_hold").await;
     let resources = MongoSandboxStore::open(&client, &database).await.unwrap();
     let mut parent = sandbox("sbx_full_archive_hold");
     parent.status = SandboxStatus::Retiring;
