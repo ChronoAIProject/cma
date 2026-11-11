@@ -18,6 +18,9 @@ mod failures;
 #[path = "ledger_maintenance_pre_exclusion_cancellation_tests.rs"]
 mod cancellation;
 
+#[path = "ledger_maintenance_input_tests.rs"]
+mod inputs;
+
 async fn fixture(store: &MongoSandboxStore) -> (Policy, LedgerPreExclusionAdmission) {
     let prior = support::fixture(store, true).await;
     let old = prior.accepted.plan();
