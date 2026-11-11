@@ -26,7 +26,7 @@ use layer3_adapter::{
 };
 use tokio::sync::mpsc;
 
-use crate::sandbox::live_agents::LiveAgentRegistry;
+use crate::sandbox::live_agents::{LiveAgentRegistry, LiveAgentTarget};
 
 pub(crate) struct RestrictedRecoveryRuntime {
     adapter: Arc<dyn SandboxAdapter>,
@@ -80,6 +80,20 @@ impl CapacityRecoveryRuntime for RestrictedRecoveryRuntime {
         &self,
         activation: &RecoveryActivation,
     ) -> Result<CompletedAttachment<Self::Attachment>, RecoveryError> {
+        let target = &activation.completed().target;
+        if self.registry.recovery_attachment_is_active(
+            &LiveAgentTarget {
+                agent_id: target.agent_id.clone(),
+                conversation_id: target.conversation_id.clone(),
+                runtime_generation: target.conversation_generation,
+            },
+            activation.writer_fence(),
+        ) {
+            // The service rechecks its exact receipt and current authority after
+            // this observation too. No staged entry is promoted or native
+            // confirmation/acknowledgement invented for an existing connection.
+            return Ok(CompletedAttachment::AlreadyActivated);
+        }
         let attached = self
             .connect(
                 activation.completed(),
