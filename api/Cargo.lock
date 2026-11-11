@@ -516,6 +516,7 @@ dependencies = [
  "governor",
  "h2",
  "http-body-util",
+ "httpdate",
  "hyper",
  "hyper-util",
  "image",
