@@ -89,7 +89,18 @@ pub(super) async fn assemble(
             let admitted = stored_admission.as_ref().ok_or_else(closed)?;
             let permission = match admitted.kind {
                 AdmissionKind::Activation => RolloverPermission::Normal,
-                AdmissionKind::CapacityRecovery => RolloverPermission::LegacyRecovery,
+                AdmissionKind::CapacityRecovery => {
+                    if !input.logs.is_empty()
+                        || next.conversation != current.conversation
+                        || next.worktree_id != current.worktree_id
+                        || next.status == layer2_core::sandbox::AgentStatus::Ready
+                    {
+                        return Err(SandboxStoreError::InvalidTransaction(
+                            "storage recovery must preserve conversation state and remain non-ready",
+                        ).into());
+                    }
+                    RolloverPermission::LegacyRecovery
+                }
                 AdmissionKind::Rollover => return Err(SandboxStoreError::Conflict.into()),
             };
             let (head, permit) = bootstrap.ok_or_else(closed)?.publication_parts(
