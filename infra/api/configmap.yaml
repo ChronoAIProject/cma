@@ -288,3 +288,5 @@ data:
   # AgentKey service floor. Public skill material is served by ornn-api.
   CHRONO_BASELINE_SERVICES: "chrono-llm-public,ornn-api"
   RUST_LOG: "info"
+  # Validate runtime output structure before allocating owned JSON trees.
+  CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED: "false"

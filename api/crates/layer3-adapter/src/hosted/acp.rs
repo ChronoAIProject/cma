@@ -80,6 +80,7 @@ struct ConversationState {
 }
 
 pub(super) struct Bridge {
+    output_json_budget: bool,
     pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
     sink: Arc<Mutex<Sink>>,
     pub(super) pending: Pending,
@@ -208,10 +209,12 @@ impl Bridge {
             .map_err(|_| AdapterError::Unavailable("runtime sent no Ready declaration".into()))?
             .ok_or_else(|| AdapterError::Unavailable("runtime closed before Ready".into()))?
             .map_err(|error| AdapterError::Unavailable(format!("Ready read failed: {error}")))?;
-        let output_stream = validate_ready(declaration, expected_agent)?;
+        let output_json_budget = settings.output_json_budget;
+        let output_stream = validate_ready(declaration, expected_agent, output_json_budget)?;
         let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
+            output_json_budget,
             subscription,
             sink: Arc::new(Mutex::new(sink)),
             pending: Arc::new(Mutex::new(HashMap::new())),

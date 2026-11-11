@@ -268,11 +268,11 @@ fn output_capability_is_optional_and_rejects_unknown_versions() {
             "t": "ready", "wireVersion": 1, "lanes": ["ctl", "conv"], "agentId": "agent-1",
             "outputAcknowledgement": {"version": version, "streamId": stream()},
         });
-        assert!(validate_ready(Message::Text(ready.to_string()), "agent-1").is_err());
+        assert!(validate_ready(Message::Text(ready.to_string()), "agent-1", false).is_err());
     }
     let ready = serde_json::json!({"t":"ready", "wireVersion":1, "lanes":["ctl","conv"], "agentId":"agent-1"});
     assert_eq!(
-        validate_ready(Message::Text(ready.to_string()), "agent-1").unwrap(),
+        validate_ready(Message::Text(ready.to_string()), "agent-1", false).unwrap(),
         None
     );
 }
@@ -488,3 +488,6 @@ async fn cancelling_open_closes_its_reader_and_relay_before_retained_output_can_
         None | Some(Ok(Message::Close(_))) | Some(Err(_))
     ));
 }
+
+#[path = "acp_output_json_tests.rs"]
+mod json_budget_tests;
