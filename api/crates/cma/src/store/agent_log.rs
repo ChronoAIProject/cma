@@ -25,7 +25,7 @@ use super::sandbox_mongo::{
 
 mod receipt;
 use receipt::reconcile_append_after_unknown;
-mod keyed;
+pub(super) mod keyed;
 mod latest_turn;
 #[cfg(test)]
 mod receipt_tests;
