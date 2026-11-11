@@ -11,13 +11,21 @@ use layer2_core::sandbox::{
 use mongodb::bson::{doc, Document, Timestamp};
 use mongodb::options::ReadConcern;
 
-use super::agent_log::scan_complete_log_with_snapshot_session;
-use super::agent_log_integrity::TransactionLogError;
+use super::agent_log_integrity::{read::read_proven_agent, scan_collection, TransactionLogError};
 use super::agent_title_claims::acquire_claim;
 use super::agent_title_state::read_title_state;
 use super::agent_title_writes::{complete_title, set_user_title};
 use super::agents::read_agent;
 use super::sandbox_mongo::MongoSandboxStore;
+
+mod bounded;
+
+impl MongoSandboxStore {
+    pub(crate) fn with_bounded_title_reads(mut self, enabled: bool) -> Self {
+        self.bounded_title_reads = enabled;
+        self
+    }
+}
 
 #[async_trait::async_trait]
 impl AgentTitleStore for MongoSandboxStore {
@@ -153,19 +161,49 @@ async fn title_transcript(
     transcript_at_snapshot(store, &agent, &mut session).await
 }
 
-async fn transcript_at_snapshot(
+pub(super) async fn transcript_at_snapshot(
     store: &MongoSandboxStore,
     agent: &Agent,
     session: &mut mongodb::ClientSession,
 ) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
+    if let Some(transcript) = bounded::read(store, agent, session).await? {
+        return Ok(Some(transcript));
+    }
+    // Complete fallback is still a reader. Validate shared proof without the
+    // explicit audit wrapper, whose corruption path persists quarantine.
+    let (proven, _) = read_proven_agent(store, &agent.id, session)
+        .await
+        .map_err(map_store_error)?
+        .ok_or(AgentTitleStoreError::NotFound)?;
+    if &proven != agent {
+        return Err(AgentTitleStoreError::SequenceConflict);
+    }
     let mut logs = Vec::new();
-    scan_complete_log_with_snapshot_session(
+    scan_collection(
         ScanCaller::TitleDiscovery,
-        store,
+        &store.agent_log,
         &agent.id,
         agent.conversation.last_seq,
         session,
+        true,
         |entry| {
+            if entry.agent_id != agent.id {
+                return Err(SandboxStoreError::SequenceConflict);
+            }
+            if let layer2_core::sandbox::AgentLogKind::Created {
+                workspace_id,
+                worktree_id,
+            } = &entry.kind
+            {
+                if entry.seq != 1
+                    || workspace_id != &agent.workspace_id
+                    || worktree_id != agent.creation_worktree_id()
+                {
+                    return Err(SandboxStoreError::Corrupt(
+                        "Agent creation log lineage does not match".into(),
+                    ));
+                }
+            }
             logs.push(entry);
             Ok(())
         },
