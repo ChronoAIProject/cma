@@ -4,7 +4,7 @@ use crate::mutation_journal::{Status, Subject};
 use layer3_adapter::wire::{AgentCloseReceipt, AgentOpenReceipt};
 use layer3_adapter::AgentSlot;
 
-fn open(config: &RuntimeConfig) -> Operation {
+pub(super) fn open(config: &RuntimeConfig) -> Operation {
     Operation {
         operation_id: "agent:agent:open:v1".into(),
         request_sha256: "a".repeat(64),

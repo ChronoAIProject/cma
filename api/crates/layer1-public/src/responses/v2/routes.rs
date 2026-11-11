@@ -124,17 +124,15 @@ async fn submit(
             }
         },
     };
-    let binding_generation = if binding {
-        match state
-            .submission_generation(&auth, expected_generation)
-            .await
-        {
-            Ok(generation) => Some(generation),
+    let binding_policy = if binding {
+        match state.submission_policy(&auth, expected_generation).await {
+            Ok(policy) => Some(policy),
             Err(error) => return *error,
         }
     } else {
         None
     };
+    let binding_generation = binding_policy.as_ref().map(|policy| policy.generation);
     // A binding's URL and body may use different aliases of the same Agent.
     let parse_alias = if binding && body.get("conversation").is_some() {
         None
@@ -195,17 +193,67 @@ async fn submit(
             }
         }
     }
+    let policy_revision = binding_policy
+        .as_ref()
+        .filter(|_| submission.command.external_event().is_some())
+        .and_then(|policy| policy.sender_context_revision);
+    if policy_revision.is_some() && submission.command.external_event().is_some() {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            state.apply_sender_context(
+                &auth,
+                &mut submission,
+                binding_generation.expect("binding policy"),
+            ),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return *error,
+            Err(_) => return super::routing::error(super::BindingRouteError::SenderUnavailable),
+        }
+    }
     let admitted = match state
         .commands
-        .admit(
+        .admit_at_binding_revision(
             &auth.context,
             credential.value(),
             CommandSubmissionSource::Api,
-            submission,
+            submission.clone(),
+            policy_revision,
         )
         .await
     {
         Ok(value) => value,
+        Err(layer2_core::sandbox::agent_io::CommandAdmissionError::Ledger(
+            layer2_core::sandbox::agent_io::CommandLedgerError::IdempotencyConflict,
+        )) if binding
+            && policy_revision.is_none()
+            && submission.command.external_event().is_some() =>
+        {
+            match state.replay_sender_context(&auth, &submission).await {
+                Ok(Some(replay)) => match state
+                    .commands
+                    .admit_at_binding_revision(
+                        &auth.context,
+                        credential.value(),
+                        CommandSubmissionSource::Api,
+                        replay,
+                        None,
+                    )
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(value) => return error::binding_admission(value),
+                },
+                _ => {
+                    return error::binding_admission(
+                        layer2_core::sandbox::agent_io::CommandLedgerError::IdempotencyConflict
+                            .into(),
+                    )
+                }
+            }
+        }
         Err(value) if binding => return error::binding_admission(value),
         Err(value) => return error::admission(value),
     };
