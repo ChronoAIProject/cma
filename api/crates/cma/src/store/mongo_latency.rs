@@ -137,7 +137,6 @@ impl Observer {
 
 pub(super) fn observe(options: &mut ClientOptions) {
     metrics::gauge!("cma_mongo_connections_tracked").set(0);
-    metrics::gauge!("cma_mongo_checkouts_pending").set(0);
     metrics::gauge!("cma_mongo_pool_max_connections")
         .set(options.max_pool_size.unwrap_or(10) as f64);
     let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
@@ -150,10 +149,11 @@ fn attach(options: &mut ClientOptions, observer: Observer) {
     // disabled so diagnostics do not add BSON decoding to every database call.
     options.cmap_event_handler = Some(EventHandler::callback(move |event| match event {
         CmapEvent::ConnectionCheckoutStarted(_) => {
-            metrics::gauge!("cma_mongo_checkouts_pending").increment(1.)
+            // A cancelled checkout need not emit a matching end event in the
+            // pinned driver. Starts minus ends cannot represent queue depth.
+            metrics::counter!("cma_mongo_checkout_started_total").increment(1)
         }
         CmapEvent::ConnectionCheckedOut(event) => {
-            metrics::gauge!("cma_mongo_checkouts_pending").decrement(1.);
             observer.checked_out(
                 connection_key(&event.address, event.connection_id),
                 event.duration,
@@ -166,7 +166,6 @@ fn attach(options: &mut ClientOptions, observer: Observer) {
             observer.returned(connection_key(&event.address, event.connection_id), true)
         }
         CmapEvent::ConnectionCheckoutFailed(event) => {
-            metrics::gauge!("cma_mongo_checkouts_pending").decrement(1.);
             observer.record(0, event.duration, true);
         }
         CmapEvent::ConnectionReady(event) => observer.record(1, event.duration, false),
