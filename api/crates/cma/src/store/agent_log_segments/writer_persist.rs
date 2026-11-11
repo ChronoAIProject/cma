@@ -13,14 +13,16 @@ use mongodb::bson::{self, doc, Bson};
 
 pub(super) async fn persist(
     store: &MongoSandboxStore,
-    session: &mut ClientSession,
+    scope: &mut TransactionScope<'_>,
     prepared: PreparedPublication,
     aggregate: AggregateUpdate,
 ) -> Result<Publication, TransactionLogError> {
-    if session.id() != &prepared.session_id {
+    scope.require(&prepared.transaction)?;
+    if store.agents.namespace().db != prepared.database {
         return Err(SandboxStoreError::Conflict.into());
     }
     let (filter, update) = aggregate_update(&prepared, aggregate)?;
+    let session = scope.session();
     let database = store.client.database(&store.agents.namespace().db);
     if let Some(permit) = &prepared.permit {
         permit

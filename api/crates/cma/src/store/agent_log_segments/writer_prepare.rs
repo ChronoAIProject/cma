@@ -8,7 +8,10 @@ use crate::store::agent_log_segments::{
     writer_plan::{self, RolloverPermission},
     writer_projection, EVIDENCE, PUBLICATIONS,
 };
-use mongodb::bson::{self, doc};
+use mongodb::{
+    bson::{self, doc},
+    ClientSession,
+};
 
 pub(super) struct EvidenceWrite {
     pub before: Option<Document>,
@@ -17,12 +20,15 @@ pub(super) struct EvidenceWrite {
 
 pub(super) async fn assemble(
     store: &MongoSandboxStore,
-    session: &mut ClientSession,
+    scope: &mut TransactionScope<'_>,
     captured: &CapturedLog,
     input: PublicationInput<'_>,
     bootstrap: Option<&BootstrapPlan>,
     admission: Option<&Admission>,
 ) -> Result<PreparedPublication, TransactionLogError> {
+    captured.validate_transaction(store, scope)?;
+    let transaction = scope.identity();
+    let session = scope.session();
     input.operation.validate()?;
     let current = input.current;
     let next = input.next;
@@ -164,7 +170,8 @@ pub(super) async fn assemble(
     )
     .await?;
     Ok(PreparedPublication {
-        session_id: session.id().clone(),
+        transaction,
+        database: store.agents.namespace().db,
         current: current.clone(),
         next: next.clone(),
         source,
