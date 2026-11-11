@@ -6,8 +6,19 @@ use mongodb::ClientSession;
 mod fixture;
 use fixture::*;
 
+#[path = "writer_bootstrap_mongo_tests.rs"]
+mod bootstrap;
+
 async fn transaction(f: &Fixture) -> ClientSession {
     f.client.start_session().await.unwrap()
+}
+
+fn succeeded<T>(result: Result<T, TransactionLogError>) -> T {
+    match result {
+        Ok(value) => value,
+        Err(TransactionLogError::Domain(error)) => panic!("publication domain error: {error}"),
+        Err(TransactionLogError::Driver(error)) => panic!("publication driver error: {error}"),
+    }
 }
 
 fn update(plan: &PreparedPublication) -> AggregateUpdate {
@@ -54,7 +65,7 @@ async fn writer_rollover_commits_original_batch_head_projection_and_receipt_toge
     let plan = f.prepared(&scope);
     let expected = plan.next.clone();
     let mutation = update(&plan);
-    let receipt = persist(&f.store, &mut scope, plan, mutation).await.unwrap();
+    let receipt = succeeded(persist(&f.store, &mut scope, plan, mutation).await);
     assert!(matches!(
         commit_transaction(scope.release()).await,
         CommitOutcome::Committed
@@ -117,7 +128,7 @@ async fn writer_abort_after_rollover_and_late_receipt_conflict_leave_no_partial_
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
     let plan = f.prepared(&scope);
     let mutation = update(&plan);
-    let receipt = persist(&f.store, &mut scope, plan, mutation).await.unwrap();
+    let receipt = succeeded(persist(&f.store, &mut scope, plan, mutation).await);
     scope.release().abort_transaction().await.unwrap();
     unchanged(&f).await;
     assert_eq!(
@@ -177,23 +188,28 @@ async fn writer_rejects_stale_domain_fence_mismatched_result_and_different_sessi
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
-async fn writer_rejects_prepared_proof_after_restart_on_the_same_session_without_writes() {
+async fn writer_rejects_previous_transaction_plan_on_same_session_and_other_database() {
     let f = fixture(2).await;
     let mut session = transaction(&f).await;
-    let original = TransactionScope::start(&mut session).await.unwrap();
-    let plan = f.prepared(&original);
+    let scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
     let mutation = update(&plan);
-    original.release().abort_transaction().await.unwrap();
+    scope.release().abort_transaction().await.unwrap();
     let mut later = TransactionScope::start(&mut session).await.unwrap();
     assert!(persist(&f.store, &mut later, plan, mutation).await.is_err());
     later.release().abort_transaction().await.unwrap();
     unchanged(&f).await;
-    assert_eq!(
-        collection(&f.store, PUBLICATIONS)
-            .count_documents(doc! {})
-            .await
-            .unwrap(),
-        0
-    );
+
+    let other = fixture(2).await;
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
+    let mutation = update(&plan);
+    assert!(persist(&other.store, &mut scope, plan, mutation)
+        .await
+        .is_err());
+    scope.release().abort_transaction().await.unwrap();
+    unchanged(&f).await;
+    unchanged(&other).await;
+    other.destroy().await;
     f.destroy().await;
 }
