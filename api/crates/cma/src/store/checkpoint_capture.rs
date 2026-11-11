@@ -17,6 +17,9 @@ use super::lifecycle_execution::LifecycleLoadError;
 use super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::workspaces::read_workspace;
 
+mod scoped;
+pub(super) use scoped::validate_and_fence_begin_scoped;
+
 pub(super) async fn validate_and_fence_begin(
     store: &MongoSandboxStore,
     current: &Sandbox,

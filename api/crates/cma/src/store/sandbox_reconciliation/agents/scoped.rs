@@ -7,9 +7,10 @@ use mongodb::bson::doc;
 
 use super::{materialize_logs, ApplyError};
 use crate::store::{
-    agent_capacity_recovery::source::{capture_segmented_scoped, fence_filter_scoped},
+    agent_capacity_recovery::source::fence_filter_scoped,
     agent_log_integrity::AppendCapacity,
     agent_log_segments::{
+        capture::CapturedLog,
         publication::{self, PublicationIdentity},
         transaction_scope::TransactionScope,
         writer_commit::{self, AggregateUpdate, PublicationInput},
@@ -23,17 +24,14 @@ use crate::store::{
 pub(in crate::store::sandbox_reconciliation) async fn publish_agent(
     store: &MongoSandboxStore,
     current: &Agent,
+    source: &CapturedLog,
     change: Option<&SandboxRuntimeLossAgentMutation>,
     request: &SandboxRuntimeLossRequest,
     scope: &mut TransactionScope<'_>,
 ) -> Result<(Agent, Vec<AgentLogEntry>), ApplyError> {
-    let source = capture_segmented_scoped(store, current, scope)
-        .await?
-        .ok_or_else(|| ApplyError::Domain(SandboxStoreError::Conflict))?;
-    source
-        .projection()
-        .validate_aggregate(current)
-        .map_err(|detail| ApplyError::Domain(SandboxStoreError::Corrupt(detail)))?;
+    if source.agent() != current {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
     let filter = fence_filter_scoped(store, current, scope).await?;
     let Some(change) = change else {
         let result = scope
@@ -71,7 +69,7 @@ pub(in crate::store::sandbox_reconciliation) async fn publish_agent(
     let prepared = writer_commit::prepare(
         store,
         scope,
-        &source,
+        source,
         PublicationInput {
             operation: &operation,
             current,
