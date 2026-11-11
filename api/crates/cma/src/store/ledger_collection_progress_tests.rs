@@ -4,6 +4,9 @@ use layer2_core::sandbox::store::ledger_collection::{
     LedgerCollectionStore, LedgerCollectorMutation, LedgerCollectorProgressV1,
 };
 
+#[path = "ledger_collection_checkpoint_tests.rs"]
+mod checkpoint;
+
 fn progress() -> LedgerCollectorProgressV1 {
     LedgerCollectorProgressV1::new("a".repeat(64), 1, 7, "b".repeat(64), 10, 20).unwrap()
 }
