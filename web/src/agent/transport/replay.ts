@@ -67,7 +67,9 @@ export async function followV2Agent(
         reconnecting();
       }
       retry = progressed ? 250 : Math.min(retry * 2, 10000);
-      await delay(retry, signal);
+      // Equal jitter spreads clients after a shared disconnect without ever
+      // exceeding the ten-second cap or allowing a zero-delay retry loop.
+      await delay(retry * (0.5 + Math.random() * 0.5), signal);
     }
   } finally {
     clearTimeout(notice);
