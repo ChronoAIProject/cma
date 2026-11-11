@@ -93,6 +93,8 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    #[cfg(test)]
+    pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
     pub(super) bounded_approval_reads: bool,
     pub(super) bounded_close_retries: bool,
     pub(super) fleet_log_activation: std::sync::Arc<super::agent_log_integrity::fleet::Activation>,
@@ -183,6 +185,8 @@ impl MongoSandboxStore {
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            #[cfg(test)]
+            request_budget_clock: None,
             bounded_admission_agents: Default::default(),
             bounded_approval_reads: false,
             bounded_close_retries: false,
