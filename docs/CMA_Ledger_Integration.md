@@ -142,11 +142,13 @@ settled-operation, shared-Worktree and accounting validation. Both input protoco
 consume and close the held source/archive owners; archives remain pending and
 continue refusing replay. The create-only storage probe exercises both protocols.
 
-This adapter retains original artifacts only in memory. Durable publication before
-Selected, stable operation/completion receipts after later groups, C's qualified
-exclusion and an online runtime port remain separate prerequisites. The existing
-immediate-after-state retry is not a durable collector acknowledgement. There is
-no new retained-home command, serving activation, archive schema or writer flag.
+The format-2 adapter retains original artifacts only in memory and deliberately
+keeps its groups pending. The separate [format-3 held completion core](CMA_Ledger_Completion.md)
+adds durable originals, one pending operation and cold final acknowledgement.
+It preserves this older protocol and the active V2 schema. Neither core provides
+C's qualified exclusion, a real-home activation command or an online collector
+port. Use [the release runbook](CMA_Ledger_Release_Runbook.md) for supported
+observations and explicit execution/restore gates.
 
 Validation covers malformed/private-path input, preservation classifications,
 snapshot/no-DDL behavior, missing/changed/quarantined records, ordered index drift,
