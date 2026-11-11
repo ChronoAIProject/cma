@@ -41,6 +41,7 @@ pub struct ProviderHostedControlTransport {
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
     native_transport: NativeRuntimeTransport,
     native_http_budget: Arc<tokio::sync::Semaphore>,
+    bounded_raw_output: bool,
     bounded_permission_state: bool,
     bounded_update_relay: bool,
     shared_runtime_output: bool,
@@ -86,6 +87,11 @@ impl ActiveLink {
 }
 
 impl ProviderHostedControlTransport {
+    pub fn with_bounded_raw_output(mut self, enabled: bool) -> Self {
+        self.bounded_raw_output = enabled;
+        self
+    }
+
     pub fn with_bounded_permission_state(mut self, enabled: bool) -> Self {
         self.bounded_permission_state = enabled;
         self
