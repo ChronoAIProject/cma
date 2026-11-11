@@ -82,9 +82,14 @@ for (const theme of ['light', 'dark']) {
     const grid = scroll.locator('.recharts-cartesian-grid-vertical line');
     await expect(grid).toHaveCount(5);
     for (const index of [1, 2, 3]) {
-      const label = await ticks.nth(index).boundingBox();
-      const line = await grid.nth(index).boundingBox();
-      expect(Math.abs(label!.x + label!.width / 2 - line!.x)).toBeLessThan(2);
+      // Measure SVG geometry in the same viewport coordinate system in every engine.
+      const label = await ticks
+        .nth(index)
+        .evaluate((element) => element.getBoundingClientRect().toJSON());
+      const line = await grid
+        .nth(index)
+        .evaluate((element) => element.getBoundingClientRect().toJSON());
+      expect(Math.abs(label.x + label.width / 2 - line.x)).toBeLessThan(2);
     }
     await page.screenshot({ path: info.outputPath(`top-10-duplicates-${theme}.png`) });
     await expect(scroll.getByText('Joined 2026-01-01', { exact: true })).toBeVisible();
@@ -104,6 +109,17 @@ for (const theme of ['light', 'dark']) {
     await scroll.focus();
     await page.keyboard.press('PageDown');
     await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    // Native PageDown can keep animating after its first scroll event in WebKit.
+    let lastTop = -1;
+    let stable = 0;
+    await expect
+      .poll(async () => {
+        const top = await scroll.evaluate((element) => element.scrollTop);
+        stable = top === lastTop ? stable + 1 : 0;
+        lastTop = top;
+        return stable;
+      })
+      .toBeGreaterThanOrEqual(2);
     expect(await page.evaluate(() => window.scrollY)).toBe(before);
     await page.screenshot({ path: info.outputPath(`scrolled-${theme}.png`) });
     expect(await labels.getByRole('listitem').count()).toBeLessThanOrEqual(12);
