@@ -89,6 +89,7 @@ pub(super) fn authentication(
     .with_platform_settings(settings)
     .with_browser_origins(&config.cors_origins)
     .with_agent_key_service(config.nyxid_service_id.clone())
+    .with_oauth_api_resource(config.nyxid_oauth_api_resource.clone())
     .with_resource_request_enabled(config.features.nyxid_resource_request)
     .with_identity_proxy(
         config.features.nyxid_proxy,
