@@ -143,7 +143,6 @@ async fn native_and_retained_constructors_pin_json_policy_over_renderer_preferen
                 recovered_prompt: None,
                 recovered_context_sequence: None,
             };
-            settings.retained_json = !enabled;
             transport.pin_output_policy(&mut settings);
             assert_eq!(settings.retained_json, enabled);
             assert!(!settings.bounded_raw_output && !settings.output_json_budget);
