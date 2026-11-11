@@ -248,6 +248,9 @@ async fn document_objects(
     blobs: Option<&dyn DocumentBlobStore>,
     request: &Request,
 ) -> Result<Vec<ExternalRecord>> {
+    if document.get_i64("document_schema_version").ok() != Some(1) {
+        return Err(REFUSED);
+    }
     let record: StoredDocument =
         mongodb::bson::deserialize_from_bson(document.get("record").ok_or(REFUSED)?.clone())
             .map_err(|_| REFUSED)?;
@@ -269,3 +272,7 @@ async fn document_objects(
     }
     Ok(result)
 }
+
+#[cfg(test)]
+#[path = "export_tests.rs"]
+mod tests;
