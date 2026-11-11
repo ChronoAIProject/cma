@@ -17,7 +17,7 @@ pub(super) async fn read(
     session: &mut ClientSession,
 ) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
     if !store.bounded_title_reads
-        || !store.bounded_admission_agents.contains(&expected.id)
+        || !store.bounded_log_enabled(&expected.id)
         || expected.conversation.last_seq <= u64::from(PREFIX_ENTRIES)
     {
         return Ok(None);
