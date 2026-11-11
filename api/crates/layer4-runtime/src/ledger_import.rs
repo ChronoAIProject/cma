@@ -9,6 +9,7 @@ mod plan_io;
 mod publication;
 mod retirement;
 mod retirement_artifact;
+pub(crate) mod retirement_move;
 mod retirement_stage;
 mod sealed;
 mod stage;

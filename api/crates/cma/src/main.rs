@@ -113,6 +113,16 @@ async fn main() {
         }
         return;
     }
+    if store::provenance_progress::is_command(&arguments) {
+        match store::provenance_progress::command(&arguments).await {
+            Ok(result) => println!("{result}"),
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if !arguments.is_empty() {
         eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE]");
         std::process::exit(2)

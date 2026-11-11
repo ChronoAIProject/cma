@@ -27,6 +27,7 @@ mod contention;
 mod prepared_replay;
 #[cfg(test)]
 mod prepared_replay_tests;
+mod publication_history;
 mod publication_log;
 mod publication_transaction;
 mod sign_in;
@@ -127,30 +128,17 @@ async fn apply_publication_observed(
         .transpose()
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    let needs_capacity_marker = agent_cleanup_capacity_retry(&current, mutation);
-    let mut last_log = None;
-    let mut prior_entries = Vec::new();
-    let complete_log = scan_complete_log_with_session(
-        if needs_capacity_marker
-            || super::agent_worker_capacity::capacity_failure_evidence_matches(&current, mutation)
-        {
-            ScanCaller::CapacitySettlement(current.work.step)
-        } else {
-            ScanCaller::WorkerPublication(current.work.step)
-        },
+    let history = publication_history::read(
         store,
-        &current.id,
-        current.conversation.last_seq,
+        &current,
+        &current_row,
+        mutation,
+        observed.is_none(),
         session,
-        |entry| {
-            prior_entries.push(entry.clone());
-            if needs_capacity_marker && entry.seq == current.conversation.last_seq {
-                last_log = Some(entry);
-            }
-            Ok(())
-        },
     )
     .await?;
+    let complete_log = history.summary;
+    let last_log = history.last;
     validate_agent_cleanup_capacity_log(&current, mutation, last_log.as_ref())
         .map_err(ApplyError::Domain)?;
     if current.work.step == AgentWorkStep::WaitForWorkspace
@@ -278,13 +266,18 @@ async fn apply_publication_observed(
     prepared_replay::fence(store, &current, &current_worktree, mutation, session).await?;
     let (final_agent, logs) = final_agent_and_logs(&current, mutation)?;
 
-    let prior_semantic = crate::store::agent_log_integrity::audit_checkpoint(
-        store,
-        &current,
-        &prior_entries,
-        session,
-    )
-    .await?;
+    let prior_semantic = match complete_log.semantic() {
+        Some(checkpoint) => checkpoint.clone(),
+        None => {
+            crate::store::agent_log_integrity::audit_checkpoint(
+                store,
+                &current,
+                &history.entries,
+                session,
+            )
+            .await?
+        }
+    };
     let next_semantic = prior_semantic
         .after_append(&logs, &final_agent)
         .map_err(ApplyError::Domain)?;
