@@ -251,6 +251,7 @@ impl ControlPlaneComposition {
             },
             SandboxLifecycleConfig {
                 parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
+                bounded_live_fragments: config.features.bounded_live_fragments,
                 access_transport_migration: config.agent_access_transport_migration.clone(),
                 managed_documents_enabled: config.document_storage.is_some(),
                 home_policy: config
@@ -408,6 +409,11 @@ impl ControlPlaneComposition {
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes = resource_routes.merge(bindings.router(config.gateway.as_ref())?);
+        // Apply before cloning for delegated dispatch: all entry points share slots.
+        let resource_routes = resource_routes.layer(axum::middleware::from_fn_with_state(
+            crate::public_streams::StreamBudget::new(config.public_stream_limit),
+            crate::public_streams::enforce,
+        ));
         let (bot_routes, bots) = bots::BotComposition::build(bots::BotCompositionDependencies {
             config,
             stores: &stores,
@@ -457,7 +463,10 @@ impl ControlPlaneComposition {
             browser_connections,
             auth.clone(),
             recorder,
-            limits,
+            (
+                limits,
+                crate::expensive_reads::ReadBudget::new(config.features.retain_read_frames),
+            ),
             stores,
             tool_routes.merge(service_portal::router(
                 auth.clone(),
