@@ -174,7 +174,7 @@ impl Bridge {
                 .lock()
                 .await
                 .as_ref()
-                .is_some_and(|(id, safe)| id != session || !safe)
+                .is_some_and(|goal| !goal.is_safe_for(session))
         {
             return Err(AdapterError::OperationIdentityConflict(
                 "conversation must settle before instructions can recover".into(),
