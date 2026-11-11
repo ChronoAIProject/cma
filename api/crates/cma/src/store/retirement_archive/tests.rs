@@ -252,7 +252,9 @@ async fn full_archive_reconstructs_home_conversations_and_ledgers_before_gate_re
         .unwrap()
         .retirement_archive_pending());
     store.database.drop().await.unwrap();
-    for root in &request.roots {std::fs::remove_dir_all(&root.path).unwrap();}
+    for root in &request.roots {
+        std::fs::remove_dir_all(&root.path).unwrap();
+    }
     assert!(verify::restore(
         &custody,
         &verification.manifest,
