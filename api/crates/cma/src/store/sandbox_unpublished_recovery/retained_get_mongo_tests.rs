@@ -1,5 +1,6 @@
 //! Exercise the real assessment GET with Mongo and admission explicitly disabled.
 use super::*;
+use crate::store::retained_reopen::mongo_fixtures::reopen_fixture;
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
@@ -19,10 +20,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tower::ServiceExt;
-
-// Reuse complete creation/publication history and the real retained hierarchy.
-#[path = "../retained_reopen/mongo_fixtures.rs"]
-mod fixtures;
 
 struct Inspector {
     hold: bool,
@@ -85,7 +82,7 @@ impl Fixture {
         let client = Client::with_options(options).unwrap();
         let name = format!("cma_retained_get_{}", uuid::Uuid::new_v4().simple());
         let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
-        let request = fixtures::reopen_fixture(&store, "sbx_get_retained").await;
+        let request = reopen_fixture(&store, "sbx_get_retained").await;
         Self {
             client,
             name,

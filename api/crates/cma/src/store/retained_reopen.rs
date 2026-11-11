@@ -16,6 +16,8 @@ use super::sandbox_unpublished_recovery::transaction::ApplyError;
 
 mod load;
 #[cfg(test)]
+pub(in crate::store) mod mongo_fixtures;
+#[cfg(test)]
 mod mongo_tests;
 mod transaction;
 const FIELD: &str = "retained_reopen_receipt_v1";
