@@ -52,6 +52,7 @@ export interface AgentController {
     answerContext?: AnswerContext,
   ) => Promise<void>;
   readonly interrupt: () => Promise<void>;
+  readonly interruptForControl?: () => Promise<void>;
   readonly steer?: AgentController['send'];
   readonly interruptWithMessage?: (
     content: string,

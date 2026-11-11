@@ -1,3 +1,4 @@
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Agent, SandboxAgentActivity};
 use mongodb::bson::doc;
@@ -27,6 +28,7 @@ pub(super) async fn live_activities(
     for agent in agents.iter().filter(|agent| agent.status.is_live()) {
         let mut newest = None;
         scan_complete_log_with_session(
+            ScanCaller::InactivityProof,
             store,
             &agent.id,
             agent.conversation.last_seq,

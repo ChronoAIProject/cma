@@ -19,6 +19,7 @@ mod mongo;
 mod nyxid;
 #[cfg(test)]
 mod tests;
+mod token;
 pub(crate) use model::*;
 use nyxid::NyxIdFundingProvider;
 #[cfg(test)]

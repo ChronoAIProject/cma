@@ -9,7 +9,8 @@ use layer2_core::sandbox::{AgentTitleOutcome, AgentTitleServiceError};
 use layer2_core::AgentId;
 use tokio::sync::watch;
 use tokio::task::{Id, JoinError, JoinHandle, JoinSet};
-use tokio::time::MissedTickBehavior;
+use tokio::time::{Instant, MissedTickBehavior};
+const START_INTERVAL: Duration = Duration::from_secs(10);
 
 use super::title_worker::AgentTitleWorker;
 
@@ -52,6 +53,7 @@ pub(crate) struct AgentTitleScheduler {
     concurrency: usize,
     poll_interval: Duration,
     drain_timeout: Duration,
+    start_interval: Duration,
 }
 
 impl AgentTitleScheduler {
@@ -61,12 +63,13 @@ impl AgentTitleScheduler {
             concurrency: CONCURRENCY,
             poll_interval: POLL_INTERVAL,
             drain_timeout: DRAIN_TIMEOUT,
+            start_interval: START_INTERVAL,
         }
     }
 
     pub(super) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let mut work = ScheduledTitles::new(self.worker, self.concurrency);
+            let mut work = ScheduledTitles::new(self.worker, self.concurrency, self.start_interval);
             let mut ticker = tokio::time::interval(self.poll_interval);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
@@ -123,10 +126,16 @@ struct ScheduledTitles {
     queued: VecDeque<AgentId>,
     cursor: Option<String>,
     querying: bool,
+    start_interval: Duration,
+    next_start: Instant,
 }
 
 impl ScheduledTitles {
-    fn new(worker: Arc<dyn TitleScheduleWork>, concurrency: usize) -> Self {
+    fn new(
+        worker: Arc<dyn TitleScheduleWork>,
+        concurrency: usize,
+        start_interval: Duration,
+    ) -> Self {
         Self {
             worker,
             concurrency,
@@ -136,6 +145,8 @@ impl ScheduledTitles {
             queued: VecDeque::new(),
             cursor: None,
             querying: false,
+            start_interval,
+            next_start: Instant::now(),
         }
     }
 
@@ -157,13 +168,14 @@ impl ScheduledTitles {
     }
 
     fn fill_slots(&mut self) {
-        while self.in_flight.len() < self.concurrency {
+        while self.in_flight.len() < self.concurrency && Instant::now() >= self.next_start {
             let Some(id) = self.queued.pop_front() else {
                 break;
             };
             if !self.in_flight.insert(id.clone()) {
                 continue;
             }
+            self.next_start = Instant::now() + self.start_interval;
             let worker = Arc::clone(&self.worker);
             let work_id = id.clone();
             let task = self.tasks.spawn(async move {

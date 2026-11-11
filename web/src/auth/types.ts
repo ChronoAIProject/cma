@@ -51,7 +51,11 @@ export type AuthState =
   | { readonly status: 'checking' }
   | { readonly status: 'anonymous' }
   | { readonly status: 'authenticated'; readonly user: User }
-  | { readonly status: 'error'; readonly message: string };
+  | {
+      readonly status: 'error';
+      readonly message: string;
+      readonly reason?: 'identity_unavailable' | 'service_unavailable';
+    };
 
 export interface AuthProvider {
   current(): Promise<AuthState>;

@@ -26,6 +26,9 @@ mod authorized;
 #[path = "agent_reads/recovery.rs"]
 mod recovery;
 pub use authorized::{AgentDetailReading, SharedAgentDetail};
+#[path = "agent_reads/history.rs"]
+mod history;
+pub use history::AgentHistoryReading;
 #[path = "agent_reads/configuration.rs"]
 mod configuration;
 pub use configuration::AgentConfigurationRead;
@@ -123,7 +126,6 @@ impl AgentReadService {
         }
     }
 
-    /// Read the Agent and every parent needed to project its public context.
     pub async fn lineage(
         &self,
         caller: &Caller,
@@ -461,7 +463,11 @@ fn store_error(error: SandboxStoreError) -> AgentReadError {
         SandboxStoreError::SequenceConflict => {
             corrupt("agent store reported an inconsistent sequence")
         }
-        other => AgentReadError::Unavailable(other.to_string()),
+        other => {
+            use crate::dependency_diagnostics::{Dependency, Failure, Reason};
+            Failure::new(Dependency::Storage, Reason::Unavailable).record();
+            AgentReadError::Unavailable(other.to_string())
+        }
     }
 }
 

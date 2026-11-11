@@ -2,8 +2,6 @@
 ARG OMARCHY_CMA_BASE=runtime
 # CMA_MODEL_PROXY_PLACEHOLDER is supplied only in managed Agent launch plans,
 # not in the Sandbox environment, so existing runtime identities stay stable.
-# Bot-pod image for a contract-3 CMA Sandbox.
-#
 # The sandbox provider schedules this image and starts the kernel-neutral Layer
 # 4 supervisor. The image supplies the one supported agent provider, the tools
 # needed to prepare git workspaces, and the NyxID CLI used through the local
@@ -16,7 +14,7 @@ ARG TARGETARCH
 # Statically linked against musl, so it runs on any base the runtime stage uses.
 RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cma-runtime-target-${TARGETARCH},target=/build/target,sharing=locked \
-    cargo build --release --locked --bin layer4-runtime \
+    cargo build --jobs 2 --release --locked --bin layer4-runtime \
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
 
@@ -32,7 +30,7 @@ ARG GH_GO_VERSION=1.26.10
 ARG GH_GO_SHA256_AMD64=ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5
 ARG GH_GO_SHA256_ARM64=3f4227ce7b206a513e794f1393adb473a07b46e94d18bd15d1c684bbb7319797
 ARG GH_X_MOD_VERSION=0.41.0
-ARG GH_X_NET_VERSION=0.60.0
+ARG GH_X_NET_VERSION=0.62.0
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
@@ -340,10 +338,10 @@ COPY --chmod=755 api/crates/layer4-runtime/src/browser/command.cjs /usr/local/bi
 # A Machine Included Sandbox starts this rootless desktop session from the
 # supervisor.  noVNC is bound to loopback; CMA must relay it through the
 # authenticated control plane before a browser can reach the screen.
+COPY api/crates/layer4-runtime/src/desktop-browser.py /usr/local/bin/cma-desktop-browser
 COPY --chmod=0755 api/crates/layer4-runtime/src/desktop-session.sh /usr/local/bin/cma-desktop-session
 COPY api/crates/layer4-runtime/src/desktop/ /usr/share/cma-desktop/
-# Keep the original asset available to retained homes whose XFCE preferences
-# still reference it; new homes select the bundled owner-provided PNG.
+# Retained XFCE homes may still reference the original wallpaper asset.
 RUN test -s /usr/share/cma-desktop/wallpaper.png
 COPY api/crates/layer4-runtime/src/desktop/chromium.desktop /usr/share/applications/chromium.desktop
 
@@ -446,15 +444,15 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.runtime-bootstrap="1" \
       dev.chrono.cma.home-layout="2"
 
-# Explicit experimental target. The default target remains the Debian runtime.
-# CI supplies a verified native CMA artifact as OMARCHY_CMA_BASE.
+# Cache checksum-pinned desktop dependencies separately from verified CMA tools.
 FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
-FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy
+FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-dependencies
 COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
 COPY api/crates/layer4-runtime/src/omarchy/secure-tools.sh /tmp/secure-omarchy-tools.sh
 COPY api/crates/layer4-runtime/src/omarchy/build-graphics.sh api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch /tmp/
 COPY api/crates/layer4-runtime/src/omarchy/build-hyprland.sh api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch /tmp/
 RUN bash /tmp/install-omarchy.sh && rm /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
+FROM omarchy-dependencies AS omarchy
 COPY --from=omarchy-cma /usr/local/bin/ /usr/local/bin/
 # Toolchain donor stays pinned; the supervisor must match this source revision.
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime
@@ -463,6 +461,7 @@ COPY --from=omarchy-cma /usr/local/lib/ /usr/local/lib/
 COPY --from=omarchy-cma /etc/codex/ /etc/codex/
 COPY --from=omarchy-cma /usr/share/cma-runtime-home/ /usr/share/cma-runtime-home/
 COPY --from=omarchy-cma /usr/share/cma-desktop/ /usr/share/cma-desktop/
+COPY api/crates/layer4-runtime/src/desktop-browser.py /usr/local/bin/cma-desktop-browser
 COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/session.sh /usr/local/bin/cma-desktop-session
 COPY --chmod=0755 api/crates/layer4-runtime/src/omarchy/inner-session.sh /usr/local/bin/cma-omarchy-inner-session
 COPY api/crates/layer4-runtime/src/omarchy/hyprland.lua /usr/share/cma-omarchy/hyprland.lua

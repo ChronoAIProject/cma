@@ -1,3 +1,6 @@
+#[path = "launch_telemetry_tests.rs"]
+mod telemetry_tests;
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 

@@ -87,6 +87,15 @@ async fn exercise(uri: &str, db: &Database) -> Result<(), Box<dyn std::error::Er
     // Base migration is compatible with an already installed optional marker.
     super::super::migrate(db).await?;
     records.whatsapp_flows_ready().await?;
+    // Existing optional validators need no unrelated GitHub migration to keep writing.
+    let legacy_validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,
+    "required":["_id","owner","blob","version","schema_version"],"properties":{
+        "_id":{"bsonType":"string"},"owner":{"bsonType":"string"},"blob":{"bsonType":"binData"},
+        "version":{"bsonType":"long"},"schema_version":{"enum":[1]}}}};
+    for collection in [WHATSAPP_FLOWS, super::super::THREAD_FENCES] {
+        db.run_command(doc! {"collMod":collection,"validator":legacy_validator.clone()})
+            .await?;
+    }
     let flows = records.for_kind(RecordKind::WhatsappFlow);
     let id = uuid::Uuid::new_v4().to_string();
     assert_eq!(flows.put(&id, "owner", b"persistent", None).await?, 1);

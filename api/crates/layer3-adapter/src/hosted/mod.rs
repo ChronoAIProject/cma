@@ -2,6 +2,7 @@
 
 mod acp;
 mod acp_context_refresh;
+mod acp_credit_failure;
 mod acp_handshake;
 mod acp_inbound;
 mod acp_observations;
@@ -19,7 +20,11 @@ mod deployment;
 mod home;
 #[cfg(test)]
 mod home_tests;
+#[cfg(test)]
+mod indexed_ledger_hold_tests;
 mod inspection_timing;
+#[cfg(test)]
+mod ledger_hold_tests;
 mod managed_context;
 mod memory;
 mod nonexecuting;

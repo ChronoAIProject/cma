@@ -7,6 +7,8 @@ use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
 use crate::mutation_journal::{self, Operation, Subject};
 
+#[path = "mutation_authority_fold.rs"]
+mod fold;
 #[path = "mutation_authority_io.rs"]
 mod io;
 
@@ -47,7 +49,26 @@ pub(super) struct Record {
 }
 
 impl Record {
-    fn new(config: &RuntimeConfig, authority_fence: u64, operation: &Operation) -> Self {
+    pub(crate) fn inventory_name(&self, config: &RuntimeConfig) -> std::path::PathBuf {
+        io::record_path(&crate::mutation_scope::root(config, &self.subject), self)
+    }
+
+    /// Validate a preserved V1 payload without invoking the mutating scanner.
+    pub(crate) fn decode_inventory(
+        bytes: &[u8],
+        config: &RuntimeConfig,
+        path: &Path,
+    ) -> Result<Self> {
+        if bytes.len() as u64 > MAX_AUTHORITY_BYTES {
+            return Err(corrupt("mutation authority record is oversized"));
+        }
+        let record = serde_json::from_slice(bytes)
+            .map_err(|_| corrupt("mutation authority record is invalid"))?;
+        validate_record(&record, config, path)?;
+        Ok(record)
+    }
+
+    pub(super) fn new(config: &RuntimeConfig, authority_fence: u64, operation: &Operation) -> Self {
         let (resource, disposition) = resource_operation(operation);
         Self {
             version: AUTHORITY_VERSION,
@@ -63,7 +84,7 @@ impl Record {
         }
     }
 
-    fn operation(&self) -> Operation {
+    pub(crate) fn operation(&self) -> Operation {
         Operation {
             operation_id: self.operation_id.clone(),
             request_sha256: self.request_sha256.clone(),
@@ -79,47 +100,74 @@ pub(crate) fn admit(
     authority_fence: u64,
     operation: &Operation,
 ) -> Result<()> {
-    mutation_journal::validate_operation(config, operation)?;
+    admit_many(config, authority_fence, std::slice::from_ref(operation))
+}
+
+/// Reserve the entire preparation pair before admitting either original intent.
+pub(crate) fn admit_many(
+    config: &RuntimeConfig,
+    authority_fence: u64,
+    operations: &[Operation],
+) -> Result<()> {
+    for operation in operations {
+        mutation_journal::validate_operation(config, operation)?;
+    }
     if authority_fence == 0 {
         return Err(RuntimeError::rejected(
             "mutation_authority_invalid",
             "runtime mutation authority fence must be nonzero",
         ));
     }
-    admit_once(config, authority_fence, operation, true)
+    admit_once(config, authority_fence, operations, true)
 }
 
 fn admit_once(
     config: &RuntimeConfig,
     authority_fence: u64,
-    operation: &Operation,
+    operations: &[Operation],
     retry_race: bool,
 ) -> Result<()> {
-    let records = records(config)?;
-    require_skill_parent(&records, operation)?;
-    let incoming = Record::new(config, authority_fence, operation);
-    let relevant = records
+    let files = files(config)?;
+    let records = files
         .iter()
-        .filter(|record| record.resource == incoming.resource)
+        .map(|file| file.record.clone())
         .collect::<Vec<_>>();
-    if !authorize(&relevant, &incoming)? {
-        return Ok(());
-    }
-    if records.len() >= MAX_AUTHORITY_RECORDS {
-        return Err(corrupt(
-            "runtime mutation authority contains too many records",
-        ));
-    }
-    match io::persist_new(
-        &crate::mutation_scope::root(config, &operation.subject),
-        &incoming,
-    ) {
-        Ok(()) => Ok(()),
-        Err(error) if retry_race && error.code == "mutation_authority_raced" => {
-            admit_once(config, authority_fence, operation, false)
+    let mut proposed = records.clone();
+    let mut additions = Vec::new();
+    for operation in operations {
+        require_skill_parent(&proposed, operation)?;
+        let incoming = Record::new(config, authority_fence, operation);
+        let relevant = proposed
+            .iter()
+            .filter(|record| record.resource == incoming.resource)
+            .collect::<Vec<_>>();
+        if authorize(&relevant, &incoming)? {
+            proposed.push(incoming.clone());
+            additions.push(incoming);
         }
-        Err(error) => Err(error),
     }
+    crate::mutation_capacity::check_loaded(config, &records, operations)?;
+    let mut files = fold::prune(files)?;
+    for incoming in additions {
+        // The derived folded population plus one append is reserved above.
+        if files.len() + 1 >= MAX_AUTHORITY_RECORDS {
+            return Err(crate::mutation_capacity::exhausted());
+        }
+        let root = crate::mutation_scope::root(config, &incoming.subject);
+        match io::persist_new(&root, &incoming) {
+            Ok(()) => {}
+            Err(error) if retry_race && error.code == "mutation_authority_raced" => {
+                return admit_once(config, authority_fence, operations, false);
+            }
+            Err(error) => return Err(error),
+        }
+        files.push(io::AuthorityFile {
+            path: io::record_path(&root, &incoming),
+            record: incoming,
+        });
+        files = fold::prune(files)?;
+    }
+    Ok(())
 }
 
 /// Return the current acknowledgement fence when a started operation still owns authority.
@@ -137,7 +185,7 @@ pub(crate) fn recovery_fence(config: &RuntimeConfig, operation: &Operation) -> R
     )
 }
 
-fn authorize(current_records: &[&Record], incoming: &Record) -> Result<bool> {
+pub(super) fn authorize(current_records: &[&Record], incoming: &Record) -> Result<bool> {
     let Some(latest) = current(current_records.iter().copied()) else {
         return Ok(true);
     };
@@ -181,7 +229,7 @@ fn authorize(current_records: &[&Record], incoming: &Record) -> Result<bool> {
     }))
 }
 
-fn current<'a>(records: impl Iterator<Item = &'a Record>) -> Option<&'a Record> {
+pub(super) fn current<'a>(records: impl Iterator<Item = &'a Record>) -> Option<&'a Record> {
     records.max_by_key(|record| {
         (
             record.authority_fence,
@@ -190,14 +238,16 @@ fn current<'a>(records: impl Iterator<Item = &'a Record>) -> Option<&'a Record> 
     })
 }
 
-fn records(config: &RuntimeConfig) -> Result<Vec<Record>> {
+pub(crate) fn records(config: &RuntimeConfig) -> Result<Vec<Record>> {
+    files(config).map(|files| files.into_iter().map(|file| file.record).collect())
+}
+
+fn files(config: &RuntimeConfig) -> Result<Vec<io::AuthorityFile>> {
     let mut files = Vec::new();
     for root in crate::mutation_scope::roots(config)? {
         files.extend(io::scan(&root)?);
         if files.len() > MAX_AUTHORITY_RECORDS {
-            return Err(corrupt(
-                "runtime mutation authority contains too many records",
-            ));
+            return Err(crate::mutation_capacity::exhausted());
         }
     }
     let mut grouped = BTreeMap::<ResourceKey, Vec<&Record>>::new();
@@ -211,7 +261,7 @@ fn records(config: &RuntimeConfig) -> Result<Vec<Record>> {
     for history in grouped.values() {
         validate_history(history)?;
     }
-    Ok(files.into_iter().map(|file| file.record).collect())
+    Ok(files)
 }
 
 fn validate_record(record: &Record, config: &RuntimeConfig, path: &Path) -> Result<()> {
@@ -224,18 +274,14 @@ fn validate_record(record: &Record, config: &RuntimeConfig, path: &Path) -> Resu
         || record.resource != resource
         || record.disposition != disposition
         || mutation_journal::validate_operation(config, &operation).is_err()
-        || path
-            != io::record_path(
-                &crate::mutation_scope::root(config, &record.subject),
-                record,
-            )
+        || path != record.inventory_name(config)
     {
         return Err(corrupt("runtime mutation authority record is invalid"));
     }
     Ok(())
 }
 
-fn validate_history(records: &[&Record]) -> Result<()> {
+pub(super) fn validate_history(records: &[&Record]) -> Result<()> {
     let present = records
         .iter()
         .filter(|record| record.disposition == Disposition::Present)
@@ -270,7 +316,7 @@ fn same_identity(records: &[&&Record]) -> bool {
     })
 }
 
-fn resource_operation(operation: &Operation) -> (ResourceKey, Disposition) {
+pub(crate) fn resource_operation(operation: &Operation) -> (ResourceKey, Disposition) {
     match &operation.subject {
         Subject::AddWorktree {
             workspace, name, ..
@@ -337,7 +383,7 @@ pub(super) fn io_error(operation: &'static str, error: std::io::Error) -> Runtim
 #[path = "mutation_authority_tests.rs"]
 mod tests;
 
-fn require_skill_parent(records: &[Record], operation: &Operation) -> Result<()> {
+pub(super) fn require_skill_parent(records: &[Record], operation: &Operation) -> Result<()> {
     let Subject::InstallAgentSkill { request } = &operation.subject else {
         return Ok(());
     };
@@ -346,3 +392,7 @@ fn require_skill_parent(records: &[Record], operation: &Operation) -> Result<()>
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "mutation_authority_capacity_tests.rs"]
+mod capacity_tests;

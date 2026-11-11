@@ -213,3 +213,5 @@ fn cleanup_capacity_retry_rejects_expired_or_changed_authority() {
         ));
     }
 }
+
+mod selection_tests;

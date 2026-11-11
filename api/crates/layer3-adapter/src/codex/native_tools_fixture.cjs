@@ -5,7 +5,7 @@ const { createServer } = require("node:http");
 
 const names = ["readEventContext", "replyToEvent", "sendTyping", "updateMessage"];
 
-function processRpc(program, args, options, observe = () => {}) {
+function processRpc(program, args, options, observe = () => {}, timeoutMs = 30000) {
   const child = spawn(program, args, { ...options, detached: true, stdio: ["pipe", "pipe", "pipe"] });
   child.stderr.resume();
   const pending = new Map();
@@ -30,7 +30,7 @@ function processRpc(program, args, options, observe = () => {}) {
       child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
       try {
         const frame = await Promise.race([response, new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error("Native tools deadline: " + method)), 30000);
+          timer = setTimeout(() => reject(new Error("Native tools deadline: " + method)), timeoutMs);
         })]);
         assert.equal(frame.error, undefined, "Native tools operation refused: " + method);
         return frame.result;

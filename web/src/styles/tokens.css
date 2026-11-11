@@ -270,3 +270,55 @@ body {
     --read-column: 100%;
   }
 }
+
+/* Agent Workspace v3 — docs/Web_Style.md §30. */
+body {
+  --dsw-alias-workspace-text: #1d1d1b;
+  --dsw-alias-workspace-secondary: #6e6e69;
+  --dsw-alias-workspace-weak: #a3a39e;
+  --dsw-alias-workspace-border: #ececea;
+  --dsw-alias-workspace-border-strong: #e4e4e0;
+  --dsw-alias-workspace-sidebar: #f7f7f5;
+  --dsw-alias-workspace-selected: #efefec;
+  --dsw-alias-workspace-accent: #4f8a35;
+  --dsw-alias-workspace-task-blue: #245b98;
+  --dsw-alias-workspace-task-purple: #7b3f93;
+  --dsw-alias-workspace-link: #456f2e;
+  --dsw-alias-workspace-success: #8fb07a;
+  --dsw-alias-workspace-danger: #c4493b;
+  --dsw-alias-workspace-ready-text: #8a6416;
+  --dsw-alias-workspace-ready-bg: #f5ecd8;
+  --dsw-alias-workspace-terminal-highlight: rgba(143, 191, 115, 0.18);
+  --dsw-alias-workspace-control-bg: #1d1d1b;
+  --dsw-alias-workspace-control-text: #ffffff;
+  --dsw-alias-workspace-row-height: 36px;
+  --dsw-alias-workspace-group-font: 400 11.5px/18px var(--dsw-font-family);
+  --dsw-alias-workspace-body-font: 400 15px/1.75 var(--dsw-font-family);
+  --dsw-alias-workspace-mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+  --dsw-alias-workspace-tool-font: 400 12.5px/20px var(--dsw-alias-workspace-mono);
+  --dsw-alias-workspace-conversation-min: 420px;
+  --dsw-alias-workspace-title-min: 96px;
+  --dsw-alias-workspace-command-inset: 16px;
+  --dsw-alias-workspace-highlight-duration: 1.8s;
+  --dsw-alias-workspace-status-duration: 1.6s;
+}
+body[data-ds-dark-theme] {
+  --dsw-alias-workspace-text: #fafafa;
+  --dsw-alias-workspace-secondary: #b4b4ae;
+  --dsw-alias-workspace-weak: #969690;
+  --dsw-alias-workspace-border: #27272a;
+  --dsw-alias-workspace-border-strong: #3f3f46;
+  --dsw-alias-workspace-sidebar: #111113;
+  --dsw-alias-workspace-selected: #27272a;
+  --dsw-alias-workspace-accent: #a9cf90;
+  --dsw-alias-workspace-task-blue: #9acbff;
+  --dsw-alias-workspace-task-purple: #d9abee;
+  --dsw-alias-workspace-link: #b9dca4;
+  --dsw-alias-workspace-success: #a4c38e;
+  --dsw-alias-workspace-danger: #ff9689;
+  --dsw-alias-workspace-ready-text: #f0ce82;
+  --dsw-alias-workspace-ready-bg: #332a18;
+  --dsw-alias-workspace-terminal-highlight: rgba(143, 191, 115, 0.24);
+  --dsw-alias-workspace-control-bg: #fafafa;
+  --dsw-alias-workspace-control-text: #1d1d1b;
+}

@@ -2,7 +2,8 @@ use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
-    AgentWorkMutation, SandboxStoreError, VersionedWorktree, MAX_AGENT_WORK_RECEIPTS,
+    AgentRetryObservation, AgentWorkMutation, SandboxStoreError, VersionedWorktree,
+    MAX_AGENT_WORK_RECEIPTS,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentWorkReceipt, AgentWorkStep, Sandbox, SandboxEventKind,
@@ -15,7 +16,10 @@ use super::AgentWorker;
 
 mod context;
 mod effects;
+#[cfg(test)]
+mod ledger_hold_tests;
 mod mapping;
+mod retry_delay;
 pub(super) use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
 pub(super) use effects::{settle_cleanup_debt, settle_compensated_cleanup_debt};
 pub(super) use mapping::{validate_runtime_skills, validate_skills};
@@ -41,6 +45,7 @@ pub(in crate::sandbox) struct WorkerFailure {
     class: &'static str,
     detail: String,
     retryable: bool,
+    observation: Option<AgentRetryObservation>,
 }
 
 impl WorkerFailure {
@@ -49,6 +54,7 @@ impl WorkerFailure {
             class,
             detail: detail.into(),
             retryable: true,
+            observation: None,
         }
     }
 
@@ -57,7 +63,12 @@ impl WorkerFailure {
             class,
             detail: detail.into(),
             retryable: false,
+            observation: None,
         }
+    }
+
+    pub(in crate::sandbox::agent_worker) fn is_ledger_hold(&self) -> bool {
+        self.class == layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD
     }
 
     fn typed(&self) -> TypedFailure {
@@ -122,6 +133,7 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        super::ledger_telemetry::observe(&failure);
         if agent.work.step == AgentWorkStep::PublishConnection {
             self.retry_connection_failure(&agent, failure, now).await
         } else if failure.retryable || agent.status != AgentStatus::Starting {
@@ -137,8 +149,8 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        self.retry_at(agent, failure, now, now + self.config.retry_delay)
-            .await
+        let delay = self.failure_retry_delay(&agent, failure.is_ledger_hold());
+        self.retry_at(agent, failure, now, now + delay).await
     }
 
     pub(super) async fn retry_at(
@@ -148,6 +160,12 @@ impl AgentWorker {
         now: SystemTime,
         ready_at: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if failure.is_ledger_hold() {
+            return self.retry_ledger_hold_at(agent, now, ready_at).await;
+        }
+        if self.retry_marked_capacity_at(&agent, now, ready_at).await? {
+            return Ok(());
+        }
         let expected = agent.revision;
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let step = agent.work.step;
@@ -159,22 +177,28 @@ impl AgentWorker {
         agent.updated_at = stamp.clone();
         agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
         bump_log_sequence(&mut agent, 1)?;
-        self.dependencies
-            .store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: expected,
-                holder: self.config.holder.clone(),
-                fence,
-                agent,
-                worktree: None,
-                appended_at: stamp,
-                sandbox_event: None,
-                agent_logs: vec![AgentLogKind::WorkStepFailed {
-                    step,
-                    failure: failure.typed(),
-                }],
-            })
-            .await
+        let mutation = AgentWorkMutation {
+            expected_agent_revision: expected,
+            holder: self.config.holder.clone(),
+            fence,
+            agent,
+            worktree: None,
+            appended_at: stamp,
+            sandbox_event: None,
+            agent_logs: vec![AgentLogKind::WorkStepFailed {
+                step,
+                failure: failure.typed(),
+            }],
+        };
+        match failure.observation {
+            Some(observed) => {
+                self.dependencies
+                    .store
+                    .commit_agent_work_retry(mutation, observed)
+                    .await
+            }
+            None => self.dependencies.store.commit_agent_work(mutation).await,
+        }
     }
 
     async fn fail_startup(
@@ -294,6 +318,10 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         | AdapterError::Unavailable(detail) => {
             WorkerFailure::retryable("agent_runtime_unavailable", detail)
         }
+        AdapterError::RuntimeLedgerHold(_) => WorkerFailure::retryable(
+            layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD,
+            layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD_DETAIL,
+        ),
         AdapterError::AtCapacity(detail) => WorkerFailure::terminal("agent_resource_quota", detail),
         AdapterError::Rejected(detail) | AdapterError::OperationIdentityConflict(detail) => {
             WorkerFailure::terminal("agent_runtime_rejected", detail)
@@ -304,6 +332,14 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         AdapterError::RuntimeContractMismatch(error) => {
             WorkerFailure::terminal("agent_runtime_contract_mismatch", error.to_string())
         }
+    }
+}
+
+pub(super) fn cleanup_failure(error: layer3_adapter::AdapterError) -> WorkerFailure {
+    if matches!(error, layer3_adapter::AdapterError::RuntimeLedgerHold(_)) {
+        adapter_failure(error)
+    } else {
+        WorkerFailure::retryable("agent_cleanup_unavailable", error.to_string())
     }
 }
 

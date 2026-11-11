@@ -17,6 +17,9 @@ it('preserves GitHub wire examples, including absent fields and explicit nulls',
     'AppVerification',
     'BindRequest',
     'Binding',
+    'BindingApproval',
+    'VerifyBindingRequest',
+    'RetireAppRequest',
     'CreateAppRequest',
     'CredentialStatus',
     'GitHubCapabilities',
@@ -73,4 +76,19 @@ it('keeps webhook secrets in request shapes and out of integration metadata', ()
   expect(
     Gateway.AppIntegrationSchema({ ...integration, webhook_secret: request.webhook_secret }),
   ).toEqual(integration);
+});
+
+it('accepts additive per-channel dispatch progress on receipts', () => {
+  const receipt = {
+    ...Gateway.ReceiptSchema(examples.Receipt?.[0]),
+    dispatch: [
+      {
+        channel_id: 'cmaeg1.ch.example',
+        status: 'dispatched',
+        reason: null,
+        admission_id: 'admission-1',
+      },
+    ],
+  };
+  expect(Gateway.ReceiptSchema(receipt)).toEqual(receipt);
 });

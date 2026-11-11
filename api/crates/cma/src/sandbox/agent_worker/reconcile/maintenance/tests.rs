@@ -9,6 +9,7 @@ fn candidate(index: usize) -> AgentConnectionRecoveryCandidate {
         runtime_generation: 1,
         revision: 1,
         work_step: AgentWorkStep::None,
+        recovery_eligible: true,
         managed_guidance_revision: 0,
         managed_context_eligible: true,
     }

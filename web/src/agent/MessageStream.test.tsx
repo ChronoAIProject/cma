@@ -62,11 +62,14 @@ it('restores the reader position for a revisited Agent instead of jumping to its
 
 it('renders messages and Agent activity in their original stream order', () => {
   render(<MessageStream conversation={conversation()} onApproval={vi.fn()} />);
-  for (const toggle of screen.getAllByRole('button', { name: /^1 tool call/ }))
+  for (const toggle of screen.getAllByRole('button', { name: 'Read package' }))
     fireEvent.click(toggle);
-  expect(screen.getAllByRole('button', { name: /^Thinking/ })).toHaveLength(1);
+  expect(screen.getAllByRole('button', { name: 'View activity' })).toHaveLength(1);
   const ordered = ['Find the issue', 'Write package', 'The issue is fixed', 'Read package'].map(
-    (name) => screen.getByText(name),
+    (name) =>
+      name === 'Read package'
+        ? screen.getByRole('article', { name: 'Tool call: Read package' })
+        : screen.getByText(name),
   );
   ordered
     .slice(1)

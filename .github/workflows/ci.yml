@@ -30,6 +30,14 @@ jobs:
         run: python3 .github/scripts/api-cargo-cache-tests.py
       - name: Runtime image evidence and provenance regressions
         run: node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs
+      - name: Ledger image qualification regressions
+        run: node --test .github/scripts/runtime-ledger-evidence.test.mjs .github/scripts/runtime-ledger-downgrade.test.mjs
+      - name: Migration matrix evidence regressions
+        run: node --test .github/scripts/migration-matrix.test.mjs
+      - name: Debian desktop fixture regressions
+        run: |
+          python3 .github/scripts/desktop-browser-input-tests.py
+          node --test .github/scripts/desktop-browser-page.test.cjs
 
   trigger-provider-smoke-contract:
     name: Trigger provider smoke contract
@@ -43,10 +51,14 @@ jobs:
         run: ruby .github/scripts/ci-contract.rb provider
       - name: Provider contract mutation regressions
         run: ruby .github/scripts/ci-contract-tests.rb provider
+      - name: Backend capacity preparation regressions
+        run: python3 .github/scripts/backend-capacity-tests.py
       - name: Staging authority and evidence regressions
         run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs
       - name: Authenticated Mongo startup regressions
-        run: node --test .github/scripts/authenticated-mongo-readiness.test.mjs
+        run: node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/image-manager-mongo-contract.test.mjs
+      - name: Backend resource sampling regressions
+        run: python3 .github/scripts/backend-resource-sampler-tests.py
       - name: Gateway sealed-record migration regressions
         run: node --test .github/scripts/export-gateway-records.test.mjs
       - name: Install harness dependencies
@@ -81,6 +93,138 @@ jobs:
         working-directory: web
         run: npm run e2e:mechanics
 
+  omarchy:
+    name: Images (runtime-omarchy)
+    runs-on: ubuntu-24.04
+    # Measured 71-80 minute builds need headroom for qualification, scan and export.
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Reserve space on the disposable Omarchy runner
+        run: |
+          test "$GITHUB_ACTIONS" = true
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h /
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+      - name: Omarchy desktop fixture regressions
+        run: |
+          python3 -B .github/scripts/omarchy-cache-key-tests.py
+          python3 .github/scripts/omarchy-close-browser-tests.py
+          python3 .github/scripts/omarchy-browser-input-tests.py
+          node --test .github/scripts/omarchy-browser-page.test.cjs
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Set immutable Omarchy image version
+        id: identity
+        run: echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+      - name: Identify pinned Omarchy dependency cache
+        id: cache
+        run: python3 .github/scripts/omarchy-cache-key.py "$RUNNER_TEMP/omarchy-evidence/cache-inputs.json" >> "$GITHUB_OUTPUT"
+      # Import only complete local archives. Remote GHA indexes can lose blobs
+      # during the build and leave invalid references in the later cache export.
+      - name: Restore complete Omarchy layer cache
+        id: omarchy-cache-restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/omarchy-layer-cache
+          key: omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}
+          fail-on-cache-miss: false
+      - name: Discard incomplete Omarchy cache restore
+        if: steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true'
+        run: rm -rf "$RUNNER_TEMP/omarchy-layer-cache"
+      # Build the tool donor and supervisor from this checkout. The historical
+      # prototype's expiring donor artifact cannot supply a develop release gate.
+      - name: Build current-source Omarchy image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: infra/runtime/Dockerfile
+          target: omarchy
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: cma-runtime-omarchy:ci
+          build-args: |
+            OMARCHY_CMA_BASE=runtime
+            RUNTIME_DESKTOP=1
+            CHRONO_BUILD=${{ steps.identity.outputs.version }}
+            CHRONO_BUILD_SHA=${{ github.sha }}
+            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+          cache-from: |
+            ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
+          # Export final-image layers in this solve, only for a missing archive.
+          # A complete restored archive stays local throughout the build.
+          cache-to: ${{ (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true') && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}
+      - name: Release Omarchy build cache before image checks
+        run: |
+          image_id=$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')
+          docker buildx prune --all --force
+          test "$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')" = "$image_id"
+          df -h /
+      - name: Verify Omarchy runtime contract
+        run: node .github/scripts/omarchy-contract.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/runtime-contract.json"
+      - name: Qualify exact Omarchy ledger storage
+        run: node .github/scripts/runtime-ledger-evidence.mjs cma-runtime-omarchy:ci "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/ledger-storage.json"
+      - name: Prepare native Chromium namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Verify device-free Omarchy desktop
+        run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/device-free"
+      - name: Verify Omarchy virtual graphics desktop
+        env:
+          CMA_OMARCHY_TEST_DRM: '1'
+        run: |
+          sudo modprobe vkms
+          node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/virtual-drm"
+      - name: Verify Omarchy production temporary directory
+        env:
+          CMA_OMARCHY_TEST_IMAGE_TMP: '1'
+        run: node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/image-tmp"
+      - name: Scan tested Omarchy image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: cma-runtime-omarchy:ci
+          format: json
+          output: ${{ runner.temp }}/omarchy-evidence/vulnerabilities.json
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+      - name: Retain Omarchy image evidence
+        if: always() && steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: omarchy-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/omarchy-evidence/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Export tested Omarchy image
+        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        timeout-minutes: 10
+        run: python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
+      - name: Retain tested Omarchy image
+        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-native-image-runtime-omarchy-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-native-image/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Save qualified Omarchy layer cache
+        if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true')
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/omarchy-layer-cache
+          key: omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}
+
   structure:
     name: Repository structure
     runs-on: ubuntu-latest
@@ -100,6 +244,8 @@ jobs:
         run: .github/scripts/check-file-size.sh
       - name: Deployment configuration matches code
         run: .github/scripts/check-config-keys.sh
+      - name: Owner-key Secret cutover contracts
+        run: python3 .github/scripts/cmaeg-owner-key-cutover-tests.py
       - name: Configuration key validator regressions
         run: .github/scripts/check-config-keys-tests.sh
       - uses: actions/setup-node@v6
@@ -279,10 +425,13 @@ jobs:
             exit 1
           fi
 
-  backend:
-    name: Backend
+  backend-lint:
+    name: Backend lint
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     env:
+      # Optional streamed evidence; the hook does not wrap or alter gate commands.
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
       # Full debug symbols made rust-lld crash linking the aggregate CMA test
       # binary on the hosted runner. Keep debug assertions and every test while
       # bounding linker output, as in the verified local workspace build.
@@ -296,6 +445,12 @@ jobs:
         working-directory: api
     steps:
       - uses: actions/checkout@v5
+      - name: Prepare Backend capacity
+        working-directory: .
+        run: >-
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS
+          python3 .github/scripts/backend-capacity.py
+          || echo "::warning::Backend capacity preparation unavailable"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -312,8 +467,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: api
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
       - name: Format
         run: cargo fmt --all --check
+      - name: Desktop browser launch and ownership regressions
+        run: python3 crates/layer4-runtime/src/desktop-browser-test.py
       - name: Native recovery persistence and process fences
         run: python3 crates/layer3-adapter/src/codex/recovery_test.py
       - name: Retained transport native goal read-only proof
@@ -322,31 +480,227 @@ jobs:
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Build
         run: cargo build --workspace --locked
-      - uses: taiki-e/install-action@nextest
+      - name: Doctests
+        run: cargo test --doc --workspace --locked
+
+  backend-test-build:
+    name: Backend test build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      RUST_MIN_STACK: 33554432
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare Backend capacity
+        working-directory: .
+        run: >-
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT,RUNNER_OS
+          python3 .github/scripts/backend-capacity.py
+          || echo "::warning::Backend capacity preparation unavailable"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: api
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
+      - name: Install pinned nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.151
+          fallback: none
+      - name: Archive workspace tests
+        # nextest builds and archives the child executables too. The separate
+        # locked workspace Build gate can stay in lint without delaying tests.
+        run: cargo nextest archive --workspace --locked --archive-file "$RUNNER_TEMP/backend-tests.tar.zst"
+      - name: Upload Backend test archive
+        uses: actions/upload-artifact@v4
+        with:
+          # Exclude run_attempt so failed-job reruns can reuse a successful build.
+          # If the producer is rerun, overwrite replaces that run's archive.
+          name: backend-tests
+          path: ${{ runner.temp }}/backend-tests.tar.zst
+          overwrite: true
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  backend-tests:
+    name: Backend tests (${{ matrix.shard }}/3)
+    needs: backend-test-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
+      RUST_MIN_STACK: 33554432
+      CMA_NEXTEST_REUSE: "1"
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.151
+          fallback: none
+      - name: Download Backend test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-tests
+          path: ${{ runner.temp }}
+      - name: Extract Backend test archive once
+        # env! paths are baked into the binaries and cannot be remapped. Keep
+        # the producer's absolute checkout path and api/target child layout.
+        # binaries-only lists metadata without executing any test process.
+        run: |
+          cargo nextest list --archive-file "$RUNNER_TEMP/backend-tests.tar.zst" --extract-to "$PWD" --list-type binaries-only
+          test -x target/debug/cmaeg
+          test -x target/debug/cmaeg-media-probe
+          test -x target/debug/layer4-runtime
+      - name: Tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: >-
+          bash ../.github/scripts/backend-nextest.sh run --no-fail-fast
+          -E 'not (binary(=media_image_peak) or binary(=turn_metrics))'
+          --partition "count:$SHARD/3"
+
+  backend-timing:
+    name: Backend timing budgets
+    needs: backend-test-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
+      RUST_MIN_STACK: 33554432
+      CMA_NEXTEST_REUSE: "1"
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.151
+          fallback: none
+      - name: Download Backend test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-tests
+          path: ${{ runner.temp }}
+      - name: Extract Backend test archive once
+        # env! paths are baked into the binaries and cannot be remapped. Keep
+        # the producer's absolute checkout path and api/target child layout.
+        # binaries-only lists metadata without executing any test process.
+        run: |
+          cargo nextest list --archive-file "$RUNNER_TEMP/backend-tests.tar.zst" --extract-to "$PWD" --list-type binaries-only
+          test -x target/debug/cmaeg
+          test -x target/debug/cmaeg-media-probe
+          test -x target/debug/layer4-runtime
       - name: Image normalization budgets
         # Measure the existing wall-time and memory limits without competing
-        # test processes. Both commands retain the same workspace build.
+        # test processes. This runner executes the isolated budgets in sequence.
         run: >-
-          cargo nextest run --workspace --locked -E 'binary(=media_image_peak)'
+          bash ../.github/scripts/backend-nextest.sh run -E 'binary(=media_image_peak)'
           --test-threads 1 --success-output final
-      - name: Tests
-        run: cargo nextest run --workspace --locked --no-fail-fast -E 'not (binary(=media_image_peak) or binary(=turn_metrics))'
       - name: Gateway socket latency budget
         # Keep the real-socket 20 ms assertion, without concurrent workspace
         # test processes consuming the same hosted runner's CPU budget.
         run: >-
-          cargo nextest run --workspace --locked -E 'binary(=turn_metrics)'
+          bash ../.github/scripts/backend-nextest.sh run -E 'binary(=turn_metrics)'
           --test-threads 1 --success-output final
       - name: Isolated Linux Workspace removal writer boundary
         run: >-
-          cargo test --locked -p layer4-runtime
-          supervisor::mutation_tests::workspace_reconciliation_tests::real_linux_writer_boundary_reconciles_target_and_resumes_live_sibling
-          -- --ignored --exact --test-threads=1
+          bash ../.github/scripts/backend-nextest.sh run
+          -E 'package(=layer4-runtime) and test(=supervisor::mutation_tests::workspace_reconciliation_tests::real_linux_writer_boundary_reconciles_target_and_resumes_live_sibling)'
+          --run-ignored only --test-threads 1
+
+  backend-mongo:
+    name: Backend Mongo contracts
+    needs: backend-test-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
+      RUST_MIN_STACK: 33554432
+      CMA_NEXTEST_REUSE: "1"
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.151
+          fallback: none
+      - name: Download Backend test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-tests
+          path: ${{ runner.temp }}
+      - name: Extract Backend test archive once
+        # env! paths are baked into the binaries and cannot be remapped. Keep
+        # the producer's absolute checkout path and api/target child layout.
+        # binaries-only lists metadata without executing any test process.
+        run: |
+          cargo nextest list --archive-file "$RUNNER_TEMP/backend-tests.tar.zst" --extract-to "$PWD" --list-type binaries-only
+          test -x target/debug/cmaeg
+          test -x target/debug/cmaeg-media-probe
+          test -x target/debug/layer4-runtime
       - name: Disposable real Mongo persistence contracts
         # A 622-contract run hit the 35-minute limit while tests still passed.
         # Retain the complete corpus and two bounded fixtures on slower runners.
         timeout-minutes: 75
         run: bash ../.github/scripts/mongo-contract-tests.sh
+
+  backend-image-manager:
+    name: Backend Image Manager Mongo isolation
+    needs: backend-test-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
+      RUST_MIN_STACK: 33554432
+      CMA_NEXTEST_REUSE: "1"
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.151
+          fallback: none
+      - name: Download Backend test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-tests
+          path: ${{ runner.temp }}
+      - name: Extract Backend test archive once
+        # env! paths are baked into the binaries and cannot be remapped. Keep
+        # the producer's absolute checkout path and api/target child layout.
+        # binaries-only lists metadata without executing any test process.
+        run: |
+          cargo nextest list --archive-file "$RUNNER_TEMP/backend-tests.tar.zst" --extract-to "$PWD" --list-type binaries-only
+          test -x target/debug/cmaeg
+          test -x target/debug/cmaeg-media-probe
+          test -x target/debug/layer4-runtime
       - uses: actions/setup-node@v6
         with:
           node-version: 24.15.0
@@ -364,40 +718,80 @@ jobs:
         working-directory: web
         run: npx --no-install playwright install --with-deps chromium
       - name: Image Manager authenticated Mongo isolation
-        timeout-minutes: 10
+        # Allow fixture setup/cleanup, all 14 archived groups and the browser
+        # contract to finish with headroom while retaining a finite deadline.
+        timeout-minutes: 15
         run: bash ../.github/scripts/image-manager-mongo-contract.sh
-      - name: Doctests
-        run: cargo test --doc --workspace --locked
 
   cmaeg-latency:
     name: CMAEG latency budget
-    needs: backend
+    needs: backend-test-build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_TEST_DEBUG: "0"
       RUST_MIN_STACK: 33554432
+      CMA_NEXTEST_REUSE: "1"
     defaults:
       run:
         working-directory: api
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - name: Install pinned nextest
+        uses: taiki-e/install-action@v2
         with:
-          workspaces: api
-      - uses: taiki-e/install-action@nextest
+          tool: cargo-nextest@0.9.151
+          fallback: none
+      - name: Download Backend test archive
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-tests
+          path: ${{ runner.temp }}
+      - name: Extract Backend test archive once
+        # env! paths are baked into the binaries and cannot be remapped. Keep
+        # the producer's absolute checkout path and api/target child layout.
+        # binaries-only lists metadata without executing any test process.
+        run: |
+          cargo nextest list --archive-file "$RUNNER_TEMP/backend-tests.tar.zst" --extract-to "$PWD" --list-type binaries-only
+          test -x target/debug/cmaeg
+          test -x target/debug/cmaeg-media-probe
+          test -x target/debug/layer4-runtime
       - name: Enforce the production budgets (one retry)
         run: |
-          cargo nextest run -p cmaeg --run-ignored ignored-only -E 'test(latency_budget)' --locked --success-output final || \
-            cargo nextest run -p cmaeg --run-ignored ignored-only -E 'test(latency_budget)' --locked --success-output final
+          bash ../.github/scripts/backend-nextest.sh run --run-ignored only -E 'package(=cmaeg) and test(~latency_budget)' --success-output final || \
+            bash ../.github/scripts/backend-nextest.sh run --run-ignored only -E 'package(=cmaeg) and test(~latency_budget)' --success-output final
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cmaeg-latency
           path: api/target/cmaeg-latency.txt
           if-no-files-found: warn
+
+  backend:
+    name: Backend
+    needs: [backend-lint, backend-test-build, backend-tests, backend-timing, backend-mongo, backend-image-manager]
+    # GitHub accepts a skipped required check. Always run this join so failed
+    # or cancelled dependencies cannot bypass Backend by skipping it.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every Backend job to succeed
+        # A skipped dependency did not prove its gate; only success is accepted.
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          import os
+          import sys
+          results = json.loads(os.environ["NEEDS"])
+          expected = ["backend-lint", "backend-test-build", "backend-tests", "backend-timing", "backend-mongo", "backend-image-manager"]
+          failed = {job: results.get(job, {}).get("result", "missing") for job in expected if results.get(job, {}).get("result") != "success"}
+          for job, result in failed.items():
+              print(f"::error::{job}: {result}")
+          sys.exit(bool(failed))
+          PYTHON
 
   sdk-typescript:
     name: TypeScript SDK
@@ -585,6 +979,10 @@ jobs:
           ruby-version: "3.4"
       - name: HTTPRoute ownership
         run: ruby .github/scripts/check-http-route-backends.rb
+      - name: Retained Web asset inventory
+        run: |
+          ruby .github/scripts/web-asset-retention-contract.rb
+          ruby .github/scripts/web-asset-retention-tests.rb
       - name: kubeconform
         run: |
           curl -sSL -o kubeconform.tar.gz \
@@ -684,7 +1082,9 @@ jobs:
           # cache. A branch's first run is still cold, since it can only read
           # what the base branch has already populated.
           cache-from: type=gha,scope=${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+          # Same policy as the Cargo job caches: PRs restore, develop saves.
+          # The next native load reuses this runner's local BuildKit layers.
+          cache-to: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,mode=max,scope={0}', matrix.component) || '' }}
       # Reuses the layers just cached above, so this is near-free.
       - name: Load native image for scanning
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
@@ -702,13 +1102,13 @@ jobs:
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ matrix.component }}
       - name: Extract API Cargo cache before pruning
-        if: matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'
         id: api-cargo-cache-export
         timeout-minutes: 3
         run: python3 .github/scripts/api-cargo-cache.py extract
       - name: Release build cache before image checks
         # Native Docker image bytes are independent of BuildKit's build cache.
-        # The cache is already exported above; free its toolchain/build layers
+        # Develop exported its cache above; free the local toolchain/build layers
         # before Trivy's Docker export and the tested-image transfer archive.
         env:
           IMAGE_COMPONENT: ${{ matrix.component }}
@@ -760,11 +1160,46 @@ jobs:
           path: ${{ runner.temp }}/desktop-runtime-evidence.json*
           if-no-files-found: error
           retention-days: 90
+      - name: Qualify exact runtime ledger storage
+        if: matrix.component == 'runtime' || matrix.component == 'runtime-desktop'
+        env:
+          IMAGE_COMPONENT: ${{ matrix.component }}
+        run: node .github/scripts/runtime-ledger-evidence.mjs "cma-${IMAGE_COMPONENT}:ci" "$GITHUB_SHA" "$RUNNER_TEMP/ledger-storage.json"
+      - name: Retain ledger storage evidence
+        if: always() && (matrix.component == 'runtime' || matrix.component == 'runtime-desktop')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ledger-storage-${{ matrix.component }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ledger-storage.json
+          if-no-files-found: error
+          retention-days: 90
       # Preserve the exact native bytes that passed this job. PR artifacts keep
       # their actual merge-checkout revision; consumers must verify tree equality.
       - name: Verify web bundle identity against image metadata
         if: matrix.component == 'web'
         run: python3 .github/scripts/web-build-identity.py cma-web:ci "$GITHUB_SHA" "git-${GITHUB_SHA:0:12}"
+      - uses: actions/setup-node@v6
+        if: matrix.component == 'web'
+        with:
+          node-version: 26
+      - name: Install web image browser harness
+        if: matrix.component == 'web'
+        run: npm ci --prefix web
+      - name: Render exact web image with stale retained assets
+        if: matrix.component == 'web'
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
+          CMA_WEB_IMAGE_EVIDENCE_DIR: ${{ runner.temp }}/web-image-evidence
+        run: python3 .github/scripts/web-image-smoke.py cma-web:ci
+      - name: Retain web image browser evidence
+        if: always() && matrix.component == 'web'
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-image-browser-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/web-image-evidence/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Export tested native image
         if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
         timeout-minutes: 10
@@ -782,7 +1217,7 @@ jobs:
           compression-level: 0
           retention-days: 1
       - name: Save accepted API Cargo cache archive
-        if: success() && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         timeout-minutes: 3
         continue-on-error: true

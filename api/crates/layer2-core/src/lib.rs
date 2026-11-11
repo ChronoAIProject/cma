@@ -11,6 +11,7 @@ pub mod activity_service;
 pub mod authz;
 pub mod bot_setups;
 pub mod bots;
+pub mod budget;
 pub mod capabilities;
 pub mod capacity_bounds;
 pub mod clock;
@@ -87,4 +88,5 @@ pub use pressure::{
 pub use pressure_service::{PressureEdges, PressureMonitor};
 pub use sequence::Sequences;
 
+pub mod dependency_diagnostics;
 pub mod event_workers;

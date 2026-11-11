@@ -17,11 +17,14 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
+        // Model the real retained home/state/transfer mounts with canonical
+        // roots. Indexed startup refuses symlink ancestors and absent mounts.
+        let root = std::env::temp_dir().canonicalize().unwrap().join(format!(
             "cmac-{}",
             &uuid::Uuid::new_v4().simple().to_string()[..16]
         ));
         std::fs::create_dir_all(root.join("home")).unwrap();
+        std::fs::create_dir_all(root.join("transfer")).unwrap();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         Self {
             root,

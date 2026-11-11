@@ -48,6 +48,8 @@ pub struct BrowserObservation {
     pub state: String,
     #[doc = "Sanitized location without addresses or credentials."]
     pub location: String,
+    /// Sanitized current origin, when reported by the runtime.
+    pub address: Option<String>,
     #[doc = "Actual bounded image, if available."]
     pub frame: Option<BrowserFrame>,
     #[doc = "Current unexpired observer leases."]
@@ -153,7 +155,14 @@ impl AgentBrowser<'_> {
                 value.state.as_str(),
                 "paused" | "unsupported" | "not_enabled"
             );
-        if value.agent_id != agent
+        if value.address.as_ref().is_some_and(|address| {
+            address != "about:blank"
+                && (address.len() > 8192
+                    || !reqwest::Url::parse(address).is_ok_and(|url| {
+                        matches!(url.scheme(), "http" | "https")
+                            && url.origin().ascii_serialization() == *address
+                    }))
+        }) || value.agent_id != agent
             || value.runtime_incarnation != incarnation
             || context
                 .is_some_and(|context| value.context_id.as_deref() != Some(context) && !empty_state)

@@ -1,127 +1,167 @@
-/*
- * Tool calls in the conversation timeline — `docs/Web_Style.md` §13.
- *
- * Tool activity is the Agent at work between replies, so it is one quiet line
- * rather than a box: no border, ground or radius, in secondary ink. Expanded
- * rows hang under the summary against a single left rule instead of a frame.
- */
-
+/* Agent Workspace v3 — docs/Web_Style.md §30. */
 .tool-calls {
   width: 100%;
   margin: 0 0 12px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--dsw-alias-workspace-secondary);
 }
-
 .tool-calls__toggle {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
   max-width: 100%;
   min-height: 32px;
-  padding: 4px 8px;
-  margin-left: -8px;
-  color: var(--dsw-alias-label-secondary);
+  padding: 4px 0;
+  color: inherit;
   font: inherit;
-  font-size: 13px;
-  line-height: 20px;
   text-align: left;
   background: transparent;
   border: 0;
   border-radius: 6px;
   cursor: pointer;
-  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
-
-.tool-calls__toggle:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
 .tool-calls__chevron {
   display: inline-flex;
   flex: none;
-  color: var(--dsw-alias-label-tertiary);
 }
-
 .tool-calls__count {
-  flex: none;
+  min-width: 0;
   font-variant-numeric: tabular-nums;
 }
-
-.tool-calls__running {
+.tool-calls__failed,
+.tool-call__error,
+.tool-call__removed {
+  color: var(--dsw-alias-workspace-danger);
+}
+.tool-calls__rows {
+  margin-top: 4px;
+  border: 1px solid var(--dsw-alias-workspace-border);
+  border-radius: 12px;
+  overflow: clip;
+}
+.agent-event--tool {
   min-width: 0;
+}
+.agent-event--tool + .agent-event--tool {
+  border-top: 1px solid var(--dsw-alias-workspace-border);
+}
+.tool-call__line {
+  display: flex;
+  align-items: center;
+  height: var(--dsw-alias-workspace-row-height);
+  min-width: 0;
+  font: var(--dsw-alias-workspace-tool-font);
+}
+.tool-call__expand {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  gap: 12px;
+  padding: 0 8px 0 12px;
+  border: 0;
+  color: var(--dsw-alias-workspace-secondary);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.tool-call__literal {
+  flex: 1;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-
-.tool-calls__failed {
+.tool-call__duration {
   flex: none;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-workspace-weak);
 }
-
-/* Indented past the chevron (14px and the 6px gap) so rows hang under the count. */
-.tool-calls__rows {
-  margin: 4px 0 0 7px;
-  padding-left: 12px;
-  border-left: 1px solid var(--dsw-alias-border-l1);
+.tool-call__icon,
+.tool-call__outcome {
+  flex: none;
+  width: 16px;
 }
-
-.agent-event--tool {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  padding: 8px 0;
+.tool-call__outcome {
+  color: var(--dsw-alias-workspace-success);
 }
-
-.tool-call__line {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  align-items: center;
-  min-width: 0;
-  font-size: 13px;
-  line-height: 20px;
+.agent-event--tool[data-outcome='failed'] .tool-call__outcome {
+  color: var(--dsw-alias-workspace-danger);
 }
-
-/* Reserves the dot's column even when the state draws none, so titles align. */
-.tool-call__dot {
+.tool-call__terminal {
   display: inline-flex;
   flex: none;
+  width: 32px;
+  height: 32px;
   align-items: center;
   justify-content: center;
-  width: 10px;
-  height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-workspace-secondary);
+  cursor: pointer;
 }
-
-.agent-event--tool strong {
-  flex: 1 1 12rem;
-  min-width: 0;
-  color: var(--dsw-alias-label-secondary);
-  font-weight: 400;
+.tool-call__terminal:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.tool-call__expand:hover,
+.tool-call__terminal:hover:not(:disabled),
+.tool-calls__toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.tool-call__expand:focus-visible,
+.tool-call__terminal:focus-visible,
+.tool-calls__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.tool-call__details {
+  padding: 8px 12px;
+}
+.tool-call__details pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: var(--dsw-alias-workspace-tool-font);
+}
+.tool-call__error {
+  margin: 0;
+  padding: 0 12px 8px;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-
-.tool-call__kind {
-  min-width: 0;
-  color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 12px;
-  overflow-wrap: anywhere;
+@media (pointer: coarse) {
+  .tool-call__line {
+    min-height: 44px;
+    height: auto;
+  }
+  .tool-call__expand,
+  .tool-call__terminal {
+    min-height: 44px;
+  }
 }
 
-.tool-call__word {
-  min-width: 0;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  overflow-wrap: anywhere;
+.tool-call__screen {
+  gap: 12px;
+  padding: 0 12px;
+  font: var(--dsw-font-xs-13);
+}
+.tool-call__screen time {
+  flex: none;
+  color: var(--dsw-alias-workspace-weak);
+  font: var(--dsw-alias-workspace-tool-font);
+}
+span.tool-call__terminal {
+  cursor: default;
 }
 
-.agent-event--tool[data-outcome='failed'] .tool-call__word {
-  color: var(--dsw-alias-state-error-primary);
+.tool-call__added {
+  color: var(--dsw-alias-workspace-accent);
 }
 
-/* Details line up under the title, past the dot's column and its gap. */
-.agent-event--tool > details {
-  margin-left: 18px;
+.tool-call__error {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  white-space: pre-wrap;
 }

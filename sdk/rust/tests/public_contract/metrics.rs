@@ -10,6 +10,9 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         c.client.usage_metrics()
     };
     let op = c.case.operation.as_str();
+    if op == "POST /api/v1/admin/usage/metrics/options" {
+        return c.check(api.options(&c.body()?).await);
+    }
     if op.starts_with("POST ") {
         return c.check(api.create(&c.body()?).await);
     }
@@ -20,7 +23,19 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         sort: c.q("sort"),
         order: c.q("order"),
     };
-    if op.ends_with("/owners") {
+    if op.ends_with("/owner-allocations") {
+        c.check(
+            api.owner_allocations(
+                id,
+                &cma_sdk::usage_metrics::OwnerAllocationQuery {
+                    metric: c.q("metric").unwrap(),
+                    limit: page.limit,
+                    cursor: page.cursor,
+                },
+            )
+            .await,
+        )
+    } else if op.ends_with("/owners") {
         c.check(api.owners(id, c.q("search").as_deref(), &page).await)
     } else if op.ends_with("/sandboxes") {
         c.check(api.sandboxes(id, &page).await)

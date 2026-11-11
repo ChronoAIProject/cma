@@ -39,7 +39,7 @@ it('preserves setup and native title provenance through decoded v2 replay and re
   );
   await waitFor(() => {
     if (result.current.state.status !== 'ready') throw new Error('Agent did not load');
-    expect(agentDisplayTitle(result.current.state.detail)).toBe(setup);
+    expect(agentDisplayTitle(result.current.state.detail)).toBe('Agent one');
   });
   await act(async () => {
     h.gap('reconnected', null);
@@ -162,7 +162,7 @@ it('keeps an idle conversation clear of loss notices when its stream connects af
   unmount();
 });
 
-it('clears a reasoning-only refresh on new live data and preserves confirmed history gaps', async () => {
+it('keeps a reasoning-only refresh frozen until durable history confirms the turn', async () => {
   const h = harness();
   const { result, unmount } = renderHook(() => useAgentController(h.client, 'agt_1'));
   await waitFor(() => expect(h.streaming).toBe(true));
@@ -175,7 +175,9 @@ it('clears a reasoning-only refresh on new live data and preserves confirmed his
     conversation: { recovery: [expect.objectContaining({ clearsOn: 'live-update' })] },
   });
   await act(async () => h.live('reasoning_summary_delta', 'A fresh thought', 1));
-  expect(result.current.state).toMatchObject({ conversation: { recovery: [] } });
+  expect(result.current.state).toMatchObject({
+    conversation: { recovery: [expect.objectContaining({ clearsOn: 'live-update' })] },
+  });
   await act(async () => {
     h.durable(2, { type: 'history_gap', frames: 2 });
     h.gap('lagged', 1);
@@ -206,8 +208,8 @@ it.each([1, null])(
     });
     expect(result.current.state).toMatchObject({
       conversation: {
-        messages: [],
-        reasoning: [],
+        messages: [expect.objectContaining({ content: 'Uncommitted text' })],
+        reasoning: [expect.objectContaining({ content: 'Uncommitted thought' })],
         recovery: [
           expect.objectContaining({ id: 'live-gap:1', title: 'Refreshing live updates…' }),
         ],
@@ -264,7 +266,7 @@ it('does not silently discard unfinished text when an idle reconnect follows can
   expect(result.current.state).toMatchObject({
     conversation: {
       activeRunId: undefined,
-      messages: [],
+      messages: [expect.objectContaining({ content: 'Uncommitted cancelled text' })],
       recovery: [expect.objectContaining({ title: 'Refreshing live updates…' })],
     },
   });
@@ -333,8 +335,8 @@ it('clears uncommitted fragments on a gap and suppresses text already covered by
   expect(result.current.state).toMatchObject({
     conversation: {
       cursor: 1,
-      messages: [expect.objectContaining({ content: 'suffix' })],
-      reasoning: [],
+      messages: [expect.objectContaining({ content: 'prefix' })],
+      reasoning: [expect.objectContaining({ content: 'thought' })],
       recovery: [expect.objectContaining({ title: 'Refreshing live updates…' })],
     },
   });

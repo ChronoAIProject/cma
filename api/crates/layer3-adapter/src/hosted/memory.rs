@@ -353,6 +353,9 @@ impl HostedBackend for InMemoryHostedBackend {
             .await
             .push((handle.clone(), RequestFrame::OpenAgent(launch.clone())));
         if let Some(failure) = self.queued_failure(WireOperation::OpenAgent) {
+            if super::reply::ledger_hold(&failure) {
+                return Err(super::reply::failure_error(failure));
+            }
             return Err(AdapterError::Rejected(format!(
                 "{}: {}",
                 failure.code, failure.detail

@@ -4,8 +4,10 @@ import type { ToolCall } from '../model';
 interface OperationObservation {
   readonly toolCalls: readonly ToolCall[];
   readonly activeRunId?: string;
+  readonly historyLoaded: boolean;
 }
 
+/** The retained conversation supplies Terminal output without another event subscription. */
 export class AgentComputerObservation {
   constructor(
     readonly scope: {
@@ -13,31 +15,12 @@ export class AgentComputerObservation {
       readonly subject: string;
       readonly agentId?: string;
     },
-    private readonly openReplay?: () => void,
+    private readonly openTerminal?: () => void,
   ) {}
-
   private value: OperationObservation | undefined;
   private readonly listeners = new Set<() => void>();
-  private replay: { readonly turn: string } | undefined;
-  private readonly replayListeners = new Set<() => void>();
-  readonly replaySnapshot = () => this.replay;
-  readonly subscribeReplay = (listener: () => void) => {
-    this.replayListeners.add(listener);
-    return () => {
-      this.replayListeners.delete(listener);
-    };
-  };
-  readonly selectReplay = (turn: string) => {
-    this.replay = { turn };
-    for (const listener of this.replayListeners) listener();
-    this.openReplay?.();
-  };
-  readonly clearReplaySelection = () => {
-    if (!this.replay) return;
-    this.replay = undefined;
-    for (const listener of this.replayListeners) listener();
-  };
-
+  private terminal: { readonly id: string; readonly revision: number } | undefined;
+  private readonly terminalListeners = new Set<() => void>();
   readonly snapshot = () => this.value;
   readonly subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -45,24 +28,37 @@ export class AgentComputerObservation {
       this.listeners.delete(listener);
     };
   };
-
-  publish(toolCalls: readonly ToolCall[] | undefined, activeRunId?: string) {
-    if (this.value?.toolCalls === toolCalls && this.value?.activeRunId === activeRunId) return;
-    this.value = toolCalls === undefined ? undefined : { toolCalls, activeRunId };
+  readonly terminalSnapshot = () => this.terminal;
+  readonly subscribeTerminal = (listener: () => void) => {
+    this.terminalListeners.add(listener);
+    return () => {
+      this.terminalListeners.delete(listener);
+    };
+  };
+  readonly selectTerminal = (id: string) => {
+    this.terminal = { id, revision: (this.terminal?.revision ?? 0) + 1 };
+    this.openTerminal?.();
+    for (const listener of this.terminalListeners) listener();
+  };
+  publish(toolCalls: readonly ToolCall[] | undefined, activeRunId?: string, historyLoaded = true) {
+    if (
+      this.value?.toolCalls === toolCalls &&
+      this.value?.activeRunId === activeRunId &&
+      this.value?.historyLoaded === historyLoaded
+    )
+      return;
+    this.value = toolCalls === undefined ? undefined : { toolCalls, activeRunId, historyLoaded };
     for (const listener of this.listeners) listener();
   }
 }
-
 const empty = () => undefined;
 const idle = () => () => {};
-
 export function useComputerObservation(observation?: AgentComputerObservation) {
   return useSyncExternalStore(observation?.subscribe ?? idle, observation?.snapshot ?? empty);
 }
-
-export function useReplaySelection(observation?: AgentComputerObservation) {
+export function useTerminalSelection(observation?: AgentComputerObservation) {
   return useSyncExternalStore(
-    observation?.subscribeReplay ?? idle,
-    observation?.replaySnapshot ?? empty,
+    observation?.subscribeTerminal ?? idle,
+    observation?.terminalSnapshot ?? empty,
   );
 }

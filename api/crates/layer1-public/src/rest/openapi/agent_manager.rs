@@ -19,6 +19,11 @@ const OPERATIONS: &[(&str, &[&str])] = &[
     ),
     ("/api/v1/usage/metrics/reports/{report}/series", &["get"]),
     ("/api/v1/admin/usage/metrics/reports", &["post"]),
+    ("/api/v1/admin/usage/metrics/options", &["post"]),
+    (
+        "/api/v1/admin/usage/metrics/reports/{report}/owner-allocations",
+        &["get"],
+    ),
     ("/api/v1/admin/usage/metrics/reports/{report}", &["get"]),
     (
         "/api/v1/admin/usage/metrics/reports/{report}/sandboxes",

@@ -203,6 +203,31 @@ fn unresolved_recovery_allows_explicit_retry_but_cannot_admit_another_automatic_
     requested.automatic = false;
     let retried = apply_unpublished_runtime_recovery(&held, &requested).unwrap();
     assert!(retried.sandbox.lifecycle.unpublished_recovery_attempted);
+    let mut renewed = retried.sandbox;
+    reach_reopen(&mut renewed);
+    let fence = renewed.work.claim(HOLDER.into(), NOW, END.into()).unwrap();
+    renewed
+        .park_failed_runtime_update(failure("terminal_validation"), HOLDER, fence, NOW.into())
+        .unwrap();
+    assert_eq!(renewed.work.step, SandboxWorkStep::None);
+    assert!(renewed.work.lease.is_none());
+    assert!(renewed.lifecycle.unpublished_recovery_attempted);
+    assert_eq!(
+        renewed
+            .runtime_update_request()
+            .unwrap()
+            .failure
+            .as_ref()
+            .unwrap()
+            .class,
+        "terminal_validation"
+    );
+    let mut parked_again = snapshot(true);
+    parked_again.sandbox = renewed;
+    parked_again.validate().unwrap();
+    let mut automatic = request(parked_again.clone());
+    automatic.automatic = true;
+    assert!(apply_unpublished_runtime_recovery(&parked_again, &automatic).is_err());
     let mut bypass = held.sandbox.clone();
     bypass.lifecycle.unpublished_recovery_attempted = false;
     assert!(held

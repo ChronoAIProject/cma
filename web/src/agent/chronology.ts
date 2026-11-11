@@ -138,6 +138,7 @@ export function mergeTranscriptSnapshot(
   const rowById = new Map(rows.map((row) => [`${row.group}:${row.id}`, row]));
   const messages = new Map(current.messages.map((message) => [message.id, message]));
   const liveByRun = new Map<string | undefined, (typeof current.messages)[number]>();
+  const replacedLiveRuns = new Set<string>();
   for (const message of current.messages)
     if (message.liveOnly && !liveByRun.has(message.runId)) liveByRun.set(message.runId, message);
   const missing: Row[] = [];
@@ -159,6 +160,7 @@ export function mergeTranscriptSnapshot(
       messages.delete(existing.id);
       messages.set(message.id, {
         ...message,
+        renderKey: message.renderKey ?? existing.renderKey ?? existing.id,
         commandId: message.commandId ?? existing.commandId,
         status:
           current.cursor >= snapshot.cursor && existing.status === 'error'
@@ -177,11 +179,17 @@ export function mergeTranscriptSnapshot(
       const known = rowById.get(`messages:${live.id}`)!;
       Object.assign(known, row);
       rowById.set(`messages:${message.id}`, known);
+      if (message.runId !== undefined) replacedLiveRuns.add(message.runId);
     } else {
       missing.push(row);
       rowById.set(`messages:${message.id}`, row);
     }
-    messages.set(message.id, message);
+    messages.set(
+      message.id,
+      live === undefined
+        ? message
+        : { ...message, renderKey: message.renderKey ?? live.renderKey ?? live.id },
+    );
   }
   const recovery = [...current.recovery];
   for (const notice of snapshot.recovery) {
@@ -205,7 +213,26 @@ export function mergeTranscriptSnapshot(
       order: 0,
     });
   }
-  const result = { ...current, messages: [...messages.values()], recovery };
+  const completedRuns = new Set(replacedLiveRuns);
+  if (
+    snapshot.cursor > previousCursor &&
+    current.activeRunId !== undefined &&
+    snapshot.activeRunId !== current.activeRunId
+  )
+    completedRuns.add(current.activeRunId);
+  const clearedRecovery = recovery.filter(
+    (notice) => notice.clearsOn === undefined || !completedRuns.has(notice.runId ?? ''),
+  );
+  const clearedGapRuns =
+    current.liveGapRuns === undefined
+      ? undefined
+      : new Set([...current.liveGapRuns].filter((runId) => !completedRuns.has(runId)));
+  const result = {
+    ...current,
+    messages: [...messages.values()],
+    recovery: clearedRecovery,
+    liveGapRuns: clearedGapRuns?.size === 0 ? undefined : clearedGapRuns,
+  };
   const positions = new Map(
     insertMissingRows(rows, missing).map((row, index) => [`${row.group}:${row.id}`, index + 1]),
   );
@@ -223,6 +250,10 @@ export function mergeTranscriptSnapshot(
   const activeRunId = useSnapshotState ? snapshot.activeRunId : current.activeRunId;
   return {
     ...result,
+    title: useSnapshotState ? (snapshot.title ?? current.title) : (current.title ?? snapshot.title),
+    ownerTitle: useSnapshotState
+      ? (snapshot.ownerTitle ?? current.ownerTitle)
+      : (current.ownerTitle ?? snapshot.ownerTitle),
     latestTurnId:
       Number(current.latestTurnId ?? 0) >= Number(snapshot.latestTurnId ?? 0)
         ? current.latestTurnId

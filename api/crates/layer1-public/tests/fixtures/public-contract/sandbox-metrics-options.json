@@ -1,0 +1,722 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "metrics-options-anonymous",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-forbidden",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "usage authority required",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-invalid",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner",
+          "cursor": "invalid-cursor"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Invalid retained cursor",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-busy",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_busy",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner"
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/reporting_budget_exceeded",
+          "title": "reporting_budget_exceeded",
+          "status": 429,
+          "detail": "reporting budget exhausted; retry with a narrower range",
+          "code": "reporting_budget_exceeded"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-unavailable",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "retry-after": "2"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/usage_unavailable",
+          "title": "usage_unavailable",
+          "status": 503,
+          "detail": "usage reporting is temporarily unavailable; retry or use a narrower range",
+          "code": "usage_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-owners",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner",
+          "search": "Alex",
+          "limit": 2
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "value": "owner",
+              "label": "Alex Chen"
+            }
+          ],
+          "next": "fixture-options-cursor"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-owners-next",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner",
+          "search": "Alex",
+          "limit": 2,
+          "cursor": "fixture-options-cursor"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "value": "owner",
+              "label": "Alex Chen"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-duplicate-names",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner",
+          "search": "duplicate"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "value": "owner",
+              "label": "Alex Chen",
+              "disambiguator": "Joined 2026-01-01"
+            },
+            {
+              "value": "other-owner",
+              "label": "Alex Chen",
+              "disambiguator": "Joined 2026-02-01"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-sandboxes",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "sandbox",
+          "owner": "owner",
+          "search": "Research"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "value": "sbx_00000000000000000000000000000001",
+              "label": "Research"
+            }
+          ],
+          "next": "fixture-options-cursor"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-runtime",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "runtime"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "value": "v1",
+              "label": "v1"
+            }
+          ],
+          "next": "fixture-options-cursor"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-selected",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "sandbox",
+          "owner": "owner",
+          "selected": "sbx_00000000000000000000000000000001"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "value": "sbx_00000000000000000000000000000001",
+              "label": "Research"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-empty",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner",
+          "selected": "missing"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-duplicate-created",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "sandbox",
+          "search": "duplicate-created"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "value": "sbx_00000000000000000000000000000001",
+              "label": "Research",
+              "disambiguator": "Alice · Created 1970-01-01"
+            },
+            {
+              "value": "other-owner",
+              "label": "Research",
+              "disambiguator": "Alice · Created 1970-01-02"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-duplicate-created-time",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "sandbox",
+          "search": "duplicate-created-time"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "value": "sbx_00000000000000000000000000000001",
+              "label": "Research",
+              "disambiguator": "Alice · Created 1970-01-01 00:16:40 UTC"
+            },
+            {
+              "value": "other-owner",
+              "label": "Research",
+              "disambiguator": "Alice · Created 1970-01-01 00:16:41 UTC"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-duplicate-joined-time",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_directory",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner",
+          "search": "duplicate-joined-time"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "value": "owner",
+              "label": "Alex Chen",
+              "disambiguator": "Joined 2026-01-01 12:30:00.001 UTC"
+            },
+            {
+              "value": "other-owner",
+              "label": "Alex Chen",
+              "disambiguator": "Joined 2026-01-01 12:30:00.002 UTC"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-duplicate-identical",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_directory",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner",
+          "search": "duplicate-identical"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "value": "owner",
+              "label": "Alex Chen",
+              "disambiguator": "Joined 2026-01-01 12:30:00 UTC · reference 4c1029697ee3"
+            },
+            {
+              "value": "other-owner",
+              "label": "Alex Chen",
+              "disambiguator": "Joined 2026-01-01 12:30:00 UTC · reference 911918f74061"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-duplicate-joined-time-without-directory",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner",
+          "search": "duplicate-joined-time"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "value": "owner",
+              "label": "Alex Chen",
+              "disambiguator": "Joined 2026-01-01 · reference 4c1029697ee3"
+            },
+            {
+              "value": "other-owner",
+              "label": "Alex Chen",
+              "disambiguator": "Joined 2026-01-01 · reference 911918f74061"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-duplicate-identical-without-directory",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner",
+          "search": "duplicate-identical"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "value": "owner",
+              "label": "Alex Chen",
+              "disambiguator": "Joined 2026-01-01 · reference 4c1029697ee3"
+            },
+            {
+              "value": "other-owner",
+              "label": "Alex Chen",
+              "disambiguator": "Joined 2026-01-01 · reference 911918f74061"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-directory-only-forbidden",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_directory_only",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "owner"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "usage authority required",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "metrics-options-duplicate-created-collision",
+      "operation": "POST /api/v1/admin/usage/metrics/options",
+      "scenario": "metrics_admin_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "sandbox",
+          "search": "duplicate-created-collision"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "value": "sbx_00000000000000000000000000000001",
+              "label": "Research",
+              "disambiguator": "Alice · Created 2026-11-01 12:30 UTC"
+            },
+            {
+              "value": "other-owner",
+              "label": "Research",
+              "disambiguator": "Alice · Created 2026-11-02"
+            },
+            {
+              "value": "third-sandbox",
+              "label": "Research",
+              "disambiguator": "Alice · Created 2026-11-01 · Created 2026-11-03"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

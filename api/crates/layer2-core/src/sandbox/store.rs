@@ -65,14 +65,17 @@ mod agent_log_capacity;
 pub use agent_log_capacity::{plan_agent_log_capacity_failure, AGENT_LOG_CAPACITY_FAILURE};
 mod agent_cleanup_capacity;
 pub use agent_cleanup_capacity::{
-    agent_cleanup_capacity_retry, plan_agent_cleanup_capacity_retry,
-    validate_agent_cleanup_capacity_log,
+    agent_cleanup_capacity_retry, agent_cleanup_capacity_retry_hint,
+    plan_agent_cleanup_capacity_retry, plan_agent_marked_cleanup_capacity_retry,
+    plan_agent_runtime_ledger_hold_retry, validate_agent_cleanup_capacity_log,
+    AGENT_RUNTIME_LEDGER_HOLD, AGENT_RUNTIME_LEDGER_HOLD_DETAIL, NORMAL_AGENT_LOG_ENTRIES,
 };
 mod agent_sign_in;
 pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
-    AgentConnectionRecoveryRequest, AgentWorkMutation, AgentWorkerStore, VersionedWorktree,
+    AgentConnectionRecoveryRequest, AgentRetryObservation, AgentWorkMutation, AgentWorkerStore,
+    VersionedWorktree,
 };
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
@@ -152,6 +155,8 @@ pub struct Page<T> {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxStoreError {
+    #[error(transparent)]
+    Budget(crate::budget::BudgetError),
     #[error("record not found")]
     NotFound,
     #[error("record already exists")]

@@ -63,6 +63,8 @@ it.each(['unavailable', 'network', 'timeout'])(
   'keeps rendered history and the exact draft read-only through a %s access refresh',
   async (failure) => {
     vi.useFakeTimers();
+    // Keep relative message ages stable while access-refresh timers advance.
+    vi.setSystemTime(new Date('2026-11-10T12:00:00Z'));
     const test = fixture();
     const { unmount } = render(test.show());
     await act(() => vi.advanceTimersByTimeAsync(0));
@@ -85,10 +87,7 @@ it.each(['unavailable', 'network', 'timeout'])(
     expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'More Agent actions' }));
-    expect(screen.getByRole('menuitem', { name: /^Show Agent details/ })).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
+    expect(screen.getByRole('button', { name: /^Show Agent details/ })).toBeDisabled();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.getByText(/Checking Agent access/)).toBeInTheDocument();
     fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));

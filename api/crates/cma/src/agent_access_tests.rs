@@ -3,6 +3,8 @@ use layer2_core::sandbox::agent_io::AgentAuthorizationRevision;
 use layer2_core::sandbox::SandboxPolicy;
 use layer2_core::{Authorization, SubjectId};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+#[path = "agent_access_tests/tenant_isolation.rs"]
+mod tenant_isolation;
 
 struct Authority {
     revoked: AtomicBool,

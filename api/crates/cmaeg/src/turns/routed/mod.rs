@@ -107,6 +107,8 @@ mod delivery_tests;
 #[cfg(test)]
 mod destination_tests;
 #[cfg(test)]
+mod long_queue_tests;
+#[cfg(test)]
 mod readiness_tests;
 #[cfg(test)]
 mod recovery_tests;
@@ -128,6 +130,8 @@ mod executor_activity_tests;
 mod executor_tests;
 #[cfg(test)]
 mod expiry_tests;
+#[cfg(test)]
+mod oversized_frame_tests;
 #[cfg(test)]
 mod projection_store_tests;
 #[cfg(test)]

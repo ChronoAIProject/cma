@@ -166,6 +166,10 @@
   margin: 0 0 16px;
   font: var(--dsw-font-s-strong-14);
 }
+.operator-settings h4 {
+  margin: 24px 0 16px;
+  font: var(--dsw-font-s-strong-14);
+}
 .operator-detail dl {
   display: grid;
   grid-template-columns: minmax(72px, 34%) minmax(0, 1fr);

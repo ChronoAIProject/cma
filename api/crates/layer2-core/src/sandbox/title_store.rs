@@ -61,6 +61,8 @@ pub struct AgentTitleClaim {
     mode: AgentTitleClaimMode,
     acquired_at: SystemTime,
     expires_at: SystemTime,
+    attempts: u32,
+    terminal_fallback: bool,
 }
 
 impl AgentTitleClaim {
@@ -77,7 +79,31 @@ impl AgentTitleClaim {
             mode,
             acquired_at,
             expires_at,
+            attempts: 0,
+            terminal_fallback: false,
         }
+    }
+
+    #[doc(hidden)]
+    pub fn with_attempts(mut self, attempts: u32) -> Self {
+        self.attempts = attempts;
+        self
+    }
+    pub const fn attempts(&self) -> u32 {
+        self.attempts
+    }
+    pub fn settle_fallback(mut self) -> Self {
+        self.terminal_fallback = true;
+        self
+    }
+    pub const fn terminal_fallback(&self) -> bool {
+        self.terminal_fallback
+    }
+    pub fn next_attempt_at(&self) -> SystemTime {
+        self.acquired_at
+            + Duration::from_secs(
+                super::AGENT_TITLE_RETRY_SECONDS * (1 << self.attempts.saturating_sub(1).min(2)),
+            )
     }
 
     pub fn agent_id(&self) -> &AgentId {
