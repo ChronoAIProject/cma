@@ -431,16 +431,16 @@ pub(crate) async fn fixture_for_owner_with_router_and_context(
     Arc<BindingAccessService>,
     BindingPrincipal,
 ) {
-    fixture_for_owner_with_context_mode(
+    fixture_for_owner_with_context_mode(ContextFixtureMode {
         conversation_state,
         admission_race,
         owner_kind,
         router,
         retained_context_lookup,
-        false,
-        false,
-        false,
-    )
+        unavailable_context: false,
+        fence_race: false,
+        revoke_on_lookup: false,
+    })
     .await
 }
 
@@ -453,16 +453,16 @@ pub(crate) async fn fixture_for_owner_with_unavailable_context(
     Arc<BindingAccessService>,
     BindingPrincipal,
 ) {
-    fixture_for_owner_with_context_mode(
+    fixture_for_owner_with_context_mode(ContextFixtureMode {
         conversation_state,
-        false,
+        admission_race: false,
         owner_kind,
-        None,
-        true,
-        true,
-        false,
-        false,
-    )
+        router: None,
+        retained_context_lookup: true,
+        unavailable_context: true,
+        fence_race: false,
+        revoke_on_lookup: false,
+    })
     .await
 }
 
@@ -475,16 +475,16 @@ pub(crate) async fn fixture_for_owner_with_fence_race(
     Arc<BindingAccessService>,
     BindingPrincipal,
 ) {
-    fixture_for_owner_with_context_mode(
+    fixture_for_owner_with_context_mode(ContextFixtureMode {
         conversation_state,
-        false,
+        admission_race: false,
         owner_kind,
-        None,
-        true,
-        false,
-        true,
-        false,
-    )
+        router: None,
+        retained_context_lookup: true,
+        unavailable_context: false,
+        fence_race: true,
+        revoke_on_lookup: false,
+    })
     .await
 }
 
@@ -497,28 +497,32 @@ pub(crate) async fn fixture_for_owner_with_revocation_race(
     Arc<BindingAccessService>,
     BindingPrincipal,
 ) {
-    fixture_for_owner_with_context_mode(
+    fixture_for_owner_with_context_mode(ContextFixtureMode {
         conversation_state,
-        false,
+        admission_race: false,
         owner_kind,
-        None,
-        true,
-        false,
-        false,
-        true,
-    )
+        router: None,
+        retained_context_lookup: true,
+        unavailable_context: false,
+        fence_race: false,
+        revoke_on_lookup: true,
+    })
     .await
 }
 
-async fn fixture_for_owner_with_context_mode(
+struct ContextFixtureMode<'a> {
     conversation_state: BindingConversationState,
     admission_race: bool,
-    owner_kind: &str,
+    owner_kind: &'a str,
     router: Option<Arc<dyn super::BindingEventRouter>>,
     retained_context_lookup: bool,
     unavailable_context: bool,
     fence_race: bool,
     revoke_on_lookup: bool,
+}
+
+async fn fixture_for_owner_with_context_mode<'a>(
+    mode: ContextFixtureMode<'a>,
 ) -> (
     axum::Router,
     Arc<InMemorySandboxStore>,
@@ -528,7 +532,7 @@ async fn fixture_for_owner_with_context_mode(
     let (state, store) = fixtures::conversation_fixture().await;
     let agent = fixtures::seeded_agent("agt_fixture", AgentStatus::Ready, 2, None);
     fixtures::insert_agent(&store, agent.clone(), vec![]).await;
-    let mut reserved = binding_with_owner("binding-responses", &"a".repeat(64), owner_kind);
+    let mut reserved = binding_with_owner("binding-responses", &"a".repeat(64), mode.owner_kind);
     reserved.sandbox_id = agent.sandbox_id.clone();
     reserved.workspace_id = agent.workspace_id.clone();
     let binding = ready(&store, reserved).await;
@@ -552,7 +556,7 @@ async fn fixture_for_owner_with_context_mode(
         .save_binding_conversation(binding.revision, None, conversation.clone())
         .await
         .unwrap();
-    conversation.state = conversation_state;
+    conversation.state = mode.conversation_state;
     conversation.revision += 1;
     store
         .save_binding_conversation(binding.revision, Some(1), conversation)
@@ -566,11 +570,11 @@ async fn fixture_for_owner_with_context_mode(
         .unwrap();
     let authority = Arc::new(BindingAuthority {
         bindings: bindings.clone(),
-        admission_race: admission_race.then(|| store.clone()),
+        admission_race: mode.admission_race.then(|| store.clone()),
         changed: AtomicBool::new(false),
     });
     let phase = Arc::new(AtomicUsize::new(0));
-    let resource_store: Arc<dyn ResourceShareStore> = if fence_race {
+    let resource_store: Arc<dyn ResourceShareStore> = if mode.fence_race {
         Arc::new(RetireOnFenceStore {
             inner: store.clone(),
             phase: phase.clone(),
@@ -582,16 +586,16 @@ async fn fixture_for_owner_with_context_mode(
         ResourceAccessService::new(resource_store, authority.clone())
             .with_bindings(bindings.clone()),
     );
-    let command_store: Arc<dyn AgentCommandStore> = if unavailable_context {
+    let command_store: Arc<dyn AgentCommandStore> = if mode.unavailable_context {
         Arc::new(UnavailableContextCommands {
             inner: store.clone(),
         })
-    } else if revoke_on_lookup {
+    } else if mode.revoke_on_lookup {
         Arc::new(RetireAfterExternalLookup {
             inner: store.clone(),
             binding_id: binding.binding_id.clone(),
         })
-    } else if fence_race {
+    } else if mode.fence_race {
         Arc::new(ArmOnExternalLookup {
             inner: store.clone(),
             phase,
@@ -606,8 +610,8 @@ async fn fixture_for_owner_with_context_mode(
         state.reads.with_resource_access(access),
     )
     .with_bindings(bindings.clone())
-    .with_retained_context_lookup(retained_context_lookup);
-    if let Some(router) = router {
+    .with_retained_context_lookup(mode.retained_context_lookup);
+    if let Some(router) = mode.router {
         state = state.with_event_router(router);
     }
     let app = super::router(state);
