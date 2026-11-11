@@ -7,6 +7,29 @@ construct a maintenance permit or change an Agent's lifecycle. Follow the
 [release runbook](CMA_Ledger_Release_Runbook.md) for the executable observations
 and the independent production gates.
 
+## Migration record: runtime ledger collection format 3
+
+Migration ID: `2026-11-12-runtime-ledger-collection-v3-readers`. Tracking:
+#1443 and #1461; prerequisites are the held V2 deactivation in #1663 and bounded
+evidence integration in #1699. Layer 4 owns the archive and active-ledger formats;
+the release operator owns production execution and verification. The phase is
+reader expansion and synthetic qualification. No production backfill or activation
+command is introduced. There is no startup DDL or implicit archive upgrade.
+
+The source head, local executable hash, test environment and results are recorded
+in the implementing PR and retained validation receipt. Candidate and approved
+recovery image digests remain unqualified until the complete release matrix runs.
+Archive versions 1/2 remain supported; only explicit format 3 creates the added
+tables/index, while the active V2 schema remains unchanged. No TTL or retention
+deletion is added. Real-home writers stay closed until the runbook's admission,
+physical exclusion, protected full-home backup and compatible-artifact gates pass.
+
+Completion of this expansion means its tests and create-only native storage probe
+pass. It is distinct from per-group acknowledgement, production migration
+completion and either tracking issue's closure. A production execution record
+must independently bind the reviewed source/checksum, exact image, cohort,
+authority, backup and final receipts before declaring those later outcomes.
+
 ## Explicit archive reader floor
 
 Archive format 3 adds original-evidence, bounded pending-operation and completion
