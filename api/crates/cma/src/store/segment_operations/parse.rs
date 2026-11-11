@@ -1,21 +1,7 @@
 use super::{authority::Access, gate, writer_control, Result};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum AuditAction {
-    Unit,
-    Cancel,
-    Install,
-}
-
-impl AuditAction {
-    pub(super) fn name(self) -> &'static str {
-        match self {
-            Self::Unit => "audit_unit",
-            Self::Cancel => "audit_cancel",
-            Self::Install => "audit_install",
-        }
-    }
-}
+use crate::store::agent_log_segments::audit_command;
+pub(super) use crate::store::agent_log_segments::audit_command::Action as AuditAction;
 
 pub(super) enum Operation {
     Role(Access),
@@ -44,6 +30,14 @@ pub(super) fn operation(arguments: &[String]) -> Result<Operation> {
     if gate::is_command(arguments) {
         return gate::parse(arguments).map(Operation::Gate);
     }
+    if audit_command::is_command(arguments) {
+        let command = audit_command::parse(arguments)?;
+        return Ok(Operation::Audit {
+            action: command.action,
+            agent: command.agent_id,
+            id: command.audit_id,
+        });
+    }
     let args: Vec<_> = arguments.iter().map(String::as_str).collect();
     match args.as_slice() {
         ["--print-agent-log-operator-role", kind] => Ok(Operation::Role(match *kind {
@@ -52,27 +46,6 @@ pub(super) fn operation(arguments: &[String]) -> Result<Operation> {
             "gate-write" => Access::GateWrite,
             _ => return Err("unknown operator role"),
         })),
-        [command, agent, id] => {
-            let action = match *command {
-                "--agent-log-audit-unit" => AuditAction::Unit,
-                "--agent-log-audit-cancel" => AuditAction::Cancel,
-                "--agent-log-audit-install" => AuditAction::Install,
-                _ => return Err("unknown Agent log operator command"),
-            };
-            for value in [agent, id] {
-                if value.is_empty()
-                    || value.len() > 128
-                    || value.chars().any(|c| c.is_control() || c.is_whitespace())
-                {
-                    return Err("operator identity is empty, oversized or malformed");
-                }
-            }
-            Ok(Operation::Audit {
-                action,
-                agent: (*agent).into(),
-                id: (*id).into(),
-            })
-        }
         _ => Err("unsupported Agent log operator arguments"),
     }
 }
