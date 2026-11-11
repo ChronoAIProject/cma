@@ -11,12 +11,13 @@ mod journal;
 #[cfg(test)]
 mod journal_tests;
 #[cfg(test)]
-mod lifecycle_tests;
+pub(crate) mod lifecycle_tests;
 mod observation;
 mod processes;
 mod queries;
 #[cfg(test)]
 mod queries_tests;
+pub(crate) mod retirement_inventory;
 pub(crate) use queries::ProcessFilter;
 #[cfg(test)]
 mod processes_tests;
