@@ -271,3 +271,51 @@ fn usage_without_original_turn_and_incomplete_steering_fail_closed() {
     );
     state.validate_aggregate(&agent).unwrap();
 }
+
+#[test]
+fn generation_maxima_are_independent_required_source_facts() {
+    let (mut agent, mut state) = opened();
+    assert_eq!(
+        (state.max_opened_generation, state.max_retired_generation),
+        (1, 0)
+    );
+    apply(
+        &mut state,
+        &mut agent,
+        AgentLogKind::RuntimeGenerationRetired {
+            previous_generation: 1,
+            runtime_generation: 2,
+        },
+    );
+    assert_eq!(
+        (state.max_opened_generation, state.max_retired_generation),
+        (1, 2)
+    );
+    apply(
+        &mut state,
+        &mut agent,
+        AgentLogKind::ConversationOpened {
+            conversation_id: "second-native".into(),
+            runtime_generation: 3,
+        },
+    );
+    assert_eq!(
+        (state.max_opened_generation, state.max_retired_generation),
+        (3, 2)
+    );
+    agent.conversation.conversation_id = Some("second-native".into());
+    agent.conversation.runtime_generation = Some(3);
+    state.validate_aggregate(&agent).unwrap();
+    let value = serde_json::to_value(&state).unwrap();
+    for name in ["max_opened_generation", "max_retired_generation"] {
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove(name);
+        assert!(serde_json::from_value::<AgentLogProjectionState>(missing).is_err());
+    }
+    let original = state.max_opened_generation;
+    state.max_opened_generation = 0;
+    assert!(state.validate_aggregate(&agent).is_err());
+    state.max_opened_generation = original;
+    state.max_retired_generation = original;
+    assert!(state.validate_aggregate(&agent).is_err());
+}
