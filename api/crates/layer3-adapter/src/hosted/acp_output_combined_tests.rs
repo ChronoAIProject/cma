@@ -42,8 +42,11 @@ async fn combined_policies_admit_once_after_raw_refusal_and_preserve_exact_ack()
     let ConversationUpdate::RuntimeOutput { receipt, update } = updates.try_recv().unwrap() else {
         panic!("accepted permission requires its original source receipt")
     };
-    let permission = match *update.unwrap() {
-        ConversationUpdate::WithoutPromptEvidence(update) => *update,
+    let update = update.unwrap();
+    assert!(update.is_shared());
+    assert!(std::ptr::eq(&*update, &*update.clone()));
+    let permission = match &*update {
+        ConversationUpdate::WithoutPromptEvidence(update) => &**update,
         other => other,
     };
     assert!(matches!(permission, ConversationUpdate::Asked(_)));
@@ -111,4 +114,84 @@ async fn combined_permission_refusal_releases_raw_storage_without_receipt_or_ter
     opened.bridge.retire().await;
     opened.relay.abort();
     let _ = opened.relay.await;
+}
+
+#[tokio::test]
+async fn combined_json_refusal_keeps_raw_capacity_cursor_and_receipts_unchanged() {
+    let (opened, _server, _received) = open_with_permissions(true, true).await;
+    let pool = budget(&opened, 8192, false).await;
+    let (capture, mut updates) = UpdateRelay::capture();
+    assert!(matches!(
+        opened
+            .bridge
+            .receive_output(&retained(3, b"{"), &capture)
+            .await,
+        Err(AdapterError::Rejected(_))
+    ));
+    assert_eq!(pool.available_permits(), 8192);
+    assert!(updates.try_recv().is_err());
+    assert_eq!(
+        opened
+            .bridge
+            .output
+            .as_ref()
+            .unwrap()
+            .lock()
+            .await
+            .last_received,
+        Some(2)
+    );
+    assert_eq!(
+        *opened
+            .bridge
+            .managed_context_progress()
+            .await
+            .unwrap()
+            .borrow(),
+        0
+    );
+    stop(opened).await;
+}
+
+#[tokio::test]
+async fn raw_copy_stays_reserved_during_bounded_delivery_and_releases_on_cancellation() {
+    let (opened, _server, _received) = open_with_permissions(true, true).await;
+    let pool = budget(&opened, 8192, false).await;
+    let (out, mut received) = mpsc::channel(1);
+    let (relay, task) = crate::hosted::update_relay::spawn(out, true);
+    // Fill ingress without yielding to its task on this current-thread runtime.
+    for frames in 0..32 {
+        relay.send(ConversationUpdate::Lost { frames }).await;
+    }
+    let bytes = retained(3, b"{}");
+    let mut delivery = Box::pin(opened.bridge.receive_output(&bytes, &relay));
+    assert!(futures_util::poll!(&mut delivery).is_pending());
+    assert!(pool.available_permits() < 8192);
+    drop(delivery);
+    assert_eq!(pool.available_permits(), 8192);
+    drop(relay);
+    for expected in 0..32 {
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(2), received.recv()).await.unwrap(),
+            Some(ConversationUpdate::Lost { frames }) if frames == expected
+        ));
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), received.recv())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    task.await.unwrap();
+    assert_eq!(
+        *opened
+            .bridge
+            .managed_context_progress()
+            .await
+            .unwrap()
+            .borrow(),
+        0,
+        "cancelled delivery published no retained receipt or durable progress"
+    );
+    stop(opened).await;
 }
