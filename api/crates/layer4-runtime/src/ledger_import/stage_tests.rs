@@ -261,10 +261,15 @@ async fn terminal_history_past_the_v1_limit_does_not_consume_outstanding_slots()
     assert_eq!(summary["operations"], 1025);
     assert_eq!(summary["terminal"], 1025);
     assert_eq!(summary["reserved_bytes"], 0);
-    let pending: i64 = database(&output)
-        .query_row("SELECT sum(pending) FROM scope_budget", [], |r| r.get(0))
+    let (pending, scope_rows): (i64, i64) = database(&output)
+        .query_row(
+            "SELECT coalesce(sum(pending),0),count(*) FROM scope_budget",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
         .unwrap();
     assert_eq!(pending, 0);
+    assert_eq!(scope_rows, 0);
 }
 
 #[tokio::test]
