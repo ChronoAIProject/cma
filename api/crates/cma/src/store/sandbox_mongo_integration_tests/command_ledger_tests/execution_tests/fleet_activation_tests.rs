@@ -315,3 +315,36 @@ async fn failed_fleet_preparation_keeps_the_existing_append_fallback_usable() {
     .await;
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn fleet_legacy_semantic_ineligibility_keeps_the_complete_append_contract() {
+    let (client, name) = database("fleet_legacy_fallback").await;
+    // This retained fixture intentionally lacks a complete semantic prefix.
+    // Structural appends remain valid under the existing compatibility contract.
+    let (legacy, agent, _) = fixture(&name, &client).await;
+    let store = legacy.with_fleet_log_percentage(100);
+    isolated(async {
+        let first = store
+            .append_agent_log(&agent.id, NOW.into(), kind())
+            .await
+            .unwrap();
+        assert_eq!(first.seq, agent.conversation.last_seq + 1);
+        assert_eq!(snapshot(ScanCaller::Other, true)[0], 1);
+        store
+            .append_agent_log(&agent.id, NOW.into(), kind())
+            .await
+            .unwrap();
+        assert_eq!(snapshot(ScanCaller::Other, true)[0], 2);
+    })
+    .await;
+    let row = store
+        .agents
+        .find_one(doc! { "_id": agent.id.as_str() })
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!row.contains_key(QUARANTINE_FIELD));
+    assert!(!parse_integrity(&row).unwrap().unwrap().semantic.valid);
+    client.database(&name).drop().await.unwrap();
+}
