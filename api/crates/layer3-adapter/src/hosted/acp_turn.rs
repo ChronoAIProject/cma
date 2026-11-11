@@ -214,7 +214,7 @@ impl Bridge {
                         )),
                     };
                     if let Some(update) = update {
-                        updates.send(update);
+                        updates.send(update).await;
                     }
                 });
                 Ok(())
@@ -222,14 +222,16 @@ impl Bridge {
             Err(error) => {
                 let previous = self.owned_prompt_waiters.fetch_sub(1, Ordering::SeqCst);
                 debug_assert!(previous > 0, "failed prompt releases its waiter");
-                updates.send(scoped_turn_outcome(
-                    Outcome::Failed {
-                        message: format!("prompt could not be sent to the agent: {error}"),
-                        capability: None,
-                    },
-                    false,
-                    terminal_identity,
-                ));
+                updates
+                    .send(scoped_turn_outcome(
+                        Outcome::Failed {
+                            message: format!("prompt could not be sent to the agent: {error}"),
+                            capability: None,
+                        },
+                        false,
+                        terminal_identity,
+                    ))
+                    .await;
                 Err(error)
             }
         }
