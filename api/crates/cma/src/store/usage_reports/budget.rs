@@ -29,8 +29,8 @@ impl Pressure {
         );
         if !failed {
             let mut pending = self.checked_out.lock().unwrap_or_else(|e| e.into_inner());
-            // The reporting pool has four connections; bound diagnostic state
-            // even during topology changes or missing driver events.
+            // Bound diagnostic state across configured pool sizes, topology
+            // changes and missing driver events.
             if pending.len() < 32 {
                 pending.insert(key, at);
             }

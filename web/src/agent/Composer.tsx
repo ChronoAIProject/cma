@@ -200,13 +200,21 @@ export function Composer({
     const field = inputRef.current;
     if (field === null) return;
     let width = field.clientWidth;
+    let frame: number | undefined;
     const observer = new ResizeObserver(() => {
       if (field.clientWidth === width) return;
       width = field.clientWidth;
-      fit(field);
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        fit(field);
+      });
     });
     observer.observe(field);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
   }, []);
 
   const submit = (quickMessage?: string) => {
