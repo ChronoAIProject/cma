@@ -1,5 +1,5 @@
 //! Every branch has an explicit complete index; missing indexes refuse.
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
 use layer2_core::sandbox::{Workspace, Worktree};
 use layer3_adapter::runtime_ledger_collection::{CollectionRequest, MAX_COLLECTION_DEPENDENCIES};
@@ -17,12 +17,16 @@ use super::{
 
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 
+#[path = "ledger_collection_indexes.rs"]
+mod indexes;
+
 pub(super) struct ReadBudget<'a> {
     db: &'a Database,
     session: &'a mut ClientSession,
     digest: Sha256,
     rows: usize,
     bytes: usize,
+    indexes: BTreeMap<String, Vec<Document>>,
 }
 
 impl<'a> ReadBudget<'a> {
@@ -40,6 +44,7 @@ impl<'a> ReadBudget<'a> {
             digest,
             rows: 0,
             bytes: 0,
+            indexes: BTreeMap::new(),
         }
     }
 
@@ -131,6 +136,14 @@ impl<'a> ReadBudget<'a> {
         filter: Document,
         index: Document,
     ) -> Result<Vec<Document>> {
+        if !self.indexes.contains_key(collection) {
+            let inventory = indexes::read(self.db, collection).await?;
+            for index in &inventory {
+                self.account(&format!("index:{collection}"), index)?;
+            }
+            self.indexes.insert(collection.to_owned(), inventory);
+        }
+        let name = indexes::complete_name(&self.indexes[collection], &index)?;
         let remaining = MAX_COLLECTION_DEPENDENCIES
             .checked_sub(self.rows)
             .ok_or(BudgetExceeded)?;
@@ -138,7 +151,7 @@ impl<'a> ReadBudget<'a> {
             .db
             .collection::<Document>(collection)
             .find(filter)
-            .hint(Hint::Keys(index))
+            .hint(Hint::Name(name))
             .limit((remaining + 1) as i64)
             .max_time(Duration::from_secs(2))
             .sort(doc! {"_id":1})
@@ -158,20 +171,27 @@ impl<'a> ReadBudget<'a> {
             let document: Document = cursor
                 .deserialize_current()
                 .map_err(|_| UnknownEligibility)?;
-            let bytes =
-                mongodb::bson::serialize_to_vec(&document).map_err(|_| UnknownEligibility)?;
-            self.bytes = self.bytes.checked_add(bytes.len()).ok_or(BudgetExceeded)?;
-            if self.bytes > MAX_BYTES {
-                return Err(BudgetExceeded);
-            }
-            self.rows += 1;
-            self.digest.update((collection.len() as u64).to_be_bytes());
-            self.digest.update(collection.as_bytes());
-            self.digest.update((bytes.len() as u64).to_be_bytes());
-            self.digest.update(bytes);
+            self.account(collection, &document)?;
             rows.push(document);
         }
         Ok(rows)
+    }
+
+    fn account(&mut self, context: &str, document: &Document) -> Result<()> {
+        if self.rows == MAX_COLLECTION_DEPENDENCIES {
+            return Err(BudgetExceeded);
+        }
+        let bytes = mongodb::bson::serialize_to_vec(document).map_err(|_| UnknownEligibility)?;
+        self.bytes = self.bytes.checked_add(bytes.len()).ok_or(BudgetExceeded)?;
+        if self.bytes > MAX_BYTES {
+            return Err(BudgetExceeded);
+        }
+        self.rows += 1;
+        self.digest.update((context.len() as u64).to_be_bytes());
+        self.digest.update(context.as_bytes());
+        self.digest.update((bytes.len() as u64).to_be_bytes());
+        self.digest.update(bytes);
+        Ok(())
     }
 }
 
