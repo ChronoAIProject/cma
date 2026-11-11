@@ -103,7 +103,7 @@ pub(super) async fn segmented_with_width(
     install(store, agent, entries, closed, width).await
 }
 
-async fn install(
+pub(super) async fn install(
     store: &MongoSandboxStore,
     mut agent: Agent,
     entries: Vec<AgentLogEntry>,
