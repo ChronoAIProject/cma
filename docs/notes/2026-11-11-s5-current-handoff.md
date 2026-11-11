@@ -48,20 +48,25 @@ registered, but compilation/execution are pending.
 
 ## Runtime and shared-file handoff
 
-Exact functions and the supplied patch are documented in
-`docs/notes/2026-11-11-s5-runtime-confirmation-handoff.md` and
-`docs/notes/2026-11-11-s5-adapter-shared.patch`.
-S2 owns shared Layer 3 trait/export/hosted/Codex wiring; S5 owns the focused neutral
-contract and hosted validation/test children. The new children remain unregistered
-until S2 integrates that patch. Seven authored Layer 3 tests have not executed.
+The shared adapter changes are integrated and separately published at
+`ccfce0137ec2d9df4e85bd8d74dfebf0d9e0093a` on
+`tl/cma-log-segments/restricted-reconnect`. The consumed patch was removed from
+the integration documentation in favor of executable source. S2 owns shared
+trait/export/Hosted/Codex and protocol/dispatcher wiring; S5 owns the focused
+producer, restricted transport and model/registry implementation.
+
+All seven restricted Layer 3 tests passed within a 22-test adapter run on the
+identical Layer 3 subtree at combined source `60790c80d`. These tests do not
+supply or prove a native production producer. The exact ownership and result
+are in `docs/notes/2026-11-11-segments-strict-lint-assignments.md`.
 
 The primary method is
 `api/crates/layer3-adapter/src/adapter.rs::SandboxAdapter::reconnect_agent_for_capacity_recovery`.
 Its hosted path is
 `api/crates/layer3-adapter/src/hosted/adapter_sandbox.rs::reconnect_agent_for_capacity_recovery`,
 with the optional native hook in `hosted/backend.rs::HostedBackend` and Codex
-forwarding in `codex/adapter.rs`. Shared roots need the owner's size refactor.
-Layer 4 must supply retained-process-only native state/output observation and
+forwarding in `codex/adapter.rs`. Shared roots are now below 500 lines.
+S5's focused producer, with S2's shared Layer 4 dispatcher changes, must supply retained-process-only native state/output observation and
 attachment. Supervisor AgentProcess/Bridge currently have no independent
 prompt/approval-state proof. No ordinary reconnect, settings/context replay,
 PublishConnection or inferred native state is permitted.
