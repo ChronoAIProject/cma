@@ -29,7 +29,7 @@ pub(crate) async fn pause(
         .settings
         .pause_triggers(&caller)
         .await
-        .map(Into::into)
+        .map(|stored| SettingsView::new(stored, state.settings.model_budget_writes_enabled()))
         .map(Json)
         .map_err(CollectionProblem::from)
 }
@@ -48,7 +48,7 @@ pub(crate) async fn resume(
         .settings
         .resume_triggers(&caller)
         .await
-        .map(Into::into)
+        .map(|stored| SettingsView::new(stored, state.settings.model_budget_writes_enabled()))
         .map(Json)
         .map_err(CollectionProblem::from)
 }
