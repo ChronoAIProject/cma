@@ -1,6 +1,7 @@
 use super::*;
 
 mod transcript_projection_tests;
+mod usage_projection_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
