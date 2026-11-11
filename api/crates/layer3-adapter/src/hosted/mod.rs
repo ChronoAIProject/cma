@@ -12,6 +12,8 @@ mod acp_turn;
 mod adapter;
 mod agent_sandbox_backend;
 mod backend;
+mod capacity_recovery;
+pub use capacity_recovery::CapacityRecoveryNativeTransport;
 mod channel_tools;
 mod checkpoint_store;
 mod checkpoint_transport;
