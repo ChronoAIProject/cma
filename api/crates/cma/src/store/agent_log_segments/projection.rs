@@ -142,7 +142,7 @@ pub(in crate::store) async fn read(
     Ok(projection.record)
 }
 
-pub(super) async fn title_through(
+pub(in crate::store) async fn title_through(
     store: &MongoSandboxStore,
     agent: &Agent,
     head: &Head,
