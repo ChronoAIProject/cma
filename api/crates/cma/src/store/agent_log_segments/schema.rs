@@ -234,7 +234,7 @@ pub(in crate::store) async fn verify(database: &Database) -> Result<(), StoreErr
 
 enum Step {
     Collection(&'static str),
-    Index(&'static str, IndexModel),
+    Index(&'static str, Box<IndexModel>),
 }
 
 /// Inspect the existing contract before any additive operation. Partial
@@ -254,7 +254,7 @@ async fn pending(database: &Database) -> Result<Vec<Step>, StoreError> {
             pending.extend(
                 indexes(name)
                     .into_iter()
-                    .map(|index| Step::Index(name, index)),
+                    .map(|index| Step::Index(name, Box::new(index))),
             );
             continue;
         };
@@ -289,7 +289,7 @@ async fn pending(database: &Database) -> Result<Vec<Step>, StoreError> {
                     || index.options.as_ref().and_then(|o| o.name.as_ref()) == expected_name
             });
             match matching.next() {
-                None => pending.push(Step::Index(name, expected)),
+                None => pending.push(Step::Index(name, Box::new(expected))),
                 Some(index) => {
                     if matching.next().is_some()
                         || !index.keys.iter().eq(expected.keys.iter())
@@ -335,7 +335,7 @@ pub(in crate::store) async fn apply_next(database: &Database) -> Result<bool, St
         Step::Index(name, index) => {
             database
                 .collection::<Document>(name)
-                .create_index(index)
+                .create_index(*index)
                 .write_concern(mongodb::options::WriteConcern::majority())
                 .await
                 .map_err(unavailable)?;
