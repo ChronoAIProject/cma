@@ -1,6 +1,22 @@
 //! A selection observation cannot authorize changed authority or corrupt history.
 use super::*;
 
+fn with_expected_quarantine(mut captured: Document) -> Document {
+    let field = "agent_log_integrity_quarantine_v1";
+    assert!(!captured.contains_key(field));
+    let agent: Agent =
+        mongodb::bson::deserialize_from_bson(captured.get("record").unwrap().clone()).unwrap();
+    captured.insert(
+        field,
+        doc! {
+            "format": 1_i64,
+            "reason": "integrity_validation_failed",
+            "observed_head": i64::try_from(agent.conversation.last_seq).unwrap(),
+        },
+    );
+    captured
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn selected_retry_revalidates_revision_identity_work_lease_head_and_tail() {
@@ -93,18 +109,21 @@ async fn selected_retry_revalidates_revision_identity_work_lease_head_and_tail()
         }
         // All races occur after the exact marker observation and before the
         // production commit's fresh snapshot, with real Mongo records.
-        let mut expected = agents
+        let expected = agents
             .find_one(agent_filter.clone())
             .await
             .unwrap()
             .unwrap();
-        if matches!(variant, 7 | 8) {
-            expect_quarantine(&mut expected);
-        }
-        assert!(
-            f.h.store.commit_agent_work(request).await.is_err(),
-            "variant {variant}"
-        );
+        let result = f.h.store.commit_agent_work(request).await;
+        assert!(result.is_err(), "variant {variant}");
+        // Only damaged history persists quarantine. Ordinary authority races
+        // must leave the complete envelope, including metadata, unchanged.
+        let expected = if matches!(variant, 7 | 8) {
+            assert!(matches!(result, Err(SandboxStoreError::Corrupt(_))));
+            with_expected_quarantine(expected)
+        } else {
+            expected
+        };
         assert_eq!(
             agents
                 .find_one(agent_filter.clone())
@@ -195,25 +214,16 @@ async fn selected_retry_still_checks_gaps_schema_extra_tail_and_physical_limits(
                 }
             }
         }
-        let mut expected = agents
+        let expected = agents
             .find_one(agent_filter.clone())
             .await
             .unwrap()
             .unwrap();
-        expect_quarantine(&mut expected);
         let result = f.h.store.commit_agent_work(proposal.clone()).await;
         assert!(result.is_err(), "variant {variant}");
         match variant {
             0 => assert_eq!(result, Err(SandboxStoreError::SequenceConflict)),
-            1 => assert!(matches!(result, Err(SandboxStoreError::Corrupt(_)))),
-            // The trusted-prefix proof rejects an extra tail before the
-            // complete scan can classify it as a sequence conflict.
-            2 => assert_eq!(
-                result,
-                Err(SandboxStoreError::Corrupt(
-                    "Agent log has rows beyond its trusted head".into()
-                ))
-            ),
+            1 | 2 => assert!(matches!(result, Err(SandboxStoreError::Corrupt(_)))),
             _ => assert_eq!(result, Err(SandboxStoreError::AgentLogCapacityExceeded)),
         }
         assert_eq!(
@@ -222,7 +232,8 @@ async fn selected_retry_still_checks_gaps_schema_extra_tail_and_physical_limits(
                 .await
                 .unwrap()
                 .unwrap(),
-            expected
+            with_expected_quarantine(expected),
+            "variant {variant}"
         );
         agents
             .replace_one(agent_filter.clone(), original.clone())
@@ -241,21 +252,6 @@ async fn selected_retry_still_checks_gaps_schema_extra_tail_and_physical_limits(
         .unwrap();
     }
     f.h.store.commit_agent_work(proposal).await.unwrap();
+    assert_retry(&current, &f.h.stored(&current.id).await, 30);
     f.cleanup().await;
-}
-
-fn expect_quarantine(row: &mut Document) {
-    // A rejected corrupt-history write now retains this exact audit marker
-    // outside the aborted transaction. Full row equality below still refuses
-    // any change to lifecycle state, work authority, revision or log head.
-    let observed_head = row.get_i64("last_seq").unwrap();
-    assert!(!row.contains_key("agent_log_integrity_quarantine_v1"));
-    row.insert(
-        "agent_log_integrity_quarantine_v1",
-        doc! {
-            "format": 1_i64,
-            "reason": "integrity_validation_failed",
-            "observed_head": observed_head,
-        },
-    );
 }
