@@ -148,7 +148,20 @@ async fn mongo_logout_before_between_and_after_promotion_never_leaves_a_session(
         let binding = SecretDigest::identify("browser-login", step);
         let login = login(&format!("fresh-{step}"));
         if step == "before-adoption" {
+            let revoked_at = SystemTime::now();
             second.revoke_browser_binding(&binding).await.unwrap();
+            let tombstone = first
+                .browser_logins
+                .find_one(doc! {"_id":binary(*binding.as_bytes())})
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                tombstone.expires_at
+                    >= DateTime::from_system_time(
+                        revoked_at + crate::auth::BROWSER_BINDING_LIFETIME
+                    )
+            );
             assert!(!first
                 .reserve_browser_login(
                     binding.clone(),
