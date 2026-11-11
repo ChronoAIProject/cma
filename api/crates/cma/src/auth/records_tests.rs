@@ -17,12 +17,12 @@ fn state(reasons: &[ClosureReason]) -> PlatformAdmissionState {
 }
 
 #[test]
-fn registration_is_closed_for_new_subjects_only_while_a_closure_exists() {
+fn registration_is_closed_for_new_subjects_only_while_a_closure_exists_and_existing_owners_pass() {
     use ClosureReason::*;
     use RegistrationDecision::*;
     for (closures, existing, expected) in [
         (&[][..], false, Admitted),
-        (&[][..], true, Admitted),
+        (&[][..], true, Existing),
         (&[SpendWarning][..], false, Closed),
         (&[SpendWarning][..], true, Existing),
         (&[SpendStop][..], false, Closed),
