@@ -22,6 +22,10 @@ mod resource_execution;
 mod capacity_execution;
 #[path = "capacity_public_tests.rs"]
 mod capacity_public;
+#[path = "capacity_timing_tests.rs"]
+mod capacity_timing;
+#[path = "capacity_usage_tests.rs"]
+mod capacity_usage;
 
 #[path = "request_budget_tests.rs"]
 mod request_budget;

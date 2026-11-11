@@ -221,7 +221,7 @@ async fn public_case(bytes: bool, refused: bool) {
     client.database(&name).drop().await.unwrap();
 }
 
-async fn response(
+pub(super) async fn response(
     store: Arc<MongoSandboxStore>,
     agent: &Agent,
     authority: Arc<Authority>,
