@@ -8,6 +8,7 @@ use crate::store::agent_log_segments::{
 
 #[derive(Clone)]
 pub(in crate::store) struct Recorded {
+    database: String,
     pub operation: PublicationIdentity,
     pub publication: Publication,
     pub next: Agent,
@@ -21,6 +22,9 @@ impl Recorded {
         store: &MongoSandboxStore,
         session: &mut mongodb::ClientSession,
     ) -> Result<bool, SandboxStoreError> {
+        if self.database != store.agents.namespace().db {
+            return Ok(false);
+        }
         Ok(matches!(writer_reconcile::reconcile(
             store, &self.operation, &self.next, &self.logs,
             &self.publication.result_digest, session,
@@ -66,6 +70,7 @@ pub(in crate::store) async fn publish_existing(
     let plan = prepare(store, scope, &captured, input, None, admission.as_ref()).await?;
     let publication = persist(store, scope, plan, aggregate).await?;
     Ok(Recorded {
+        database: store.agents.namespace().db,
         operation,
         publication,
         next,
