@@ -15,7 +15,8 @@ pub use legacy::BoundedAgentLogFold;
 #[serde(deny_unknown_fields)]
 pub struct AgentLogProjectionState {
     pub through_seq: u64,
-    /// Maxima of actual committed open/retirement source records, not current state.
+    /// Max event.runtime_generation, independently for each native boundary kind.
+    /// Zero is a certified absence only when this state covers the captured head.
     pub max_opened_generation: u64,
     pub max_retired_generation: u64,
     #[serde(deserialize_with = "required_nullable")]
@@ -247,19 +248,6 @@ impl AgentLogProjectionState {
             return Err("Agent steering fence has no adjacent owner message".into());
         }
         let changes = self.apply(agent, entry, queued_owner)?;
-        match entry.kind {
-            AgentLogKind::ConversationOpened {
-                runtime_generation, ..
-            } => {
-                self.max_opened_generation = self.max_opened_generation.max(runtime_generation);
-            }
-            AgentLogKind::RuntimeGenerationRetired {
-                runtime_generation, ..
-            } => {
-                self.max_retired_generation = self.max_retired_generation.max(runtime_generation);
-            }
-            _ => {}
-        }
         self.through_seq = entry.seq;
         Ok(changes)
     }

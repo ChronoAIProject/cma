@@ -8,9 +8,10 @@ use mongodb::{
 };
 
 use super::{
+    collections::collection,
     corrupt, digest,
     publication::{self, Publication, PublicationIdentity},
-    read_format, read_head, visit_range, LogRange, Seal,
+    read_format, read_head, visit_range, LogRange, Seal, PUBLICATIONS, SEGMENTS,
 };
 use crate::store::{
     agent_log_integrity::{ensure_append_batch_size, TransactionLogError},
@@ -38,9 +39,8 @@ pub(in crate::store) async fn reconcile(
     operation.validate()?;
     ensure_append_batch_size(logs.len())?;
     let incarnation = digest::incarnation(expected);
-    let receipt = store
-        .segment_logs
-        .publications
+    let publications = collection(store, PUBLICATIONS);
+    let receipt = publications
         .find_one(doc! {
             "_id":publication::identity(expected.id.as_str(), &incarnation, &operation.key),
         })
@@ -90,9 +90,8 @@ pub(in crate::store) async fn reconcile(
     }
     if receipt.active_ordinal > 0 {
         let ordinal = receipt.active_ordinal - 1;
-        let seal = store
-            .segment_logs
-            .seals
+        let seals = collection(store, SEGMENTS);
+        let seal = seals
             .find_one(doc! {"_id":Seal::identity(&head.agent_id, &head.incarnation, ordinal)})
             .read_concern(ReadConcern::snapshot())
             .session(&mut *session)
