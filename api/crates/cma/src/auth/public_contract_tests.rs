@@ -200,12 +200,36 @@ async fn scenario(name: &str) -> Scenario {
                 actor_link_intent: None,
                 silent: name == "auth_callback_silent_declined",
                 consent_requested: false,
+                custody_reserved: false,
+                started_at: None,
                 expires_at: if name == "auth_callback_expired" {
                     SystemTime::UNIX_EPOCH
                 } else {
                     SystemTime::now() + Duration::from_secs(3600)
                 },
             })
+            .await
+            .unwrap();
+    }
+    if name == "auth_anonymous" {
+        let binding = SecretDigest::identify("browser-login", "contract-preference-binding");
+        store
+            .reserve_browser_login(
+                binding.clone(),
+                SystemTime::now() + Duration::from_secs(600),
+            )
+            .await
+            .unwrap();
+        store
+            .complete_browser_login(
+                &binding,
+                BrowserLogin {
+                    id: SecretDigest::identify("browser-login", "contract-preference-session"),
+                    subject: SubjectId::new("contract-visitor"),
+                    expires_at: SystemTime::now() + Duration::from_secs(3600),
+                },
+                Some(SystemTime::UNIX_EPOCH + Duration::from_millis(1001)),
+            )
             .await
             .unwrap();
     }
@@ -225,13 +249,15 @@ async fn scenario(name: &str) -> Scenario {
             public_url: "https://cma.example.test".into(),
         }
     };
-    let auth = AuthState::with_store_and_nyxid_public_url(
+    let mut auth = AuthState::with_store_and_nyxid_public_url(
         mode,
         None,
         store,
         Some("https://identity.example.test".into()),
     )
     .with_silent_sign_in(name != "auth_anonymous_disabled");
+    Arc::get_mut(&mut auth).unwrap().preference_clock =
+        || SystemTime::UNIX_EPOCH + Duration::from_secs(1);
     if matches!(
         name,
         "auth_visitor" | "auth_store_unavailable" | "auth_identity_unavailable"

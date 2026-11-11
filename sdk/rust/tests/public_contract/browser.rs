@@ -12,6 +12,11 @@ pub const BROWSER_CASES: &[&str] = &[
     "auth-trusted-register-return",
     "auth-trusted-callback",
     "auth-trusted-logout",
+    "auth-cross-site-logout",
+    "auth-silent-suppressed",
+    "auth-silent-explicit-resumed",
+    "auth-silent-later-logout",
+    "auth-silent-preference-logout",
     "auth-expired-browser-session",
     "auth-visitor-session",
     "auth-visitor-logout",
@@ -177,9 +182,11 @@ pub fn verify(c: &Context<'_>) {
                     "cma_session=; Path=/; HttpOnly{secure}; SameSite=Lax; Max-Age=0"
                 ));
             }
-            expected.push(format!(
-                "cma_signed_out=1; Path=/; HttpOnly{secure}; SameSite=Lax; Max-Age=2592000"
-            ));
+            if c.case.id != "auth-cross-site-logout" {
+                expected.push(format!(
+                    "cma_signed_out=1000; Path=/; HttpOnly{secure}; SameSite=Lax; Max-Age=2592000"
+                ));
+            }
             assert_eq!(c.case.response.set_cookies, expected);
         }
         "GET /auth/callback" => assert!(c.case.request.path.starts_with("/auth/callback")),
@@ -196,7 +203,7 @@ pub fn verify(c: &Context<'_>) {
                 // the SDK's signed-out session deliberately does not carry it.
                 (401, Some(false)) => assert_eq!(
                     c.case.response.body,
-                    serde_json::json!({"authenticated":false,"silent_sign_in":true})
+                    serde_json::json!({"authenticated":false,"silent_sign_in": !matches!(c.case.id.as_str(), "auth-silent-suppressed" | "auth-silent-later-logout")})
                 ),
                 (503, None) => {}
                 _ => panic!("invalid browser identity document {}", c.case.id),
