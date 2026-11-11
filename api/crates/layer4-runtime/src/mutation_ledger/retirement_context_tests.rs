@@ -194,7 +194,7 @@ async fn retirement_inventory_refuses_changed_accounting_or_geometry_without_rev
 async fn retirement_inventory_refuses_damaged_context_and_auxiliary_columns() {
     for sql in [
         "UPDATE cleanup_budget SET available=2",
-        "UPDATE cleanup_budget SET resource='{}'",
+        "UPDATE cleanup_budget SET resource='{}' WHERE resource=(SELECT resource FROM cleanup_budget ORDER BY scope,resource LIMIT 1)",
         "UPDATE scope_budget SET pending=-1",
         "UPDATE scope_budget SET processes=-1",
         "UPDATE scope_budget SET scope=x''",
