@@ -50,5 +50,5 @@ Contracts cover shared capacity across attachments, empty/maximal payloads,
 startup boundary refusal, ordered drain, cancellation at a bootstrap barrier,
 final storage release, same-cursor recovery after refusal, exact source
 fingerprints and ACKs, required protocol negotiation, actual transport policy
-override, and legacy flag-OFF behavior. No production campaign is part of this
+override, combined permission-policy admission/refusal, and legacy flag-OFF behavior. No production campaign is part of this
 source change.
