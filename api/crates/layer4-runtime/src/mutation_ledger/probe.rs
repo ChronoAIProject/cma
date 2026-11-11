@@ -93,5 +93,34 @@ pub(crate) async fn run(directory: &Path) -> Result<()> {
     {
         return Err(invalid());
     }
+    use sha2::{Digest, Sha256};
+    let mut previous = None;
+    for _ in 0..2 {
+        let mut cursor = None;
+        let mut rows = 0;
+        let mut digest = Sha256::new();
+        loop {
+            let page = ledger.retirement_inventory(cursor).await?;
+            if rows == 0 {
+                page.context.hash_into(&mut digest);
+            }
+            for row in &page.rows {
+                row.hash_into(&mut digest);
+                rows += 1;
+            }
+            cursor = page.next;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        let hash = digest.finalize();
+        if rows != 6 || previous.as_ref().is_some_and(|prior| prior != &hash) {
+            return Err(invalid());
+        }
+        previous = Some(hash);
+    }
+    if ledger.snapshot().await? != snapshot {
+        return Err(invalid());
+    }
     ledger.close().await
 }
