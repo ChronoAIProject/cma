@@ -21,6 +21,9 @@ mod resource_execution;
 #[path = "capacity_execution_tests.rs"]
 mod capacity_execution;
 
+#[path = "request_budget_tests.rs"]
+mod request_budget;
+
 mod bounded_admission_tests;
 mod bounded_audit_tests;
 mod bounded_compatibility_tests;
