@@ -61,8 +61,9 @@ fn personal(
 }
 
 /// Issue a short-lived in-process capability only after the exact durable result
-/// matches the current Agent (including owner). Every worker call obtains a new
-/// capability; capture compares current policy, all parents and shares again.
+/// binds the Agent, with positive current-publication proof after later progress.
+/// Every call obtains a new capability; capture compares current policy, all
+/// parents and shares again.
 /// There is intentionally no constructor from a discovery row or owner identity.
 pub(super) async fn authorize(
     store: &MongoSandboxStore,
@@ -91,11 +92,7 @@ pub(super) async fn authorize(
         let stored = receipts::read(store, agent, request, &mut scope)
             .await?
             .ok_or(SandboxStoreError::Conflict)?;
-        // Later-head incarnation equality does not establish unchanged owner.
-        // Exact revision makes receipt verification check the entire Agent digest.
-        if stored.result.agent_revision != agent.revision {
-            return Err(SandboxStoreError::Conflict.into());
-        }
+        receipts::require_current_result(store, agent, &stored, &mut scope).await?;
         Ok::<_, TransactionLogError>(())
     }
     .await;
