@@ -181,6 +181,7 @@ pub(in crate::store) async fn quarantine_row(
         )
         .into());
     }
+    fleet::telemetry::record(fleet::telemetry::Event::QuarantineWritten);
     Ok(())
 }
 
@@ -200,7 +201,16 @@ pub(in crate::store) async fn trusted_summary(
         let _ = session.abort_transaction().await;
         quarantine_row(store, row).await?;
     }
-    if store.bounded_admission_agents.contains(&agent.id) {
+    if store.bounded_log_enabled(&agent.id) {
+        use super::fleet::telemetry::{record, Event};
+        if row.contains_key(QUARANTINE_FIELD) {
+            record(Event::Quarantined);
+        }
+        match &result {
+            Ok(Some(_)) => record(Event::WriteScanAvoided),
+            Ok(None) => record(Event::Fallback),
+            Err(_) => {}
+        }
         result
     } else {
         result.map(|_| None)

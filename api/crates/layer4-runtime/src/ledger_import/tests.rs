@@ -5,6 +5,8 @@ use crate::config::RuntimeConfig;
 use std::path::{Path, PathBuf};
 #[path = "plan_tests.rs"]
 mod plans;
+#[path = "retirement_stage_tests.rs"]
+mod retirement_archives;
 #[path = "retirement_tests.rs"]
 mod retirement_preview;
 #[path = "sealed_tests.rs"]
