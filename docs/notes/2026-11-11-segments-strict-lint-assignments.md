@@ -405,7 +405,7 @@ Normally merged published audit-compatible current-proof44ad3819889e8c196a0dafd5
 Pushed5123295c3 after fetch/normal develop merge (already current). Strict four-package gate8 is queued on this clean source; light gates are running. Actual later-progress execution still requires the allocated S4 service.rs::activation_authorized consumer of the already-published11f381ea0 helpers. S5 has not edited that transferred path. Earlier strict PASS stays at024de5168 and affected-layer counts at11f381ea0. No new-head Mongo/activation/PR-ready claim. Temporary staged Rust files were applied and removed from notes.
 
 
-## P1-3 proof delivery and S4 caller handoff — 05:25 SGT
+## P1-3 proof delivery and S4 caller handoff — 05:20 SGT
 
 S2 owns the published narrow API/schema/publisher branch
 `tl/cma-log-segments/current-publication-proof`, now at
