@@ -26,6 +26,7 @@ pub(crate) enum HierarchyProblem {
     InvalidQuery,
     InvalidPage,
     Unavailable,
+    GlobalCapacityReached,
     SandboxLifecycleUnavailable(&'static str),
     SandboxLifecycleBusy(SandboxLifecycleBlocker),
 }
@@ -43,6 +44,7 @@ impl HierarchyProblem {
     }
     pub(crate) fn sandbox(error: SandboxServiceError) -> Self {
         match error {
+            SandboxServiceError::GlobalCapacityReached => Self::GlobalCapacityReached,
             SandboxServiceError::CredentialSetupRequired => Self::CredentialSetupRequired,
             SandboxServiceError::ConnectionsRequired { services } => {
                 Self::ConnectionsRequired(services)
@@ -245,6 +247,13 @@ impl IntoResponse for HierarchyProblem {
                 "hierarchy_service_unavailable".to_owned(),
                 vec![],
             ),
+            Self::GlobalCapacityReached => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "sandbox-capacity-unavailable",
+                "Sandbox capacity is temporarily unavailable. Retry the original operation later.",
+                "sandbox_capacity_unavailable".to_owned(),
+                vec![],
+            ),
             Self::SandboxLifecycleUnavailable(code) => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "sandbox-lifecycle-unavailable",
@@ -288,4 +297,27 @@ fn not_found(resource: &'static str) -> ProblemParts {
         format!("{resource}_not_found"),
         vec![],
     )
+}
+
+#[cfg(test)]
+mod global_admission_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn global_capacity_is_retryable_and_does_not_disclose_fleet_counts() {
+        let response =
+            HierarchyProblem::sandbox(SandboxServiceError::GlobalCapacityReached).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "sandbox_capacity_unavailable");
+        assert!(body.get("limit").is_none());
+        assert!(body.get("live").is_none());
+        assert_eq!(
+            SandboxServiceError::GlobalCapacityReached.code(),
+            body["code"]
+        );
+    }
 }
