@@ -2,7 +2,8 @@
 
 Current source: `63fea5a86` after normal slice/develop merges, branch
 `tl/cma-log-segments/integration-20261111`; develop `1d425cffc` is included.
-No integration PR is ready. All four pre-review P1s remain activation blockers.
+No integration PR is ready. Pre-review 2 has four unresolved P1s; P1-2 is
+closed in source, while exact combined qualification remains a release gate.
 The source remains default-off. Production was not touched.
 
 The plan due Thu 2026-11-12 08:00 SGT is **one combined PR to develop**.
@@ -72,23 +73,35 @@ Install strict validation, simple collation and the exact nonunique due, expired
 and per-Agent discovery indexes. Retain the unique `_id_` index. No TTL/deletion.
 S1 owns schema/checksum validation, S5 codec/discovery, S2 shared migration/roles.
 
-## Pre-review closure ledger
+## Current blocker ledger — pre-review 2 at 34bcc3667
 
-| Finding | Owner | Current status / evidence required |
-| --- | --- | --- |
-| P1-1 ordinary writers after v2 adoption | S4, with S1 aggregate save and S5 due discovery | OPEN. Original worker/control/lifecycle source is integrated; reserve/contextual-answer/targeted-control/cancellation, restart discovery, claims and aggregate saves must all preserve exact v2 authority. Test real adopted fixtures through public roots and unknown outcomes. |
-| P1-2 runtime authority/schema | S2 with S1/S5 | OPEN, real isolated-role gate now passes at `afc60d98a`. Latest exact-index drift changes still need combined Mongo qualification and review. No ad hoc carrier installation in qualification. |
-| P1-3 completed recovery activation | S5 proof/runtime; S2 shared routing | OPEN. Exact registry consumer and resumed completion source are integrated. Completed-work restart/loss routing must intercept ordinary reconnect; later progress needs positive current supersession proof. Native producer is deferred/Unsupported. |
-| P1-4 indexed response/transcript | S1 response; S3 transcript | OPEN. S3 now uses title/usage facts and an incremental transcript fold, but the transcript visitor still scans zero through the lifetime head and returns an unpaged lifetime transcript. Required readers must survive flag closure and must not authorize legacy fallback for v2. |
-| P2-5 unresolved keyed attempt | S4 | Source fix and corrected owner-reported root Mongo tests exist. Await combined rerun and exact-head review; a missing receipt never proves KnownAbort or permits a new attempted result. |
-| P2-6 total child budgets | S5 | Count/byte bounds are integrated; owner-reported oversized-child tests pass on an earlier S5 source. Await combined qualification and review. |
+Source: `notes/reviews/2026-11-12-segments-prereview2.md`. Verdict changes:
+0 P0, **4 P1 + 2 P2 blocking findings**, plus one P3 nit. Prior numbered findings:
+8 source-closed, 3 open, 1 regressed; new P1-N1 and P2-N2 are included below.
+Source closure never substitutes for combined executable/release qualification.
 
-No finding closes merely because a warning disappears or source is integrated.
-S4 reports 47 unit/config and 76 actual-Mongo passes at `e094ffeea`; its strict
-run still has 22 shared diagnostics. Those counts stay bound to that slice
-head: [S4 evidence](2026-11-12-s4-postreview-evidence.md).
-S5's last reported actual-Mongo run at `c15bb553f` was 16 passed / 2 failed;
-wire-batch diagnostics and admission isolation are in `c3c8c5f59`, awaiting rerun.
+| Finding / state | Accountable owner and exact boundary | Required pin / proof deadline (Thu SGT) | 09:00 disposition rule |
+| --- | --- | --- | --- |
+| P1-1 OPEN: adopted Agents cannot claim/reserve/target-control | **S4 / cma-seg-lead**: `store/child_writer_claims.rs`, `agent_commands/reserve.rs`, `agent_commands/targeted_control/apply.rs` and remaining ordinary roots. S5 retains due-work discovery; S1 supplies its existing captured-proof interface. | Pin 07:30; actual adoption → discovery → AgentWorkerStore claim → ordinary/contextual/targeted admission → output, plus refusal/abort, by 10:30. Do not bypass the actual claim in fixtures. | Thursday only with a complete root inventory/pin and a credible remaining gate budget; otherwise name S4 and affected adoption scope for Friday. |
+| P1-4 / D6-2 REGRESSED: unlimited compatibility vector and lifetime consumers | **S1 / cma-cost** owns `agent_log_reads.rs`, response store/core/public consumers and v2 fallback dispatch. **S3 / cma-seg-2** owns `agent_log_segment_reads.rs`, transcript/usage/title consumers and bounded title-prefix reconstruction. S2 applies only agreed shared-core delegation/registration edits. | Both pins 07:30; stable continuation, v2 reads after flag closure, >10,128 rows/>4 MiB/long-turn parity and fixed requested-output query/byte/memory evidence at 1/10/100/1000 segments by 11:00. | Both halves must fit. Removing an old ceiling or retaining an unpaged projected response is not closure. Name the missing half/owner and dependent writer/reader scope for Friday. |
+| P1-3 OPEN: reconnect after later ordinary progress has no positive route | **S5 / cma-seg-3**: `agent_capacity_recovery/restart.rs`, `accepted_authority.rs`, worker/reconnect integration and actual restart/loss tests. **S4** supplies any required certified successor/publication/activation evidence; S1 retains capture/proof implementation. | S5 states exact proof dependency by 05:00; contract pin by 05:30; implementation 07:30; positive later-progress actual restart/loss, fresh authority and foreign/stale refusal by 10:30. | Later revision, same incarnation or absent work alone never authorize reconnect. If the bounded positive proof is not implemented with executable cases by 09:00, name S5 and its S4/S1 dependency for Friday. |
+| P1-N1 ADDITIONAL: segmented CapacityRecovery admission rejected by writer | **S4 / cma-seg-lead** owns `agent_log_segments/writer_prepare.rs` and writer prepare/persist semantics. **S5** owns real admission/preparation callers and capacity Mongo tests. Preserve the existing shared helper interface if possible. | Writer pin 06:30 for S5 consumption; actual segmented admission, atomic seal/successor/carrier, abort, Unknown/restart and wrong/closed gate tests by 10:30. | Requires independent CapacityRecovery authority and original result/source identity. No substitution of ordinary Rollover admission, premature Ready or input replay. Missing contract/implementation at 09:00 falls to Friday. |
+| P2 / D6-5 OPEN: selected-consumer parity/failure matrix | **S3 / cma-seg-2** owns direct `AgentTranscriptFold`, transcript/usage projection tests and selected-reader replica-set fixtures. S1 retains response-specific parity/security tests under P1-4. | Matrix/test pin 07:30; actual legacy/segmented serialized parity, queued/steered/active/terminal/generation/gap cases, bad proofs, snapshot races, revocation after buffering, bounds and no read-side writes by 11:00. | The four repaired legacy tests alone cannot qualify new segmented readers. Unimplemented required cases at 09:00 are named for Friday with their consumer dependency. |
+| P2-N2 NEW: ordinary store module is 500 lines | **S2 / cma-db-contention** owns `layer2-core/src/sandbox/store.rs` and new `store/pagination.rs`. | Source fixed at `efc880523`: existing helper extracted, root now 480 lines. Existing pagination success/failure tests and combined lint due next gate; source target 04:00 met. | Expected Thursday; requires executable checks and reviewer delta confirmation. |
+| P3 NEW nit: trailing blank line in history note | **S2 / cma-db-contention** owns `docs/notes/2026-11-12-segments-coordination-history-3.md`. | Trailing blank line removed in this checkpoint; base-to-candidate whitespace check passes. Source target 04:00 met. | Mechanical Thursday correction; non-blocking, tracked to completion. |
+
+The eight source-closed prior findings are P1-2 runtime/schema, P2-5 unresolved
+attempt preservation, P2-6 child budgets, S4 Option/u64/scoped-root build gap,
+S5 raw BSON shape, D6-1 required authentication, D6-3 enum layout, and D6-4 config
+documentation. The old S5 batchSize P3 is also source-closed. Retain their success,
+failure and combined gates; do not reopen them merely because the full build is
+not yet green. Native Unsupported is intentional and is not an additional defect.
+
+**Separate gate failure G1:** strict CMA at `34bcc3667` exited 101 on one emitted
+dependency diagnostic: S3 `AgentTranscriptFold` manual Default is derivable.
+Integrator applied the exact mechanical derive at `3cb7a3348`, preserving all
+field defaults. S3 retains semantic ownership and the open parity/bounds work.
+This is not a full warning inventory; repeat strict CMA on the next exact head.
 
 ## Exact combined gate evidence
 
@@ -136,11 +149,14 @@ never removed or changed. Remove disposable exports after their gates finish.
    explicit lead merge relay. Monitor merged develop CI and fix forward/revert
    an actual failure within one hour. The release requires its exact green artifact.
 
-Earliest strict-green estimate remains **Thu 12:00–16:00 SGT**, conditional on
-real wiring, remaining slice deliveries and build availability. The estimate
-is not a test result or an owner commitment. Source review target is Thu
-18:00–22:00; Fri 06:00 is the intended merge window after review/authorization.
-If that misses the artifact/train, report the slip and use the approved Sat train.
+Current target: **Thursday 2026-11-12 16:00 SGT reviewed and merged**, with
+release-owner deployment in the **19:00–22:00** window. Aim for a frozen source
+by 10:30, strict-green combined gates by 13:30, PR ready by 14:00, and final
+review/delta closure by 15:30. The current strict-green forecast is still
+12:00–16:00, so this schedule is at risk until the 09:00 owner checkpoint proves
+which items fit. It is a target, not a gate result or a new owner commitment.
+Items that cannot qualify in time must be named with their owners by **09:00**
+and fall back to the **Friday 2026-11-13 13:00 train**. Do not drop a required gate.
 Full recovery activation has **no defensible ETA while the native producer is
 deferred**. A source review must retain that blocker and cannot claim #1351 done.
 
@@ -151,7 +167,8 @@ unknown-outcome faults, retaining compatible readers and accepted recovery.
 Never roll back to a binary that cannot read already-written envelopes/sidecars.
 Require representative route/checkouts/bytes/scan evidence, a real natural
 rollover and at least 36 minutes of canary observation before expansion. Target
-staged activation Fri–Sat and stable watch through Sun 2026-11-15; issue closure
+Thursday-evening deployment and separately authorized staged activation, with
+stable watch through Sun 2026-11-15; issue closure
 requires each issue's own verified production evidence.
 
 Complete chronological coordination snapshot:
@@ -210,29 +227,13 @@ reply. No helper-only or empty-child test qualifies this production root.
 Target source checkpoint Thu 04:00 SGT, focused Mongo result by 08:00 if the shared
 slot permits; these are integration targets awaiting S4 confirmation, not passes.
 
-## #1696 delta6 blockers retained on the combined candidate
+## #1696 delta6 disposition
 
-Source review: `notes/reviews/2026-11-11-pr1696-delta6-review.md`, exact head
-`a744a5a3feab021eb3a4e5042540116ae89bd36f`. Integration merged the work, not the
-review verdict. All five findings must have closure evidence before the combined
-PR. S3 owns the consumer fixes and tracks this review with S2; shared failures
-retain their actual slice owners below.
-
-| Delta6 finding | Owner | Current evidence / next gate | Target (SGT) |
-| --- | --- | --- | --- |
-| D6-1 P1 required authentication ambiguity | S5 source; S2 integration | Explicit required `FromRequestParts` qualification is in `45fc44e33` and current source. Auth-required/public route tests and current combined compile remain the closure gate; source-only correction is not a new CI pass. | Next combined compile; route gate by Thu 08:00 target. |
-| D6-2 P1 lifetime transcript/usage/title traversal | S3 | PARTIAL SOURCE FIX. Title/usage now use maintained facts; transcript still loops zero to the lifetime head through `visit_selected` and retains the full projected response. Add requested-page continuation and 1/10/100/1000-segment fixed-page cost evidence. | Source Thu 10:00–12:00; scale gates by 18:00 estimate. |
-| D6-3 P2 recovery enum strict lint | S5 | SOURCE FIX INTEGRATED. S5 `4f3e7022c` boxes `RecoveryConfirmation` and updates real/test constructors. Exact combined strict lint remains pending; no lint allowance. | Next S5 pin; combined strict run after integration. |
-| D6-4 P2 configuration references | S2 | Source corrected in `ce9da2336`; current `node .github/scripts/check-config-docs.mjs` passes for all quoted keys. Review must confirm defaults, prerequisites and retained-reader/settlement behavior; rerun at final candidate. | Local gate passed Thu 02:31; final candidate rerun. |
-| D6-5 P2 fixture/parity/failure matrix | S3 | PARTIAL SOURCE FIX. `bc08dc4a0` repairs persisted top-level `last_seq` in legacy transcript/usage fixtures. Actual replica-set legacy/v2 parity, generation/retirement, stale/corrupt/unsupported proof, snapshot/append, revocation-after-buffering, bounds and no-read-writes matrix remains pending. | Fixtures by Thu 06:00 target; full consumer matrix by 18:00 estimate. |
-
-Readiness remains one combined default-off PR, with no schema-first shortcut.
-Earliest strict-green estimate stays Thu 12:00–16:00, conditional on source and
-build availability; source review Thu 18:00–22:00, intended Fri 06:00 merge window.
-All four prereview P1s and the five delta6 closure checks gate activation/readiness.
-Native recovery proof remains Unsupported; no full recovery activation ETA is
-claimed. The cancelled revert does not resolve a source or test blocker.
-
+Pre-review 2 supersedes the older delta6 ledger. D6-1 authentication, D6-3 enum,
+and D6-4 configuration are closed in source. D6-2 is regressed and assigned to
+S1/S3 above; D6-5 remains open with the fixture half repaired. All five retain
+exact source/gate evidence. The previous integration-only merge did not imply
+review approval or change develop. See the current blocker ledger for deadlines.
 
 ### S5 reviewer corrections — bb34b1ae6
 
@@ -273,8 +274,9 @@ strict-green, reviewed candidate: S3 has open lifetime-read and fixture/parity
 blockers, S1 response work is in progress, and the shared proof/schema dependencies
 have not been qualified as a reader-only release. Cutting that tree now would
 require another source assembly and complete gates; do not infer safety from
-writer/recovery flags being off. The combined candidate remains for Friday,
-subject to its actual gates and exact-head review. Owner priority is unchanged;
+writer/recovery flags being off. That initial Friday disposition is superseded
+by the Thursday-evening target below; the 08:30 NO-GO remains accepted.
+Qualification and exact-head review still govern. Owner priority is unchanged;
 no lower-priority work is being substituted.
 
 The existing bounded response PR #1687 is already merged to develop at
@@ -353,3 +355,60 @@ flag and both configuration test modules. No develop merge or production mutatio
 was performed. The target-source guard removed 1.7 GiB of this worktree's stale
 workspace artifacts before rebuilding the archive; external caches and active
 source exports remain for their continuing gates. Only one Cargo target is used.
+
+
+## Current delivery schedule — lead retarget to Thursday evening
+
+This supersedes earlier Friday-first source/review targets. The accepted 08:30
+NO-GO does not change. Pre-review is pinned at published `34bcc3667`; preserve
+its finding references while recording each subsequent fix and exact test head.
+No develop merge is authorized by this schedule alone. The normal exact-head
+review and explicit MERGE relay still apply; release uses green develop CI.
+
+| Slice / owner | Required delivery and evidence | Source / gate deadline (SGT) |
+| --- | --- | --- |
+| S1 / cma-cost | Publish a consumable reader/response pin: retained v2 reads independent of admission flags, indexed long-turn response/events and legacy retrieval, >10,128-entry/>4 MiB parity, current authority, event cursor/page limits and unchanged-head polling. Include exact capture/schema/index dependency inventory. | Progress/pin 07:30; executable consumer and reader evidence 11:00. At 09:00 name any unresolved item that prevents 13:30 combined qualification. |
+| S2 / cma-db-contention | Integrate all pins; qualify source-closed P1-2 through the canonical migrator, exact runtime grants and discovery indexes; run current-source strict CMA, scheduler/config, adapter, authenticated Mongo and partitioned Mongo. Prove the seven new scheduler tests actually execute. Resolve shared wiring/registration deltas and track every pre-review finding. | Gate progress 07:30; itemized fallback decision 09:00; source freeze 10:30; combined gate evidence 13:30; PR 14:00. |
+| S3 / cma-seg-2 | Close remaining delta6 transcript lifetime traversal with caller continuation and a bounded requested page. Execute repaired legacy fixtures plus serialized v1/v2 parity, stale/corrupt/unsupported proofs, append/snapshot, generation/retirement, revocation, no read-side writes and 1/10/100/1000-segment cost evidence. Source-only title/usage changes do not close transcript qualification. | Source/pin and fixture results 07:30; full bounds/parity matrix 11:00; 09:00 risk/fallback decision. |
+| S4 / cma-seg-lead | Consume the transferred runtime-loss dispatch; qualify nonempty mixed-v1/v2 children, original scoped receipts, parent CAS and unknown outcomes. Finish ordinary v2 reserve/control/cancellation/claim roots and P2-5 root qualification. Supply exact response facts to S1. | Runtime-loss checkpoint 04:00 target remains; full caller pin 07:30; focused Mongo evidence 10:30. Report unresolved roots at 09:00. |
+| S5 / cma-seg-3 | Qualify exact completed-recovery restart/loss routing, fresh personal/parent authority, strict format-2 witness/codec, discovery and total child bounds. Supply real source/gate counts after the privacy-export and enum fixes. Typed Unsupported stays honest while native proof is unavailable. | Service/restart pin and first actual results 07:30; remaining default-off protocol gates 10:30. Native activation fallback identified below. |
+
+Each owner checkpoint must include the immutable pin, consumed dependency pins,
+actual success/failure/skip counts, remaining blocker, and its execution ETA.
+Use the existing shared heavy slot with two Cargo jobs and release it between
+steps. Use one target per worktree and remove obsolete artifacts; never delete
+shared lock files. The combined source is fixed while an in-place gate runs.
+
+**Known fallback item, named before 09:00:** native production recovery proof and
+capacity-recovery activation, **S5 / cma-seg-3**. There is still no qualified native
+producer. It is a Friday 13:00 candidate only after real pinned-runtime evidence;
+Friday is not a promise of unsupported capability. A reviewed default-off PR may
+retain the explicit Unsupported path. Do not enable recovery or close #1351 from
+mocked native ports or receipt-only tests. Required default-off protocol tests
+and the remaining P1-3 routing/authority checks are still due Thursday.
+
+At 09:00, publish a named GO/NO-GO row for each unresolved item, its dependency
+impact, and the largest safe qualified scope. A missing reader/parity dependency
+cannot be treated as closed because writer admission is off. The combined PR
+remains the authorized vehicle; any fallback must retain its required dependency
+closure and strict gates. Aim for final review by 15:30, relay/merge by 16:00,
+then monitor develop CI and hand the release owner exact-head evidence for the
+19:00–22:00 deployment. The release owner performs production changes/verification.
+
+
+### S5 exact-source capacity gate — 4d7f6d680
+
+At clean, unchanged `4d7f6d680`, `cargo test --locked -p cma --bin cma capacity` passed: 64 passed, 0 failed, 63 ignored, 2429 filtered. This includes all four strict raw-BSON shape regressions and the existing completed-activation/no-replay model tests; ignored Mongo tests are not counted as passed. Formatting and source-size passed (6119 files). Actual Mongo is queued separately under either existing heavy lock, retaining one reusable target and two Cargo jobs. No source mutation will occur during the run. The format-2 contract remains `daf605ab410fc4737633aa3997e67192d4c4112b`. P1-3 executable restart/loss proof, exact profiler conformance and strict lint remain pending; no PR-ready or activation claim.
+
+
+## 09:00 Thursday decision checkpoint
+
+At 09:00, report each row above as **expected to qualify for 16:00** or **Friday
+13:00 fallback**, naming its primary owner and dependent slices. The Thursday
+forecast requires published source, known test selection, actual results so far
+and sufficient slot/runtime budget to finish combined gates by 13:30. It is not
+merge or activation approval. Unresolved proof contracts, missing consumer cases
+or an unspecified source ETA cannot be reported as GO. Source closure is separate
+from any pending execution. Final review/deltas must finish by 15:30 for the
+explicit 16:00 merge relay. Keep the already named S5 native activation fallback
+separate from the default-off source's remaining P1-3/P1-N1 correctness gates.
