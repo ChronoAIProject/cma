@@ -195,6 +195,14 @@ source digest and replay indexes without rereading mutable sources. Both archive
 and pending groups refuse later mutations on the retired resource. Shared scope
 counters are retained context; they are not independently retired resources.
 
+Binary source columns use base64 strings so a legal 1 MiB journal plus its raw
+identity fits the unchanged 2 MiB SQLite value limit. New writes include separate
+keys and SQLite row headers in that budget. Readers also accept earlier numeric
+byte arrays, preserving raw bytes, NULL fields, source digests and retry receipts
+without rewriting a prepared archive. Earlier numeric-only V2 checkpoint readers
+cannot read compact payloads; these checkpoints have no production activation,
+and pending groups continue to hold serving. This is not recovery-image approval.
+
 This representation requires retirement descriptor version 2 as well as archive
 database version 2. New readers retain version-1 support and require the descriptor
 and database versions to agree. The existing marker filenames remain the reader
