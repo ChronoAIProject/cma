@@ -7,6 +7,7 @@ use mongodb::bson::{doc, Document, Timestamp};
 use mongodb::options::ReadConcern;
 use mongodb::{ClientSession, Collection};
 
+use super::agent_log_integrity::carry_integrity_for_revision;
 use super::agent_title_state::record_title_value;
 use super::agents::{agent_replacement_fields, read_agent};
 use super::sandbox_mongo::{
@@ -185,6 +186,19 @@ async fn apply(
     }
     let revision = signed(expected_revision, "writer claim revision")
         .map_err(|_| ClaimError::Domain(SandboxStoreError::Conflict))?;
+    let current_agent_row = if matches!(claim, ChildWriterClaim::Agent(_)) {
+        Some(
+            store
+                .agents
+                .find_one(doc! { "_id": id })
+                .session(&mut *session)
+                .await
+                .map_err(ClaimError::Driver)?
+                .ok_or(ClaimError::Domain(SandboxStoreError::NotFound))?,
+        )
+    } else {
+        None
+    };
     let mut filter = doc! {
         "_id": id,
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
@@ -200,12 +214,20 @@ async fn apply(
         );
         filter.insert("record.title", record_title_value(agent));
     }
+    let mut fields = claim.fields().map_err(ClaimError::Domain)?;
+    if let (ChildWriterClaim::Agent(agent), Some(current_row)) = (claim, current_agent_row.as_ref())
+    {
+        carry_integrity_for_revision(
+            current_row,
+            &read_agent(current_row).map_err(ClaimError::Domain)?,
+            agent,
+            &mut fields,
+        )
+        .map_err(ClaimError::Domain)?;
+    }
     let advanced = claim
         .collection(store)
-        .update_one(
-            filter,
-            doc! { "$set": claim.fields().map_err(ClaimError::Domain)? },
-        )
+        .update_one(filter, doc! { "$set": fields })
         .session(session)
         .await
         .map_err(ClaimError::Driver)?;

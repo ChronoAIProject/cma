@@ -89,7 +89,11 @@ async fn detached_ineligible_candidates_skip_reads_and_changes_recover_next_swee
             .unwrap(),
         2
     );
-    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        4,
+        "each recovered Agent reads its authority and carries matching integrity metadata"
+    );
     for original in [&paused, &closing] {
         let current = store.get_agent(&original.id).await.unwrap().unwrap();
         assert_eq!(current.work.step, AgentWorkStep::PublishConnection);

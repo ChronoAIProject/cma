@@ -124,6 +124,21 @@ async fn committed_prebinding_failures_keep_typed_http_errors_and_receipt_header
             "runtime_lost",
         ),
         (
+            CommandFailureCode::OwnerBudgetExhausted,
+            StatusCode::PAYMENT_REQUIRED,
+            "owner_budget_exhausted",
+        ),
+        (
+            CommandFailureCode::TurnBudgetExhausted,
+            StatusCode::PAYMENT_REQUIRED,
+            "turn_budget_exhausted",
+        ),
+        (
+            CommandFailureCode::BudgetUnavailable,
+            StatusCode::PAYMENT_REQUIRED,
+            "budget_unavailable",
+        ),
+        (
             CommandFailureCode::ExecutionFailed,
             StatusCode::CONFLICT,
             "agent_command_execution_failed",
