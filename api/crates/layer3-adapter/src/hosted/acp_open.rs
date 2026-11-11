@@ -109,7 +109,20 @@ impl Bridge {
             .ok_or_else(|| AdapterError::Unavailable("runtime closed before Ready".into()))?
             .map_err(|error| AdapterError::Unavailable(format!("Ready read failed: {error}")))?;
         let output_json_budget = settings.output_json_budget;
-        let output_stream = validate_ready(declaration, expected_agent, output_json_budget)?;
+        let json_pools = settings
+            .retained_json
+            .then(crate::hosted::retained_json::JsonPools::process);
+        let output_stream = validate_ready(
+            declaration,
+            expected_agent,
+            output_json_budget,
+            json_pools.as_ref(),
+        )?;
+        if json_pools.is_some() && output_stream.is_none() {
+            return Err(AdapterError::Rejected(
+                "JSON retention bounds require retained runtime output".into(),
+            ));
+        }
         if bounded && output_stream.is_none() {
             return Err(AdapterError::Unavailable(
                 "bounded output requires retained runtime acknowledgements".into(),
@@ -137,6 +150,7 @@ impl Bridge {
         let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
+            json_pools: json_pools.clone(),
             bounded_raw_output: settings.bounded_raw_output,
             shared_runtime_output: settings.shared_runtime_output,
             output_json_budget,
@@ -153,6 +167,7 @@ impl Bridge {
                     stream,
                     acknowledgements,
                     settings.bounded_raw_output,
+                    json_pools,
                 ))
             }),
             blocked: Mutex::new(HashMap::new()),
