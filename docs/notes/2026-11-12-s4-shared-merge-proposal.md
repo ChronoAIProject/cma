@@ -1,7 +1,9 @@
 # S4 shared-root merge compatibility proposal
 
 Part of #1350. Source pin `5fdfae28133246ffbeb1d6bc5689513139d9cf95`.
-This patch is prepared for S2 ownership handoff and is **not applied**.
+The lead authorized this narrow shared-root correction after pre-review. It is
+**applied and pushed** in `5b49c51d6e44f509d937759a4e67c8dfca9ccf8b`; the diff
+below records the original proposal before formatting.
 
 The required develop merge made the retained/unpublished inspection generation
 optional. The segmented branch still compares its u64 maxima with that Option,
@@ -36,7 +38,7 @@ activation policy, admission gate or reader format.
                          "runtime generation was already published",
 ```
 
-After the narrow pin or handoff, rerun strict CMA with warnings denied, the focused
+The post-correction batch runs strict CMA with warnings denied, the focused
 writer units, real-Mongo writer/lease/legacy roots, and the existing retained
 assessment/reopen contracts under the authorized release slot. Keep two jobs,
 pause below10% available memory, and preserve all shared lock inodes.
