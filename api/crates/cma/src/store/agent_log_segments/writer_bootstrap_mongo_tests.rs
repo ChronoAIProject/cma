@@ -230,3 +230,98 @@ async fn bootstrap_rejects_replaced_permit_and_changed_original_request() {
     );
     f.destroy().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn staged_bootstrap_is_published_only_against_the_same_recaptured_source() {
+    use crate::store::agent_log_segments::{capture, writer_commit};
+    for changed_source in [false, true] {
+        let mut f = legacy_fixture().await;
+        let (operation, admission, permit) = admitted(&f).await;
+        let bootstrap = succeeded(
+            writer_bootstrap::stage(&f.store, &f.agent, &operation, &admission, permit).await,
+        );
+        if changed_source {
+            f.agent.revision += 1;
+            f.store
+                .agents
+                .replace_one(
+                    doc! {"_id":f.agent.id.as_str()},
+                    crate::store::agents::agent_document(&f.agent).unwrap(),
+                )
+                .await
+                .unwrap();
+        }
+        let mut next = f.agent.clone();
+        next.revision += 1;
+        next.conversation.last_seq += 1;
+        let logs = [AgentLogEntry {
+            agent_id: f.agent.id.clone(),
+            seq: next.conversation.last_seq,
+            appended_at: operation.appended_at.clone(),
+            kind: AgentLogKind::ConversationGap { frames: 1 },
+        }];
+        let mut session = transaction(&f).await;
+        let mut scope = TransactionScope::start(&mut session).await.unwrap();
+        let captured =
+            succeeded(capture::capture_transaction(&f.store, &f.agent, &mut scope).await);
+        let prepared = writer_commit::prepare(
+            &f.store,
+            &mut scope,
+            &captured,
+            PublicationInput {
+                operation: &operation,
+                current: &f.agent,
+                next: &next,
+                logs: &logs,
+                capacity: AppendCapacity::Normal,
+                result_digest: publication::result_digest(&next).unwrap(),
+            },
+            Some(&bootstrap),
+            Some(&admission),
+        )
+        .await;
+        if changed_source {
+            assert!(prepared.is_err());
+            scope.release().abort_transaction().await.unwrap();
+            for name in [HEADS, PROJECTIONS, PUBLICATIONS] {
+                assert_eq!(
+                    collection(&f.store, name)
+                        .count_documents(doc! {})
+                        .await
+                        .unwrap(),
+                    0
+                );
+            }
+        } else {
+            let receipt = succeeded(
+                writer_commit::persist(
+                    &f.store,
+                    &mut scope,
+                    succeeded(prepared),
+                    AggregateUpdate {
+                        filter: doc! {"_id":f.agent.id.as_str()},
+                        fields: agent_replacement_fields(&next).unwrap(),
+                    },
+                )
+                .await,
+            );
+            assert!(matches!(
+                commit_transaction(scope.release()).await,
+                CommitOutcome::Committed
+            ));
+            let head = Head::read(
+                collection(&f.store, HEADS)
+                    .find_one(doc! {"_id":f.agent.id.as_str()})
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(head.revision, 1);
+            assert_eq!(head.last_seq, next.conversation.last_seq as i64);
+            assert_eq!(receipt.result_revision, next.revision as i64);
+        }
+        f.destroy().await;
+    }
+}
