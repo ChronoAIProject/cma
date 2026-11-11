@@ -79,10 +79,12 @@ async fn startup_retains_parsed_owner_and_refusal_keeps_original_cursor() {
         panic!("receipt missing")
     };
     assert_eq!(receipt.source.cursor, 3);
-    assert!(matches!(
-        update.as_deref(),
-        Some(ConversationUpdate::Said(_))
-    ));
+    let update = update.as_deref().expect("startup message retained");
+    assert!(update.turn_evidence().is_none());
+    let ConversationUpdate::WithoutPromptEvidence(message) = update else {
+        panic!("passive attachment must not establish prompt authority")
+    };
+    assert!(matches!(**message, ConversationUpdate::Said(_)));
     assert_eq!(pools.available(), (1024 * 1024, 1024 * 1024));
     let refused = pool(&opened.bridge, 0, 1024 * 1024, false).await;
     assert!(matches!(
