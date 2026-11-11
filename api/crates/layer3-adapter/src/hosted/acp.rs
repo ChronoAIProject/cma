@@ -80,6 +80,7 @@ struct ConversationState {
 }
 
 pub(super) struct Bridge {
+    shared_runtime_output: bool,
     pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
     sink: Arc<Mutex<Sink>>,
     pub(super) pending: Pending,
@@ -212,6 +213,7 @@ impl Bridge {
         let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
+            shared_runtime_output: settings.shared_runtime_output,
             subscription,
             sink: Arc::new(Mutex::new(sink)),
             pending: Arc::new(Mutex::new(HashMap::new())),

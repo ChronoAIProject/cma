@@ -70,7 +70,8 @@ pub(super) async fn production_adapter(
         .with_reclaimer(reclaimer);
         let transport = ProviderHostedControlTransport::for_retained_opensandbox(client.clone())
             .map_err(|e| e.to_string())?
-            .with_subscriptions(subscriptions.clone());
+            .with_subscriptions(subscriptions.clone())
+            .with_shared_runtime_output(config.features.shared_runtime_output);
         backends.opensandbox = Some(Arc::new(
             ProviderHostedBackend::new(client, Arc::new(transport), &config.deployment_id)
                 .map_err(|e| e.to_string())?,
@@ -140,7 +141,8 @@ pub(super) async fn production_adapter(
             config.runtime.agent_sandbox_runtime_transport,
         )
         .map_err(|e| e.to_string())?
-        .with_subscriptions(subscriptions);
+        .with_subscriptions(subscriptions)
+        .with_shared_runtime_output(config.features.shared_runtime_output);
         backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(
             client,
             Arc::new(transport),
