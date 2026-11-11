@@ -2,6 +2,7 @@ use super::*;
 use crate::store::mongo_read_telemetry as reads;
 use std::sync::atomic::AtomicU64;
 
+mod fallback;
 mod fixture;
 mod refusals;
 use fixture::Fixture;

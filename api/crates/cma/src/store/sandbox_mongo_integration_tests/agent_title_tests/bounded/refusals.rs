@@ -175,36 +175,3 @@ async fn title_prefix_refuses_corrupt_proof_or_requested_rows_without_writes() {
         f.cleanup().await;
     }
 }
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
-async fn untrusted_title_fallback_still_rejects_a_gap_outside_the_prefix() {
-    let f = Fixture::new(1_000, 6, false, 64).await;
-    f.store
-        .agents
-        .update_one(
-            doc! { "_id": f.agent.id.as_str() },
-            doc! { "$unset": { INTEGRITY_FIELD: "" } },
-        )
-        .await
-        .unwrap();
-    f.store
-        .agent_log
-        .delete_one(doc! { "agent_id": f.agent.id.as_str(), "seq": 500_i64 })
-        .await
-        .unwrap();
-    assert_eq!(
-        f.store.agent_title_transcript(&f.agent.id).await,
-        Err(AgentTitleStoreError::SequenceConflict)
-    );
-    // Existing full audits retain their quarantine responsibility.
-    assert!(f
-        .store
-        .agents
-        .find_one(doc! { "_id": f.agent.id.as_str() })
-        .await
-        .unwrap()
-        .unwrap()
-        .contains_key(QUARANTINE_FIELD));
-    f.cleanup().await;
-}
