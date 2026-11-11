@@ -83,7 +83,7 @@ mod background_checkpoint_tests;
 mod command_ledger_tests;
 mod conversation_fixtures;
 mod ledger_census_tests;
-mod ledger_retirement_tests;
+pub(in crate::store) mod ledger_retirement_tests;
 mod live_sandbox_pages;
 mod read_telemetry_tests;
 pub(in crate::store) mod resource_access_tests;
