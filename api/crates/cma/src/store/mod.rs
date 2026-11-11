@@ -60,6 +60,8 @@ mod durability;
 mod encryption;
 mod media_uploads;
 pub(crate) mod provenance_progress;
+mod segment_response;
+pub(crate) use segment_response::emit as emit_response_reads;
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
 #[cfg(test)]
@@ -72,6 +74,9 @@ mod hierarchy;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
+pub(crate) mod ledger_census;
+pub(crate) mod ledger_collection;
+mod ledger_collection_progress;
 pub(crate) mod ledger_retirement;
 mod legacy_history;
 mod lifecycle_execution;

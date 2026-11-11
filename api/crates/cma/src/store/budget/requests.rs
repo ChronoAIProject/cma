@@ -48,7 +48,11 @@ fn ledger_key(scope: &RequestScope) -> String {
     )
 }
 
-fn now() -> Result<u64, BudgetError> {
+fn now(_store: &MongoSandboxStore) -> Result<u64, BudgetError> {
+    #[cfg(test)]
+    if let Some(clock) = &_store.request_budget_clock {
+        return Ok(clock.load(std::sync::atomic::Ordering::SeqCst));
+    }
     layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339()).ok_or(BudgetError::Unavailable)
 }
 
