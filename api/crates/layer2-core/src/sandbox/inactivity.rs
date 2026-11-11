@@ -119,6 +119,19 @@ pub fn is_inactivity_pause_candidate(
     now: &str,
     pause_after_seconds: u64,
 ) -> bool {
+    (MIN_PAUSE_AFTER_SECONDS..=MAX_PAUSE_AFTER_SECONDS).contains(&pause_after_seconds)
+        && is_quiet_pause_candidate(sandbox, live_agents, now, pause_after_seconds)
+}
+
+/// The quiet-pause eligibility predicate without an inactivity threshold
+/// bound: a platform spend stop pauses every quiet Sandbox immediately.
+pub fn is_quiet_pause_candidate(
+    sandbox: &Sandbox,
+    live_agents: &[SandboxAgentActivity],
+    now: &str,
+    idle_after_seconds: u64,
+) -> bool {
+    let pause_after_seconds = idle_after_seconds;
     let Some(now) = seconds_from_rfc3339(now) else {
         return false;
     };
@@ -126,7 +139,6 @@ pub fn is_inactivity_pause_candidate(
         return false;
     };
     if sandbox.status != SandboxStatus::Active
-        || !(MIN_PAUSE_AFTER_SECONDS..=MAX_PAUSE_AFTER_SECONDS).contains(&pause_after_seconds)
         || runtime.runtime_id.trim().is_empty()
         || runtime.runtime_version.trim().is_empty()
         || seconds_from_rfc3339(&runtime.bound_at).is_none()
@@ -155,6 +167,9 @@ pub fn is_inactivity_pause_candidate(
             })
     })
 }
+
+/// The fixed owner-facing reason for a pause under a platform spend stop.
+pub const PLATFORM_SPEND_PAUSE_NOTICE: &str = "Platform spend limit reached. Your work is saved; the Sandbox will be available again after the limit is raised.";
 
 /// Compose the one notice stored for an inactivity pause.
 pub fn inactivity_pause_notice(pause_after_seconds: u64) -> String {
