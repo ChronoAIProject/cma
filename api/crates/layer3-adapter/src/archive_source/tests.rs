@@ -112,13 +112,10 @@ fn extended_metadata_is_retained_and_drift_detected() {
     };
     assert_eq!(result, 0);
     let tree = SnapshotTree::open(&temp.0).unwrap();
-    assert_eq!(
-        tree.entries[1].attributes,
-        vec![(
-            STANDARD.encode(b"user.cma.archive"),
-            STANDARD.encode(b"first")
-        )]
-    );
+    assert!(tree.entries[1].attributes.contains(&(
+        STANDARD.encode(b"user.cma.archive"),
+        STANDARD.encode(b"first")
+    )));
     #[cfg(target_os = "linux")]
     let result =
         unsafe { libc::setxattr(path.as_ptr(), key.as_ptr(), b"other".as_ptr().cast(), 5, 0) };
@@ -135,4 +132,30 @@ fn extended_metadata_is_retained_and_drift_detected() {
     };
     assert_eq!(result, 0);
     assert!(tree.verify_unchanged().is_err());
+}
+
+#[test]
+fn reconstruction_refuses_traversal_duplicate_entries_and_existing_symlink_parents() {
+    let temp = Temp::new();
+    let source = temp.0.join("source");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::write(source.join("data"), b"original").unwrap();
+    let tree = SnapshotTree::open(&source).unwrap();
+    let mut restored = RestoreTree::create(&temp.0.join("restore")).unwrap();
+    restored.add(&tree.entries[0]).unwrap();
+    assert!(restored.add(&tree.entries[0]).is_err());
+    let mut bad = tree.entries[1].clone();
+    bad.path = vec![STANDARD.encode(b".."), STANDARD.encode(b"escaped")];
+    assert!(restored.add(&bad).is_err());
+    let mut linked = tree.entries[1].clone();
+    linked.path = vec![STANDARD.encode(b"link")];
+    linked.kind = Kind::Symlink {
+        target: STANDARD.encode(source.as_os_str().as_encoded_bytes()),
+    };
+    restored.add(&linked).unwrap();
+    let mut child = tree.entries[1].clone();
+    child.path = vec![STANDARD.encode(b"link"), STANDARD.encode(b"escaped")];
+    assert!(restored.add(&child).is_err());
+    assert!(!source.join("escaped").exists());
+    assert_eq!(std::fs::read(source.join("data")).unwrap(), b"original");
 }

@@ -64,6 +64,13 @@ impl Request {
                 return Err(REFUSED);
             }
         }
+        if self.roots.iter().any(|root| {
+            root.path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        }) {
+            return Err(REFUSED);
+        }
         if !["home", "state", "transfer"]
             .into_iter()
             .all(|r| roles.contains(r))

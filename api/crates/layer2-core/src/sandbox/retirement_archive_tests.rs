@@ -63,3 +63,18 @@ fn malformed_or_manufactured_requirements_are_refused() {
         assert!(s.validate_retirement_archive().is_err());
     }
 }
+
+#[test]
+fn legacy_records_remain_unchanged_and_future_gate_versions_fail_closed() {
+    let ordinary = sandbox();
+    let value = serde_json::to_value(&ordinary).unwrap();
+    assert!(value["lifecycle"].get("retirement_archive").is_none());
+    let parsed: Sandbox = serde_json::from_value(value).unwrap();
+    assert_eq!(parsed, ordinary);
+    let mut future = held();
+    future.lifecycle.retirement_archive.as_mut().unwrap().format = 2;
+    assert!(future.validate_retirement_archive().is_err());
+    let mut raw = serde_json::to_value(held()).unwrap();
+    raw["lifecycle"]["retirement_archive"]["unknown_release_authority"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<Sandbox>(raw).is_err());
+}
