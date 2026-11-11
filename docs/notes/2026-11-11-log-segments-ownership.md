@@ -34,8 +34,10 @@ Companion to [the five-slice plan](2026-11-11-log-segments-plan.md). Each exact 
 | `api/crates/cma/src/store/agent_admission/initial_integrity.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/agent_admission_records.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/agent_admission_reuse.rs` | S4 | cma-seg-lead |
+| `api/crates/cma/src/store/agent_capacity_recovery/accepted_authority.rs` | S5 | cma-seg-3 |
 | `api/crates/cma/src/store/agent_capacity_recovery/admission.rs` | S5 | cma-seg-3 |
 | `api/crates/cma/src/store/agent_capacity_recovery/mod.rs` | S5 | cma-seg-3 |
+| `api/crates/cma/src/store/agent_capacity_recovery/restart.rs` | S5 | cma-seg-3 |
 | `api/crates/cma/src/store/agent_capacity_recovery/source.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/agent_capacity_recovery/status.rs` | S5 | cma-seg-3 |
 | `api/crates/cma/src/store/agent_capacity_recovery/tests.rs` | S5 | cma-seg-3 |
@@ -60,6 +62,7 @@ Companion to [the five-slice plan](2026-11-11-log-segments-plan.md). Each exact 
 | `api/crates/cma/src/store/agent_log_reads/integrity.rs` | S1 | cma-cost |
 | `api/crates/cma/src/store/agent_log_reads/tests.rs` | S1 | cma-cost |
 | `api/crates/cma/src/store/agent_log_receipts.rs` | S4 | cma-seg-lead |
+| `api/crates/cma/src/store/agent_log_segment_reads.rs` | S3 | cma-seg-2 |
 | `api/crates/cma/src/store/agent_log_segments/answer.rs` | S3 | cma-seg-2 |
 | `api/crates/cma/src/store/agent_log_segments/approval_pages.rs` | S3 | cma-seg-2 |
 | `api/crates/cma/src/store/agent_log_segments/approvals.rs` | S3 | cma-seg-2 |
@@ -94,6 +97,7 @@ Companion to [the five-slice plan](2026-11-11-log-segments-plan.md). Each exact 
 | `api/crates/cma/src/store/agent_log_segments/writer_gate_tests.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/agent_log_segments/writer_plan.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/agent_log_segments/writer_plan_tests.rs` | S4 | cma-seg-lead |
+| `api/crates/cma/src/store/agent_log_segments/writer_prepare.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/agent_log_segments/writer_projection.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/agent_log_segments/writer_reconcile.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/agent_log_store.rs` | S1 | cma-cost |
@@ -106,6 +110,7 @@ Companion to [the five-slice plan](2026-11-11-log-segments-plan.md). Each exact 
 | `api/crates/cma/src/store/agent_title_writes.rs` | S3 | cma-seg-2 |
 | `api/crates/cma/src/store/agent_title_writes/integrity.rs` | S3 | cma-seg-2 |
 | `api/crates/cma/src/store/agent_titles.rs` | S3 | cma-seg-2 |
+| `api/crates/cma/src/store/agent_titles/bounded.rs` | S3 | cma-seg-2 |
 | `api/crates/cma/src/store/agent_worker_reconcile.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/agent_worker_store.rs` | S2 | cma-db-contention |
 | `api/crates/cma/src/store/agent_worker_transaction.rs` | S4 | cma-seg-lead |
@@ -117,6 +122,7 @@ Companion to [the five-slice plan](2026-11-11-log-segments-plan.md). Each exact 
 | `api/crates/cma/src/store/checkpoints.rs` | S5 | cma-seg-3 |
 | `api/crates/cma/src/store/checkpoints/agents.rs` | S5 | cma-seg-3 |
 | `api/crates/cma/src/store/checkpoints/reconciliation.rs` | S5 | cma-seg-3 |
+| `api/crates/cma/src/store/child_writer_claims.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/isolation.rs` | S2 | cma-db-contention |
 | `api/crates/cma/src/store/lifecycle_transaction.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/migrations/agent_log_segments.rs` | S1 | cma-cost |
@@ -261,6 +267,7 @@ Companion to [the five-slice plan](2026-11-11-log-segments-plan.md). Each exact 
 | `api/crates/layer2-core/src/sandbox/agent_reads_tests/resource_access_tests/service_tests/reads.rs` | S2 | cma-db-contention |
 | `api/crates/layer2-core/src/sandbox/agent_reads_tests/resource_access_tests/service_tests/reads/response.rs` | S2 | cma-db-contention |
 | `api/crates/layer2-core/src/sandbox/agent_reads_tests/segment_projection_tests.rs` | S3 | cma-seg-2 |
+| `api/crates/layer2-core/src/sandbox/agent_reads_transcript.rs` | S3 | cma-seg-2 |
 | `api/crates/layer2-core/src/sandbox/agent_reads_usage.rs` | S3 | cma-seg-2 |
 | `api/crates/layer2-core/src/sandbox/mod.rs` | S2 | cma-db-contention |
 | `api/crates/layer2-core/src/sandbox/store.rs` | S2 | cma-db-contention |
@@ -282,6 +289,7 @@ Companion to [the five-slice plan](2026-11-11-log-segments-plan.md). Each exact 
 | `api/crates/layer2-core/src/sandbox/store/memory/agent_lifecycle_tests/capacity_tests.rs` | S5 | cma-seg-3 |
 | `api/crates/layer2-core/src/sandbox/store/memory/agent_reads.rs` | S3 | cma-seg-2 |
 | `api/crates/layer2-core/src/sandbox/store/memory/agent_segment_contracts.rs` | S2 | cma-db-contention |
+| `api/crates/layer2-core/src/sandbox/store/pagination.rs` | S2 | cma-db-contention |
 | `api/crates/layer2-core/src/sandbox/suggestions.rs` | S3 | cma-seg-2 |
 | `api/crates/layer2-core/src/sandbox/suggestions/budget.rs` | S3 | cma-seg-2 |
 | `api/crates/layer2-core/src/sandbox/suggestions/context.rs` | S3 | cma-seg-2 |

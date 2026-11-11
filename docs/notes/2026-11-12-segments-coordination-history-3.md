@@ -347,4 +347,3 @@ Other fetched checkpoints waiting for the immutable current gate: S1 `e955d37f1`
 ### S5 admission isolation and normal develop merge — c3c8c5f59
 
 Published c3c8c5f59157ffcb23b51a9073de57ad004138a2, normally including develop42fbf75deaae699ac2f17c6e93528daef140b9fa. The single FeatureFlags conflict retained both recovery parent pacing and the new permission bounds flag.
-
