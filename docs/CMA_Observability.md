@@ -63,15 +63,93 @@ Unknown routes use `unmatched`. Correlation IDs belong in restricted logs.
 | Response bodies | `cma_http_response_body_bytes_total` counts bytes polled into the server body consumer. `cma_http_body_closed_total{reason}` and `cma_http_body_lifetime_seconds` report `eof`, `error`, or `dropped`. Body errors and drops after HTTP 200 remain observable. Trailers and backpressure are preserved. |
 | Before-header cancellation | `cma_http_before_headers_cancelled_total` and `cma_http_cancelled_before_headers_seconds`; a client disconnect or cancellation is an observation, not proof of platform task failure. |
 | SSE | `cma_sse_observation_closed_total{route,reason}` reports transport observation endings. It does not inspect protocol payloads or assert a terminal. `cma_public_streams_active{stream_kind}` and `cma_public_stream_polls_total{stream_kind,outcome}` export existing bounded stream diagnostics every 10 seconds. |
-| Authentication | `cma_auth_resolutions_total{outcome}` and `cma_auth_resolution_seconds`: ambient subject resolution is `resolved`, `anonymous`, or `unavailable`. Worker/resource-specific auth paths and intentional auth bypasses are not included; HTTP results still cover their responses. |
+| Authentication | `cma_auth_resolutions_total{path,outcome}` and `cma_auth_resolution_seconds` cover ambient, worker and exact resource-request verification, including early rejection and cancellation. Independent routes record `bypassed`. Resolution is distinct from later endpoint authorization. |
 | Readiness | `cma_readiness_check_success` is the last completed Mongo check's result. `cma_readiness_check_timestamp_seconds` supplies freshness; `cma_readiness_check_seconds{outcome}` reports check duration. A stale successful check is not ready. `/ready` retains its existing five-second freshness limit, `/livez` retains process liveness semantics. |
-| Mongo pool | `cma_mongo_pool_events_total{operation,outcome}`, `cma_mongo_pool_operation_seconds`, `cma_mongo_checkout_started_total`, `cma_mongo_connections_tracked`, `cma_mongo_pool_max_connections`, `cma_mongo_connection_tracking_overflow_total`. These observe the general application client across its server pools; max connections is a per-server pool limit, not a fleet denominator. Tracking is bounded at 4096; overflow means tracked occupancy is incomplete. Checkout starts are events, not queue depth: the pinned driver may omit the end event on cancellation, so starts minus ends is invalid. Duration samples cover completed checkouts only. Command monitoring stays disabled. |
+| Mongo pool | `cma_mongo_pool_events_total{pool,operation,outcome}`, `cma_mongo_pool_operation_seconds`, `cma_mongo_checkout_started_total`, `cma_mongo_connections_tracked`, `cma_mongo_pool_max_connections`, `cma_mongo_connection_tracking_overflow_total`. Fixed pool labels separate `application`, `reporting` and `routing` clients, each across its server pools; max connections is a per-server pool limit, not a fleet denominator. The reporting observer composes with its existing circuit callback. Tracking is bounded at 4096; overflow means tracked occupancy is incomplete. Checkout starts are events, not queue depth: the pinned driver may omit the end event on cancellation, so starts minus ends is invalid. Duration samples cover completed checkouts only. Command monitoring stays disabled. |
 | Mongo reads | Existing `cma_mongo_read_{operations,failures,documents,document_bytes}_total` snapshots, by bounded collection and `find`. They cover instrumented reads, not every database command or wire byte. |
 | Ledger reads | Existing `cma_agent_log_scan*` counters, by fixed caller/worker step/outcome, exported from periodic diagnostics. They measure read work, not accepted commands. |
-| Workers | `cma_worker_alive`, `cma_worker_heartbeat_timestamp_seconds`, `cma_worker_progress_timestamp_seconds{phase}`, `cma_worker_operations_total{phase,outcome}`, `cma_worker_local_queued`, `cma_worker_local_active`. Instrumented schedulers are Agent commands, Sandbox commands, Agent connection/lifecycle work, launches and native warm pools. A guard clears alive/queue gauges on return, abort or panic. Heartbeat proves scheduler-loop activity; successful discovery proves a scan completed; neither proves a turn completed. |
+| Workers | `cma_worker_alive`, `cma_worker_heartbeat_timestamp_seconds`, `cma_worker_phase_success_timestamp_seconds{phase}`, `cma_worker_operations_total{phase,outcome}`, `cma_worker_local_queued`, `cma_worker_local_active`. Instrumented schedulers are Agent commands, Sandbox commands, Agent connection/lifecycle work, launches and native warm pools. A guard clears alive/queue gauges on return, abort or panic. Heartbeat proves scheduler-loop activity; successful discovery proves a scan completed; neither proves a turn completed. |
 | Optional background work | `cma_background_active`, `cma_background_deferred_total`, `cma_background_attempts_total{outcome}`, `cma_background_attempt_seconds`, `cma_background_pending_since_timestamp_seconds`, `cma_background_completion_timestamp_seconds`. Pending timestamps continue to age during a blocked operation. Zero means no observed pending sweep. These cover local resumable sweeps, not the oldest durable command in Mongo. |
 | Runtime ledger holds | `cma_runtime_ledger_holds_total`: observed runtime capacity holds. This does not invent an occupancy estimate for runtimes lacking that contract. |
 | Collector health | `cma_telemetry_sample_timestamp_seconds` is refreshed by the existing 10-second diagnostics worker. A fresh scrape with an old sample timestamp means that local worker is stalled. |
+
+### Request attribution
+
+`cma_http_classified_attempts_total{route,method,consumer,protocol}` is emitted
+when headers are constructed or the attempt is cancelled, once verified auth
+attribution is available. The original attempt counter still starts before auth.
+`cma_http_classified_responses_total` adds status;
+`cma_http_classified_headers_seconds` measures header construction latency.
+`consumer` is a trusted credential path: `public_user` is retained provider-mode
+browser authority, `direct_api` is an independently verified bearer/binding key,
+`nyxid` is verified proxy or exact request-bound authority, `internal` is the
+verified Gateway service path. Local trusted mode, rejected/anonymous requests
+and independent routes remain `unknown`. These labels do not identify a client
+application. Origin, User-Agent and caller-supplied consumer headers confer no
+attribution. Protocol is derived from the route template (`agui`, `responses`,
+`rest`, `auth`, `other`). Environment comes from the collector's target labels.
+
+### Durable worker snapshots
+
+`cma_worker_durable_items{worker,state}` and
+`cma_worker_durable_oldest_timestamp_seconds{worker,state}` summarize persisted
+work every 30 seconds. Agent commands retain separate `queued`, `in_progress`
+and `waiting_action` populations; only `expired_queue` compares a queued
+command's actual queue deadline with now. Sandbox commands expose `queued` and
+`expired_queue`. Launch `due` and Agent `lifecycle_due` reuse the scheduling
+predicates, excluding live leases, future retries and non-retryable holds.
+Their oldest timestamp is eligibility time (including expired lease/retry), not
+admission time. Agent lifecycle is a subset of the `agents` worker's scope.
+Queued is a candidate population, not proof that per-Agent lane ordering or
+permissions allow execution. Waiting action and long running inference never
+become expired queue merely because their admission is old.
+
+Each Mongo aggregate has a one-second server limit, a two-second client limit
+and indexes over the active population; sampling is sequential and skips missed
+ticks. A scrape reads cached gauges only. Failed or timed-out samples preserve
+prior values and set `cma_worker_durable_sample_success` to zero. Always gate
+on success and fresh `cma_worker_durable_sample_success_timestamp_seconds`;
+`cma_worker_durable_sample_timestamp_seconds` records the last completed attempt.
+A count is absent until first success. Oldest zero means empty only alongside
+a successful fresh sample and count zero. Compute age using `time() - oldest`
+only when count and oldest are positive. A warm target scheduled at epoch zero
+has no reconstructed eligibility timestamp; its positive due count remains
+visible, with oldest zero explicitly unknown. These are shared database observations repeated by
+overlapping replicas: do not sum them across pods. Use one fresh source or max
+with the correct deployment/database scope.
+
+Worker heartbeat and `phase_success` prove loop/phase activity, including idle
+scans. They never assert durable advancement. Warm executions distinguish
+`idle`, `attempted` and `error`; provider apply outcomes have their own counter.
+
+### Warm capacity and reporting circuit
+
+Every 15 seconds a separate task reads bounded deployment-scoped warm targets
+and provider inventory under an eight-second total timeout. Fixed `kind=agent`
+and `kind=machine` labels expose `cma_warm_pool_desired_replicas` and
+`cma_warm_pool_ready_replicas` for current immutable image/Pod/home plans,
+excluding retired/retiring plans. A ready count requires exact original binding,
+observed controller generation and matching desired replicas. A deliberately
+disabled target with no binding contributes zero. Missing/replaced resources,
+unobserved generations and failed inventory set
+`cma_warm_pool_observation_complete` to zero and retain the previous ready count;
+consumers must also check `cma_warm_pool_sample_success_timestamp_seconds`.
+`cma_warm_pool_sample_timestamp_seconds` tracks completed attempts.
+No pool/image/resource IDs enter labels. This is the provider's ready-replica
+contract; claimed/available counts are not inferred. The same bounded target
+snapshot publishes native warm `due` count/oldest with worker freshness gauges.
+
+`cma_warm_pool_apply_total{kind,outcome}` follows the fenced finish write.
+`cma_warm_pool_revision_applied_timestamp_seconds` advances only when a new
+revision is successfully acknowledged; an idle or unchanged periodic re-apply
+cannot refresh it. This observation still resets on process restart.
+
+`cma_mongo_circuit_until_timestamp_seconds{pool="reporting"}` exposes the actual
+atomic circuit deadline. Open means `until > time()`; it expires naturally
+without another request. `cma_mongo_circuit_opened_total{pool,reason}` counts
+pressure observations that open/extend it, and
+`cma_mongo_circuit_rejections_total{pool}` counts refusals at its guard. These
+metrics preserve the existing reporting deadline and recovery behavior.
 
 All counters are process observations and reset on restart. Idle event-driven
 series may be absent until observed; do not treat every absent event counter as
@@ -109,7 +187,7 @@ unfinished according to the public operation contract, without a blanket
 The current HTTP metrics are backend attempt observations, not the complete
 edge-plus-backend request SLI and not a durable accepted-work ledger. Do not
 advertise the final consumer/protocol/environment SLI or `unknown=0` from them.
-Required follow-up includes verified consumer attribution, durable projection
+Trusted credential-path attribution is now exported, with explicit unknowns. Required follow-up includes durable projection
 and reconciliation, native/public terminal timestamps and edge-only access
 evidence. IDs remain in durable records/restricted events, not metric labels.
 
@@ -166,7 +244,7 @@ Before claiming #1470 complete:
 5. Complete the remaining issue families and #1486 reconciliation. This change
    does not implement durable admission/terminal SLIs, native-to-public lag,
    cancellation-safe Mongo pending/oldest-age observations, provider permits, the
-   complete warm-capacity inventory, browser fatal-event
+   claimed/available capacity beyond the provider ready-replica contract, browser fatal-event
    collection, or Edge Gateway queue/delivery instrumentation beyond its
    existing metrics. Those are explicit gaps, not zero-valued successes.
 
