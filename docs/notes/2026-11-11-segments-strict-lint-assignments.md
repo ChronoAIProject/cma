@@ -367,3 +367,44 @@ abort/restart/foreign/absence, uncertain commit and retry without replanning.
 The Thursday train plan is read and observed. This checkpoint is dependency
 work for the integration owner, not a standalone PR or an activation change.
 Gate results and the final source pin follow after qualification.
+
+
+## Scoped runtime-loss final qualification — 03:09 SGT
+
+Published source/documentation pin `de645dcab68851727ca3a80f4e20abca3debace2`,
+branch `tl/cma-log-segments/writer-publication`; executable source
+`9243f917137d66b9af8ecc94e85824cfad8aec89`, including normal develop merge
+`1d425cffc6e48bf33cc26635b6e1a58f92aec79f`. No mixed integration tip.
+
+The reassigned production root now calls `transaction::apply_scoped`, its scoped
+Agent publisher and `capture_segmented_scoped`. Exact original publication/domain
+receipts participate in original commit-uncertainty reconciliation. No absent or
+foreign receipt permits success or replanning. S5's `records.rs::insert` owns the
+`TransactionScope::insert_one` consumer; admission/authority/records/status remain
+S5-owned. No missing interface blocks the completed runtime-loss root.
+
+Final gates: **114 unit/configuration + 54 real-Mongo tests passed**, zero failures.
+Mongo includes all 7 new actual-adoption/scoped-root cases, 12 existing
+reconciliation cases, 34 writer regressions and the imported lineage-bound case.
+Success, terminal fencing, stale parent CAS, corrupt/foreign/absent receipt, late
+rollback, restart, transient retry and committed/uncommitted Unknown are covered.
+The two initial fixture/assertion failures were corrected; the exact S5 fixture
+fix `5fa84974f` is isolated as `02f634983` and normally merged.
+
+Strict CMA all targets/features with `-D warnings`: **exit 101, 18 distinct
+remaining S5 dead-code locations**, zero type errors and no reassigned root
+diagnostic. This clears four of the prior 22 locations. No new suppression or
+dummy consumer. Whole-CMA strict green still requires S5 service composition.
+
+Fmt/whitespace, 6,124-file size, canonical configuration docs, 31 Mongo-runner
+harness checks and 4 configuration-parser checks passed. Source history scan:
+3,810 commits, zero findings; final documentation history is scanned before push.
+Heavy gates used the existing release-only lock, two jobs, one target; final
+minimum available RAM 27%, no pause. The exact owned Mongo container/volume are
+confirmed removed. Full evidence and cleanup:
+`docs/notes/2026-11-12-s4-scoped-reconciliation.md`.
+
+Project 9 stays In Progress. No slice PR; S2 owns integration/review/merge. This
+does not close the remaining P1 activation findings or open writer/recovery
+activation. The Thursday train cutoff is acknowledged; this source is available
+for integration qualification before the assigned 04:00 source checkpoint.
