@@ -21,6 +21,11 @@ current Sandbox before confirming. A read-only assessment precedes the dialog;
 POST repeats stronger proof and can still refuse. An accepted request appears in
 the existing Sandbox progress. Return to the same Agent once it is Ready.
 
+Assessment honours existing quarantine and refuses corrupt metadata, history or
+creation lineage without changing any document, including when admission is
+disabled or inspection is cancelled. Only the consented admission uses the full
+audit that can persist quarantine; viewing or cancelling recovery never does.
+
 The browser stores the owner/Sandbox-scoped revision and request key in session
 storage before sending. A lost response offers **Retry recovery request** with
 the original revision and key, including after page reload or lifecycle progress.
