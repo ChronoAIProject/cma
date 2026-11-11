@@ -81,7 +81,7 @@ it.each(['hint', 'refresh'])(
     expect(h.listQueued).toHaveBeenCalledTimes(3);
     expect(hook.result.current.items[0]?.input).toBe('Retained message');
     expect(hook.result.current.error).toContain('could not be refreshed');
-    await advance(60000);
+    await advance(29000);
     expect(h.listQueued).toHaveBeenCalledTimes(3);
     if (trigger === 'hint') hook.rerender({ revision: '1' });
     else act(() => hook.result.current.refresh());
@@ -94,6 +94,35 @@ it.each(['hint', 'refresh'])(
     hook.unmount();
   },
 );
+
+it('recovers a compatibility 404 on a slow timer without a stream event or remount', async () => {
+  const h = fixture();
+  h.listQueued.mockImplementationOnce(async () => unavailable(404));
+  const hook = renderHook(() => useQueuedInputs(h.session, true, false, '0', unchangedIdentity));
+  await advance(29999);
+  expect(h.listQueued).toHaveBeenCalledTimes(1);
+  await advance(1);
+  expect(h.listQueued).toHaveBeenCalledTimes(2);
+  expect(hook.result.current.error).toBeUndefined();
+  hook.unmount();
+});
+
+it('uses a slow fallback for an empty active queue and stays idle after the turn ends', async () => {
+  const h = fixture();
+  const hook = renderHook(
+    ({ active }) => useQueuedInputs(h.session, true, active, '0', unchangedIdentity),
+    { initialProps: { active: true } },
+  );
+  await advance(60000);
+  expect(h.listQueued).toHaveBeenCalledTimes(7);
+  expect(h.currentUser).toHaveBeenCalledTimes(14);
+  hook.rerender({ active: false });
+  await advance(100);
+  const count = h.listQueued.mock.calls.length;
+  await advance(60000);
+  expect(h.listQueued).toHaveBeenCalledTimes(count);
+  hook.unmount();
+});
 
 it('bounds stream-driven queue reads while preserving both fresh authorization checks', async () => {
   const h = fixture();
