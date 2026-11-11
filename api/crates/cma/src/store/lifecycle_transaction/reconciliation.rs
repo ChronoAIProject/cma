@@ -37,6 +37,11 @@ pub(in crate::store) async fn snapshot(
     if !checkpoint_receipt::matches(store, &receipt.checkpoint_children, session).await? {
         return Ok(false);
     }
+    for recorded in &receipt.segmented {
+        if !receipt.agents.contains(&recorded.next) || !recorded.matches(store, session).await? {
+            return Ok(false);
+        }
+    }
     for expected in &receipt.agents {
         let actual = store
             .agents

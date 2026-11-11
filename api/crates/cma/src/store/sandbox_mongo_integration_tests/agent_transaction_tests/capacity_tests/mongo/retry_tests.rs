@@ -88,6 +88,7 @@ async fn cleanup_capacity_retries_preserve_reserve_until_runtime_recovers() {
         store.commit_agent_work(retry.clone()).await.unwrap();
         if attempt == 1 {
             let mut receipt = crate::store::agent_worker_transaction::PublicationReceipt {
+                segmented: None,
                 agent: retry.agent.clone(),
                 worktree: None,
                 logs: vec![],
