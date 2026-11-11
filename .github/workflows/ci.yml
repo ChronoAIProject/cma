@@ -950,6 +950,10 @@ jobs:
           ruby-version: "3.4"
       - name: HTTPRoute ownership
         run: ruby .github/scripts/check-http-route-backends.rb
+      - name: Retained Web asset inventory
+        run: |
+          ruby .github/scripts/web-asset-retention-contract.rb
+          ruby .github/scripts/web-asset-retention-tests.rb
       - name: kubeconform
         run: |
           curl -sSL -o kubeconform.tar.gz \
