@@ -135,8 +135,18 @@ async fn load_for_inspection(
             Ok(Some(source)) => {
                 // These are full-prefix certified maxima. A missing point row
                 // never proves the proposed generation was unpublished.
-                if source.max_opened_generation() >= generation
-                    || source.max_retired_generation() >= generation
+                if require_reopen {
+                    observation.finish(Reason::Unavailable);
+                    return Err(ApplyError::Domain(SandboxStoreError::Unavailable(
+                        "segmented retained reopen requires its original bounded history proof"
+                            .into(),
+                    )));
+                }
+                if require_unpublished
+                    && generation.is_some_and(|generation| {
+                        source.max_opened_generation() >= generation
+                            || source.max_retired_generation() >= generation
+                    })
                 {
                     observation.finish(Reason::PublishedGeneration);
                     return Err(ApplyError::Domain(SandboxStoreError::InvalidTransaction(
