@@ -78,6 +78,12 @@ async fn real_child_claims_succeed_without_a_hold_and_invalidate_the_old_plan() 
     for kind in [Kind::Agent, Kind::Workspace] {
         let (client, name, store) = database().await;
         let request = pending(&store, kind).await;
+        // Fixture preparation itself can use a fenced generic child save.
+        // The claim must add exactly one admission to that observed baseline.
+        let prior_fence = documents(&store).await[0][0]
+            .get("ledger_writer_admission_fence_v1")
+            .map(|value| value.as_i64().unwrap())
+            .unwrap_or(0);
         let other = MongoSandboxStore::open(&client, &name).await.unwrap();
         assert!(claim(&other, &request, kind, NOW).await.unwrap());
         let before = documents(&store).await;
@@ -85,7 +91,7 @@ async fn real_child_claims_succeed_without_a_hold_and_invalidate_the_old_plan() 
             before[0][0]
                 .get_i64("ledger_writer_admission_fence_v1")
                 .unwrap(),
-            1
+            prior_fence + 1
         );
         assert_eq!(
             store.admit_ledger_maintenance(ENABLED, request).await,
