@@ -11,7 +11,7 @@ use layer2_core::sandbox::{
 
 const QUIET: &str = "2026-11-11T00:02:00Z";
 
-async fn parent(f: &Fixture) -> Sandbox {
+pub(super) async fn parent(f: &Fixture) -> Sandbox {
     let mut parent = active_sandbox(f.agent.sandbox_id.as_str());
     parent.owner = f.agent.owner.clone();
     parent.work = SandboxWorkState::new(SandboxWorkStep::None, NOW.into());

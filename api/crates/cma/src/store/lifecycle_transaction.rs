@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 mod checkpoint_receipt;
 mod integrity_write;
 pub(super) mod reconciliation;
+mod segmented;
 use integrity_write::{advance_agent, classify_aggregate_write, classify_log_write};
 
 use layer2_core::sandbox::store::{
@@ -31,6 +32,7 @@ use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 
 #[derive(Clone)]
 pub(super) struct LifecycleReceipt {
+    pub(super) segmented: Vec<super::agent_log_segments::writer_commit::Recorded>,
     pub(super) sandbox: Sandbox,
     pub(super) agents: Vec<Agent>,
     pub(super) logs: Vec<AgentLogEntry>,
@@ -198,6 +200,7 @@ pub(super) async fn apply_lifecycle(
     // Checkpoint proofs remain inside the exclusive scope. The completed
     // checkpoint fence and all later domain writes still share this transaction;
     // any later validation/write error is aborted by the root above.
+    let segment_receipts = segmented::publish(store, &agents, mutation, &mut scope).await?;
     let session = scope.release();
     if !segmented {
         super::checkpoint_capture::validate_and_fence_begin(
@@ -229,6 +232,10 @@ pub(super) async fn apply_lifecycle(
             .get(&change.agent.id)
             .copied()
             .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+        if let Some(recorded) = segment_receipts.get(&stored.id) {
+            logs.extend(recorded.logs.iter().cloned());
+            continue;
+        }
         let mut prior_entries = Vec::new();
         let complete = scan_complete_log_with_session(
             ScanCaller::CommandAdmission,
@@ -290,6 +297,9 @@ pub(super) async fn apply_lifecycle(
             .get(&change.agent.id)
             .copied()
             .expect("validated lifecycle agent exists");
+        if segment_receipts.contains_key(&stored.id) {
+            continue;
+        }
         let integrity = integrity_by_id
             .remove(&stored.id)
             .ok_or(ApplyError::Domain(SandboxStoreError::Corrupt(
@@ -321,6 +331,7 @@ pub(super) async fn apply_lifecycle(
         );
     }
     Ok(LifecycleReceipt {
+        segmented: segment_receipts.into_values().collect(),
         sandbox: mutation.sandbox.clone(),
         agents: mutation
             .agents
