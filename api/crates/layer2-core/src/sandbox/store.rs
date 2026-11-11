@@ -22,6 +22,7 @@ pub use agent::AgentStore;
 mod agent_log;
 pub use agent_log::AgentLogStore;
 mod agent_response_log;
+pub use agent_response_log::indexed;
 pub use agent_response_log::{AgentResponseLogStore, AgentResponseLogWindow};
 mod agent_log_publication;
 pub use agent_log_publication::AgentLogPublicationIdentity;
