@@ -232,7 +232,7 @@ impl ControlPlaneComposition {
             stores.request_limits.clone(),
         );
         let worker_holder = format!("{}:{}", config.deployment_id, uuid::Uuid::new_v4());
-        let sandbox_lifecycle = SandboxLifecycleComposition::new(
+        let mut sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
                 store: stores.sandbox_model.clone(),
                 title_budget: stores.request_limits.clone(),
@@ -386,7 +386,7 @@ impl ControlPlaneComposition {
             .merge(capacity_recovery::router(
                 &stores,
                 resource_access.clone(),
-                &sandbox_lifecycle,
+                &mut sandbox_lifecycle,
                 config.features.capacity_recovery_enabled,
             ))
             .merge(layer1_public::rest::resource_access_router(resource_access))

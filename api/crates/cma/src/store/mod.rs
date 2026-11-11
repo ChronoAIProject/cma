@@ -8,6 +8,7 @@ mod agent_access_tools;
 mod agent_admission;
 mod agent_admission_records;
 pub(crate) mod agent_capacity_recovery;
+mod agent_capacity_recovery_presence;
 mod agent_channel_usage;
 mod agent_commands;
 mod agent_control_lineage;
