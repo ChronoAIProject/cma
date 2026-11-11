@@ -49,7 +49,7 @@ pub(crate) async fn deactivate_collected_held(
     .await
 }
 
-enum Eligibility {
+pub(super) enum Eligibility {
     Legacy(Vec<u8>),
     Collected(Box<CollectionEvidence>),
 }
@@ -124,6 +124,26 @@ async fn apply(
     boundary: &mut (impl FnMut(Boundary) -> Result<()> + Send),
     exclusion: Arc<Mutex<impl Send + 'static>>,
 ) -> Result<DeactivationReceipt> {
+    if archive.version != super::Version::Indexed {
+        return Err(invalid());
+    }
+    let selection = selection(archive, proof, observation).await?;
+    archive.verify()?;
+    boundary(Boundary::Verified)?;
+    let receipt = source
+        .deactivate_retirement(selection, (archive.clone(), exclusion))
+        .await?;
+    boundary(Boundary::Committed)?;
+    Ok(receipt)
+}
+
+/// Reuse exact held source validation for a qualified completion coordinator.
+/// This method only builds a selection; it does not grant serving or exclusion.
+pub(super) async fn selection(
+    archive: &Arc<Archive>,
+    proof: GroupProof,
+    observation: Eligibility,
+) -> Result<Selection> {
     archive.verify()?;
     super::require_reserve(&archive.path, archive.anchor.as_deref())?;
     if matches!(&observation, Eligibility::Collected(evidence)
@@ -177,11 +197,5 @@ async fn apply(
             Selection::collected(&archive.config, proof, context, rows, &evidence)?
         }
     };
-    archive.verify()?;
-    boundary(Boundary::Verified)?;
-    let receipt = source
-        .deactivate_retirement(selection, (archive.clone(), exclusion))
-        .await?;
-    boundary(Boundary::Committed)?;
-    Ok(receipt)
+    Ok(selection)
 }
