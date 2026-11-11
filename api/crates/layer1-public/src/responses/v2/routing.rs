@@ -8,10 +8,27 @@ pub enum BindingRouteError {
     Invalid,
     NotReady,
     Unavailable,
+    SenderInvalid,
+    SenderUnsupported,
+    SenderUnavailable,
 }
 
 #[async_trait::async_trait]
 pub trait BindingEventRouter: Send + Sync {
+    /// Pure projection for comparison with an already admitted complete command.
+    /// This does not attest a new event or authorize a new admission.
+    fn sender_line(&self, _event: &ExternalEventContext) -> Result<String, BindingRouteError> {
+        Err(BindingRouteError::SenderUnsupported)
+    }
+    /// Attest the complete original event and render one deterministic first line.
+    async fn verified_sender_line(
+        &self,
+        _caller: &AuthenticatedResourceCaller,
+        _event: &ExternalEventContext,
+        _generation: u64,
+    ) -> Result<String, BindingRouteError> {
+        Err(BindingRouteError::SenderUnavailable)
+    }
     /// The interface captured this generation before resolving any alias.
     async fn route_at_generation(
         &self,
@@ -34,6 +51,21 @@ pub trait BindingEventRouter: Send + Sync {
 pub(super) fn error(value: BindingRouteError) -> axum::response::Response {
     use axum::http::{HeaderValue, StatusCode};
     let (status, code, detail) = match value {
+        BindingRouteError::SenderInvalid => (
+            StatusCode::FORBIDDEN,
+            "verified_sender_context_invalid",
+            "The gateway did not attest the original event for this binding.",
+        ),
+        BindingRouteError::SenderUnsupported => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "verified_sender_context_unsupported",
+            "The verified sender context cannot be represented within the input contract.",
+        ),
+        BindingRouteError::SenderUnavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "verified_sender_context_unavailable",
+            "Sender verification is temporarily unavailable; no turn was admitted.",
+        ),
         BindingRouteError::Forbidden => (
             StatusCode::FORBIDDEN,
             "event_identity_invalid",
@@ -60,6 +92,11 @@ pub(super) fn error(value: BindingRouteError) -> axum::response::Response {
         response
             .headers_mut()
             .insert("retry-after", HeaderValue::from_static("2"));
+    }
+    if matches!(value, BindingRouteError::SenderUnavailable) {
+        response
+            .headers_mut()
+            .insert("retry-after", HeaderValue::from_static("5"));
     }
     response
 }

@@ -15,6 +15,9 @@ impl BindingPrincipal {
 }
 
 impl BindingConversationAuthority {
+    pub fn command_authority(&self) -> AgentAuthorizationRevision {
+        authority(&self.binding.binding_id, self.binding.generation)
+    }
     /// The store supplies both records from its locked state/transaction. The
     /// parent write serializes this observation with all conversation changes.
     pub fn require_current(
