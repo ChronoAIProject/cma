@@ -44,6 +44,7 @@ Companion to [the five-slice plan](2026-11-11-log-segments-plan.md). Each exact 
 | `api/crates/cma/src/store/agent_conversation_store/reads.rs` | S3 | cma-seg-2 |
 | `api/crates/cma/src/store/agent_failure_pacing.rs` | S5 | cma-seg-3 |
 | `api/crates/cma/src/store/agent_failure_pacing/discovery.rs` | S5 | cma-seg-3 |
+| `api/crates/cma/src/store/agent_worker_store.rs` | S2 | cma-db-contention |
 | `api/crates/cma/src/store/agent_log.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/agent_log/receipt.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/agent_log_context.rs` | S1 | cma-cost |
