@@ -36,7 +36,8 @@ queues use a ten-second fallback to discover changes from another tab. Idle empt
 queues wait for events, focus or explicit actions. A compatibility 404 retries
 every thirty seconds or on a hint; it never clears a prior real error. Successful
 reads still have fresh authorization checks before and after data retrieval.
-Stream reconnects without durable progress back off to ten seconds and pause
+Stream reconnects without durable progress back off with equal jitter (half to
+all of each delay, capped at ten seconds) and pause
 while hidden. A healthy existing stream stays connected.
 
 ## Local comparison
