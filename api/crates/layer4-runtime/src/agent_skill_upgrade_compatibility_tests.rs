@@ -243,3 +243,28 @@ async fn changed_published_tree_keeps_recovery_pending_instead_of_claiming_the_o
         .matches(&request));
     cleanup(&config);
 }
+
+#[tokio::test]
+async fn excessive_tree_depth_is_refused_without_removing_owner_content() {
+    let (config, request) = fixture(true).await;
+    let target = config
+        .agent_home(request.agent_id.as_str())
+        .join("skills/research");
+    let mut deep = target.clone();
+    for _ in 0..66 {
+        deep.push("nested");
+    }
+    std::fs::create_dir_all(&deep).unwrap();
+    let note = deep.join("owner-note");
+    std::fs::write(&note, b"preserve").unwrap();
+    let error = install(&config, &reqwest::Client::new(), &request)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "agent_skill_upgrade_conflict");
+    assert_eq!(std::fs::read(note).unwrap(), b"preserve");
+    assert_eq!(
+        std::fs::read_to_string(target.join("SKILL.md")).unwrap(),
+        "# Research 1.0\n"
+    );
+    cleanup(&config);
+}
