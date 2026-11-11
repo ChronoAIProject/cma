@@ -1,5 +1,17 @@
 //! Accepted-work mutations within the caller's exclusive transaction. These
 //! helpers never commit, infer an unknown outcome, or activate a runtime.
+use super::{authority, receipts, records, source};
+use crate::store::{
+    agent_log_integrity::{AppendCapacity, TransactionLogError},
+    agent_log_segments::{
+        capture::{self, CapturedFormat},
+        publication::{self, PublicationIdentity},
+        transaction_scope::TransactionScope,
+        writer_commit::{self, AggregateUpdate, PublicationInput},
+    },
+    agents::agent_replacement_fields,
+    sandbox_mongo::MongoSandboxStore,
+};
 use layer2_core::resource_access::AuthorizedResource;
 use layer2_core::sandbox::{
     agent_capacity_recovery::{
@@ -11,21 +23,6 @@ use layer2_core::sandbox::{
     },
     store::SandboxStoreError,
     Agent, AgentLogEntry,
-};
-use mongodb::bson::{doc, spec::BinarySubtype, Binary};
-
-use super::{authority, records, source};
-use crate::store::{
-    agent_log_integrity::{AppendCapacity, TransactionLogError},
-    agent_log_segments::{
-        capture::{self, CapturedFormat},
-        incarnation,
-        publication::{self, Publication, PublicationIdentity},
-        transaction_scope::TransactionScope,
-        writer_commit::{self, AggregateUpdate, PublicationInput},
-    },
-    agents::agent_replacement_fields,
-    sandbox_mongo::MongoSandboxStore,
 };
 
 pub(in crate::store) struct ClaimRequest<'a> {
@@ -47,13 +44,10 @@ pub(in crate::store) async fn claim(
     let current =
         authority::capture(store, input.authorized, &input.request.agent_id, scope).await?;
     let work = read_work(store, input.request, current.context()?.agent, scope).await?;
-    if work.phase == RecoveryPhase::Completed {
-        return Err(SandboxStoreError::Unavailable(
-            "completed capacity recovery requires exact receipt reconciliation".into(),
-        )
-        .into());
-    }
-    if work.phase == RecoveryPhase::Superseded {
+    if matches!(
+        work.phase,
+        RecoveryPhase::Completed | RecoveryPhase::Superseded
+    ) {
         return Ok(ClaimOutcome::Terminal(Box::new(work)));
     }
     let context = current.context()?;
@@ -194,67 +188,10 @@ async fn read_work(
     current: &Agent,
     scope: &mut TransactionScope<'_>,
 ) -> Result<RecoveryWork, TransactionLogError> {
-    let key = request.key().map_err(|_| SandboxStoreError::Conflict)?;
-    let work = records::read(store, &key, scope)
+    let stored = receipts::read(store, current, request, scope)
         .await?
         .ok_or(SandboxStoreError::Conflict)?;
-    if &work.request != request {
-        return Err(SandboxStoreError::Conflict.into());
-    }
-    // The original immutable publication proves gated admission. A manually
-    // inserted or damaged carrier cannot grant recovery permission.
-    let admission = work
-        .admission_identity()
-        .map_err(|_| SandboxStoreError::Conflict)?;
-    let identity = PublicationIdentity {
-        key: admission.key,
-        fingerprint: Binary {
-            subtype: BinarySubtype::Generic,
-            bytes: admission.fingerprint.to_vec(),
-        },
-        appended_at: admission.appended_at,
-    };
-    let admitted = read_publication(store, current, &identity.key, scope).await?;
-    admitted.matches_request(current, &identity)?;
-    if admitted.expected_seq != admitted.last_seq {
-        return Err(SandboxStoreError::Conflict.into());
-    }
-    let receipt = if work.revision == 1 {
-        admitted
-    } else {
-        read_publication(
-            store,
-            current,
-            &format!("{key}:step:{}", work.revision),
-            scope,
-        )
-        .await?
-    };
-    // This active-mutation path requires exact current result evidence. It is
-    // not the later-head/unknown-outcome reconciliation path: changed aggregate
-    // state must be reconciled there, never accepted from a carrier alone.
-    if u64::try_from(receipt.result_revision).ok() != Some(current.revision)
-        || u64::try_from(receipt.last_seq).ok() != Some(current.conversation.last_seq)
-        || receipt.result_digest != publication::result_digest(&(current, &work))?
-    {
-        return Err(SandboxStoreError::Conflict.into());
-    }
-    Ok(work)
-}
-
-async fn read_publication(
-    store: &MongoSandboxStore,
-    current: &Agent,
-    key: &str,
-    scope: &mut TransactionScope<'_>,
-) -> Result<Publication, TransactionLogError> {
-    let id = publication::identity(current.id.as_str(), &incarnation(current), key);
-    let row = scope
-        .find_one(&store.segment_logs.publications, doc! {"_id": id})
-        .await
-        .map_err(TransactionLogError::Driver)?
-        .ok_or(SandboxStoreError::Conflict)?;
-    Ok(Publication::read(row)?)
+    Ok(stored.work)
 }
 
 fn advance(current: &Agent, now: &str) -> Result<Agent, SandboxStoreError> {
@@ -307,6 +244,17 @@ async fn persist(
         fingerprint: publication::request_digest(&(work, next_work, logs))?,
         appended_at: now.into(),
     };
+    let key = work
+        .request
+        .key()
+        .map_err(|_| SandboxStoreError::Conflict)?;
+    let prior = records::read(store, &key, scope)
+        .await?
+        .ok_or(SandboxStoreError::Conflict)?;
+    if prior.work != *work {
+        return Err(SandboxStoreError::Conflict.into());
+    }
+    let stored = records::StoredRecovery::new(next, next_work.clone(), logs, now)?;
     let prepared = writer_commit::prepare(
         store,
         scope,
@@ -317,14 +265,14 @@ async fn persist(
             next,
             logs,
             capacity: AppendCapacity::Normal,
-            result_digest: publication::result_digest(&(next, next_work))?,
+            result_digest: stored.result.digest(next_work)?,
         },
         None,
         None,
     )
     .await?;
     let filter = source::fence_filter_scoped(store, context.agent, scope).await?;
-    records::replace(store, work, next_work, scope).await?;
+    records::replace(store, &prior, &stored, scope).await?;
     authority::fence_parents(store, current, scope).await?;
     authority::require(authorized)?;
     writer_commit::persist(

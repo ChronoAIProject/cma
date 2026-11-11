@@ -4,54 +4,8 @@ use super::*;
 use crate::store::agent_capacity_recovery::records;
 use crate::store::agent_log_integrity::TransactionLogError;
 use crate::store::agent_log_segments::transaction_scope::TransactionScope;
-use layer2_core::sandbox::agent_capacity_recovery::state::{
-    RecoveryPhase, RecoveryRequest, RecoveryTarget, RecoveryWork,
-};
-use layer2_core::sandbox::RuntimeBinding;
-
-fn work() -> RecoveryWork {
-    let request = RecoveryRequest {
-        agent_id: AgentId("carrier-fixture".into()),
-        creation_key: "original-creation".into(),
-        creation_fingerprint: "a".repeat(64),
-        failure_seq: 10_001,
-        requested_at: NOW.into(),
-    };
-    RecoveryWork {
-        format_version: 1,
-        target: RecoveryTarget {
-            agent_id: request.agent_id.clone(),
-            creation_key: request.creation_key.clone(),
-            creation_fingerprint: request.creation_fingerprint.clone(),
-            conversation_id: "retained-native".into(),
-            conversation_generation: 1,
-            runtime: RuntimeBinding {
-                boot_id: Some("b".repeat(32)),
-                runtime_id: "original-runtime".into(),
-                runtime_version: "test".into(),
-                provision_generation: Some(3),
-                bound_at: NOW.into(),
-            },
-            home_identity: "original-home".into(),
-            original_open: AgentWorkReceipt {
-                step: AgentWorkStep::OpenConversation,
-                operation_id: format!("agent:{}:open:v1", request.agent_id),
-                request_sha256: "c".repeat(64),
-                completed_at: NOW.into(),
-            },
-            active_turn: None,
-            input_sha256: "d".repeat(64),
-        },
-        request,
-        phase: RecoveryPhase::Admitted,
-        revision: 1,
-        attempts: 0,
-        next_fence: 8,
-        lease: None,
-        ready_at: NOW.into(),
-        completed_at: None,
-    }
-}
+use layer2_core::sandbox::agent_capacity_recovery::state::RecoveryPhase;
+use records::test_support::stored;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -63,8 +17,8 @@ async fn capacity_carrier_insert_and_replace_obey_commit_abort_and_exact_cas() {
         .create_collection(records::COLLECTION)
         .await
         .unwrap();
-    let original = work();
-    let key = original.request.key().unwrap();
+    let original = stored();
+    let key = original.work.request.key().unwrap();
     let mut session = client.start_session().await.unwrap();
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
     records::insert(&store, &original, &mut scope)
@@ -85,8 +39,9 @@ async fn capacity_carrier_insert_and_replace_obey_commit_abort_and_exact_cas() {
         .unwrap();
     scope.release().commit_transaction().await.unwrap();
     let mut next = original.clone();
-    next.revision += 1;
-    next.phase = RecoveryPhase::Superseded;
+    next.work.revision += 1;
+    next.result.agent_revision += 1;
+    next.work.phase = RecoveryPhase::Superseded;
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
     records::replace(&store, &original, &next, &mut scope)
         .await
@@ -132,8 +87,8 @@ async fn capacity_carrier_cannot_change_original_request_or_native_target() {
         .create_collection(records::COLLECTION)
         .await
         .unwrap();
-    let original = work();
-    let key = original.request.key().unwrap();
+    let original = stored();
+    let key = original.work.request.key().unwrap();
     let mut session = client.start_session().await.unwrap();
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
     records::insert(&store, &original, &mut scope)
@@ -142,12 +97,13 @@ async fn capacity_carrier_cannot_change_original_request_or_native_target() {
     scope.release().commit_transaction().await.unwrap();
     for variant in 0..4 {
         let mut changed = original.clone();
-        changed.revision += 1;
+        changed.work.revision += 1;
+        changed.result.agent_revision += 1;
         match variant {
-            0 => changed.target.conversation_id = "replacement".into(),
-            1 => changed.target.input_sha256 = "e".repeat(64),
-            2 => changed.request.requested_at = MINUTE.into(),
-            _ => changed.revision += 1,
+            0 => changed.work.target.conversation_id = "replacement".into(),
+            1 => changed.work.target.input_sha256 = "e".repeat(64),
+            2 => changed.work.request.requested_at = MINUTE.into(),
+            _ => changed.work.revision += 1,
         }
         let mut scope = TransactionScope::start(&mut session).await.unwrap();
         assert!(matches!(
@@ -175,8 +131,8 @@ async fn capacity_carrier_corrupt_projection_and_unknown_fields_fail_closed() {
         .create_collection(records::COLLECTION)
         .await
         .unwrap();
-    let original = work();
-    let key = original.request.key().unwrap();
+    let original = stored();
+    let key = original.work.request.key().unwrap();
     let mut session = client.start_session().await.unwrap();
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
     records::insert(&store, &original, &mut scope)
@@ -196,7 +152,7 @@ async fn capacity_carrier_corrupt_projection_and_unknown_fields_fail_closed() {
                 corrupt.insert("agent_id", "different-agent");
             }
             1 => {
-                corrupt.insert("format_version", 2_i64);
+                corrupt.insert("format_version", 1_i64);
             }
             2 => {
                 corrupt.insert("unknown_authority", true);
