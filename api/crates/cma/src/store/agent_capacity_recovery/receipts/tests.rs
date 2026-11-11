@@ -12,6 +12,7 @@ fn receipt(agent: &Agent, stored: &StoredRecovery) -> Publication {
     let receipt = Publication {
         id: publication::identity(agent.id.as_str(), &incarnation(agent), &key),
         format_version: 1,
+        agent_digest: None,
         agent_id: agent.id.0.clone(),
         incarnation: incarnation(agent),
         publication_key: key,
