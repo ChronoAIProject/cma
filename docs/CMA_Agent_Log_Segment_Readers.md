@@ -132,8 +132,11 @@ exact-head PR evidence; this document is not a passing-gate claim.
 Passing fenced audit/rebuild and near-capacity resource tests, retention regressions,
 executable predecessor/rollback qualification and the full integrated foreground
 caller inventory remain required before #1348 closes. Release-owner production
-verification must observe real boundary replay and natural rollover without
-synthetic user input; elapsed time alone cannot satisfy that evidence.
+verification for this reader phase checks retained legacy history, cursors/SSE,
+identity, and unchanged format/head distribution through authorized read-only
+surfaces, with segmented emission closed. Real boundary replay and natural
+rollover belong to the later writer activation gate; elapsed time alone cannot
+satisfy that separate evidence requirement.
 
 `.github/scripts/agent-log-predecessor-tests.py` archives the original pinned
 pre-segmentation store and injects a test module only. It exercises unchanged
