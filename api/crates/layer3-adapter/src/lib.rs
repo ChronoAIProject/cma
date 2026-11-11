@@ -18,7 +18,7 @@ pub use browser::{
 pub use browser_control::*;
 mod agent_skill_install;
 pub use agent_skill_install::{
-    AgentSkillInstallReceipt, AgentSkillInstallRequest, AgentSkillUpgrade,
+    AgentSkillInstallReceipt, AgentSkillInstallRequest, AgentSkillUpgrade, AgentSkillUpgradeRefusal,
 };
 mod agent_provider;
 mod capabilities;
