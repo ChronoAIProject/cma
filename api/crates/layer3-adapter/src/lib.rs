@@ -181,3 +181,9 @@ pub use agent_filesystem::{
     AgentFileWriteReceipt, AgentFileWriteRequest, MAX_AGENT_FILE_BYTES, MAX_AGENT_FILE_ENTRIES,
 };
 pub mod sandbox_metrics;
+
+// Shared immutable archive locator; core persistence and runtime use one shape.
+mod runtime_ledger_collection_artifact;
+pub use runtime_ledger_collection_artifact::{
+    LedgerCollectionArtifactReferenceV1, LEDGER_COLLECTION_ARTIFACT_FORMAT,
+};
