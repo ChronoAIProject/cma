@@ -8,6 +8,8 @@ mod plan;
 mod plan_io;
 mod publication;
 mod retirement;
+mod retirement_artifact;
+mod retirement_stage;
 mod sealed;
 mod stage;
 #[cfg(test)]
@@ -67,6 +69,50 @@ pub(crate) async fn validate_command() -> std::result::Result<(), String> {
     .await
     .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
     .map_err(|error| error.to_string())?;
+    println!("{summary}");
+    Ok(())
+}
+
+pub(crate) async fn retirement_stage_command(
+    plan: std::path::PathBuf,
+    plan_sha256: String,
+    observation: std::path::PathBuf,
+    observation_sha256: String,
+    destination: std::path::PathBuf,
+) -> std::result::Result<(), String> {
+    let config = crate::config::RuntimeConfig::from_environment()
+        .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
+    let runtime = tokio::runtime::Handle::current();
+    let summary = tokio::task::spawn_blocking(move || {
+        runtime.block_on(retirement_stage::create(
+            config,
+            retirement_stage::Input {
+                plan: &plan,
+                plan_sha256: &plan_sha256,
+                observation: &observation,
+                observation_sha256: &observation_sha256,
+            },
+            &destination,
+        ))
+    })
+    .await
+    .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
+    .map_err(|error| error.to_string())?;
+    println!("{summary}");
+    Ok(())
+}
+
+pub(crate) async fn retirement_verify_command(
+    path: std::path::PathBuf,
+    expected: String,
+) -> std::result::Result<(), String> {
+    let config = crate::config::RuntimeConfig::from_environment()
+        .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
+    let summary =
+        tokio::task::spawn_blocking(move || retirement_artifact::verify(&config, &path, &expected))
+            .await
+            .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
+            .map_err(|error| error.to_string())?;
     println!("{summary}");
     Ok(())
 }
