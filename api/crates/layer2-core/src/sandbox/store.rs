@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
+use async_trait::async_trait;
 
 use super::{
     Agent, AgentLogEntry, AgentLogKind, Sandbox, SandboxEvent, SandboxEventKind, SandboxStatus,
@@ -24,7 +23,7 @@ pub use agent::AgentStore;
 mod agent_log;
 pub use agent_log::AgentLogStore;
 mod agent_response_log;
-pub use agent_response_log::{AgentResponseLogStore, AgentResponseLogWindow};
+pub use agent_response_log::{indexed, AgentResponseLogStore, AgentResponseLogWindow};
 mod agent_log_publication;
 pub use agent_log_publication::AgentLogPublicationIdentity;
 mod workspace_worker;
