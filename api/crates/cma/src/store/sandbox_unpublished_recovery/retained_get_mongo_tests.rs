@@ -9,8 +9,10 @@ use futures_util::TryStreamExt;
 use layer1_public::rest::{hierarchy_router, HierarchyState};
 use layer2_core::{profiles::store::InMemoryProfileStore, Authorization, Capability};
 use mongodb::{
-    bson::RawDocumentBuf, event::command::CommandEvent, options::ClientOptions, Client,
-    EventHandler,
+    bson::RawDocumentBuf,
+    event::{command::CommandEvent, EventHandler},
+    options::ClientOptions,
+    Client,
 };
 use std::{
     collections::BTreeMap,
