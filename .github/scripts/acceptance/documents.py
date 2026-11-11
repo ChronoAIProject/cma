@@ -1,6 +1,8 @@
 """Small real document controls, tenant refusals, and revoked-receipt replay."""
 
 from safety import decode
+import grant_cleanup
+import retained
 
 ISSUES = [1549, 1472, 1593]
 
@@ -21,6 +23,7 @@ def run(p):
             p.assert_case(label + "_owner", doc.get("owner_subject") == p.accounts[owner]["subject"], ISSUES, security=True)
             p.fixture(label, doc)
         doc = p.state["fixtures"][label]
+        retained.check_fixture(p, owner, "document", doc["id"])
         path = "/api/v1/documents/" + doc["id"]
         for suffix in ("", "/source", "/revisions", "/comments", "/shares", "/share-links"):
             case = label + (suffix.replace("/", "_") or "_metadata")
@@ -42,7 +45,11 @@ def run(p):
             present = any(row.get("id") == doc["id"] for row in items)
             p.assert_case(label + "_list_" + caller, response[0] == 200 and present == (caller == owner), ISSUES, response, True)
         if owner == "a":
-            revoke_replay(p, path, doc, owner, foreign)
+            try:
+                revoke_replay(p, path, doc, owner, foreign)
+            finally:
+                with p.http.cleanup_budget():
+                    grant_cleanup.run(p)
 
 
 def revoke_replay(p, path, doc, owner, reader):

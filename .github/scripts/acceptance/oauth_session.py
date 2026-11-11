@@ -1,11 +1,12 @@
 """Owner-approved ordinary CMA consent, bound to the returned signed request."""
 
 import hashlib
-import http.cookiejar
+import oauth_journal
 import urllib.parse
 import urllib.request
 
 from safety import CMA_ORIGIN, NoRedirect, Refusal, decode, write_private
+from identity import fingerprint
 
 OAUTH_ORIGIN = "https://api.nyxid.ai"
 SCOPES = "openid profile email roles proxy offline_access"
@@ -16,9 +17,16 @@ def fields(response):
 
 
 def run(p):
+    try:
+        consent(p)
+    finally:
+        p.http.opener = urllib.request.build_opener(NoRedirect())
+
+
+def consent(p):
     for tenant in ("a", "b"):
-        p.login(tenant)
-        jar = http.cookiejar.CookieJar()
+        oauth_journal.begin(p, tenant)
+        jar = oauth_journal.DurableCookies(p, tenant)
         p.http.opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPCookieProcessor(jar))
         response = p.http.request(CMA_ORIGIN, "/auth/login")
         if response[0] != 303:
@@ -29,6 +37,7 @@ def run(p):
                 or authorization.path != "/oauth/authorize"
                 or query.get("scope") != [SCOPES]
                 or query.get("redirect_uri") != [CMA_ORIGIN + "/auth/callback"]
+                or fingerprint(query.get("client_id", [""])[0]) != p.approval["cma_client_sha256"]
                 or query.get("code_challenge_method") != ["S256"]):
             raise Refusal("unexpected_cma_oauth_request")
         account = p.accounts[tenant]
@@ -42,7 +51,8 @@ def run(p):
             if (consent.scheme + "://" + consent.netloc != "https://nyxid.ai"
                     or consent.path != "/oauth-consent"
                     or any(consent_query.get(key) != query.get(key)
-                           for key in ("client_id", "redirect_uri", "scope", "state", "code_challenge"))):
+                           for key in ("response_type", "client_id", "redirect_uri", "scope", "state",
+                                       "code_challenge", "code_challenge_method"))):
                 raise Refusal("consent_not_bound_to_cma_login")
             response = p.http.request("https://nyxid.ai", consent.path + "?" + consent.query,
                                       token=account["access_token"])
@@ -53,6 +63,8 @@ def run(p):
             form = {key: consent_query[key][0] for key in names}
             # Normal sign-in only. Never expand connected-service or node access.
             form.update(decision="allow", allow_all_services="false")
+            p.state.setdefault("consent_cleanup", {})[tenant] = "submitted"
+            p.save()
             response = p.http.request(OAUTH_ORIGIN, "/oauth/authorize/decision", "POST",
                                       token=account["access_token"], form=form)
         if response[0] in (302, 303):
@@ -67,6 +79,7 @@ def run(p):
         if (target.scheme + "://" + target.netloc != CMA_ORIGIN or target.path != "/auth/callback"
                 or urllib.parse.parse_qs(target.query).get("state") != query.get("state")):
             raise Refusal("callback_not_bound_to_cma_login")
+        oauth_journal.before_callback(p, tenant)
         response = p.http.request(CMA_ORIGIN, target.path + "?" + target.query)
         if response[0] != 303:
             p.record("ordinary_cma_consent_" + tenant, "BLOCKED", [1536], response,
@@ -88,4 +101,3 @@ def run(p):
             "client": account["cma_client_id"], "scopes": SCOPES.split(),
         }
         p.save()
-    p.http.opener = urllib.request.build_opener(NoRedirect())
