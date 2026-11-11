@@ -53,3 +53,20 @@ The limit does not reclaim retained homes or establish a CPU, byte, stream or
 document quota. Runtime/network isolation and actual load remain separate
 acceptance rows. The real-Mongo tests establish cross-process transaction
 behavior, not production capacity or production execution permission.
+
+## Migration and reader record
+
+Migration ID: `2026-11-11-am-global-sandbox-admission`; phase: additive expand,
+then separately gated enforcement. Source identity is the PR's exact reviewed
+head; deployment digest/checksum and operator window remain release-owner receipts.
+
+| Required field | Scoped disposition |
+| --- | --- |
+| Store and writers | Agent Manager owns `sandboxes` and `sandbox_admissions`. Manual, Trigger and binding admissions use the existing transaction; origin replays retain identity. Startup ensures the additive index even while enforcement is off. No new runtime, object-storage, browser, key or external-effect writer. |
+| Durable formats | Sandbox/event/claim records are unchanged. `sandbox_admissions` gains one schema-v1 row with structured `_id: {scope: global_sandbox_capacity}` and an incrementing fence; subject fences retain string IDs. No validator, TTL, key or encryption change. |
+| Index / bounded work | Adds nonunique `sandboxes_global_live` on `{retired_at: 1, _id: 1}`. Startup uses the existing idempotent index initializer; build work scales with existing inventory and has no newly claimed wall-time bound. Release owner must preflight index conflicts and qualify build/readiness in the OFF deployment. Admission reads at most the configured ceiling with a three-second query deadline. |
+| Reader floor | New-store restart tests exercise schema guard acceptance of the actual fence bytes and saturated replay. Existing store readers do not deserialize this fence as a subject ID. No prior executable/image is certified by these source tests. For enforced-capacity rollback, release must pin a qualified image containing this implementation and its whole-batch prerequisites; earlier writers can bypass the ceiling and are excluded. |
+| Writer gate | Zero disables global enforcement; positive bounded limit enables it for all admission writers. All processes must converge before acceptance. Disabled-mode and failed-query contracts prove absence of a durable global fence write; accepted retries and retirement remain available. |
+| Backfill and recovery | No backfill, counter initialization, transformation or contraction: count existing nonretired rows directly. Transaction fence plus insert are atomic; failed transactions roll back. Startup partial index completion is retried by the existing initializer, which does not drop/replace an incompatible index. Concurrent initializers request the same additive index; no destructive DDL or older migrator is introduced. |
+| Backup / dry-run | No data deletion or rewrite requires a new destructive-step backup. Existing recovery unit remains Mongo Sandbox/event/claim records with their original home and runtime authority. Disposable real-Mongo contracts are the local dry-run; no production restore drill is claimed. |
+| Rollback / completion | Preserve index/fence and original records. Keep a compatible image and the approved limit; setting zero removes protection and needs the capacity owner's decision. cma-web-hotfix/cma-migration own exact artifact, OFF rollout, mixed-writer drain and recovery receipt; GKE/controller owns physical headroom and the enabled campaign. No production activation or artifact compatibility PASS is claimed by this PR. |
