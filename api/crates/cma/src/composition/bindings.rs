@@ -106,7 +106,6 @@ pub(super) fn responses(
     gateway: Option<&crate::config::GatewayConfig>,
     features: crate::config::FeatureFlags,
 ) -> Result<Router, String> {
-    let reads = reads.with_response_logs(stores.sandbox_model.response_log_reader());
     let mut state =
         layer1_public::responses::v2::ResponsesV2State::new(agent_page_origin, commands, reads)
             .with_paged_events(features.paged_response_events)
