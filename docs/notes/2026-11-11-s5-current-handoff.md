@@ -1,12 +1,41 @@
 # S5 current source handoff
 
-Source checkpoint: `ac6c085bb` on `tl/cma-log-segments/capacity-recovery`.
+Source checkpoint: `e9b134d8c` on `tl/cma-log-segments/capacity-recovery`.
 Part of #1351 and recovery-consumer #1349. Develop freeze is lifted. No S5 PR,
 review verdict, merge relay, executable recovery acceptance or activation exists.
 
-## Implemented and executed
+## Latest source checkpoint; execution pending
 
-The registered core recovery domain/state/service has 38 passing tests. The
+Normally merged S2 recovery registrations `34c9a3228`, including bounded scoped
+page enumeration `9e5c47a72`. The store and its Mongo tests are now
+registered in source; the dry-run router is exported and parent pacing is wired
+independently with a default-false flag. No new compile pass is claimed yet.
+
+Seven additional core tests cover live completion crashes at three boundaries,
+unknown completion with visible/absent writes, exact attempt receipts, reused
+holder names with stale fences, input/native changes after handshake, competing
+admission snapshots and revoked ownership. The live cases cover idle and active
+Agents and preserve original input/receipts without scheduling ordinary work.
+Service acknowledgement now requires the entire expected completion for that
+lease attempt, including revision, attempts, fence and timestamps.
+
+New scoped settlement helpers (`agent_capacity_recovery/settlement.rs`) propose
+claim, retry, supersession and completion inside the caller's transaction. They
+require the original S4 admission publication and exact prior result digest,
+replace only the exact work carrier, fence parents and invoke the sole S4 Agent
+CAS/log publication. Carrier insertion/replacement share the same bounded codec.
+Three additional registered Mongo tests cover carrier commit/abort, stale CAS,
+immutable request/native/input facts, corrupt projections and unknown fields.
+These carrier tests grant no recovery authority and are not end-to-end admission.
+
+The 45-test core candidate and new Mongo source have not executed yet: heavy-0
+has remained occupied through the attempted acquisitions. The persistent-lock
+runner uses `lockf -k -n`, two jobs, one target and disk/inode guards. It releases
+the lock after each gate. No target or Mongo fixture has been allocated so far.
+
+## Previously executed
+
+The earlier registered core recovery domain/state/service checkpoint had 38 passing tests. The
 last four exercise the authorized dry-run service: final parent intent, owner
 change before release, foreign callers, incomplete/wrong ancestry and restricted
 metadata. The service uses the existing ResourceAccessService and current-read
@@ -20,7 +49,7 @@ The REST child is
 `rest/agent_capacity_recovery.rs::agent_capacity_recovery_router`, receiving
 `Arc<CapacityRecoveryPreflightService>`. It exposes authenticated GET
 `/api/v1/agents/{id}/capacity-recovery/dry-run` with private/no-store responses.
-Its public root export/composition is still S2-owned and not registered here.
+Its public root export is now registered by S2; production composition is still pending.
 
 ## Scoped source checkpoints
 
@@ -46,36 +75,41 @@ Its public root export/composition is still S2-owned and not registered here.
   the scope before original domain helpers use certified per-kind native maxima
   and legacy sibling checks. Both helpers remain unwired at the external root.
 
-The lineage loader uses ascending `_id` metadata pages of 128 documents, against
-the requested S2 constrained `TransactionScope::find_page(...,sort,limit)` method
-(maximum requested 256). That method is not present yet. None of these new cma
-paths has compiled or run Mongo gates; they are source checkpoints only.
+The lineage loader uses ascending `_id` metadata pages of 128 documents through
+S2's merged `TransactionScope::find_page(...,sort,limit)` (1..=256 rows and 4 MiB
+per page, no partial result on failure). New cma source on this branch has not
+run a compile or Mongo gate; no acceptance result is claimed.
 
 ## Required integration and remaining S5 work
 
-S2: store `pub(crate) mod agent_capacity_recovery`, integration-test child
-`mod agent_capacity_recovery_tests`, default-false worker config field
-`parent_not_ready_pacing_enabled`, the REST export/composition above, bounded
-scope page method, and carrier migration/schema/backup/grant inventory.
+S2's store/test/export/config registrations and bounded scope method are merged.
+Remaining shared work is production dry-run and recovery composition plus carrier
+migration/schema/backup/grant inventory. The carrier is `agent_capacity_recovery_work`:
+`_id` is the stable operation key, `format_version` is int64 1, `agent_id` is the
+original Agent ID and `work` is the strict domain record. Decode is bounded to
+32 KiB BSON and 16 KiB work JSON. Discovery must index/bound `work.phase` with
+`work.ready_at` or `work.lease.expires_at`; no collection-wide worker scan.
 
-The precise ownership handoff is in #1351 comment 6794826184; caller signatures
-are in comment 6795069287. Correction: the actual runtime-loss root is
-`sandbox_reconciliation.rs::recover` (starts the transaction around line 161),
-not `sandbox_worker_store.rs:126`, which starts purge in this revision. The former
-and `sandbox_unpublished_recovery.rs` are absent from the exact manifest. Assign
-those roots explicitly or publish their owner wiring; S5 has not edited them.
+S2's strict-lint allocation now owns `sandbox_reconciliation.rs` and
+`sandbox_unpublished_recovery.rs`; S5's scoped child signatures remain unchanged.
+S4 owns the lifecycle checkpoint root. These allocated roots require their
+owners' wiring and executable qualification.
 
 S1 still supplies transaction source certification. S4 preparation for an already
 segmented source currently permits only Rollover admission, so the CapacityRecovery
 empty-batch successor case remains reported to S4. The legacy storage-recovery
 path requires its exact CapacityRecovery admission and staged BootstrapPlan.
 
-S5 still needs the production accepted-work Mongo adapter, exact completion
-receipt reconciliation, admission/status HTTP composition and restricted native
-reconnect/registry follow-through. A crash after durable completion but before
+S5 still needs the production transaction/outcome adapter around the new scoped
+settlement helpers, exact completion receipt reconciliation, admission/status
+HTTP composition and restricted native reconnect/registry follow-through. A crash after durable completion but before
 registry activation must never enter ordinary PublishConnection, which can replay
-managed context/settings or schedule queued first input. These are not covered
-by the current model-only completion test or by successful storage adoption.
+managed context/settings or schedule queued first input. The new model tests establish receipt idempotence after this crash but do not
+establish production registry activation. The existing adapter channel has no
+native-state confirmation; the ordinary reattach path replays settings/context.
+The concrete ownership/interface request is in
+`docs/notes/2026-11-11-s5-runtime-confirmation-handoff.md`. No shared adapter files
+have been edited without allocation.
 
 ## Evidence and resource handling
 
@@ -84,7 +118,7 @@ Logs are persisted under the lead's absolute notes directory:
 `2026-11-11-1351-final-core-recovery.log` (prior 34-test exact acdb0eb72 result),
 and `2026-11-11-1351-current-core-gates.log` (prior recovery/projection/Clippy run).
 Later S4 bootstrap/compile dependency merges are not a new executable gate pass.
-The latest light gates pass: workspace fmt, repository size check (5,917 files),
+The previously reported light gates passed: workspace fmt, repository size check (5,917 files),
 all 111 changed Rust files strictly below 500 lines, whitespace, and full reachable
 history secrets (3,643 commits; zero findings). The earlier all-local-refs scan
 reported findings outside this clean reachable history; unrelated branches were
