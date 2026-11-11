@@ -122,3 +122,22 @@ purge/acquisition races and preservation of unknown state. The integrated caller
 must additionally prove both store formats past the legacy bounds and actual V2
 page limits, including changed source/authority and crash boundaries. The current
 contract does not claim those lifecycle tests or the production recovery have run.
+
+## Migration record: 2026-11-11-am-ledger-collection-v1
+
+Phase: expand, writers closed. Apply the [data migration standard](CMA_Data_Migrations.md).
+The integrating PR must pin the reviewed source/checksum and the complete
+release batch; no executable image or recovery artifact is qualified here yet.
+
+| Required field | B1 boundary and outstanding release evidence |
+| --- | --- |
+| Service and owners | Agent Manager; Track B owns observation/progress and hierarchy retention. Track A owns shared registration/indexes and source/archive transitions. Track C owns maintenance/exclusion. The release owner qualifies and executes production steps. |
+| Affected stores and writers | A new top-level marker on `sandboxes`; complete additive Agent/Workspace/Worktree indexes supplied by A. Observation reads all four collections. Server startup only installs A's reviewed indexes; it does not enqueue, claim or run collection. The progress store has no production caller in B1. |
+| Format and preservation | `runtime-ledger-candidates-v1`, `runtime-ledger-authority-request-v1`, `runtime-ledger-authority-batch-v1`, `runtime-ledger-group-authority-v1`, `runtime-ledger-group-evidence-v1`, `runtime-ledger-collector-progress-v1`. No TTL, validator contraction, identity replacement, history rewriting or key changes. Unknown formats hold. |
+| Prerequisites | Held storage foundations #1659/#1663, C's frozen binding and A's registration/index hooks. Executing collection additionally needs A's acknowledged transition adapter, C's durable activation and reviewed external writer exclusion. |
+| Reader floor | Before any progress write, every hierarchy purge reader must recognize marker presence, including malformed/future markers. Readers that ignore the marker are excluded even if they can decode the Sandbox. Old/new exact-artifact execution remains unverified. |
+| Writer gate | No server/worker registration calls the progress writer or runtime collector. The observation command is read-only. Future integration must enforce C's default-closed epoch/permit, compatible reader floor and exact cohort; a local lease never supplies those permissions. |
+| Migration/backfill | No production backfill or marker initialization is run by B1. A owns additive index initialization and its partial-DDL/readiness evidence. Runtime observations require every hinted index to exist; no fallback scan or inline creation. Later progress uses parent/progress CAS and bounded pages. |
+| Backup and dry-run | Observation is nonmutating and does not require a destructive-transform backup. Source removal is absent. Before B2 activation, C/release must qualify independent full-home backup and cold archives, including checkpoint cleanup exclusion and restore rehearsal. |
+| Rollback/forward recovery | Before marker writes, B1 adds only readers and additive indexes. After writes, never return to an API that can purge through a retained marker; use a qualified compatible recovery artifact. Closing writer admission does not remove this floor or settle pending operations. No marker clearing or schema downgrade is a rollback. |
+| Completion evidence | Local contract/Mongo/Clippy results belong to the exact B1 head; missing results stay unverified. B2 needs both-format lifecycle and crash/restart proof. Production image digests, reader/drain receipts, configuration, counts/hashes, backup evidence and final release/closure belong to the integrating release record. |
