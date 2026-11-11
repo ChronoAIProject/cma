@@ -80,6 +80,7 @@ use super::DefaultProfileSpec;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 mod background_checkpoint_tests;
+pub(super) mod capacity_fixtures;
 mod command_ledger_tests;
 mod conversation_fixtures;
 mod ledger_retirement_tests;

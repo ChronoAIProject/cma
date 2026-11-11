@@ -13,12 +13,25 @@ mod settlement_tests;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn full_history_worker_closes_and_deletes_with_original_runtime_effects() {
+    cleanup_case(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn byte_exhausted_worker_closes_and_deletes_with_original_runtime_effects() {
+    cleanup_case(true).await;
+}
+
+async fn cleanup_case(bytes: bool) {
     let (client, database, harness) = fixture().await;
     let agent = harness.admit("worker-capacity-cleanup", vec![]).await;
     for _ in 0..5 {
         harness.run(&agent.id, SystemTime::now()).await;
     }
-    let ready = fill_history(&client, &database, &harness, &agent.id).await;
+    let current = harness.stored(&agent.id).await;
+    let ready =
+        crate::store::fill_agent_capacity_fixture(harness.store.as_ref(), current, bytes).await;
+    let started = std::time::Instant::now();
     let identity = ready.conversation.clone();
     let before = harness.backend.requests().await.len();
     harness
@@ -88,13 +101,20 @@ async fn full_history_worker_closes_and_deletes_with_original_runtime_effects() 
             WireOperation::RemoveWorktree
         ]
     );
-    assert_eq!(deleted.conversation.last_seq, 10_007);
+    assert_eq!(
+        deleted.conversation.last_seq,
+        ready.conversation.last_seq + 7
+    );
+    assert!(started.elapsed() < Duration::from_secs(120));
     let reopened = MongoSandboxStore::open(&client, &database).await.unwrap();
     assert_eq!(reopened.get_agent(&agent.id).await.unwrap(), Some(deleted));
-    let tail = reopened.agent_log(&agent.id, 9_999, 20).await.unwrap();
+    let tail = reopened
+        .agent_log(&agent.id, ready.conversation.last_seq - 1, 20)
+        .await
+        .unwrap();
     assert!(
         matches!(&tail[0].kind, AgentLogKind::ToolOutputReported { output, .. }
-        if output.text == "Retained worker capacity fixture output")
+        if !output.text.is_empty())
     );
     assert_eq!(tail.last().unwrap().kind, AgentLogKind::Deleted);
     client.database(&database).drop().await.unwrap();
