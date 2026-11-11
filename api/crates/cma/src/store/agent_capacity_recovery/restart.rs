@@ -22,8 +22,8 @@ pub(crate) enum RestartDecision {
     /// its own revision, intent and lease checks before scheduling anything.
     Legacy,
     Completed(RecoveryRequest),
-    /// Segmented absence, later progress or another phase does not prove that
-    /// ordinary reconnection is safe. Its separate publication proof is needed.
+    /// Segmented absence or another phase does not prove that ordinary
+    /// reconnection is safe. Later progress needs positive current evidence.
     Deferred,
 }
 
@@ -62,12 +62,10 @@ impl RecoveryService {
                 else {
                     return Ok(RestartDecision::Deferred);
                 };
-                if stored.result.agent_revision == agent.revision {
-                    return Ok(if stored.work.phase == RecoveryPhase::Completed {
-                        RestartDecision::Completed(request)
-                    } else {
-                        RestartDecision::Deferred
-                    });
+                if stored.work.phase == RecoveryPhase::Completed {
+                    receipts::require_current_result(&self.store, &agent, &stored, &mut scope)
+                        .await?;
+                    return Ok(RestartDecision::Completed(request));
                 }
             }
             Ok::<_, TransactionLogError>(RestartDecision::Deferred)

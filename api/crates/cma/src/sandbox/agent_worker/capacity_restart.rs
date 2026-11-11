@@ -65,6 +65,16 @@ impl<R: CapacityRecoveryRuntime> CapacityRecoveryReconnect for RecoveryReconnect
 }
 
 impl AgentWorker {
+    #[cfg(test)]
+    pub(crate) fn install_capacity_restart_for_test(
+        &self,
+        router: Arc<dyn CapacityRecoveryReconnect>,
+    ) {
+        self.capacity_restart
+            .set(router)
+            .unwrap_or_else(|_| panic!("capacity recovery restart is assembled once"));
+    }
+
     pub(super) fn install_capacity_restart(&self, service: Arc<RecoveryService>) {
         let runtime = RestrictedRecoveryRuntime::new(
             self.dependencies.adapter.clone(),
