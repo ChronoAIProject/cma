@@ -362,6 +362,7 @@ pub(super) fn blocked_from_locator(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn sign_in_from(
     params: Option<&serde_json::Value>,
 ) -> Option<(String, Option<String>, Option<String>)> {
