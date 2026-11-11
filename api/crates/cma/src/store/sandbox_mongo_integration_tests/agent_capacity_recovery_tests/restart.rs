@@ -4,7 +4,7 @@ use super::*;
 use crate::sandbox::binding_lifecycle_test_support::{
     AgentWorker, AgentWorkerConfig, AgentWorkerDependencies, CapacityRecoveryReconnect,
     DurableAgentConnectionLossHandler, EmptyAgentSkillResolver, LiveAgentAttachmentIdentity,
-    LiveAgentConnectionLossHandler, ReconnectAction, RecoveryReconnect,
+    LiveAgentConnectionLossHandler, RecoveryReconnect,
 };
 use crate::sandbox::LiveAgentRegistry;
 use crate::store::agent_capacity_recovery::{records, RecoveryService, RestartDecision};
@@ -264,7 +264,7 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
     let mut advanced = saved.clone();
     advanced.revision += 1;
     replace_agent_fixture(&store, &advanced).await;
-    assert_eq!(router.route(&agent.id).await, Ok(ReconnectAction::Deferred));
+    assert!(router.route(&agent.id).await.is_err());
     assert_eq!(
         worker
             .reconcile_connections(SystemTime::now())
