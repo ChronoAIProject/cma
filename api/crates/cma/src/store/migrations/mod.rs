@@ -5,6 +5,9 @@ use mongodb::{bson::doc, options::ClientOptions, Client};
 use serde_json::{json, Value};
 
 mod activity_indexes;
+mod collection_indexes;
+mod steps;
+use steps::Step;
 mod authority;
 mod ledger;
 #[cfg(test)]
@@ -27,16 +30,8 @@ pub(crate) async fn command(arguments: &[String]) -> Result<Value> {
 }
 
 async fn execute(arguments: &[String]) -> Result<Value> {
-    let apply = match arguments
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>()
-        .as_slice()
-    {
-        ["--migration-plan" | "--migration-status" | "--print-migration-role"] => false,
-        ["--migration-apply", _, _] => true,
-        _ => return Err("unsupported migration command or arguments"),
-    };
+    let (step, command, proof) = invocation(arguments)?;
+    let apply = proof.is_some();
     let database = std::env::var("CHRONO_MONGODB_DATABASE").map_err(|_| "database is required")?;
     if database.is_empty()
         || database.len() > 63
@@ -46,16 +41,17 @@ async fn execute(arguments: &[String]) -> Result<Value> {
     {
         return Err("invalid database name");
     }
-    if arguments[0] == "--print-migration-role" {
-        return serde_json::to_value(authority::role(&database, true)).map_err(|_| "role encoding");
+    if command == "--print-migration-role" {
+        return serde_json::to_value(authority::role_for(&database, true, step))
+            .map_err(|_| "role encoding");
     }
-    let identity = if apply {
-        if arguments[1] != activity_indexes::checksum() {
+    let identity = if let Some((checksum, image)) = proof {
+        if checksum != step.checksum() {
             return Err("manifest checksum mismatch");
         }
         Some(ledger::Identity::new(
             option_env!("CHRONO_BUILD_SHA").unwrap_or("development"),
-            &arguments[2],
+            image,
         )?)
     } else {
         None
@@ -75,21 +71,19 @@ async fn execute(arguments: &[String]) -> Result<Value> {
         .run_command(doc! {"connectionStatus":1,"showPrivileges":true})
         .await
         .map_err(|_| "database authority unavailable")?;
-    authority::verify(&authority, database.name(), mode, apply)?;
-    let ledger = ledger::Ledger::new(client, database.clone());
+    authority::verify_for(&authority, database.name(), mode, apply, step)?;
+    let ledger = ledger::Ledger::for_step(client, database.clone(), step);
     ledger.preflight().await?;
-    if arguments[0] == "--migration-status" {
+    if command == "--migration-status" {
         return ledger.status().await;
     }
-    let indexes = activity_indexes::inspect(&database).await?;
+    let indexes = step.inspect(&database).await?;
     if let Some(identity) = identity {
         apply_indexes(&ledger, &database, &identity).await
     } else {
-        Ok(
-            json!({"migration":activity_indexes::ID,"checksum":activity_indexes::checksum(),
+        Ok(json!({"migration":step.id(),"checksum":step.checksum(),
             "prerequisites":[],"phase":"expand","missing_indexes":indexes.len(),
-            "effects":"add nonunique query indexes only","writes":false}),
-        )
+            "effects":"add nonunique query indexes only","writes":false}))
     }
 }
 
@@ -98,25 +92,26 @@ async fn apply_indexes(
     database: &mongodb::Database,
     identity: &ledger::Identity,
 ) -> Result<Value> {
+    let step = ledger.step;
     super::sandbox_mongo::require_transaction_topology(database)
         .await
         .map_err(|_| "migration requires a supported replica set or mongos")?;
     ledger.initialize().await?;
     if ledger.completed().await? {
-        if !activity_indexes::inspect(database).await?.is_empty() {
+        if !step.inspect(database).await?.is_empty() {
             return Err("completed migration postcondition drift");
         }
-        return Ok(json!({"migration":activity_indexes::ID,"outcome":"already_completed"}));
+        return Ok(json!({"migration":step.id(),"outcome":"already_completed"}));
     }
     let lease = ledger.claim(identity).await?;
     let outcome = async {
-        let pending = activity_indexes::inspect(database).await?;
+        let pending = step.inspect(database).await?;
         let mut changed = 0_i64;
-        for index in pending {
+        for (collection, index) in pending {
             ledger.renew(&lease).await?;
             // Only identical additive DDL is allowed: submitted commands can
             // outlive a lost lease, so lease ownership cannot fence a TTL/drop.
-            let effect = activity_indexes::create(database, index);
+            let effect = step.create(database, collection, index);
             tokio::pin!(effect);
             let mut renewal = tokio::time::interval(Duration::from_secs(5));
             let created = loop {
@@ -127,7 +122,7 @@ async fn apply_indexes(
             };
             changed += i64::from(created);
         }
-        if !activity_indexes::inspect(database).await?.is_empty() {
+        if !step.inspect(database).await?.is_empty() {
             return Err("migration postcondition unavailable");
         }
         Ok(changed)
@@ -135,5 +130,25 @@ async fn apply_indexes(
     .await;
     ledger.finish(&lease, outcome).await?;
     let changed = outcome?;
-    Ok(json!({"migration":activity_indexes::ID,"outcome":"completed","created_indexes":changed}))
+    Ok(json!({"migration":step.id(),"outcome":"completed","created_indexes":changed}))
+}
+
+// Keep the original one-step CLI spelling compatible; explicit IDs select new steps.
+fn invocation(arguments: &[String]) -> Result<(Step, &str, Option<(&str, &str)>)> {
+    let values: Vec<_> = arguments.iter().map(String::as_str).collect();
+    match values.as_slice() {
+        [command @ ("--migration-plan" | "--migration-status" | "--print-migration-role")] => {
+            Ok((Step::Activity, command, None))
+        }
+        [command @ ("--migration-plan" | "--migration-status" | "--print-migration-role"), id] => {
+            Ok((Step::parse(id)?, command, None))
+        }
+        [command @ "--migration-apply", checksum, image] => {
+            Ok((Step::Activity, command, Some((checksum, image))))
+        }
+        [command @ "--migration-apply", id, checksum, image] => {
+            Ok((Step::parse(id)?, command, Some((checksum, image))))
+        }
+        _ => Err("unsupported migration command or arguments"),
+    }
 }
