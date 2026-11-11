@@ -29,6 +29,12 @@ struct Proof {
     request_sha256: String,
     previous_tree: String,
     new_tree: String,
+    // Earlier proof writers retained every tree. Missing policy must never permit deletion.
+    #[serde(default = "retain_previous")]
+    retain_previous: bool,
+}
+fn retain_previous() -> bool {
+    true
 }
 fn recovery_conflict() -> RuntimeError {
     let reason = layer3_adapter::AgentSkillUpgradeRefusal::RecoveryConflict;
@@ -231,7 +237,9 @@ async fn replace(
             }
             let previous =
                 tree::prove_previous(&expected, &target, upgrade.previous_receipt.as_ref())?;
-            retention::reserve(&stage, previous.bytes)?;
+            if previous.has_extra {
+                retention::reserve(&stage, previous.bytes)?;
+            }
             let previous_tree = previous.digest();
             crate::skills::install_prepared(config, client, &request.skill, &candidate).await?;
             point(config, "new_extracted")?;
@@ -246,6 +254,7 @@ async fn replace(
                 request_sha256: request.request_sha256.clone(),
                 previous_tree,
                 new_tree,
+                retain_previous: previous.has_extra,
             };
             publish_proof(&evidence, &proof)?;
             point(config, "proof_published")?;
@@ -299,7 +308,20 @@ fn finish_published(
     point(config, "exchange_synced")?;
     // Cleanup is optional after publication. A changed/missing tree, or a cleanup
     // error, cannot undo the correlated receipt or keep conversation input blocked.
-    if proof.is_some() {
+    if let Some(proof) = proof {
+        let old = stage.join("new");
+        let previous_receipt = request
+            .upgrade
+            .as_ref()
+            .and_then(|u| u.previous_receipt.as_ref());
+        if !proof.retain_previous
+            && tree::digest(&old, previous_receipt).ok().as_deref() == Some(&proof.previous_tree)
+        {
+            if let Err(error) = clean(&old) {
+                tracing::warn!(request_sha256 = %request.request_sha256, code = %error.code,
+                    "published skill upgrade retained old data after cleanup failure");
+            }
+        }
         if let Err(error) = clean(expected) {
             tracing::warn!(request_sha256 = %request.request_sha256, code = %error.code,
                 "published skill upgrade retained comparison data after cleanup failure");

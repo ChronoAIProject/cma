@@ -55,6 +55,7 @@ pub(super) fn receipt_matches(path: &Path, expected: &AgentSkillInstallReceipt) 
 pub(super) struct Tree {
     entries: BTreeMap<String, Option<String>>,
     pub(super) bytes: u64,
+    pub(super) has_extra: bool,
 }
 impl Tree {
     pub(super) fn digest(&self) -> String {
@@ -70,7 +71,7 @@ pub(super) fn prove_previous(
     receipt: Option<&AgentSkillInstallReceipt>,
 ) -> Result<Tree> {
     let expected = snapshot(expected, None)?;
-    let actual = snapshot(target, receipt)?;
+    let mut actual = snapshot(target, receipt)?;
     if expected
         .entries
         .iter()
@@ -83,6 +84,7 @@ pub(super) fn prove_previous(
     }
     // Additional regular content (including runtime caches) is retained in the
     // exchanged old tree outside discovery, never deleted or copied into the new version.
+    actual.has_extra = actual.entries.len() != expected.entries.len();
     Ok(actual)
 }
 pub(super) fn digest(path: &Path, receipt: Option<&AgentSkillInstallReceipt>) -> Result<String> {
@@ -97,6 +99,7 @@ fn snapshot(path: &Path, receipt: Option<&AgentSkillInstallReceipt>) -> Result<T
     Ok(Tree {
         entries: tree,
         bytes,
+        has_extra: false,
     })
 }
 fn walk(

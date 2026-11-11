@@ -143,7 +143,7 @@ pub enum AgentSkillUpgradeRefusal {
     Modified,
     #[error("Restore access to the exact previous archive or its checksum-verified warm cache before retrying.")]
     PreviousUnavailable,
-    #[error("Archive and remove settled trees in the Agent home's .cma-skill-upgrades directory; preserve pending evidence, then retry.")]
+    #[error("Ask an infrastructure operator to archive settled retained skill trees; CMA has no retention cleanup endpoint. Preserve pending evidence, then retry.")]
     RetentionFull,
     #[error("The previous version remains effective. Preserve the staged trees; save and restore local skill edits, then retry with a new key.")]
     RecoveryConflict,
