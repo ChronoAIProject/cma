@@ -5,7 +5,7 @@ use layer2_core::sandbox::{RuntimeBinding, SandboxHome};
 use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
 
 pub(super) async fn capacity_fixture(store: &MongoSandboxStore) -> Agent {
-    let mut agent = ready_conversation_fixture(store, "activation").await;
+    let mut agent = ready_with_created(store).await;
     let mut sandbox = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
     sandbox.runtime = Some(RuntimeBinding {
         runtime_id: "retained-runtime".into(),
@@ -109,4 +109,73 @@ pub(super) async fn capacity_fixture(store: &MongoSandboxStore) -> Agent {
     }
     session.commit_transaction().await.unwrap();
     agent
+}
+
+// Adoption must prove the original Created row. The generic worker fixture
+// deliberately starts at ConversationOpened and cannot qualify this contract.
+async fn ready_with_created(store: &MongoSandboxStore) -> Agent {
+    let (_, mut worktree, claimed) = claimed_agent_work_fixture(store, "activation").await;
+    store
+        .append_agent_log(
+            &claimed.id,
+            NOW.into(),
+            AgentLogKind::Created {
+                workspace_id: claimed.workspace_id.clone(),
+                worktree_id: claimed.worktree_id.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    let current = store.get_agent(&claimed.id).await.unwrap().unwrap();
+    let conversation_id = "conversation-activation";
+    let claimed = ready_publication_claim(current, conversation_id);
+    replace_agent_fixture(store, &claimed).await;
+    let fence = claimed.work.lease.as_ref().unwrap().fence;
+    let mut ready = claimed.clone();
+    ready
+        .work
+        .advance(
+            "worker",
+            fence,
+            AgentWorkStep::PublishConnection,
+            NOW.into(),
+        )
+        .unwrap();
+    ready
+        .transition(AgentStatus::Ready, NOW.into(), None)
+        .unwrap();
+    let logs = vec![
+        AgentLogKind::ConversationOpened {
+            conversation_id: conversation_id.into(),
+            runtime_generation: 1,
+        },
+        AgentLogKind::StatusChanged {
+            from: AgentStatus::Starting,
+            to: AgentStatus::Ready,
+        },
+    ];
+    ready.conversation.last_seq += logs.len() as u64;
+    let expected_revision = worktree.revision;
+    worktree.transition(WorktreeStatus::Ready).unwrap();
+    store
+        .commit_agent_work(AgentWorkMutation {
+            expected_agent_revision: claimed.revision,
+            holder: "worker".into(),
+            fence,
+            agent: ready.clone(),
+            worktree: Some(VersionedWorktree {
+                expected_revision,
+                worktree,
+            }),
+            appended_at: NOW.into(),
+            sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+                agent_id: ready.id.clone(),
+                from: AgentStatus::Starting,
+                to: AgentStatus::Ready,
+            }),
+            agent_logs: logs,
+        })
+        .await
+        .unwrap();
+    ready
 }
