@@ -25,6 +25,7 @@ pub(crate) struct FeatureFlags {
     pub document_quotas: bool,
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
+    pub event_driven_reconciliation: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -57,6 +58,10 @@ impl FeatureFlags {
             sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
             sandbox_detail_timings: flag(lookup, "CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
+            event_driven_reconciliation: flag(
+                lookup,
+                "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
+            )?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
             model_request_budget_writes_enabled: flag(
@@ -216,6 +221,35 @@ mod sandbox_read_tests {
                 })
                 .is_err());
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod reconciliation_tests {
+    use super::*;
+
+    #[test]
+    fn event_driven_reconciliation_requires_an_explicit_boolean_opt_in() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok(
+                    if key == "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED" {
+                        value.map(str::to_owned)
+                    } else {
+                        None
+                    },
+                )
+            })
+            .unwrap();
+            assert_eq!(flags.event_driven_reconciliation, expected);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED")
+                    .then(|| value.to_owned()))
+            })
+            .is_err());
         }
     }
 }
