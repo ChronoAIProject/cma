@@ -81,6 +81,12 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
     };
     let service = RecoveryService::new(store.clone(), transactions::access(&store))
         .with_features(CapacityRecoveryFeatures { enabled: true });
+    assert_eq!(
+        service
+            .run_accepted(&Native::default(), &request, "no-receipt")
+            .await,
+        Err(RecoveryError::Conflict)
+    );
     assert!(matches!(
         service.admit(&caller, &request).await.unwrap(),
         CommitOutcome::Recorded(_)
@@ -125,21 +131,22 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
     let native = Native::default();
     native.fail_ack.store(true, Ordering::SeqCst);
     assert_eq!(
-        restarted
-            .run_one(&native, &caller, &request, "restart")
-            .await,
+        restarted.run_accepted(&native, &request, "restart").await,
         Err(RecoveryError::Unavailable)
     );
     assert_eq!(
         restarted
-            .run_one(&native, &caller, &request, "restart")
+            .run_accepted(&native, &request, "restart")
             .await
             .unwrap(),
         CommitOutcome::Recorded(completed)
     );
     assert_eq!(native.attaches.load(Ordering::SeqCst), 2);
     assert_eq!(native.acknowledges.load(Ordering::SeqCst), 1);
-    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(saved));
+    assert_eq!(
+        store.get_agent(&agent.id).await.unwrap(),
+        Some(saved.clone())
+    );
     assert_eq!(
         records::collection(&store)
             .find_one(doc! {"_id": request.key().unwrap()})
@@ -156,6 +163,62 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
             .unwrap(),
         publications
     );
+    // A different original timestamp shares an operation key but must not gain
+    // receipt-bound background permission.
+    let mut different = request.clone();
+    different.requested_at = "2026-11-11T00:00:00Z".into();
+    assert_eq!(
+        restarted.run_accepted(&native, &different, "restart").await,
+        Err(RecoveryError::Conflict)
+    );
+    assert_eq!(native.attaches.load(Ordering::SeqCst), 2);
+    // A later Agent revision no longer has exact original-result authority,
+    // even if its incarnation and native conversation remain unchanged.
+    let mut advanced = saved.clone();
+    advanced.revision += 1;
+    replace_agent_fixture(&store, &advanced).await;
+    assert_eq!(
+        restarted.run_accepted(&native, &request, "restart").await,
+        Err(RecoveryError::Conflict)
+    );
+    assert_eq!(native.attaches.load(Ordering::SeqCst), 2);
+    replace_agent_fixture(&store, &saved).await;
+    // A current organization sidecar must never become personal accepted-work
+    // authority just because it uses the same subject text as the old owner.
+    let parent = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
+    let policy = layer2_core::resource_access::ResourcePolicyRecord {
+        sandbox_id: parent.id.clone(),
+        sandbox_created_at: parent.created_at.clone(),
+        owner: layer2_core::resource_access::ResourceOwner::Organization {
+            subject: parent.owner.clone(),
+        },
+        organization_evidence: Some(
+            layer2_core::resource_access::OrganizationOwnershipEvidence {
+                issuer: "fixture".into(),
+                organization: parent.owner.clone(),
+                admitted_by: layer2_core::resource_access::ResourceActor::Human {
+                    subject: SubjectId::new("fixture"),
+                },
+                verified_at: NOW.into(),
+            },
+        ),
+        revision: 1,
+    };
+    store
+        .resource_policies
+        .insert_one(crate::store::resource_access::records::policy_document(&policy).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        restarted.run_accepted(&native, &request, "restart").await,
+        Err(RecoveryError::Conflict)
+    );
+    assert_eq!(native.attaches.load(Ordering::SeqCst), 2);
+    store
+        .resource_policies
+        .delete_one(doc! {"_id": parent.id.as_str()})
+        .await
+        .unwrap();
     let mut parent = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
     parent.status = SandboxStatus::Retiring;
     parent.revision += 1;
@@ -169,9 +232,7 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
         .await
         .unwrap();
     assert_eq!(
-        restarted
-            .run_one(&native, &caller, &request, "restart")
-            .await,
+        restarted.run_accepted(&native, &request, "restart").await,
         Err(RecoveryError::Conflict)
     );
     assert_eq!(native.attaches.load(Ordering::SeqCst), 2);
