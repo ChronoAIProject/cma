@@ -83,18 +83,34 @@ pub(super) fn load(
     let Some((high, present, first, last)) = row else {
         return Ok(Vec::new());
     };
+    decode(
+        config,
+        resource,
+        scope,
+        &high,
+        [present.as_deref(), first.as_deref(), last.as_deref()],
+    )
+}
+
+pub(super) fn decode(
+    config: &RuntimeConfig,
+    resource: &ResourceKey,
+    scope: &[u8; 8],
+    high: &[u8],
+    blobs: [Option<&[u8]>; 3],
+) -> Result<Vec<Record>> {
     let mut records = Vec::new();
     let mut absent_fences = Vec::new();
     for (bytes, disposition) in [
-        (present, Disposition::Present),
-        (first, Disposition::Absent),
-        (last, Disposition::Absent),
+        (blobs[0], Disposition::Present),
+        (blobs[1], Disposition::Absent),
+        (blobs[2], Disposition::Absent),
     ] {
         if let Some(bytes) = bytes {
             if bytes.len() > v1::MAX_AUTHORITY_BYTES as usize {
                 return Err(invalid());
             }
-            let record: Record = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+            let record: Record = serde_json::from_slice(bytes).map_err(|_| invalid())?;
             let operation = record.operation();
             crate::mutation_journal::validate_operation(config, &operation)
                 .map_err(|_| invalid())?;
@@ -119,7 +135,7 @@ pub(super) fn load(
         return Err(invalid());
     }
     v1::validate_history(&records.iter().collect::<Vec<_>>()).map_err(|_| invalid())?;
-    if records.iter().map(|r| r.authority_fence).max() != Some(fence::decode(&high)?) {
+    if records.iter().map(|r| r.authority_fence).max() != Some(fence::decode(high)?) {
         return Err(invalid());
     }
     Ok(records)
