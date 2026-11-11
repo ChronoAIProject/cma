@@ -2254,3 +2254,23 @@ with the tested source, image labels and promoted digest. Retain all prior hashe
 web assets needed by open tabs and the batch's compatible reader floor through
 normal deployment procedures. Verify an existing tab continues working and names
 its original bundle. This UI change does not authorize deployment or asset removal.
+
+## Sandbox detail read rollout
+
+`CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED` defaults to `false` and accepts only exact
+`true` or `false`. When enabled, Sandbox hierarchy reads use one consistent Mongo
+snapshot session instead of a read-only transaction plus abort. Workspace reads,
+record validation and the fresh final authorization fence retain their existing
+behavior. Disable the flag to return to the transaction reader; no data migration
+or writer change is involved.
+
+`CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED` independently defaults to `false` and
+accepts only exact `true` or `false`. It emits the allowlisted auth, hierarchy,
+colors, names and final-fence durations and completion/error/cancellation outcome,
+without identifiers, error strings or inherited request spans. Enable it before
+reader activation to collect a baseline, and disable it after the measurement
+window. Optional enrichment retains its existing fallback behavior.
+
+See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
+boundaries, local comparison, security/concurrency tests and the next batching
+proposal. Production flag changes remain part of the approved release process.
