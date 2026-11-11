@@ -79,6 +79,10 @@ before/after states while pending intent prevents another serving/collection eff
 A later retry uses the immutable cold receipt, so later groups cannot overwrite
 its outcome. Missing/changed artifacts, corrupt indexes or an inconsistent pending
 slot refuse; missing rows or matching counters alone never mean success.
+An actual archive write/storage error spends its emergency reserve and remains
+held after restart. Original evidence and source accounting survive, but this
+slice does not replenish that reserve or authorize storage repair. A lost reply
+with intact storage can retry; a spent reserve needs separately qualified recovery.
 
 `CollectionCompletion` uses `runtime-ledger-transition-receipt-v1` and phase
 `acknowledged`, with the frozen binding/operation/plan/group/source/observation

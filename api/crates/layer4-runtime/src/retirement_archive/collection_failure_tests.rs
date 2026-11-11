@@ -97,7 +97,7 @@ async fn collection_corrupt_pending_slot_or_artifact_holds_without_changing_sour
 }
 
 #[tokio::test]
-async fn collection_ack_failure_keeps_hold_and_retries_without_a_second_source_commit() {
+async fn collection_ack_storage_failure_preserves_evidence_and_holds_without_source_replay() {
     let fixture = Fixture::new();
     let intent = fixture.intent("selected", true).await;
     let archive = fixture.collection(true).await;
@@ -108,29 +108,65 @@ async fn collection_ack_failure_keeps_hold_and_retries_without_a_second_source_c
         db.execute_batch("CREATE TEMP TRIGGER fail_ack BEFORE INSERT ON collection_acknowledgements BEGIN SELECT RAISE(ABORT,'injected'); END").unwrap();
         Ok(())
     }).await.unwrap();
-    assert!(complete_collection_held(
+    let error = complete_collection_held(
         archive,
         fixture.source(false).await,
         intent.binding.clone(),
         reference.clone(),
         intent.proof.clone(),
-        ()
+        (),
     )
     .await
-    .is_err());
+    .unwrap_err();
+    assert_eq!(error.code, "mutation_ledger_storage_hold");
     let source = fixture.source(false).await;
     let before = source.snapshot().await.unwrap();
     assert_eq!((before.operations, before.authority), (0, 0));
     source.close().await.unwrap();
     let archive = fixture.collection(false).await;
+    assert_eq!(
+        crate::ledger_storage::reserve::remaining(&fixture.path).unwrap(),
+        0
+    );
     assert!(archive.require_ready().await.is_err());
+    assert_eq!(
+        archive
+            .pending_collection(intent.binding.clone())
+            .await
+            .unwrap(),
+        Some(reference.clone())
+    );
+    assert_eq!(
+        archive
+            .read_collection(intent.binding.clone(), reference.clone())
+            .await
+            .unwrap()
+            .originals(),
+        intent.bytes.each_ref().map(Vec::as_slice)
+    );
     assert!(archive
         .collection_completion(intent.binding.clone(), reference.clone())
         .await
         .unwrap()
         .is_none());
     archive.close().await.unwrap();
-    fixture.finish(&intent, reference).await;
+    // A storage error spends the archive reserve. Reopening must not refill it
+    // or turn a retry into successful completion without qualified repair.
+    let error = complete_collection_held(
+        fixture.collection(false).await,
+        fixture.source(false).await,
+        intent.binding.clone(),
+        reference,
+        intent.proof.clone(),
+        (),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, "mutation_ledger_storage_hold");
+    assert_eq!(
+        crate::ledger_storage::reserve::remaining(&fixture.path).unwrap(),
+        0
+    );
     let source = fixture.source(false).await;
     assert_eq!(source.snapshot().await.unwrap(), before);
     source.close().await.unwrap();
