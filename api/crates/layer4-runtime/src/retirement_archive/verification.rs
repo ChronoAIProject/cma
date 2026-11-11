@@ -12,6 +12,16 @@ pub(super) fn group(
     proof: &GroupProof,
     receipt: &Receipt,
 ) -> Result<()> {
+    visit(db, config, proof, receipt, |_| Ok(()))
+}
+
+pub(super) fn visit(
+    db: &Connection,
+    config: &RuntimeConfig,
+    proof: &GroupProof,
+    receipt: &Receipt,
+    mut consume: impl FnMut(&SourceRecord) -> Result<()>,
+) -> Result<()> {
     let mut statement = db.prepare(
         "SELECT scope,kind,source_name,sha256,payload FROM archived_records WHERE group_key=? ORDER BY scope,kind,source_name",
     ).map_err(|_| storage_error())?;
@@ -52,6 +62,7 @@ pub(super) fn group(
         if owner.as_deref() != Some(proof.key.as_str()) {
             return Err(invalid());
         }
+        consume(&record)?;
         record.hash_into(&mut digest);
         records += 1;
         bytes = bytes

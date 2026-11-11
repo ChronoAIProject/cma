@@ -275,6 +275,9 @@ impl ExecutionPort for HttpExecutionPort {
             {
                 FrozenSubmission::Accepted(response_id) => StartResult::Accepted { response_id },
                 FrozenSubmission::NotAccepted => StartResult::NotAccepted,
+                FrozenSubmission::NotAcceptedWithCode(code) => {
+                    StartResult::NotAcceptedWithCode { code }
+                }
                 FrozenSubmission::Rejected(code) => StartResult::Rejected { code },
                 FrozenSubmission::Unknown => StartResult::Unknown,
             }

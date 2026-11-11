@@ -45,7 +45,8 @@ pub(crate) async fn run(directory: &Path) -> Result<()> {
             }
             Ok(serde_json::json!({"sqlite_version":rusqlite::version(), "sqlite_source_id":source_id, "compile_options":compile_options,
                 "journal_mode":"delete", "synchronous":"extra", "create_commit_reopen":"passed", "anchored_import_create_commit_reopen":"passed",
-                "retirement_archive_copy_reopen_refusal":"passed"}))
+                "retirement_archive_copy_reopen_refusal":"passed", "synthetic_retirement_move_restore":"passed",
+                "indexed_retirement_copy_reopen_refusal":"passed"}))
         })
         .await?;
     storage.close().await?;
