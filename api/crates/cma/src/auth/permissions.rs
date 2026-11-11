@@ -130,6 +130,8 @@ impl IntrospectionResponse {
     pub(super) fn verify(
         self,
         expected_subject: &str,
+        resource: Option<&str>,
+        resource_required: bool,
     ) -> Result<PermissionObservation, ProviderVerificationError> {
         let body = self.0;
         let token_expires_at = token_expiry(&body)?;
@@ -141,9 +143,7 @@ impl IntrospectionResponse {
                         == Some(expected_subject)
                     && body.get("token_type").and_then(serde_json::Value::as_str)
                         == Some("access")
-                    && body.get("resource").is_none_or(|value| {
-                        value.is_null() || value.as_array().is_some_and(Vec::is_empty)
-                    }))
+                    && super::oauth_commands::provider_allows(&body, resource, resource_required))
                 .then(|| body.get("exp").and_then(serde_json::Value::as_u64))
                 .flatten()
                 .and_then(|seconds| {

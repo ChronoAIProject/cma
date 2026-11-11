@@ -121,6 +121,8 @@ data:
   # is read only in explicit local-development trusted mode.
   CHRONO_AUTH_MODE: "provider"
   # Resource server audience for service-scoped NyxID agent key introspection.
+  # Canonical RFC 8707 audience for direct third-party user OAuth commands.
+  CHRONO_NYXID_OAUTH_API_RESOURCE: "https://api.nyxid.ai/api/v1/proxy/s/cma"
   CHRONO_NYXID_SERVICE_ID: "b48c8aff-02a6-43b6-87b5-98d3e66c1a06"
   # Existing NyxID signed service identity; enable the CMA catalog connection's
   # jwt propagation with a stable service audience across browser-domain changes.

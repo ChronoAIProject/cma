@@ -336,3 +336,95 @@ async fn api_execution_and_revival_proofs_expire_with_the_credential() {
         before
     );
 }
+
+#[tokio::test]
+async fn third_party_cma_scoped_oauth_admits_followups_and_live_revocation_stops_them() {
+    const RESOURCE: &str = "https://issuer.example/api/v1/proxy/s/cma";
+    let mut fixture = ResourceFixture::with_owner("owner").await;
+    fixture.identity.auth = AuthState::with_store(
+        fixture.identity.auth.mode.clone(),
+        None,
+        fixture.identity.store.clone(),
+    )
+    .with_oauth_api_resource(Some(RESOURCE.into()));
+    let credential = token(
+        json!({"sub":"owner","token_type":"access","scope":"openid roles proxy",
+        "client_id":"external-web-client","resources":[RESOURCE],"allowed_service_ids":["cma-connection"],
+        "allow_all_services":false,"allowed_node_ids":[],"allow_all_nodes":true}),
+    );
+    *fixture.identity.control.introspection.write().await = Reply::json(json!({
+        "active":true,"sub":"owner","token_type":"access","exp":future_expiry(),
+        "resource":[RESOURCE],"scope":"openid roles proxy","permissions":["cma:sandbox:use"]
+    }));
+    assert_eq!(api_session_commands(&fixture, &credential).await, true);
+    let first = admitted(&fixture, &credential, "third-party-first").await;
+    let second = admitted(&fixture, &credential, "third-party-second").await;
+    assert_ne!(
+        first.receipt.envelope.command_id,
+        second.receipt.envelope.command_id
+    );
+    fixture
+        .identity
+        .auth
+        .authorize_resource_command(&fixture.access, &second.receipt.envelope)
+        .await
+        .unwrap();
+    *fixture.identity.control.introspection.write().await = Reply::json(json!({"active":false}));
+    assert!(fixture
+        .identity
+        .auth
+        .authorize_resource_command(&fixture.access, &second.receipt.envelope)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn scoped_oauth_cannot_substitute_identity_or_wrong_resource_evidence() {
+    const RESOURCE: &str = "https://issuer.example/api/v1/proxy/s/cma";
+    for observed in [json!([]), json!(["other-resource"])] {
+        let mut fixture = ResourceFixture::with_owner("owner").await;
+        fixture.identity.auth = AuthState::with_store(
+            fixture.identity.auth.mode.clone(),
+            None,
+            fixture.identity.store.clone(),
+        )
+        .with_oauth_api_resource(Some(RESOURCE.into()));
+        let credential = token(json!({"sub":"owner","token_type":"access","scope":"proxy",
+            "resources":[RESOURCE],"allowed_service_ids":["cma-connection"],"allow_all_services":false,
+            "allowed_node_ids":[],"allow_all_nodes":true}));
+        *fixture.identity.control.introspection.write().await = Reply::json(json!({
+            "active":true,"sub":"owner","token_type":"access","exp":future_expiry(),
+            "resource":observed,"scope":"proxy","permissions":["cma:sandbox:use"]
+        }));
+        assert_eq!(api_session_commands(&fixture, &credential).await, false);
+        let context = external_context(&fixture, &credential).await;
+        assert!(fixture
+            .identity
+            .auth
+            .command_admission_authority(&context, &credential, &fixture.envelope.owner)
+            .await
+            .is_err());
+    }
+}
+
+async fn api_session_commands(fixture: &ResourceFixture, credential: &str) -> Value {
+    use tower::ServiceExt;
+    let auth = fixture.identity.auth.clone();
+    let app = crate::auth::router(auth.clone()).layer(axum::middleware::from_fn_with_state(
+        auth,
+        crate::auth::middleware::attach_subject,
+    ));
+    let response = app
+        .oneshot(
+            axum::http::Request::get("/auth/session")
+                .header("authorization", format!("Bearer {credential}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = axum::body::to_bytes(response.into_body(), 16384)
+        .await
+        .unwrap();
+    serde_json::from_slice::<Value>(&body).unwrap()["api_commands"].clone()
+}
