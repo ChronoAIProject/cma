@@ -80,7 +80,8 @@ pub(super) fn open(
         .map(|sql| {
             let mut words = sql.split_whitespace();
             words.find(|word| matches!(*word, "TABLE" | "INDEX"));
-            (words.next().unwrap().to_owned(), sql.to_owned())
+            let name = words.next().unwrap().split('(').next().unwrap();
+            (name.to_owned(), sql.to_owned())
         })
         .collect::<Vec<_>>();
     expected.sort();
