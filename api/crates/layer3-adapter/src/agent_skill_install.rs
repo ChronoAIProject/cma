@@ -1,4 +1,4 @@
-//! One additive, content-pinned skill installation into an existing Agent home.
+//! Content-pinned skill installation and replacement in an existing Agent home.
 use crate::{AgentSkill, AgentSlot};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -132,3 +132,23 @@ impl AgentSkillInstallReceipt {
 #[cfg(test)]
 #[path = "agent_skill_install_tests.rs"]
 mod tests;
+
+/// Terminal, owner-actionable replacement failures; no runtime loss is implied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum AgentSkillUpgradeRefusal {
+    #[error("Save edits outside the skill directory and restore the installed archive's files before retrying.")]
+    Modified,
+    #[error("Restore access to the exact previous archive or its checksum-verified warm cache before retrying.")]
+    PreviousUnavailable,
+    #[error("Archive and remove settled trees in the Agent home's .cma-skill-upgrades directory; preserve pending evidence, then retry.")]
+    RetentionFull,
+}
+impl AgentSkillUpgradeRefusal {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Modified => "agent_skill_upgrade_modified",
+            Self::PreviousUnavailable => "agent_skill_upgrade_previous_unavailable",
+            Self::RetentionFull => "agent_skill_upgrade_retention_full",
+        }
+    }
+}
