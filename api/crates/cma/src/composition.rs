@@ -190,7 +190,14 @@ impl ControlPlaneComposition {
         .with_user_directory(Arc::clone(&users))
         .with_runtime_updates(runtime.updates.clone())
         .with_maintenance(stores.sandbox_model.clone())
-        .with_warm_pools(native_warm_pools.clone());
+        .with_warm_pools(native_warm_pools.clone())
+        .with_platform_spend(Arc::new(
+            layer2_core::budget::PlatformSpendService::new(
+                stores.sandbox_model.clone(),
+                Arc::clone(&activity),
+            )
+            .with_writes_enabled(settings.platform_spend_writes_enabled()),
+        ));
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
             stores.sandbox_profiles.clone(),

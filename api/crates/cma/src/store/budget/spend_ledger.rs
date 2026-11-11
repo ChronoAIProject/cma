@@ -1,18 +1,28 @@
-//! The platform spend read model over the period row: plain reads, no session,
-//! no settings fence.
+//! The platform spend read model over the period row (plain reads, no session,
+//! no settings fence), the evaluator, and the operator's cloud observations.
+
+use std::time::{Duration, UNIX_EPOCH};
 
 use layer2_core::budget::{
-    BudgetError, Evaluation, PlatformAdmissionState, PlatformPeriodLedger, PlatformSpendLedger,
-    PlatformSpendState,
+    BudgetError, CloudObservation, CloudObservationInput, Evaluation, ObservationError,
+    PlatformAdmissionState, PlatformPeriodLedger, PlatformSpendLedger, PlatformSpendState,
 };
 use mongodb::bson::doc;
+use mongodb::ClientSession;
 
-use super::period::{ensure_period_row, enter_closures, period_key, snapshot, PolicySnapshot};
+use super::period::{
+    ensure_period_row, enter_closures, load_or_open, period_key, read_snapshot, save_period,
+    snapshot, PolicySnapshot,
+};
+use super::{decode, ApplyError, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
+use crate::store::sandbox_mongo::{
+    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
+    TRANSACTION_ATTEMPTS,
+};
 
 /// A row unchanged for this long is still re-persisted, so `evaluated_at`
 /// shows the evaluator is alive (concurrency rule 4).
 const REFRESH_SECONDS: u64 = 60;
-use super::{decode, MongoSandboxStore};
 
 impl MongoSandboxStore {
     /// The current settings with no owner scope; `None` without a settings record.
@@ -139,4 +149,132 @@ impl PlatformSpendLedger for MongoSandboxStore {
             ledger,
         })
     }
+
+    async fn record_cloud_observation(
+        &self,
+        input: CloudObservationInput,
+        now: u64,
+    ) -> Result<PlatformSpendState, ObservationError> {
+        if input.observed_through > now || input.units > (1 << 53) - 1 {
+            return Err(ObservationError::Invalid);
+        }
+        self.observe_cloud(input, now).await?;
+        self.spend_state(now)
+            .await
+            .map_err(|_| ObservationError::Unavailable)
+    }
+}
+
+/// The observation transaction's outcome: retry from a fresh snapshot, or a
+/// typed refusal.
+enum Attempt {
+    Retry,
+    Refused(ObservationError),
+}
+
+impl From<ApplyError> for Attempt {
+    fn from(error: ApplyError) -> Self {
+        match error {
+            ApplyError::Driver(error) if is_transient(&error) || is_duplicate_key(&error) => {
+                Self::Retry
+            }
+            _ => Self::Refused(ObservationError::Unavailable),
+        }
+    }
+}
+
+impl MongoSandboxStore {
+    /// Append the immutable observation row and update the period row in one
+    /// transaction. An identical repeat changes nothing.
+    async fn observe_cloud(
+        &self,
+        input: CloudObservationInput,
+        now: u64,
+    ) -> Result<(), ObservationError> {
+        let _platform = self.platform_write_guard().await;
+        for attempt in 0..TRANSACTION_ATTEMPTS {
+            crate::store::contention::backoff(attempt).await;
+            let mut session = self
+                .client
+                .start_session()
+                .await
+                .map_err(|_| ObservationError::Unavailable)?;
+            start_transaction(&mut session)
+                .await
+                .map_err(|_| ObservationError::Unavailable)?;
+            match observe_in(self, input, now, &mut session).await {
+                Ok(()) => match commit_transaction(&mut session).await {
+                    CommitOutcome::Committed => return Ok(()),
+                    CommitOutcome::Retry(_) => continue,
+                    CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
+                        return Err(ObservationError::Unavailable)
+                    }
+                },
+                Err(Attempt::Retry) => {
+                    let _ = session.abort_transaction().await;
+                }
+                Err(Attempt::Refused(error)) => {
+                    let _ = session.abort_transaction().await;
+                    return Err(error);
+                }
+            }
+        }
+        Err(ObservationError::Unavailable)
+    }
+}
+
+async fn observe_in(
+    store: &MongoSandboxStore,
+    input: CloudObservationInput,
+    now: u64,
+    session: &mut ClientSession,
+) -> Result<(), Attempt> {
+    let invalid = || Attempt::Refused(ObservationError::Invalid);
+    let snapshot = read_snapshot(&store.budget_settings, None, session)
+        .await?
+        .ok_or_else(invalid)?;
+    let platform = snapshot.platform.ok_or_else(invalid)?;
+    let (start, end) = platform.period_bounds().map_err(|_| invalid())?;
+    if input.observed_through < start || input.observed_through > end {
+        return Err(invalid());
+    }
+    let key = format!(
+        "observation:cloud:{}",
+        layer2_core::rfc3339_at(UNIX_EPOCH + Duration::from_secs(input.observed_through))
+    );
+    if let Some(document) = store
+        .model_budget
+        .find_one(doc! {"_id": &key})
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+    {
+        let recorded: CloudObservation = decode(&document)?;
+        return if recorded.units == input.units {
+            Ok(())
+        } else {
+            Err(Attempt::Refused(ObservationError::Conflict))
+        };
+    }
+    let observation = CloudObservation {
+        observed_through: input.observed_through,
+        units: input.units,
+        recorded_at: now,
+        settings_revision: snapshot.revision,
+    };
+    let record = mongodb::bson::serialize_to_bson(&observation)
+        .map_err(|_| Attempt::Refused(ObservationError::Unavailable))?;
+    store
+        .model_budget
+        .insert_one(
+            doc! {"_id": &key, "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "record": record},
+        )
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    let (mut ledger, _) = load_or_open(store, &platform, snapshot.revision, session).await?;
+    ledger.record_cloud(observation).map_err(|_| invalid())?;
+    save_period(store, &ledger, session).await?;
+    Ok(())
 }
