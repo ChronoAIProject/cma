@@ -35,50 +35,47 @@ pub(super) async fn apply_mutation_with_capacity(
     crate::store::trigger_first_messages::require_mutation(store, &current, mutation, session)
         .await
         .map_err(ApplyError::Domain)?;
-    let (actual_last_seq, latest_turn, log_summary, semantic) = match if capacity.is_some() {
-        None
-    } else {
-        trusted_summary(store, &current, &current_row, caller, session, false).await?
-    } {
-        Some(summary) => {
-            let semantic = summary.semantic().cloned().ok_or_else(|| {
-                ApplyError::Domain(SandboxStoreError::Corrupt(
-                    "trusted Agent log metadata has no semantic checkpoint".into(),
-                ))
-            })?;
-            (
-                summary.entry_count(),
-                semantic.latest_turn(),
-                summary,
-                semantic,
-            )
-        }
-        None => {
-            let mut entries = Vec::new();
-            let summary = scan_complete_log_with_session(
-                caller,
-                store,
-                &mutation.agent.id,
-                current.conversation.last_seq,
-                session,
-                |entry| {
-                    entries.push(entry);
-                    Ok(())
-                },
-            )
-            .await?;
-            let semantic = crate::store::agent_log_integrity::audit_checkpoint(
-                store, &current, &entries, session,
-            )
-            .await?;
-            (
-                summary.entry_count(),
-                semantic.latest_turn(),
-                summary,
-                semantic,
-            )
-        }
-    };
+    let (actual_last_seq, latest_turn, log_summary, semantic) =
+        match trusted_summary(store, &current, &current_row, caller, session, false).await? {
+            Some(summary) => {
+                let semantic = summary.semantic().cloned().ok_or_else(|| {
+                    ApplyError::Domain(SandboxStoreError::Corrupt(
+                        "trusted Agent log metadata has no semantic checkpoint".into(),
+                    ))
+                })?;
+                (
+                    summary.entry_count(),
+                    semantic.latest_turn(),
+                    summary,
+                    semantic,
+                )
+            }
+            None => {
+                let mut entries = Vec::new();
+                let summary = scan_complete_log_with_session(
+                    caller,
+                    store,
+                    &mutation.agent.id,
+                    current.conversation.last_seq,
+                    session,
+                    |entry| {
+                        entries.push(entry);
+                        Ok(())
+                    },
+                )
+                .await?;
+                let semantic = crate::store::agent_log_integrity::audit_checkpoint(
+                    store, &current, &entries, session,
+                )
+                .await?;
+                (
+                    summary.entry_count(),
+                    semantic.latest_turn(),
+                    summary,
+                    semantic,
+                )
+            }
+        };
     if let Some(proof) = capacity {
         proof
             .validate_snapshot(
