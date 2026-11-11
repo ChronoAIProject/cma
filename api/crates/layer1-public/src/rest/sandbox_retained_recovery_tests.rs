@@ -1,4 +1,7 @@
 use super::*;
+#[path = "sandbox_retained_reopen_fixture.rs"]
+pub(crate) mod reopen;
+
 use layer2_core::sandbox::{
     RetainedRecoveryDisposition, RetainedRecoveryInspector, RetainedRecoveryService,
     RetainedRecoverySnapshot,
