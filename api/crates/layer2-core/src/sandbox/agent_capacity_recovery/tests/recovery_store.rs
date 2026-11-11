@@ -24,6 +24,7 @@ pub(super) struct State {
     pub successors: usize,
     pub publications: usize,
     pub source_available: bool,
+    pub completion_response_fault: Option<fn(&mut RecoveryWork)>,
     pub logs: Vec<AgentLogEntry>,
 }
 
@@ -43,6 +44,7 @@ impl Store {
             successors: 0,
             publications: 0,
             source_available: true,
+            completion_response_fault: None,
             logs: vec![failure],
         })))
     }
@@ -249,7 +251,7 @@ impl CapacityRecoveryStore for Store {
         let mut s = self.0.lock().unwrap();
         authorize(&s, caller)?;
         let work = s.work.as_ref().ok_or(RecoveryError::Conflict)?;
-        let (next_work, next_agent, log) =
+        let (mut next_work, next_agent, log) =
             work.complete(&s.fixture.context(), claim, confirmation, now)?;
         let fault = std::mem::take(&mut s.fault);
         if matches!(fault, Fault::BeforeCommit) {
@@ -271,6 +273,9 @@ impl CapacityRecoveryStore for Store {
         if matches!(fault, Fault::AfterCommit) {
             s.unresolved = true;
             return Ok(CommitOutcome::Unknown);
+        }
+        if let Some(corrupt) = s.completion_response_fault {
+            corrupt(&mut next_work);
         }
         Ok(CommitOutcome::Recorded(next_work))
     }
@@ -300,6 +305,8 @@ impl CapacityRecoveryStore for Store {
 pub(super) struct RuntimeState {
     pub reconnects: Vec<RecoveryTarget>,
     pub acknowledgements: usize,
+    pub acknowledgement_attempts: usize,
+    pub acknowledgement_unavailable: bool,
     pub unavailable: bool,
     pub mismatch: bool,
     pub delay: std::time::Duration,
@@ -350,7 +357,12 @@ impl CapacityRecoveryRuntime for Runtime {
         completed: &RecoveryWork,
     ) -> Result<(), RecoveryError> {
         assert_eq!(completed.phase, RecoveryPhase::Completed);
-        self.0.lock().unwrap().acknowledgements += 1;
+        let mut s = self.0.lock().unwrap();
+        s.acknowledgement_attempts += 1;
+        if s.acknowledgement_unavailable {
+            return Err(RecoveryError::Unavailable);
+        }
+        s.acknowledgements += 1;
         Ok(())
     }
 }
