@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
 
 #[path = "indexed_stream.rs"]
-mod indexed;
+pub(super) mod indexed;
 
 pub(super) async fn open(
     state: ResponsesV2State,
