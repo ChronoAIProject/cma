@@ -19,6 +19,8 @@ mod agent_lifecycle_operations;
 mod agent_log;
 mod agent_log_integrity;
 mod agent_log_reads;
+pub(crate) mod agent_log_segments;
+mod agent_log_store;
 pub(crate) mod agent_log_telemetry;
 mod agent_profiles;
 mod agent_provenance;
