@@ -40,8 +40,10 @@ observation path performs no DDL, history reads or durable writes.
 | Workspaces | `(sandbox_id, name, _id)`, `(record.sandbox_id, record.name, _id)` |
 | Worktrees | `(workspace_id, name)`, `(record.workspace_id, record.name, _id)` |
 
-Track A owns registration and index installation. Indexes are appended without
-reordering the existing mandatory contract. Observations never install them.
+Track A owns registration and the explicit `am-ledger-collection-indexes-v1`
+migration. Apply and verify that reviewed step before observation; it installs
+the five additive full indexes without reordering the startup index contract.
+Neither startup nor observations install these collector indexes.
 
 ## Eligibility and evidence
 
@@ -132,12 +134,12 @@ release batch; no executable image or recovery artifact is qualified here yet.
 | Required field | B1 boundary and outstanding release evidence |
 | --- | --- |
 | Service and owners | Agent Manager; Track B owns observation/progress and hierarchy retention. Track A owns shared registration/indexes and source/archive transitions. Track C owns maintenance/exclusion. The release owner qualifies and executes production steps. |
-| Affected stores and writers | A new top-level marker on `sandboxes`; complete additive Agent/Workspace/Worktree indexes supplied by A. Observation reads all four collections. Server startup only installs A's reviewed indexes; it does not enqueue, claim or run collection. The progress store has no production caller in B1. |
+| Affected stores and writers | A new top-level marker on `sandboxes`; complete additive Agent/Workspace/Worktree indexes supplied by A. Observation reads all four collections. The explicit `am-ledger-collection-indexes-v1` migration installs the five new indexes; startup does not install them or enqueue, claim or run collection. The progress store has no production caller in B1. |
 | Format and preservation | `runtime-ledger-candidates-v1`, `runtime-ledger-authority-request-v1`, `runtime-ledger-authority-batch-v1`, `runtime-ledger-group-authority-v1`, `runtime-ledger-group-evidence-v1`, `runtime-ledger-collector-progress-v1`. No TTL, validator contraction, identity replacement, history rewriting or key changes. Unknown formats hold. |
 | Prerequisites | Held storage foundations #1659/#1663, C's frozen binding and A's registration/index hooks. Executing collection additionally needs A's acknowledged transition adapter, C's durable activation and reviewed external writer exclusion. |
 | Reader floor | Before any progress write, every hierarchy purge reader must recognize marker presence, including malformed/future markers. Readers that ignore the marker are excluded even if they can decode the Sandbox. Old/new exact-artifact execution remains unverified. |
 | Writer gate | No server/worker registration calls the progress writer or runtime collector. The observation command is read-only. Future integration must enforce C's default-closed epoch/permit, compatible reader floor and exact cohort; a local lease never supplies those permissions. |
-| Migration/backfill | No production backfill or marker initialization is run by B1. A owns additive index initialization and its partial-DDL/readiness evidence. Runtime observations require every hinted index to exist; no fallback scan or inline creation. Later progress uses parent/progress CAS and bounded pages. |
+| Migration/backfill | No production backfill or marker initialization is run by B1. A owns the explicit additive index migration and its partial-DDL/readiness evidence. Runtime observations require every hinted index to exist; no fallback scan or inline creation. Later progress uses parent/progress CAS and bounded pages. |
 | Backup and dry-run | Observation is nonmutating and does not require a destructive-transform backup. Source removal is absent. Before B2 activation, C/release must qualify independent full-home backup and cold archives, including checkpoint cleanup exclusion and restore rehearsal. |
 | Rollback/forward recovery | Before marker writes, B1 adds only readers and additive indexes. After writes, never return to an API that can purge through a retained marker; use a qualified compatible recovery artifact. Closing writer admission does not remove this floor or settle pending operations. No marker clearing or schema downgrade is a rollback. |
 | Completion evidence | Local contract/Mongo/Clippy results belong to the exact B1 head; missing results stay unverified. B2 needs both-format lifecycle and crash/restart proof. Production image digests, reader/drain receipts, configuration, counts/hashes, backup evidence and final release/closure belong to the integrating release record. |
@@ -178,8 +180,12 @@ between homes. No collector result releases a home or certifies empty occupancy.
 The real adapter must also close the selection-to-dispatch window. An owned
 qualified job/gate must cover original source selection, Selected publication and
 source transition; separate successful lock acquisitions do not prove the source
-stayed unchanged between calls. The skeleton retains its hold through each
-progress CAS, but does not implement a hold across calls or process restart.
+stayed unchanged between calls. The owned-window entry point keeps one hold
+through selection, source dispatch and receipt/progress publication. Dropping its response does not cancel the
+admitted task. A finite step/deadline budget ends the local window while preserving
+pending identity; backend jobs must retain their own guards through uncertainty.
+Process restart and gaps between bounded windows still require C's durable hold
+and A's qualified source gate; the coordinator does not supply those authorities.
 Until A/C provide that integration, source changes with a pending intent refuse
 and retain the original operation. A separately reviewed no-effect cancellation
 could resolve a provably unprepared stale selection; absence or lease expiry alone
@@ -198,9 +204,9 @@ measurements of SQLite allocation or disk headroom.
 
 ## B2 prerequisite design: exact evidence survives before Prepared
 
-This is an integration proposal for A/C review, not a new archive schema written
-by B. Keep one bounded staged operation per home in the existing accepted-plan or
-archive authority. It must survive before B writes Selected, including a lost
+Track A accepted this ordering in contract addendum 1. It remains an integration
+requirement, not a new archive schema written by B. Keep one bounded staged
+operation per home in the existing accepted-plan or archive authority. It must survive before B writes Selected, including a lost
 response and worker-fence takeover. Never allocate a fresh logical operation just
 because the stage publication or Selected CAS response was lost.
 
@@ -235,8 +241,8 @@ their persistence primitives; the coordinator model cannot establish durability.
 
 ## B2 prerequisite design: checkpoint deletion cannot race retention
 
-Hierarchy retention covers the final parent delete, but external object cleanup
-has separate admission paths. The reviewed integration must cover
+Track A accepted this boundary in contract addendum 1. Hierarchy retention covers
+the final parent delete, but external object cleanup has separate admission paths. The reviewed integration must cover
 `checkpoint_objects/purge.rs` (`purge_sandbox`, `retire_deleted_sandboxes`,
 `cleanup_due` and `cleanup_one`) and `checkpoint_objects/tombstones.rs`
 (`cleanup_due`, including already-admitted retries). A tombstone may outlive the
