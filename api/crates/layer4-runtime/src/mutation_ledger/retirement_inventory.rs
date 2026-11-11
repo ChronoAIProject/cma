@@ -409,3 +409,8 @@ mod inspection_tests;
 #[cfg(test)]
 #[path = "retirement_inventory_tests.rs"]
 mod tests;
+
+// Track C source comparison is qualification-only until the held coordinator consumes it.
+#[cfg(test)]
+#[path = "retirement_restore.rs"]
+pub(crate) mod restore;

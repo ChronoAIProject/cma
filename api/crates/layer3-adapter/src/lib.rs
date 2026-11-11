@@ -188,4 +188,5 @@ pub mod sandbox_metrics;
 mod runtime_ledger_collection_artifact;
 pub use runtime_ledger_collection_artifact::{
     LedgerCollectionArtifactReferenceV1, LEDGER_COLLECTION_ARTIFACT_FORMAT,
+    LEDGER_FILE_COLLECTION_ARTIFACT_FORMAT,
 };

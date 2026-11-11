@@ -1,6 +1,11 @@
 //! Exact retained bytes and indexed permanent replay refusal. Active-ledger
 //! deactivation is a separate, ordered step after this archive has committed.
 mod collection;
+mod file_collection;
+mod file_collection_probe;
+mod file_collection_state;
+mod file_collection_transition;
+pub(crate) use file_collection_transition::complete_file_collection_held;
 mod collection_artifacts;
 pub(crate) mod collection_probe;
 pub(crate) use layer3_adapter::LedgerCollectionArtifactReferenceV1 as CollectionReference;
@@ -53,6 +58,7 @@ pub(crate) enum Version {
     Legacy = 1,
     Indexed = 2,
     Collection = 3,
+    FileCollection = 4,
 }
 
 /// Only a complete source selection and authoritative settled-deletion proof
@@ -163,7 +169,10 @@ impl Archive {
                         |row| row.get(0),
                     )
                     .map_err(|_| storage_error())?;
-                if pending || (version == Version::Collection && collection::pending(db)?) {
+                if pending
+                    || (matches!(version, Version::Collection | Version::FileCollection)
+                        && collection::pending(db)?)
+                {
                     return Err(invalid());
                 }
                 Ok(())
@@ -230,12 +239,16 @@ impl Archive {
         let config = Arc::clone(&self.config);
         let directory = self.path.clone();
         let anchor = self.anchor.clone();
+        let version = self.version;
         self.storage
             .call(move |db| {
                 let tx = db.transaction().map_err(|_| storage_error())?;
                 if let Some(receipt) = existing(&tx, &proof)? {
                     verification::group(&tx, &config, &proof, &receipt)?;
                     return Ok(receipt);
+                }
+                if version == Version::FileCollection {
+                    file_collection::require_selection(&tx, &config, &proof)?;
                 }
                 require_reserve(&directory, anchor.as_deref())?;
                 tx.execute(
@@ -428,3 +441,6 @@ fn storage_error() -> RuntimeError {
         "runtime mutation ledger storage requires verification",
     )
 }
+
+#[cfg(test)]
+mod indexed_restore;

@@ -55,6 +55,8 @@ pub(super) const WARM_SANDBOXES: &str = "warm_sandboxes";
 pub(super) const SANDBOX_BILLING: &str = "sandbox_billing_state";
 
 const SANDBOX_COLLECTIONS: &[&str] = &[
+    super::ledger_maintenance_records::AUDITS,
+    super::ledger_maintenance_pre_exclusion_records::AUDITS,
     super::settings::SETTINGS,
     super::budget::COLLECTION,
     "sandbox_retained_availability",

@@ -54,6 +54,7 @@ impl Selection {
                 1 => Version::Legacy,
                 2 => Version::Indexed,
                 3 => Version::Collection,
+                4 => Version::FileCollection,
                 _ => return Err(hold()),
             },
         )

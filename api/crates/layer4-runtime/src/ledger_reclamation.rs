@@ -122,7 +122,17 @@ impl CollectionEvidence {
         proof: &GroupProof,
         source_revision: u64,
     ) -> Result<()> {
-        if self.binding.source_format != LedgerSourceFormatV1::V2
+        self.validate_source_format(config, proof, source_revision, LedgerSourceFormatV1::V2)
+    }
+
+    pub(crate) fn validate_source_format(
+        &self,
+        config: &RuntimeConfig,
+        proof: &GroupProof,
+        source_revision: u64,
+        format: LedgerSourceFormatV1,
+    ) -> Result<()> {
+        if self.binding.source_format != format
             || self.binding.sandbox_id != config.sandbox_id
             || Some(&self.binding.home_identity) != config.home_identity.as_ref()
             || self.binding.generation != config.generation

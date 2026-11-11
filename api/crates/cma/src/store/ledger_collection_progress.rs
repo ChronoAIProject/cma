@@ -17,6 +17,9 @@ use super::{
 
 pub(super) const MARKER: &str = "ledger_collection_v1";
 
+#[path = "ledger_collection_checkpoint.rs"]
+mod checkpoint;
+
 /// A completed collection group is not acknowledgement of the final home
 /// transition. C/A must supply that later release integration. Unknown or
 /// malformed markers retain authority; missing data never invents a tombstone.

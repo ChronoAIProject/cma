@@ -1,5 +1,6 @@
 //! Offline tools never initialize a home, recover a journal or authorize effects.
 //! Inventory is evidence, not proof that a legacy writer has stopped.
+pub(crate) mod collection_source;
 mod inventory;
 mod io;
 mod isolation;

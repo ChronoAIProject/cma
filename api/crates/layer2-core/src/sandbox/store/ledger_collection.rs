@@ -144,6 +144,9 @@ pub trait LedgerCollectionStore: Send + Sync {
 #[path = "ledger_collection_progress.rs"]
 mod progress;
 
+#[path = "ledger_collection_checkpoint.rs"]
+pub mod checkpoint;
+
 #[cfg(test)]
 #[path = "ledger_collection_tests.rs"]
 mod tests;

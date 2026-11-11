@@ -7,9 +7,9 @@ pub(super) fn from_evidence(
     plan_sha256: String,
 ) -> Result<CollectionReference> {
     Ok(CollectionReference {
-        format: layer3_adapter::LEDGER_COLLECTION_ARTIFACT_FORMAT.into(),
+        format: format(evidence.binding().source_format).into(),
         archive_id: evidence.binding().archive_id.clone(),
-        archive_version: 3,
+        archive_version: version(evidence.binding().source_format),
         operation_id: evidence.operation_id().into(),
         group_key: evidence.group_key().into(),
         binding_sha256: evidence.binding().binding_sha256().map_err(|_| invalid())?,
@@ -40,7 +40,7 @@ pub(super) fn load(db: &Connection, operation: &str) -> Result<CollectionReferen
     let result=db.query_row(
         "SELECT operation_id,group_key,binding_sha256,plan_sha256,artifacts_sha256,candidate_bytes,request_bytes,observation_bytes
         FROM collection_evidence WHERE operation_id=?", [operation], |r| Ok(CollectionReference {
-            format:layer3_adapter::LEDGER_COLLECTION_ARTIFACT_FORMAT.into(),archive_id,archive_version,
+            format:if archive_version == 4 {layer3_adapter::LEDGER_FILE_COLLECTION_ARTIFACT_FORMAT} else {layer3_adapter::LEDGER_COLLECTION_ARTIFACT_FORMAT}.into(),archive_id,archive_version,
             operation_id:r.get(0)?,group_key:r.get(1)?,binding_sha256:r.get(2)?,plan_sha256:r.get(3)?,
             artifacts_sha256:r.get(4)?,artifact_lengths:[
                 u64::from(r.get::<_,u32>(5)?),
@@ -50,4 +50,20 @@ pub(super) fn load(db: &Connection, operation: &str) -> Result<CollectionReferen
         })).map_err(|_|invalid())?;
     validate(&result)?;
     Ok(result)
+}
+
+fn version(source: layer3_adapter::runtime_ledger_maintenance::LedgerSourceFormatV1) -> u8 {
+    match source {
+        layer3_adapter::runtime_ledger_maintenance::LedgerSourceFormatV1::V1 => 4,
+        layer3_adapter::runtime_ledger_maintenance::LedgerSourceFormatV1::V2 => 3,
+    }
+}
+fn format(
+    source: layer3_adapter::runtime_ledger_maintenance::LedgerSourceFormatV1,
+) -> &'static str {
+    if version(source) == 4 {
+        layer3_adapter::LEDGER_FILE_COLLECTION_ARTIFACT_FORMAT
+    } else {
+        layer3_adapter::LEDGER_COLLECTION_ARTIFACT_FORMAT
+    }
 }

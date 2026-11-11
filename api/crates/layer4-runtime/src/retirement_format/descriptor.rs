@@ -29,8 +29,9 @@ impl Descriptor {
     pub(super) fn load(config: &RuntimeConfig) -> Result<Self> {
         let bytes = io::read(&config.state_root.join(MANIFEST))?;
         let descriptor: Self = serde_json::from_slice(&bytes).map_err(|_| hold())?;
-        if !matches!(descriptor.version, 1..=3)
+        if !matches!(descriptor.version, 1..=4)
             || (descriptor.version == 3 && descriptor.active_v2_sha256.is_none())
+            || (descriptor.version == 4 && descriptor.active_v2_sha256.is_some())
             || descriptor.sandbox != config.sandbox_id
             || Some(descriptor.home.as_str()) != config.home_identity.as_deref()
             || descriptor.state_root != config.state_root

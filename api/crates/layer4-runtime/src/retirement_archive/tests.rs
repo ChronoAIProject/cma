@@ -1,10 +1,14 @@
 use super::*;
 #[path = "collection_tests.rs"]
 mod completion_tests;
+#[path = "file_collection_tests.rs"]
+mod file_completion_tests;
 #[path = "indexed_tests.rs"]
 mod indexed_tests;
 #[path = "transfer_tests.rs"]
 mod transfer_tests;
+#[path = "v1_lifetime_tests.rs"]
+mod v1_lifetime_tests;
 use crate::mutation_authority::Record as Authority;
 use crate::mutation_journal::Record as Journal;
 use layer3_adapter::{AgentHomeRemoveRequest, AgentSlot};

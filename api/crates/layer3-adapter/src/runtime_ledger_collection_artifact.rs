@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 pub const LEDGER_COLLECTION_ARTIFACT_FORMAT: &str = "runtime-ledger-collection-reference-v1";
+pub const LEDGER_FILE_COLLECTION_ARTIFACT_FORMAT: &str =
+    "runtime-ledger-file-collection-reference-v1";
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -21,14 +23,15 @@ pub struct LedgerCollectionArtifactReferenceV1 {
 
 impl LedgerCollectionArtifactReferenceV1 {
     pub fn validate(&self) -> bool {
-        self.format == LEDGER_COLLECTION_ARTIFACT_FORMAT
-            && self.archive_version == 3
-            && [&self.archive_id, &self.operation_id]
-                .into_iter()
-                .all(|value| {
-                    uuid::Uuid::parse_str(value)
-                        .is_ok_and(|id| !id.is_nil() && id.to_string() == *value)
-                })
+        matches!(
+            (self.format.as_str(), self.archive_version),
+            (LEDGER_COLLECTION_ARTIFACT_FORMAT, 3) | (LEDGER_FILE_COLLECTION_ARTIFACT_FORMAT, 4)
+        ) && [&self.archive_id, &self.operation_id]
+            .into_iter()
+            .all(|value| {
+                uuid::Uuid::parse_str(value)
+                    .is_ok_and(|id| !id.is_nil() && id.to_string() == *value)
+            })
             && [
                 &self.group_key,
                 &self.binding_sha256,
