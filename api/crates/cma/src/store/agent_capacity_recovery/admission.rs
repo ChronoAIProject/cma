@@ -79,7 +79,9 @@ pub(in crate::store) async fn persist_admission(
         },
         appended_at: identity.appended_at,
     };
-    let stored = records::StoredRecovery::new(&next, work.clone(), &[], input.now)?;
+    // The immutable publication keeps the original request timestamp across
+    // delayed/known-aborted attempts; wall-clock admission time is not its identity.
+    let stored = records::StoredRecovery::new(&next, work.clone(), &[], &operation.appended_at)?;
     input
         .admission
         .permits(context.agent, &operation, AdmissionKind::CapacityRecovery)?;
