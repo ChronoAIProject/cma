@@ -2593,6 +2593,71 @@ received, not as a projection of it.
 Synthetic management tests omit this extension. Unsupported/unavailable reads
 must fail explicitly; the gateway does not invent a context from the sealed ref.
 
+### Verified sender context (CMA Responses v2 dialect)
+
+CMA's opaque `profile.environment.verified_sender_context:true` extension is
+supported for existing-Agent bindings. The provider lists the enabled extension
+in `honoured`; omitted/false disables it. Profile targets refuse it by name.
+Other existing-Agent profile settings remain unapplied as before. Policy-only
+PUTs preserve the borrowed Agent, credentials, binding generation and history.
+See [the CMA binding API](API_REST.md) for the exact first-line format and replay
+contract. CMAEG forwards the profile and full Activity without interpreting this
+policy or any product workflow.
+
+These precise refusals without `x-cma-response-id` precede **durable turn admission**, including input
+rendering and prefix-size validation:
+
+| HTTP | `error.code` | Meaning |
+| --- | --- | --- |
+| 403 | `verified_sender_context_invalid` | The original Activity/reference was not attested for this binding, or proof identity did not match. Definite, non-retryable. |
+| 422 | `verified_sender_context_unsupported` | Attested identity cannot be represented safely, or the complete prefixed input exceeds the input limit. Definite, non-retryable. |
+| 503 | `verified_sender_context_unavailable` | Attestation timed out or was unavailable for a request with no retained admission. No turn was admitted. Retry with the same frozen body/key after `Retry-After: 5`. |
+
+CMAEG recognizes only the matching status, `application/json` content type,
+exact nested error code and error type (`invalid_request_error` for 403/422,
+`server_error` for 503), with no `x-cma-response-id`. Other 403/422/503 responses,
+malformed/truncated bodies and contradictory admission headers remain `Unknown`
+and use existing uncertain-submission recovery; they never authorize a blind
+transport retry. The provider transport itself never retries a POST.
+
+Exact replay of admitted input never contacts the gateway. CMA compares the
+complete request, including its ExternalEvent, to the retained command using
+local deterministic prefix rendering. Only new admissions call attestation;
+reference expiry and gateway outages do not prevent exact replay. A changed
+request still conflicts. Disabled-policy turns retain ordinary admission;
+only a ledger conflict invokes the prefixed replay comparison.
+
+Attestation has a **2-second** deadline; opted-in sender preflight has a
+**5-second** deadline and holds no Mongo transaction, binding lock or worker lease
+across HTTP. Disabled-policy admission has no new deadline. The deployed provider
+request timeout is 30 seconds, capped at **20 seconds** for frozen submission.
+Keep that POST budget above the opted-in preflight budget with transport headroom
+(at least 10 seconds). Both attestation and outer preflight timeouts return the
+named 503 with `Retry-After: 5`: preflight performs no admission writes. Other
+read failures retain their existing unavailable response and recovery semantics.
+
+Rollback readers can dispatch the existing text schema but ignore the new policy
+in `honoured`, so new gateway turns may lack the line. Consumers must refuse
+`event_ref` inputs without a verified first line, including during rollback.
+
+The scheduler retries proven non-admissions with its existing **5-second**
+cooldown, rechecking original event expiry and current authority. Definite
+failures settle as `Refused`. An expired, proven-unadmitted prepared request
+settles with `event_expired_before_start`; an uncertain/accepted request is never
+misclassified as unstarted. Prepared targets can retain media work; original
+expiry closes its effect guards before any upload, supplement or delivery. The
+media worker records refusal for every indexed obligation and removes its active
+head. A late derivative cannot recreate that head or send after expiry. See
+[binding queue deadlines](CMAEG_Binding_Queue_Deadlines.md). Terminal activity records include optional
+`refusal_code`, `last_non_admission_code` and a completion timestamp. The last
+precise retryable refusal (for example `verified_sender_context_unavailable` or
+`conversation_not_ready`) is retained in a separate sealed diagnostic receipt
+and restored to Activity on expiry, including after restart. The Feishu
+user receives **no reply** for these refusals or expiry: no Agent ran, and no
+platform failure message is invented. Channel Activity shows the recorded reason.
+If a temporary outage recovers before expiry, the original turn admits once and
+normal automatic-final reply delivery resumes.
+
 ### Verify a fresh activity before admitting a workflow
 
 Providers that run a deterministic workflow before creating any model turn can

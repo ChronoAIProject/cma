@@ -72,6 +72,10 @@ protocol; adding a new gateway `sender` rule does not implement this requirement
 The profile-target provider contract must let the provider choose the session
 without treating a gateway-derived conversation ID as the user-affinity authority.
 
+The separate `environment.verified_sender_context:true` input extension is for
+existing-Agent targets only; profile targets refuse it by name. It does not
+change source-user affinity. See [CMA binding extensions](API_REST.md).
+
 Bot Father uses the profile target. CMA retains one always-live Sandbox and
 Workspace, with a distinct Agent, Worktree, model conversation and per-user
 operation context for each subconnection. Different agents may run concurrently;
