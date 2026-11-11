@@ -194,11 +194,20 @@ export function Menu({
      */
     window.addEventListener('scroll', place, true);
     window.addEventListener('resize', place);
-    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(place);
+    let frame: number | undefined;
+    const schedulePlace = () => {
+      frame ??= requestAnimationFrame(() => {
+        frame = undefined;
+        place();
+      });
+    };
+    const observer =
+      typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(schedulePlace);
     if (listRef.current) observer?.observe(listRef.current);
     if (rootRef.current) observer?.observe(rootRef.current);
     return () => {
       observer?.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
       window.removeEventListener('scroll', place, true);
       window.removeEventListener('resize', place);
     };
