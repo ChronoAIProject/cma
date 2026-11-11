@@ -41,6 +41,7 @@ pub struct ProviderHostedControlTransport {
     native_transport: NativeRuntimeTransport,
     native_http_budget: Arc<tokio::sync::Semaphore>,
     bounded_permission_state: bool,
+    bounded_update_relay: bool,
 }
 
 #[derive(Clone)]
@@ -85,6 +86,11 @@ impl ActiveLink {
 impl ProviderHostedControlTransport {
     pub fn with_bounded_permission_state(mut self, enabled: bool) -> Self {
         self.bounded_permission_state = enabled;
+        self
+    }
+
+    pub fn with_bounded_update_relay(mut self, enabled: bool) -> Self {
+        self.bounded_update_relay = enabled;
         self
     }
 
