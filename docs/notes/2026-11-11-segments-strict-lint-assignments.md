@@ -3,6 +3,7 @@
 Pre-review 2 baseline: `34bcc3667`, including normal slice/develop merges; branch
 `tl/cma-log-segments/integration-20261111`; develop `1d425cffc` is included.
 Mechanical follow-ups are `efc880523` and `3cb7a3348`, detailed below.
+Latest code assembly `5ce631649` includes normal S1/S4/S5 merges; gates pending.
 No integration PR is ready. Pre-review 2 has four unresolved P1s; P1-2 is
 closed in source, while exact combined qualification remains a release gate.
 The source remains default-off. Production was not touched.
@@ -17,11 +18,11 @@ closing an issue whose production acceptance is still missing.
 
 | Slice | Normally integrated pin | Remaining delivery / owner |
 | --- | --- | --- |
-| S1 readers/schema | `e955d37f1` | Exact index drift and shared-reader qualification; response consumers now owned by S1 under the 01:55 allocation below. |
+| S1 readers/schema | `fbce2aa87` (readers `e955d37f1`) | Exact index drift and shared-reader qualification; response consumers now owned by S1 under the 01:55 allocation below. |
 | S2 composition / integration | scheduler `541c3f7f2`; merge checkpoint `e47527cbf` | Shared registration, runtime authority, accepted-work scheduler qualification, completed-work/loss routing composition and combined gates. |
 | S3 transcript consumers | `e300190a6` (`bc08dc4a0` fixes) | Fixture sequence corrected; title/usage facts use projections. Transcript still traverses lifetime data; golden parity, pagination and scale evidence remain open. |
-| S4 publication | `6b665b1a4` | Remaining command/discovery/claim roots; response-interval metadata; segmented capacity successor; combined root qualification. |
-| S5 capacity recovery | `4d7f6d680` | Strict BSON shape, discovery batch, completed restart/loss routing and enum boxing integrated; actual restart/authority tests and native producer qualification still pending. |
+| S4 publication | `08b947f93` | Remaining command/discovery/claim roots; response-interval metadata; segmented capacity successor; combined root qualification. |
+| S5 capacity recovery | `69eda007a` | Strict BSON shape, discovery batch, completed restart/loss routing and enum boxing integrated; actual restart/authority tests and native producer qualification still pending. |
 | Develop | `1d425cffc` | Normally included; later develop merges require affected checks at the resulting candidate. |
 
 S2's new scheduler retains at most 32 candidates, executes at most two original
@@ -374,3 +375,32 @@ boundaries, isolated scheduler pins and S5's retained authority/native ownership
 [composition handoff](2026-11-12-s4-composition-handoff.md). S2 retains canonical
 migration/grants and combined qualification. S4 source and actual gates are due
 11:00; this is additional to P1-1/P1-N1's earlier dependency deadlines.
+
+
+## Normal integration and gate replacement — pre-review 2 follow-up
+
+Normally merged S5 `69eda007a` at `a442934d9`, S4 `08b947f93` at `399ab1b05`,
+and S1 `fbce2aa87` at `8876a618a`. Conflicts retain every independent strict flag
+and configuration test, captured transaction scope, S3 title facts, S1 evidence
+visibility, and the broader reconciliation Mongo selector. No consumer semantics
+were rewritten. `5ce631649` repairs the retained fixture through a real revision
+boundary (`save_agent`); the focused actual-Mongo rerun remains required.
+
+The `d76c2171b` pagination result remains valid: 37/0 with 1,469 skipped. Its
+unacquired strict/scheduler/adapter/authenticated batch is superseded by this
+combined source. The old `afc60d98a` archive ends at 110/5 across 115 tests;
+partitions 4–6 were canceled before lock acquisition. No executing Cargo/Mongo
+child was interrupted. Preserve all exact-source logs; neither canceled batch
+is a complete pass. Unused immutable exports were removed; shared locks and the
+one reusable Cargo target were retained. Gates now qualify the new combined
+snapshot, with the same source-byte guard and two Cargo jobs under heavy-1.
+
+S1 still owes an explicit compatibility-vector correction against the combined
+tree; S3 owes the bounded transcript/parity half. S4's actual-scoped-root evidence
+is recorded in `2026-11-12-s4-scoped-reconciliation.md`; it does not close its
+ordinary claim/admission or segmented CapacityRecovery findings. S5's 19/19 Mongo
+pass closes the earlier exact-result test failure, not later-progress P1-3 or
+native activation. All remaining deadlines and the 09:00 disposition hold.
+
+Current exact ownership manifest includes the consumed S1/S4 additions and the
+03:25 accepted-work composition transfer; shared registration remains S2.
