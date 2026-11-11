@@ -25,7 +25,11 @@ pub(in crate::store) async fn required(
         .batch_size(16)
         .session(&mut *session)
         .await?;
-    while let Some(row) = cursor.stream(&mut *session).try_next().await? {
+    loop {
+        let next = cursor.stream(&mut *session).try_next().await?;
+        let Some(row) = next else {
+            break;
+        };
         // Existing legacy purge includes pre-envelope records. Preserve that
         // behavior only in the absence of every segment marker and sidecar.
         if !matches!(
