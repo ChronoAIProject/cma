@@ -10,7 +10,12 @@ transcript slice; this handoff does not close the whole combined finding.
 ## Source and dependencies
 
 Branch: `tl/cma-log-segments/response-consumers`.
-Implementation pin: `11c9361562165264924f3f39ea134b95164a8543`.
+Implementation pin: `b9d390634` (response behavior through `fbce2aa87`;
+explicit compatibility integration correction in `b9d390634`).
+Latest normal develop sync: `8167d01d896bd9d6f6ceba21a20a9e145ce059ac`
+at `f389f41c8dc8b0c5f5594d5b10fa52b437bc0678`. It retains all 24
+configuration fields/parser assignments and every test from both parents,
+including default-off hierarchy batching and its snapshot prerequisite.
 Develop `1d425cffc6e48bf33cc26635b6e1a58f92aec79f` is normally merged at
 `9b82a99e112a62252b0e6f869100e6e860385b31`. Both parents' independent rollout
 flags, configuration tests and bounded live-delivery behavior are retained.
@@ -81,7 +86,9 @@ workspace package artifacts are cleaned where required to prevent stale reuse.
 | Strict core/public Clippy, all targets/features, `-D warnings` | `fbce2aa87` | Passed. |
 | `cargo test --locked -p cma --bin cma --all-features config::features:: -j 2` | `11c936156` | 14 passed, 0 failed; 2,566 filtered. Includes the restored quota test and independent default-off flags. |
 | Actual Mongo response-reader contracts, all features, ignored tests explicitly selected | `11c936156` | 5 passed, 0 failed; 2,575 skipped. Includes post-capture evidence/source mutation. |
-| Strict CMA Clippy, all targets/features, `-D warnings` | `11c936156` | Final diagnostic pass pending. Prior source had 22 binary and 20 test-target shared integration diagnostics. |
+| Strict CMA Clippy, all targets/features, `-D warnings` | `11c936156`, `f389f41c8` | Neither final attempt started Cargo: disk preflight refused. Prior source had 22 binary and 20 test-target shared integration diagnostics. No newer pass is claimed. |
+| Configuration delta after hierarchy batching | `f389f41c8` | Compilation interrupted by the shared disk floor guard before any test executed. |
+| Compatibility correction, config delta and strict CMA | `b9d390634` | Pending safe disk capacity and a shared build slot; new tests are not yet execution evidence. |
 | Formatting, whitespace and canonical source-size check | `11c936156` | Passed; 6,152 source files checked. Response-owned changed files are below 500 lines. |
 | Mongo selector regression suite | `9b82a99e1`, selector/runner files unchanged afterward | 31 passed, 0 failed; mocked orchestration tests, separate from actual Mongo. Both lists have the same 70 prefixes in the same order. |
 | Canonical full-history secret scan | `11c936156` | Passed; 3,828 commits scanned, zero findings. |
@@ -92,8 +99,10 @@ The only source delta from `fbce2aa87` to `11c936156` is
 The core, public and response-reader source bytes are identical. Their passing
 results retain their original tested SHA; the corrected CMA binary and Mongo
 suite were compiled/executed at the newer head. All recorded frozen-source
-checksums remained unchanged. The current archive SHA-256 is
+checksums remained unchanged. The passing `11c936156` archive SHA-256 is
 `edb195ee4348e7c0d9c9806418f4dd6562450a730afa4aae5aeb3447c857eb29`.
+The interrupted `f389f41c8` archive remained unchanged at
+`e8d99e7355b06ccf4ec09c9dac301948d71df97ba1d996aa91f3696f2e29f414`.
 
 The first Mongo build at `fbce2aa87` failed before executing tests on the missing
 configuration field. It is not counted as Mongo evidence. The corrective gate
@@ -132,6 +141,41 @@ small sample on the shared machine establishes bounded query/byte work; it is
 not a production-latency or complete-route savings claim. Latency is reported
 as observed, without claiming it is constant across history sizes.
 
+## Explicit compatibility correction for the combined tree
+
+The merge preview against combined `efc1fd426` confirms a real conflict in
+`cma/src/store/agent_log_reads.rs`. Resolve its segmented arm by calling
+`segmented::read_compatibility_window`, with the new child module registered.
+Do not retain the combined tree's page loop that accumulates an unlimited vector.
+This is an explicit replacement of that integration behavior, not a claim that
+merging the earlier unchanged reader file would restore the bound.
+
+The helper retains total count and byte limits for the compatibility vector and
+always calls the captured range proof, even for empty, future and maximum-value
+cursors. It preserves ordinary legacy reads. Indexed response readers and their
+public output pages bypass this complete-vector API, so a small requested result
+remains available above either lifetime limit. Small direct log pages also remain
+available; an oversized complete-vector request is an explicit refusal.
+
+Two actual-Mongo regressions under the already-selected `response_readers`
+namespace cover independent total row/byte refusals, successful small prefix/tail
+pages in a large history, and empty-range refusal after an uncommitted append.
+They need execution before this correction is called qualified. Existing range,
+bounds and indexed-response suites are included in the corrective gate.
+
+The other merge-preview conflict is `config/features.rs`: preserve every
+independent flag, parser assignment and test from both parents, including quota,
+batching and batching's snapshot prerequisite. No whole-file older-side choice
+is valid for either conflict.
+
+Adopted-caller boundary: v2 retrieval, output paging and replay, plus legacy
+retrieval/streaming, select the indexed response port before legacy fallback.
+Direct log page/range/prefix calls now use the bounded helper. The generic
+`AgentReads::complete_log` still serves legacy methods; S3 must preserve its
+adopted transcript/usage/title routing through the compatible paged reader when
+admission/optimization flags close. This response branch does not qualify those
+transcript callers or eliminate legacy live streaming's requested-turn traversal.
+
 ## Combined integration and rollout gates
 
 1. Merge the published branch normally, preserving the consumed dependency
@@ -155,10 +199,11 @@ The Thursday 08:30 cutoff is NO-GO. The updated shared schedule targets combined
 evidence by 13:30, PR ready at 14:00, review/merge by 16:00, then release-owner
 deployment Thursday evening. A schedule or default-off state is not a gate pass.
 
-All owned Mongo fixtures and volumes were removed and read back as absent.
-Completed build outputs were removed after the machine fell below the free-space
-floor: 2.783 GiB reclaimed, returning free space to 33.36 GiB. Only the immutable
-source export remains for the final strict-lint retry. Its first launch refused
-the local disk cushion before Cargo started. Final lint/cleanup disposition
-will be recorded before the completed handoff. No production calls, adoption
-or activation occurred in this work.
+All prior owned Mongo fixtures and volumes were removed and read back as absent.
+After disk pressure interrupted the final configuration build, another 1.480 GiB
+of owned compiler outputs was removed, in addition to the earlier 2.783 GiB
+cleanup. Shared disk subsequently fell below the mandatory floor again; no new
+heavy work starts until capacity recovers. The guarded corrective coordinator
+waits before archive/build allocation, then uses the existing shared locks.
+No production calls, adoption or activation occurred in this work. Final gate
+and cleanup disposition will replace this pending checkpoint before completion.
