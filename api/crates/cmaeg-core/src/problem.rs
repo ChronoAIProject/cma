@@ -46,6 +46,10 @@ pub enum ProblemCode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Problem {
+    /// HTTP-only retry guidance, never serialized into the problem body.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub retry_after_seconds: Option<u64>,
     #[serde(rename = "type", default = "default_type")]
     pub r#type: String,
     pub title: String,
@@ -65,6 +69,7 @@ impl Problem {
     /// Construct a problem with the standard RFC 9457 type.
     pub fn new(code: ProblemCode, status: u16, detail: impl Into<String>) -> Self {
         Self {
+            retry_after_seconds: None,
             r#type: default_type(),
             title: code.to_string().replace('_', " "),
             status,
@@ -89,5 +94,20 @@ impl fmt::Display for ProblemCode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = serde_json::to_string(self).expect("problem code is a string enum");
         formatter.write_str(value.trim_matches('"'))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_guidance_is_http_only_and_does_not_change_retained_problem_json() {
+        let original = Problem::new(ProblemCode::ProviderUnavailable, 503, "context_unavailable");
+        let bytes = serde_json::to_vec(&original).unwrap();
+        let mut guided = original.clone();
+        guided.retry_after_seconds = Some(10);
+        assert_eq!(serde_json::to_vec(&guided).unwrap(), bytes);
+        assert_eq!(serde_json::from_slice::<Problem>(&bytes).unwrap(), original);
     }
 }
