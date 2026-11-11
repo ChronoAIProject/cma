@@ -87,6 +87,7 @@ fn add(counter: &AtomicU64, delta: u64) {
     }
 }
 pub(crate) fn emit() {
+    super::agent_log_integrity::fleet::telemetry::emit();
     counters().emit();
 }
 impl Counters {
