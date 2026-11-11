@@ -19,10 +19,13 @@ pub struct AgentReadService {
     sessions: Option<Arc<dyn super::store::SandboxSessionStore>>,
     resources: Arc<dyn SandboxResourceReader>,
     access: Option<Arc<ResourceAccessService>>,
+    response_logs: Option<Arc<dyn super::store::AgentResponseLogStore>>,
 }
 
 #[path = "agent_reads/authorized.rs"]
 mod authorized;
+#[path = "agent_reads/composition.rs"]
+mod composition;
 #[path = "agent_reads/recovery.rs"]
 mod recovery;
 pub use authorized::{AgentDetailReading, SharedAgentDetail};
@@ -43,6 +46,8 @@ mod sessions;
 #[path = "agent_reads/stream.rs"]
 mod stream;
 pub use stream::{AgentEventStreamAuthorization, AgentEventStreamSnapshot};
+#[path = "agent_reads/response.rs"]
+mod response;
 #[path = "agent_reads/window.rs"]
 mod window;
 pub use window::{
@@ -54,40 +59,6 @@ mod answer;
 pub use answer::AgentFinalAnswer;
 
 impl AgentReadService {
-    pub fn new<S, R>(store: Arc<S>, resources: Arc<R>) -> Arc<Self>
-    where
-        S: AgentReadStore + 'static,
-        R: SandboxResourceReader + 'static,
-    {
-        Arc::new(Self {
-            store,
-            sessions: None,
-            resources,
-            access: None,
-        })
-    }
-
-    pub fn with_resource_access(self: &Arc<Self>, access: Arc<ResourceAccessService>) -> Arc<Self> {
-        Arc::new(Self {
-            store: self.store.clone(),
-            sessions: self.sessions.clone(),
-            resources: self.resources.clone(),
-            access: Some(access),
-        })
-    }
-
-    pub fn with_sessions(
-        self: &Arc<Self>,
-        sessions: Arc<dyn super::store::SandboxSessionStore>,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            store: self.store.clone(),
-            sessions: Some(sessions),
-            resources: self.resources.clone(),
-            access: self.access.clone(),
-        })
-    }
-
     pub async fn list(
         &self,
         caller: &Caller,
