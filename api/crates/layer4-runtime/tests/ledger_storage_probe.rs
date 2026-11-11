@@ -37,9 +37,43 @@ fn create_only_probe_reports_the_actual_bundled_sqlite_and_refuses_existing_stat
     assert_eq!(report["retirement_archive_copy_reopen_refusal"], "passed");
     assert_eq!(report["synthetic_retirement_move_restore"], "passed");
     assert_eq!(report["indexed_retirement_copy_reopen_refusal"], "passed");
+    validate_image_evidence(&result.stdout);
     let path = database.join("ledger.sqlite3");
     let before = std::fs::read(&path).unwrap();
     assert!(!run().status.success());
     assert_eq!(std::fs::read(path).unwrap(), before);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+fn validate_image_evidence(proof: &[u8]) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let validator = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../.github/scripts/runtime-ledger-evidence.mjs");
+    // Exercise the real producer/consumer boundary: a handwritten fixture
+    // cannot detect a newly emitted field rejected by the strict image gate.
+    let mut child = Command::new("node")
+        .args([
+            "--input-type=module",
+            "-e",
+            "import { readFileSync } from 'node:fs';
+             import { pathToFileURL } from 'node:url';
+             const { validateSqlite } = await import(pathToFileURL(process.argv[2]).href);
+             validateSqlite(JSON.parse(readFileSync(0, 'utf8')));",
+        ])
+        .arg("ledger-probe-validator-test")
+        .arg(validator)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Node is required for the shipped image-evidence contract");
+    child.stdin.take().unwrap().write_all(proof).unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 }
