@@ -10,6 +10,7 @@ pub(crate) struct FeatureFlags {
     pub sandbox_snapshot_reads: bool,
     pub sandbox_detail_timings: bool,
     pub bounded_response_reads: bool,
+    pub capacity_recovery_enabled: bool,
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
     pub nyxid_resource_request: bool,
@@ -50,6 +51,7 @@ impl FeatureFlags {
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
+            capacity_recovery_enabled: flag(lookup, "CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED")?,
             v2_ui_transport: flag(lookup, "CHRONO_V2_UI_TRANSPORT_ENABLED")?,
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
@@ -61,6 +63,9 @@ impl FeatureFlags {
         })
     }
 }
+
+#[cfg(test)]
+mod capacity_tests;
 
 #[cfg(test)]
 mod parent_pacing_tests {
