@@ -58,6 +58,21 @@ and completed-status routes remain separate acceptance work.
 
 ## Reuse and code boundaries
 
+The current storage checkpoint uses recovery carrier BSON format 2. Its strict
+`result` witness records the original Agent result hash, log-batch hash, Agent
+revision, global through sequence and publication timestamp. S4's immutable
+publication digest binds that witness and the full recovery work with domain
+`cma.capacity-recovery.result/v2`. The witness contains no input or Agent snapshot.
+Earlier draft format-1 carrier rows are refused; this default-off carrier has
+not been activated in production. The domain work record remains format 1.
+
+Receipt reads verify the original admission, exact work revision and publication
+result, current certified segmented source, historical seal coordinates and the
+single retained completion status event. A later Agent revision or owner stop
+does not rewrite the original result. Missing publication evidence remains
+unresolved. Returning a completed receipt does not reconnect or activate the
+native process; that remains a separately fenced runtime responsibility.
+
 The integration plan assigns S5 capacity recovery, checkpoint/maintenance/
 unpublished recovery and scoped retry pacing. S1 owns raw-BSON validation,
 CapturedLog/range proof, format markers and reader compatibility. S4 owns the
