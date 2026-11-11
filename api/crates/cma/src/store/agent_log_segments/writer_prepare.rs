@@ -162,7 +162,7 @@ pub(super) async fn assemble(
         input.operation,
         input.result_digest,
     )?;
-    let evidence = certify_evidence(
+    let mut evidence = certify_evidence(
         store,
         scope.session(),
         &before,
@@ -170,6 +170,9 @@ pub(super) async fn assemble(
         std::mem::take(&mut delta.evidence),
     )
     .await?;
+    evidence.extend(
+        super::output::plan(store, scope, captured, &before, &plan.head, input.logs).await?,
+    );
     Ok(PreparedPublication {
         transaction,
         database: store.agents.namespace().db,

@@ -1,4 +1,7 @@
 //! Bounded semantic state and indexed source references shared by all writers.
+use layer2_core::sandbox::agent_output_index::{
+    AgentOutputChange, AgentToolOutputState, AgentTurnOutputIndex,
+};
 use layer2_core::sandbox::{
     store::SandboxStoreError, Agent, AgentLogEvidenceChange, AgentLogProjectionState,
     AgentLogTurnFacts, AgentTranscriptRole,
@@ -9,6 +12,9 @@ use mongodb::{
     ClientSession,
 };
 use serde::{Deserialize, Serialize};
+
+#[path = "projection_output.rs"]
+pub(super) mod output;
 
 use super::{collections::collection, corrupt, Head, EVIDENCE, PROJECTIONS};
 use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::MongoSandboxStore};
@@ -40,11 +46,24 @@ pub(super) struct Evidence {
     pub through_seq: i64,
     pub head_revision: i64,
     pub record: EvidenceRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_sequence: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change_ordinal: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum EvidenceRecord {
+    TurnOutput {
+        index: AgentTurnOutputIndex,
+    },
+    OutputChange {
+        change: AgentOutputChange,
+    },
+    ToolOutput {
+        tool: AgentToolOutputState,
+    },
     Turn {
         facts: Box<AgentLogTurnFacts>,
     },
@@ -155,6 +174,12 @@ pub(super) fn read_evidence(
     key: &str,
     row: Document,
 ) -> Result<EvidenceRecord, SandboxStoreError> {
+    if kind == "output_change" {
+        row.get_i64("turn_sequence").map_err(|_| corrupt())?;
+        row.get_i64("change_ordinal").map_err(|_| corrupt())?;
+    } else if row.contains_key("turn_sequence") || row.contains_key("change_ordinal") {
+        return Err(corrupt());
+    }
     let evidence: Evidence = bson::deserialize_from_document(row).map_err(|_| corrupt())?;
     if evidence.format_version != 1
         || evidence.id != identity(head, kind, key)
@@ -175,8 +200,14 @@ pub(super) fn read_evidence(
 }
 
 fn validate_record(evidence: &Evidence, through: u64) -> Result<(), SandboxStoreError> {
+    if output::validate(evidence, through)? {
+        return Ok(());
+    }
     let covered = |seq| seq > 0 && seq <= through;
     let (kind, key, valid) = match &evidence.record {
+        EvidenceRecord::TurnOutput { .. }
+        | EvidenceRecord::OutputChange { .. }
+        | EvidenceRecord::ToolOutput { .. } => return Err(corrupt()),
         EvidenceRecord::Turn { facts } => (
             "turn",
             facts.turn_sequence.to_string(),
@@ -303,6 +334,8 @@ pub(in crate::store) fn plan(
         through_seq: head.last_seq,
         head_revision: head.revision,
         record,
+        turn_sequence: None,
+        change_ordinal: None,
     };
     bson::serialize_to_document(&evidence).map_err(|_| corrupt())
 }

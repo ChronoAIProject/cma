@@ -9,11 +9,13 @@ use crate::store::{
     },
     sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome, MongoSandboxStore},
 };
+use layer2_core::sandbox::agent_output_index::{AgentOutputTool, AgentTurnOutputIndex};
 use layer2_core::sandbox::BoundedAgentLogFold;
 use mongodb::{
     bson::{self, doc, DateTime, Document},
     ClientSession,
 };
+use projection::{output, EvidenceRecord};
 use std::collections::BTreeMap;
 
 const BATCH_ROWS: usize = 64;
@@ -54,6 +56,7 @@ pub(in crate::store) async fn stage(
     head.validate()?;
     let mut fold = BoundedAgentLogFold::default();
     let mut batch = Batch::default();
+    let mut output_index: Option<AgentTurnOutputIndex> = None;
     let mut writer = store
         .client
         .start_session()
@@ -72,11 +75,42 @@ pub(in crate::store) async fn stage(
         )
         .await?;
         let entry = entries.first().ok_or_else(corrupt)?;
-        for change in fold
+        let mut rows = fold
             .observe(current, entry)
             .map_err(SandboxStoreError::Corrupt)?
-        {
-            let row = projection::plan(&head, change)?;
+            .into_iter()
+            .map(|change| projection::plan(&head, change))
+            .collect::<Result<Vec<_>, _>>()?;
+        let tool = if let (Some(index), Some(call)) = (&output_index, output::call_id(entry)) {
+            let key = output::tool_key(index.turn_sequence, call);
+            let id = projection::identity(&head, "tool_output", &key);
+            let row = if let Some((row, _)) = batch.rows.get(&id) {
+                Some(row.clone())
+            } else {
+                collection(store, EVIDENCE)
+                    .find_one(doc! {"_id":id})
+                    .session(&mut writer)
+                    .await
+                    .map_err(TransactionLogError::Driver)?
+            };
+            match row
+                .map(|row| projection::read_evidence(&head, "tool_output", &key, row))
+                .transpose()?
+            {
+                Some(EvidenceRecord::ToolOutput { tool }) => Some(tool),
+                None => None,
+                _ => return Err(corrupt().into()),
+            }
+        } else {
+            None
+        };
+        let supplied = match (output::call_id(entry), tool.as_ref()) {
+            (Some(_), Some(tool)) => AgentOutputTool::Stored(tool),
+            (Some(_), None) => AgentOutputTool::Absent,
+            (None, _) => AgentOutputTool::None,
+        };
+        rows.extend(output::fold(&head, &mut output_index, entry, supplied)?);
+        for row in rows {
             let size = bson::serialize_to_vec(&row).map_err(|_| corrupt())?.len();
             if size > RECORD_BYTES {
                 return Err(budget().into());
@@ -206,6 +240,14 @@ async fn write_batch(
     let renewed = permit.renew(&database, DateTime::now(), session).await?;
     let evidence = collection(store, EVIDENCE);
     for (id, (row, _)) in batch.rows {
+        if row.get_str("kind").map_err(|_| corrupt())? == "output_change" {
+            evidence
+                .insert_one(row)
+                .session(&mut *session)
+                .await
+                .map_err(TransactionLogError::Driver)?;
+            continue;
+        }
         evidence
             .replace_one(doc! {"_id":id}, row)
             .upsert(true)
