@@ -29,6 +29,12 @@ cohort empty in fleet mode. The kill switch is percentage 0 plus an empty explic
 cohort, rolled out on the same compatible image. It disables both admission and
 public-window selection. Independent title/other reader switches remain separate.
 
+Verify effective Deployment environment overrides as well as the ConfigMap:
+an explicit ID override must not survive a positive percentage rollout. Shared
+selection activates admission and public-window reads together. Qualify admission
+first, then open-Agent reads before expanding each stage, and report their scan
+and latency effects separately rather than attributing the joint change to one.
+
 Disabling selection does not disable quarantine writes by explicit audits or
 full writer fallbacks. Keep every marker, event and receipt. Never remove a marker
 to authorize an old image. An older-image rollback needs its own compatibility
@@ -53,8 +59,10 @@ limit on existing fallback scans. Multiple API processes each have one slot,
 while Mongo transaction/CAS rules retain authority across processes.
 
 A scheduling cache holds at most 1,024 Agent deadlines. Successful preparation
-or proof reuse suppresses redundant preflight for 30 minutes; failures and
-cancellation suppress it for 60 seconds. Eviction only permits another preflight.
+or proof reuse suppresses redundant preflight for 30 minutes from completion.
+Every attempt reserves a 60-second cooldown from its start, including on failure
+or cancellation; a ten-second timeout leaves about 50 seconds of that cooldown.
+Eviction only permits another preflight.
 The cache is never evidence: every actual read/write validates its own fresh
 snapshot through the existing proof. A stale checkpoint from an old writer
 therefore falls back and is refreshed by the existing full append path even
@@ -97,6 +105,12 @@ Include first-use preparation cost and unprepared, busy, failed and stale-proof
 fallbacks. An avoided validation scan is not a claim that every semantic
 consumer or full-prefix read is bounded. #1349 remains separate.
 
+Checkout summaries are per-emission windows: sum their counts, durations and
+histogram buckets once, and report checkout quantiles as bucket bounds. Route
+latency quantiles use pooled request durations with sample counts. Activation
+and scan counters are cumulative: compute boundary deltas within one process
+birth, carrying sparse samples forward without treating absent telemetry as zero.
+
 ## Gates and production acceptance
 
 Unit contracts cover stable nested buckets, default/invalid/mixed config, more
@@ -111,10 +125,16 @@ executed old-binary qualification.
 Release owner uses a fully green develop batch artifact. At every stage record
 source/image, percentage, eligible natural request counts, first-preparation and
 steady-state behavior, checkout wait p50/p95, admission/open-Agent p50/p95, scans/s,
-bytes/s and 503s over matched windows. A minimum 30-minute watch precedes each
-expansion; missing natural samples remain unverified. Retain separate incident handling for known unhealthy/full-ledger Agents;
-selection does not certify their recovery or eligibility. No production test messages or database edits are
-authorized to the implementation owner.
+bytes/s and 503s over matched windows. Preserve the release owner's existing
+admission activation gates: a minimum 30-minute off baseline, separate rollout
+and first-use costs, old-process drain, the initial health watch, then at least
+60 steady minutes at each stage before expansion. Require 100 successful natural
+ordinary-message samples on each side before claiming its p95 improvement;
+report open-Agent samples separately and leave missing coverage unverified.
+Keep image, replicas, workers, pool and resources fixed through each comparison.
+Retain separate incident handling for known unhealthy/full-ledger Agents;
+selection does not certify their recovery or eligibility. No production test
+messages or database edits are authorized to the implementation owner.
 
 Stop expansion and use same-image percentage-zero rollback on correctness or
 receipt drift, read-side mutation, new quarantine/corruption signals, sustained
@@ -122,3 +142,25 @@ preparation/fallback storms, checkout-wait regression, HTTP latency regression
 or new 503/no-healthy-upstream events. Preserve all durable evidence and diagnose
 the affected Agent independently. Target Thu 2026-11-12 morning train (merge by
 06:00 SGT), Thu evening fallback; final acceptance Fri 2026-11-13 15:00 SGT.
+
+## Local first-use and steady-state measurements
+
+Disposable Mongo 8.0.13 CMAP counts include the full operation, with approximately
+4 KiB retained message records. The high-history append fixture leaves room
+below the unchanged 10,000-entry normal limit. First append performs one full
+preparation scan; the next append performs no full scan at either size.
+
+| Retained rows | Unprepared 200-row page checkouts | First append checkouts | Steady append checkouts | Prepared 200-row page checkouts |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 | 3 | 13 | 6 | 4 |
+| 9,990 | 5 | 15 | 6 | 4 |
+
+The prepared page returns identical rows and uses the shared proof. It consumes
+201 log documents including the proof tail, versus full history on fallback;
+the existing public-window profiler verifies 202 examined documents across all
+collections at 1,000 and 10,000 retained rows. Small unprepared histories can
+have fewer checkouts than the bounded proof. The first write also pays the lazy
+preparation cost. These observations separate decoded-history savings from
+checkout savings and do not predict fleet latency or replace matched production
+qualification. Busy, stale, failed and semantically ineligible fallbacks remain
+part of the production denominator.
