@@ -26,6 +26,29 @@ impl AgentWorker {
         std::sync::Arc::new(commands::AuthorizedRecoveryCommands::new(service, self))
     }
 
+    /// Background entry for an exact already-published recovery operation.
+    /// The service proves fresh receipt-bound personal authority for every step;
+    /// discovery metadata alone never grants this permission.
+    pub(crate) async fn run_accepted_capacity_recovery(
+        &self,
+        service: &crate::store::agent_capacity_recovery::RecoveryService,
+        request: &layer2_core::sandbox::agent_capacity_recovery::state::RecoveryRequest,
+    ) -> Result<
+        layer2_core::sandbox::agent_capacity_recovery::ports::CommitOutcome<
+            layer2_core::sandbox::agent_capacity_recovery::state::RecoveryWork,
+        >,
+        layer2_core::sandbox::agent_capacity_recovery::ports::RecoveryError,
+    > {
+        let runtime = recovery::RestrictedRecoveryRuntime::new(
+            self.dependencies.adapter.clone(),
+            self.dependencies.registry.clone(),
+            self.dependencies.updates.clone(),
+        );
+        service
+            .run_accepted(&runtime, request, &self.config.holder)
+            .await
+    }
+
     /// Authenticated accepted-work entry for shared composition. The caller is
     /// reauthorized by the service on every store operation; a discovery row
     /// must never be converted into a fabricated owner identity.
