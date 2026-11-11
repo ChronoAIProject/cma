@@ -1,10 +1,11 @@
-# Runtime ledger retirement preflight
+# Runtime ledger retirement evidence and archives
 
 This read-only preflight compares V1 runtime journal and authority files with a
 consistent observation of the API's retained hierarchy. It reports occupancy and
-conservative candidate counts. It does not archive, remove, compact, reconcile,
-restore, start, stop or update a Sandbox. The output is not maintenance authority
-or proof that an old runtime writer has stopped.
+conservative candidate counts. A separate command builds a detached archive from
+an independently pinned byte backup and observation. These tools do not remove
+source records, reconcile, restore, start, stop or update a Sandbox. Their output
+is not maintenance authority or proof that an old runtime writer has stopped.
 
 ## Export authoritative observations
 
@@ -91,9 +92,70 @@ in release evidence; never paste the private observation, raw receipts or
 resource identities into GitHub. Zero candidates means no proven candidate,
 not evidence that all remaining resources are live or that cleanup is impossible.
 
-## Archive and restore boundary
+## Build a detached retained archive
 
-Archive/apply and restore are not implemented by this preflight. Retained exact
+After the preview, create and pin a complete byte backup with the existing
+offline planner. Then build a separate archive from that exact backup and the
+independently pinned API observation:
+
+```sh
+cma-runtime --plan-ledger-v1 /absolute/private/new-plan
+cma-runtime --verify-ledger-plan /absolute/private/new-plan PLAN_SHA256
+cma-runtime --stage-ledger-retirement /absolute/private/new-plan PLAN_SHA256 /absolute/private/new-observation.json SNAPSHOT_SHA256 /absolute/private/new-retirement-archive
+cma-runtime --verify-ledger-retirement /absolute/private/new-retirement-archive READY_SHA256
+```
+
+Both output directories must be new, private and outside the retained runtime
+roots and input backup. Keep the original sealed plan and its digest as well as
+the resulting archive. The builder reuses the preview's conservative eligibility
+rules, copies the selected original journal/authority bytes into a durable
+archive, and retains the observation alongside it. Live, missing and uncertain
+groups stay outside the archive. It never rereads active source bytes after
+opening the sealed plan; the original runtime can therefore change independently
+without making this artifact permission to reclaim its newer state.
+
+The output reports only fixed fields, counts and hashes, including
+`ready_sha256` and `database_sha256`. Retain the ready hash independently. The
+verification command reads and hashes the detached archive and observation,
+checks their private file shapes and home/generation binding, and emits fresh
+counts/hashes without opening SQLite for writing or echoing arbitrary metadata.
+Each group remains pending. The report says
+`admission: retirement_held`, `writer_exclusion: unproved`, and
+`source_deactivated: false`. Zero candidates is a valid empty archive. A rerun
+at the same destination refuses without overwriting it. An interrupted output
+without a valid `ready.json` is incomplete; use a new destination when rebuilding
+from the same pinned inputs. A replacement output pathname cannot redirect writes
+into source state or another directory.
+
+This command supplies retained bytes for later reviewed maintenance. It does
+not stop a runtime, publish activation metadata, free active-ledger capacity,
+complete a retirement receipt, or supply restore/production execution authority.
+Keep these private artifacts under the release owner's retained-backup policy,
+independently of any PVC that may be released when its Sandbox finishes retiring.
+
+## Activation and restore boundary
+
+The runtime now understands a required retirement archive dependency. Its exact
+descriptor binds the archive UUID, retained home, roots, creation generation and
+active V1/V2 format. Startup opens the existing archive and refuses any pending
+deactivation before home initialization or installation recovery. Missing,
+partial, replaced or mismatched metadata holds startup; an unactivated process
+also holds when activation artifacts appear while it is serving.
+
+Admission checks the complete prepared pair before either active ledger writes,
+then checks retirement again at journal begin and recovery. A retired group
+refuses permanently, including another valid operation on that Agent. Both
+archive payloads and scoped operation identities remain retained. The required
+installation marker is unknown to earlier readers, which refuse before
+installation recovery. This code-level refusal still requires qualification
+against the exact approved rollback/recovery images before activation.
+
+These are reader capabilities only. There is no supported activation publisher,
+source deactivation command or automatic collector yet. Do not manufacture the
+descriptor or marker to enable them. Activation metadata is currently produced
+only by isolated tests.
+
+Cleanup apply and restore are not implemented by these tools. Retained exact
 receipts and authority still protect against stale replay. Moving them out of
 the active lookup without permanent retirement refusal would make some old
 operations appear new. A future archive operation must publish and verify a
