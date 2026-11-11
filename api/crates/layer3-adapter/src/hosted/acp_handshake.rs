@@ -198,15 +198,11 @@ impl Bridge {
             (Greeting::Fresh(_), Some(conversation)) => {
                 *phase = "session_load";
                 self.activate_session(conversation.clone(), updates).await?;
-                self.call_within(
-                    "session/load",
-                    serde_json::json!({
-                        "sessionId": conversation,
-                        "cwd": cwd,
-                        "mcpServers": tool_servers,
-                    }),
-                    RETAINED_HISTORY_IDLE_DEADLINE,
-                )
+                self.load_retained_session(serde_json::json!({
+                    "sessionId": conversation,
+                    "cwd": cwd,
+                    "mcpServers": tool_servers,
+                }))
                 .await
                 .map_err(|error| error.context("could not resume conversation"))?;
                 conversation
@@ -258,15 +254,11 @@ impl Bridge {
                     rebinding.completed("prepared_protocol_close");
                     *phase = "prepared_session_load";
                     self.activate_session(conversation.clone(), updates).await?;
-                    self.call_within(
-                        "session/load",
-                        serde_json::json!({
-                            "sessionId": conversation,
-                            "cwd": cwd,
-                            "mcpServers": tool_servers,
-                        }),
-                        RETAINED_HISTORY_IDLE_DEADLINE,
-                    )
+                    self.load_retained_session(serde_json::json!({
+                        "sessionId": conversation,
+                        "cwd": cwd,
+                        "mcpServers": tool_servers,
+                    }))
                     .await
                     .map_err(|error| error.context("could not bind prepared conversation"))?;
                     rebinding.completed("prepared_protocol_load");
