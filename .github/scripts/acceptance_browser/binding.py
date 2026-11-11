@@ -26,12 +26,22 @@ def bind_browser(p):
 
 
 def existing_fixture(p):
-    # No arbitrary ID override: only the existing approved campaign's owned receipt.
-    receipt = p.state.get("fixtures", {}).get("launch_a", {}).get("resolution", {})
+    # No arbitrary ID override: use the approved campaign or lead #215's receipt.
+    from permanent_fixture import load
+
+    permanent = load(p)
+    receipt = (
+        {
+            "agent": {"id": permanent.get("agent_id", "")},
+            "sandbox": {"id": permanent.get("sandbox_id", "")},
+        }
+        if permanent
+        else p.state.get("fixtures", {}).get("launch_a", {}).get("resolution", {})
+    )
     agent = receipt.get("agent", {}).get("id", "")
     sandbox = receipt.get("sandbox", {}).get("id", "")
     if (
-        p.state.get("cleaned_sandboxes", {}).get("a")
+        (not permanent and p.state.get("cleaned_sandboxes", {}).get("a"))
         or not re.fullmatch(r"[A-Za-z0-9_-]+", agent)
         or not re.fullmatch(r"[A-Za-z0-9_-]+", sandbox)
     ):
@@ -42,6 +52,7 @@ def existing_fixture(p):
     if parent[0] != 200 or item[0] != 200:
         raise Refusal("existing_fixture_not_readable")
     owner = decode(parent[2])
+    owner = owner.get("sandbox", owner)
     detail = decode(item[2])
     if (
         identity.fingerprint(owner.get("owner", ""))

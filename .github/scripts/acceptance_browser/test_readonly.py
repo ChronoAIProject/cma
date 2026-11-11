@@ -89,8 +89,9 @@ class PrivacyTests(unittest.TestCase):
         class Probe:
             state = {"fixtures": {}}
 
-        with self.assertRaisesRegex(Refusal, "existing_dedicated_agent_required"):
-            binding.existing_fixture(Probe())
+        with patch("permanent_fixture.load", return_value=None):
+            with self.assertRaisesRegex(Refusal, "existing_dedicated_agent_required"):
+                binding.existing_fixture(Probe())
 
     def test_rejected_identity_prevents_browser_spawn(self):
         with patch.object(runner, "bind_browser", side_effect=Refusal("rejected")):
@@ -139,9 +140,9 @@ class ArtifactTests(unittest.TestCase):
 
         result = artifacts.attest(
             Http(),
-            extractor=lambda source: ["./next.js"]
-            if "next.js" in source
-            else ["./main.js"],
+            extractor=lambda source: (
+                ["./next.js"] if "next.js" in source else ["./main.js"]
+            ),
         )
         self.assertEqual(len(result["assets"]), 2)
         self.assertNotIn("main.js", json.dumps(result))
