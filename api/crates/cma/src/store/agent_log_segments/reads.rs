@@ -85,14 +85,52 @@ pub(in crate::store) async fn read_head(
         find
     };
     if find
-        .session(session)
+        .session(&mut *session)
         .await
         .map_err(TransactionLogError::Driver)?
         .is_some()
     {
         return Err(corrupt().into());
     }
+    if head.active_ordinal == 0 && head.last_seq > 0 {
+        validate_unsealed_creation(store, &agent, session, snapshot).await?;
+    }
     Ok(head)
+}
+
+/// Until creation belongs to an immutable seal, even a page that does not
+/// deliver that row must bind its lineage to the captured Agent.
+async fn validate_unsealed_creation(
+    store: &MongoSandboxStore,
+    agent: &layer2_core::sandbox::Agent,
+    session: &mut ClientSession,
+    snapshot: bool,
+) -> Result<()> {
+    let source = store.agent_log.clone_with_type::<RawDocumentBuf>();
+    let mut read = crate::store::mongo_read_telemetry::Read::find(source.name());
+    let query = source.find_one(doc! {"agent_id":agent.id.as_str(),"seq":1_i64});
+    let query = if snapshot {
+        query.read_concern(ReadConcern::snapshot())
+    } else {
+        query
+    };
+    let raw = query
+        .session(session)
+        .await
+        .map_err(TransactionLogError::Driver)?
+        .ok_or_else(corrupt)?;
+    read.document(raw.as_bytes().len());
+    let entry = read_entry(&Document::try_from(&raw).map_err(|_| corrupt())?)?;
+    if entry.agent_id != agent.id
+        || entry.seq != 1
+        || !matches!(&entry.kind,
+        AgentLogKind::Created { workspace_id, worktree_id }
+        if workspace_id == &agent.workspace_id && worktree_id == agent.creation_worktree_id())
+    {
+        return Err(corrupt().into());
+    }
+    read.complete();
+    Ok(())
 }
 
 async fn seal_at(
