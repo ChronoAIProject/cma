@@ -26,7 +26,7 @@ Its public root export/composition is still S2-owned and not registered here.
 
 - Admission/status/authority/work use the exclusive TransactionScope.
 - `checkpoint_capture::validate_and_fence_begin_scoped(store,current,next,agents,scope)`
-  is the S4 lifecycle boundary. Parameter six is `&mut TransactionScope<'_>`.
+  is the S4 lifecycle boundary. The final parameter is `&mut TransactionScope<'_>`.
 - S5's allocated checkpoint root now dispatches v2/unknown envelopes to scoped
   capture and fences, then consumes release before the remaining checkpoint,
   Sandbox, event and archive writes in the same transaction. Legacy-only dispatch
