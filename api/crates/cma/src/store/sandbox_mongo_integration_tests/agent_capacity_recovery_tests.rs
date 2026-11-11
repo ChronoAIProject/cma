@@ -4,4 +4,5 @@ use super::*;
 mod pacing;
 mod records;
 mod source;
+mod transactions;
 mod worker;
