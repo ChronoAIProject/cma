@@ -94,6 +94,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
 #[derive(Clone)]
 pub struct MongoSandboxStore {
     pub(super) segment_logs: super::agent_log_segments::SegmentCollections,
+    pub(super) global_sandbox_limit: u16,
     #[cfg(test)]
     pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
     pub(super) bounded_approval_reads: bool,
@@ -101,6 +102,7 @@ pub struct MongoSandboxStore {
     pub(super) fleet_log_activation: std::sync::Arc<super::agent_log_integrity::fleet::Activation>,
     pub(super) bounded_admission_agents: std::collections::BTreeSet<layer2_core::AgentId>,
     pub(super) bounded_title_reads: bool,
+    pub(super) sandbox_snapshot_reads: bool,
     pub(super) bounded_response_reads: bool,
     pub(crate) writer_policy:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
@@ -188,6 +190,7 @@ impl MongoSandboxStore {
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
             segment_logs: super::agent_log_segments::SegmentCollections::new(&database),
+            global_sandbox_limit: 0,
             #[cfg(test)]
             request_budget_clock: None,
             bounded_admission_agents: Default::default(),
@@ -195,6 +198,7 @@ impl MongoSandboxStore {
             bounded_close_retries: false,
             fleet_log_activation: Default::default(),
             bounded_title_reads: false,
+            sandbox_snapshot_reads: false,
             bounded_response_reads: false,
             writer_policy: Default::default(),
             bindings: super::bindings::BindingCollections::open(&database).await?,

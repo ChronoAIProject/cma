@@ -1047,8 +1047,10 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_PLATFORM_BASE_URL` | Required canonical HTTPS platform proxy origin; also the upstream for the runtime's explicitly granted GitHub API proxy |
 | `CHRONO_DOCUMENT_BUCKET` | Existing S3-backed bucket used for durable Markdown artifacts. Empty disables document source storage and runtime publication tools; writes fail explicitly instead of storing ephemeral documents. Production uses `chrono-platform-bot`. |
 | `CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED` | Strict boolean, default `false`. Reuses trusted metadata for ordinary single-failure CloseProcess publication within the shared cohort. Capacity settlement, successful effects and unknown-commit reconciliation retain complete proofs. Disable and restart for rollback; preserve all history and quarantine. See [Bounded close retries](CMA_Bounded_Close_Retries.md). |
+| `CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED` | `false` | Require retained runtime output and bound compact pending/replay permission state across attachments. See [permission state bounds](CMA_Permission_State_Bounds.md). |
 | `CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED` | Strict boolean, default `false`. Enables a proven 200-row/4-MiB suffix for pending-approval reads only for the shared trusted cohort. A missing reset boundary, oversized suffix or untrusted metadata retains complete validation. Independent of admission/public-window and title activation. Disable and restart the API for rollback; keep all original history and metadata. See [Bounded pending-approval recovery](CMA_Bounded_Approval_Reads.md). |
 | `CHRONO_AGENT_LOG_FLEET_PERCENT` | Canonical integer 0–100, default `0`; positive percentages require the explicit admission ID list to be empty. Stable Agent-hash buckets stage 10/50/100. Preparation is lazy and bounded before eligible writes; public reads never prepare. Stage changes/kill switch require a same-image API rollout; preserve quarantine and compatible-image floor. See [Fleet log activation](CMA_Fleet_Log_Activation.md). |
+| `CHRONO_SANDBOX_GLOBAL_LIMIT` | Default `0` (off); integer `1..4096` enables a shared transactional ceiling on all nonretired Sandboxes across owners/replicas. Paused/provisioning/retiring rows retain capacity; exact-origin retries bypass new-capacity refusal. Requires all writers upgraded and a capacity-owner limit with unclaimed pool/prepared and failure headroom reserved separately. See [global admission](CMA_Global_Admission.md). |
 | `CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED` | Strict boolean, default `false` in code and manifests. All writes retain 1,024 receipts / 12 MiB while off; compatible readers always accept bounded expanded aggregates. Enable only in a later train after the compatible reader is deployed, older workers have drained and that image is the pinned rollback target. Only owner grant/link revocations may spend the reserve; ordinary writes retain the old limits. Disabling it preserves expanded reads and exact retries. See [Document artifacts](Document_Artifacts.md) for activation and rollback. |
 | `CHRONO_STORAGE_CLIENT_ID` | Deployment-owned machine identity for the existing `chrono-storage-service` proxy. Required when the document bucket is configured. Never passed to runtime Agents or browsers. |
 | `CHRONO_STORAGE_CLIENT_SECRET` | Secret reference for the storage machine identity; required with a configured document bucket. Issued tokens are cached in memory and renewed before expiry or once after a 401. |
@@ -2252,3 +2254,23 @@ with the tested source, image labels and promoted digest. Retain all prior hashe
 web assets needed by open tabs and the batch's compatible reader floor through
 normal deployment procedures. Verify an existing tab continues working and names
 its original bundle. This UI change does not authorize deployment or asset removal.
+
+## Sandbox detail read rollout
+
+`CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED` defaults to `false` and accepts only exact
+`true` or `false`. When enabled, Sandbox hierarchy reads use one consistent Mongo
+snapshot session instead of a read-only transaction plus abort. Workspace reads,
+record validation and the fresh final authorization fence retain their existing
+behavior. Disable the flag to return to the transaction reader; no data migration
+or writer change is involved.
+
+`CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED` independently defaults to `false` and
+accepts only exact `true` or `false`. It emits the allowlisted auth, hierarchy,
+colors, names and final-fence durations and completion/error/cancellation outcome,
+without identifiers, error strings or inherited request spans. Enable it before
+reader activation to collect a baseline, and disable it after the measurement
+window. Optional enrichment retains its existing fallback behavior.
+
+See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
+boundaries, local comparison, security/concurrency tests and the next batching
+proposal. Production flag changes remain part of the approved release process.
