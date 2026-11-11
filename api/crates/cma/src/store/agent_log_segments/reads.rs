@@ -133,7 +133,7 @@ async fn validate_unsealed_creation(
     Ok(())
 }
 
-async fn seal_at(
+pub(super) async fn seal_at(
     store: &MongoSandboxStore,
     head: &Head,
     ordinal: i64,
@@ -164,7 +164,7 @@ async fn seal_at(
     Ok(seal)
 }
 
-async fn containing(
+pub(super) async fn containing(
     store: &MongoSandboxStore,
     head: &Head,
     seq: i64,
