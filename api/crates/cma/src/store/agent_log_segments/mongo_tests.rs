@@ -18,6 +18,7 @@ use fixtures::*;
 mod audit_bounds;
 mod audit_tests;
 mod audit_unknown;
+mod audit_validation;
 mod authority;
 mod bounds;
 mod capture_bounds;
