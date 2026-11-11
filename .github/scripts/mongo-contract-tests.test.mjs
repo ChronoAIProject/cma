@@ -4,7 +4,6 @@ import { execFileSync, spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
 const scaleTest = 'store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages';
 const ownerTest = 'store::usage_reports::tests::owner_allocation::metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound';
 const ordinaryPredicate = `not (test(=${scaleTest}) or test(=${ownerTest}))`;
@@ -15,6 +14,7 @@ const requiredPrefixes = [
   'store::request_limits::tests::',
   'store::sandbox_mongo_integration_tests::sandbox_usage_tests::',
   'document_artifacts::mongo_integration_tests::',
+  'agent_access::tests::tenant_isolation::',
   'store::message_feedback::tests::',
   'store::sandbox_colors::tests::',
   'agent_lifecycle::workspace::tests::mongo::',
@@ -405,7 +405,6 @@ for (const reuse of [false, true]) {
       f.close();
     }
   });
-
 
   test(`${mode}: larger suites use bounded fresh fixtures, with at most two running and all partitions attempted after failure`, () => {
     for (const scenario of ['batches', 'batches-error']) {

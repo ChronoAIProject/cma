@@ -34,6 +34,8 @@ mod provider_overlap_tests;
 mod resource_command_tests;
 #[path = "cookie_authorization_tests/session_routes_tests.rs"]
 mod session_routes_tests;
+#[path = "cookie_authorization_tests/tenant_isolation_tests.rs"]
+mod tenant_isolation_tests;
 
 #[path = "cookie_authorization_tests/diagnostic_tests.rs"]
 mod diagnostic_tests;
