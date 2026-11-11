@@ -254,6 +254,7 @@ impl ControlPlaneComposition {
                 parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
                 access_transport_migration: config.agent_access_transport_migration.clone(),
                 managed_documents_enabled: config.document_storage.is_some(),
+                event_driven_reconciliation: config.features.event_driven_reconciliation,
                 home_policy: config
                     .runtime
                     .home_policy
@@ -357,6 +358,7 @@ impl ControlPlaneComposition {
             &bindings,
             config.gateway.as_ref(),
             config.features.paged_response_events,
+            config.features.retained_context_lookup,
         )?;
         let event_workers = layer2_core::event_workers::EventWorkerProfileService::new(
             stores.event_workers.clone(),
