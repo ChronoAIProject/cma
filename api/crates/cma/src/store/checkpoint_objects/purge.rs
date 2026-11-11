@@ -227,8 +227,19 @@ async fn cleanup_one(
     manifest: &ManifestDoc,
     now: DateTime,
 ) -> AdapterResult<bool> {
-    if channel_retained(store, &manifest.sandbox_id).await? {
-        return Ok(false);
+    // A full-data archive hold protects even incomplete source uploads. Channel
+    // retention protects published history, but still cleans abandoned stages.
+    if let Some(document) = store
+        .sandboxes
+        .find_one(doc! { "_id": &manifest.sandbox_id })
+        .await
+        .map_err(|_| unavailable("retirement archive authority is unavailable"))?
+    {
+        let parent = super::super::sandboxes::read_sandbox(&document)
+            .map_err(|_| unavailable("retirement archive authority is corrupt"))?;
+        if parent.retirement_archive_pending() {
+            return Ok(false);
+        }
     }
     if manifest.state == ArchiveState::Published {
         return Ok(false);
