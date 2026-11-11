@@ -1,7 +1,14 @@
 //! Durable Mongo completion/restart evidence; the native port is a counted stub.
 //! Production native proof remains Unsupported and requires separate qualification.
 use super::*;
-use crate::store::agent_capacity_recovery::{records, RecoveryService};
+use crate::sandbox::{
+    agent_worker::{CapacityRecoveryReconnect, ReconnectAction, RecoveryReconnect},
+    live_agents::{
+        DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
+        LiveAgentConnectionLossHandler,
+    },
+};
+use crate::store::agent_capacity_recovery::{records, RecoveryService, RestartDecision};
 use layer2_core::sandbox::agent_capacity_recovery::{
     activation::RecoveryActivation,
     ports::{
@@ -13,13 +20,14 @@ use layer2_core::sandbox::agent_capacity_recovery::{
     },
 };
 use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Native {
-    attaches: AtomicUsize,
-    acknowledges: AtomicUsize,
-    fail_ack: AtomicBool,
+    attaches: Arc<AtomicUsize>,
+    acknowledges: Arc<AtomicUsize>,
+    fail_ack: Arc<AtomicBool>,
 }
 #[async_trait::async_trait]
 impl CapacityRecoveryRuntime for Native {
@@ -81,6 +89,10 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
     };
     let service = RecoveryService::new(store.clone(), transactions::access(&store))
         .with_features(CapacityRecoveryFeatures { enabled: true });
+    assert!(matches!(
+        service.restart_decision(&agent.id).await.unwrap(),
+        RestartDecision::Legacy
+    ));
     assert_eq!(
         service
             .run_accepted(&Native::default(), &request, "no-receipt")
@@ -90,6 +102,10 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
     assert!(matches!(
         service.admit(&caller, &request).await.unwrap(),
         CommitOutcome::Recorded(_)
+    ));
+    assert!(matches!(
+        service.restart_decision(&agent.id).await.unwrap(),
+        RestartDecision::Deferred
     ));
     let at = SystemTime::now();
     let now = layer2_core::rfc3339_at(at);
@@ -127,19 +143,53 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
         .await
         .unwrap();
     let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let restarted = RecoveryService::new(reopened.clone(), transactions::access(&reopened));
+    let restarted = Arc::new(RecoveryService::new(
+        reopened.clone(),
+        transactions::access(&reopened),
+    ));
     let native = Native::default();
+    let router = Arc::new(RecoveryReconnect::new(
+        restarted.clone(),
+        native.clone(),
+        "restart".into(),
+    ));
+    // The actual restart discovery must include this completed schema-v2 Agent
+    // even though completion leaves no pending ordinary work.
+    let live = reopened
+        .live_agent_connections(&PageRequest::new(32, None).unwrap())
+        .await
+        .unwrap();
+    assert!(live
+        .items
+        .iter()
+        .any(|candidate| candidate.agent_id == agent.id));
     native.fail_ack.store(true, Ordering::SeqCst);
     assert_eq!(
-        restarted.run_accepted(&native, &request, "restart").await,
+        router.route(&agent.id).await,
         Err(RecoveryError::Unavailable)
     );
+    // The real loss handler must route the exact completion through recovery,
+    // never schedule ordinary PublishConnection or change the durable Agent.
+    let route: Arc<dyn CapacityRecoveryReconnect> = router.clone();
+    let installed = Arc::new(OnceLock::from(route));
+    let handler = DurableAgentConnectionLossHandler::with_capacity_recovery(
+        Arc::new(reopened.clone()),
+        installed,
+    );
+    handler
+        .connection_lost(LiveAgentAttachmentIdentity {
+            agent_id: agent.id.clone(),
+            conversation_id: completed.target.conversation_id.clone(),
+            runtime_generation: completed.target.conversation_generation,
+            authority_fence: completed.next_fence - 1,
+            nonce: 1,
+        })
+        .await;
     assert_eq!(
-        restarted
-            .run_accepted(&native, &request, "restart")
-            .await
-            .unwrap(),
-        CommitOutcome::Recorded(completed)
+        restarted.lookup(&caller, &request).await.unwrap(),
+        layer2_core::sandbox::agent_capacity_recovery::ports::RecoveryLookup::Recorded(Box::new(
+            completed
+        ))
     );
     assert_eq!(native.attaches.load(Ordering::SeqCst), 2);
     assert_eq!(native.acknowledges.load(Ordering::SeqCst), 1);
@@ -177,6 +227,7 @@ async fn capacity_completed_mongo_restart_retries_activation_without_republicati
     let mut advanced = saved.clone();
     advanced.revision += 1;
     replace_agent_fixture(&store, &advanced).await;
+    assert_eq!(router.route(&agent.id).await, Ok(ReconnectAction::Deferred));
     assert_eq!(
         restarted.run_accepted(&native, &request, "restart").await,
         Err(RecoveryError::Conflict)
