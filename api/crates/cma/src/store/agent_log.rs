@@ -25,6 +25,7 @@ use super::sandbox_mongo::{
 
 mod receipt;
 use receipt::reconcile_append_after_unknown;
+pub(super) mod keyed;
 mod latest_turn;
 #[cfg(test)]
 mod receipt_tests;
@@ -216,6 +217,14 @@ pub(in crate::store) async fn append_in_transaction(
 
 #[async_trait::async_trait]
 impl AgentLogStore for MongoSandboxStore {
+    async fn append_agent_log_keyed(
+        &self,
+        agent_id: &AgentId,
+        identity: &layer2_core::sandbox::store::AgentLogPublicationIdentity,
+        kind: AgentLogKind,
+    ) -> Result<AgentLogEntry, SandboxStoreError> {
+        keyed::append(self, agent_id, identity, kind).await
+    }
     async fn agent_latest_started_turn(
         &self,
         agent: &layer2_core::sandbox::Agent,
@@ -346,16 +355,30 @@ impl AgentLogStore for MongoSandboxStore {
         agent_id: &AgentId,
         sequence: u64,
     ) -> Result<Option<AgentLogEntry>, SandboxStoreError> {
-        if sequence == 0 {
-            return Ok(None);
-        }
-        self.agent_log
-            .find_one(doc! {"_id": log_id(agent_id, sequence)})
+        super::agent_log_store::point(self, agent_id, sequence).await
+    }
+
+    async fn visit_agent_log_range(
+        &self,
+        agent_id: &AgentId,
+        after: u64,
+        through: u64,
+        limit: u16,
+        visit: &mut (dyn FnMut(AgentLogEntry) -> Result<(), SandboxStoreError> + Send),
+    ) -> Result<(), SandboxStoreError> {
+        super::agent_log_store::visit_page(self, agent_id, after, through, limit, false, visit)
             .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-            .as_ref()
-            .map(read_entry)
-            .transpose()
+    }
+
+    async fn visit_agent_log_page_with_predecessor(
+        &self,
+        agent_id: &AgentId,
+        after: u64,
+        through: u64,
+        limit: u16,
+        visit: &mut (dyn FnMut(AgentLogEntry) -> Result<(), SandboxStoreError> + Send),
+    ) -> Result<(), SandboxStoreError> {
+        super::agent_log_store::visit_page(self, agent_id, after, through, limit, true, visit).await
     }
 
     async fn agent_log_prefix(

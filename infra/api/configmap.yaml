@@ -87,12 +87,18 @@ data:
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
+  CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED: "false"
   # Independent fleet mode: 0 disables; stable percentage stages require rollout.
   CHRONO_AGENT_LOG_FLEET_PERCENT: "0"
   # Qualify title reads separately after the admission/public-window cohort.
   CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED: "false"
   # Response projection uses a proven target-turn window; independent rollout.
   CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
+  CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED: "false"
+  # New recovery admission also requires both durable gates; accepted work survives closure.
+  CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED: "false"
+  CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED: "false"
+  CHRONO_RESPONSE_PAGED_EVENTS_ENABLED: "false"
   CHRONO_TASK_EXPERIENCE_POLICY: '{"mode":"disabled","accounts":[],"capabilities":[]}'
   # Independent placement rollout selections; these do not attest continuity.
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.

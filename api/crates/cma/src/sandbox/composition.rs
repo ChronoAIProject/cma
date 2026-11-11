@@ -44,6 +44,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub parent_not_ready_pacing_enabled: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -60,6 +61,7 @@ pub(crate) struct SandboxLifecycleComposition {
     sandbox: SandboxScheduler,
     workspace: SandboxScheduler,
     agent: AgentScheduler,
+    capacity_worker: Arc<AgentWorker>,
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
     updates: Arc<dyn AgentUpdateRecorder>,
@@ -149,6 +151,7 @@ impl SandboxLifecycleComposition {
                 config.deployment_id.clone(),
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
+            .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
             .with_managed_documents(config.managed_documents_enabled)
             .with_access_transport_migration(config.access_transport_migration),
         );
@@ -187,6 +190,7 @@ impl SandboxLifecycleComposition {
             reconciliation,
             sandbox: SandboxScheduler::new(sandbox_worker).with_admission_wake(sandbox_admitted),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
+            capacity_worker: agent_worker.clone(),
             agent: AgentScheduler::new(agent_worker, agent_admitted),
             titles,
             funding_renewal,
@@ -196,6 +200,16 @@ impl SandboxLifecycleComposition {
 
     pub(crate) fn updates(&self) -> Arc<dyn AgentUpdateRecorder> {
         Arc::clone(&self.updates)
+    }
+
+    pub(crate) fn capacity_recovery_commands(
+        &self,
+        service: Arc<crate::store::agent_capacity_recovery::RecoveryService>,
+    ) -> Arc<dyn layer2_core::sandbox::agent_capacity_recovery::commands::CapacityRecoveryCommands>
+    {
+        self.capacity_worker
+            .clone()
+            .capacity_recovery_commands(service)
     }
 
     pub(crate) async fn initialize(&self) -> Result<(), String> {
