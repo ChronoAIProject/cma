@@ -14,6 +14,32 @@ use super::agent_control_lineage::LineageError;
 use super::ledger_maintenance::ApplyError;
 use super::sandbox_mongo::MongoSandboxStore;
 
+/// Resolve custody in the writer transaction. An orphan command cannot prove
+/// that its original home is unheld, even when its lease remains valid.
+pub(super) async fn command_agent(
+    store: &MongoSandboxStore,
+    agent_id: &layer2_core::AgentId,
+    session: &mut ClientSession,
+) -> Result<(), CommandError> {
+    let document = store
+        .agents
+        .find_one(mongodb::bson::doc! {"_id":agent_id.as_str()})
+        .session(&mut *session)
+        .await?
+        .ok_or(CommandLedgerError::NotFound)?;
+    let agent = super::agents::read_agent(&document).map_err(|_| CommandLedgerError::Corrupt)?;
+    if agent.id != *agent_id {
+        return Err(CommandLedgerError::Corrupt.into());
+    }
+    command(
+        store,
+        &agent.sandbox_id,
+        LedgerWriterClass::AgentWorker,
+        session,
+    )
+    .await
+}
+
 pub(super) async fn command(
     store: &MongoSandboxStore,
     sandbox: &SandboxId,

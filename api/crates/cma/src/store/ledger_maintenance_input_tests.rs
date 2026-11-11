@@ -11,6 +11,9 @@ use layer2_core::sandbox::{AgentStatus, AgentStopReason};
 mod helpers;
 use helpers::*;
 
+#[path = "ledger_maintenance_command_tests.rs"]
+mod command_mutations;
+
 #[tokio::test]
 #[ignore = "requires an owned disposable MongoDB replica set and shared input hooks"]
 async fn new_input_refuses_after_hold_restart_and_lease_expiry_without_any_writes() {
