@@ -176,3 +176,147 @@ The exact-image storage qualification now exercises source moves using only crea
 Before restoring even one record, the archive commits a pending state. A failed or interrupted restore therefore refuses serving startup. Retrying restore accepts only the exact retained original or an already-restored exact original; a changed/new active record, duplicate, missing pair, symlink, hard link or directory replacement refuses. Restore does not erase retirement indexes or authorize an older image to serve. This primitive does not prove that no later effects occurred elsewhere in the home; the full restore-admission workflow must enforce that boundary.
 
 This is the source-transition core, not the production cleanup command. It requires the caller to own a proved exclusive writer hold and a complete eligible group selection. A file lock on the archive cannot exclude an old raw writer; descriptor checks cannot replace that exclusion. The qualification fixture does not exercise the actual retained-home storage class, physical fencing, operator activation, V2 accounting or automatic authoritative collection. Those remain required before cleanup of a real home.
+
+## Settled V2 accounting
+
+Finishing a V2 mutation removes its generation's derived scope-budget row when
+both pending-work and logical-process counts equal zero. The removal commits
+together with the receipt and counters. A storage failure rolls back that whole
+transaction, preserving recovery from the started receipt.
+
+Admission and recovery already interpret a missing budget row as zero, and an
+admission recreates the row when needed. The persistent format is unchanged.
+Journal receipts, authority, cleanup reservations and nonzero budgets remain
+retained. Historical empty rows are still valid input; untouched historical rows
+are not swept by this change. This prevents new settled accounting rows from
+accumulating across generation turnover. It does not retire resource history,
+bound either full history store, or repair an exhausted home.
+
+## Held indexed-store archives
+
+The V2 source inventory uses bounded primary-key pages and reconciles global and
+per-generation accounting before its final page succeeds. Source columns retain
+raw operation identities and receipts, all folded authority blobs and high-water
+values, cleanup reservations, logical processes and scope counters. The inventory
+also binds store identity, generation, roots, accounting revision and page geometry.
+A source change invalidates continuation; this read-only audit establishes neither
+eligibility nor exclusion of writers.
+
+Completed V2 mutations discard a generation's derived budget row when both its
+pending-work and logical-process counts reach zero, in the same transaction as
+the receipt and counters. Existing admission and recovery readers already treat
+an absent budget row as zero. This prevents new empty generation rows from
+accumulating; journal receipts, authority, cleanup reservations and all nonzero
+budget rows stay retained. Historical empty rows are still valid input. This
+accounting cleanup does not retire resource history or repair an exhausted home.
+
+Archive schema 2 adds exact encoded V2 rows and their source context to the existing
+retirement index. Preparing one selected group commits its payloads and every
+scoped operation identity together. A copy error rolls that transaction back.
+After a lost reply, retry verifies the committed context, raw payloads, count,
+source digest and replay indexes without rereading mutable sources. Both archived
+and pending groups refuse later mutations on the retired resource. Shared scope
+counters are retained context; they are not independently retired resources.
+
+Binary source columns use base64 strings so a legal 1 MiB journal plus its raw
+identity fits the unchanged 2 MiB SQLite value limit. New writes include separate
+keys and SQLite row headers in that budget. Readers also accept earlier numeric
+byte arrays, preserving raw bytes, NULL fields, source digests and retry receipts
+without rewriting a prepared archive. Earlier numeric-only V2 checkpoint readers
+cannot read compact payloads; these checkpoints have no production activation,
+and pending groups continue to hold serving. This is not recovery-image approval.
+
+This representation requires retirement descriptor version 2 as well as archive
+database version 2. New readers retain version-1 support and require the descriptor
+and database versions to agree. The existing marker filenames remain the reader
+barrier: the frozen version-1 descriptor reader refuses version 2 before installation
+recovery. This source-level compatibility check does not qualify an actual recovery
+image; that qualification remains a release requirement.
+
+The create-only `--verify-ledger-storage` probe now also reports
+`indexed_retirement_copy_reopen_refusal: passed` after exercising synthetic V2
+archival, reopen, retry, permanent replay refusal and rejection by the version-1
+database reader. No active source rows are removed. V2 groups remain pending;
+the V1 file-transfer primitive refuses them. Accounting-checked transactional
+deactivation, complete-home restore admission, authoritative automatic collection
+and a supported real-home activation command remain required before cleanup.
+
+## Verify indexed sources before a transition
+
+Archive inspection validates the complete group, source digest, context and
+permanent replay indexes before exposing its first row. It then streams the
+original columns in one read transaction, without collecting the whole history
+in memory. Corruption in the final row refuses before any callback. Inspection
+errors or cancellation never mark the group complete; an owned guard captured by
+the storage callback remains held until that admitted worker finishes.
+Inspection query and callback errors return a fixed refusal without consuming
+the archive or active-store emergency reserve. A failed observation therefore
+does not itself persist a new storage-capacity hold.
+
+Active-source comparison accepts pages of at most 64 rows and 2 MiB including
+context. Each comparison rechecks the exact store, generation, revision and page
+geometry, then compares every original column using the table's primary key.
+Raw JSON whitespace and NULL distinctions matter. The operation, authority,
+cleanup-budget, scope-budget and logical-process tables are all covered. Missing,
+duplicate, reordered, changed or oversized inputs refuse without source writes.
+The shipped create-only storage probe exercises archive-to-source comparison.
+
+These are current observations, not a reserved selection or complete-group
+eligibility proof. A successful page does not exclude another effect afterward
+or prove that omitted rows do not belong to the group. The eventual deactivation
+transaction must repeat the source checks under its owned writer hold and require
+the collector's complete-group and authoritative retirement evidence. Neither
+inspection nor comparison clears a pending archive hold, removes an active row,
+authorizes restore or proves reclaimed capacity.
+
+## Held V2 deactivation and accounting
+
+The create-only storage probe now also exercises a held V2 source transaction.
+The internal coordinator consumes both store owners and keeps the caller's owned
+exclusion guard through archive verification, source commit and closing both
+stores. Cancelling the caller's wait does not cancel the admitted coordinator.
+There is still no command that applies this operation to a retained home.
+
+Before source writes, the coordinator checks the pinned API observation and the
+complete retained archive, including all permanent replay indexes. The bounded
+selection admits only Completed operations, settled absence authority and
+consumed cleanup reservations. A skill additionally needs completed, authoritative
+absence of its parent home. Live processes, uncertain outcomes, unused cleanup
+reservations and resources absent from the API's settled sets refuse. Shared
+scope-budget rows are verified context and are never removed by this operation.
+
+One immediate source transaction audits the whole active store with bounded
+primary-key pages, reconciles accounting, and checks that the archive contains
+**every** active row for the resource group. It rejects a process using a selected
+Worktree even when that process belongs to another group. Exact columns and
+context must match before removing operation, authority and consumed cleanup
+rows. The same transaction reduces operation, terminal and authority totals,
+preserves outstanding reservations and shared counters, and increments revision
+once. The complete remaining state is audited again before commit.
+
+The retained archive's original context and source digest, together with the
+atomic after-accounting state, allow the same receipt to be reconstructed after
+a lost reply or process exit. Retry accepts only the exact original state or the
+expected revision/counters with the complete group absent. A partial transition,
+changed binding or later effect refuses. The receipt reports counts and hashes,
+before/after revision and free-page counts. It is not full-home restore admission:
+other home effects require the independent boundary in the restore plan. A future
+collector must durably acknowledge this transition before admitting another one;
+it cannot recover an old after-state receipt after unrelated later work.
+
+DELETE leaves pages available to SQLite for reuse; it does not shrink the file,
+raise the page ceiling or promise physical disk headroom. The selection is capped
+at 16,384 rows and 32 MiB, with at most 64 MiB of encoded archive payload. Each
+complete audit is capped at 262,144 rows and 256 MiB and checks a 30-second time
+budget between pages, with at most 64 rows / 2 MiB resident per scan page. An oversized
+or timed-out selection holds instead of weakening the audit.
+
+Every archive group remains pending after success, rollback and retry. Permanent
+replay refusal and the original archived bytes remain intact. Real-home execution
+still requires a published required archive dependency, qualified exclusion of
+all old writers, a fresh authoritative observation under that exclusion and an
+independent complete-home backup. Full restore admission, automatic collection,
+activation publication and release qualification remain separate work. Tests
+exercise 1,400 complete lifecycles (8,400 operations and 4,200 authority records),
+source-page reuse, live/shared preservation, injected transaction abort,
+process exit after commit, lost reply and cancelled-wait ownership.

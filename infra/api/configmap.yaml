@@ -85,10 +85,14 @@ data:
   CHRONO_RETAINED_REOPEN_ENABLED: "false"
   # Independent pending-approval reader; also requires trusted cohort membership.
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
+  # Qualify ordinary CloseProcess retry publication separately from fleet admission.
+  CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
   # Independent fleet mode: 0 disables; stable percentage stages require rollout.
   CHRONO_AGENT_LOG_FLEET_PERCENT: "0"
   # Qualify title reads separately after the admission/public-window cohort.
   CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED: "false"
+  # Response projection uses a proven target-turn window; independent rollout.
+  CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
   CHRONO_TASK_EXPERIENCE_POLICY: '{"mode":"disabled","accounts":[],"capabilities":[]}'
   # Independent placement rollout selections; these do not attest continuity.
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
@@ -189,6 +193,8 @@ data:
   CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE: "600"
   CHRONO_SERVER_RATE_CREATE_PER_MINUTE: "10"
   CHRONO_SERVER_RATE_INPUT_PER_MINUTE: "120"
+  # Separate policy activation after exact-route classification review.
+  CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED: "false"
   # GFE appends upstream then forwarding-rule addresses. Trust the chain only
   # from an official GFE TCP peer and skip its rightmost load-balancer token.
   CHRONO_SERVER_TRUSTED_PROXY_CIDRS: "35.191.0.0/16,130.211.0.0/22,2600:2d00:1:1::/64"
