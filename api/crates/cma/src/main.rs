@@ -25,6 +25,7 @@ mod profile_authoring;
 mod profile_policy;
 mod projections;
 mod provider_tool_relay;
+mod public_streams;
 mod rate_limit;
 mod read_telemetry;
 mod sandbox;
