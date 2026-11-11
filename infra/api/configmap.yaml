@@ -7,6 +7,8 @@ metadata:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 data:
+  # Private pod scrape listener; never routed by the public Service/Gateway.
+  CHRONO_METRICS_BIND: "0.0.0.0:9091"
   # Measured reporting is independent of allocated billing. Enable only after
   # monitoring service-account GET reachability and reader/schema readiness.
   CHRONO_USAGE_METRICS_ENABLED: "false"
