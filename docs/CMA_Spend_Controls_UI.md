@@ -10,6 +10,22 @@ use the authenticated settings API, the displayed revision and the existing
 full-settings PUT. The SDK retains the additive model_budget section and unrelated
 server fields. Backend authorization and revision checks remain authoritative.
 
+Save availability uses the effective policy, including any omitted policy restored
+by the server before validation. Any configured or enabled budget requires explicit
+`model_budget_writes_available: true`; retained nonempty request models also require
+`model_request_budget_writes_available: true`. False or missing applicable metadata
+blocks the entire settings save, including unrelated edits. Omitting a retained
+policy cannot bypass that check. The UI retains owner/model settings and drafts,
+and explains why Save is unavailable. Request-model editing is outside this panel.
+
+An absent or empty disabled policy permits unrelated settings saves with the gates
+closed; spend editing stays unavailable until the foundation gate opens. A closed
+request gate does not block foundation edits when no request models are retained.
+Read, successful save, refresh and explicit revision review all use the same gate
+decision. A refused save retains its draft; reviewing unchanged unavailable state
+does not reopen Save. A fresh available response and explicit revision review are
+required before retrying it.
+
 The supported section includes enabled, the platform period policy, a default
 owner policy and existing explicit owner overrides. Disabled policies retain their
 configuration. Existing reservations and stop decisions remain effective. Empty

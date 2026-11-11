@@ -13,6 +13,7 @@ import { SpendControls } from './SpendControls';
 import { budgetChanged, spendBudget } from './spendBudget';
 import { validateSpendBudget, type SpendErrors } from './spendValidation';
 import { SettingsAudit } from './SettingsAudit';
+import { spendAvailability, type SpendAvailability } from './spendAvailability';
 
 export function PlatformSettings({
   client,
@@ -80,9 +81,7 @@ function SettingsEditor({
   const [draft, setDraft] = useState<Settings>(initial.settings);
   const [base, setBase] = useState<Settings>(initial.settings);
   const [revision, setRevision] = useState(initial.revision);
-  const [writesAvailable, setWritesAvailable] = useState(
-    initial.model_budget_writes_available === true,
-  );
+  const [availability, setAvailability] = useState<SpendAvailability>(initial);
   const [current, setCurrent] = useState<StoredPlatformSettings>();
   const [failure, setFailure] = useState<OperatorFailure>();
   const [busy, setBusy] = useState(false);
@@ -94,7 +93,10 @@ function SettingsEditor({
   const [spendErrors, setSpendErrors] = useState<SpendErrors>({});
   const submitting = useRef(false);
   const spendChanged = budgetChanged(base.model_budget, draft.model_budget);
-  const spendSaveBlocked = !writesAvailable && spendChanged;
+  // PUT restores an omitted policy before the backend evaluates either gate.
+  const effectiveBudget = draft.model_budget === undefined ? base.model_budget : draft.model_budget;
+  const { edit: writesAvailable, save: canSave } = spendAvailability(availability, effectiveBudget);
+  const spendSaveBlocked = !canSave;
   const update = (value: Settings) => {
     setDraft(value);
     setSaved(false);
@@ -103,7 +105,7 @@ function SettingsEditor({
     try {
       const latest = await client.admin.readSettings();
       setCurrent(latest);
-      if (latest.model_budget_writes_available !== true) setWritesAvailable(false);
+      setAvailability(latest);
     } catch (error) {
       setFailure(operatorFailure(error));
     }
@@ -119,25 +121,21 @@ function SettingsEditor({
     setFailure(undefined);
     setSaved(false);
     try {
-      const settings = { ...draft };
-      // Omission preserves the stored policy, including disabled retained values.
-      // Never silently omit an edited spend draft: the guard above blocks it.
-      if (!writesAvailable) delete settings.model_budget;
       const stored = await client.admin.replaceSettings({
         expected_revision: revision,
-        settings,
+        settings: draft,
       });
       setDraft(stored.settings);
       setBase(stored.settings);
       setRevision(stored.revision);
-      setWritesAvailable(stored.model_budget_writes_available === true);
+      setAvailability(stored);
       setCurrent(undefined);
       setSaved(true);
       usageSettingsChanged();
     } catch (error) {
       const problem = operatorFailure(error);
       setFailure(problem);
-      if (problem.code === 'model_budget_writes_unavailable') setWritesAvailable(false);
+      if (problem.code === 'model_budget_writes_unavailable') setAvailability({});
       if (problem.conflict || problem.uncertain) {
         setNeedsReview(true);
         await reread();
@@ -148,10 +146,7 @@ function SettingsEditor({
     }
   };
   const disabled = busy;
-  const canReviewBudget =
-    !current ||
-    !budgetChanged(base.model_budget, draft.model_budget) ||
-    !!spendBudget(current.settings.model_budget);
+  const canReviewBudget = !current || !spendChanged || !!spendBudget(current.settings.model_budget);
   const fieldError = (path: string) =>
     failure?.field?.replace(/^settings\./, '') === path ? failure.message : undefined;
   return (
@@ -181,7 +176,7 @@ function SettingsEditor({
                     setDraft(current.settings);
                     setBase(current.settings);
                     setRevision(current.revision);
-                    setWritesAvailable(current.model_budget_writes_available === true);
+                    setAvailability(current);
                     setCurrent(undefined);
                     setNeedsReview(false);
                     setFailure(undefined);
@@ -198,7 +193,7 @@ function SettingsEditor({
                     setDraft(reviewSettingsDraft(base, draft, current.settings));
                     setBase(current.settings);
                     setRevision(current.revision);
-                    setWritesAvailable(current.model_budget_writes_available === true);
+                    setAvailability(current);
                     setCurrent(undefined);
                     setNeedsReview(false);
                     setFailure(undefined);
@@ -248,7 +243,11 @@ function SettingsEditor({
           >
             Refresh settings availability
           </Button>
-          {spendSaveBlocked ? <p role="status">Your spend-control changes are retained.</p> : null}
+          {spendSaveBlocked ? (
+            <p role="status">
+              Saving settings is not available yet for this spend policy. Your changes are retained.
+            </p>
+          ) : null}
         </div>
       ) : null}
       <section>
