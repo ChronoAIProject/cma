@@ -1,3 +1,7 @@
+#[path = "fake_provider/context.rs"]
+mod context;
+use context::event_context;
+
 use std::{
     convert::Infallible,
     sync::{
@@ -60,6 +64,7 @@ pub struct FakeProviderConfig {
     pub context_status: Option<u16>,
     pub context_override: Option<Value>,
     pub context_delay: Duration,
+    pub context_steps: Vec<(Duration, Option<u16>, Option<String>)>,
 }
 
 impl Default for FakeProviderConfig {
@@ -93,6 +98,7 @@ impl Default for FakeProviderConfig {
             context_status: None,
             context_override: None,
             context_delay: Duration::ZERO,
+            context_steps: Vec::new(),
         }
     }
 }
@@ -118,6 +124,7 @@ struct StateData {
     missing_turn_once: AtomicBool,
     conversation_attempt: AtomicUsize,
     binding_attempt: AtomicUsize,
+    context_attempt: AtomicUsize,
 }
 
 pub struct FakeProvider {
@@ -142,6 +149,7 @@ impl FakeProvider {
             missing_turn_once: AtomicBool::new(missing_turn_once),
             conversation_attempt: AtomicUsize::new(0),
             binding_attempt: AtomicUsize::new(0),
+            context_attempt: AtomicUsize::new(0),
         });
         let router = Router::new()
             .route("/.well-known/agent-card.json", get(agent_card))
@@ -472,52 +480,5 @@ fn received(method: &str, path: String, headers: &HeaderMap, body: &[u8]) -> Rec
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned),
         body: String::from_utf8_lossy(body).into_owned(),
-    }
-}
-
-async fn event_context(
-    State(state): State<Arc<StateData>>,
-    Path((binding, conversation, event)): Path<(String, String, String)>,
-    headers: HeaderMap,
-) -> Response {
-    state.requests.lock().unwrap().push(received(
-        "GET",
-        format!("/api/v1/cmaeg/bindings/{binding}/conversations/{conversation}/events/{event}"),
-        &headers,
-        &[],
-    ));
-    if !state.config.context_delay.is_zero() {
-        sleep(state.config.context_delay).await;
-    }
-    if let Some(status) = state.config.context_status {
-        return StatusCode::from_u16(status).unwrap().into_response();
-    }
-    let authorization = headers
-        .get("authorization")
-        .and_then(|value| value.to_str().ok());
-    let snapshot = state
-        .admitted
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|request| {
-            request.method == "POST" && request.authorization.as_deref() == authorization
-        })
-        .find_map(|request| {
-            let value: Value = serde_json::from_str(&request.body).ok()?;
-            let context = value.get("event_context")?;
-            (context["conversation_id"] == conversation && context["activity"]["event_id"] == event)
-                .then(|| context.clone())
-        });
-    match snapshot {
-        Some(mut value) => {
-            if let Some(patch) = &state.config.context_override {
-                for (key, replacement) in patch.as_object().unwrap() {
-                    value[key] = replacement.clone();
-                }
-            }
-            Json(value).into_response()
-        }
-        None => StatusCode::NOT_FOUND.into_response(),
     }
 }
