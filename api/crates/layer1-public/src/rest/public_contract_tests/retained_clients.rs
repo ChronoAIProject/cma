@@ -80,7 +80,7 @@ fn corpora() -> Vec<Corpus> {
 async fn retained_current_and_previous_clients_match_develop_handlers_without_network() {
     for mut corpus in corpora() {
         // Always false: neither public-contract recorder environment variable can rewrite these.
-        replay_corpus(&mut corpus, false).await;
+        replay_corpus(&mut corpus, false, false).await;
     }
 }
 
@@ -104,7 +104,8 @@ async fn retained_oracle_rejects_route_status_header_and_response_field_drift() 
             3 => case.response.body["id"] = "changed_agent".into(),
             _ => unreachable!(),
         }
-        let result = tokio::spawn(async move { replay_corpus(&mut corpus, false).await }).await;
+        let result =
+            tokio::spawn(async move { replay_corpus(&mut corpus, false, false).await }).await;
         assert!(
             result.is_err_and(|error| error.is_panic()),
             "mutation {mutation} escaped the oracle"
