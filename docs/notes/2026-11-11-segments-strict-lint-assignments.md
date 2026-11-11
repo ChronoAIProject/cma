@@ -1,7 +1,8 @@
 # Segmentation integration and PR plan
 
-Current source: `63fea5a86` after normal slice/develop merges, branch
+Pre-review 2 baseline: `34bcc3667`, including normal slice/develop merges; branch
 `tl/cma-log-segments/integration-20261111`; develop `1d425cffc` is included.
+Mechanical follow-ups are `efc880523` and `3cb7a3348`, detailed below.
 No integration PR is ready. Pre-review 2 has four unresolved P1s; P1-2 is
 closed in source, while exact combined qualification remains a release gate.
 The source remains default-off. Production was not touched.
