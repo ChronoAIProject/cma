@@ -279,6 +279,94 @@ async fn retirement_inventory_byte_bound_preserves_noncanonical_raw_bytes() {
 }
 
 #[tokio::test]
+async fn retirement_inventory_preserves_covered_cleanup_and_all_authority_blobs() {
+    let fixture = Fixture::new();
+    let ledger = fixture.open(true).await;
+    let cycle =
+        crate::mutation_ledger::lifecycle_tests::lifecycle(&fixture.config, "inventory-cycle");
+    for (index, (operation, receipt)) in cycle.into_iter().enumerate() {
+        ledger
+            .admit(index as u64 + 1, vec![operation.clone()])
+            .await
+            .unwrap();
+        let entry = ledger.begin(operation).await.unwrap();
+        ledger
+            .finish(entry.record.completed(&receipt).unwrap())
+            .await
+            .unwrap();
+    }
+    let (rows, _, _) = inventory(&ledger).await;
+    let mut operations = 0;
+    let mut covered = 0;
+    let mut authorities = 0;
+    for row in &rows {
+        match row {
+            SourceRow::Operation { normal, .. } => {
+                operations += 1;
+                covered += usize::from(!normal);
+            }
+            SourceRow::Authority { high, records, .. } => {
+                authorities += 1;
+                assert_eq!(records.iter().flatten().count(), 3);
+                assert_eq!(records[1], records[2]);
+                assert!(fence::decode(high).unwrap() >= 4);
+            }
+        }
+    }
+    assert_eq!((operations, covered, authorities), (6, 3, 3));
+    assert_eq!(ledger.snapshot().await.unwrap().reserved_bytes, 0);
+    ledger.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn retirement_inventory_refuses_invalid_reservation_flag_instead_of_normalizing_it() {
+    let fixture = Fixture::new();
+    let ledger = fixture.open(true).await;
+    finish(&ledger, 0).await;
+    ledger
+        .storage
+        .call(|db| {
+            // Model damaged/imported state that bypassed ordinary SQL constraints.
+            db.pragma_update(None, "ignore_check_constraints", true)
+                .unwrap();
+            db.execute("UPDATE operations SET normal=2", []).unwrap();
+            db.pragma_update(None, "ignore_check_constraints", false)
+                .unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert!(ledger.retirement_inventory(None).await.is_err());
+    ledger.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn retirement_inventory_refuses_oversized_source_without_skipping_it() {
+    let fixture = Fixture::new();
+    let ledger = fixture.open(true).await;
+    finish(&ledger, 0).await;
+    finish(&ledger, 1).await;
+    ledger.close().await.unwrap();
+    // The normal storage writer already refuses oversized rows. Model damage
+    // from an external writer while the owned fixture is closed, then reopen
+    // through the unchanged production limits for the refusal check.
+    let db = Connection::open(fixture.database().join("ledger.sqlite3")).unwrap();
+    let mut bytes = serde_json::to_vec(&close(0)).unwrap();
+    bytes.resize(BYTES + 1, b' ');
+    db.pragma_update(None, "ignore_check_constraints", true)
+        .unwrap();
+    db.execute(
+        "UPDATE operations SET identity=? WHERE operation_id=?",
+        params![bytes, close(0).operation_id],
+    )
+    .unwrap();
+    db.close().unwrap();
+    let ledger = fixture.open(false).await;
+    assert!(ledger.retirement_inventory(None).await.is_err());
+    ledger.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn retirement_inventory_queries_use_primary_key_ranges() {
     let fixture = Fixture::new();
     let ledger = fixture.open(true).await;
