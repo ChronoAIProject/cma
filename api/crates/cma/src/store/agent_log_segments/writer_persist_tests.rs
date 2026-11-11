@@ -21,6 +21,10 @@ mod keyed_restart;
 mod keyed_settlement;
 #[path = "writer_lifecycle_mongo_tests.rs"]
 mod lifecycle_caller;
+#[path = "writer_original_callers_mongo_tests.rs"]
+mod original_callers;
+#[path = "writer_lifecycle_child_mongo_tests.rs"]
+mod lifecycle_child;
 #[path = "writer_output_mongo_tests.rs"]
 mod output_index;
 #[path = "writer_unknown_mongo_tests.rs"]
