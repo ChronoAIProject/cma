@@ -88,7 +88,7 @@ async fn restore_assembly(
     }
 }
 
-async fn record_update(
+pub(crate) async fn record_update(
     recorder: &dyn AgentUpdateRecorder,
     agent_id: &AgentId,
     runtime_generation: u64,

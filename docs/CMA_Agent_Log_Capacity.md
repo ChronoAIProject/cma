@@ -221,6 +221,16 @@ Run affected crates with `CARGO_BUILD_JOBS=4` while iterating. After integration
 run full required local gates once, including source size/structure, before
 opening the PR. Do not push further commits to an open PR unless the lead asks.
 
+## Native terminal settlement at exhaustion
+
+Conversation output uses the normal append budget first. If a known, deterministic `AgentLogCapacityExceeded` occurs, the recorder retries through a separate transactionally verified settlement proof. The proof captures the exact Agent/checkpoint/mutation, verifies the refused BSON batch still exceeds the normal budget in the committing snapshot, and spends only the existing stop/failure reserve. It never treats a store-unavailable or unknown commit as an abort.
+
+A terminal whose preceding output is already durable may use that finite reserve and retain its native `TurnCompleted`, `TurnInterrupted` or native `TurnFailed` outcome. If any output in the same turn was refused, the settlement emits `TurnFailed` with `agent_log_capacity_exceeded`; it cannot publish `TurnCompleted` with an omitted output. The Agent is `Failed`, its work step and lease are cleared, and its conversation/native identity, usage, receipts, cleanup debt, retained log and checkpoint prefix remain unchanged. A Failed Agent has no ordinary reopen path under the current policy.
+
+The runtime receipt is acknowledged only after the settlement transaction commits. A transaction commit that remains unknown is reconciled by the exact checkpoint/log proof; if the result is still unproved, the caller receives a typed unavailable result and must not retry a native prompt or tool effect blindly. Replaying the exact committed update returns the original outcome and does not append a second terminal.
+
+The PR regression matrix covers count and byte exhaustion, terminal-only reserve use, refused-output failure, actual worker byte settlement, command/Response projections, delayed ACK, committed unknown commit and unproved unknown commit. The command/Response projections remain content-free except for already durable assistant output; no output text is synthesized from a tool result.
+
 ## Production verification
 
 1. Record deployed source/image and the initial Agent counts, statuses and log
