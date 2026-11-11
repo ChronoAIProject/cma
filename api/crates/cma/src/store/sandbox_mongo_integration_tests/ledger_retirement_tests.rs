@@ -8,7 +8,7 @@ mod collection;
 #[path = "../ledger_collection_progress_tests.rs"]
 mod collection_progress;
 
-fn hierarchy() -> (Sandbox, Workspace, Worktree, Agent) {
+pub(in crate::store) fn hierarchy() -> (Sandbox, Workspace, Worktree, Agent) {
     let mut sandbox = sandbox("sbx_retirement_fixture");
     sandbox.runtime = Some(RuntimeBinding {
         boot_id: None,
