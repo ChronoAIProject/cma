@@ -1,6 +1,7 @@
 //! Explicit read-only cohort census; no service startup, writes or effect authority.
 mod files;
 mod observation;
+mod report;
 #[cfg(test)]
 mod tests;
 
@@ -103,7 +104,7 @@ pub(crate) async fn command(request: &Path, output: &Path) -> Result<()> {
         return Err(OUTPUT);
     }
     files::publish(output, &bytes)?;
-    println!("{}", summary(&census, &bytes));
+    println!("{}", report::summary(&census, &bytes));
     Ok(())
 }
 
@@ -111,21 +112,4 @@ pub(super) use observation::observe;
 
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
-}
-
-fn summary(census: &Census, bytes: &[u8]) -> serde_json::Value {
-    let mut causes = std::collections::BTreeMap::<String, usize>::new();
-    let mut routes = std::collections::BTreeMap::<String, usize>::new();
-    for assessment in census.rows.iter().filter_map(|row| row.assessment.as_ref()) {
-        let cause = serde_json::to_value(assessment.cause).expect("fixed enum");
-        *causes
-            .entry(cause.as_str().expect("fixed enum").into())
-            .or_default() += 1;
-        *routes.entry(assessment.recovery_route.clone()).or_default() += 1;
-    }
-    serde_json::json!({"format":"runtime-ledger-census-summary-v1",
-        "snapshot_sha256":digest(bytes), "request_sha256":census.request_sha256,
-        "source_sha256":census.source_sha256, "requested":census.rows.len(),
-        "unknown":census.rows.iter().filter(|row| row.assessment.is_none()).count(),
-        "causes":causes, "routes":routes, "writes":false, "recovery_authorized":false})
 }

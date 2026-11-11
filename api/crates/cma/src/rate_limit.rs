@@ -105,6 +105,7 @@ pub(crate) struct RateLimiters {
     default: KeyedLimiter,
     create: KeyedLimiter,
     input: KeyedLimiter,
+    response_input_tier_enabled: bool,
     visitor_launches: VisitorLaunchQuota,
     trusted_proxies: TrustedProxyConfig,
     decisions: AtomicU64,
@@ -126,6 +127,7 @@ impl RateLimiters {
             Quota::per_minute(config.input_per_minute),
             trusted_proxies,
         );
+        limiters.response_input_tier_enabled = config.response_input_tier_enabled;
         limiters.shared = Some((shared, config));
         Arc::new(limiters)
     }
@@ -145,6 +147,7 @@ impl RateLimiters {
             default: RateLimiter::keyed(default),
             create: RateLimiter::keyed(create),
             input: RateLimiter::keyed(input),
+            response_input_tier_enabled: false,
             visitor_launches: VisitorLaunchQuota::default(),
             trusted_proxies,
             decisions: AtomicU64::new(0),
@@ -207,7 +210,7 @@ pub(crate) async fn admit(
         return next.run(request).await;
     }
 
-    let tier = request_tier(&request);
+    let tier = request_tier(&request, limiters.response_input_tier_enabled);
     let client = resolve_client(&request, &limiters.trusted_proxies);
     request.extensions_mut().insert(client.clone());
     let budget = if tier == RequestTier::Health {
@@ -232,7 +235,7 @@ pub(crate) async fn enforce(
     if is_cors_preflight(&request) {
         return next.run(request).await;
     }
-    let tier = request_tier(&request);
+    let tier = request_tier(&request, limiters.response_input_tier_enabled);
     if tier == RequestTier::Health {
         return next.run(request).await;
     }
@@ -286,7 +289,7 @@ fn limited_response(
     response
 }
 
-fn request_tier(request: &Request) -> RequestTier {
+fn request_tier(request: &Request, response_inputs: bool) -> RequestTier {
     let path = request
         .extensions()
         .get::<MatchedPath>()
@@ -305,7 +308,29 @@ fn request_tier(request: &Request) -> RequestTier {
     {
         return RequestTier::Default;
     }
-    if path.split('/').rfind(|segment| !segment.is_empty()) == Some("input") {
+    // Parameterized paths must be exact registered MatchedPath templates.
+    // The disabled branch preserves the prior suffix-based policy.
+    let input = if response_inputs {
+        // Binding event routing can provision a source-user conversation.
+        request
+            .extensions()
+            .get::<layer1_public::AuthMethod>()
+            .is_none()
+            && matches!(
+                path,
+                "/api/v2/responses"
+                    | "/api/v2/agents/{agent_id}/responses"
+                    | "/api/v1/responses"
+                    | "/api/v1/agui/run"
+                    | "/api/v1/agents/{id}/input"
+                    | "/api/v1/agents/{id}/steer"
+                    | "/api/v2/agents/{agent_id}/responses/{response_id}/queued-input"
+                    | "/api/v2/agents/{agent_id}/responses/{response_id}/interrupt"
+            )
+    } else {
+        path.split('/').rfind(|segment| !segment.is_empty()) == Some("input")
+    };
+    if input {
         return RequestTier::Input;
     }
     RequestTier::Create
@@ -468,3 +493,7 @@ fn retry_after_seconds(wait: std::time::Duration) -> u64 {
 #[cfg(test)]
 #[path = "rate_limit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "rate_limit_input_tests.rs"]
+mod input_tests;

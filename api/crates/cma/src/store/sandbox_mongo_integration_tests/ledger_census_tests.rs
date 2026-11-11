@@ -92,6 +92,38 @@ fn ledger_census_preserves_conversation_inputs_and_unknown_effects() {
     );
 }
 
+#[test]
+fn ledger_census_retains_terminal_input_history_without_claiming_pending_work() {
+    use layer2_core::sandbox::{FirstMessageFailure, FirstMessageRecord};
+    for completed in [false, true] {
+        let (parent, workspace, worktree, mut agent) = fixture();
+        let mut input = FirstMessageRecord::new("fixture-key", "retained input", NOW).unwrap();
+        input.fence_dispatch(1, 1, NOW.into()).unwrap();
+        if completed {
+            input.complete(MINUTE.into()).unwrap();
+        } else {
+            input
+                .fail(
+                    FirstMessageFailure::new("fixture", "retained failure", false, MINUTE).unwrap(),
+                )
+                .unwrap();
+        }
+        assert!(input.is_terminal());
+        agent.conversation.first_message = Some(input);
+        agent.conversation.last_seq = 1;
+        let assessment = agent.ledger_census(&parent, &workspace, &worktree).unwrap();
+        assert!(assessment.input_state_present);
+        assert!(assessment
+            .preserve
+            .contains(&"native_conversation_and_input_state_no_automatic_replay".into()));
+        assert!(!assessment.recovery_authorized);
+        let encoded = serde_json::to_string(&assessment).unwrap();
+        assert!(!encoded.contains("active_or_queued_input"));
+        assert!(!encoded.contains("retained input"));
+        assert!(!encoded.contains("retained failure"));
+    }
+}
+
 fn documents() -> (Request, Vec<(&'static str, Document)>) {
     let (parent, workspace, worktree, agent) = fixture();
     (
