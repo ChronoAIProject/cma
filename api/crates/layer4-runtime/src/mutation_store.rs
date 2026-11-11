@@ -13,6 +13,7 @@ use std::sync::Arc;
 pub(crate) struct Store {
     config: RuntimeConfig,
     ledger: Option<Arc<Ledger>>,
+    retirement: Option<crate::retirement_format::Reader>,
 }
 #[derive(Default)]
 pub(crate) struct Cursor {
@@ -35,21 +36,38 @@ pub(crate) enum Begin<T> {
 
 impl Store {
     pub(crate) fn new(config: RuntimeConfig, ledger: Option<Arc<Ledger>>) -> Self {
-        Self { config, ledger }
+        Self {
+            config,
+            ledger,
+            retirement: None,
+        }
+    }
+    pub(crate) fn with_retirement(
+        mut self,
+        retirement: Option<crate::retirement_format::Reader>,
+    ) -> Self {
+        self.retirement = retirement;
+        self
     }
     pub(crate) async fn observation(&self) -> Result<layer3_adapter::RuntimeLedgerStatus> {
+        self.verify()?;
         match &self.ledger {
             Some(ledger) => ledger.observation().await,
             None => Ok(layer3_adapter::RuntimeLedgerStatus::LegacyMigrationRequired),
         }
     }
     pub(crate) fn verify(&self) -> Result<()> {
+        match &self.retirement {
+            Some(retirement) => retirement.verify()?,
+            None => crate::retirement_format::require_absent(&self.config)?,
+        }
         if let Some(ledger) = &self.ledger {
             ledger.verify()?;
         }
         Ok(())
     }
     pub(crate) async fn admit(&self, fence: u64, operations: &[Operation]) -> Result<()> {
+        self.authorize_retirement(operations).await?;
         match &self.ledger {
             Some(ledger) => {
                 crate::persistent_home::verify(&self.config)?;
@@ -62,6 +80,8 @@ impl Store {
         }
     }
     pub(crate) async fn admitted(&self, operation: &Operation) -> Result<bool> {
+        self.authorize_retirement(std::slice::from_ref(operation))
+            .await?;
         match &self.ledger {
             Some(ledger) => ledger.admitted(operation.clone()).await,
             None => v1::admitted(&self.config, operation),
@@ -71,6 +91,8 @@ impl Store {
         &self,
         operation: &Operation,
     ) -> Result<Begin<T>> {
+        self.authorize_retirement(std::slice::from_ref(operation))
+            .await?;
         let Some(ledger) = &self.ledger else {
             return v1::begin(&self.config, operation).map(|begin| match begin {
                 v1::Begin::New(t) => Begin::New(Ticket::legacy(t)),
@@ -96,12 +118,15 @@ impl Store {
         })
     }
     pub(crate) async fn recovery_fence(&self, operation: &Operation) -> Result<Option<u64>> {
+        self.authorize_retirement(std::slice::from_ref(operation))
+            .await?;
         match &self.ledger {
             Some(ledger) => ledger.recovery_fence(operation.clone()).await,
             None => crate::mutation_authority::recovery_fence(&self.config, operation),
         }
     }
     pub(crate) async fn started(&self, cursor: &mut Cursor) -> Result<Vec<Pending>> {
+        self.verify()?;
         if cursor.done {
             return Ok(Vec::new());
         }
@@ -140,6 +165,7 @@ impl Store {
         }
     }
     pub(crate) async fn active(&self, filter: ProcessFilter) -> Result<bool> {
+        self.verify()?;
         if let Some(ledger) = &self.ledger {
             return ledger.active(filter).await;
         }
@@ -155,5 +181,21 @@ impl Store {
                     std::path::Path::new(&agent.cwd).starts_with(path)
                 }
             }))
+    }
+
+    async fn authorize_retirement(&self, operations: &[Operation]) -> Result<()> {
+        self.verify()?;
+        if let Some(retirement) = &self.retirement {
+            retirement.authorize(operations).await?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn close_retirement(self) -> Result<()> {
+        if let Some(retirement) = self.retirement {
+            retirement.close().await?;
+        }
+        Ok(())
     }
 }
