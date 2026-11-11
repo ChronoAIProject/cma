@@ -185,7 +185,10 @@ impl MongoStores {
         );
         super::schema::initialize_collections(
             &client.database(database),
-            &[crate::document_artifacts::COLLECTION],
+            &[
+                crate::document_artifacts::COLLECTION,
+                crate::document_artifacts::QUOTA_COLLECTION,
+            ],
         )
         .await?;
         let document_artifacts = Arc::new(crate::document_artifacts::MongoDocumentStore::new(
