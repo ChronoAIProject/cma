@@ -60,7 +60,8 @@
               "owners": []
             }
           },
-          "model_budget_writes_available": false
+          "model_budget_writes_available": false,
+          "model_request_budget_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -133,7 +134,8 @@
               "owners": []
             }
           },
-          "model_budget_writes_available": false
+          "model_budget_writes_available": false,
+          "model_request_budget_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -271,7 +273,8 @@
               "owners": []
             }
           },
-          "model_budget_writes_available": false
+          "model_budget_writes_available": false,
+          "model_request_budget_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -341,7 +344,8 @@
               "owners": []
             }
           },
-          "model_budget_writes_available": false
+          "model_budget_writes_available": false,
+          "model_request_budget_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -476,7 +480,8 @@
               "owners": []
             }
           },
-          "model_budget_writes_available": false
+          "model_budget_writes_available": false,
+          "model_request_budget_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -541,7 +546,8 @@
               "owners": []
             }
           },
-          "model_budget_writes_available": false
+          "model_budget_writes_available": false,
+          "model_request_budget_writes_available": false
         },
         "bodyKind": "json"
       },
