@@ -4,6 +4,9 @@ use layer3_adapter::runtime_ledger_collection::{
     CollectionGroup, CollectionRequest, LedgerGroupDecisionV1, COLLECTION_FORMAT,
 };
 
+#[path = "ledger_collection_cancellation_tests.rs"]
+mod cancellation;
+
 fn collection_documents() -> Vec<(&'static str, Document)> {
     let mut documents = documents();
     let mut parent = crate::store::sandboxes::read_sandbox(&documents[0].1).unwrap();
@@ -62,11 +65,18 @@ async fn indexes(db: &mongodb::Database) {
 }
 
 async fn traced_client() -> (Client, Arc<Mutex<Vec<(String, Document)>>>) {
+    traced_client_named(None).await
+}
+
+async fn traced_client_named(
+    app_name: Option<String>,
+) -> (Client, Arc<Mutex<Vec<(String, Document)>>>) {
     let trace = Arc::new(Mutex::new(Vec::new()));
     let captured = trace.clone();
     let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
+    options.app_name = app_name;
     options.command_event_handler = Some(EventHandler::callback(move |event| {
         if let CommandEvent::Started(event) = event {
             captured
