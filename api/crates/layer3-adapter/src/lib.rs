@@ -7,6 +7,7 @@
 mod adapter;
 mod agent;
 mod agent_attachment;
+pub mod agent_capacity_recovery;
 mod agent_filesystem;
 pub mod binding_diagnostics;
 mod browser;
