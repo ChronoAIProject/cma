@@ -4,7 +4,8 @@ use crate::store::agent_log_telemetry::{isolated_test, snapshot, ScanCaller};
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn fleet_window_reads_never_prepare_and_measure_first_and_steady_append_cost() {
-    for history in [1_000, 10_000] {
+    // Leave room for both measured appends below the 10,000-entry normal cap.
+    for history in [1_000, 9_990] {
         let mut f = Fixture::new(history).await.prepare().await;
         f.store.bounded_admission_agents.clear();
         f.store
