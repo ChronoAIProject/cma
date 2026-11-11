@@ -7,6 +7,7 @@ mod agent;
 pub mod agent_artifacts;
 pub mod agent_attachments;
 pub mod agent_browser_control;
+pub mod agent_capacity_recovery;
 mod agent_context;
 pub mod agent_environment;
 pub mod agent_filesystem;
