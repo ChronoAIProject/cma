@@ -235,31 +235,11 @@ pub trait AgentLogStore: Send + Sync {
         &self,
         agent: &Agent,
     ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
-        #[cfg(test)]
-        {
-            let entries = self
-                .agent_log_prefix(&agent.id, agent.conversation.last_seq)
-                .await?;
-            return Ok(Some(
-                entries
-                    .into_iter()
-                    .filter(|entry| {
-                        matches!(
-                            entry.kind,
-                            AgentLogKind::Created { .. }
-                                | AgentLogKind::ConversationOpened { .. }
-                                | AgentLogKind::RuntimeGenerationRetired { .. }
-                                | AgentLogKind::Usage { .. }
-                                | AgentLogKind::UsageUpdated { .. }
-                        )
-                    })
-                    .collect(),
-            ));
-        }
-        #[cfg(not(test))]
-        {
-            let _ = agent;
-            Ok(None)
-        }
+        // The in-memory adapter has no durable semantic checkpoint proving
+        // that omitted rows are valid. Claiming a selected usage projection
+        // here would let unrelated malformed entries bypass the exact fold.
+        // Mongo supplies the trusted proof alongside its selected rows.
+        let _ = agent;
+        Ok(None)
     }
 }
