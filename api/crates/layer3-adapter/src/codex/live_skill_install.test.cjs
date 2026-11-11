@@ -1,9 +1,9 @@
 const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
-const { mkdtempSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } = require("node:fs");
+const { mkdtempSync, mkdirSync, readFileSync, readlinkSync, writeFileSync, renameSync, rmSync } = require("node:fs");
 const { createServer } = require("node:http");
 const { tmpdir } = require("node:os");
-const { join } = require("node:path");
+const { join, basename } = require("node:path");
 const { test } = require("node:test");
 const { bridgePath } = require("./persist_conversations.cjs");
 const { controlledBinary } = require("./native_control_fixture.cjs");
@@ -55,22 +55,31 @@ function config(directory, provider, origin) {
   ].join("\n"));
 }
 
-function processTree(root) {
-  // npm's CLI launcher can itself spawn the native executable. Observe the
-  // entire child tree so a stable launcher PID cannot hide a native restart.
-  // Debian's image need not install ps: Linux exposes children through procfs.
-  const parents = process.platform === "darwin" ? execFileSync("/bin/ps",
-    ["-axo", "pid=,ppid="], { encoding: "utf8" }).trim().split("\n")
-    .map(line => line.trim().split(/\s+/).map(Number)) : null;
+function nativeProcesses(root) {
+  // npm's launcher can spawn the native executable. Prove that executable's
+  // identity; unrelated short-lived helpers may appear/disappear between turns.
+  const rows = process.platform === "darwin" ? execFileSync("/bin/ps",
+    ["-axo", "pid=,ppid=,comm="], { encoding: "utf8" }).trim().split("\n")
+    .map(line => {
+      const [, pid, parent, executable] = line.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/);
+      return { pid: Number(pid), parent: Number(parent), executable };
+    }) : null;
   const processes = [root];
+  const native = [];
   for (let index = 0; index < processes.length; index++) {
     const pid = processes[index];
-    const children = parents ? parents.filter(row => row[1] === pid).map(row => row[0]) :
-      readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8").trim().split(/\s+/).filter(Boolean).map(Number);
-    processes.push(...children);
+    try {
+      const children = rows ? rows.filter(row => row.parent === pid).map(row => row.pid) :
+        readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8").trim().split(/\s+/).filter(Boolean).map(Number);
+      processes.push(...children);
+      const executable = rows ? rows.find(row => row.pid === pid)?.executable : readlinkSync(`/proc/${pid}/exe`);
+      if (executable && basename(executable) === "codex") native.push(pid);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
   }
-  assert(processes.length > 1, "bridge must own the running native process tree");
-  return processes.sort((a, b) => a - b);
+  assert.equal(native.length, 1, "bridge must own exactly one actual native Codex executable");
+  return native;
 }
 
 
@@ -98,7 +107,7 @@ test("pinned running Codex discovers an added skill and refreshes its latest cat
     };
     const before = await prompt();
     const nativePid = readFileSync(join(directory, "native-control.pid"), "utf8");
-    const processIds = processTree(bridge.pid);
+    const processIds = nativeProcesses(bridge.pid);
     assert(!before.includes(description));
     const staging = join(home, "skills", ".stage-live-install");
     mkdirSync(staging);
@@ -109,8 +118,10 @@ test("pinned running Codex discovers an added skill and refreshes its latest cat
     assert(after.includes(name));
     assert.equal(fixture.calls.length, 2);
     const upgradedDescription = "Unique live-upgrade discovery marker c63e1f4a";
-    mkdirSync(staging);
-    writeFileSync(join(staging, "SKILL.md"), "---\nname: " + name + "\ndescription: " + upgradedDescription + "\n---\nUse the upgraded skill when specifically requested.\n");
+    writeFileSync(join(home, "skills", "research-guid", "owner-note"), "Retain this extra content.");
+    const retained = join(home, ".cma-skill-upgrades", "fixture", "new");
+    mkdirSync(retained, { recursive: true });
+    writeFileSync(join(retained, "SKILL.md"), "---\nname: " + name + "\ndescription: " + upgradedDescription + "\n---\nUse the upgraded skill when specifically requested.\n");
     // Exercise the atomic directory exchange required for a runtime upgrade.
     execFileSync("python3", ["-c", [
       "import ctypes, os, sys",
@@ -119,8 +130,9 @@ test("pinned running Codex discovers an added skill and refreshes its latest cat
       // The Dockerfile runs this test on Debian/glibc, which exports renameat2.
       "result = lib.renamex_np(a, b, 2) if sys.platform == 'darwin' else lib.renameat2(-100, a, -100, b, 2)",
       "assert result == 0, os.strerror(ctypes.get_errno())",
-    ].join("\n"), staging, join(home, "skills", "research-guid")]);
-    rmSync(staging, { recursive: true });
+    ].join("\n"), retained, join(home, "skills", "research-guid")]);
+    assert(readFileSync(join(retained, "SKILL.md"), "utf8").includes(description));
+    assert.equal(readFileSync(join(retained, "owner-note"), "utf8"), "Retain this extra content.");
     const upgraded = await prompt();
     assert(upgraded.includes(upgradedDescription), "next turn must advertise the replacement in the same conversation");
     assert(upgraded.includes(name));
@@ -141,7 +153,7 @@ test("pinned running Codex discovers an added skill and refreshes its latest cat
     process.kill(bridge.pid, 0);
     assert.equal(readFileSync(join(directory, "native-control.pid"), "utf8"), nativePid);
     process.kill(Number(nativePid), 0);
-    assert.deepEqual(processTree(bridge.pid), processIds);
+    assert.deepEqual(nativeProcesses(bridge.pid), processIds);
 
   } finally {
     await bridge.close(); await fixture.close(); rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
