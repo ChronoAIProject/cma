@@ -135,7 +135,8 @@ impl Fixture {
         let store = store
             .prepare_bounded_admission(std::slice::from_ref(&agent.id))
             .await
-            .unwrap();
+            .unwrap()
+            .with_bounded_title_reads(true);
         Self {
             client,
             name,
