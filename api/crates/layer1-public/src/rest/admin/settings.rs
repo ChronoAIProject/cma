@@ -140,7 +140,7 @@ pub(crate) async fn read(
 ) -> Result<Json<SettingsView>, Failure> {
     Ok(Json(SettingsView::new(
         state.settings.read(&caller).await?,
-        state.settings.model_budget_writes_enabled(),
+        &state.settings,
     )))
 }
 
@@ -166,7 +166,7 @@ pub(crate) async fn replace(
             .settings
             .configure_platform(&caller, body.expected_revision, &settings)
             .await?,
-        state.settings.model_budget_writes_enabled(),
+        &state.settings,
     )))
 }
 
@@ -187,7 +187,7 @@ pub(crate) async fn patch(
             .settings
             .configure_platform(&caller, expected_revision, &settings)
             .await?,
-        state.settings.model_budget_writes_enabled(),
+        &state.settings,
     )))
 }
 
@@ -206,6 +206,6 @@ pub(crate) async fn reset(
                 &PlatformSettings::default(),
             )
             .await?,
-        state.settings.model_budget_writes_enabled(),
+        &state.settings,
     )))
 }
