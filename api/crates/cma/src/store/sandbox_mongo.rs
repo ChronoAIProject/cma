@@ -100,6 +100,7 @@ pub struct MongoSandboxStore {
     pub(super) fleet_log_activation: std::sync::Arc<super::agent_log_integrity::fleet::Activation>,
     pub(super) bounded_admission_agents: std::collections::BTreeSet<layer2_core::AgentId>,
     pub(super) bounded_title_reads: bool,
+    pub(super) bounded_transcript_reads: bool,
     pub(super) bounded_response_reads: bool,
     pub(crate) writer_policy:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
@@ -193,6 +194,7 @@ impl MongoSandboxStore {
             bounded_close_retries: false,
             fleet_log_activation: Default::default(),
             bounded_title_reads: false,
+            bounded_transcript_reads: false,
             bounded_response_reads: false,
             writer_policy: Default::default(),
             bindings: super::bindings::BindingCollections::open(&database).await?,
