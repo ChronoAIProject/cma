@@ -42,6 +42,12 @@ fn measured_decode_peak_and_reply_lifetime_fit_the_derived_reservation() {
     AllocationRegistry::set_global_tracker(Tracker).unwrap();
     AllocationRegistry::enable_tracking();
     let pools = JsonPools::new(TREE_BYTES, SCRATCH_BYTES);
+    // On macOS the first permit release initializes a 64-byte pthread mutex
+    // owned by each semaphore. Initialize coordinator infrastructure before
+    // assigning frame allocation groups; it lives until the pool is dropped.
+    for pool in [&pools.trees, &pools.scratch] {
+        drop(pool.clone().try_acquire_owned().unwrap());
+    }
     let max_string = format!("\"{}\"", "x".repeat(4 * 1024 * 1024 - 2));
     let escaped = format!("\"{}\"", "\\n".repeat((4 * 1024 * 1024 - 2) / 2));
     let objects = format!("[{}]", vec![r#"{"a":[],"b":{}}"#; 1365].join(","));
