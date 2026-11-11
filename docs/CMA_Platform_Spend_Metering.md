@@ -572,9 +572,12 @@ Recorded during implementation:
 23. A refusal that follows the same transaction's insert of a missing period
     row aborts that transaction before the guarded closure write, and every
     refusal pre-creates the row outside it, so the closure is not lost.
-24. Only owners with a model budget policy reserve liability; their messages
-    and queued turn starts read the platform state. Zero-liability
-    commitments read it for every owner.
+24. Only owners with a model budget policy reserve liability. An owner
+    without one reserves nothing, but its messages, turn starts (queued or
+    not) and model requests still pass the zero-liability platform check, so
+    `SpendStop` refuses them with `platform_budget_exhausted` and
+    `MeteringUnavailable` with `budget_unavailable` (decision 19).
+    Zero-liability commitments read the state for every owner.
 25. Registration checks the user directory first: an existing subject signs
     in without reading the platform state, so an unreadable state never locks
     an owner out. Only a never-seen subject reads the state, and a failed read
