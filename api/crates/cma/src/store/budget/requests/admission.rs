@@ -33,6 +33,10 @@ pub(super) async fn reserve(
     }
     let snapshot = super::super::period::fenced_snapshot(store, &agent.owner, session).await?;
     let Some(policy) = snapshot.owner.clone() else {
+        // No hold for an unbudgeted owner, but the platform state still
+        // refuses its model request (decision 24).
+        let timestamp = now(store).map_err(domain)?;
+        super::super::period::require_open(store, timestamp, session).await?;
         return Ok(None);
     };
     let settings = store
