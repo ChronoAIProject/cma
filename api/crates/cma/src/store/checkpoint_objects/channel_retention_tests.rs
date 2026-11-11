@@ -2,6 +2,73 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
+async fn full_data_archive_hold_keeps_unconfirmed_uploads_and_refuses_purge() {
+    use layer2_core::sandbox::{retirement_archive::RetirementArchiveRequirement, SandboxStatus};
+    let (client, _, database) = test_store("full_archive_hold").await;
+    let resources = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let mut parent = sandbox("sbx_full_archive_hold");
+    parent.status = SandboxStatus::Retiring;
+    parent.work = SandboxWorkState::new(SandboxWorkStep::StopAgents, layer2_core::now_rfc3339());
+    parent.lifecycle.retirement_archive = Some(RetirementArchiveRequirement {
+        format: 1,
+        operation_id: uuid::Uuid::new_v4().to_string(),
+        plan_sha256: "a".repeat(64),
+        source_sha256: "b".repeat(64),
+        exclusion_sha256: "c".repeat(64),
+        verified: None,
+    });
+    resources.create_sandbox(parent.clone()).await.unwrap();
+    let objects = &resources.checkpoint_objects;
+    let original = b"retain incomplete source upload until full archive is verified";
+    let (reference, sha256) = sealed(original);
+    let identity =
+        ArchiveIdentity::from_input(reference.clone(), sha256, original.len() as u64).unwrap();
+    let mut stage = ManifestDoc::new(parent.id.as_str(), &identity, DateTime::now());
+    stage.cleanup_after = DateTime::from_millis(1);
+    super::super::publication::admit(objects, &stage)
+        .await
+        .unwrap();
+    objects
+        .objects
+        .upload(&stage.object_key, upload(original.to_vec()))
+        .await
+        .unwrap();
+    for seconds in [0, 61] {
+        objects
+            .cleanup_due(std::time::SystemTime::now() + std::time::Duration::from_secs(seconds))
+            .await
+            .unwrap();
+        let retained = objects
+            .manifests
+            .find_one(doc! {"_id":&stage.id})
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(retained.get_str("state").unwrap(), "uploading");
+        assert!(objects
+            .tombstones
+            .find_one(doc! {"_id":&stage.id})
+            .await
+            .unwrap()
+            .is_none());
+        let retained = objects
+            .objects
+            .download(
+                &stage.object_key,
+                &reference,
+                &identity.sha256,
+                original.len() as u64,
+            )
+            .await
+            .unwrap();
+        assert_eq!(bytes(retained).await.unwrap(), original);
+        assert!(objects.purge_sandbox(parent.id.as_str()).await.is_err());
+    }
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB"]
 async fn channel_markers_retain_published_bytes_without_losing_uncertain_upload_cleanup() {
     let (client, _, database) = test_store("retain").await;
     let resources = MongoSandboxStore::open(&client, &database).await.unwrap();
