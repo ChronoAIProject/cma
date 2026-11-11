@@ -350,6 +350,7 @@ impl ControlPlaneComposition {
             agent_page_origin,
             &bindings,
             config.gateway.as_ref(),
+            config.features.paged_response_events,
         )?;
         let event_workers = layer2_core::event_workers::EventWorkerProfileService::new(
             stores.event_workers.clone(),

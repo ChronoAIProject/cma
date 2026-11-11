@@ -37,6 +37,7 @@ mod routing_tests;
 pub use routing::{BindingEventRouter, BindingRouteError};
 mod sender_context;
 mod stream;
+mod stream_pages;
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -50,8 +51,13 @@ pub struct ResponsesV2State {
     reads: Arc<AgentReadService>,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     event_router: Option<Arc<dyn BindingEventRouter>>,
+    paged_events: bool,
 }
 impl ResponsesV2State {
+    pub fn with_paged_events(mut self, enabled: bool) -> Self {
+        self.paged_events = enabled;
+        self
+    }
     pub fn with_event_router(mut self, router: Arc<dyn BindingEventRouter>) -> Self {
         self.event_router = Some(router);
         self
@@ -75,6 +81,7 @@ impl ResponsesV2State {
             reads,
             bindings: None,
             event_router: None,
+            paged_events: false,
         }
     }
 }
