@@ -19,9 +19,15 @@ async fn command_fixture(
     ready_workspace(store, &binding).await;
     let input = agent_request(store, &binding, "command_replay_fixture").await;
     let created = store.admit_agent(input).await.unwrap();
-    // Creation advances the parent; command admission needs that exact result,
-    // not the earlier Sandbox observation used to set up the fixture.
-    let parent = created.creation().sandbox.clone();
+    // Creation advances the persisted parent. AgentCreation carries only the
+    // child result, so load the current parent for command admission's guard.
+    let parent = layer2_core::sandbox::store::SandboxStore::get_sandbox(
+        store,
+        &created.creation().agent.sandbox_id,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let mut agent = created.creation().agent.clone();
     let revision = agent.revision;
     agent.status = AgentStatus::Ready;
