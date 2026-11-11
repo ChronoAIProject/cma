@@ -22,5 +22,10 @@ pub mod ledger_maintenance_plan;
 #[path = "../../src/sandbox/ledger_maintenance_progress.rs"]
 pub mod ledger_maintenance_progress;
 
+#[path = "../../src/sandbox/ledger_maintenance_pre_exclusion.rs"]
+pub mod ledger_maintenance_pre_exclusion;
+#[path = "../../src/sandbox/ledger_maintenance_pre_exclusion_progress.rs"]
+pub mod ledger_maintenance_pre_exclusion_progress;
+
 #[path = "store.rs"]
 pub mod store;
