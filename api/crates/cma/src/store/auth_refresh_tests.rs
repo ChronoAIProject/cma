@@ -383,3 +383,61 @@ async fn browser_login_repairs_unfenced_subject_without_accepting_stale_cookie_a
     upstream.abort();
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn mongo_browser_login_reservation_fences_logout_across_replicas() {
+    let (client, name, first, second) = stores().await;
+    for order in ["logout-first", "complete-first", "expired", "race"] {
+        let id = SecretDigest::identify("browser-login", order);
+        let expiry = if order == "expired" {
+            SystemTime::UNIX_EPOCH
+        } else {
+            SystemTime::now() + Duration::from_secs(60)
+        };
+        first
+            .reserve_browser_login(id.clone(), expiry)
+            .await
+            .unwrap();
+        assert!(second.browser_login(&id).await.unwrap().is_none());
+        let login = BrowserLogin {
+            id: id.clone(),
+            subject: SubjectId::new("owner-a"),
+            expires_at: SystemTime::now() + Duration::from_secs(3600),
+        };
+        match order {
+            "logout-first" => {
+                second.delete_browser_login(&id).await.unwrap();
+                assert!(!first.complete_browser_login(login.clone()).await.unwrap());
+            }
+            "complete-first" => {
+                assert!(first.complete_browser_login(login.clone()).await.unwrap());
+                assert_eq!(
+                    second.browser_login(&id).await.unwrap().unwrap().subject,
+                    login.subject
+                );
+                let wrong = BrowserLogin {
+                    subject: SubjectId::new("owner-b"),
+                    ..login.clone()
+                };
+                assert!(!second.complete_browser_login(wrong).await.unwrap());
+                second.delete_browser_login(&id).await.unwrap();
+            }
+            "expired" => {
+                assert!(!second.complete_browser_login(login.clone()).await.unwrap());
+            }
+            "race" => {
+                let (issued, removed) = tokio::join!(
+                    first.complete_browser_login(login.clone()),
+                    second.delete_browser_login(&id)
+                );
+                issued.unwrap();
+                removed.unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert!(first.browser_login(&id).await.unwrap().is_none());
+        assert!(!second.complete_browser_login(login).await.unwrap());
+    }
+    client.database(&name).drop().await.unwrap();
+}

@@ -336,7 +336,7 @@ async fn unseen_identity_callback_records_sign_in_without_aggregate_bootstrap() 
             urlencode(&query["state"])
         );
         // One browser returns having signed out of CMA earlier; choosing to
-        // sign in again clears that.
+        // sign in again keeps the automatic-sign-in opt-out.
         let signed_out = return_to == Some("/");
         let callback_cookie = if signed_out {
             format!("{binding}; cma_signed_out=1")
@@ -389,14 +389,13 @@ async fn unseen_identity_callback_records_sign_in_without_aggregate_bootstrap() 
             .iter()
             .map(|value| value.to_str().unwrap())
             .collect();
-        assert_eq!(cookies.len(), if signed_out { 3 } else { 2 });
-        if signed_out {
-            assert!(cookies[2].starts_with("cma_signed_out=;"));
-            assert!(cookies[2].contains("Max-Age=0"));
-        }
-        assert!(cookies[0].starts_with(&format!("{}=;", binding_cookie_name(&query["state"]))));
-        assert!(cookies[0].contains("Max-Age=0"));
-        let browser_cookie = cookies[1].split(';').next().unwrap();
+        assert_eq!(cookies.len(), 2);
+        assert!(cookies
+            .iter()
+            .all(|value| !value.starts_with("cma_signed_out=")));
+        assert!(cookies[1].starts_with(&format!("{}=;", binding_cookie_name(&query["state"]))));
+        assert!(cookies[1].contains("Max-Age=0"));
+        let browser_cookie = cookies[0].split(';').next().unwrap();
         let (name, value) = browser_cookie.split_once('=').unwrap();
         assert_eq!(name, AUTH_COOKIE);
         let browser = store
