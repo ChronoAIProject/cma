@@ -1,29 +1,57 @@
 use crate::store::agent_log_telemetry::ScanCaller;
 use std::collections::BTreeMap;
 
-use layer2_core::sandbox::store::{SandboxRuntimeLossAgentMutation, SandboxStoreError};
+use layer2_core::sandbox::store::{
+    SandboxRuntimeLossAgentMutation, SandboxRuntimeLossRequest, SandboxStoreError,
+};
 use layer2_core::sandbox::{Agent, AgentLogEntry};
 use layer2_core::SandboxId;
-use mongodb::bson::{doc, Document};
+use mongodb::bson::doc;
 use mongodb::ClientSession;
 
+use super::super::agent_capacity_recovery::source::{capture_segmented, fence_filter};
 use super::super::agent_log::scan_complete_log_with_session;
 use super::super::agent_log_integrity::{prepare_append, AppendCapacity, LogSummary};
+use super::super::agent_log_segments::{
+    capture::CapturedLog,
+    publication::{self, PublicationIdentity},
+    writer_commit::{self, AggregateUpdate, PublicationInput},
+};
 use super::super::agents::agent_replacement_fields;
 use super::super::lifecycle_execution::load_sandbox_agents;
-use super::super::sandbox_mongo::{
-    is_duplicate_key, signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
-};
+use super::super::sandbox_mongo::{is_duplicate_key, signed, MongoSandboxStore};
 use super::transaction::ApplyError;
+
+pub(super) enum Source {
+    Legacy(Box<LogSummary>),
+    Segmented(Box<CapturedLog>),
+}
+
+impl Source {
+    pub(super) fn through(&self) -> u64 {
+        match self {
+            Self::Legacy(summary) => summary.entry_count(),
+            Self::Segmented(captured) => captured.through(),
+        }
+    }
+}
 
 pub(super) async fn load_agents(
     store: &MongoSandboxStore,
     id: &SandboxId,
     session: &mut ClientSession,
-) -> Result<Vec<(Agent, LogSummary)>, ApplyError> {
+) -> Result<Vec<(Agent, Source)>, ApplyError> {
     let agents = load_sandbox_agents(store, id, session).await?;
     let mut rows = Vec::with_capacity(agents.len());
     for agent in agents {
+        if let Some(source) = capture_segmented(store, &agent, session).await? {
+            source
+                .projection()
+                .validate_aggregate(&agent)
+                .map_err(|detail| ApplyError::Domain(SandboxStoreError::Corrupt(detail)))?;
+            rows.push((agent, Source::Segmented(Box::new(source))));
+            continue;
+        }
         let mut entries = Vec::new();
         let complete = scan_complete_log_with_session(
             ScanCaller::RuntimeReconciliation,
@@ -40,16 +68,19 @@ pub(super) async fn load_agents(
         let semantic =
             crate::store::agent_log_integrity::audit_checkpoint(store, &agent, &entries, session)
                 .await?;
-        rows.push((agent, complete.with_semantic(semantic)));
+        rows.push((
+            agent,
+            Source::Legacy(Box::new(complete.with_semantic(semantic))),
+        ));
     }
     Ok(rows)
 }
 
 pub(super) async fn publish_agents(
     store: &MongoSandboxStore,
-    rows: Vec<(Agent, LogSummary)>,
+    rows: Vec<(Agent, Source)>,
     changes: &[SandboxRuntimeLossAgentMutation],
-    at: &str,
+    request: &SandboxRuntimeLossRequest,
     session: &mut ClientSession,
 ) -> Result<(Vec<Agent>, Vec<AgentLogEntry>), ApplyError> {
     let changes = changes
@@ -60,10 +91,78 @@ pub(super) async fn publish_agents(
     let mut logs = Vec::new();
     let mut encoded_logs = Vec::new();
     for (current, complete) in rows {
-        let filter = agent_filter(&current)?;
+        let filter = fence_filter(store, &current, session).await?;
+        let complete = match complete {
+            Source::Legacy(summary) => summary,
+            Source::Segmented(source) => {
+                if let Some(change) = changes.get(&current.id) {
+                    let batch = materialize_logs(change, &request.observed_at)?;
+                    let operation = PublicationIdentity {
+                        key: format!(
+                            "runtime-loss:{}:{}:{}",
+                            request.sandbox_id, request.expected_revision, current.id
+                        ),
+                        fingerprint: publication::request_digest(&(
+                            "runtime-loss/v1",
+                            &request.sandbox_id,
+                            request.expected_revision,
+                            &request.expected_runtime,
+                            request.retain_runtime,
+                            request.interruption_cause,
+                            &request.observed_at,
+                            &current.id,
+                        ))
+                        .map_err(ApplyError::Domain)?,
+                        appended_at: request.observed_at.clone(),
+                    };
+                    let prepared = writer_commit::prepare(
+                        store,
+                        session,
+                        &source,
+                        PublicationInput {
+                            operation: &operation,
+                            current: &current,
+                            next: &change.agent,
+                            logs: &batch,
+                            capacity: AppendCapacity::StopOrFailure,
+                            result_digest: publication::result_digest(&(&change.agent, &batch))
+                                .map_err(ApplyError::Domain)?,
+                        },
+                        None,
+                        None,
+                    )
+                    .await?;
+                    writer_commit::persist(
+                        store,
+                        session,
+                        prepared,
+                        AggregateUpdate {
+                            filter,
+                            fields: agent_replacement_fields(&change.agent)
+                                .map_err(ApplyError::Domain)?,
+                        },
+                    )
+                    .await?;
+                    agents.push(change.agent.clone());
+                    logs.extend(batch);
+                } else {
+                    let result = store
+                        .agents
+                        .update_one(filter, doc! {"$inc": {"sandbox_recovery_fence": 1_i64}})
+                        .session(&mut *session)
+                        .await
+                        .map_err(ApplyError::Driver)?;
+                    if result.matched_count != 1 {
+                        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+                    }
+                    agents.push(current);
+                }
+                continue;
+            }
+        };
         let update = match changes.get(&current.id) {
             Some(change) => {
-                let batch = materialize_logs(change, at)?;
+                let batch = materialize_logs(change, &request.observed_at)?;
 
                 let mut fields =
                     agent_replacement_fields(&change.agent).map_err(ApplyError::Domain)?;
@@ -129,19 +228,6 @@ pub(super) async fn publish_agents(
             })?;
     }
     Ok((agents, logs))
-}
-
-fn agent_filter(agent: &Agent) -> Result<Document, ApplyError> {
-    Ok(doc! {
-        "_id": agent.id.as_str(),
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-        "sandbox_id": agent.sandbox_id.as_str(),
-        "owner": agent.owner.as_str(),
-        "revision": signed(agent.revision, "runtime-loss Agent revision")
-            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-        "last_seq": signed(agent.conversation.last_seq, "runtime-loss Agent log sequence")
-            .map_err(|_| ApplyError::Domain(SandboxStoreError::SequenceConflict))?,
-    })
 }
 
 fn materialize_logs(
