@@ -104,6 +104,9 @@ data:
   CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "false"
   # Response projection uses a proven target-turn window; independent rollout.
   CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
+  # Retained-context lookup remains opt-in until the compatible API path is
+  # deployed and its latency and authorization evidence is reviewed.
+  CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED: "false"
   CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED: "false"
   CHRONO_TASK_EXPERIENCE_POLICY: '{"mode":"disabled","accounts":[],"capabilities":[]}'
   # Independent placement rollout selections; these do not attest continuity.
