@@ -149,7 +149,7 @@ impl Bridge {
 
     async fn capture_output(&self, payload: &[u8]) -> crate::Result<Option<ConversationUpdate>> {
         let (capture, mut effects) = UpdateRelay::capture();
-        self.receive(payload, &capture).await;
+        self.receive(payload, &capture).await?;
         let effect = effects.try_recv().ok();
         if effects.try_recv().is_ok() {
             return Err(AdapterError::Rejected(
