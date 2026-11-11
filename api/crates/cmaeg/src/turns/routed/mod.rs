@@ -31,6 +31,7 @@ mod media_status;
 mod media_work;
 mod media_worker;
 mod model;
+mod non_admission;
 mod preparation;
 pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
 #[cfg(test)]
