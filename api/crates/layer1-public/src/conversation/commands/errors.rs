@@ -81,7 +81,7 @@ pub(super) fn unbound_failure(command: &AgentCommand, status: &CommandStatusView
         ) => {
             let reason = code.budget_error().expect("budget failure variant");
             (
-                StatusCode::PAYMENT_REQUIRED,
+                crate::rest::instance_problem::budget_status(reason),
                 reason.code(),
                 reason.guidance(),
             )

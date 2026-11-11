@@ -165,12 +165,17 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
             "The Agent command queue is full. Retry the same request after capacity is available.",
             None,
         ),
-        CommandAdmissionError::Ledger(CommandLedgerError::Budget(reason)) => error(
-            StatusCode::PAYMENT_REQUIRED,
-            reason.code(),
-            reason.guidance(),
-            None,
-        ),
+        CommandAdmissionError::Ledger(CommandLedgerError::Budget(reason)) => {
+            let mut response = error(
+                crate::rest::instance_problem::budget_status(reason),
+                reason.code(),
+                reason.guidance(),
+                None,
+            );
+            // A platform stop lifts only by operator revision: no honest retry time.
+            response.headers_mut().remove("retry-after");
+            response
+        }
         CommandAdmissionError::Ledger(CommandLedgerError::IdempotencyConflict) => error(
             StatusCode::CONFLICT,
             "agent_command_key_conflict",

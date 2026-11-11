@@ -258,3 +258,43 @@ async fn identical_unkeyed_runs_are_distinct_and_run_id_stays_correlation_only()
     );
     assert!(f.runtime.0.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn platform_exhaustion_is_a_503_problem_with_the_spec_guidance() {
+    use axum::response::IntoResponse;
+    use layer2_core::budget::BudgetError;
+    let reason = BudgetError::PlatformExhausted;
+    let admission = crate::rest::instance_problem::InstanceProblem::Budget(reason).into_response();
+    assert_eq!(admission.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(admission.headers().get("retry-after").is_none());
+    let wire = body(admission).await;
+    assert!(wire.contains("platform_budget_exhausted"), "{wire}");
+    assert!(wire.contains("send a new message to continue"), "{wire}");
+
+    let f = fixture(false).await;
+    let task = tokio::spawn(f.router.clone().oneshot(request(
+        RESPONSES,
+        Some("platform-stopped"),
+        json!({"conversation":ID,"input":"Refused","stream":true}),
+    )));
+    let record = admitted(&f).await.remove(0);
+    f.store
+        .reject_unclaimed_command(
+            &record.receipt.envelope.command_id,
+            record.revision,
+            CommandFailureCode::PlatformBudgetExhausted,
+            layer2_core::now_rfc3339(),
+        )
+        .await
+        .unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(response.headers().get("retry-after").is_none());
+    let wire = body(response).await;
+    assert!(wire.contains("platform_budget_exhausted"), "{wire}");
+    assert!(wire.contains(reason.guidance()), "{wire}");
+}
