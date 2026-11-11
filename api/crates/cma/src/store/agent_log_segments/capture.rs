@@ -159,3 +159,33 @@ fn pending() -> TransactionLogError {
     )
     .into()
 }
+
+/// Transaction capture uses the exclusive scope; a raw session/mode cannot
+/// establish transaction identity. S1 fills this refusal body after wiring the
+/// same source validation as snapshot capture.
+pub(in crate::store) async fn capture_transaction(
+    _store: &MongoSandboxStore,
+    _current: &Agent,
+    _scope: &mut super::transaction_scope::TransactionScope<'_>,
+) -> Result<CapturedLog, TransactionLogError> {
+    Err(pending())
+}
+
+pub(in crate::store) async fn points_transaction(
+    _store: &MongoSandboxStore,
+    _captured: &CapturedLog,
+    _sequences: &[u64],
+    _scope: &mut super::transaction_scope::TransactionScope<'_>,
+) -> Result<Vec<AgentLogEntry>, TransactionLogError> {
+    Err(pending())
+}
+
+impl CapturedLog {
+    pub(super) fn validate_transaction(
+        &self,
+        _store: &MongoSandboxStore,
+        _scope: &super::transaction_scope::TransactionScope<'_>,
+    ) -> Result<(), TransactionLogError> {
+        Err(pending())
+    }
+}
