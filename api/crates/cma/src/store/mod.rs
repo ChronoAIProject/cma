@@ -98,6 +98,7 @@ pub(crate) mod native_prepared;
 pub mod operation;
 mod operator_profiles;
 mod operator_sandboxes;
+mod platform_write_coordination;
 mod profile_documents;
 #[cfg(test)]
 mod profile_index_tests;
