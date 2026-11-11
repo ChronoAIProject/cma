@@ -3,8 +3,8 @@
 Pre-review 2 baseline: `34bcc3667`, including normal slice/develop merges; branch
 `tl/cma-log-segments/integration-20261111`; develop `8167d01d8` is included.
 Mechanical follow-ups are `efc880523` and `3cb7a3348`, detailed below.
-Latest code assembly `c3ca9e3aa` includes proof/schema pin `c4e4b995a`,
-S1 `f0d9746ef`, S4 `984d881ee`, S5 `5123295c3` and develop `cf1d6ce54`;
+Latest code assembly `41c74a702` includes proof/schema pin `c4e4b995a`,
+S1 `f0d9746ef`, S4 `984d881ee`, S5 `3aaa55395` and develop `cf1d6ce54`;
 combined gates are queued against that immutable source.
 No integration PR is ready. Pre-review 2 has four unresolved P1s; P1-2 is
 closed in source, while exact combined qualification remains a release gate.
@@ -24,7 +24,7 @@ closing an issue whose production acceptance is still missing.
 | S2 composition / integration | scheduler `541c3f7f2`; merge checkpoint `e47527cbf` | Shared registration, runtime authority, accepted-work scheduler qualification, completed-work/loss routing composition and combined gates. |
 | S3 transcript consumers | `c62ab928f` (`bc08dc4a0` fixes) | Fixture sequence corrected; title/usage facts use projections. Transcript still traverses lifetime data; golden parity, pagination and scale evidence remain open. |
 | S4 publication | `984d881ee` (composition gates `fbe139132`) | Remaining command/discovery/claim roots; response-interval metadata; segmented capacity successor; combined root qualification. |
-| S5 capacity recovery | `5123295c3` | Current activation domain helpers, later-progress restart/loss tests and strict BSON/discovery corrections integrated; S4 service caller and actual current-source qualification pending. |
+| S5 capacity recovery | `3aaa55395` | Current activation domain helpers, later-progress restart/loss tests and strict BSON/discovery corrections integrated; S4 service caller and actual current-source qualification pending. |
 | Develop | `8167d01d8` | Normally included; later develop merges require affected checks at the resulting candidate. |
 
 S2's new scheduler retains at most 32 candidates, executes at most two original
@@ -376,35 +376,10 @@ queued separately under heavy-1. No current heavy-pass claim or API signature
 change. S4 agreement and S5 actual later-progress caller qualification remain.
 
 
-### S1 final published response handoff — f0d9746ef
+### Reader and later-progress checkpoint archive
 
-Normally pushed `f0d9746efd52d9d183dcb9d72e2f275cca6b8278` on
-`tl/cma-log-segments/response-consumers`. Code stays exactly
-`b9d390634745c0d78e287ea238934187ebe18a94`; later commits are documentation
-only. Current develop8167d01d8 is included. See the updated
-`2026-11-12-response-consumer-handoff.md` and its committed docs/notes copy.
-
-Current code:16 configuration/window passes and13 actual Mongo passes. Strict
-CMA finished with22 normal-target and20 test-target unused shared roots, no
-response/compatibility diagnostic; preserve the real S2/S4/S5 caller integration
-instead of suppressions. Final fmt/whitespace/source-size6160 passed; canonical
-secret scan3834commits,zero findings. No independent PR or readiness claim.
-
-All owned gates ended. Target and source exports removed:2.245GiB,62.32GiB free
-at readback. Recorded fixture containers/volumes absent; both lock inodes intact.
-Project9 stays In Progress. Evidence milestones:
-- https://github.com/ChronoAIProject/cma/issues/1349#issuecomment-6807100035
-- https://github.com/ChronoAIProject/cma/issues/1674#issuecomment-6807100943
-
-
-### S5 current domain pass and later-progress Mongo checkpoint —5123295c3
-
-At clean11f381ea0e2677affdc710aa1a575903824f20a2 the affected-layer gate9 passed:49core/8HTTP/7adapter, zero failures and zero ignored. All three new current_activation domain cases executed. Exact log2026-11-12-s5-affected-units-11f381ea0.log. The existing shared lock was released; one target is retained for immediate strict/CMA/Mongo qualification.
-
-Normally merged published audit-compatible current-proof44ad3819889e8c196a0dafd5a851227a8360cbb2 (API unchanged). Added three actual-Mongo test functions covering five fresh fixtures plus the current-evidence refusal variants: real worker and loss handler after keyed output or shared-publisher turn/input/fence progress; stale native confirmation; missing/v1/wrong-digest current publication; current publication or Retiring parent changes during native IO before acknowledgement. Read snapshots use one committed transaction. All tests assert unchanged original carrier/publication and no ordinary work/input replay. Native is a counted no-input stub, not production proof. Source files368/249/222lines (all under500; exact post-format counts in source).
-
-Pushed5123295c3 after fetch/normal develop merge (already current). Strict four-package gate8 is queued on this clean source; light gates are running. Actual later-progress execution still requires the allocated S4 service.rs::activation_authorized consumer of the already-published11f381ea0 helpers. S5 has not edited that transferred path. Earlier strict PASS stays at024de5168 and affected-layer counts at11f381ea0. No new-head Mongo/activation/PR-ready claim. Temporary staged Rust files were applied and removed from notes.
-
+The S1 final reader handoff and initial S5 later-progress evidence are retained
+in [coordination history 9](2026-11-12-segments-coordination-history-9.md).
 
 ## P1-3 proof delivery and S4 caller handoff — 05:20 SGT
 
@@ -479,3 +454,38 @@ Runner qualification at `c3ca9e3aa`: **31 passed, 0 failed, 0 skipped**,
 contracts; they are not actual Mongo evidence. Formatting/config checks passed;
 base-to-working-tree whitespace passes after trimming the history6 EOF blank.
 The canonical secret scan at `b0b4943c5` passed3,977commits with zero findings.
+
+
+### S5 lint correction and develop synchronization —3aaa5539512ac97440fb665b4e3352bc0f56ae8e
+
+Strict at5123295c3 exited101 with one unused ReconnectAction test re-export in the shared sandbox registry; all other diagnostics absent. S5 fixed its owned test in3cf361ac4 by exercising the legacy positive router decision directly and asserting zero restricted native attachments. No shared registry edit, suppression or synthetic production consumer. Exact failed log2026-11-12-s5-strict-5123295c3.log.
+
+Develop advanced tocf1d6ce54 (#1719). The normal merge had two conflicts: sandbox/composition.rs construction and infra/api/configmap.yaml flags. The mechanical resolution preserves capacity_worker/capacity_recovery, the reviewed event-driven reconciliation builder, parent pacing=false and event-driven reconciliation=false. The3cf checkpoint push preceded completion of this newly fetched merge; it was immediately followed by the normal resolved merge3aaa55395, another fetch/merge verification and push. No history rewrite. Pushed head3aaa5539512ac97440fb665b4e3352bc0f56ae8e is clean and includes current develop. All imported feature/parser/test changes are retained.
+
+Formatting and configuration-documentation checks pass. Root restart374lines, later249, support218. Full source-size/history scan and strict gate8 are in progress/queued on the final merged source. Core49/HTTP8/adapter7 remain passed at unchanged domain pin11f381ea0. Later-progress Mongo source is ready but its S4-owned service.rs::activation_authorized caller still needs the already-published helpers; no actual later-progress pass claimed. Native Unsupported stays typed.
+
+
+### S1 response callers — source prepared, gates queued
+
+Caller fix `982360fa279ba8f633c0fea53ac0cf7389d5ff79` on reader-foundation
+attaches the retained reader to AgentProjectionServices before both legacy and
+v2 construction; removes the v2-only attachment. Normal develop merge
+`74dfc3406eadecabde6c3fca1b29cca1ff783735` preserves both disabled flags in
+the manifest conflict. No other shared composition was changed by the fix.
+Two production-factory regressions cover retrieval, ownership refusal, and
+stream source failure with paging disabled. These commits are local pending
+the targeted tests and strict CMA run; not a passing-gate or published claim.
+The immutable gate export is queued on existing heavy-1, with two Cargo jobs.
+At 05:33 SGT heavy-0 was absent; heavy-1 retained inode 160080032. S1 did not
+remove, recreate or modify either lock and continues on heavy-1.
+
+
+### Replaced unexecuted combined gate source —41c74a702
+
+Normally integrated S5 `3aaa55395`, including the real legacy-router test fix
+`3cf361ac4` for its one strict unused re-export diagnostic. No production
+registry suppression or synthetic consumer was added. The prior combined
+`c3ca9e3aa` coordinator was still waiting for narrow proof Mongo: stopped before
+any Cargo, lock acquisition or fixture allocation. Its unused export was removed.
+The replacement immutable source is `41c74a702`, with the same separately
+locked gate list. No heavy result is attributed to either combined head yet.
