@@ -13,6 +13,7 @@ pub(crate) struct FeatureFlags {
     pub model_request_budget_writes_enabled: bool,
     pub bounded_title_reads: bool,
     pub sandbox_snapshot_reads: bool,
+    pub sandbox_batched_reads: bool,
     pub sandbox_detail_timings: bool,
     pub bounded_response_reads: bool,
     pub v2_ui_transport: bool,
@@ -38,7 +39,7 @@ impl FeatureFlags {
                 _ => Err(format!("{key} must be true or false")),
             }
         }
-        Ok(Self {
+        let flags = Self {
             bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
             output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
             bounded_update_relay: flag(lookup, "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED")?,
@@ -47,6 +48,7 @@ impl FeatureFlags {
             bounded_permission_state: flag(lookup, "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED")?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
+            sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
             sandbox_detail_timings: flag(lookup, "CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")?,
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
@@ -67,7 +69,11 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
             )?,
-        })
+        };
+        if flags.sandbox_batched_reads && !flags.sandbox_snapshot_reads {
+            return Err("CHRONO_SANDBOX_BATCHED_READS_ENABLED requires CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED".into());
+        }
+        Ok(flags)
     }
 }
 
@@ -222,6 +228,38 @@ mod sandbox_read_tests {
                     Ok((name == key).then(|| invalid.to_owned()))
                 })
                 .is_err());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod sandbox_batch_tests {
+    use super::*;
+    #[test]
+    fn batching_is_default_off_strict_and_requires_snapshot_sessions() {
+        for snapshot in [false, true] {
+            for value in [
+                None,
+                Some("false"),
+                Some("true"),
+                Some("TRUE"),
+                Some("1"),
+                Some(" true "),
+                Some(""),
+            ] {
+                let flags = FeatureFlags::from_lookup(&mut |key| {
+                    Ok(match key {
+                        "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED" => Some(snapshot.to_string()),
+                        "CHRONO_SANDBOX_BATCHED_READS_ENABLED" => value.map(str::to_owned),
+                        _ => None,
+                    })
+                });
+                match value {
+                    None | Some("false") => assert!(!flags.unwrap().sandbox_batched_reads),
+                    Some("true") if snapshot => assert!(flags.unwrap().sandbox_batched_reads),
+                    _ => assert!(flags.is_err()),
+                }
             }
         }
     }
