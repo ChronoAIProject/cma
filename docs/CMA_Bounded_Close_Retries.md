@@ -81,6 +81,9 @@ capacity_settlement/close_process separately; its scans are intentionally not
 eliminated. Global avoided-write counters include all trusted writers, so use
 caller/step attribution and actual sample coverage; do not claim a per-retry or
 CPU saving from fleet totals. No synthetic failure or production fault injection.
+Publication timing logs only emit at 100 ms or above, or after multiple attempts;
+their count is not the total publication denominator. Missing complete exposure
+must be reported as partial evidence.
 
 Hold expansion for missing eligible exposure, untrusted fallback growth or
 unmatched windows. Roll back on altered pending work/receipt/stop semantics,
