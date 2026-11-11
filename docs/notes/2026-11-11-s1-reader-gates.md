@@ -88,10 +88,29 @@ performed by this qualification.
 
 ## Follow-up source checkpoint
 
-Schema/control registration, the audit argument parser and shared output-index
-rebuild follow the capture gate above. Their exact executable results must be
-recorded separately; the earlier counts do not claim qualification of later
-source. Formatting, source size and candidate-history secret checks passed at
-`9f2fe7ac0`. The new unit/Mongo gates are queued under the existing shared lock.
-No review-ready or activation claim is made while strict production wiring,
-operator authority and migration registration remain outstanding.
+At `40af6d461`, thirteen focused codec, audit-batch, parser and shared-output
+unit tests passed. The expanded Mongo selection passed thirty-six cases and
+failed four: the output rebuild exceeded the unchanged audit time bound, and
+three audit assertions omitted the new output records or expected an error
+instead of the durable corruption disposition.
+
+The corrective source at `e85e5de1f` sends each fenced evidence batch as one
+bounded update command, requires a complete acknowledgment without embedded
+write errors, and asserts exact per-kind output evidence and durable corruption.
+It preserves the original source/cache, transaction, query and time limits.
+Production transaction capture uses only `TransactionScope`; the invalid raw
+mode remains solely in negative qualification tests.
+
+Checkpoint `8b81db391` normally consumes the narrow S4 keyed-publication and
+bounded-read delegation at `072ab7465`. Existing scaling tests now emit aggregate
+source rows/bytes, read commands and timings without changing their assertions.
+Formatting, repository size, all touched Rust files below the sprint line limit,
+and full candidate-history secret scanning passed at this checkpoint.
+
+The corrective executable gates have not run: two shared-lock attempts timed
+out before any child process started. A later idle waiter was explicitly stopped
+before execution. The earlier passing counts do not certify the later changes.
+No review-ready or activation claim is made. Strict production lint, narrow
+operator/migration integration, the format-2 recovery carrier's frozen discovery
+contract and matching schema remain outstanding. The develop merge freeze is
+respected; these checkpoints are published only to the slice branch.
