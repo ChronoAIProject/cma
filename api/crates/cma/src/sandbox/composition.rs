@@ -44,6 +44,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub bounded_live_fragments: bool,
     pub parent_not_ready_pacing_enabled: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
@@ -99,10 +100,11 @@ impl SandboxLifecycleComposition {
                 ),
             )),
         ));
-        let updates = DurableAgentUpdateRecorder::with_spend_source(
+        let updates = DurableAgentUpdateRecorder::with_live_budget(
             dependencies.store.clone(),
             dependencies.store.writer_policy.clone(),
             Some(dependencies.store.clone()),
+            config.bounded_live_fragments,
         );
         let registry = Arc::clone(&dependencies.registry);
         let suggestions = super::suggestion_worker::SuggestionWorker::new(
