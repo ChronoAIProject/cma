@@ -228,6 +228,16 @@ pub trait AgentLogStore: Send + Sync {
         }
     }
 
+    /// Read a trusted transcript projection while visiting source pages. The
+    /// returned transcript owns only public output; stores that cannot prove a
+    /// bounded projection return `None` and retain the compatibility path.
+    async fn agent_log_transcript_projection(
+        &self,
+        _agent: &Agent,
+    ) -> Result<Option<super::AgentTranscript>, SandboxStoreError> {
+        Ok(None)
+    }
+
     /// Read only rows that can change usage through a captured Agent head.
     /// `None` means the store cannot prove a bounded usage projection for the
     /// requested format, so callers must use the complete compatibility read.
@@ -240,6 +250,15 @@ pub trait AgentLogStore: Send + Sync {
         // here would let unrelated malformed entries bypass the exact fold.
         // Mongo supplies the trusted proof alongside its selected rows.
         let _ = agent;
+        Ok(None)
+    }
+
+    /// Read usage from the maintained semantic projection without retaining
+    /// selected source rows. Legacy or unproven stores return `None`.
+    async fn agent_log_usage_projection(
+        &self,
+        _agent: &Agent,
+    ) -> Result<Option<super::AgentUsageReading>, SandboxStoreError> {
         Ok(None)
     }
 }
