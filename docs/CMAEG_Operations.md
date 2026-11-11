@@ -571,7 +571,9 @@ for exact identity and source restrictions.
 
 CMAEG serves Prometheus text at `/metrics` on `CMAEG_METRICS_LISTEN`
 (`0.0.0.0:9091` by default). The public listener does not expose that path.
-Keep the scrape listener private to the cluster. Registration is process-wide
+Keep the scrape listener private to the cluster. The deployment declares the
+platform Pod discovery metadata described in [CMA observability](CMA_Observability.md);
+verify active collector coverage separately. Registration is process-wide
 and idempotent. All duration histograms use seconds with buckets
 `0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10`, except those named
 `cmaeg_media_*`, which use `0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8, 15, 30, 60, 90`:

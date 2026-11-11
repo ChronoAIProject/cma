@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn unmatched_checkout_start_is_an_event_not_a_permanent_queue_entry() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    metrics::with_local_recorder(&recorder, || {
+        let mut options = ClientOptions::default();
+        observe(&mut options);
+        let Some(EventHandler::Callback(callback)) = options.cmap_event_handler else {
+            panic!("pool observer must use a synchronous callback");
+        };
+        // The pinned driver emits no matching end if checkout is cancelled.
+        let event = serde_json::from_str("{}").unwrap();
+        callback(CmapEvent::ConnectionCheckoutStarted(event));
+    });
+    let text = handle.render();
+    assert!(text.contains("cma_mongo_checkout_started_total 1"));
+    assert!(!text.contains("cma_mongo_checkouts_pending"));
+    assert!(!text.contains("cma_mongo_pool_events_total"));
+}
+
+#[test]
 fn scrape_observes_checkout_failures_and_occupancy_without_connection_identifiers() {
     let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
     let handle = recorder.handle();
