@@ -1,6 +1,6 @@
 # Segmentation integration and PR plan
 
-Current source: local `541c3f7f2`, last pushed `e7e4cdda0`, branch
+Current source: `e47527cbf` after normal slice merges, last pushed `e7e4cdda0`, branch
 `tl/cma-log-segments/integration-20261111`; develop `42fbf75de` is included.
 No integration PR is ready. All four pre-review P1s remain activation blockers.
 The source remains default-off. Production was not touched.
@@ -16,10 +16,10 @@ closing an issue whose production acceptance is still missing.
 | Slice | Normally integrated pin | Remaining delivery / owner |
 | --- | --- | --- |
 | S1 readers/schema | `e955d37f1` | Exact index drift and shared-reader qualification; response consumers now owned by S1 under the 01:55 allocation below. |
-| S2 composition / integration | `0eba12933` plus merge checkpoint `dcb94ae22` | Shared registration, runtime authority, accepted-work scheduler qualification, completed-work/loss routing composition and combined gates. |
-| S3 transcript consumers | `a744a5a3f` | Replace lifetime traversal with indexed requested-page facts; preserve readers when flags close; golden parity and scale evidence. |
-| S4 publication | `e094ffeea` | Remaining command/discovery/claim roots; response-interval metadata; segmented capacity successor; combined root qualification. |
-| S5 capacity recovery | `c3c8c5f59` | Admission-conflict diagnosis, completed-work/loss routing proof, v2 due-work discovery and native producer qualification. |
+| S2 composition / integration | scheduler `541c3f7f2`; merge checkpoint `e47527cbf` | Shared registration, runtime authority, accepted-work scheduler qualification, completed-work/loss routing composition and combined gates. |
+| S3 transcript consumers | `e300190a6` (`bc08dc4a0` fixes) | Fixture sequence corrected; title/usage facts use projections. Transcript still traverses lifetime data; golden parity, pagination and scale evidence remain open. |
+| S4 publication | `6b665b1a4` | Remaining command/discovery/claim roots; response-interval metadata; segmented capacity successor; combined root qualification. |
+| S5 capacity recovery | `4d7f6d680` | Strict BSON shape, discovery batch, completed restart/loss routing and enum boxing integrated; actual restart/authority tests and native producer qualification still pending. |
 | Develop | `42fbf75de` | Normally included; later develop merges require affected checks at the resulting candidate. |
 
 S2's new scheduler retains at most 32 candidates, executes at most two original
@@ -79,7 +79,7 @@ S1 owns schema/checksum validation, S5 codec/discovery, S2 shared migration/role
 | P1-1 ordinary writers after v2 adoption | S4, with S1 aggregate save and S5 due discovery | OPEN. Original worker/control/lifecycle source is integrated; reserve/contextual-answer/targeted-control/cancellation, restart discovery, claims and aggregate saves must all preserve exact v2 authority. Test real adopted fixtures through public roots and unknown outcomes. |
 | P1-2 runtime authority/schema | S2 with S1/S5 | OPEN, real isolated-role gate now passes at `afc60d98a`. Latest exact-index drift changes still need combined Mongo qualification and review. No ad hoc carrier installation in qualification. |
 | P1-3 completed recovery activation | S5 proof/runtime; S2 shared routing | OPEN. Exact registry consumer and resumed completion source are integrated. Completed-work restart/loss routing must intercept ordinary reconnect; later progress needs positive current supersession proof. Native producer is deferred/Unsupported. |
-| P1-4 indexed response/transcript | S1 response; S3 transcript | OPEN. S3's new helper still scans from zero through the entire head and accumulates matching rows; its title stop does not stop scanning. Required readers must survive flag closure and must not authorize legacy fallback for v2. |
+| P1-4 indexed response/transcript | S1 response; S3 transcript | OPEN. S3 now uses title/usage facts and an incremental transcript fold, but the transcript visitor still scans zero through the lifetime head and returns an unpaged lifetime transcript. Required readers must survive flag closure and must not authorize legacy fallback for v2. |
 | P2-5 unresolved keyed attempt | S4 | Source fix and corrected owner-reported root Mongo tests exist. Await combined rerun and exact-head review; a missing receipt never proves KnownAbort or permits a new attempted result. |
 | P2-6 total child budgets | S5 | Count/byte bounds are integrated; owner-reported oversized-child tests pass on an earlier S5 source. Await combined qualification and review. |
 
@@ -221,10 +221,10 @@ retain their actual slice owners below.
 | Delta6 finding | Owner | Current evidence / next gate | Target (SGT) |
 | --- | --- | --- | --- |
 | D6-1 P1 required authentication ambiguity | S5 source; S2 integration | Explicit required `FromRequestParts` qualification is in `45fc44e33` and current source. Auth-required/public route tests and current combined compile remain the closure gate; source-only correction is not a new CI pass. | Next combined compile; route gate by Thu 08:00 target. |
-| D6-2 P1 lifetime transcript/usage/title traversal | S3 | OPEN. `agent_log_segment_reads` still loops from zero to the lifetime head, retains all selected rows, and title completion does not stop the outer scan. Use bounded maintained facts/pages with continuation; 1/10/100/1000-segment fixed-page cost evidence must hold. | Source Thu 10:00–12:00; scale gates by 18:00 estimate. |
-| D6-3 P2 recovery enum strict lint | S5 | OPEN. Archived strict CMA at `afc60d98a` reproduced `CompletedAttachment` large-enum diagnostic. Narrow boxing correction plus caller/test updates requested; no lint allowance. | Next S5 pin; combined strict run after integration. |
+| D6-2 P1 lifetime transcript/usage/title traversal | S3 | PARTIAL SOURCE FIX. Title/usage now use maintained facts; transcript still loops zero to the lifetime head through `visit_selected` and retains the full projected response. Add requested-page continuation and 1/10/100/1000-segment fixed-page cost evidence. | Source Thu 10:00–12:00; scale gates by 18:00 estimate. |
+| D6-3 P2 recovery enum strict lint | S5 | SOURCE FIX INTEGRATED. S5 `4f3e7022c` boxes `RecoveryConfirmation` and updates real/test constructors. Exact combined strict lint remains pending; no lint allowance. | Next S5 pin; combined strict run after integration. |
 | D6-4 P2 configuration references | S2 | Source corrected in `ce9da2336`; current `node .github/scripts/check-config-docs.mjs` passes for all quoted keys. Review must confirm defaults, prerequisites and retained-reader/settlement behavior; rerun at final candidate. | Local gate passed Thu 02:31; final candidate rerun. |
-| D6-5 P2 fixture/parity/failure matrix | S3 | OPEN. Legacy transcript/usage fixtures still omit persisted top-level `last_seq`; their four earlier failures precede assertions. Repair fixture authority, then actual replica-set legacy/v2 parity, generation/retirement, stale/corrupt/unsupported proof, snapshot/append, revocation-after-buffering, bounds and no-read-writes matrix. Do not weaken production validation. | Fixtures by Thu 06:00 target; full consumer matrix by 18:00 estimate. |
+| D6-5 P2 fixture/parity/failure matrix | S3 | PARTIAL SOURCE FIX. `bc08dc4a0` repairs persisted top-level `last_seq` in legacy transcript/usage fixtures. Actual replica-set legacy/v2 parity, generation/retirement, stale/corrupt/unsupported proof, snapshot/append, revocation-after-buffering, bounds and no-read-writes matrix remains pending. | Fixtures by Thu 06:00 target; full consumer matrix by 18:00 estimate. |
 
 Readiness remains one combined default-off PR, with no schema-first shortcut.
 Earliest strict-green estimate stays Thu 12:00–16:00, conditional on source and
@@ -289,6 +289,15 @@ only separately approved PRs with a valid explicit merge relay can land before i
 The combined PR will not be opened or activation approved from historical gates.
 
 
+### S5 strict enum correction and train disposition — 4f3e7022c
+
+Consumed the integration-reported CompletedAttachment large-enum diagnostic:4f3e7022c boxes only the retained confirmation payload and adapts the production/model constructors. Fresh authority and native confirmation semantics are unchanged; no lint suppression. The bb34b1ae6 waiter was canceled before acquisition (no Cargo/Mongo ran) to avoid knowingly testing a strict-lint failure. Pushed4f3e7022c with current develop already included; clean source is queued for capacity/decoder tests with600-second bounded compilation and separate Mongo acquisition.
+
+Reported to the lead before05:00: S5 is NO-GO for the Thursday08:30 merge cutoff and remains on the Friday train under the02:35 plan. Restart qualification and strict gates remain pending; native production proof is deferred/Unsupported. Continue the same priority without dropping any gate. P1/P2/P3 source corrections and exact future gate evidence remain the next handoff; P2-6 is reviewer-accepted.
+
+Allocated HTTP qualification child: `api/crates/layer1-public/src/responses/v2/indexed_tests/http.rs` (response slice).
+
+
 ## Gate artifact correction — Thu 02:40 SGT
 
 The first nominal scheduler run at `541c3f7f2` reused the archive's older test
@@ -309,9 +318,30 @@ The newer S5 boxed-enum pin is now available and will be normally integrated;
 S3 also published a delta-fix checkpoint for inspection and combined qualification.
 
 
-S4 checkpoint `6b665b1a4` is normally integrated. Preserve its source-specific
-124-pass report and scoped-root ownership acknowledgement separately in
-[S4 handoff evidence](2026-11-12-s4-handoff-evidence.md); these do not qualify the
-combined source. S4 also owns `sandbox_reconciliation/reconciliation.rs` and its
-focused root tests/local registration. Shared canonical selector additions are
-limited to those root tests and integrated by S2.
+S5 follow-up4d7f6d680 is pushed. The4f3e7022c capacity attempt reached CMA test compilation and failed only on five E0603 diagnostics: the new store Mongo regression imported private sandbox modules. No tests executed. Re-exported the required types through the existing cfg(test) binding_lifecycle_test_support module and changed the test import; production module visibility is unchanged. Clean4d7f6d680 is fixed and queued for the rerun. The slot was released on compilation failure; no Mongo fixture was created.
+
+
+## Combined assembly after the handoff — Thu 02:45 SGT
+
+Normally merged S4 `6b665b1a4`, S5 `4d7f6d680` and S3 `e300190a6` at combined
+`5e5f130a6`. Conflict resolution retained every independent default-off feature,
+the two-attempt accepted-work scheduler, the actual completed-reconnect router,
+and S5's additional configuration tests. S4's fresh report is preserved in
+`docs/notes/2026-11-12-s4-handoff-evidence.md`: 124 owner-reported passes at its
+own source and 22 shared strict diagnostics. Those are not combined results.
+S4 also owns `sandbox_reconciliation/reconciliation.rs` and its focused local
+root tests; shared canonical selector integration remains S2-owned.
+
+Own mechanical correction `e47527cbf` passes the captured `Head` by reference to
+S1's `visit_range` signature. No response semantics were edited. Current format,
+configuration-reference and 6,159-file source-size gates pass. No current combined
+strict/Rust/Mongo pass is claimed; source-switch artifact invalidation and required
+scheduler-test inventory now precede the next gate. The older archive's Mongo
+batch is still running/queued and retains its own exact-source evidence only.
+
+D6-2 remains open in actual source: `agent_log_segment_reads.rs:98` starts at zero,
+and `projected_transcript` supplies `expected.conversation.last_seq` at line 184.
+Incremental folding removes the separate selected-log vector, but it does not
+bound lifetime query work or provide a caller continuation. S3 must qualify a
+requested page independently of unrelated lifetime history. This is why the
+new checkpoint does not change the Thursday wave-1 NO-GO.

@@ -158,6 +158,7 @@ Companion to [the five-slice plan](2026-11-11-log-segments-plan.md). Each exact 
 | `api/crates/cma/src/store/sandbox_reconciliation.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/sandbox_reconciliation/agents.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/sandbox_reconciliation/agents/scoped.rs` | S4 | cma-seg-lead |
+| `api/crates/cma/src/store/sandbox_reconciliation/reconciliation.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/sandbox_reconciliation/transaction.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/sandbox_reconciliation/transaction/scoped.rs` | S4 | cma-seg-lead |
 | `api/crates/cma/src/store/sandbox_unpublished_recovery.rs` | S2 | cma-db-contention |
