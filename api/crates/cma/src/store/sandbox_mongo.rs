@@ -103,7 +103,6 @@ pub struct MongoSandboxStore {
     pub(super) bounded_title_reads: bool,
     pub(super) bounded_transcript_reads: bool,
     pub(super) bounded_response_reads: bool,
-    pub(super) bounded_transcript_reads: bool,
     pub(crate) writer_policy:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub(super) bindings: super::bindings::BindingCollections,
@@ -199,7 +198,6 @@ impl MongoSandboxStore {
             bounded_title_reads: false,
             bounded_transcript_reads: false,
             bounded_response_reads: false,
-            bounded_transcript_reads: false,
             writer_policy: Default::default(),
             bindings: super::bindings::BindingCollections::open(&database).await?,
             client: client.clone(),
