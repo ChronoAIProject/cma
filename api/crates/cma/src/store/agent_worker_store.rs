@@ -7,13 +7,38 @@ use layer2_core::sandbox::store::{
     AgentConnectionRecoveryRequest, AgentStore, AgentWorkMutation, AgentWorkerStore, Page,
     PageRequest, SandboxStoreError, MAX_PAGE_SIZE,
 };
-use mongodb::bson::{doc, Bson};
+use mongodb::bson::doc;
 
 use super::child_writer_claims::{persist, ChildWriterClaim};
 use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS};
 
 #[async_trait::async_trait]
 impl AgentWorkerStore for MongoSandboxStore {
+    async fn agent_command_admission_generation(
+        &self,
+        id: &AgentId,
+    ) -> Result<Option<u64>, SandboxStoreError> {
+        let row = self
+            .agents
+            .find_one(doc! {"_id": id.as_str(),
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION})
+            .projection(doc! {"agent_command_admission_fence": 1})
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        Ok(row
+            .as_ref()
+            .and_then(super::agent_failure_pacing::command_generation))
+    }
+
+    async fn commit_agent_work_retry(
+        &self,
+        mutation: AgentWorkMutation,
+        observed: layer2_core::sandbox::store::AgentRetryObservation,
+    ) -> Result<(), SandboxStoreError> {
+        super::agent_worker_transaction::commit_agent_work(self, mutation.clone()).await?;
+        super::agent_failure_pacing::record(self, &mutation, &observed).await
+    }
+
     async fn prepared_agent_replay_matches(
         &self,
         agent: &layer2_core::sandbox::Agent,
@@ -146,18 +171,9 @@ impl AgentWorkerStore for MongoSandboxStore {
         let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
         let mut cursor = self
             .agents
-            .find(doc! {
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "work_pending": true,
-                "work_ready_at": { "$lte": now },
-                "$or": [
-                    { "work_lease_expires_at": Bson::Null },
-                    { "work_lease_expires_at": { "$lte": now } },
-                ],
-            })
-            .projection(doc! { "_id": 1 })
-            .sort(doc! { "_id": 1 })
-            .limit(i64::from(limit))
+            .aggregate(super::agent_failure_pacing::discovery::pipeline(
+                self, now, limit,
+            ))
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let mut ids = Vec::new();
@@ -185,9 +201,30 @@ impl AgentWorkerStore for MongoSandboxStore {
         lease_expires_at: String,
     ) -> Result<Option<layer2_core::sandbox::Agent>, SandboxStoreError> {
         for _ in 0..TRANSACTION_ATTEMPTS {
-            let Some(mut agent) = self.get_agent(id).await? else {
+            let Some(row) = self
+                .agents
+                .find_one(doc! {"_id": id.as_str()})
+                .await
+                .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+            else {
                 return Ok(None);
             };
+            let mut agent = super::agents::read_agent(&row)?;
+            if agent
+                .work
+                .lease
+                .as_ref()
+                .is_some_and(|lease| lease.expires_at > now)
+            {
+                return Ok(None);
+            }
+            match super::agent_failure_pacing::decision(self, &row, &agent, &now).await? {
+                super::agent_failure_pacing::Decision::Hold => return Ok(None),
+                super::agent_failure_pacing::Decision::Wake => {
+                    agent.work.ready_at = now.clone();
+                }
+                super::agent_failure_pacing::Decision::Ordinary => {}
+            }
             if !agent.work.is_due(&now) {
                 return Ok(None);
             }
