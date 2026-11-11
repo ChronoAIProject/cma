@@ -105,6 +105,7 @@ fn fixture() -> LedgerMaintenancePlanV1 {
         format: "ledger-maintenance-plan-v1".into(),
         binding,
         source: LedgerMaintenanceSnapshotV1 {
+            source_documents_sha256: "a".repeat(64),
             sandbox,
             sandbox_event_head: 1,
             agents: vec![agent],

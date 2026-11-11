@@ -23,6 +23,9 @@ pub struct LedgerMaintenanceLaneV1 {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LedgerMaintenanceSnapshotV1 {
+    /// Hash of the complete authoritative rows, including sidecars. Only this
+    /// workflow's marker and serialization fences are excluded by the adapter.
+    pub source_documents_sha256: String,
     pub sandbox: Sandbox,
     pub sandbox_event_head: u64,
     pub agents: Vec<Agent>,
@@ -38,8 +41,9 @@ impl LedgerMaintenanceSnapshotV1 {
         at: &str,
     ) -> Result<(), LedgerMaintenancePlanRefusal> {
         binding.validate().map_err(|_| invalid())?;
-        if self.agents.len() + self.workspaces.len() + self.worktrees.len()
-            > MAX_LEDGER_MAINTENANCE_RESOURCES
+        if !valid_sha256(&self.source_documents_sha256)
+            || self.agents.len() + self.workspaces.len() + self.worktrees.len()
+                > MAX_LEDGER_MAINTENANCE_RESOURCES
             || self.command_lanes.len() != self.agents.len()
             || !ordered(self.agents.iter().map(|row| row.id.as_str()))
             || !ordered(self.workspaces.iter().map(|row| row.id.as_str()))
