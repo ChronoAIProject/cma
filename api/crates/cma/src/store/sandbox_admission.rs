@@ -15,6 +15,7 @@ use super::sandbox_events::{event_document, read_event};
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::sandboxes::{admitted_sandbox_document, read_sandbox, read_sandbox_admission_replay};
 
+mod global;
 mod retry;
 
 const REPLAY_CANDIDATE_LIMIT: i64 = 2;
@@ -110,6 +111,7 @@ where
     if let Some(sandbox) = replay_in_transaction(store, admission, session).await? {
         return Ok(AdmissionReceipt::Existing(sandbox));
     }
+    global::admit(store, session).await?;
     let live = store
         .sandboxes
         .count_documents(doc! { "owner": owner, "retired_at": Bson::Null })
