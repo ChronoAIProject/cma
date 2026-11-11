@@ -247,22 +247,36 @@ impl AgentLogProjectionState {
         }) {
             return Err("Agent steering fence has no adjacent owner message".into());
         }
-        let changes = self.apply(agent, entry, queued_owner)?;
-        match entry.kind {
-            AgentLogKind::ConversationOpened {
-                runtime_generation, ..
-            } => {
-                self.max_opened_generation = self.max_opened_generation.max(runtime_generation);
-            }
-            AgentLogKind::RuntimeGenerationRetired {
-                runtime_generation, ..
-            } => {
-                self.max_retired_generation = self.max_retired_generation.max(runtime_generation);
-            }
-            _ => {}
+        if queued_owner.is_some_and(|sequence| {
+            sequence >= entry.seq
+                || !self
+                    .unconsumed_queue
+                    .iter()
+                    .any(|source| source.sequence == sequence)
+        }) {
+            return Err("queued turn has no unconsumed original owner message".into());
         }
+        let changes = self.apply(agent, entry, queued_owner)?;
         self.through_seq = entry.seq;
         Ok(changes)
+    }
+
+    /// Verify a point-proved original queued input before publishing its turn.
+    pub fn validate_queued_source(&self, entry: &AgentLogEntry) -> Result<(), String> {
+        let AgentLogKind::OwnerMessage { content } = &entry.kind else {
+            return Err("queued source is not an original owner message".into());
+        };
+        let hash = legacy::payload_digest(content);
+        if entry.seq == 0
+            || entry.seq > self.through_seq
+            || !self
+                .unconsumed_queue
+                .iter()
+                .any(|source| source.sequence == entry.seq && source.payload_sha256 == hash)
+        {
+            return Err("queued source differs from certified owner input".into());
+        }
+        Ok(())
     }
 
     pub fn validate_aggregate(&self, agent: &Agent) -> Result<(), String> {
@@ -310,6 +324,21 @@ impl AgentLogProjectionState {
                 .latest_turn
                 .is_some_and(|turn| self.latest_task_status.is_none_or(|seq| seq < turn))
             || self.unconsumed_queue.len() > super::MAX_QUEUED_AGENT_MESSAGES
+            || self.unconsumed_queue.len()
+                != agent
+                    .conversation
+                    .queued_messages
+                    .iter()
+                    .filter(|queued| queued.state == super::QueuedMessageState::Queued)
+                    .count()
+            || self
+                .unconsumed_queue
+                .windows(2)
+                .any(|pair| pair[0].sequence >= pair[1].sequence)
+            || self
+                .unconsumed_queue
+                .iter()
+                .any(|source| source.sequence == 0 || source.sequence > self.through_seq)
             || [self.latest_commands, self.latest_plan, self.latest_metadata]
                 .into_iter()
                 .flatten()
