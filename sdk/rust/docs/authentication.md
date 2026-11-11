@@ -92,3 +92,9 @@ controlled by the API startup flag, default false; the SDK continues projecting
 Explicit preference recovery is backed by durable custody, with a separate
 non-authenticating reference cookie. Same-origin logout revokes that proof;
 cross-site logout revokes the session without changing the preference.
+
+Browser binding cookies last 660 seconds: the ten-minute authorization attempt
+plus a one-minute callback-processing margin. Attempt expiry is unchanged.
+Predecessor attempts complete inline after reservation, and logout tombstones
+last at least as long as the binding cookie. Neither SDK handles the OAuth code
+exchange; browser cookies remain server-owned.

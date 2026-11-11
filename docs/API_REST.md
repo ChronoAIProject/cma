@@ -264,8 +264,10 @@ session but cannot establish this new opt-out.
 
 Callbacks mint fresh session tokens and atomically link them to pending binding
 custody; either cookie revokes the session. Predecessor attempts remain readable,
-and new fields are additive. Legacy callbacks first establish the extended cookie
-through a same-origin handoff. Consent renews only live pending custody. The complete
+and new fields are additive. Predecessor callbacks reserve custody and complete
+inline; logout tombstones prevent resurrection. Binding cookies last 660 seconds
+(ten-minute attempt plus a one-minute callback margin); tombstones last at least
+that long. Consent renews only live pending custody. The complete
 encoded absolute login URL is limited to 4,096 ASCII bytes, measured after query
 encoding. Server and SDKs reject oversized or non-ASCII inputs; the web retains
 large drafts and uses path-only explicit sign-in instead of navigating to an
