@@ -306,3 +306,51 @@ async fn worker_restart_after_material_pin_before_runtime_mutation_uses_no_catal
         ready.conversation.conversation_id
     );
 }
+
+#[tokio::test]
+async fn terminal_upgrade_reasons_reach_the_owner_and_keep_the_confirmed_version() {
+    for reason in [
+        layer3_adapter::AgentSkillUpgradeRefusal::Modified,
+        layer3_adapter::AgentSkillUpgradeRefusal::PreviousUnavailable,
+        layer3_adapter::AgentSkillUpgradeRefusal::RetentionFull,
+    ] {
+        let versions = Versions::new(vec![
+            vec![runtime_skill("1.0", 'a', "original")],
+            vec![runtime_skill("1.1", 'b', "next")],
+        ]);
+        let harness = Harness::with_upgrade_support(versions).await;
+        let admitted = harness.admit("named-upgrade", vec![reference("1.0")]).await;
+        let ready = harness.drive_ready(&admitted.id).await;
+        let caller = Caller::new(
+            ready.owner.clone(),
+            Authorization::new([Capability::UseOwnSandboxes]),
+        );
+        let operations =
+            AgentOperationService::new(harness.store.clone(), harness.registry.clone());
+        operations
+            .with_skill_upgrades_enabled(true)
+            .install_skill(&caller, &ready.id, reference("1.1"))
+            .await
+            .unwrap();
+        // A new default-closed service refuses new admission; the admitted worker still settles.
+        assert!(!operations.skill_upgrades_enabled());
+        harness.backend.fail_next(
+            WireOperation::InstallAgentSkill,
+            reason.code(),
+            "owner action required",
+        );
+        harness.run(&ready.id, SystemTime::now()).await;
+        let failed = harness.stored(&ready.id).await;
+        let item = failed.work.live_skills.last().unwrap();
+        assert_eq!(item.status, AgentSkillInstallStatus::Failed);
+        assert_eq!(
+            item.error.as_deref(),
+            Some(format!("{}: {reason}", reason.code()).as_str())
+        );
+        assert_eq!(
+            effective(&failed.work, &reference("").id).unwrap().version,
+            "1.0"
+        );
+        assert_eq!(failed.work.step, AgentWorkStep::None);
+    }
+}

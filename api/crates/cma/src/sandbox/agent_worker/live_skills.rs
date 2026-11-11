@@ -156,6 +156,14 @@ impl AgentWorker {
                 )
                 .await
             }
+            Err(layer3_adapter::AdapterError::SkillUpgradeRefused(reason)) => {
+                self.finish_skill(
+                    agent,
+                    Some(&format!("{}: {reason}", reason.code())),
+                    now + started.elapsed(),
+                )
+                .await
+            }
             Err(layer3_adapter::AdapterError::Rejected(_)) => {
                 self.finish_skill(
                     agent,
