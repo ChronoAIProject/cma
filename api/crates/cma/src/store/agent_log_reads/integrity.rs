@@ -11,6 +11,7 @@ pub(in crate::store) struct ReadHead {
     pub(in crate::store) last_seq: u64,
     /// Requires the shared prepared-cohort proof, never metadata presence alone.
     pub(in crate::store) trusted: bool,
+    pub(in crate::store) segmented: Option<crate::store::agent_log_segments::Head>,
     pub(super) workspace_id: WorkspaceId,
     pub(super) creation_worktree_id: WorktreeId,
 }
@@ -41,6 +42,7 @@ impl ReadHead {
         Self {
             last_seq: agent.conversation.last_seq,
             trusted,
+            segmented: None,
             workspace_id: agent.workspace_id.clone(),
             creation_worktree_id: agent.creation_worktree_id().clone(),
         }
@@ -69,11 +71,32 @@ impl LogReadIntegrity for PreparedIntegrity {
         agent_id: &AgentId,
         session: &mut ClientSession,
     ) -> Result<Option<ReadHead>, SandboxStoreError> {
-        Ok(
-            super::super::agent_log_integrity::read::read_proven_agent(store, agent_id, session)
-                .await?
-                .map(|(agent, trusted)| ReadHead::from_agent(&agent, trusted)),
-        )
+        use mongodb::{bson::doc, options::ReadConcern};
+        let row = store
+            .agents
+            .find_one(doc! {"_id":agent_id.as_str()})
+            .read_concern(ReadConcern::snapshot())
+            .session(&mut *session)
+            .await
+            .map_err(super::unavailable)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let agent = crate::store::agents::read_agent(&row)?;
+        if crate::store::agent_log_segments::read_format(&row)?.is_some() {
+            let segmented = crate::store::agent_log_segments::read_head(store, &row, session, true)
+                .await
+                .map_err(super::transaction_error)?;
+            let mut head = ReadHead::from_agent(&agent, false);
+            head.segmented = Some(segmented);
+            return Ok(Some(head));
+        }
+        // Keep the current trusted legacy proof authoritative. Its queries use
+        // this same snapshot and cannot initiate preparation or quarantine writes.
+        let trusted =
+            super::super::agent_log_integrity::read::legacy_proof(store, &agent, &row, session)
+                .await?;
+        Ok(Some(ReadHead::from_agent(&agent, trusted)))
     }
 }
 
