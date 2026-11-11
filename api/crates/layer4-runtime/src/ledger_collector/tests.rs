@@ -1,8 +1,7 @@
 use super::*;
 use std::{
     future::Future,
-    sync::Arc,
-    task::{Context, Poll, Wake, Waker},
+    task::{Context, Poll, Waker},
 };
 #[path = "lifecycle_harness.rs"]
 mod lifecycle_harness;
@@ -10,15 +9,13 @@ mod lifecycle_harness;
 mod model;
 use lifecycle_harness::until_complete;
 use model::{digest, Call, Model};
+#[path = "window_tests.rs"]
+mod window_tests;
 
-struct Noop;
-impl Wake for Noop {
-    fn wake(self: Arc<Self>) {}
-}
 fn run<T>(future: impl Future<Output = T>) -> T {
     let mut future = std::pin::pin!(future);
-    let waker = Waker::from(Arc::new(Noop));
-    match future.as_mut().poll(&mut Context::from_waker(&waker)) {
+    let waker = Waker::noop();
+    match future.as_mut().poll(&mut Context::from_waker(waker)) {
         Poll::Ready(value) => value,
         Poll::Pending => panic!("the model unexpectedly awaited external work"),
     }
@@ -113,10 +110,10 @@ fn cancellation_after_source_commit_keeps_admitted_guard_and_original_retry() {
     selected(&m);
     m.state.lock().unwrap().suspend_dispatch = true;
     let mut future = Box::pin(step(enabled(), &m));
-    let waker = Waker::from(Arc::new(Noop));
+    let waker = Waker::noop();
     assert!(future
         .as_mut()
-        .poll(&mut Context::from_waker(&waker))
+        .poll(&mut Context::from_waker(waker))
         .is_pending());
     drop(future);
     assert_eq!(m.holds.load(std::sync::atomic::Ordering::SeqCst), 1);
