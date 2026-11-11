@@ -17,12 +17,7 @@ pub(in crate::store) async fn agents(
     id: &SandboxId,
     scope: &mut TransactionScope<'_>,
 ) -> Result<Vec<Agent>, TransactionLogError> {
-    rows(&store.agents, id, scope)
-        .await?
-        .iter()
-        .map(read_agent)
-        .collect::<Result<_, _>>()
-        .map_err(Into::into)
+    rows(&store.agents, id, scope, read_agent).await
 }
 
 pub(in crate::store) async fn workspaces(
@@ -30,21 +25,18 @@ pub(in crate::store) async fn workspaces(
     id: &SandboxId,
     scope: &mut TransactionScope<'_>,
 ) -> Result<Vec<Workspace>, TransactionLogError> {
-    rows(&store.workspaces, id, scope)
-        .await?
-        .iter()
-        .map(read_workspace)
-        .collect::<Result<_, _>>()
-        .map_err(Into::into)
+    rows(&store.workspaces, id, scope, read_workspace).await
 }
 
-async fn rows(
+async fn rows<T>(
     collection: &Collection<Document>,
     id: &SandboxId,
     scope: &mut TransactionScope<'_>,
-) -> Result<Vec<Document>, TransactionLogError> {
+    decode: impl Fn(&Document) -> Result<T, SandboxStoreError>,
+) -> Result<Vec<T>, TransactionLogError> {
     const PAGE: u32 = 128;
     let mut rows = Vec::new();
+    let mut budget = Budget::default();
     let mut after: Option<String> = None;
     loop {
         let mut filter = doc! {"sandbox_id": id.as_str()};
@@ -58,7 +50,9 @@ async fn rows(
         if page.len() > PAGE as usize {
             return Err(SandboxStoreError::Conflict.into());
         }
-        for row in &page {
+        let complete = page.len() < PAGE as usize;
+        for row in page {
+            budget.record(&row)?;
             let key = row
                 .get_str("_id")
                 .map_err(|_| SandboxStoreError::Conflict)?;
@@ -69,11 +63,64 @@ async fn rows(
                 return Err(SandboxStoreError::Conflict.into());
             }
             after = Some(key.to_owned());
+            rows.push(decode(&row)?);
         }
-        let complete = page.len() < PAGE as usize;
-        rows.extend(page);
         if complete {
             return Ok(rows);
         }
+    }
+}
+
+// Bounds apply to the entire child set, across every query page. Callers get
+// either the complete set or an error before they can use it for any mutation.
+const MAX_CHILDREN: usize = 512;
+const MAX_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Default)]
+struct Budget {
+    count: usize,
+    bytes: usize,
+}
+impl Budget {
+    fn record(&mut self, row: &Document) -> Result<(), SandboxStoreError> {
+        let bytes = mongodb::bson::serialize_to_vec(row)
+            .map_err(|_| SandboxStoreError::Conflict)?
+            .len();
+        let total = self
+            .bytes
+            .checked_add(bytes)
+            .filter(|total| *total <= MAX_BYTES);
+        if self.count >= MAX_CHILDREN || total.is_none() {
+            return Err(SandboxStoreError::Unavailable(
+                "child enumeration exceeds its total count or BSON byte budget".into(),
+            ));
+        }
+        self.count += 1;
+        self.bytes = total.expect("budget checked");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn child_budget_spans_pages_and_refuses_before_accumulation() {
+        let mut budget = Budget::default();
+        for index in 0..MAX_CHILDREN {
+            budget.record(&doc! {"_id": index as i64}).unwrap();
+        }
+        let accepted_bytes = budget.bytes;
+        assert!(budget.record(&doc! {"_id": "overflow"}).is_err());
+        assert_eq!(budget.count, MAX_CHILDREN);
+        assert_eq!(budget.bytes, accepted_bytes);
+        let row = doc! {"payload": "x".repeat(32 * 1024)};
+        let mut budget = Budget::default();
+        let mut accepted = 0;
+        while budget.record(&row).is_ok() {
+            accepted += 1;
+        }
+        assert!(accepted > 128 && accepted < MAX_CHILDREN);
+        assert!(budget.bytes <= MAX_BYTES);
     }
 }
