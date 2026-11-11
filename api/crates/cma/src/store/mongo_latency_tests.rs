@@ -1,4 +1,26 @@
 use super::*;
+
+#[test]
+fn scrape_observes_checkout_failures_and_occupancy_without_connection_identifiers() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    metrics::with_local_recorder(&recorder, || {
+        let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
+        observer.checked_out(424242, Duration::from_millis(12));
+        assert!(handle.render().contains("cma_mongo_connections_tracked 1"));
+        observer.returned(424242, false);
+        observer.record(0, Duration::from_millis(30), true);
+    });
+    let text = handle.render();
+    assert!(text.contains("cma_mongo_connections_tracked 0"));
+    assert!(
+        text.contains("cma_mongo_pool_events_total{operation=\"checkout\",outcome=\"failed\"} 1")
+    );
+    assert!(text.contains(
+        "cma_mongo_pool_operation_seconds_count{operation=\"checkout\",outcome=\"ok\"} 1"
+    ));
+    assert!(!text.contains("424242"));
+}
 use std::io::Write;
 
 #[derive(Clone, Default)]

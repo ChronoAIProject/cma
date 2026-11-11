@@ -152,6 +152,7 @@ pub struct Config {
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
     pub bind: SocketAddr,
+    pub metrics_bind: SocketAddr,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
     pub agent_access_retained_origins: Vec<String>,
@@ -239,6 +240,12 @@ impl Config {
         let bind = value_or(&mut lookup, "CHRONO_SERVER_BIND", DEFAULT_BIND)?
             .parse::<SocketAddr>()
             .map_err(|error| format!("CHRONO_SERVER_BIND is not a socket address: {error}"))?;
+        let metrics_bind = value_or(&mut lookup, "CHRONO_METRICS_BIND", "0.0.0.0:9091")?
+            .parse::<SocketAddr>()
+            .map_err(|error| format!("CHRONO_METRICS_BIND is not a socket address: {error}"))?;
+        if metrics_bind == bind && bind.port() != 0 {
+            return Err("CHRONO_METRICS_BIND must differ from CHRONO_SERVER_BIND".into());
+        }
         let public_url = value_or(&mut lookup, "CHRONO_SERVER_PUBLIC_URL", DEFAULT_PUBLIC_URL)?;
         validate_origin("CHRONO_SERVER_PUBLIC_URL", &public_url)?;
         let agent_access_retained_origins = access_origins::retained(&mut lookup)?;
@@ -377,6 +384,7 @@ impl Config {
         }
         Ok(Self {
             bind,
+            metrics_bind,
             public_url,
             agent_access_retained_origins,
             agent_access_transport_migration,
