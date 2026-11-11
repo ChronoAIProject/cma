@@ -20,6 +20,7 @@ import {
 } from './lifecycle';
 import { Badge } from '../ui/Badge';
 import { SandboxRuntimeUpdate } from './SandboxRuntimeUpdate';
+import { SandboxRetainedRecovery } from './SandboxRetainedRecovery';
 import { SandboxAdvanced } from './SandboxAdvanced';
 import { SandboxAlerts } from './SandboxAlerts';
 import { SandboxSections } from './SandboxSections';
@@ -340,6 +341,18 @@ export function SandboxPage({
         stale={stale}
         onViewProgress={tab === 'activity' ? undefined : () => selectTab('activity')}
       />
+      {viewerId !== undefined && sandbox.owner === viewerId && client.inspectSandboxRecovery ? (
+        <SandboxRetainedRecovery
+          key={`${sandbox.id}:${viewerId}`}
+          client={client}
+          sandboxId={sandbox.id}
+          ownerId={viewerId}
+          revision={sandbox.revision}
+          failed={sandbox.status === 'failed'}
+          disabled={busy || stale || needsConnections}
+          onAccepted={() => setRetry((value) => value + 1)}
+        />
+      ) : null}
       <SandboxSections
         key={`${sandbox.id}:${sandbox.owner ?? ''}:${JSON.stringify(sandbox.profile)}`}
         client={client}
