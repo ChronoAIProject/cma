@@ -49,6 +49,27 @@ pub struct LedgerMaintenanceInspection {
     pub state: Option<LedgerMaintenanceStateV1>,
 }
 
+/// Assessment consumers receive no mutation port or native-effect capability.
+#[async_trait]
+pub trait LedgerMaintenanceReader: Send + Sync {
+    async fn inspect(
+        &self,
+        caller: &Caller,
+        sandbox: &SandboxId,
+    ) -> Result<LedgerMaintenanceInspection, LedgerMaintenanceStoreError>;
+}
+
+#[async_trait]
+impl<T: LedgerMaintenanceStore + ?Sized> LedgerMaintenanceReader for T {
+    async fn inspect(
+        &self,
+        caller: &Caller,
+        sandbox: &SandboxId,
+    ) -> Result<LedgerMaintenanceInspection, LedgerMaintenanceStoreError> {
+        self.inspect_ledger_maintenance(caller, sandbox).await
+    }
+}
+
 #[async_trait]
 pub trait LedgerMaintenanceStore: Send + Sync {
     async fn inspect_ledger_maintenance(

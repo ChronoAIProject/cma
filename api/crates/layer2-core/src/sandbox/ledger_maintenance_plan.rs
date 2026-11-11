@@ -41,6 +41,29 @@ impl LedgerMaintenanceSnapshotV1 {
         at: &str,
     ) -> Result<(), LedgerMaintenancePlanRefusal> {
         binding.validate().map_err(|_| invalid())?;
+        self.validate_inventory(at)?;
+        let observation = self
+            .hierarchy()
+            .ledger_retirement_observation(at.into(), binding.candidate_sha256.clone())
+            .map_err(|_| invalid())?;
+        if observation.sandbox_id != binding.sandbox_id
+            || observation.home_identity != binding.home_identity
+            || observation.generation != binding.generation
+            || observation.sandbox_revision != binding.sandbox_revision
+            || self
+                .sandbox
+                .retained_runtime_binding()
+                .and_then(|runtime| runtime.boot_id.as_ref())
+                != Some(&binding.boot_id)
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
+    /// Complete record validation without manufacturing an exclusion binding.
+    /// A valid inventory remains an observation, never recovery authority.
+    pub fn validate_inventory(&self, at: &str) -> Result<(), LedgerMaintenancePlanRefusal> {
         if !valid_sha256(&self.source_documents_sha256)
             || self.agents.len() + self.workspaces.len() + self.worktrees.len()
                 > MAX_LEDGER_MAINTENANCE_RESOURCES
@@ -54,26 +77,9 @@ impl LedgerMaintenanceSnapshotV1 {
         }
         // Reuse the existing bounded complete-hierarchy identity validation.
         // The resulting observation is not maintenance or deactivation authority.
-        let observation = SandboxHierarchyRecord {
-            sandbox: self.sandbox.clone(),
-            agents: self.agents.clone(),
-            workspaces: self.workspaces.clone(),
-            worktrees: self.worktrees.clone(),
-        }
-        .ledger_retirement_observation(at.into(), binding.candidate_sha256.clone())
-        .map_err(|_| invalid())?;
-        if observation.sandbox_id != binding.sandbox_id
-            || observation.home_identity != binding.home_identity
-            || observation.generation != binding.generation
-            || observation.sandbox_revision != binding.sandbox_revision
-            || self
-                .sandbox
-                .retained_runtime_binding()
-                .and_then(|runtime| runtime.boot_id.as_ref())
-                != Some(&binding.boot_id)
-        {
-            return Err(invalid());
-        }
+        self.hierarchy()
+            .ledger_retirement_observation(at.into(), "0".repeat(64))
+            .map_err(|_| invalid())?;
         for (agent, row) in self.agents.iter().zip(&self.command_lanes) {
             if agent.id != row.agent_id {
                 return Err(invalid());
@@ -93,6 +99,15 @@ impl LedgerMaintenanceSnapshotV1 {
             }
         }
         Ok(())
+    }
+
+    fn hierarchy(&self) -> SandboxHierarchyRecord {
+        SandboxHierarchyRecord {
+            sandbox: self.sandbox.clone(),
+            agents: self.agents.clone(),
+            workspaces: self.workspaces.clone(),
+            worktrees: self.worktrees.clone(),
+        }
     }
 }
 

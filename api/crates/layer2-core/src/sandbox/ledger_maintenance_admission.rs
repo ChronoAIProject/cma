@@ -251,3 +251,7 @@ fn invalid() -> LedgerMaintenanceAdmissionRefusal {
 #[cfg(test)]
 #[path = "ledger_maintenance_admission_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ledger_maintenance_test_support.rs"]
+pub(crate) mod test_support;

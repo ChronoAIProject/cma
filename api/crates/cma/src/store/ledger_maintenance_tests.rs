@@ -207,7 +207,7 @@ async fn audit_insert_failure_rolls_back_parent_and_every_child_fence() {
 
 #[tokio::test]
 #[ignore = "requires an owned disposable MongoDB replica set"]
-async fn cancellation_before_commit_aborts_all_fences_and_audit() {
+async fn explicit_abort_before_commit_rolls_back_all_fences_and_audit() {
     let (client, name, store) = database().await;
     let request = fixture(&store, true).await;
     let before = documents(&store).await;
