@@ -6186,3 +6186,21 @@ must not reopen Save without an available response for that policy.
 | 2026-11-06 | Check for a live NyxID session once, silently, before showing the signed-out surface (§20), keeping the existing Signing you in state for at most 10 seconds and never repeating after an explicit Sign out. |
 
 | 2026-11-11 | Finish silent sign-in rollout gating, server-owned logout suppression and callback fencing, eligible SPA navigation, bounded UI query restoration and owner-scoped draft preservation; retain all prior changelog entries. |
+
+### 2026-11-11 — Browser sign-in review corrections
+
+This entry supersedes §20's initial 30-day fixed opt-out and return-target sizing
+rules. A successful explicit sign-in re-enables automatic sign-in when that attempt
+started after the most recent logout; a delayed older callback never clears a
+newer logout. The start marker has a durable preference proof, preventing stale
+logout responses or replica clock skew from reopening a revoked sign-in. An
+opted-out anonymous browser receives a false capability hint.
+The web Sign out action clears private task/creation drafts before navigation.
+
+The complete encoded absolute login URL has the shared 4 KiB transport budget in
+API Overview. Oversized setup drafts stay in the URL and tab storage; explicit
+sign-in returns to the clean path and silent sign-in is skipped. Return targets
+are percent-encoded ASCII. Existing loading, error, focus/reconnection and draft
+isolation patterns remain authoritative; no new visual control is introduced.
+
+| 2026-11-11 | Restore explicit sign-in preference recovery with response-order fencing, clear private drafts before Sign out navigation, and bound fully encoded login URLs while retaining oversized setup drafts. |

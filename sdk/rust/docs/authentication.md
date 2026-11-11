@@ -84,7 +84,11 @@ credentials for a backend client.
 Return destinations also support `/agent-manager`, `/event-gateway`, `/image-manager`,
 Bot pages and the public actor-link completion path. A single `setup` query on
 `/bots/new` and a single `tab` query on `/sandboxes/{id}` are preserved; duplicate
-or unknown keys and fragments are rejected. Paths are limited to 256 bytes and
-the complete target to 25,064 UTF-8 bytes. The anonymous `silent_sign_in` hint is
+or unknown keys and fragments and raw non-ASCII bytes are rejected. Paths are limited to 256 bytes and
+the complete encoded absolute login URL to 4,096 ASCII bytes (including origin and options). The anonymous `silent_sign_in` hint is
 controlled by the API startup flag, default false; the SDK continues projecting
 `SignedOut`. Logout is server-owned and emits separate session/suppression cookies.
+
+Explicit preference recovery is backed by durable custody, with a separate
+non-authenticating reference cookie. Same-origin logout revokes that proof;
+cross-site logout revokes the session without changing the preference.
