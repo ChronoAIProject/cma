@@ -12,6 +12,7 @@ use super::{
 
 mod sandbox;
 pub use sandbox::SandboxStore;
+pub mod ledger_collection;
 mod service_traits;
 pub use super::binding::BindingStore;
 pub use service_traits::*;
