@@ -1,13 +1,17 @@
 import { act, render, renderHook, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, agentClient } from '../test/agent';
 import { useAgentController } from './controller';
 import { SignInCard } from './SignInCard';
 import { conversationFromTranscript, foldAgentEvent, foldLiveEvent } from './conversation';
 import type { AgentEvent, AgentLiveEvent } from '../api/types';
 
-afterEach(() => vi.useRealTimers());
+beforeEach(() => vi.spyOn(Math, 'random').mockReturnValue(0.5));
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 it('polls a starting Agent until its first message is durably delivered without posting that message again', async () => {
   vi.useFakeTimers();
@@ -40,7 +44,7 @@ it('polls a starting Agent until its first message is durably delivered without 
     expect(result.current.state.conversation.messages).toHaveLength(0);
   delivered = true;
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(1000);
   });
   if (result.current.state.status === 'ready')
     expect(result.current.state.conversation.messages[0]?.content).toBe('Inspect this repository.');
@@ -75,7 +79,7 @@ it('keeps startup reads sequential, slows prolonged preparation and stops on unm
   expect(readAgent).toHaveBeenCalledTimes(2);
   expect(readAgentTranscript).toHaveBeenCalledTimes(1);
   await act(async () => finishRead?.(starting));
-  await act(() => vi.advanceTimersByTimeAsync(1499));
+  await act(() => vi.advanceTimersByTimeAsync(999));
   expect(readAgent).toHaveBeenCalledTimes(2);
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(readAgent).toHaveBeenCalledTimes(3);
@@ -86,7 +90,7 @@ it('keeps startup reads sequential, slows prolonged preparation and stops on unm
   expect(readAgent).toHaveBeenCalledTimes(3);
 });
 
-it('observes startup again without an extra idle interval after a slow successful read', async () => {
+it('uses a bounded readiness delay after a slow successful read', async () => {
   vi.useFakeTimers();
   const starting = { ...AGENT_DETAIL, status: 'starting' as const, readyAt: undefined };
   let finishRead: ((value: typeof starting) => void) | undefined;
@@ -104,7 +108,7 @@ it('observes startup again without an extra idle interval after a slow successfu
   await act(() => vi.advanceTimersByTimeAsync(200));
   expect(readAgent).toHaveBeenCalledTimes(2);
   await act(async () => finishRead?.(starting));
-  await act(() => vi.advanceTimersByTimeAsync(1));
+  await act(() => vi.advanceTimersByTimeAsync(1000));
   expect(result.current.state.status).toBe('ready');
   if (result.current.state.status === 'ready')
     expect(result.current.state.detail.status).toBe('ready');

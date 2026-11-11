@@ -81,7 +81,10 @@ data:
   # New file admissions only; supporting readers/workers must precede enablement.
   CHRONO_V2_UI_TRANSPORT_ENABLED: "true"
   CHRONO_AGENT_LOG_ADMISSION_AGENTS: ""
+  # Owner-consented same-image reopening only; admission remains off until qualified.
+  CHRONO_RETAINED_REOPEN_ENABLED: "false"
   # Independent pending-approval reader; also requires trusted cohort membership.
+  CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED: "false"
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
@@ -89,6 +92,8 @@ data:
   CHRONO_AGENT_LOG_FLEET_PERCENT: "0"
   # Qualify title reads separately after the admission/public-window cohort.
   CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED: "false"
+  CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED: "false"
+  CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "false"
   # Response projection uses a proven target-turn window; independent rollout.
   CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
   # Retained-context lookup remains opt-in until the compatible API path is
@@ -240,6 +245,8 @@ data:
   # Objects live only under documents/<owner-hash>/<document-id>/<source-hash>.md.
   # Activate in a later train only after compatible readers are the rollback floor.
   CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED: "false"
+  # Off until capacity-owner headroom and all admission writers are verified.
+  CHRONO_SANDBOX_GLOBAL_LIMIT: "0"
   CHRONO_DOCUMENT_BUCKET: "chrono-platform-bot"
   CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
   # Agent model calls use the scoped AgentKey through this platform proxy.
