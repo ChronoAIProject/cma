@@ -62,7 +62,10 @@ the source-byte budget. They check only requested sealed membership and reuse th
 captured active hashes. Reads in a transaction also recheck the aggregate/head
 because a transaction can see its own writes.
 
-Snapshot proofs bind the established snapshot, session and database. Transaction
+Snapshot proofs bind the established snapshot, session and database. The initial
+read requires a snapshot timestamp returned by the server without forcing a
+snapshot concern onto an ordinary session; a cached driver timestamp alone is
+insufficient. Transaction
 proofs instead bind the private stamp from the exclusive `TransactionScope`;
 consuming that scope releases the session for caller commit or abort. A later
 transaction gets a fresh stamp, even on the same session. A raw transaction-mode
