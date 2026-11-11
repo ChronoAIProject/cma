@@ -370,10 +370,11 @@ async fn agent_conversation_rebuilds_approvals_and_rejects_incomplete_logs() {
         reopened.pending_agent_approvals(&working.id).await,
         Err(SandboxStoreError::SequenceConflict)
     );
-    assert!(matches!(
+    // The reader refuses without quarantine; this explicit writer audit owns it.
+    assert_eq!(
         reopened.commit_agent_conversation(resume).await,
-        Err(SandboxStoreError::Corrupt(_))
-    ));
+        Err(SandboxStoreError::SequenceConflict)
+    );
     assert!(matches!(
         reopened
             .append_agent_log(
