@@ -112,6 +112,7 @@ pub struct AuthState {
     bot_father_username: Option<String>,
     agent_key_service_id: Option<String>,
     resource_request_enabled: bool,
+    silent_sign_in_enabled: bool,
     identity_proxy: Option<nyxid_proxy::jwt::Verifier>,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     pub(super) mode: AuthMode,
@@ -184,6 +185,7 @@ impl AuthState {
             bindings: None,
             agent_key_service_id: None,
             resource_request_enabled: false,
+            silent_sign_in_enabled: false,
             identity_proxy: None,
             mode,
             nyxid_public_url,
@@ -203,6 +205,13 @@ impl AuthState {
             bearer_verifications: bearer_authorization::VerificationFlights::default(),
             signup_options_cache: signup_options::SignupOptionsCache::default(),
         })
+    }
+
+    pub(crate) fn with_silent_sign_in(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("auth configured before sharing")
+            .silent_sign_in_enabled = enabled;
+        self
     }
 
     pub fn requires_credential(&self) -> bool {

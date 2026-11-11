@@ -167,7 +167,7 @@ fn assert_rejected(path: &str, result: (StatusCode, Value)) {
     if path == "/auth/session" {
         assert_eq!(
             result.1,
-            json!({"authenticated": false, "silent_sign_in": true})
+            json!({"authenticated": false, "silent_sign_in": false})
         );
     } else {
         assert_eq!(result.1["code"], "not_authenticated");
