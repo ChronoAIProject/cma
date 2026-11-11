@@ -51,6 +51,10 @@ pub(in crate::store) async fn required(
         // Markers can be damaged independently of retained sidecars. Retain
         // even an apparently legacy Agent when any new-format evidence exists.
         for name in COLLECTIONS {
+            if *name == super::writer_gate::COLLECTION {
+                // Global rollout policy is not a per-Agent retained sidecar.
+                continue;
+            }
             let sidecar = collection(store, name);
             let field = if matches!(*name, HEADS | PROJECTIONS) {
                 "_id"
