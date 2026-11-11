@@ -1,6 +1,7 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub retain_read_frames: bool,
     pub model_budget_writes_enabled: bool,
     pub model_request_budget_writes_enabled: bool,
     pub bounded_title_reads: bool,
@@ -28,6 +29,7 @@ impl FeatureFlags {
             }
         }
         Ok(Self {
+            retain_read_frames: flag(lookup, "CHRONO_READ_FRAME_BUDGET_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
@@ -147,6 +149,30 @@ mod response_tests {
             assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
                 == "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")
                 .then(|| value.into())))
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod read_frame_tests {
+    use super::*;
+
+    #[test]
+    fn read_frame_ownership_requires_an_independent_strict_boolean() {
+        const KEY: &str = "CHRONO_READ_FRAME_BUDGET_ENABLED";
+        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.retain_read_frames, enabled);
+            assert!(!flags.bounded_response_reads && !flags.bounded_title_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.to_owned()))
+            })
             .is_err());
         }
     }
