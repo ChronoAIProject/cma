@@ -31,7 +31,9 @@ active prompt does not rotate the permission scope. Scope changes keep the old
 records reserved; they never evict uncertain state to admit more work.
 
 New-state pressure returns a typed `-32002` runtime protocol refusal and stops the
-attachment before publishing an approval or retained source receipt. Oversized
+attachment before publishing an approval or retained source receipt. The refusal
+notification has a one-second deadline, including a blocked sink; notification
+failure does not admit the frame. Oversized
 permission shapes follow the same path. There is no synthesized source ACK,
 durable terminal, or retry loop. The runtime retains the unacknowledged source
 for supported recovery. An already admitted durable answer can still replay at
