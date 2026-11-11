@@ -8,7 +8,7 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::AgentId;
 use serde::Serialize;
 
-use super::{authority, records};
+use super::{authority, receipts};
 use crate::store::{
     agent_log_integrity::TransactionLogError,
     agent_log_segments::transaction_scope::TransactionScope, sandbox_mongo::MongoSandboxStore,
@@ -57,19 +57,8 @@ pub(in crate::store) async fn read(
             return Err(SandboxStoreError::Conflict.into());
         }
         let key = request.key().map_err(|_| SandboxStoreError::Conflict)?;
-        if let Some(work) = records::read(store, &key, scope).await? {
-            if work.request != *request {
-                return Err(SandboxStoreError::Conflict.into());
-            }
-            // This checkpoint has no completed-publication reader for this
-            // carrier. Refuse successful status until exact receipt integration
-            // lands; a deserializable row alone never establishes completion.
-            if work.phase == RecoveryPhase::Completed {
-                return Err(SandboxStoreError::Unavailable(
-                    "exact capacity recovery completion receipt requires reconciliation".into(),
-                )
-                .into());
-            }
+        if let Some(stored) = receipts::read(store, context.agent, request, scope).await? {
+            let work = stored.work;
             status.phase = Some(work.phase);
             status.attempts = work.attempts;
             status.retry_at =
