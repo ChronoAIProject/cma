@@ -100,6 +100,32 @@ impl Archive {
         self.verify()?;
         Ok(receipt)
     }
+
+    /// Stream verified retained sources without collecting history in memory.
+    /// This is inspection only: it never clears the pending hold or authorizes
+    /// deactivation. Any captured selection/writer guard stays inside the worker
+    /// until its admitted callback finishes, even if the awaiting task is lost.
+    pub(crate) async fn visit_indexed_sources(
+        &self,
+        proof: GroupProof,
+        mut inspect: impl FnMut(&Context, SourceRow) -> Result<()> + Send + 'static,
+    ) -> Result<Receipt> {
+        self.verify()?;
+        check(self.version, &proof)?;
+        let config = self.config.clone();
+        let receipt = self
+            .storage
+            .call(move |db| {
+                let tx = db.transaction().map_err(|_| storage_error())?;
+                let receipt = existing(&tx, &proof)?.ok_or_else(invalid)?;
+                verification::visit(&tx, &config, &proof, &receipt, &mut inspect)?;
+                tx.commit().map_err(|_| storage_error())?;
+                Ok(receipt)
+            })
+            .await?;
+        self.verify()?;
+        Ok(receipt)
+    }
 }
 
 fn check(version: Version, proof: &GroupProof) -> Result<()> {
