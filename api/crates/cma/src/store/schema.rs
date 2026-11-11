@@ -15,7 +15,11 @@ pub(super) async fn initialize_collections(
     collections: &[&str],
 ) -> Result<(), StoreError> {
     ensure_collections(database, collections).await?;
-    refuse_unknown_versions(database, collections).await
+    refuse_unknown_versions(database, collections).await?;
+    if collections.contains(&"agents") {
+        super::agent_log_segments::schema::verify(database).await?;
+    }
+    Ok(())
 }
 
 /// Collection creation shared by stores with explicitly versioned readers.
@@ -60,7 +64,7 @@ pub(super) async fn refuse_unknown_versions(
         let session_leases = *name == super::sandbox_mongo::SANDBOX_SESSIONS;
         let mut unsupported = database
             .collection::<Document>(name)
-            .find(unknown_version_filter())
+            .find(unknown_version_filter(name))
             .limit(if session_leases { 0 } else { 1 })
             .projection(if session_leases {
                 doc! {} // The complete shape must match the known legacy writer.
@@ -104,10 +108,15 @@ pub(super) fn require_current(version: i64) -> Result<(), StoreError> {
     }
 }
 
-fn unknown_version_filter() -> Document {
+fn unknown_version_filter(collection: &str) -> Document {
+    let versions = if collection == "agents" {
+        vec![1_i64, 2]
+    } else {
+        vec![DOCUMENT_SCHEMA_VERSION]
+    };
     doc! {
         "$or": [
-            { "document_schema_version": { "$ne": DOCUMENT_SCHEMA_VERSION } },
+            { "document_schema_version": { "$nin": versions } },
             {
                 "document_schema_version": {
                     "$not": { "$type": ["int", "long"] }
@@ -123,10 +132,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_agent_envelopes_accept_the_additive_reader_version() {
+        let versions = |name| {
+            unknown_version_filter(name).get_array("$or").unwrap()[0]["document_schema_version"]
+                ["$nin"]
+                .clone()
+        };
+        assert_eq!(versions("agents"), mongodb::bson::bson!([1_i64, 2_i64]));
+        assert_eq!(versions("agent_log"), mongodb::bson::bson!([1_i64]));
+        assert_eq!(versions("sandboxes"), mongodb::bson::bson!([1_i64]));
+        // Scalar integer and no-array predicates remain present for both paths.
+        for guard in [1_usize, 2] {
+            assert_eq!(
+                unknown_version_filter("agents").get_array("$or").unwrap()[guard],
+                unknown_version_filter("other").get_array("$or").unwrap()[guard]
+            );
+        }
+    }
+
+    #[test]
     fn current_version_is_exact_and_the_scan_includes_missing_or_wrong_types() {
         assert!(require_current(1).is_ok());
         assert!(require_current(0).is_err());
         assert!(require_current(2).is_err());
-        assert_eq!(unknown_version_filter()["$or"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            unknown_version_filter("other")["$or"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
     }
 }
