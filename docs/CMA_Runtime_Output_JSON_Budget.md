@@ -70,3 +70,8 @@ Abort on unauthorized data, failed owner control, unexpected 429/503, candidate
 drift or health regression. Close bodies and revoke tracked sessions; preserve
 the retained-fixture ledger. A larger or destructive payload campaign needs its
 own reviewed isolated profile and explicit relay under the existing tier rules.
+
+The preflight also rejects Serde private embedded-parser keys, including escaped
+spellings. With the pinned raw-value feature, such a key can cause Value parsing
+to decode an encoded JSON string and bypass an outer node count. This refusal
+applies only when a JSON bounds policy is enabled; the legacy off path remains.
