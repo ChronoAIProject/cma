@@ -80,6 +80,7 @@ struct ConversationState {
 }
 
 pub(super) struct Bridge {
+    pub(super) permission_state: Option<Mutex<super::permission_state::PermissionState>>,
     pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
     sink: Arc<Mutex<Sink>>,
     pub(super) pending: Pending,
@@ -209,9 +210,24 @@ impl Bridge {
             .ok_or_else(|| AdapterError::Unavailable("runtime closed before Ready".into()))?
             .map_err(|error| AdapterError::Unavailable(format!("Ready read failed: {error}")))?;
         let output_stream = validate_ready(declaration, expected_agent)?;
+        let permission_state = if settings.bounded_permission_state {
+            if output_stream.is_none() {
+                return Err(AdapterError::Rejected(
+                    "permission bounds require retained runtime output".into(),
+                ));
+            }
+            let mut state = super::permission_state::PermissionState::new()?;
+            if let Some(prompt) = &recovered_prompt {
+                state.begin_prompt(prompt.as_str());
+            }
+            Some(Mutex::new(state))
+        } else {
+            None
+        };
         let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
+            permission_state,
             subscription,
             sink: Arc::new(Mutex::new(sink)),
             pending: Arc::new(Mutex::new(HashMap::new())),
@@ -379,7 +395,7 @@ impl Bridge {
         prompt_id: Option<PromptIdentity>,
     ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
         if self.retired.load(Ordering::SeqCst) {
-            return Err(retired_before_write(prompt));
+            return Err(write::retired_before_write(prompt));
         }
         let remembered_prompt = prompt_id.clone();
         let id = prompt_id.map_or_else(
@@ -404,6 +420,9 @@ impl Bridge {
             .await
             .insert(id.clone(), PendingCall { answer, prompt });
         if prompt {
+            if let Some(state) = &self.permission_state {
+                state.lock().await.begin_prompt(&id);
+            }
             if let Some(prompt_id) = remembered_prompt.clone() {
                 self.remember_prompt(prompt_id).await;
             }
@@ -418,56 +437,6 @@ impl Bridge {
             return Err(error);
         }
         Ok(waiting)
-    }
-
-    pub(super) async fn send(&self, frame: &serde_json::Value) -> crate::Result<()> {
-        self.send_frame(frame, false).await
-    }
-
-    async fn send_frame(&self, frame: &serde_json::Value, prompt: bool) -> crate::Result<()> {
-        if self.retired.load(Ordering::SeqCst) {
-            return Err(retired_before_write(prompt));
-        }
-        let body = serde_json::to_vec(frame)
-            .map_err(|_| AdapterError::Rejected("ACP frame could not be encoded".into()))?;
-        if body.len() > MAX_FRAME_BYTES {
-            return Err(AdapterError::Rejected(
-                "ACP frame exceeds the size limit".into(),
-            ));
-        }
-        let mut framed = Vec::with_capacity(body.len() + 1);
-        framed.push(LANE_CONVERSATION);
-        framed.extend_from_slice(&body);
-        self.sink
-            .lock()
-            .await
-            .send(Message::Binary(framed))
-            .await
-            .map_err(|error| {
-                AdapterError::Unavailable(format!("conversation write failed: {error}"))
-            })
-    }
-
-    pub(super) async fn retire(&self) {
-        if !self.retired.swap(true, Ordering::SeqCst) {
-            self.pending.lock().await.clear();
-            self.blocked.lock().await.clear();
-            let _ = self.sink.lock().await.close().await;
-        }
-    }
-
-    async fn finish(&self) {
-        self.retired.store(true, Ordering::SeqCst);
-        self.pending.lock().await.clear();
-        self.blocked.lock().await.clear();
-    }
-}
-
-fn retired_before_write(prompt: bool) -> AdapterError {
-    if prompt {
-        AdapterError::PromptNotWritten("conversation link has retired".into())
-    } else {
-        AdapterError::Unavailable("conversation link has retired".into())
     }
 }
 
@@ -489,6 +458,9 @@ pub(super) enum Outcome {
         capability: Option<String>,
     },
 }
+
+#[path = "acp_write.rs"]
+mod write;
 
 #[cfg(test)]
 #[path = "acp_tests.rs"]
