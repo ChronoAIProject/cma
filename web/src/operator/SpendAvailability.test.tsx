@@ -85,14 +85,19 @@ it('retains a refused draft until a fresh available revision is explicitly revie
 
 it.each([false, undefined])('adopts availability %s from a successful save', async (available) => {
   const client = operatorClient();
-  client.admin.readSettings.mockResolvedValue(configured(true));
-  client.admin.replaceSettings.mockResolvedValue({ ...configured(available), revision: 5 });
+  const empty = { ...settings, model_budget: { enabled: false, owners: [] } };
+  client.admin.readSettings.mockResolvedValue({ ...configured(true), settings: empty });
+  client.admin.replaceSettings.mockResolvedValue({
+    ...configured(available),
+    settings: empty,
+    revision: 5,
+  });
   render(<PlatformSettings client={client} />);
   await screen.findByLabelText('Enable spend controls');
   await userEvent.click(save());
   await screen.findByText('Settings saved at revision 5.');
-  expect(amount()).toBeDisabled();
-  expect(save()).toBeDisabled();
+  expect(screen.getByLabelText('Enable spend controls')).toBeDisabled();
+  expect(save()).toBeEnabled();
   expect(screen.getByText(/Saving spend controls is not available yet/)).toBeVisible();
 });
 
