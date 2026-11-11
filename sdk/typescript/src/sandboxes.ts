@@ -27,6 +27,12 @@ import {
 } from './instances/types.js';
 import { sandboxEvent } from './instances/events.js';
 import {
+  retainedRecoveryAssessment,
+  recoverRetainedRequest,
+  retainedReopenReceipt,
+  type RecoverRetainedRequest,
+} from './instances/retained-recovery.js';
+import {
   updateSandboxRuntimeRequest,
   type UpdateSandboxRuntimeRequest,
 } from './instances/runtime-update.js';
@@ -174,6 +180,31 @@ export class Sandboxes {
       body: input(alwaysOnRequest, body),
       expectedStatus: 200,
     });
+  }
+
+  /** Read fresh retained-runtime facts without admitting or interrupting work. */
+  inspectRuntimeRecovery(id: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/sandboxes/${segment(id)}/runtime-recovery`,
+      retainedRecoveryAssessment,
+      options,
+    );
+  }
+
+  /** Explicit owner consent; server re-proves exact retained authority and idle history. */
+  recoverRetained(id: string, body: RecoverRetainedRequest, options: CommandOptions) {
+    return read(
+      this.config,
+      `/api/v1/sandboxes/${segment(id)}/runtime-recovery`,
+      retainedReopenReceipt,
+      {
+        ...command(options),
+        method: 'POST',
+        body: input(recoverRetainedRequest, body),
+        expectedStatus: 202,
+      },
+    );
   }
 
   /** Queue an exact deployment runtime image; active work finishes before rotation. */
