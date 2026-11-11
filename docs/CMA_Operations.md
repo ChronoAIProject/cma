@@ -1457,6 +1457,11 @@ The staging harness lives in `web/e2e/`. Run commands from `web/` after `npm ci`
 three read-only smoke cases. Listing cases with `npm run e2e -- --list` executes
 no journey. No staging fixture or credential is supplied by the repository.
 
+The opt-in [J0–J2 Friday slice](CMA_New_User_Friday_Slice.md) selects only those
+three authenticated journeys while retaining the complete existing fixture and
+cleanup contract. Its separate partial report never substitutes for J0–J7 or
+the new-user sample targets; the guide lists the J3–J7 prerequisites explicitly.
+
 Read-only smoke requires `CMA_E2E_BASE_URL` (one exact HTTPS origin),
 `CMA_E2E_PUBLIC_ID` (an existing published Trigger), and `CMA_E2E_OUTPUT_DIR`
 (a fresh absolute evidence directory outside the checkout, under an existing
