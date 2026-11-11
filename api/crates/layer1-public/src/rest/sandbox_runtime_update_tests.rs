@@ -2,6 +2,9 @@ use super::*;
 use layer2_core::sandbox::{RuntimeBinding, SandboxRuntimeUpdateService};
 const PATH: &str = "/api/v1/sandboxes/sbx_update/runtime-update";
 
+#[path = "sandbox_retained_recovery_tests.rs"]
+pub(crate) mod retained;
+
 pub(crate) async fn update_fixture(configured: bool) -> Fixture {
     let mut f = fixture(3);
     let mut sandbox = stored_sandbox("sbx_update", "owner", SandboxStatus::Active, 4);
