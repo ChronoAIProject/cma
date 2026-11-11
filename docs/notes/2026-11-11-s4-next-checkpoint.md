@@ -132,4 +132,13 @@ ownership plan prohibits S4 edits to this root without handoff. Requested a narr
 S2 pin or authorization through the lead. No mixed integration tip was imported.
 
 The corrected S4 writer/lease tests still await the post-compatibility rerun.
-Cleanup of the one retained target follows that final gate.
+The checkpoint is blocked on that exact S2 ownership handoff. The complete
+measured output summaries and command selections are retained in
+[gate evidence](2026-11-12-s4-gate-evidence.md). Project9 remains In Progress;
+no PR or activation readiness is claimed.
+
+Cleanup completed: **4.847 GB removed**, including this worktree's only build
+target, downloaded nextest and temporary runner/log files after evidence extraction.
+Available disk:63.12GiB. Owned Mongo fixtures/volumes were cleaned by their runner;
+the final compile-only attempt created none. Worktree, requested notes, prepared
+patch and all three lock inodes are retained. See [cleanup](2026-11-12-s4-cleanup.md).

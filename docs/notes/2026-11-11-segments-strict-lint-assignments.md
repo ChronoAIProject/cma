@@ -219,4 +219,10 @@ builds: two E0308 errors in S2-owned `sandbox_unpublished_recovery::transaction:
 compare u64 maxima with the new Option<u64> generation. No unit/Mongo ran in that
 attempt. The unused scoped export also remains. RAM stayed at least29%.
 A matching 22-line correction is prepared; narrow S2 pin/ownership handoff requested.
-Final qualification counts and cleanup evidence follow in the same checkpoint note.
+Pushed documentation pin: `34a059faf599332c791381376c9e17abf9c25618`;
+implementation pin remains `5fdfae28133246ffbeb1d6bc5689513139d9cf95`.
+Final evidence is in `2026-11-12-s4-gate-evidence.md`; checkpoint status is BLOCKED
+on the named S2 handoff. Canonical secret scan passed3770commits; file-size6055passed.
+Cleanup removed4.847GB of owned target/tools/temp files;63.12GiB available.
+All requested notes, the prepared patch, worktree and lock inodes are retained.
+The final documentation head is reported in the aggregate #1350 comment.
