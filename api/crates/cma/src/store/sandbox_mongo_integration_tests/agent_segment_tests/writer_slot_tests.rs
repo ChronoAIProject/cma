@@ -146,7 +146,7 @@ async fn expired_preparation_and_timestamp_drift_never_authorize_publication() {
         &agent,
         &request,
         &admitted,
-        DateTime::from_millis(DateTime::now().timestamp_millis() - 118_000),
+        DateTime::from_millis(server_time(&db).await.timestamp_millis() - 118_000),
         &mut session,
     )
     .await
@@ -184,6 +184,64 @@ async fn expired_preparation_and_timestamp_drift_never_authorize_publication() {
         .consume(&db, &admitted, &mut session)
         .await
         .unwrap();
+    commit(&mut session).await;
+    db.drop().await.unwrap();
+}
+
+async fn server_time(db: &mongodb::Database) -> DateTime {
+    *db.run_command(doc! {"hello":1_i32})
+        .await
+        .unwrap()
+        .get_datetime("localTime")
+        .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn ahead_client_clock_cannot_extend_preparation_authority() {
+    let (client, name, _, agent) = fixture("segment_slot_clock").await;
+    let db = client.database(&name);
+    open_gate(&client, &db, &agent).await;
+    let (request, admitted) = accepted(&client, &db, &agent, "$fixture-ahead").await;
+    let ahead = DateTime::from_millis(server_time(&db).await.timestamp_millis() + 86_400_000);
+    let mut session = transaction(&client).await;
+    let original = gate::slots::claim(&db, &agent, &request, &admitted, ahead, &mut session)
+        .await
+        .unwrap()
+        .unwrap();
+    commit(&mut session).await;
+    let mut session = transaction(&client).await;
+    let gate_row = gate::read(&db, gate::GateName::Segments, &mut session)
+        .await
+        .unwrap()
+        .unwrap();
+    let before = gate_row.slots[0].expires_at;
+    session.abort_transaction().await.unwrap();
+    let now = server_time(&db).await;
+    assert!(before > now);
+    assert!(before.timestamp_millis() <= now.timestamp_millis() + 120_000);
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let mut session = transaction(&client).await;
+    let renewed = original.renew(&db, ahead, &mut session).await.unwrap();
+    assert_eq!(renewed.fence(), original.fence());
+    commit(&mut session).await;
+    let mut session = transaction(&client).await;
+    let gate_row = gate::read(&db, gate::GateName::Segments, &mut session)
+        .await
+        .unwrap()
+        .unwrap();
+    let after = gate_row.slots[0].expires_at;
+    session.abort_transaction().await.unwrap();
+    assert!(after >= before);
+    assert!(after.timestamp_millis() <= server_time(&db).await.timestamp_millis() + 120_000);
+    let mut session = transaction(&client).await;
+    assert!(original
+        .consume(&db, &admitted, &mut session)
+        .await
+        .is_err());
+    session.abort_transaction().await.unwrap();
+    let mut session = transaction(&client).await;
+    renewed.consume(&db, &admitted, &mut session).await.unwrap();
     commit(&mut session).await;
     db.drop().await.unwrap();
 }
