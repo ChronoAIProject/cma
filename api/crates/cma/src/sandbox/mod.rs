@@ -68,7 +68,14 @@ pub(crate) mod legacy_credentials;
 pub(crate) mod binding_lifecycle_test_support {
     pub(crate) use super::agent_skills::EmptyAgentSkillResolver;
     pub(crate) use super::agent_worker::{AgentWorker, AgentWorkerConfig, AgentWorkerDependencies};
+    pub(crate) use super::agent_worker::{
+        CapacityRecoveryReconnect, ReconnectAction, RecoveryReconnect,
+    };
     pub(crate) use super::live_agent_stopper::DurableLiveAgentStopper;
+    pub(crate) use super::live_agents::{
+        DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
+        LiveAgentConnectionLossHandler,
+    };
     pub(crate) use super::workspace_worker::{
         DurableProfileWorkspaceProvisioner, WorkspaceWorker, WorkspaceWorkerConfig,
         WorkspaceWorkerDependencies,
