@@ -1,6 +1,37 @@
 use super::*;
 
 #[tokio::test]
+async fn profile_target_refuses_sender_context_by_name() {
+    let (app, _) = app();
+    let mut input = body();
+    input["profile"]["environment"]["verified_sender_context"] = true.into();
+    input["profile_digest"] = json!(format!(
+        "sha256:{}",
+        content_digest(&input["profile"]).unwrap()
+    ));
+    let response = app
+        .oneshot(request(
+            "PUT",
+            "/api/v1/cmaeg/bindings/sender-profile",
+            Some(input),
+            Some(authority()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let value = json_body(response).await;
+    assert!(value["refused"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["field"] == "environment.verified_sender_context"));
+    assert!(!value["honoured"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("environment.verified_sender_context")));
+}
+
+#[tokio::test]
 async fn queue_lifetime_defaults_and_limits_are_enforced_before_binding_creation() {
     for (seconds, status, effective) in [
         (None, StatusCode::OK, 300),

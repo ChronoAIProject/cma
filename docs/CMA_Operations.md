@@ -1,5 +1,9 @@
 # CMA Operations
 
+For data changes in any store, follow [CMA Data Migrations](CMA_Data_Migrations.md):
+deploy compatible readers before admitting new writers, and record the release
+reader floor, recovery artifacts and migration evidence.
+
 This runbook covers deployment-owned operations for the Sandbox/Agent model.
 The current runtime contract is **3**, not the contract-2 image named in the
 original #832 plan. Product semantics are defined in [CMA Model](CMA_Model.md);
@@ -1042,8 +1046,10 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_UPSTREAM_WIRE_API` | Exactly `responses` |
 | `CHRONO_PLATFORM_BASE_URL` | Required canonical HTTPS platform proxy origin; also the upstream for the runtime's explicitly granted GitHub API proxy |
 | `CHRONO_DOCUMENT_BUCKET` | Existing S3-backed bucket used for durable Markdown artifacts. Empty disables document source storage and runtime publication tools; writes fail explicitly instead of storing ephemeral documents. Production uses `chrono-platform-bot`. |
+| `CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED` | Strict boolean, default `false`. Reuses trusted metadata for ordinary single-failure CloseProcess publication within the shared cohort. Capacity settlement, successful effects and unknown-commit reconciliation retain complete proofs. Disable and restart for rollback; preserve all history and quarantine. See [Bounded close retries](CMA_Bounded_Close_Retries.md). |
 | `CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED` | Strict boolean, default `false`. Enables a proven 200-row/4-MiB suffix for pending-approval reads only for the shared trusted cohort. A missing reset boundary, oversized suffix or untrusted metadata retains complete validation. Independent of admission/public-window and title activation. Disable and restart the API for rollback; keep all original history and metadata. See [Bounded pending-approval recovery](CMA_Bounded_Approval_Reads.md). |
 | `CHRONO_AGENT_LOG_FLEET_PERCENT` | Canonical integer 0–100, default `0`; positive percentages require the explicit admission ID list to be empty. Stable Agent-hash buckets stage 10/50/100. Preparation is lazy and bounded before eligible writes; public reads never prepare. Stage changes/kill switch require a same-image API rollout; preserve quarantine and compatible-image floor. See [Fleet log activation](CMA_Fleet_Log_Activation.md). |
+| `CHRONO_SANDBOX_GLOBAL_LIMIT` | Default `0` (off); integer `1..4096` enables a shared transactional ceiling on all nonretired Sandboxes across owners/replicas. Paused/provisioning/retiring rows retain capacity; exact-origin retries bypass new-capacity refusal. Requires all writers upgraded and a capacity-owner limit with unclaimed pool/prepared and failure headroom reserved separately. See [global admission](CMA_Global_Admission.md). |
 | `CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED` | Strict boolean, default `false` in code and manifests. All writes retain 1,024 receipts / 12 MiB while off; compatible readers always accept bounded expanded aggregates. Enable only in a later train after the compatible reader is deployed, older workers have drained and that image is the pinned rollback target. Only owner grant/link revocations may spend the reserve; ordinary writes retain the old limits. Disabling it preserves expanded reads and exact retries. See [Document artifacts](Document_Artifacts.md) for activation and rollback. |
 | `CHRONO_STORAGE_CLIENT_ID` | Deployment-owned machine identity for the existing `chrono-storage-service` proxy. Required when the document bucket is configured. Never passed to runtime Agents or browsers. |
 | `CHRONO_STORAGE_CLIENT_SECRET` | Secret reference for the storage machine identity; required with a configured document bucket. Issued tokens are cached in memory and renewed before expiry or once after a 401. |
@@ -1062,6 +1068,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` | Separate probe budget, minimum 30; default 120 |
 | `CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE` | Ordinary request budget/burst; default 600 |
 | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` | Creation request budget/burst; default 10 |
+| `CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED` | Strict boolean, default `false`. Opts exact registered existing-Agent input submissions into the existing Input budget, including Responses v2 and its Agent alias; preserves local and Mongo enforcement. See [Response input rate policy](CMA_Response_Input_Rate_Policy.md) for the route inventory and separate activation/rollback. |
 | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` | Agent input request budget/burst; default 120 |
 | `CHRONO_USAGE_BILLING_ENABLED` | Default false. Enables durable delivery of recorded Sandbox resource-time to NyxID's existing Lago organization; metering remains active when false. |
 | `CHRONO_USAGE_LAGO_API_URL` | Complete HTTPS API base ending `/api/v1`; required when usage billing is enabled. Supply the effective API path used by NyxID, including any reverse-proxy prefix. |

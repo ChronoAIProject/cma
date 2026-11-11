@@ -3864,6 +3864,14 @@ the shared quiet status treatment, with explicit retry for a disconnected feed.
 Changing channel or identity closes the previous subscription and rejects its
 late responses. Opening Activity never sends an event or starts agent work.
 
+A consumer's optional public `refusal_code` appears as **Refusal reason** in
+its existing Activity definition list. Use the existing row typography and
+spacing. A pre-admission refusal means no Agent turn and no automatic chat
+reply; never present it as a delivered response. Older snapshots without the
+field retain their existing presentation. When present, show
+`last_non_admission_code` as **Last admission refusal** in the same list, including
+after expiry, so the terminal reason and the last provider refusal remain distinct.
+
 | 2026-10-27 | Standardize Event Gateway on Agent Manager primitives; introduce a full-area accessible React Flow workspace, expandable resource navigation, illustrative entry screens, retained centered node configuration with section navigation, and evidence-based live Channel Activity. |
 
 ### Selected-channel Activity preview (2026-10-27)
@@ -6154,3 +6162,27 @@ request-policy gate when request models are retained. Refresh and explicit revie
 must not reopen Save without an available response for that policy.
 
 | 2026-11-11 | Align settings save availability with retained foundation/request policy gates and keep empty-policy unrelated saves available. |
+
+| 2026-11-10 | Show recorded pre-admission refusal reasons in the existing Channel Activity detail rows. |
+
+| 2026-11-11 | Retain the last precise provider admission refusal beside the terminal expiry reason in Channel Activity. |
+
+### 2026-11-11 — Explicit owner and request-model policies
+
+Spend controls includes editable owner overrides and request-model lists in the
+existing operator section. Reuse the same field, grid and Button primitives;
+number each group for distinct accessible labels. Add starts blank. Remove changes
+only the unsaved draft; the existing Save applies the revision-checked transaction.
+Explain the default-policy fallback when an owner override is removed. Removing
+the default policy allows an explicit-owner scope; never prepopulate policy values.
+
+Request-model editing requires both existing write-availability gates. A closed
+request gate leaves a foundation-only policy editable and exposes explicit refresh.
+Retained models behind a closed gate continue to block the full settings save.
+
+If both the retained draft and the server changed the same policy list, retain the
+draft visibly and require loading current values and reapplying list edits. Do not
+silently replace concurrent list changes. Independent field edits still use the
+existing explicit revision review. Disabled policies retain every entered value.
+
+| 2026-11-11 | Complete owner-override and request-model editing with blank inputs, independent availability, validation and conservative list-conflict recovery. |

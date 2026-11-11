@@ -13,6 +13,7 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 mod access_migration;
 mod access_origins;
 mod admission_log;
+mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
@@ -67,6 +68,7 @@ pub struct RateLimitConfig {
     pub default_per_minute: NonZeroU32,
     pub create_per_minute: NonZeroU32,
     pub input_per_minute: NonZeroU32,
+    pub response_input_tier_enabled: bool,
 }
 
 impl RateLimitConfig {
@@ -74,6 +76,17 @@ impl RateLimitConfig {
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         Ok(Self {
+            response_input_tier_enabled: match lookup("CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED")?
+                .as_deref()
+            {
+                None | Some("false") => false,
+                Some("true") => true,
+                _ => {
+                    return Err(
+                        "CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED must be true or false".into(),
+                    )
+                }
+            },
             admission_per_minute: positive_u32(
                 lookup,
                 "CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE",
@@ -149,6 +162,7 @@ impl TrustedProxyConfig {
 /// Complete process configuration for the temporary discovery boundary.
 #[derive(Clone)]
 pub struct Config {
+    pub(crate) global_sandbox_limit: u16,
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
     pub bind: SocketAddr,
@@ -280,6 +294,7 @@ impl Config {
         }
 
         let features = FeatureFlags::from_lookup(&mut lookup)?;
+        let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
         let bounded_admission_agents = admission_log::from_lookup(&mut lookup)?;
         let agent_log_fleet_percent =
             admission_log::fleet_percent(&mut lookup, &bounded_admission_agents)?;
@@ -376,6 +391,7 @@ impl Config {
             );
         }
         Ok(Self {
+            global_sandbox_limit,
             bind,
             public_url,
             agent_access_retained_origins,
