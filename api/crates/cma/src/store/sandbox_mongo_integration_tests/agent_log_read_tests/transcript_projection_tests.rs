@@ -131,7 +131,7 @@ async fn trusted_transcript_projection_matches_the_complete_log_and_selects_rows
             .unwrap()
             .unwrap();
         assert_eq!(actual, expected);
-        assert!(telemetry::snapshot(AGENT_LOG)[2] < fixture.entries.len());
+        assert!(telemetry::snapshot(AGENT_LOG)[2] < fixture.entries.len() as u64);
     })
     .await;
 
