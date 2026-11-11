@@ -35,6 +35,10 @@ fn indexes(name: &str) -> Vec<IndexModel> {
         )],
         EVIDENCE => vec![
             (
+                "agent_log_evidence_generation",
+                doc! {"agent_id":1,"incarnation":1,"evidence_generation":1,"_id":1},
+            ),
+            (
                 "agent_log_evidence_key",
                 doc! {"agent_id":1,"incarnation":1,"evidence_generation":1,"kind":1,"entity_key":1},
             ),
@@ -147,15 +151,20 @@ fn validator(name: &str) -> Document {
             &[],
         ),
         AUDITS => (
-            &["agent_id", "incarnation", "audit_id", "holder", "status"],
+            &[
+                "agent_id",
+                "incarnation",
+                "audit_id",
+                "holder",
+                "status",
+                "result_generation",
+            ],
             &[
                 "fence",
                 "expires_at_ms",
                 "through_seq",
                 "head_revision",
-                "next_ordinal",
-                "checked_entries",
-                "checked_bytes",
+                "step",
             ],
             &[],
         ),
@@ -179,8 +188,9 @@ fn validator(name: &str) -> Document {
     if name == AUDITS {
         properties.insert("captured_head", doc! {"bsonType":"object"});
         properties.insert("captured_agent", doc! {"bsonType":"object"});
-        properties.insert("semantic", doc! {"bsonType":"object"});
-        properties.insert("previous_seal", doc! {"bsonType":["null","binData"]});
+        properties.insert("format_version", doc! {"bsonType":"long","enum":[2_i64]});
+        properties.insert("completed", doc! {"bsonType":"object"});
+        properties.insert("stage", doc! {"bsonType":["null","object"]});
     }
     let required: Vec<_> = properties.keys().cloned().collect();
     doc! {"$jsonSchema":{"bsonType":"object","required":required,"additionalProperties":false,"properties":properties}}
@@ -224,7 +234,7 @@ pub(in crate::store) async fn verify(database: &Database) -> Result<(), StoreErr
 
 enum Step {
     Collection(&'static str),
-    Index(&'static str, IndexModel),
+    Index(&'static str, Box<IndexModel>),
 }
 
 /// Inspect the existing contract before any additive operation. Partial
@@ -244,7 +254,7 @@ async fn pending(database: &Database) -> Result<Vec<Step>, StoreError> {
             pending.extend(
                 indexes(name)
                     .into_iter()
-                    .map(|index| Step::Index(name, index)),
+                    .map(|index| Step::Index(name, Box::new(index))),
             );
             continue;
         };
@@ -279,7 +289,7 @@ async fn pending(database: &Database) -> Result<Vec<Step>, StoreError> {
                     || index.options.as_ref().and_then(|o| o.name.as_ref()) == expected_name
             });
             match matching.next() {
-                None => pending.push(Step::Index(name, expected)),
+                None => pending.push(Step::Index(name, Box::new(expected))),
                 Some(index) => {
                     if matching.next().is_some()
                         || !index.keys.iter().eq(expected.keys.iter())
@@ -325,7 +335,7 @@ pub(in crate::store) async fn apply_next(database: &Database) -> Result<bool, St
         Step::Index(name, index) => {
             database
                 .collection::<Document>(name)
-                .create_index(index)
+                .create_index(*index)
                 .write_concern(mongodb::options::WriteConcern::majority())
                 .await
                 .map_err(unavailable)?;

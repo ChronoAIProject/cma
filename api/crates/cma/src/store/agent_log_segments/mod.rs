@@ -1,4 +1,5 @@
 //! Versioned immutable log readers. This module never admits segmented writes.
+pub(in crate::store) mod audit;
 pub(in crate::store) mod capture;
 mod codec;
 #[cfg(test)]
