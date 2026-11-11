@@ -34,11 +34,11 @@ impl Fixture {
         let ambiguous = ambiguous_commits.clone();
         options.command_event_handler = Some(EventHandler::callback(move |event| match event {
             CommandEvent::Started(event)
-                if event.command.get_str("find") == Ok(AGENT_LOG)
+                if event.command.get_str("find").ok() == Some(AGENT_LOG)
                     && event.command.get_document("filter").is_ok_and(|filter| {
                         filter.len() == 1 && filter.contains_key("agent_id")
                     })
-                    && event.command.get_document("sort") == Ok(&doc! { "seq": 1 }) =>
+                    && event.command.get_document("sort").ok() == Some(&doc! { "seq": 1 }) =>
             {
                 complete.fetch_add(1, Ordering::SeqCst);
             }
@@ -47,7 +47,7 @@ impl Fixture {
                     && event
                         .reply
                         .get_document("writeConcernError")
-                        .is_ok_and(|error| error.get_i32("code") == Ok(50)) =>
+                        .is_ok_and(|error| error.get_i32("code").ok() == Some(50)) =>
             {
                 ambiguous.fetch_add(1, Ordering::SeqCst);
             }
