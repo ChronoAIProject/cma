@@ -24,10 +24,35 @@ pub(super) async fn run(path: &Path) -> Result<()> {
         ),
     ]))
     .map_err(|_| invalid())?;
-    let ledger = Ledger::open(path.with_extension("source"), config.clone(), true, 16_384).await?;
+    let id = uuid::Uuid::new_v4().to_string();
+    // Reuse the synthetic pair: another two stores would exceed the image
+    // probe's 128 MiB filesystem once their emergency reserves were allocated.
+    for collected in [false, true] {
+        qualify(path, &config, &id, collected).await?;
+    }
+    // Both owners are closed. Reuse this create-only synthetic allocation for
+    // the new format without increasing the 128 MiB image probe footprint.
+    std::fs::remove_dir_all(path).map_err(|_| invalid())?;
+    std::fs::remove_dir_all(path.with_extension("source")).map_err(|_| invalid())?;
+    super::super::collection_storage_probe::run(path, &config).await
+}
+
+async fn qualify(path: &Path, config: &RuntimeConfig, id: &str, collected: bool) -> Result<()> {
+    let ledger = Ledger::open(
+        path.with_extension("source"),
+        config.clone(),
+        !collected,
+        16_384,
+    )
+    .await?;
+    let name = if collected {
+        "indexed-collection-probe"
+    } else {
+        "indexed-probe"
+    };
     let operation = Operation::remove_agent_home(&AgentHomeRemoveRequest::new(
-        "agent:indexed-probe:home:remove:v1",
-        AgentSlot::new("indexed-probe"),
+        format!("agent:{name}:home:remove:v1"),
+        AgentSlot::new(name),
     ));
     ledger.admit(5, vec![operation.clone()]).await?;
     let entry = ledger.begin(operation.clone()).await?;
@@ -38,7 +63,7 @@ pub(super) async fn run(path: &Path) -> Result<()> {
                 .completed(&layer3_adapter::wire::AgentHomeRemoveReceipt {
                     operation_id: operation.operation_id.clone(),
                     request_sha256: operation.request_sha256.clone(),
-                    agent_id: AgentSlot::new("indexed-probe"),
+                    agent_id: AgentSlot::new(name),
                 })?,
         )
         .await?;
@@ -61,18 +86,41 @@ pub(super) async fn run(path: &Path) -> Result<()> {
     for row in &rows {
         row.hash_into(&mut digest);
     }
-    let proof = GroupProof {
+    let mut proof = GroupProof {
         key: group_key(&operation),
         source_sha256: format!("{:x}", digest.finalize()),
-        observation_sha256: format!("{:x}", Sha256::digest(observation(&config, &operation)?)),
+        observation_sha256: format!("{:x}", Sha256::digest(observation(config, &operation)?)),
         records: rows.len() as u32,
     };
-    let id = uuid::Uuid::new_v4().to_string();
+    let (binding, originals) = super::super::collection_probe::artifacts(
+        config,
+        id,
+        context.revision()?,
+        layer3_adapter::runtime_ledger_collection::CollectionGroup::Agent {
+            agent_id: name.into(),
+        },
+    )?;
+    let collection = || {
+        crate::ledger_reclamation::CollectionEvidence::parse(
+            &binding,
+            &group_key(&operation),
+            originals.clone(),
+        )
+    };
+    if collected {
+        let evidence = collection()?;
+        if evidence.originals() != originals.each_ref().map(Vec::as_slice)
+            || evidence.operation_id().is_empty()
+        {
+            return Err(invalid());
+        }
+        proof.observation_sha256 = evidence.observation_sha256().into();
+    }
     let archive = Archive::open_version(
         path.to_owned(),
         config.clone(),
-        id.clone(),
-        true,
+        id.into(),
+        !collected,
         256,
         Version::Indexed,
     )
@@ -91,14 +139,14 @@ pub(super) async fn run(path: &Path) -> Result<()> {
     expect_refused(&archive, &operation).await?;
     archive.close().await?;
     // This uses the exact V1 schema expectation, which must not reinterpret V2.
-    if let Ok(old) = Archive::open(path.to_owned(), config.clone(), id.clone(), false, 256).await {
+    if let Ok(old) = Archive::open(path.to_owned(), config.clone(), id.into(), false, 256).await {
         old.close().await?;
         return Err(invalid());
     }
     let archive = Archive::open_version(
         path.to_owned(),
         config.clone(),
-        id.clone(),
+        id.into(),
         false,
         256,
         Version::Indexed,
@@ -131,14 +179,18 @@ pub(super) async fn run(path: &Path) -> Result<()> {
         return Err(invalid());
     }
     expect_refused(&archive, &operation).await?;
-    let observation = observation(&config, &operation)?;
-    let first =
+    let observation = observation(config, &operation)?;
+    let first = if collected {
+        super::super::deactivate_collected_held(archive, ledger, proof.clone(), collection()?, ())
+            .await?
+    } else {
         super::super::deactivate_held(archive, ledger, proof.clone(), observation.clone(), ())
-            .await?;
+            .await?
+    };
     let archive = Archive::open_version(
         path.to_owned(),
         config.clone(),
-        id.clone(),
+        id.into(),
         false,
         256,
         Version::Indexed,
@@ -155,7 +207,11 @@ pub(super) async fn run(path: &Path) -> Result<()> {
         return Err(invalid());
     }
     expect_refused(&archive, &operation).await?;
-    let retry = super::super::deactivate_held(archive, ledger, proof, observation, ()).await?;
+    let retry = if collected {
+        super::super::deactivate_collected_held(archive, ledger, proof, collection()?, ()).await?
+    } else {
+        super::super::deactivate_held(archive, ledger, proof, observation, ()).await?
+    };
     if retry != first {
         return Err(invalid());
     }

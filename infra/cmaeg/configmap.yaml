@@ -204,6 +204,7 @@ data:
   CMAEG_INGRESS_MAX_BODY: "1048576"
   CMAEG_INGRESS_INFLIGHT: "256"
   CMAEG_ACCEPT_BUDGET_MS: "20000"
+  CMAEG_CONTEXT_RETRY_ENABLED: "false"
   CMAEG_TURN_TIMEOUT_MS: "600000"
   CMAEG_NYXID_REPLY_TIMEOUT_MS: "5000"
   # Keep complete replies off until retained runtime proxy compatibility is verified.

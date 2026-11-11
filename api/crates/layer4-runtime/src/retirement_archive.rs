@@ -1,12 +1,23 @@
 //! Exact retained bytes and indexed permanent replay refusal. Active-ledger
 //! deactivation is a separate, ordered step after this archive has committed.
+mod collection;
+mod collection_artifacts;
+pub(crate) mod collection_probe;
+pub(crate) use layer3_adapter::LedgerCollectionArtifactReferenceV1 as CollectionReference;
+mod collection_completion;
+mod collection_receipt;
+mod collection_reference;
+pub(crate) use collection_receipt::CollectionCompletion;
+mod collection_transition;
+pub(crate) use collection_transition::complete_collection_held;
+mod collection_storage_probe;
 mod probe;
 mod probe_sources;
 mod transfer;
 pub(crate) use transfer::Direction;
 mod indexed;
 mod indexed_deactivation;
-pub(crate) use indexed_deactivation::deactivate_held;
+pub(crate) use indexed_deactivation::{deactivate_collected_held, deactivate_held};
 mod record;
 mod schema;
 #[cfg(test)]
@@ -34,12 +45,14 @@ pub(crate) struct Archive {
     identity: [(u64, u64); 3],
     anchor: Option<Arc<std::fs::File>>,
     version: Version,
+    archive_id: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Version {
     Legacy = 1,
     Indexed = 2,
+    Collection = 3,
 }
 
 /// Only a complete source selection and authoritative settled-deletion proof
@@ -80,6 +93,7 @@ impl Archive {
     ) -> Result<Self> {
         let storage = Storage::open(path.clone(), create, pages).await?;
         let expected = config.clone();
+        let retained_id = archive_id.clone();
         let storage = storage
             .validate(move |db| schema::open(db, &expected, &archive_id, create, version))
             .await?;
@@ -97,6 +111,7 @@ impl Archive {
             identity,
             anchor: None,
             version,
+            archive_id: retained_id,
         })
     }
 
@@ -108,6 +123,7 @@ impl Archive {
     ) -> Result<Self> {
         let storage = Storage::open_anchored(Arc::clone(&directory), pages).await?;
         let expected = config.clone();
+        let retained_id = archive_id.clone();
         let storage = storage
             .validate(move |db| schema::open(db, &expected, &archive_id, true, Version::Legacy))
             .await?;
@@ -118,6 +134,7 @@ impl Archive {
             identity: [(0, 0); 3],
             anchor: Some(directory),
             version: Version::Legacy,
+            archive_id: retained_id,
         })
     }
 
@@ -136,8 +153,9 @@ impl Archive {
     pub(crate) async fn require_ready(&self) -> Result<()> {
         self.verify()?;
         require_reserve(&self.path, self.anchor.as_deref())?;
+        let version = self.version;
         self.storage
-            .call(|db| {
+            .call(move |db| {
                 let pending: bool = db
                     .query_row(
                         "SELECT EXISTS(SELECT 1 FROM retired_groups WHERE complete=0)",
@@ -145,7 +163,7 @@ impl Archive {
                         |row| row.get(0),
                     )
                     .map_err(|_| storage_error())?;
-                if pending {
+                if pending || (version == Version::Collection && collection::pending(db)?) {
                     return Err(invalid());
                 }
                 Ok(())
@@ -198,6 +216,9 @@ impl Archive {
         mut read: impl FnMut(u32) -> Result<SourceRecord> + Send + 'static,
     ) -> Result<Receipt> {
         self.verify()?;
+        if self.version == Version::Collection {
+            return Err(invalid());
+        }
         if !record::digest(&proof.key)
             || !record::digest(&proof.source_sha256)
             || !record::digest(&proof.observation_sha256)
