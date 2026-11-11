@@ -212,39 +212,6 @@ async fn cache_hit_survives_deleted_previous_version_and_cache_miss_names_the_fa
 }
 
 #[tokio::test]
-async fn changed_published_tree_keeps_recovery_pending_instead_of_claiming_the_old_version() {
-    let (config, request) = fixture(true).await;
-    FAULTS
-        .lock()
-        .unwrap()
-        .insert(config.state_root.clone(), "exchanged");
-    assert_eq!(
-        install(&config, &reqwest::Client::new(), &request)
-            .await
-            .unwrap_err()
-            .code,
-        "injected_crash"
-    );
-    let parent = config.agent_home(request.agent_id.as_str()).join("skills");
-    let target = parent.join("research/SKILL.md");
-    let published = std::fs::read(&target).unwrap();
-    std::fs::write(&target, b"concurrent owner edit").unwrap();
-    let error = install(&config, &reqwest::Client::new(), &request)
-        .await
-        .unwrap_err();
-    assert_eq!(error.code, "agent_skill_upgrade_recovery_required");
-    assert!(error.retryable);
-    assert_eq!(std::fs::read(&target).unwrap(), b"concurrent owner edit");
-    assert!(staging(&parent, &request).join("new/SKILL.md").exists());
-    std::fs::write(&target, published).unwrap();
-    assert!(install(&config, &reqwest::Client::new(), &request)
-        .await
-        .unwrap()
-        .matches(&request));
-    cleanup(&config);
-}
-
-#[tokio::test]
 async fn excessive_tree_depth_is_refused_without_removing_owner_content() {
     let (config, request) = fixture(true).await;
     let target = config

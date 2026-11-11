@@ -313,6 +313,8 @@ async fn terminal_upgrade_reasons_reach_the_owner_and_keep_the_confirmed_version
         layer3_adapter::AgentSkillUpgradeRefusal::Modified,
         layer3_adapter::AgentSkillUpgradeRefusal::PreviousUnavailable,
         layer3_adapter::AgentSkillUpgradeRefusal::RetentionFull,
+        layer3_adapter::AgentSkillUpgradeRefusal::RecoveryConflict,
+        layer3_adapter::AgentSkillUpgradeRefusal::PreparationExhausted,
     ] {
         let versions = Versions::new(vec![
             vec![runtime_skill("1.0", 'a', "original")],
@@ -351,6 +353,21 @@ async fn terminal_upgrade_reasons_reach_the_owner_and_keep_the_confirmed_version
             effective(&failed.work, &reference("").id).unwrap().version,
             "1.0"
         );
-        assert_eq!(failed.work.step, AgentWorkStep::None);
+        assert!(layer2_core::sandbox::agent_live_skills::idle(&failed));
+        let outcome = operations
+            .send_message(
+                &caller,
+                &ready.id,
+                "Continue after the refused upgrade.".into(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            layer2_core::sandbox::AgentMessageOutcome::Dispatched(_)
+        ));
     }
 }
+
+#[path = "skill_upgrade_retry_tests.rs"]
+mod retry_tests;

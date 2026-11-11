@@ -133,6 +133,9 @@ impl AgentSkillInstallReceipt {
 #[path = "agent_skill_install_tests.rs"]
 mod tests;
 
+/// Each preparation budget is durable and belongs to one immutable upgrade request.
+pub const MAX_AGENT_SKILL_UPGRADE_PREPARATION_ATTEMPTS: u32 = 5;
+
 /// Terminal, owner-actionable replacement failures; no runtime loss is implied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum AgentSkillUpgradeRefusal {
@@ -142,6 +145,10 @@ pub enum AgentSkillUpgradeRefusal {
     PreviousUnavailable,
     #[error("Archive and remove settled trees in the Agent home's .cma-skill-upgrades directory; preserve pending evidence, then retry.")]
     RetentionFull,
+    #[error("The previous version remains effective. Preserve the staged trees; save and restore local skill edits, then retry with a new key.")]
+    RecoveryConflict,
+    #[error("The previous version remains effective. Preparation failed five times; restore the archive or runtime dependency, then retry with a new key.")]
+    PreparationExhausted,
 }
 impl AgentSkillUpgradeRefusal {
     pub const fn code(self) -> &'static str {
@@ -149,6 +156,8 @@ impl AgentSkillUpgradeRefusal {
             Self::Modified => "agent_skill_upgrade_modified",
             Self::PreviousUnavailable => "agent_skill_upgrade_previous_unavailable",
             Self::RetentionFull => "agent_skill_upgrade_retention_full",
+            Self::RecoveryConflict => "agent_skill_upgrade_recovery_conflict",
+            Self::PreparationExhausted => "agent_skill_upgrade_preparation_exhausted",
         }
     }
 }

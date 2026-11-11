@@ -22,6 +22,9 @@ pub enum AgentSkillInstallStatus {
 #[serde(deny_unknown_fields)]
 pub struct AgentSkillInstallation {
     pub reference: SkillRef,
+    /// Safe preparation retries, retained even when lifecycle work changes step.
+    #[serde(default, skip_serializing_if = "zero_retries")]
+    pub preparation_retries: u32,
     /// Exact effective installation being replaced; absent on legacy additive work.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous: Option<ResolvedAgentSkill>,
@@ -35,12 +38,27 @@ impl AgentSkillInstallation {
     pub fn new(reference: SkillRef) -> Self {
         Self {
             reference,
+            preparation_retries: 0,
             previous: None,
             status: AgentSkillInstallStatus::Pending,
             material: None,
             error: None,
         }
     }
+}
+fn zero_retries(value: &u32) -> bool {
+    *value == 0
+}
+fn preparation_retry(old: &AgentSkillInstallation, new: &AgentSkillInstallation) -> bool {
+    if old.previous.is_none()
+        || old.material.is_some()
+        || new.preparation_retries >= layer3_adapter::MAX_AGENT_SKILL_UPGRADE_PREPARATION_ATTEMPTS
+    {
+        return false;
+    }
+    let mut expected = old.clone();
+    expected.preparation_retries = old.preparation_retries.saturating_add(1);
+    expected == *new
 }
 fn valid_reference(reference: &SkillRef) -> bool {
     let id = reference.id.as_str();
@@ -68,6 +86,9 @@ pub(super) fn validate_installations(
         && work.live_skills.iter().enumerate().all(|(index, item)| {
             let previous = effective_before(work, &item.reference.id, index);
             valid_reference(&item.reference)
+                && item.preparation_retries
+                    < layer3_adapter::MAX_AGENT_SKILL_UPGRADE_PREPARATION_ATTEMPTS
+                && (item.previous.is_some() || item.preparation_retries == 0)
                 && match &item.previous {
                     Some(expected) => {
                         previous == Some(expected)
@@ -398,7 +419,7 @@ pub fn validate_install_work(
                 .expect("present")
                 .material = new.material.clone();
         }
-        AgentSkillInstallStatus::Pending if old == new => {
+        AgentSkillInstallStatus::Pending if old == new || preparation_retry(old, new) => {
             if (!mutation.agent_logs.is_empty()
                 && !super::store::agent_cleanup_capacity_retry(current, mutation))
                 || next.work.ready_at <= mutation.appended_at
@@ -407,11 +428,18 @@ pub fn validate_install_work(
             }
             expected
                 .work
+                .live_skills
+                .last_mut()
+                .expect("present")
+                .preparation_retries = new.preparation_retries;
+            expected
+                .work
                 .retry(&mutation.holder, mutation.fence, next.work.ready_at.clone())
                 .map_err(|_| Error::Conflict)?;
         }
         AgentSkillInstallStatus::Installed | AgentSkillInstallStatus::Failed => {
             if old.material != new.material
+                || old.preparation_retries != new.preparation_retries
                 || (new.status == AgentSkillInstallStatus::Installed && old.material.is_none())
                 || mutation.agent_logs
                     != vec![AgentLogKind::SkillInstallationChanged {

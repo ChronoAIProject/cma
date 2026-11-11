@@ -210,6 +210,7 @@ async fn history_capacity_bounds_hot_metadata_and_refuses_new_work_without_trunc
         let version = format!("{n:03}{}", "v".repeat(253));
         let mut item = AgentSkillInstallation::new(reference(&version));
         item.previous = agent_live_skills::effective(&ready.work, &item.reference.id).cloned();
+        item.preparation_retries = if n == 0 { 0 } else { 4 };
         let mut pinned = material(&version);
         pinned.name = Some("n".repeat(256));
         item.material = Some(pinned);
@@ -245,4 +246,24 @@ async fn history_capacity_bounds_hot_metadata_and_refuses_new_work_without_trunc
         ready
     );
     assert_eq!(store.get_agent(&ready.id).await.unwrap().unwrap(), ready);
+}
+
+#[test]
+fn preparation_retry_metadata_is_bounded_and_cannot_be_admitted_or_added_to_ordinary_installs() {
+    let mut ready = installed();
+    ready.work.live_skills[0].preparation_retries = 1;
+    assert!(agent_live_skills::validate_installations(&ready.work, &[]).is_err());
+    ready.work.live_skills[0].preparation_retries = 0;
+    let mut next = ready.clone();
+    let mut upgrade = AgentSkillInstallation::new(reference("1.1"));
+    upgrade.previous = Some(material("1.0"));
+    upgrade.preparation_retries = 1;
+    next.work.live_skills.push(upgrade);
+    next.work
+        .schedule(AgentWorkStep::InstallSkill, next.updated_at.clone());
+    assert!(agent_live_skills::validate_installations(&next.work, &[]).is_ok());
+    assert!(!agent_live_skills::is_install_admission(&ready, &next));
+    next.work.live_skills[1].preparation_retries =
+        layer3_adapter::MAX_AGENT_SKILL_UPGRADE_PREPARATION_ATTEMPTS;
+    assert!(agent_live_skills::validate_installations(&next.work, &[]).is_err());
 }
