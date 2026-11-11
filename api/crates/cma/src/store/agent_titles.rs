@@ -19,6 +19,8 @@ use super::agent_title_writes::{complete_title, set_user_title};
 use super::agents::read_agent;
 use super::sandbox_mongo::MongoSandboxStore;
 
+mod bounded;
+
 #[async_trait::async_trait]
 impl AgentTitleStore for MongoSandboxStore {
     async fn agent_title_candidates(
@@ -153,11 +155,14 @@ async fn title_transcript(
     transcript_at_snapshot(store, &agent, &mut session).await
 }
 
-async fn transcript_at_snapshot(
+pub(super) async fn transcript_at_snapshot(
     store: &MongoSandboxStore,
     agent: &Agent,
     session: &mut mongodb::ClientSession,
 ) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
+    if let Some(transcript) = bounded::read(store, agent, session).await? {
+        return Ok(Some(transcript));
+    }
     let mut logs = Vec::new();
     scan_complete_log_with_snapshot_session(
         ScanCaller::TitleDiscovery,
