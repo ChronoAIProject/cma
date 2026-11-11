@@ -204,6 +204,8 @@ impl ControlPlaneComposition {
             Arc::clone(&operations),
         )
         .with_runtime_updates(runtime.updates)
+        .with_retained_recovery(runtime.recovery)
+        .with_retained_reopening(runtime.reopen)
         .with_user_directory(Arc::clone(&users))
         .with_sandbox_colors(layer2_core::sandbox::colors::SandboxColorService::new(
             stores.sandbox_colors.clone(),

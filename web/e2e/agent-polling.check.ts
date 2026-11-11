@@ -42,11 +42,9 @@ test('LOCAL queue discovery resumes after an older server returns 404', async ({
     await expect.poll(() => reads).toBeGreaterThan(0);
     legacy = false;
     fixture.append({
-      type: 'usage',
-      input_tokens: 1,
-      output_tokens: 1,
-      context_used: 2,
-      context_window: 100000,
+      type: 'message',
+      role: 'user',
+      content: 'Recorded queue discovery hint',
     });
     await expect.poll(() => reads).toBeGreaterThanOrEqual(2);
     expect(reads).toBeLessThanOrEqual(3);
@@ -124,8 +122,8 @@ for (const fail of [false, true]) {
         200,
       );
       await page.waitForTimeout(7000);
-      expect(reads).toBeGreaterThanOrEqual(3);
-      expect(reads).toBeLessThanOrEqual(fail ? 3 : 5);
+      expect(reads).toBeGreaterThanOrEqual(fail ? 3 : 1);
+      expect(reads).toBeLessThanOrEqual(fail ? 3 : 2);
       if (fail) {
         await expect(
           page.getByText('The message queue could not be refreshed. Your messages are retained.'),
