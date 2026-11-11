@@ -75,8 +75,23 @@ registration, supported audit maintenance entry points, and the point/range/
 predecessor store delegations. The integration branch has published Mongo CI
 selection at `d6368d023`; that registration is not yet part of this branch.
 
-The predecessor executable harness is implemented but has not yet run against
-this checkpoint. The actual permitted rollback artifact still requires the
-release compatibility gate. Required integrated consumer/writer tests and
+The predecessor executable qualification subsequently passed using the harness
+at `77df688f3` and original production source
+`0932e58cb6c821c4cdc69f2cb5d82fe538b8c2b6`. It proved empty legacy initialization,
+exact append/read success, v2 read/append refusal and unchanged original source
+bytes after refusal. Only the test module was injected; source, documentation
+and manifests came from the same historical revision. Its disposable replica
+set and volume were confirmed absent after completion. The actual permitted
+rollback artifact still requires the release compatibility gate. Required integrated consumer/writer tests and
 release-owner verification remain open. No production calls or mutations were
 performed by this qualification.
+
+## Follow-up source checkpoint
+
+Schema/control registration, the audit argument parser and shared output-index
+rebuild follow the capture gate above. Their exact executable results must be
+recorded separately; the earlier counts do not claim qualification of later
+source. Formatting, source size and candidate-history secret checks passed at
+`9f2fe7ac0`. The new unit/Mongo gates are queued under the existing shared lock.
+No review-ready or activation claim is made while strict production wiring,
+operator authority and migration registration remain outstanding.
