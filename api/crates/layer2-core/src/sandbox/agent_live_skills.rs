@@ -234,7 +234,15 @@ impl AgentOperationService {
             }
             self.require_agent_connections(&current).await?;
             let (parent, queues) = self.parent_admission(&current).await?;
-            if queues {
+            // A ready child can precede the parent's final active publication.
+            // Skill stores only admit an active parent; do not spin on a
+            // deterministic store refusal and misreport it as an operation lock.
+            if queues
+                || !matches!(
+                    parent.status,
+                    super::SandboxStatus::Active | super::SandboxStatus::CredentialRotating
+                )
+            {
                 return Err(AgentOperationError::StatusConflict {
                     status: current.status,
                 });
@@ -258,7 +266,11 @@ impl AgentOperationService {
                 Err(error) => return Err(error),
             }
         }
-        Err(AgentOperationError::Conflict)
+        // Revision contention does not prove that another operation owns this
+        // Agent. Keep the bounded retry, but do not project it as a busy Agent.
+        Err(AgentOperationError::Unavailable(
+            "skill admission could not commit after concurrent changes; retry the request".into(),
+        ))
     }
 }
 
