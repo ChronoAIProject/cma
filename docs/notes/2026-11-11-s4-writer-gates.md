@@ -134,3 +134,8 @@ The size gate passed 5,948 files. Owned changes pass formatting and whitespace;
 the workspace format gate fails solely at the inherited S1
 `agent_log_segments/mongo_tests/capture_tests.rs:207` assertion. Its owner must
 publish that routine formatting fix. Staged source secret scan passed.
+
+All 31 canonical Mongo runner harness tests passed with source and archive
+selection, refusal, cancellation and fixture ownership/cleanup coverage
+(`node --test .github/scripts/mongo-contract-tests.test.mjs`). This harness
+uses mock Cargo/Docker commands; it is not a real-Mongo publication pass.
