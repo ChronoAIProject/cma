@@ -23,6 +23,10 @@ pub struct RuntimeRecoveryCommand {
 pub struct HostedAgentOpenSettings {
     /// Transport-owned compact permission retention policy.
     pub bounded_permission_state: bool,
+    /// Transport policy, overwritten from trusted composition before attachment.
+    pub output_json_budget: bool,
+    /// Transport-owned policy for immutable retained domain payloads.
+    pub shared_runtime_output: bool,
     /// Exact provider-proved initialize error for an already initialized bridge.
     /// This permits reattachment only; it never supplies conversation/tool authority.
     pub already_initialized_error: Option<serde_json::Value>,
@@ -50,6 +54,8 @@ pub trait HostedAgentRuntime: Send + Sync {
     fn open_settings(&self, request: &AgentOpenRequest) -> Result<HostedAgentOpenSettings> {
         Ok(HostedAgentOpenSettings {
             bounded_permission_state: false,
+            output_json_budget: false,
+            shared_runtime_output: false,
             already_initialized_error: None,
             open_completion: None,
             context_refresh: None,
