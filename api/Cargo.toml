@@ -18,6 +18,7 @@ edition = "2021"
 publish = false
 
 [workspace.dependencies]
+jiff = { version = "0.2.38", features = ["tzdb-bundle-always"] }
 # The Agent Client Protocol's published schema. Layer 3 *is* ACP, so its types
 # are taken from the protocol's own crate rather than mirrored by hand — a
 # hand-written copy drifts from the specification the first time it moves.

@@ -87,22 +87,42 @@ public_enum!(
         RuntimeLost
     ]
 );
-public_enum!(
-    V2CommandFailure,
-    layer2_core::sandbox::agent_io::CommandFailureCode,
-    [
-        QueueTimeout,
-        AuthorityRevoked,
-        AuthorityUnavailable,
-        CredentialSetupRequired,
-        ConnectionsRequired,
-        AgentUnavailable,
-        TargetTurnChanged,
-        RuntimeUnavailable,
-        RuntimeLost,
-        ExecutionFailed
-    ]
-);
+// Command-status readers retain the predecessor enum; typed budget detail is
+// carried by the HTTP refusal and the response's error code/guidance.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum V2CommandFailure {
+    QueueTimeout,
+    AuthorityRevoked,
+    AuthorityUnavailable,
+    CredentialSetupRequired,
+    ConnectionsRequired,
+    AgentUnavailable,
+    TargetTurnChanged,
+    RuntimeUnavailable,
+    RuntimeLost,
+    ExecutionFailed,
+}
+impl From<layer2_core::sandbox::agent_io::CommandFailureCode> for V2CommandFailure {
+    fn from(value: layer2_core::sandbox::agent_io::CommandFailureCode) -> Self {
+        use layer2_core::sandbox::agent_io::CommandFailureCode as Core;
+        match value {
+            Core::QueueTimeout => Self::QueueTimeout,
+            Core::AuthorityRevoked => Self::AuthorityRevoked,
+            Core::AuthorityUnavailable => Self::AuthorityUnavailable,
+            Core::CredentialSetupRequired => Self::CredentialSetupRequired,
+            Core::ConnectionsRequired => Self::ConnectionsRequired,
+            Core::AgentUnavailable => Self::AgentUnavailable,
+            Core::TargetTurnChanged => Self::TargetTurnChanged,
+            Core::RuntimeUnavailable => Self::RuntimeUnavailable,
+            Core::RuntimeLost => Self::RuntimeLost,
+            Core::ExecutionFailed => Self::ExecutionFailed,
+            Core::OwnerBudgetExhausted | Core::TurnBudgetExhausted | Core::BudgetUnavailable => {
+                Self::ExecutionFailed
+            }
+        }
+    }
+}
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct V2CommandReceipt {
@@ -232,6 +252,9 @@ mod compatibility_tests {
         for failure in [
             CommandFailureCode::CredentialSetupRequired,
             CommandFailureCode::ConnectionsRequired,
+            CommandFailureCode::OwnerBudgetExhausted,
+            CommandFailureCode::TurnBudgetExhausted,
+            CommandFailureCode::BudgetUnavailable,
         ] {
             let retained = CommandStatusView {
                 receipt: CommandReceiptView {

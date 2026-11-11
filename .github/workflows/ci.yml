@@ -32,6 +32,8 @@ jobs:
         run: node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs
       - name: Ledger image qualification regressions
         run: node --test .github/scripts/runtime-ledger-evidence.test.mjs .github/scripts/runtime-ledger-downgrade.test.mjs
+      - name: Migration matrix evidence regressions
+        run: node --test .github/scripts/migration-matrix.test.mjs
       - name: Debian desktop fixture regressions
         run: |
           python3 .github/scripts/desktop-browser-input-tests.py
@@ -94,7 +96,8 @@ jobs:
   omarchy:
     name: Images (runtime-omarchy)
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    # Measured 71-80 minute builds need headroom for qualification, scan and export.
+    timeout-minutes: 150
     permissions:
       contents: read
     steps:
