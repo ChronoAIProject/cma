@@ -107,13 +107,39 @@ async fn legacy_indexed_stream_retains_intermediate_tools_and_fences_buffered_fr
         events(&stream.next().await.unwrap().unwrap())[0]["type"],
         "response.created"
     );
-    let mut deleted = f.agent.clone();
-    deleted.status = AgentStatus::Deleted;
-    deleted.deleted_at = Some(AT.into());
-    deleted.revision += 1;
-    f.store.save_agent(f.agent.revision, deleted).await.unwrap();
+    f.purge().await;
     assert!(
         stream.next().await.is_none(),
         "buffered frames cannot escape deleted authority"
     );
+}
+
+#[tokio::test]
+async fn v2_output_page_http_preserves_authority_and_refuses_a_foreign_cursor() {
+    let mut kinds = beginning();
+    kinds.push(AgentLogKind::TurnCompleted { turn_sequence: 3 });
+    let data = make(kinds).await;
+    let f = fixture_with_events(Some(data.source.clone()), false).await;
+    let response = create(&f, false).await;
+    let id = response.headers()["x-cma-response-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    drop(response);
+    let path = format!("/api/v2/responses/{id}/output");
+    let (status, page) = read_json(&f.router, Method::GET, &path, "owner-a", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["data"], json!([]));
+    assert_eq!(page["has_more"], false);
+    let (status, _) = read_json(
+        &f.router,
+        Method::GET,
+        &format!("{path}?after=legacy:0"),
+        "owner-a",
+        None,
+    )
+    .await;
+    assert!(!status.is_success());
+    let (status, _) = read_json(&f.router, Method::GET, &path, "unrelated", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

@@ -384,6 +384,26 @@ pub(super) async fn make_turn(mut kinds: Vec<AgentLogKind>, target: u64) -> Inde
 }
 
 impl IndexedFixture {
+    pub async fn purge(&self) {
+        use layer2_core::sandbox::store::{SandboxStore, SandboxWorkerStore};
+        let mut parent = self
+            .store
+            .get_sandbox(&self.agent.sandbox_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let revision = parent.revision;
+        parent.status = layer2_core::sandbox::SandboxStatus::Retired;
+        parent.retired_at = Some(AT.into());
+        parent.purge_after = Some(AT.into());
+        parent.revision += 1;
+        self.store.save_sandbox(revision, parent).await.unwrap();
+        self.store
+            .purge_sandbox(&self.agent.sandbox_id, revision + 1, AT)
+            .await
+            .unwrap();
+    }
+
     pub fn mutate(&mut self, mutate: impl FnOnce(&mut Data)) {
         let mut data = (*self.source.data).clone();
         mutate(&mut data);

@@ -81,7 +81,16 @@ pub(in crate::responses::v2) async fn output_page(
                     "The cursor is beyond the output.",
                 );
             }
-            let next = response.output.len().min(from.saturating_add(8));
+            let next = response.output.len().min(from.saturating_add(1));
+            if serde_json::to_vec(&response.output[from..next]).map_or(true, |b| {
+                b.len() + 2048 > layer2_core::sandbox::store::indexed::OUTPUT_PAGE_BYTES
+            }) {
+                return error::field(
+                    "output",
+                    "response_output_item_too_large",
+                    "One output item exceeds the page budget.",
+                );
+            }
             serde_json::json!({"data":&response.output[from..next],"has_more":next<response.output.len(),"next_after":(next<response.output.len()).then(||format!("legacy:{next}"))})
         }
         Err(layer2_core::sandbox::AgentReadError::InvalidPage) => {
