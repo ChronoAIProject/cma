@@ -182,6 +182,22 @@ async fn v1_real_files_reuse_both_bounds_and_preserve_originals_over_1400_lifecy
     assert_eq!(counts(&fixture.root, true), [8400, 4200]);
     let archive = fixture.open(false).await;
     archive.require_ready().await.unwrap();
+    let archived = archive
+        .storage
+        .call(|db| {
+            let query = |sql| {
+                db.query_row(sql, [], |r| r.get::<_, i64>(0))
+                    .map_err(|_| invalid())
+            };
+            Ok([
+                query("SELECT count(*) FROM retired_groups WHERE complete=1")?,
+                query("SELECT count(*) FROM archived_records WHERE kind=1")?,
+                query("SELECT count(*) FROM archived_records WHERE kind=2")?,
+            ])
+        })
+        .await
+        .unwrap();
+    assert_eq!(archived, [2800, 8400, 4200]);
     let (proof, receipt) = original.unwrap();
     let root = fixture.root.clone();
     assert_eq!(
