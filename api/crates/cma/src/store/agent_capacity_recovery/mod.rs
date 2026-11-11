@@ -8,6 +8,8 @@ mod discovery;
 pub(super) mod lineage;
 mod preparation;
 mod receipts;
+mod restart;
+pub(crate) use restart::RestartDecision;
 pub(super) mod records;
 mod service;
 pub(super) mod settlement;

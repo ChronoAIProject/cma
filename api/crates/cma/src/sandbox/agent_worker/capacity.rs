@@ -16,6 +16,9 @@ pub(crate) mod recovery;
 #[path = "recovery_commands.rs"]
 pub(crate) mod commands;
 
+#[path = "capacity_restart.rs"]
+pub(crate) mod reconnect;
+
 impl AgentWorker {
     pub(crate) fn capacity_recovery_commands(
         self: std::sync::Arc<Self>,
@@ -23,6 +26,7 @@ impl AgentWorker {
     ) -> std::sync::Arc<
         dyn layer2_core::sandbox::agent_capacity_recovery::commands::CapacityRecoveryCommands,
     > {
+        self.install_capacity_restart(service.clone());
         std::sync::Arc::new(commands::AuthorizedRecoveryCommands::new(service, self))
     }
 

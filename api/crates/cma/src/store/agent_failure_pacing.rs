@@ -134,13 +134,17 @@ pub(super) async fn record(
         ready_at: next.work.ready_at.clone(),
         until: layer2_core::rfc3339_at(SystemTime::UNIX_EPOCH + Duration::from_secs(at + delay)),
     };
-    store.agents.update_one(
-        doc! {"_id": next.id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-            "revision": signed(next.revision, "agent revision").map_err(SandboxStoreError::Corrupt)?,
-            FIELD: row.get(FIELD).cloned().unwrap_or(Bson::Null)},
-        doc! {"$set": {FIELD: mongodb::bson::serialize_to_bson(&pacing)
+    let mut filter = super::agent_capacity_recovery::source::envelope_filter(next, &row)?;
+    filter.insert(FIELD, row.get(FIELD).cloned().unwrap_or(Bson::Null));
+    store
+        .agents
+        .update_one(
+            filter,
+            doc! {"$set": {FIELD: mongodb::bson::serialize_to_bson(&pacing)
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?}},
-    ).await.map_err(unavailable)?;
+        )
+        .await
+        .map_err(unavailable)?;
     Ok(())
 }
 
