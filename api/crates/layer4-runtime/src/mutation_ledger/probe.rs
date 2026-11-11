@@ -101,6 +101,9 @@ pub(crate) async fn run(directory: &Path) -> Result<()> {
         let mut digest = Sha256::new();
         loop {
             let page = ledger.retirement_inventory(cursor).await?;
+            if rows == 0 {
+                page.context.hash_into(&mut digest);
+            }
             for row in &page.rows {
                 row.hash_into(&mut digest);
                 rows += 1;
@@ -111,7 +114,7 @@ pub(crate) async fn run(directory: &Path) -> Result<()> {
             }
         }
         let hash = digest.finalize();
-        if rows != 4 || previous.as_ref().is_some_and(|prior| prior != &hash) {
+        if rows != 7 || previous.as_ref().is_some_and(|prior| prior != &hash) {
             return Err(invalid());
         }
         previous = Some(hash);
