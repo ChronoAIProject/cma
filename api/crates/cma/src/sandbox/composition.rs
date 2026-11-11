@@ -44,6 +44,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub parent_not_ready_pacing_enabled: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -149,6 +150,7 @@ impl SandboxLifecycleComposition {
                 config.deployment_id.clone(),
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
+            .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
             .with_managed_documents(config.managed_documents_enabled)
             .with_access_transport_migration(config.access_transport_migration),
         );
