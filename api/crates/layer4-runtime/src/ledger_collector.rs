@@ -86,7 +86,7 @@ pub async fn step<P: CollectorPort>(admission: Admission, port: &P) -> Result<St
         }
         match &checkpoint.page {
             None => {
-                let page = port.enumerate(hold, &checkpoint).await?;
+                let page = port.enumerate(hold.clone(), &checkpoint).await?;
                 if !page.valid()
                     || page.source_revision != checkpoint.source_revision
                     || page.cursor != checkpoint.cursor
@@ -105,7 +105,9 @@ pub async fn step<P: CollectorPort>(admission: Admission, port: &P) -> Result<St
                     Ok(Step::PageAdvanced)
                 }
                 Some(group) => {
-                    let intent = port.retain_evidence(hold, &checkpoint, *group).await?;
+                    let intent = port
+                        .retain_evidence(hold.clone(), &checkpoint, *group)
+                        .await?;
                     if !intent.valid()
                         || intent.group != *group
                         || intent.binding != checkpoint.binding

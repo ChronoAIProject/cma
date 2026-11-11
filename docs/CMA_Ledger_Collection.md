@@ -175,6 +175,17 @@ not prove fairness under arbitrary unfenced writers: A/C must provide a bounded
 qualified gate window, and the scheduler must bound deadlines and opportunities
 between homes. No collector result releases a home or certifies empty occupancy.
 
+The real adapter must also close the selection-to-dispatch window. An owned
+qualified job/gate must cover original source selection, Selected publication and
+source transition; separate successful lock acquisitions do not prove the source
+stayed unchanged between calls. The skeleton retains its hold through each
+progress CAS, but does not implement a hold across calls or process restart.
+Until A/C provide that integration, source changes with a pending intent refuse
+and retain the original operation. A separately reviewed no-effect cancellation
+could resolve a provably unprepared stale selection; absence or lease expiry alone
+cannot authorize discarding it. The model's fair-tail test injects source changes
+between settled groups and is not proof against arbitrary inter-step writer churn.
+
 The tests include an in-memory fault model and a reusable lifecycle driver
 interface. Both model format selections run 1,400 cycles with modeled totals of
 8,400 operations and 4,200 authority lifetimes, restart points and retained-replay
