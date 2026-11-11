@@ -36,6 +36,9 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     super::agent_log_segments::PROJECTIONS,
     super::agent_log_segments::EVIDENCE,
     super::agent_log_segments::AUDITS,
+    super::agent_log_segments::writer_gate::COLLECTION,
+    super::agent_log_segments::writer_admission::COLLECTION,
+    super::agent_capacity_recovery::records::COLLECTION,
     super::message_feedback::COLLECTION,
     "agent_lifecycle_operations",
     "agent_profile_revisions",
@@ -293,6 +296,8 @@ mod lifecycle_children_contract;
 #[cfg(test)]
 #[path = "profile_internal_contract.rs"]
 mod profile_internal_contract;
+#[cfg(test)]
+mod segments;
 #[cfg(test)]
 #[path = "shared_schema_contract.rs"]
 mod shared_schema_contract;
