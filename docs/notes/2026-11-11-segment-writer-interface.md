@@ -157,10 +157,19 @@ async fn prepare(
     admission: Option<&Admission>,
 ) -> Result<PreparedPublication, TransactionLogError>;
 
+// The caller builds its existing domain/fence predicate and replacement
+// fields; the helper owns the single Agent CAS and adds strict captured-source
+// and format conditions. No independently applied Agent replacement is needed.
+struct AggregateUpdate {
+    filter: Document,
+    fields: Document,
+}
+
 async fn persist(
     store: &MongoSandboxStore,
     session: &mut ClientSession,
     prepared: PreparedPublication,
+    aggregate: AggregateUpdate,
 ) -> Result<PublicationReceipt, TransactionLogError>;
 ```
 
@@ -181,11 +190,14 @@ emit any new-format document; an activated Agent cannot select that fallback.
 
 The caller validates its existing domain transition, owner/lineage/retirement,
 channel-history seal, runtime/checkpoint and lease holder/fence/expiry evidence.
-It keeps its Agent/worktree/command/side-effect writes in the same existing
-snapshot/majority transaction. `persist` writes only the planned log, seal, head,
-derived-state and publication receipt, and fences the matching Agent envelope.
-The caller's aggregate replacement uses the returned format/update fields and
-CAS; any failed match aborts **all** effects. A helper error must never be caught
+It keeps its worktree/command/side-effect writes in the same existing
+snapshot/majority transaction and passes its validated Agent predicate/fields
+as `AggregateUpdate`. `persist` owns the single Agent CAS plus the planned log,
+seal, head, derived-state and publication receipt. It adds exact captured-source
+identity/revision/head/schema guards and format-preserving fields; callers do
+not independently replace the Agent. The predicate must use S1's explicit
+legacy/segmented format dispatch, not an unconditional version-1 filter. Any
+failed match aborts **all** effects. A helper error must never be caught
 and followed by committing the rest of the transaction.
 
 The commit unit is therefore:
