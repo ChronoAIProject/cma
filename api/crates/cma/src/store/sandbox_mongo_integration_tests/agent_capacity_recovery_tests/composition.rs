@@ -16,6 +16,7 @@ use layer2_core::sandbox::agent_capacity_recovery::{
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 mod faults;
+mod later_progress;
 
 #[derive(Default)]
 struct Native {
