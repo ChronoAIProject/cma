@@ -1,12 +1,14 @@
 //! A/B real SQLite interoperability, awaiting A's test-only main registration.
 //! These small fixtures are not the 1,400-cycle V1/V2 qualification or C exclusion.
+#[path = "archive_reader.rs"]
+mod archive_reader;
 #[path = "storage_fixture.rs"]
 mod fixture;
 #[path = "types.rs"]
 pub mod types;
 
 use fixture::{Fixture, Original};
-use types::{Binding, Decision, Digest, Intent, Phase, Receipt, SourceFormat};
+use types::{Binding, Decision, Digest, Intent, SourceFormat};
 
 fn digest(value: &str) -> Digest {
     assert_eq!(value.len(), 64);
@@ -38,35 +40,6 @@ fn intent(original: &Original) -> Intent {
     }
 }
 
-// A's Archive::collection_completion already checked the original encoding,
-// reference, checksum and source proof before this private B projection exists.
-fn project(cold: crate::retirement_archive::CollectionCompletion) -> Receipt {
-    assert_eq!(cold.format, "runtime-ledger-transition-receipt-v1");
-    assert_eq!(cold.phase, "acknowledged");
-    Receipt {
-        version: 1,
-        binding_sha256: digest(&cold.binding_sha256),
-        operation: *uuid::Uuid::parse_str(&cold.operation_id)
-            .unwrap()
-            .as_bytes(),
-        plan_sha256: digest(&cold.plan_sha256),
-        group: digest(&cold.group_key),
-        source_sha256: digest(&cold.source_sha256),
-        observation_sha256: digest(&cold.observation_sha256),
-        before_sha256: digest(&cold.before_sha256),
-        after_sha256: digest(&cold.after_sha256),
-        before_revision: cold.before_revision,
-        after_revision: cold.after_revision,
-        operations: cold.operations,
-        authority: cold.authority,
-        cleanup: cold.cleanup,
-        free_pages_before: cold.free_pages_before,
-        free_pages_after: cold.free_pages_after,
-        phase: Phase::Acknowledged,
-        sha256: digest(&cold.receipt_sha256),
-    }
-}
-
 #[tokio::test]
 async fn actual_v2_reopen_and_later_group_preserve_b_reference_and_final_receipt() {
     let fixture = Fixture::new();
@@ -94,28 +67,26 @@ async fn actual_v2_reopen_and_later_group_preserve_b_reference_and_final_receipt
             Some(reference.clone())
         );
         assert_eq!(
-            archive
-                .read_collection(original.binding.clone(), reference.clone())
+            archive_reader::read_originals(&archive, &original.binding, &expected, &reference)
                 .await
                 .unwrap()
                 .originals(),
             original.bytes.each_ref().map(Vec::as_slice)
         );
-        assert!(archive
-            .collection_completion(original.binding.clone(), reference.clone())
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            archive_reader::completion(&archive, &original.binding, &expected, &reference)
+                .await
+                .unwrap()
+                .is_none()
+        );
         archive.close().await.unwrap();
         fixture.complete(&original, reference.clone()).await;
         let archive = fixture.archive(false).await;
-        let receipt = project(
-            archive
-                .collection_completion(original.binding.clone(), reference.clone())
+        let receipt =
+            archive_reader::completion(&archive, &original.binding, &expected, &reference)
                 .await
                 .unwrap()
-                .unwrap(),
-        );
+                .unwrap();
         assert!(receipt.matches(&expected));
         assert!(receipt.operations > 0 && receipt.authority > 0);
         assert!(archive
@@ -126,13 +97,10 @@ async fn actual_v2_reopen_and_later_group_preserve_b_reference_and_final_receipt
             first = Some((original.binding, reference, expected, receipt));
         }
         if let Some((binding, reference, expected, receipt)) = &first {
-            let again = project(
-                archive
-                    .collection_completion(binding.clone(), reference.clone())
-                    .await
-                    .unwrap()
-                    .unwrap(),
-            );
+            let again = archive_reader::completion(&archive, binding, expected, reference)
+                .await
+                .unwrap()
+                .unwrap();
             assert_eq!(&again, receipt);
             assert!(again.matches(expected));
         }
@@ -162,14 +130,16 @@ async fn actual_v2_corrupt_reference_refuses_and_preserves_original_pending_work
             _ => changed.artifacts_sha256 = "c".repeat(64),
         }
         assert_ne!(changed, expected.reference());
-        assert!(archive
-            .read_collection(original.binding.clone(), changed.clone())
-            .await
-            .is_err());
-        assert!(archive
-            .collection_completion(original.binding.clone(), changed)
-            .await
-            .is_err());
+        assert!(
+            archive_reader::read_originals(&archive, &original.binding, &expected, &changed)
+                .await
+                .is_err()
+        );
+        assert!(
+            archive_reader::completion(&archive, &original.binding, &expected, &changed)
+                .await
+                .is_err()
+        );
         assert_eq!(
             archive
                 .pending_collection(original.binding.clone())
@@ -178,6 +148,114 @@ async fn actual_v2_corrupt_reference_refuses_and_preserves_original_pending_work
             Some(reference.clone())
         );
     }
+    archive.close().await.unwrap();
+    let source = fixture.source(false).await;
+    assert_eq!(source.snapshot().await.unwrap().operations, 1);
+    source.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn actual_v2_completion_reader_rejects_changed_intent_without_changing_outcome() {
+    let fixture = Fixture::new();
+    let original = fixture.original("collector-cold-read", true).await;
+    let expected = intent(&original);
+    let archive = fixture.archive(true).await;
+    let reference = archive
+        .retain_collection(original.evidence(), "a".repeat(64))
+        .await
+        .unwrap();
+    archive.close().await.unwrap();
+    fixture.complete(&original, reference.clone()).await;
+    let archive = fixture.archive(false).await;
+    let receipt = archive_reader::completion(&archive, &original.binding, &expected, &reference)
+        .await
+        .unwrap()
+        .unwrap();
+    let source = fixture.source(false).await;
+    let source_before = source.snapshot().await.unwrap();
+    source.close().await.unwrap();
+    for case in 0..13 {
+        let mut changed = expected.clone();
+        match case {
+            0 => changed.source_sha256[0] ^= 1,
+            1 => changed.observation_sha256[0] ^= 1,
+            2 => changed.evidence_sha256[0] ^= 1,
+            3 => changed.before_revision += 1,
+            4 => changed.plan_sha256[0] ^= 1,
+            5 => changed.operation[0] ^= 1,
+            6 => changed.binding.epoch += 1,
+            7 => changed.binding.sha256[0] ^= 1,
+            8 => changed.binding.archive_id[0] ^= 1,
+            9 => changed.group[0] ^= 1,
+            10 => changed.artifact_lengths[0] += 1,
+            11 => changed.decision = Decision::RetainUnknown,
+            _ => changed.binding.format = SourceFormat::V1,
+        }
+        assert_eq!(
+            archive_reader::completion(&archive, &original.binding, &changed, &reference).await,
+            Err(types::Refusal::InvalidEvidence),
+            "changed intent case {case}"
+        );
+    }
+    let mut changed_binding = original.binding.clone();
+    changed_binding.maintenance_epoch += 1;
+    assert_eq!(
+        archive_reader::completion(&archive, &changed_binding, &expected, &reference).await,
+        Err(types::Refusal::InvalidEvidence)
+    );
+    let mut unretained = expected.clone();
+    unretained.operation = *uuid::Uuid::from_u128(1).as_bytes();
+    assert_eq!(
+        archive_reader::completion(
+            &archive,
+            &original.binding,
+            &unretained,
+            &unretained.reference()
+        )
+        .await,
+        Err(types::Refusal::UnknownOutcome),
+        "missing originals cannot become an empty completion or a new attempt"
+    );
+    assert_eq!(
+        archive_reader::completion(&archive, &original.binding, &expected, &reference)
+            .await
+            .unwrap(),
+        Some(receipt)
+    );
+    assert!(archive
+        .pending_collection(original.binding.clone())
+        .await
+        .unwrap()
+        .is_none());
+    archive.close().await.unwrap();
+    let source = fixture.source(false).await;
+    assert_eq!(source.snapshot().await.unwrap(), source_before);
+    source.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn actual_archive_reader_refuses_v1_instead_of_relabeling_its_binding() {
+    use layer3_adapter::runtime_ledger_maintenance::LedgerSourceFormatV1;
+    let fixture = Fixture::new();
+    let original = fixture.original("collector-v1-refusal", true).await;
+    let archive = fixture.archive(true).await;
+    let reference = archive
+        .retain_collection(original.evidence(), "a".repeat(64))
+        .await
+        .unwrap();
+    let mut v1_binding = original.binding.clone();
+    v1_binding.source_format = LedgerSourceFormatV1::V1;
+    let mut v1 = intent(&original);
+    v1.binding.sha256 = digest(&v1_binding.binding_sha256().unwrap());
+    v1.binding.format = SourceFormat::V1;
+    assert_eq!(
+        archive_reader::completion(&archive, &v1_binding, &v1, &v1.reference()).await,
+        Err(types::Refusal::InvalidEvidence)
+    );
+    assert_eq!(
+        archive.pending_collection(original.binding).await.unwrap(),
+        Some(reference)
+    );
     archive.close().await.unwrap();
     let source = fixture.source(false).await;
     assert_eq!(source.snapshot().await.unwrap().operations, 1);
