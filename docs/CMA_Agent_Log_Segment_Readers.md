@@ -101,12 +101,19 @@ alone are not an executable or activation claim.
 
 ## Additive migration and retention
 
-The reader migration adds the eight sidecars: heads, segments, publications,
-projections, evidence, audits, rollout gates and exact publication admissions. The shared migration runner owns source and
+The reader migration adds nine sidecars: heads, segments, publications,
+projections, evidence, audits, rollout gates, exact publication admissions and
+format-2 capacity recovery work. The shared migration runner owns source and
 checksum identity, authority, lease renewal and completion receipts. One adapter
 step creates one collection or one index with majority acknowledgment, then
-reads back the contract. Existing validator, index-order, name, collation or TTL
-drift is refused before any additive change. Unknown migration history must
+reads back the contract. Existing validator, index-order, name, uniqueness,
+collation, TTL or extra-index drift is refused before any additive change.
+Every index is compared with its own declared options; recovery discovery
+indexes are nonunique, while admission and segment keys remain unique.
+Only the ordinary primary index and declared secondary indexes are accepted.
+Missing indexes refuse runtime verification; an unfinished explicit migration
+can resume their creation. A completed migration refuses missing-index drift.
+Unknown migration history must
 remain a refusal for older migrators.
 
 Startup verifies instead of creating sidecars. All may be absent before any
@@ -162,6 +169,13 @@ validate authority and semantic relationships before effects. Global gate
 policy alone does not prevent a legacy hierarchy purge; per-Agent admissions
 do preserve its evidence and lineage.
 
+`agent_capacity_recovery_work` uses the frozen format-2 schema and three
+nonunique discovery indexes from the capacity-recovery contract. All four
+carrier phases retain their required original result witness. Unknown or older
+carrier schemas refuse migration inspection without relabeling records.
+Schema acceptance is separate from the codec's identity, digest, calendar and
+receipt checks; the runtime must perform those checks before acting on a row.
+
 Output changes use the partial unique `agent_log_output_change_seek` index on
 Agent, incarnation, evidence generation, kind, numeric turn and numeric ordinal.
 Only `output_change` evidence carries the numeric seek fields. Its validator
@@ -179,9 +193,11 @@ remains immutable when later output advances the current tool record. Source
 reply row limits are independent of the smaller evidence write-transaction
 limit; the historical source/query/time and transaction caps remain test gates.
 
-The immutable migration checksum must include `schema.rs`,
-`schema/validators.rs` and `schema/controls.rs`. The migration adapter and shared
-operator registration remain an integration gate; startup still performs no DDL.
+The immutable migration checksum includes the migration adapter, ordered
+collection inventory, `schema.rs`, its validator/control/recovery/index-contract
+children and both frozen format-2 JSON definitions. The runtime role and backup
+inventory must cover the same collections. Actual encoder and authenticated-role
+qualification remain combined integration gates; startup still performs no DDL.
 
 The pure `audit_command` parser accepts exactly one of
 `--agent-log-audit-unit`, `--agent-log-audit-cancel`, or
