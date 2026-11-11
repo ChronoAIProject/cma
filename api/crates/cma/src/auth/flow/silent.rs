@@ -4,13 +4,13 @@
 use std::sync::Arc;
 
 use axum::{
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Redirect, Response},
     Json,
 };
 use serde::Deserialize;
 
-use super::{begin_login, issued_cookie, request_cookie, LoginAttempt};
+use super::{begin_login_with_intent, request_cookie, LoginAttempt};
 use crate::auth::{AuthState, SIGNED_OUT_COOKIE};
 
 /// OIDC `prompt`. Only `none` is accepted.
@@ -50,15 +50,23 @@ pub(super) async fn declined_callback(
     attempt: &LoginAttempt,
     error: Option<&str>,
     headers: &HeaderMap,
-    binding_cookie: &str,
+    binding: &str,
 ) -> Option<Response> {
     let signed_out = request_cookie(headers, SIGNED_OUT_COOKIE).is_some();
     let back = || Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response();
-    let mut response = match error {
+    let response = match error {
         // Signed in to the provider, which only needs this person to approve
         // CMA: continue to its consent screen. Nothing starts work.
-        Some("consent_required") if !signed_out => {
-            begin_login(auth.clone(), attempt.return_to.clone(), None, false).await
+        Some("consent_required") if !signed_out && !attempt.consent_requested => {
+            begin_login_with_intent(
+                auth.clone(),
+                attempt.return_to.clone(),
+                None,
+                None,
+                true,
+                Some(binding),
+            )
+            .await
         }
         // No provider session, or the browser signed out of CMA after this
         // attempt began. Nobody asked to sign in, so return them to the page
@@ -67,20 +75,13 @@ pub(super) async fn declined_callback(
         None if signed_out => back(),
         None => return None,
     };
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        issued_cookie(binding_cookie, "", auth.secure_cookies(), 0),
-    );
     Some(response)
 }
 
-/// Only an interactive sign-in completes while the marker is set; it is the
-/// person choosing to be signed in again, so the marker is cleared.
-pub(super) fn clear_signed_out(response: &mut Response, headers: &HeaderMap, secure: bool) {
-    if request_cookie(headers, SIGNED_OUT_COOKIE).is_some() {
-        response.headers_mut().append(
-            header::SET_COOKIE,
-            issued_cookie(SIGNED_OUT_COOKIE, "", secure, 0),
-        );
+pub(super) fn fallback(automatic: bool, return_to: Option<&str>, failure: Response) -> Response {
+    if automatic {
+        Redirect::to(return_to.unwrap_or("/")).into_response()
+    } else {
+        failure
     }
 }

@@ -60,6 +60,7 @@ async fn login_verifier_is_encrypted_and_bound_to_its_attempt() {
             revision: 3,
         }),
         silent: true,
+        consent_requested: true,
         expires_at: SystemTime::UNIX_EPOCH + Duration::from_secs(20),
     };
 
@@ -74,6 +75,7 @@ async fn login_verifier_is_encrypted_and_bound_to_its_attempt() {
     assert_eq!(restored.return_to, original.return_to);
     assert_eq!(restored.actor_link_intent, original.actor_link_intent);
     assert_eq!(restored.silent, original.silent);
+    assert_eq!(restored.consent_requested, original.consent_requested);
     assert_eq!(restored.expires_at, original.expires_at);
 
     let mut moved = store.login_to_doc(original).unwrap();
