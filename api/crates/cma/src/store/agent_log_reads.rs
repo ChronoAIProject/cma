@@ -109,16 +109,46 @@ pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
     };
     let entries = if let Some(segmented) = &head.segmented {
         let (after, through) = window.bounds(head.last_seq)?;
+        if matches!(window, Window::Prefix { .. })
+            && through.saturating_sub(after)
+                > u64::try_from(super::agent_log_segments::MAX_ENTRIES)
+                    .map_err(|_| SandboxStoreError::SequenceConflict)?
+        {
+            return Err(SandboxStoreError::AgentLogCapacityExceeded);
+        }
         let mut entries = Vec::new();
         // A segmented history has per-segment integrity bounds. Walk those
         // pages independently so a compatibility complete read remains
         // available for valid histories larger than the legacy 10,128-row /
         // 4 MiB physical scan budget.
         let mut page_after = after.min(head.last_seq);
-        while page_after < through.min(head.last_seq) {
+        let bounded_through = through.min(head.last_seq);
+        if page_after == bounded_through {
+            // Even an empty public range proves the captured active tail and
+            // rejects a missing row or uncommitted append in that snapshot.
+            super::agent_log_segments::visit_range(
+                store,
+                segmented,
+                super::agent_log_segments::LogRange {
+                    after: page_after,
+                    through: bounded_through,
+                    limit: 1,
+                },
+                &mut session,
+                true,
+                |entry| {
+                    head.validate_lineage(&entry)?;
+                    entries.push(entry);
+                    Ok(())
+                },
+            )
+            .await
+            .map_err(transaction_error)?;
+        }
+        while page_after < bounded_through {
             let page_through = page_after
                 .saturating_add(super::agent_log_segment_reads::PAGE_SIZE)
-                .min(through.min(head.last_seq));
+                .min(bounded_through);
             super::agent_log_segments::visit_range(
                 store,
                 segmented,
