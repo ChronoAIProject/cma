@@ -55,6 +55,26 @@ permission replay retention, live-fragment competition, trusted transport policy
 and strict configuration. Run the existing allocation fixtures after any change
 to reservation layout or parser representation; requested bytes are not RSS.
 
+## Allocation regression receipt
+
+The reservation layout was remeasured on aarch64-apple-darwin with Rust 1.96.1
+at API tree `d645b897cdfe11b357d00d0d147dc5bd6c72c41a` (source
+`b6d84af4a58a4618f7c732cacb46903d52f38cc0`). The seven existing parsed JSON
+fixtures all fit their derived tree/scratch reservations and returned measured
+frame allocations to zero after the final owner was dropped. The combined suite
+passed 205 focused tests. Values below are requested allocation bytes, excluding
+allocator/OS overhead; they do not qualify the still-missing ingress owners or RSS.
+
+| Fixture | Retained requested bytes | Peak requested bytes | Tree allowance | Scratch allowance |
+| --- | ---: | ---: | ---: | ---: |
+| max-string | 4194438 | 4194438 | 8390656 | 12583936 |
+| max-escaped | 2097287 | 4194303 | 8390656 | 12583936 |
+| small-objects | 636262 | 636262 | 7034530 | 66547 |
+| wide-map | 834614 | 1205174 | 8460100 | 108262 |
+| wide-array | 589960 | 884736 | 8422398 | 50173 |
+| nested | 18568 | 18568 | 67842 | 1411 |
+| duplicates | 496 | 496 | 8527840 | 209872 |
+
 ## Rollout and rollback
 
 Keep this policy and its dependencies off on the Thursday 13:00 train. Activation
