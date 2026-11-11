@@ -53,6 +53,7 @@ impl InstanceProblem {
     pub(crate) fn from_create(error: AgentServiceError) -> Self {
         match error {
             AgentServiceError::Connection(error) => Self::Connection(error),
+            AgentServiceError::Budget(reason) => Self::Budget(reason),
             AgentServiceError::Forbidden => Self::Forbidden,
             AgentServiceError::ProfileNotFound => Self::AgentProfileNotFound,
             AgentServiceError::WorkspaceNotFound => Self::WorkspaceNotFound,

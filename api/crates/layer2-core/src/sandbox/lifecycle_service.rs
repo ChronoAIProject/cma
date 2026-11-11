@@ -30,6 +30,8 @@ pub enum SandboxLifecycleCommandError {
         status: SandboxStatus,
         reason: SandboxLifecycleBlocker,
     },
+    #[error("model budget refused the revival: {0}")]
+    Budget(crate::budget::BudgetError),
     #[error("sandbox data is not usable: {0}")]
     Corrupt(String),
     #[error("sandbox lifecycle dependency is unavailable: {0}")]
@@ -46,6 +48,7 @@ impl SandboxLifecycleCommandError {
             Self::SandboxNotActive { .. } => "sandbox_not_active",
             Self::SandboxNotPaused { .. } => "sandbox_not_paused",
             Self::SandboxBusy { .. } => "sandbox_lifecycle_busy",
+            Self::Budget(reason) => reason.code(),
             Self::Corrupt(_) => "stored_sandbox_corrupt",
             Self::Unavailable(_) => "sandbox_lifecycle_unavailable",
         }
@@ -75,6 +78,9 @@ impl SandboxService {
             sandbox.status,
             SandboxStatus::Paused | SandboxStatus::Pausing
         ) {
+            self.require_platform_open()
+                .await
+                .map_err(SandboxLifecycleCommandError::Budget)?;
             observe_command_preparation(
                 command,
                 "revival_prerequisites",
@@ -176,6 +182,9 @@ impl SandboxService {
                     "connection verification is unavailable".into(),
                 ),
             })?;
+        self.require_platform_open()
+            .await
+            .map_err(SandboxLifecycleCommandError::Budget)?;
         let command = SandboxLifecycleCommand::revive(
             id.clone(),
             caller.subject.clone(),
