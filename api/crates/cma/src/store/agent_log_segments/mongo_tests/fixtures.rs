@@ -7,6 +7,10 @@ use layer2_core::sandbox::{
 
 pub(super) async fn database(prefix: &str) -> (Client, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable replica set required");
+    assert!(prefix.is_ascii());
+    // Keep the random identity intact and leave room for the cross-database
+    // proof fixtures' `_other` suffix within Mongo's database-name limit.
+    let prefix = &prefix[..prefix.len().min(11)];
     (
         Client::with_uri_str(uri).await.unwrap(),
         format!("cma_segments_{prefix}_{}", uuid::Uuid::new_v4().simple()),
@@ -103,7 +107,7 @@ pub(super) async fn segmented_with_width(
     install(store, agent, entries, closed, width).await
 }
 
-async fn install(
+pub(super) async fn install(
     store: &MongoSandboxStore,
     mut agent: Agent,
     entries: Vec<AgentLogEntry>,
@@ -223,4 +227,39 @@ async fn install(
         .await
         .unwrap();
     (agent, entries)
+}
+
+pub(super) async fn certify(store: &MongoSandboxStore, agent: &Agent, entries: &[AgentLogEntry]) {
+    let head = Head::read(
+        collection(store, HEADS)
+            .find_one(doc! {"_id":agent.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    let mut state = layer2_core::sandbox::AgentLogProjectionState::default();
+    for entry in entries {
+        state
+            .observe(
+                agent,
+                entry,
+                layer2_core::sandbox::AgentLogProjectionState::queued_owner(entry),
+            )
+            .unwrap();
+    }
+    state.validate_aggregate(agent).unwrap();
+    let projection = segments::projection::Projection {
+        agent_id: agent.id.0.clone(),
+        format_version: 1,
+        incarnation: head.incarnation,
+        evidence_generation: head.evidence_generation,
+        through_seq: head.last_seq,
+        head_revision: head.revision,
+        record: state,
+    };
+    collection(store, PROJECTIONS)
+        .insert_one(bson::serialize_to_document(&projection).unwrap())
+        .await
+        .unwrap();
 }

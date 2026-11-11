@@ -21,7 +21,7 @@ async fn additive_units_resume_and_reject_index_order_drift_before_mutation() {
                 .keys(doc! {"start_seq":1,"incarnation":1,"agent_id":1})
                 .options(
                     mongodb::options::IndexOptions::builder()
-                        .name("agent_log_segment_start".to_owned())
+                        .name("agent_log_segment_start".to_string())
                         .unique(true)
                         .build(),
                 )
