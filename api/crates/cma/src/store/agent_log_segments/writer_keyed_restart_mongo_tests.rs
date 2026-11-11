@@ -5,9 +5,19 @@ use layer2_core::sandbox::{
     store::{AgentLogPublicationIdentity, AgentLogStore},
     AgentLogKind,
 };
-use mongodb::{options::ClientOptions, Client};
+use mongodb::{
+    event::{command::CommandEvent, EventHandler},
+    options::ClientOptions,
+    Client,
+};
+use std::sync::{Arc, Mutex};
 
 pub(super) async fn isolated(f: &mut Fixture) -> (Client, String) {
+    let (admin, name, _) = isolated_observed(f).await;
+    (admin, name)
+}
+
+async fn isolated_observed(f: &mut Fixture) -> (Client, String, Arc<Mutex<Option<Document>>>) {
     let admin = f.client.clone();
     let name = format!("keyed-restart-{}", uuid::Uuid::new_v4().simple());
     let mut options =
@@ -15,11 +25,21 @@ pub(super) async fn isolated(f: &mut Fixture) -> (Client, String) {
             .await
             .unwrap();
     options.app_name = Some(name.clone());
+    let original_session = Arc::new(Mutex::new(None));
+    let observed = original_session.clone();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        if let CommandEvent::Started(event) = event {
+            if event.command_name == "commitTransaction" {
+                *observed.lock().unwrap() =
+                    Some(event.command.get_document("lsid").unwrap().clone());
+            }
+        }
+    }));
     f.client = Client::with_options(options).unwrap();
     f.store = MongoSandboxStore::open(&f.client, &f.store.agents.namespace().db)
         .await
         .unwrap();
-    (admin, name)
+    (admin, name, original_session)
 }
 
 fn identity(kind: &AgentLogKind) -> AgentLogPublicationIdentity {
@@ -49,7 +69,7 @@ async fn pending(f: &Fixture) -> Option<mongodb::bson::Bson> {
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
 async fn unknown_without_receipt_survives_restart_and_later_head_without_replan() {
     let mut f = fixture(2).await;
-    let (admin, app) = isolated(&mut f).await;
+    let (admin, app, original_session) = isolated_observed(&mut f).await;
     let kind = AgentLogKind::ConversationGap { frames: 1 };
     let identity = identity(&kind);
     admin
@@ -81,6 +101,17 @@ async fn unknown_without_receipt_survives_restart_and_later_head_without_replan(
             .unwrap(),
         0
     );
+    // Model server-side cleanup after the lost process. No KnownAbort is sent
+    // to the caller or restarted store, so its durable claim must remain pending.
+    // This releases the unresolved transaction's server locks, allowing the
+    // independent publication below without waiting for transaction expiry.
+    let original_session = original_session.lock().unwrap().clone().unwrap();
+    admin
+        .database("admin")
+        .run_command(doc! {"killSessions":[original_session]})
+        .await
+        .unwrap();
+    assert_eq!(pending(&f).await, Some(original.clone()));
     // An independent fenced domain publication can advance the Agent. It must
     // preserve the unresolved keyed fence, even when its own receipt commits.
     let mut session = transaction(&f).await;
