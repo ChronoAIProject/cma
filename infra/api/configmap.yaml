@@ -82,6 +82,7 @@ data:
   CHRONO_V2_UI_TRANSPORT_ENABLED: "true"
   CHRONO_AGENT_LOG_ADMISSION_AGENTS: ""
   # Independent pending-approval reader; also requires trusted cohort membership.
+  CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED: "false"
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
