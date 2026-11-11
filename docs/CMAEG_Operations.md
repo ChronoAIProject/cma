@@ -3386,3 +3386,18 @@ current consent and authority. See [the full contract](CMAEG_Native_WhatsApp_Mes
 ## Optional media continuation scheduling storage
 
 The continuation worker uses a separate expiring active-head collection, bounded keyset scans and a preserved original retention deadline. It never treats a scheduling head as admission authority. Base Gateway startup does not require the optional migration or role. Deploy compatible readers, then review the optional role/migration and readiness before enabling a worker; older isolated readers reject unrecognized optional grants. See [media continuation storage](CMAEG_Media_Continuation_Storage.md) for exact commands, retention, rollback and verification.
+
+### Delivery queue and outcome observations
+
+The private exporter additionally exposes `cmaeg_delivery_queue_{depth,capacity,waiters,sample_timestamp_seconds}`
+by `inbound` / `worker` stage, worker `oldest_seconds` and
+`residence_seconds`, queue `wait_seconds` and `submissions_total` by bounded
+result, and `cmaeg_delivery_outcomes_total{platform,step,destination,outcome}`.
+Worker queues retain cancellation-safe residence guards; old entries disappear
+on dequeue or receiver loss/panic. Queue depth excludes active sends; inbound
+depth uses available capacity and has no oldest timestamp. Require fresh sample
+timestamps before interpreting snapshots. Local `buffered` does not mean a
+recipient received a message; unknown outcomes are not failures safe to resend.
+Default webhook groups are logical group outcomes. Turn duration buckets cover
+long inference through 3600 seconds. Full semantics and production follow-up
+are in [CMA Observability](CMA_Observability.md#admission-terminal-browser-and-eg-coverage).

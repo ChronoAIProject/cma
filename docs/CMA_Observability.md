@@ -28,7 +28,7 @@ annotations:
 ```
 
 These are pod-template labels, never Deployment selector labels. Event Gateway
-already has its own listener and metrics; only its discovery metadata changes.
+already has its own listener and metrics; delivery and queue observations extend that registry.
 The platform collector must select namespace `chrono-bot` as well as tenant
 namespaces and stamp `cluster`, `namespace`, `pod`, `environment` and service
 identity on samples. Verify this scope and discovery in the collector's active
@@ -93,8 +93,8 @@ attribution. Protocol is derived from the route template (`agui`, `responses`,
 
 `cma_worker_durable_items{worker,state}` and
 `cma_worker_durable_oldest_timestamp_seconds{worker,state}` summarize persisted
-work every 30 seconds. Agent commands retain separate `queued`, `in_progress`
-and `waiting_action` populations; only `expired_queue` compares a queued
+work every 30 seconds. Agent commands retain separate `queued`, `in_progress`,
+`waiting_action`, `completed`, `failed` and `cancelled` populations; only `expired_queue` compares a queued
 command's actual queue deadline with now. Sandbox commands expose `queued` and
 `expired_queue`. Launch `due` and Agent `lifecycle_due` reuse the scheduling
 predicates, excluding live leases, future retries and non-retryable holds.
@@ -244,11 +244,109 @@ Before claiming #1470 complete:
 5. Complete the remaining issue families and #1486 reconciliation. This change
    does not implement durable admission/terminal SLIs, native-to-public lag,
    cancellation-safe Mongo pending/oldest-age observations, provider permits, the
-   claimed/available capacity beyond the provider ready-replica contract, browser fatal-event
-   collection, or Edge Gateway queue/delivery instrumentation beyond its
-   existing metrics. Those are explicit gaps, not zero-valued successes.
+   claimed/available capacity beyond the provider ready-replica contract, or
+   inbound EG oldest-item age. Browser diagnostics and EG worker queue/delivery
+   observations are described below with their actual boundaries. Remaining
+   gaps are explicit, not zero-valued successes.
 
 The local tests verify private routing, bounded HTTP labels, cancellation,
 response bytes/trailers, stream observation classification and worker guard
 cleanup. They cannot prove production scrape coverage, two-location execution,
 the seven-day service window or real notification delivery.
+
+## Admission, terminal, browser and EG coverage
+
+The CMA command-store admission boundary exports
+`cma_admission_attempts_total{operation,outcome}` and `cma_admission_seconds`.
+Ordinary reservations distinguish confirmed `created` and `existing`; interrupting
+messages, targeted controls, queued-input edits and queued cancellation report
+`confirmed` or the fixed typed rejection code. Unavailable results are
+`unconfirmed`, not rejected work: a commit may already have happened. A dropped
+future reports `cancelled`, not a durable cancellation. Internal transaction
+retries do not create extra attempts. These are process observations, not the
+unique accepted-work denominator. Trigger first-message admission inside a
+larger transaction is represented by the durable snapshots, not an ordinary
+reservation attempt.
+
+`cma_admission_durable_commands{status}` reuses the bounded majority snapshot of
+`agent_commands`, including all six statuses: `queued`, `in_progress`,
+`waiting_action`, `completed`, `failed`, `cancelled`. Each document contributes
+once regardless of request retries. This is the current retained population,
+not a rate or 168-hour admission cohort. The same status appears on worker
+snapshot success/freshness metrics; terminal populations are not pending work.
+Oldest timestamps remain **admission** timestamps, including for terminal
+populations; they must never be interpreted as completion times. Historical
+records with malformed/missing admission timestamps fail that state's sample
+rather than silently creating a valid zero. Gate each population on its fresh
+successful sample and never sum these shared DB snapshots across AM replicas.
+
+`cma_terminal_publications_total{outcome,confirmation}` counts new durable
+`TurnCompleted`, `TurnFailed` and `TurnInterrupted` publications after an
+acknowledged transaction commit, including a commit independently reconciled
+by the existing snapshot proof. Covered paths are conversation updates,
+message/reopen checkpoints, worker publications and direct log append.
+Checkpoint response replay does not recount the retained terminal. Histograms
+`cma_terminal_observation_to_commit_seconds{outcome}` measure AM event
+observation/preparation (`appended_at`, second precision) to confirmed commit;
+invalid/future timestamps increment `cma_terminal_timestamp_invalid_total`
+instead of entering a negative latency sample. They do **not** measure delivery
+into a browser or native completion → public terminal lag. Native completion
+has no independent timestamp in this existing record contract:
+`cma_terminal_native_timestamp_missing_total{outcome}` exposes that absence.
+Crash between DB commit and counter update can lose an observation, and
+concurrent ambiguous-commit reconciliation can observe the same publication;
+these counters are diagnostic, never the exactly-once SLI ledger for #1486.
+
+The web bootstrap loads `/browser-telemetry.js` before the application module
+and reports script/style load errors, uncaught errors, unhandled rejections,
+React caught/uncaught errors and Vite chunk preload errors. It emits at most one
+report per category per page (five total), with no retry. No exception message,
+stack, source URL, page path, browser identity, token or resource ID leaves the
+browser. Network failure of the reporter is swallowed. A page whose bootstrap
+script or network fails entirely may emit nothing; external asset/journey
+checks remain required.
+
+`POST /api/v1/telemetry/browser` is an anonymous, public diagnostics contract
+for any client, documented in OpenAPI. Its JSON contains only one enum `kind`;
+additional fields and unknown values are rejected, body size is <=256 bytes,
+and a local 20 reports/sec process budget runs before body parsing in addition
+to the normal network admission guard. This route bypasses auth, Mongo and
+activity recording so startup/auth faults can still be reported. Valid reports
+increment `cma_browser_fault_reports_total{kind}`; exhausted budget increments
+`cma_browser_fault_reports_limited_total` and returns 429/Retry-After. They are
+untrusted client observations, not a fatal-session rate or availability SLI.
+The existing public `/api` Gateway prefix carries this diagnostic endpoint;
+`/metrics` remains private.
+
+EG adds `cmaeg_delivery_queue_depth{stage}`, capacity and sample timestamps for
+its `inbound` and aggregate `worker` queues. Inbound depth is a one-second
+capacity snapshot (queued/reserved slots); worker depth is guard-based and
+excludes blocked producers and active sends. Worker residence starts only after
+capacity is reserved. `cmaeg_delivery_queue_oldest_seconds{stage="worker"}`
+continues aging at one-second intervals while workers are blocked;
+`cmaeg_delivery_queue_residence_seconds` samples successful dequeue.
+`cmaeg_delivery_queue_waiters`, `cmaeg_delivery_queue_wait_seconds` and
+`cmaeg_delivery_queue_submissions_total{stage,outcome}` distinguish accepted,
+full, closed and cancelled producers. Cancelled sends and discarded/panicked
+receivers release their gauges. Gate snapshots on fresh
+`cmaeg_delivery_queue_sample_timestamp_seconds`; inbound oldest age is not
+available because the existing unwrapped inbound command contract has no
+enqueue timestamp. These local queues do not represent all durable/routed
+turns or the provider-permit backlog.
+
+`cmaeg_delivery_outcomes_total{platform,step,destination,outcome}` reports
+bounded logical delivery-step outcomes for native/relay transports, actual
+custom webhook legs, default destinations, and local stream buffering.
+Compatibility aggregate callbacks do not double count custom delivery.
+`confirmed` is distinct from `unknown`, `rejected`, `rate_limited`,
+`unsupported`, and local `buffered`/`unavailable`. A buffered local frame is
+never external recipient confirmation. A webhook group default destination is
+a logical group result, labelled `webhook_group`, not a per-recipient receipt.
+Existing delivery duration metrics remain in place. EG turn duration buckets
+now include 30s, 120s, 600s, 1800s and 3600s, without imposing a turn deadline.
+
+External journeys and production collection/notification acceptance are tracked
+in [chrono-probe #18](https://github.com/ChronoAIProject/chrono-probe/issues/18).
+It reuses the existing collector and probe checks, and coordinates versioned
+rules/dashboards in the platform repository. Creating it neither closes #1470
+nor implements #1486's complete durable request/terminal accounting.
