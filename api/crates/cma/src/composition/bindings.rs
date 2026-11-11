@@ -97,6 +97,7 @@ pub(super) fn resource_access(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn responses(
     stores: &MongoStores,
     commands: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,

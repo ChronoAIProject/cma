@@ -15,19 +15,31 @@ async fn bounded_log(
     if through.saturating_sub(after) > MAX_CONTEXT_EVENTS as u64 {
         return Ok(Vec::new());
     }
-    if let Some(entries) = agent_log_segment_reads::range_with_snapshot(
+    match agent_log_segment_reads::range_with_snapshot(
         store, expected, session, after, through, snapshot,
     )
     .await
-    .map_err(unavailable)?
     {
-        return Ok(entries);
+        Ok(Some(entries)) => return Ok(entries),
+        Ok(None)
+        | Err(
+            SandboxStoreError::Corrupt(_)
+            | SandboxStoreError::SequenceConflict
+            | SandboxStoreError::AgentLogCapacityExceeded
+            | SandboxStoreError::InvalidPage
+            | SandboxStoreError::NotFound,
+        ) => {}
+        Err(error) => return Err(unavailable(error)),
     }
-    let mut cursor = store
-        .agent_log
-        .find(
-            doc! {"agent_id":expected.id.as_str(),"seq":{"$gt":after as i64,"$lte":through as i64}},
-        )
+    let find = store.agent_log.find(
+        doc! {"agent_id":expected.id.as_str(),"seq":{"$gt":after as i64,"$lte":through as i64}},
+    );
+    let find = if snapshot {
+        find.read_concern(mongodb::options::ReadConcern::snapshot())
+    } else {
+        find
+    };
+    let mut cursor = find
         .sort(doc! {"seq":1})
         .limit(MAX_CONTEXT_EVENTS as i64)
         .session(&mut *session)
