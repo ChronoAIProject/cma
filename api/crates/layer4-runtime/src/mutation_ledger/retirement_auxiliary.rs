@@ -11,7 +11,9 @@ pub(super) const PROCESSES: &str = "SELECT scope,agent,cwd,home,NULL,NULL,
     length(scope)+length(CAST(agent AS BLOB))+length(CAST(cwd AS BLOB))+length(CAST(home AS BLOB))
     FROM logical_processes WHERE (scope,agent)>(?,?) ORDER BY scope,agent LIMIT 65";
 
-pub(in crate::mutation_ledger) enum Auxiliary {
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum Auxiliary {
     Cleanup {
         scope: Vec<u8>,
         resource: String,

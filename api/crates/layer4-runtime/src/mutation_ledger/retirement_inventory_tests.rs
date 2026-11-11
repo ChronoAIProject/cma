@@ -45,6 +45,13 @@ pub(super) async fn inventory(ledger: &Ledger) -> (Vec<SourceRow>, Vec<usize>, S
         }
         lengths.push(page.rows.len());
         for row in &page.rows {
+            let encoded = row.encode(&ledger.config).unwrap();
+            let restored = SourceRow::decode(&encoded, &ledger.config).unwrap();
+            let mut original = Sha256::new();
+            let mut recovered = Sha256::new();
+            row.hash_into(&mut original);
+            restored.hash_into(&mut recovered);
+            assert_eq!(original.finalize(), recovered.finalize());
             row.hash_into(&mut digest);
         }
         rows.extend(page.rows);

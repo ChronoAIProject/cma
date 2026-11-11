@@ -17,7 +17,7 @@ mod processes;
 mod queries;
 #[cfg(test)]
 mod queries_tests;
-mod retirement_inventory;
+pub(crate) mod retirement_inventory;
 pub(crate) use queries::ProcessFilter;
 #[cfg(test)]
 mod processes_tests;
