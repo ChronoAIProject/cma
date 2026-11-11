@@ -53,6 +53,18 @@ pub(super) async fn open_with_permissions(
     ServerSocket,
     mpsc::Receiver<ConversationUpdate>,
 ) {
+    open_with_json(bounded, permissions, permissions).await
+}
+
+pub(super) async fn open_with_json(
+    bounded: bool,
+    permissions: bool,
+    json: bool,
+) -> (
+    OpenedBridge,
+    ServerSocket,
+    mpsc::Receiver<ConversationUpdate>,
+) {
     let (client, mut server) = socket_pair().await;
     server
         .send(Message::Text(
@@ -65,7 +77,7 @@ pub(super) async fn open_with_permissions(
         .await
         .unwrap();
     let mut configured = settings(None, false);
-    configured.retained_json = permissions;
+    configured.retained_json = json;
     configured.bounded_raw_output = bounded;
     configured.bounded_permission_state = permissions;
     configured.output_json_budget = permissions;

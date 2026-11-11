@@ -36,6 +36,9 @@ impl AllocationTracker for Tracker {
 
 #[test]
 fn measured_decode_peak_and_reply_lifetime_fit_the_derived_reservation() {
+    assert!(std::mem::size_of::<Value>() <= 80);
+    assert!(std::mem::size_of::<String>() <= 24);
+    assert!(std::mem::size_of::<usize>() <= 8);
     AllocationRegistry::set_global_tracker(Tracker).unwrap();
     AllocationRegistry::enable_tracking();
     let pools = JsonPools::new(TREE_BYTES, SCRATCH_BYTES);

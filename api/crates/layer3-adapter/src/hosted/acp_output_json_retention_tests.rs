@@ -1,5 +1,6 @@
 use super::super::tests::{receive_json, settings, socket_pair, stop};
-use super::budget_tests::{open_with_permissions, retained};
+use super::super::LANE_RETAINED_OUTPUT;
+use super::budget_tests::{open_with_json, open_with_permissions, retained};
 use super::*;
 use crate::hosted::retained_json::JsonPools;
 use crate::ConversationInput;
@@ -119,7 +120,7 @@ async fn startup_retains_parsed_owner_and_refusal_keeps_original_cursor() {
 
 #[tokio::test]
 async fn exhausted_json_reader_closes_without_ack_or_synthetic_prompt_terminal() {
-    let (mut opened, mut server, mut received) = open_with_permissions(true, true).await;
+    let (mut opened, mut server, mut received) = open_with_json(false, false, true).await;
     pool(&opened.bridge, 0, 1024 * 1024, false).await;
     let (capture, mut effects) = UpdateRelay::capture();
     opened
@@ -186,4 +187,67 @@ async fn enabled_policy_requires_retained_ready_and_scopes_ready_admission() {
         super::super::validate_ready(Message::Text(text), "agent-1", false, Some(&pools)).is_ok()
     );
     assert_eq!(pools.available(), (1024 * 1024, 1024 * 1024));
+}
+
+#[tokio::test]
+async fn two_attachments_share_capacity_and_teardown_allows_same_cursor_replay() {
+    let (first, _first_server, _first_updates) = open_with_json(false, false, true).await;
+    let (second, _second_server, _second_updates) = open_with_json(false, false, true).await;
+    let sizing = JsonPools::new(1024 * 1024, 1024 * 1024);
+    let sample = sizing.decode(b"{}").unwrap();
+    let weight = 1024 * 1024 - sizing.available().0;
+    drop(sample);
+    let shared = JsonPools::new(weight, 1024 * 1024);
+    {
+        let mut state = first.bridge.output.as_ref().unwrap().lock().await;
+        state.json_pools = Some(shared.clone());
+        state.session = None;
+    }
+    second
+        .bridge
+        .output
+        .as_ref()
+        .unwrap()
+        .lock()
+        .await
+        .json_pools = Some(shared.clone());
+    let (capture, mut effects) = UpdateRelay::capture();
+    first
+        .bridge
+        .receive_output(&retained(3, b"{}"), &capture)
+        .await
+        .unwrap();
+    assert_eq!(shared.available(), (0, 1024 * 1024));
+    assert!(matches!(
+        second
+            .bridge
+            .receive_output(&retained(3, b"{}"), &capture)
+            .await,
+        Err(AdapterError::AtCapacity(_))
+    ));
+    assert_eq!(
+        second
+            .bridge
+            .output
+            .as_ref()
+            .unwrap()
+            .lock()
+            .await
+            .last_received,
+        Some(2)
+    );
+    assert!(effects.try_recv().is_err());
+    stop(first).await;
+    assert_eq!(shared.available(), (weight, 1024 * 1024));
+    second
+        .bridge
+        .receive_output(&retained(3, b"{}"), &capture)
+        .await
+        .unwrap();
+    let ConversationUpdate::RuntimeOutput { receipt, .. } = effects.try_recv().unwrap() else {
+        panic!("replay receipt missing")
+    };
+    assert_eq!(receipt.source.cursor, 3);
+    assert_eq!(shared.available(), (weight, 1024 * 1024));
+    stop(second).await;
 }
