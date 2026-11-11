@@ -1,0 +1,98 @@
+--- a/api/crates/layer3-adapter/src/lib.rs
++++ b/api/crates/layer3-adapter/src/lib.rs
+@@ -6,6 +6,7 @@
+ 
+ mod adapter;
+ mod agent;
++pub mod agent_capacity_recovery;
+ mod agent_attachment;
+ mod agent_filesystem;
+ pub mod binding_diagnostics;
+--- a/api/crates/layer3-adapter/src/hosted/mod.rs
++++ b/api/crates/layer3-adapter/src/hosted/mod.rs
+@@ -12,6 +12,8 @@
+ mod adapter;
+ mod agent_sandbox_backend;
+ mod backend;
++mod capacity_recovery;
++pub use capacity_recovery::CapacityRecoveryNativeTransport;
+ mod channel_tools;
+ mod checkpoint_store;
+ mod checkpoint_transport;
+--- a/api/crates/layer3-adapter/src/adapter.rs
++++ b/api/crates/layer3-adapter/src/adapter.rs
+@@ -373,6 +373,20 @@
+         updates: mpsc::Sender<ConversationUpdate>,
+     ) -> Result<ConversationChannel>;
+ 
++    /// Reattach only a retained native process with independent state/output proof.
++    /// No ordinary reconnect, launch, input or settings fallback is permitted.
++    async fn reconnect_agent_for_capacity_recovery(
++        &self,
++        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
++        updates: mpsc::Sender<ConversationUpdate>,
++    ) -> crate::agent_capacity_recovery::CapacityRecoveryResult<
++        crate::agent_capacity_recovery::CapacityRecoveryConnection,
++    > {
++        request.validate()?;
++        let _ = updates;
++        Err(crate::agent_capacity_recovery::CapacityRecoveryError::Unsupported)
++    }
++
+     /// Replay the original open operation while attaching its recorded conversation.
+     /// The connection identity does not change the durable launch fingerprint.
+     async fn reconnect_agent(
+--- a/api/crates/layer3-adapter/src/hosted/backend.rs
++++ b/api/crates/layer3-adapter/src/hosted/backend.rs
+@@ -64,6 +64,11 @@
+ /// Provider lifecycle and supervisor transport used by a hosted adapter.
+ #[async_trait::async_trait]
+ pub trait HostedBackend: Send + Sync {
++    /// Present only when this backend supplies an independent native proof.
++    fn capacity_recovery_transport(&self) -> Option<&dyn super::CapacityRecoveryNativeTransport> {
++        None
++    }
++
+     async fn open_desktop(
+         &self,
+         _handle: &RuntimeHandle,
+--- a/api/crates/layer3-adapter/src/hosted/adapter_sandbox.rs
++++ b/api/crates/layer3-adapter/src/hosted/adapter_sandbox.rs
+@@ -363,6 +363,18 @@
+     ) -> crate::Result<ConversationChannel> {
+         let recovery = (conversation_id, None, None);
+         agent::reconnect_agent(self, handle, authority_fence, request, recovery, updates).await
++    }
++
++    async fn reconnect_agent_for_capacity_recovery(
++        &self,
++        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
++        updates: mpsc::Sender<ConversationUpdate>,
++    ) -> crate::agent_capacity_recovery::CapacityRecoveryResult<
++        crate::agent_capacity_recovery::CapacityRecoveryConnection,
++    > {
++        crate::hosted::capacity_recovery::reattach(
++            self.backend.capacity_recovery_transport(), request, updates,
++        ).await
+     }
+ 
+     async fn reconnect_agent_with_prompt(
+--- a/api/crates/layer3-adapter/src/codex/adapter.rs
++++ b/api/crates/layer3-adapter/src/codex/adapter.rs
+@@ -380,6 +380,16 @@
+             .await
+     }
+ 
++    async fn reconnect_agent_for_capacity_recovery(
++        &self,
++        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
++        updates: mpsc::Sender<ConversationUpdate>,
++    ) -> crate::agent_capacity_recovery::CapacityRecoveryResult<
++        crate::agent_capacity_recovery::CapacityRecoveryConnection,
++    > {
++        self.hosted.reconnect_agent_for_capacity_recovery(request, updates).await
++    }
++
+     async fn reconnect_agent_with_prompt(
+         &self,
+         handle: &RuntimeHandle,
