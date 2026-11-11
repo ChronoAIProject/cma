@@ -152,7 +152,7 @@ pub(in crate::store) async fn retry(
     finish(scope.release(), result).await
 }
 
-async fn finish<T>(
+pub(super) async fn finish<T>(
     session: &mut ClientSession,
     result: Result<T, TransactionLogError>,
 ) -> Result<CommitOutcome<T>, RecoveryError> {
@@ -179,7 +179,7 @@ async fn finish<T>(
     })
 }
 
-fn error(error: TransactionLogError) -> RecoveryError {
+pub(super) fn error(error: TransactionLogError) -> RecoveryError {
     match error {
         TransactionLogError::Domain(
             SandboxStoreError::Conflict | SandboxStoreError::SequenceConflict,

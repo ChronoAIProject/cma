@@ -11,6 +11,8 @@ use super::transaction::ApplyError;
 
 pub(super) mod scoped;
 
+// Historical legacy-only fixture entry; production requires captured sources.
+#[cfg(test)]
 pub(super) async fn live_activities(
     store: &MongoSandboxStore,
     agents: &[Agent],
