@@ -10,6 +10,9 @@ use layer2_core::sandbox::{
 use serde_json::{json, Value};
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
 
+#[path = "indexed_stream.rs"]
+mod indexed;
+
 pub(super) async fn open(
     state: ResponsesV2State,
     authorization: AgentEventStreamAuthorization,
@@ -41,6 +44,9 @@ pub(super) async fn open(
         terminal: false,
         failed: false,
         first: true,
+        more: false,
+        last: None,
+        pagination_required: false,
     };
     stream::response(
         unfold(open, |mut open| async move {
@@ -65,10 +71,13 @@ pub(super) async fn open(
                     open.next = sequence + 1;
                     return Some((Ok(stream::sse(event)), open));
                 }
+                if open.pagination_required {
+                    return open.fail("response_pagination_required");
+                }
                 if open.terminal || open.failed {
                     return None;
                 }
-                if !open.first {
+                if !open.first && !open.more {
                     let wake = tokio::time::Instant::now() + Duration::from_millis(250);
                     let wake = open
                         .authorization
@@ -82,13 +91,9 @@ pub(super) async fn open(
                 match open.refresh().await {
                     Ok(changed) => {
                         if first
-                            && open.after.is_some_and(|after| {
-                                open.pending.back().is_none_or(|last| {
-                                    last["sequence_number"]
-                                        .as_u64()
-                                        .is_none_or(|last| after > last)
-                                })
-                            })
+                            && open
+                                .after
+                                .is_some_and(|after| open.last.is_none_or(|last| after > last))
                         {
                             return open.fail("invalid_replay_cursor");
                         }
@@ -103,7 +108,7 @@ pub(super) async fn open(
                             );
                         }
                     }
-                    Err(()) => return open.fail("response_observation_unavailable"),
+                    Err(code) => return open.fail(code),
                 }
             }
         }),
@@ -129,11 +134,18 @@ struct Open {
     terminal: bool,
     failed: bool,
     first: bool,
+    more: bool,
+    last: Option<u64>,
+    pagination_required: bool,
 }
 
 impl Open {
-    async fn refresh(&mut self) -> Result<bool, ()> {
-        let id = self.receipt.response_id.as_ref().ok_or(())?;
+    async fn refresh(&mut self) -> Result<bool, &'static str> {
+        let id = self
+            .receipt
+            .response_id
+            .as_ref()
+            .ok_or("response_observation_unavailable")?;
         // Always re-read current command state and authority, including on quiet
         // heads: queued rejection and revocation need not append Agent events.
         let command = self
@@ -141,19 +153,46 @@ impl Open {
             .commands
             .response_for_stream(&self.authorization, id)
             .await
-            .map_err(|_| ())?;
+            .map_err(|_| "response_observation_unavailable")?;
         if command.command.receipt != self.receipt {
-            return Err(());
+            return Err("response_observation_unavailable");
         }
         let header = self
             .state
             .reads
             .event_stream_header(&self.authorization)
             .await
-            .map_err(|_| ())?;
+            .map_err(|_| "response_observation_unavailable")?;
         let current = Seen { command, header };
         if self.seen.as_ref() == Some(&current) {
             return Ok(false);
+        }
+        let origin = self.state.agent_page_origin.clone();
+        let reading = current.command.clone();
+        let next = self.next;
+        let page = self
+            .state
+            .reads
+            .with_output_observation(
+                &self.authorization,
+                reading.command.turn_sequence,
+                move |source| {
+                    Box::pin(async move { indexed::read(source, &origin, reading, next).await })
+                },
+            )
+            .await
+            .map_err(|error| match error {
+                layer2_core::sandbox::AgentReadError::InvalidPage => "invalid_replay_cursor",
+                _ => "response_observation_unavailable",
+            })?;
+        if let Some(page) = page {
+            self.terminal = page.terminal;
+            self.more = page.more;
+            self.last = Some(page.last);
+            self.pagination_required = page.pagination_required;
+            self.pending = page.events.into();
+            self.seen = (!page.more && page.through == current.header.head).then_some(current);
+            return Ok(true);
         }
         let bound = current.command.command.turn_sequence.is_some();
         let history = self
@@ -164,15 +203,20 @@ impl Open {
                 current.command.command.turn_sequence,
             )
             .await
-            .map_err(|_| ())?;
+            .map_err(|_| "response_observation_unavailable")?;
         let response = projection::project(
             &self.state.agent_page_origin,
             current.command.clone(),
             &history,
         )
-        .ok_or(())?;
+        .ok_or("response_observation_unavailable")?;
         self.terminal = response.terminal();
         self.pending = projection::events(&response, bound).into();
+        self.last = self
+            .pending
+            .back()
+            .and_then(|v| v["sequence_number"].as_u64());
+        self.more = false;
         // An append between the cheap head read and the source read forces one
         // fresh observation; it cannot cache a mismatched source coordinate.
         self.seen = (history.head == current.header.head).then_some(current);
@@ -183,7 +227,7 @@ impl Open {
         self.failed = true;
         self.pending.clear();
         let event = json!({"type":"error","sequence_number":self.next,"code":code,
-            "message":"Response observation ended. Retrieve or reconnect with current authorization.","param":null});
+            "message":if code=="response_pagination_required" {"The response exceeds the result budget. Read its /output pages; output was not truncated."} else {"Response observation ended. Retrieve or reconnect with current authorization."},"param":null});
         // No durable id and no cursor advancement on dependency failures.
         Some((Ok(stream::sse(event)), self))
     }

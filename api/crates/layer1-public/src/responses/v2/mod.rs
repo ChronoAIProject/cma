@@ -27,7 +27,7 @@ mod output;
 #[cfg(test)]
 mod output_gap_tests;
 mod parse;
-mod projection;
+pub(super) mod projection;
 pub(crate) mod queued_cancellation;
 pub(crate) mod queued_input;
 mod routes;
@@ -106,6 +106,10 @@ pub fn router(state: ResponsesV2State) -> Router {
             post(interruption::submit),
         )
         .route("/api/v2/responses/{response_id}", get(routes::retrieve))
+        .route(
+            "/api/v2/responses/{response_id}/output",
+            get(routes::output::output_page),
+        )
         .route("/api/v2/commands/{command_id}", get(controls::status))
         .route(
             "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
@@ -143,6 +147,7 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
             routes::create,
             routes::create_alias,
             routes::retrieve,
+            routes::output::output_page,
             routes::replay,
             controls::observe,
             controls::submit,
