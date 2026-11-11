@@ -53,6 +53,9 @@ pub(in crate::store) struct Publication {
     #[serde(deserialize_with = "super::required_nullable")]
     pub previous_seal: Option<Binary>,
     pub result_digest: Binary,
+    /// Format 2 binds the full Agent independently of the caller's domain result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_digest: Option<Binary>,
 }
 
 pub(in crate::store) fn identity(agent: &str, incarnation: &str, key: &str) -> String {
@@ -81,6 +84,11 @@ pub(in crate::store) fn request_digest<T: Serialize>(
     canonical_digest(b"cma.agent-log.publication-request.v1\0", request)
 }
 
+/// Separate from the immutable, caller-specific domain result witness.
+pub(in crate::store) fn agent_digest(agent: &Agent) -> Result<Binary, SandboxStoreError> {
+    canonical_digest(b"cma.agent-log.current-agent.v1\0", agent)
+}
+
 impl Publication {
     pub fn new(
         current: &Agent,
@@ -101,7 +109,7 @@ impl Publication {
         }
         let value = Self {
             id: identity(current.id.as_str(), &head.incarnation, &operation.key),
-            format_version: 1,
+            format_version: 2,
             agent_id: current.id.0.clone(),
             incarnation: head.incarnation.clone(),
             publication_key: operation.key.clone(),
@@ -119,12 +127,17 @@ impl Publication {
             active_ordinal: head.active_ordinal,
             previous_seal: head.previous_seal.clone(),
             result_digest,
+            agent_digest: Some(agent_digest(next)?),
         };
         value.validate()?;
         Ok(value)
     }
 
     pub fn read(row: Document) -> Result<Self, SandboxStoreError> {
+        // Historical v1 never carried an Agent witness, including explicit null.
+        if row.get_i64("format_version").ok() == Some(1) && row.contains_key("agent_digest") {
+            return Err(corrupt());
+        }
         for field in [
             "format_version",
             "expected_revision",
@@ -143,7 +156,13 @@ impl Publication {
     }
 
     pub fn validate(&self) -> Result<(), SandboxStoreError> {
-        if self.format_version != 1
+        if !matches!(
+            (self.format_version, &self.agent_digest),
+            (1, None) | (2, Some(_))
+        ) || self
+            .agent_digest
+            .as_ref()
+            .is_some_and(|value| !digest::valid_digest(value))
             || self.agent_id.is_empty()
             || self.agent_id.len() > 512
             || self.incarnation.len() != 64
