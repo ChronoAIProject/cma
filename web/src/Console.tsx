@@ -43,6 +43,7 @@ import { scopeValue } from './resources/scope';
 import { useNavigationScope } from './resources/NavigationScope';
 import { useConsoleScope } from './resources/useConsoleScope';
 import { OwnerViewsProvider, useOwnerViews } from './resources/retainedOwnerViews';
+import { coalesceDetailReads } from './api/detailReads';
 import { DocsPage } from './services/DocsPage';
 
 export function Console(props: ConsoleProps) {
@@ -72,7 +73,10 @@ function ConsoleContent({
   const viewPosition = useMemo(() => positions.forAgent(selectedAgent), [positions, selectedAgent]);
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
   const [revision, setRevision] = useState(0);
-  const client = useCmaClient();
+  const sourceClient = useCmaClient();
+  const reads = useMemo(() => coalesceDetailReads(sourceClient), [sourceClient]);
+  useEffect(() => () => reads.dispose(), [reads]);
+  const client = reads.client;
   const computerObservation = useMemo(
     () =>
       new AgentComputerObservation({ client, subject: user.id, agentId: selectedAgent }, () =>

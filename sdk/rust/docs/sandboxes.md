@@ -257,3 +257,19 @@ Display `label`, and show `disambiguator` only as secondary duplicate-name conte
 `subject` is an opaque key and must not appear in chart text or tooltips. Respect
 partial `complete` flags, retain loaded/total counts on failures, and handle
 429/503 retries and 410 report expiry explicitly.
+
+## Same-image retained recovery
+
+`client.sandboxes().inspect_runtime_recovery(id).await` reads the owner-only
+retained-runtime assessment. Its fixed disposition is diagnostic;
+`admission_enabled` reports the deployment gate. GET performs no recovery.
+
+After explicit owner consent, use `client.sandboxes().recover_retained(id,
+&request, &key).await` with `instances::RecoverRetainedRequest` containing the
+reviewed `expected_revision` and `confirm_same_image_recovery: true`. Retain the
+`IdempotencyKey` before sending. The default-off operation rechecks complete proof
+and preserves the exact image, home and original conversations. HTTP 202 returns
+an immutable operation receipt; follow the same Sandbox's lifecycle progress.
+Refusals preserve the saved environment. Lost replies must reuse the original
+revision and key, including after progress or gate closure. Operator authority
+does not replace the owner's consent.

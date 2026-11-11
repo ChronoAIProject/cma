@@ -1,6 +1,7 @@
 import type { V2AgentStreamFrame } from '@chronoai/cma-sdk';
 import { transientReadFailure } from '../loadAgent';
 import type { AgentV2Session } from './client';
+import { ReadinessWake } from '../readinessWait';
 
 function delay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -26,6 +27,7 @@ export async function followV2Agent(
   let cursor = afterCursor;
   let retry = 250;
   let notice: ReturnType<typeof setTimeout> | undefined;
+  const visibility = new ReadinessWake();
   const reconnecting = () => {
     notice ??= setTimeout(() => {
       if (!signal.aborted)
@@ -34,7 +36,10 @@ export async function followV2Agent(
   };
   try {
     while (!signal.aborted) {
+      let progressed = false;
       try {
+        if (document.hidden) await visibility.wait(0, signal);
+        signal.throwIfAborted();
         await v2.authorize(signal);
         await v2.events.events(v2.journal.agentId, {
           afterCursor: cursor,
@@ -51,8 +56,8 @@ export async function followV2Agent(
             onFailure(undefined);
           },
           onCursor(next) {
+            progressed ||= next !== cursor;
             cursor = next;
-            retry = 250;
           },
         });
         reconnecting();
@@ -60,9 +65,11 @@ export async function followV2Agent(
         if (signal.aborted) return;
         if (!transientReadFailure(error)) throw error;
         reconnecting();
-        retry = Math.min(retry * 2, 10000);
       }
-      await delay(retry, signal);
+      retry = progressed ? 250 : Math.min(retry * 2, 10000);
+      // Equal jitter spreads clients after a shared disconnect without ever
+      // exceeding the ten-second cap or allowing a zero-delay retry loop.
+      await delay(retry * (0.5 + Math.random() * 0.5), signal);
     }
   } finally {
     clearTimeout(notice);
