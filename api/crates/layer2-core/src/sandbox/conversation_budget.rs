@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::budget::{BudgetStop, SpendSource};
 use crate::sandbox::{Agent, AgentConversationError};
 use layer3_adapter::ConversationUpdate;
@@ -18,15 +20,15 @@ pub(super) async fn stop(
         .map_err(|_| AgentConversationError::Unavailable("budget accounting is unavailable".into()))
 }
 
-pub(super) async fn terminal(
+pub(super) async fn terminal<'a>(
     source: Option<&dyn SpendSource>,
     agent: &Agent,
-    update: ConversationUpdate,
-) -> Result<ConversationUpdate, AgentConversationError> {
+    update: Cow<'a, ConversationUpdate>,
+) -> Result<Cow<'a, ConversationUpdate>, AgentConversationError> {
     let Some(generation) = agent.conversation.runtime_generation else {
         return Ok(update);
     };
-    let terminal = match &update {
+    let terminal = match update.as_ref() {
         ConversationUpdate::TurnEnded(_)
         | ConversationUpdate::Failed { .. }
         | ConversationUpdate::TurnEndedForPrompt { .. }
@@ -50,11 +52,11 @@ pub(super) async fn terminal(
     }
     let message = stop.reason.guidance().to_owned();
     let capability = Some(stop.reason.code().to_owned());
-    Ok(match update {
+    Ok(Cow::Owned(match update.as_ref() {
         ConversationUpdate::TurnEndedForPrompt { prompt_id, .. }
         | ConversationUpdate::FailedForPrompt { prompt_id, .. } => {
             ConversationUpdate::FailedForPrompt {
-                prompt_id,
+                prompt_id: prompt_id.clone(),
                 message,
                 capability,
             }
@@ -63,7 +65,7 @@ pub(super) async fn terminal(
             message,
             capability,
         },
-    })
+    }))
 }
 
 use super::{live, AgentConversationUpdateStore, Arc, DurableAgentUpdateRecorder};
@@ -94,11 +96,27 @@ impl DurableAgentUpdateRecorder {
     where
         S: AgentConversationUpdateStore + 'static,
     {
+        Self::with_live_budget(store, writer_policy, spend_source, false)
+    }
+
+    pub fn with_live_budget<S>(
+        store: Arc<S>,
+        writer_policy: Arc<super::super::task_experience::TaskExperiencePolicy>,
+        spend_source: Option<Arc<dyn crate::budget::SpendSource>>,
+        bounded_live_fragments: bool,
+    ) -> Arc<Self>
+    where
+        S: AgentConversationUpdateStore + 'static,
+    {
         Arc::new(Self {
             store,
             writer_policy,
             spend_source,
-            live: live::AgentLiveHub::default(),
+            live: if bounded_live_fragments {
+                live::AgentLiveHub::with_budget(super::live_budget::LiveBudget::process())
+            } else {
+                live::AgentLiveHub::default()
+            },
         })
     }
 }

@@ -4,6 +4,7 @@ import { sandboxLifecycle } from './lifecycle.js';
 import { sandboxRuntimeUpdate } from './runtime-update.js';
 export type * from './lifecycle.js';
 export type * from './runtime-update.js';
+export type * from './retained-recovery.js';
 import {
   array,
   boolean,

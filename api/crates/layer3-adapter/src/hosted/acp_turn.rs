@@ -114,6 +114,11 @@ impl Bridge {
                 locator,
                 decision,
             } => {
+                if self.permission_state.is_some() {
+                    return self
+                        .bounded_permission_answer(&id, locator.as_ref(), &session, decision)
+                        .await;
+                }
                 let restored = match locator.as_ref() {
                     Some(locator) => Some(blocked_from_locator(&id, locator, &session)?),
                     None => None,
@@ -178,6 +183,7 @@ impl Bridge {
             "prompt": content,
         });
         let recoverable = prompt_id.is_some();
+        let bounded_permissions = self.permission_state.is_some();
         let terminal_identity = prompt_id.clone();
         match self.begin_prompt(params, prompt_id).await {
             Ok(waiting) => {
@@ -197,7 +203,7 @@ impl Bridge {
                         // The runtime still owns this identified prompt when
                         // its API attachment closes. Connection recovery must
                         // observe its original result, never invent a failure.
-                        Err(_) if recoverable => None,
+                        Err(_) if recoverable || bounded_permissions => None,
                         Err(_) => Some(scoped_turn_outcome(
                             Outcome::Failed {
                                 message: "agent stopped answering before the turn finished".into(),
@@ -208,7 +214,7 @@ impl Bridge {
                         )),
                     };
                     if let Some(update) = update {
-                        updates.send(update);
+                        updates.send(update).await;
                     }
                 });
                 Ok(())
@@ -216,14 +222,16 @@ impl Bridge {
             Err(error) => {
                 let previous = self.owned_prompt_waiters.fetch_sub(1, Ordering::SeqCst);
                 debug_assert!(previous > 0, "failed prompt releases its waiter");
-                updates.send(scoped_turn_outcome(
-                    Outcome::Failed {
-                        message: format!("prompt could not be sent to the agent: {error}"),
-                        capability: None,
-                    },
-                    false,
-                    terminal_identity,
-                ));
+                updates
+                    .send(scoped_turn_outcome(
+                        Outcome::Failed {
+                            message: format!("prompt could not be sent to the agent: {error}"),
+                            capability: None,
+                        },
+                        false,
+                        terminal_identity,
+                    ))
+                    .await;
                 Err(error)
             }
         }

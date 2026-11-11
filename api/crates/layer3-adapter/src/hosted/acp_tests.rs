@@ -12,6 +12,9 @@ use crate::{
 
 type ServerSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
 
+#[path = "acp_permission_tests.rs"]
+mod permission_tests;
+
 #[path = "acp_access_tool_tests.rs"]
 mod access_tool_tests;
 #[path = "acp_channel_tool_tests.rs"]
@@ -32,6 +35,8 @@ mod fresh_bridge_tests;
 #[path = "acp_reconnect_turn_tests.rs"]
 mod reconnect_turn_tests;
 
+#[path = "acp_backpressure_tests.rs"]
+mod backpressure_tests;
 #[path = "acp_context_refresh_tests.rs"]
 mod context_refresh_tests;
 #[path = "acp_output_tests.rs"]
@@ -132,6 +137,9 @@ async fn reject(server: &mut ServerSocket, request: &serde_json::Value) {
 
 fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentOpenSettings {
     HostedAgentOpenSettings {
+        bounded_permission_state: false,
+        output_json_budget: false,
+        shared_runtime_output: false,
         already_initialized_error: Some(serde_json::json!({
             "code": -32603, "message": "Internal error",
             "data": { "details": "Already initialized" },
@@ -164,7 +172,8 @@ fn ready_declaration_requires_exact_version_agent_and_lanes() {
         "lanes": ["ctl", "conv"],
         "agentId": "agent-1",
     });
-    validate_ready(Message::Text(valid.to_string()), "agent-1").expect("exact Ready is accepted");
+    validate_ready(Message::Text(valid.to_string()), "agent-1", false)
+        .expect("exact Ready is accepted");
 
     let invalid = [
         serde_json::json!({
@@ -185,9 +194,9 @@ fn ready_declaration_requires_exact_version_agent_and_lanes() {
         }),
     ];
     for declaration in invalid {
-        assert!(validate_ready(Message::Text(declaration.to_string()), "agent-1").is_err());
+        assert!(validate_ready(Message::Text(declaration.to_string()), "agent-1", false).is_err());
     }
-    assert!(validate_ready(Message::Binary(vec![1, 2, 3]), "agent-1").is_err());
+    assert!(validate_ready(Message::Binary(vec![1, 2, 3]), "agent-1", false).is_err());
 }
 
 #[tokio::test]

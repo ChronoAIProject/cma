@@ -81,16 +81,24 @@ data:
   # New file admissions only; supporting readers/workers must precede enablement.
   CHRONO_V2_UI_TRANSPORT_ENABLED: "true"
   CHRONO_AGENT_LOG_ADMISSION_AGENTS: ""
+  # Owner-consented same-image reopening only; admission remains off until qualified.
+  CHRONO_RETAINED_REOPEN_ENABLED: "false"
   # Independent pending-approval reader; also requires trusted cohort membership.
+  CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED: "false"
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
+  # Keep expensive-read admission charged through final returned frame drop.
+  CHRONO_READ_FRAME_BUDGET_ENABLED: "false"
   # Independent fleet mode: 0 disables; stable percentage stages require rollout.
   CHRONO_AGENT_LOG_FLEET_PERCENT: "0"
   # Qualify title reads separately after the admission/public-window cohort.
   CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED: "false"
+  CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED: "false"
+  CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "false"
   # Response projection uses a proven target-turn window; independent rollout.
   CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
+  CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED: "false"
   CHRONO_TASK_EXPERIENCE_POLICY: '{"mode":"disabled","accounts":[],"capabilities":[]}'
   # Independent placement rollout selections; these do not attest continuity.
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
@@ -196,6 +204,9 @@ data:
   CHRONO_SERVER_RATE_INPUT_PER_MINUTE: "120"
   # Separate policy activation after exact-route classification review.
   CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED: "false"
+  # Per-process public stream lifetimes; zero keeps admission disabled.
+  CHRONO_PUBLIC_STREAM_LIMIT: "0"
+  CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED: "false"
   # GFE appends upstream then forwarding-rule addresses. Trust the chain only
   # from an official GFE TCP peer and skip its rightmost load-balancer token.
   CHRONO_SERVER_TRUSTED_PROXY_CIDRS: "35.191.0.0/16,130.211.0.0/22,2600:2d00:1:1::/64"
@@ -240,6 +251,8 @@ data:
   # Objects live only under documents/<owner-hash>/<document-id>/<source-hash>.md.
   # Activate in a later train only after compatible readers are the rollback floor.
   CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED: "false"
+  # Requires a complete, fenced storage inventory; never enable on unknown usage.
+  CHRONO_DOCUMENT_QUOTAS_ENABLED: "false"
   # Off until capacity-owner headroom and all admission writers are verified.
   CHRONO_SANDBOX_GLOBAL_LIMIT: "0"
   CHRONO_DOCUMENT_BUCKET: "chrono-platform-bot"
@@ -293,3 +306,7 @@ data:
   # AgentKey service floor. Public skill material is served by ornn-api.
   CHRONO_BASELINE_SERVICES: "chrono-llm-public,ornn-api"
   RUST_LOG: "info"
+  # Shared retained live-fragment budget; deployment qualification is separate.
+  CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED: "false"
+  # Validate runtime output structure before allocating owned JSON trees.
+  CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED: "false"
