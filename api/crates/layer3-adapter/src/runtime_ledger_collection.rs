@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::runtime_ledger_maintenance::LedgerBindingV1;
+use crate::runtime_ledger_maintenance::{valid_sha256, LedgerBindingV1};
 use crate::runtime_ledger_retirement::{ledger_retired_agent_key, ledger_retired_worktree_key};
 
 pub const COLLECTION_FORMAT: &str = "runtime-ledger-authority-request-v1";
@@ -51,7 +51,7 @@ pub struct LedgerCandidatePageV1 {
 impl LedgerCandidatePageV1 {
     pub fn validate(&self) -> bool {
         self.format == "runtime-ledger-candidates-v1"
-            && binding_valid(&self.binding)
+            && self.binding.validate().is_ok()
             && self.active_revision > 0
             && cursor_valid(&self.cursor)
             && cursor_valid(&self.next_cursor)
@@ -86,9 +86,9 @@ impl CollectionRequest {
     pub fn validate(&self) -> bool {
         self.format == COLLECTION_FORMAT
             && valid_operation(&self.operation_id)
-            && binding_valid(&self.binding)
+            && self.binding.validate().is_ok()
             && self.active_revision > 0
-            && collection_digest(&self.page_sha256)
+            && valid_sha256(&self.page_sha256)
             && !self.groups.is_empty()
             && groups_valid(&self.groups)
             && serde_json::to_vec(self).is_ok_and(|b| b.len() <= MAX_COLLECTION_REQUEST_BYTES)
@@ -102,7 +102,7 @@ impl CollectionRequest {
         }
         let mut hash = Sha256::new();
         hash.update(b"chrono.runtime.ledger.collection.request.v1\0");
-        let binding = binding_hash(&self.binding);
+        let binding = self.binding.binding_sha256().ok()?;
         for bytes in [
             self.format.as_bytes(),
             self.operation_id.as_bytes(),
@@ -181,6 +181,9 @@ impl CollectionObservation {
         let Some(request_hash) = request.fingerprint() else {
             return false;
         };
+        let Ok(binding_sha256) = request.binding.binding_sha256() else {
+            return false;
+        };
         self.format == "runtime-ledger-authority-batch-v1"
             && self.request_sha256 == request_hash
             && self.groups.len() == request.groups.len()
@@ -204,20 +207,20 @@ impl CollectionObservation {
                     };
                     let hash = format!("{:x}", Sha256::digest(bytes));
                     authority.format == "runtime-ledger-group-authority-v1"
-                        && binding_hash(&authority.binding) == binding_hash(&request.binding)
+                        && authority.binding.validate_for(&request.binding).is_ok()
                         && authority.group_key == group.key()
                         && authority.sandbox_revision == request.binding.sandbox_revision
                         && authority.observation_sha256 == hash
                         && authority.evidence_reference == format!("sha256:{hash}")
                         && evidence.format == "runtime-ledger-group-evidence-v1"
                         && evidence.request_sha256 == request_hash
-                        && evidence.binding_sha256 == binding_hash(&request.binding)
+                        && evidence.binding_sha256 == binding_sha256
                         && evidence.group_key == authority.group_key
                         && evidence.sandbox_revision == authority.sandbox_revision
                         && evidence.resource_revisions == authority.resource_revisions
                         && evidence.observed_at == authority.observed_at
                         && evidence.decision == authority.decision
-                        && collection_digest(&evidence.source_sha256)
+                        && valid_sha256(&evidence.source_sha256)
                         && time::OffsetDateTime::parse(
                             &evidence.observed_at,
                             &time::format_description::well_known::Rfc3339,
@@ -227,66 +230,6 @@ impl CollectionObservation {
                 })
             && serde_json::to_vec(self).is_ok_and(|b| b.len() <= MAX_COLLECTION_OBSERVATION_BYTES)
     }
-}
-
-pub fn binding_hash(binding: &LedgerBindingV1) -> String {
-    let mut hash = Sha256::new();
-    hash.update(b"chrono.runtime.ledger.binding.v1\0");
-    // Every named field is encoded explicitly; JSON field order is not authority.
-    for value in [
-        &binding.format,
-        &binding.sandbox_id,
-        &binding.home_identity,
-        &binding.boot_id,
-        &binding.roots_sha256,
-        &binding.archive_id,
-        &binding.maintenance_id,
-        &binding.candidate_sha256,
-        &binding.recovery_sha256,
-        &binding.exclusion_receipt_sha256,
-    ] {
-        field(&mut hash, value.as_bytes());
-    }
-    field(
-        &mut hash,
-        &serde_json::to_vec(&binding.source_format).expect("source format"),
-    );
-    for value in [
-        binding.generation,
-        binding.maintenance_epoch,
-        binding.sandbox_revision,
-    ] {
-        hash.update(value.to_be_bytes());
-    }
-    format!("{:x}", hash.finalize())
-}
-
-pub fn collection_digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
-fn binding_valid(value: &LedgerBindingV1) -> bool {
-    value.format == "runtime-ledger-binding-v1"
-        && identifier(&value.sandbox_id)
-        && crate::valid_home_identity(&value.home_identity)
-        && identifier(&value.boot_id)
-        && identifier(&value.archive_id)
-        && identifier(&value.maintenance_id)
-        && serde_json::to_value(&value.source_format).is_ok_and(|v| v == "v1" || v == "v2")
-        && value.generation > 0
-        && value.maintenance_epoch > 0
-        && value.sandbox_revision > 0
-        && [
-            &value.roots_sha256,
-            &value.candidate_sha256,
-            &value.recovery_sha256,
-            &value.exclusion_receipt_sha256,
-        ]
-        .into_iter()
-        .all(|s| collection_digest(s))
 }
 
 fn valid_operation(value: &str) -> bool {
@@ -302,7 +245,7 @@ fn revisions_valid(revisions: &[LedgerResourceRevisionV1]) -> bool {
         && revisions.len() <= MAX_COLLECTION_DEPENDENCIES
         && revisions
             .iter()
-            .all(|r| r.revision > 0 && collection_digest(&r.resource_sha256))
+            .all(|r| r.revision > 0 && valid_sha256(&r.resource_sha256))
         && revisions
             .windows(2)
             .all(|p| p[0].resource_sha256 < p[1].resource_sha256)
