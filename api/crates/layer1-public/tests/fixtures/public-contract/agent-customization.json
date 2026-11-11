@@ -695,11 +695,11 @@
           "content-type": "application/problem+json"
         },
         "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-ready",
-          "title": "agent not ready",
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-skill-install-unsupported",
+          "title": "agent skill install unsupported",
           "status": 409,
-          "detail": "The agent is not ready for this operation.",
-          "code": "agent_not_ready"
+          "detail": "This Agent runtime does not support installing skills. No installation was admitted. After runtime support becomes available, make a new attempt with a new Idempotency-Key.",
+          "code": "agent_skill_install_unsupported"
         },
         "bodyKind": "json"
       },
@@ -730,7 +730,7 @@
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-ready",
           "title": "agent not ready",
           "status": 409,
-          "detail": "The agent is not ready for this operation.",
+          "detail": "The Agent or its Sandbox is not ready and idle. No skill operation was admitted. After it becomes ready and idle, make a new attempt with a new Idempotency-Key.",
           "code": "agent_not_ready"
         },
         "bodyKind": "json"
@@ -1271,7 +1271,7 @@
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-skill-version-upgrade-unsupported",
           "title": "agent skill version upgrade unsupported",
           "status": 409,
-          "detail": "Skill \"research\" is already installed at version \"1.0\"; changing it to version \"1.1\" is unsupported on an existing Agent. Create a replacement Agent with the requested profile.",
+          "detail": "Skill \"research\" is already installed at version \"1.0\"; this runtime does not support upgrading it to version \"1.1\". No upgrade was admitted. After runtime support becomes available, make a new attempt with a new Idempotency-Key.",
           "code": "agent_skill_version_upgrade_unsupported"
         },
         "bodyKind": "json"
@@ -1442,7 +1442,7 @@
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-ready",
           "title": "agent not ready",
           "status": 409,
-          "detail": "The agent is not ready for this operation.",
+          "detail": "The Agent or its Sandbox is not ready and idle. No skill operation was admitted. After it becomes ready and idle, make a new attempt with a new Idempotency-Key.",
           "code": "agent_not_ready"
         },
         "bodyKind": "json"
@@ -1481,8 +1481,7 @@
             }
           ],
           "pending": false,
-          "can_install": false,
-          "unavailable_reason": "Skills can be installed when this Agent is ready and idle."
+          "can_install": true
         },
         "bodyKind": "json"
       },
@@ -1513,7 +1512,7 @@
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-skill-version-upgrade-unsupported",
           "title": "agent skill version upgrade unsupported",
           "status": 409,
-          "detail": "Skill \"research\" is already installed at version \"1.0\"; changing it to version \"2.0\" is unsupported on an existing Agent. Create a replacement Agent with the requested profile.",
+          "detail": "Skill \"research\" is already installed at version \"1.0\"; this runtime does not support upgrading it to version \"2.0\". No upgrade was admitted. After runtime support becomes available, make a new attempt with a new Idempotency-Key.",
           "code": "agent_skill_version_upgrade_unsupported"
         },
         "bodyKind": "json"
@@ -1542,11 +1541,11 @@
           "content-type": "application/problem+json"
         },
         "body": {
-          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-operation-in-flight",
-          "title": "agent operation in flight",
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-ready",
+          "title": "agent not ready",
           "status": 409,
-          "detail": "Another durable operation currently owns this agent.",
-          "code": "agent_operation_in_flight"
+          "detail": "The Agent or its Sandbox is not ready and idle. No skill operation was admitted. After it becomes ready and idle, make a new attempt with a new Idempotency-Key.",
+          "code": "agent_not_ready"
         },
         "bodyKind": "json"
       },
@@ -1578,6 +1577,147 @@
           "pending": true,
           "can_install": false,
           "unavailable_reason": "Skills can be installed when this Agent is ready and idle."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-upgrade-accepted",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_upgrade",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "skill-upgrade"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.1"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "version": "1.0",
+              "source": "ornn",
+              "status": "installed"
+            }
+          ],
+          "pending": true,
+          "can_install": false,
+          "unavailable_reason": "Skills can be installed when this Agent is ready and idle."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-upgrade-replay",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_upgrade",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "skill-upgrade"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.1"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "version": "1.0",
+              "source": "ornn",
+              "status": "installed"
+            }
+          ],
+          "pending": true,
+          "can_install": false,
+          "unavailable_reason": "Skills can be installed when this Agent is ready and idle."
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-upgrade-read-confirmed",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_upgraded",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "version": "1.1",
+              "source": "ornn",
+              "status": "installed"
+            }
+          ],
+          "pending": false,
+          "can_install": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-upgrade-read-failed",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_upgrade_failed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "version": "1.0",
+              "source": "ornn",
+              "status": "installed",
+              "error": "Upgrade to version 1.1 failed: Skill archive could not be installed."
+            }
+          ],
+          "pending": false,
+          "can_install": true
         },
         "bodyKind": "json"
       },

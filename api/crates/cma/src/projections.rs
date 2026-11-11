@@ -349,6 +349,14 @@ pub(crate) struct AdapterAgentSkillSupport(pub Arc<dyn SandboxAdapter>);
 #[async_trait::async_trait]
 impl layer1_public::rest::AgentSkillRuntimeSupport for AdapterAgentSkillSupport {
     async fn supported(&self, sandbox: &Sandbox) -> bool {
+        self.observe(sandbox, false).await
+    }
+    async fn upgrade_supported(&self, sandbox: &Sandbox) -> bool {
+        self.observe(sandbox, true).await
+    }
+}
+impl AdapterAgentSkillSupport {
+    async fn observe(&self, sandbox: &Sandbox, upgrade: bool) -> bool {
         let Some(binding) = &sandbox.runtime else {
             return false;
         };
@@ -361,6 +369,7 @@ impl layer1_public::rest::AgentSkillRuntimeSupport for AdapterAgentSkillSupport 
         match result {
             Ok(Ok(status)) => {
                 status.agent_skill_install
+                    && (!upgrade || status.agent_skill_upgrade)
                     && status.installation_ready
                     && status.credential_ready
                     && sandbox.runtime_process_matches(&status).unwrap_or(false)
