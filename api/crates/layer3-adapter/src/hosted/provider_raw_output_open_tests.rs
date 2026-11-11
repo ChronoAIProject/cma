@@ -2,14 +2,16 @@ use super::*;
 
 #[tokio::test]
 #[allow(clippy::result_large_err)]
-async fn open_pins_one_endpoint_and_overrides_raw_output_policy_both_ways() {
+async fn open_pins_one_endpoint_and_overrides_raw_and_json_policy_both_ways() {
     for enabled in [false, true] {
-        open_with_raw_output_policy(enabled).await;
+        for json in [false, true] {
+            open_with_raw_output_policy(enabled, json).await;
+        }
     }
 }
 
 #[allow(clippy::result_large_err)]
-async fn open_with_raw_output_policy(enabled: bool) {
+async fn open_with_raw_output_policy(enabled: bool, json: bool) {
     let handle = RuntimeHandle::new("runtime-1");
     let launch = AgentLaunch {
         operation_id: "agent:agent-1:open:v1".into(),
@@ -109,7 +111,8 @@ async fn open_with_raw_output_policy(enabled: bool) {
         factory,
     )
     .expect("transport builds")
-    .with_bounded_raw_output(enabled);
+    .with_bounded_raw_output(enabled)
+    .with_retained_json(json);
     let (updates, _) = tokio::sync::mpsc::channel(4);
 
     let (channel, receipt) = transport
@@ -121,6 +124,7 @@ async fn open_with_raw_output_policy(enabled: bool) {
                 output_json_budget: false,
                 shared_runtime_output: false,
                 bounded_permission_state: false,
+                retained_json: !json,
                 bounded_raw_output: !enabled,
                 already_initialized_error: None,
                 open_completion: None,
@@ -146,6 +150,7 @@ async fn open_with_raw_output_policy(enabled: bool) {
     let bridge = state.links.values().next().unwrap().bridge.clone();
     drop(state);
     assert_eq!(bridge.bounded_raw_output, enabled);
+    assert_eq!(bridge.json_pools.is_some(), json);
     assert_eq!(transport.state.lock().await.links.len(), 1);
 
     let provider_request = request_text(provider_task.await.expect("provider fixture completes"));
