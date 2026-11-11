@@ -12,6 +12,7 @@ use super::{
 
 mod sandbox;
 pub use sandbox::SandboxStore;
+pub mod ledger_collection;
 mod service_traits;
 pub use super::binding::BindingStore;
 pub use service_traits::*;
@@ -180,6 +181,8 @@ pub enum SandboxStoreError {
     AgentLogCapacityExceeded,
     #[error("sandbox limit reached: {live} of {limit}")]
     LimitReached { limit: u16, live: u16 },
+    #[error("global sandbox capacity is unavailable")]
+    GlobalCapacityReached,
     #[error("sandbox is not ready for workspace admission")]
     SandboxNotReady,
     #[error("workspace name is already live in the sandbox")]
