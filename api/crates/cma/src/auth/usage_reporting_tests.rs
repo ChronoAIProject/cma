@@ -117,7 +117,7 @@ async fn every_authenticated_role_reads_live_usage_presentation_and_failures_are
         session(&app, None).await,
         (
             StatusCode::UNAUTHORIZED,
-            json!({"authenticated": false, "silent_sign_in": true})
+            json!({"authenticated": false, "silent_sign_in": false})
         )
     );
     assert_eq!(*settings.reads.lock().unwrap(), 13);

@@ -7,6 +7,8 @@ metadata:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 data:
+  # Enable only after this compatible API image serves every replica.
+  CHRONO_SILENT_SIGN_IN_ENABLED: "false"
   # Measured reporting is independent of allocated billing. Enable only after
   # monitoring service-account GET reachability and reader/schema readiness.
   CHRONO_USAGE_METRICS_ENABLED: "false"

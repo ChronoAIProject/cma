@@ -59,7 +59,7 @@ pub(super) async fn read(
             StatusCode::UNAUTHORIZED,
             // Advertised so a client only attempts `/auth/login?prompt=none`
             // against a control plane that implements it.
-            Json(serde_json::json!({ "authenticated": false, "silent_sign_in": true })),
+            Json(serde_json::json!({ "authenticated": false, "silent_sign_in": auth.silent_sign_in_enabled })),
         )
             .into_response(),
     }
