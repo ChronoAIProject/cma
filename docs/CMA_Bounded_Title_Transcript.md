@@ -9,8 +9,8 @@ the setup turn when recorded as such. The unchanged domain fold returns as soon
 as that turn completes. A proven prefix containing that terminal event therefore
 produces the same title input as the complete history.
 
-With `CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED=true`, for an Agent in
-`CHRONO_AGENT_LOG_ADMISSION_AGENTS` with more than 200 entries,
+With `CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED=true`, for an Agent selected by
+`CHRONO_AGENT_LOG_ADMISSION_AGENTS` or `CHRONO_AGENT_LOG_FLEET_PERCENT` with more than 200 entries,
 the reader uses #1591's shared `read_proven_agent` interface in the title read's
 existing Mongo snapshot. It requires the same captured Agent and trusted proof,
 then reads sequences 1–200 through the unique Agent/sequence index. Requested
@@ -57,11 +57,13 @@ open under #1349 and its prerequisites.
 
 `CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED` defaults to `false` in the parser and
 API manifest and accepts only the exact strings `true` or `false`. It is
-independent of the existing default-empty admission cohort, so an already-active
+independent of the default-off admission selectors, so an already-active
 admission/public-window cohort does not silently activate title reads on upgrade.
-Preparation and cohort selection remain owned by #1591's release procedure.
+Preparation and cohort selection remain owned by #1591's release procedure and
+the [fleet activation contract](CMA_Fleet_Log_Activation.md).
 The release owner qualifies admission and public windows first, then enables
-title reads for that fixed cohort. Setting the title switch to `false` and
+title reads for the qualified cohort. Fleet selection alone cannot activate title
+reads, and title reads never initiate fleet preparation. Setting the title switch to `false` and
 restarting the API restores complete title reads without disabling admission or
 public windows. All metadata, quarantine and source history are preserved.
 This adds no index, document format, projection, backfill or writer. It is a
