@@ -16,7 +16,7 @@ use super::sandbox_mongo::{
     TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::read_sandbox;
-use transaction::{attempt, reconcile, ApplyError, MaintenanceRequest};
+use transaction::{attempt as apply_attempt, reconcile, ApplyError, MaintenanceRequest};
 
 mod consented;
 mod evidence;
@@ -138,7 +138,7 @@ async fn schedule(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        let receipt = match attempt(store, &request, &mut session).await {
+        let receipt = match apply_attempt(store, &request, &mut session).await {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
