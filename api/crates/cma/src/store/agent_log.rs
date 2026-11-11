@@ -273,6 +273,7 @@ impl AgentLogStore for MongoSandboxStore {
         appended_at: String,
         kind: AgentLogKind,
     ) -> Result<AgentLogEntry, SandboxStoreError> {
+        self.prepare_fleet_log(agent_id).await;
         let mut last_transient = None;
         for attempt in 0..TRANSACTION_ATTEMPTS {
             if attempt > 0 {
