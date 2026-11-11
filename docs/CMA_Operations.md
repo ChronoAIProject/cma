@@ -833,8 +833,10 @@ dry-run comparison, and a web-only patch for each phase. Recovery changes only
 image/provenance and retains both old and incoming assets. HTTP 200 for `/` alone
 does not prove the app mounts. CI runs `.github/scripts/web-image-smoke.py` on the
 exact native image before export, with an intentionally stale compatibility
-volume, and checks personal/Operations rendering, retained chunks and uncached
-404 responses. API data in that browser check is synthetic.
+volume, and checks personal/Operations rendering, reload/history navigation,
+retained chunks and uncached 404 responses. It also checks copied bundle identity
+against the same image's OCI labels and reporting backoff/recovery. API data in
+that browser check is synthetic; it does not prove production source coverage.
 
 ### Lifecycle Scheduling
 
@@ -1126,16 +1128,21 @@ checkpoint writer hold; they cannot create new holds or transfer archives.
 configuration field. Log level changes never authorize credential-value output.
 Keep model/service/provider configuration out of ad hoc frontend build flags.
 
-The API Deployment sets `TOKIO_WORKER_THREADS=2`, consumed by Tokio's existing
-multithread runtime before CMA starts. Its one-CPU quota would otherwise select
-one worker. Production desktop measurements found CPU work occupying that sole
-worker for about a second, delaying both desktop frames and liveness responses.
-Two workers let the operating system schedule interactive IO while one task is
-busy. This does not increase the CPU quota or replace profiling and moving
+The API Deployment supplies `TOKIO_WORKER_THREADS` through the downward API:
+`resourceFieldRef` names container `api`, resource `limits.cpu`, and divisor `"1"`.
+The current eight-core limit therefore supplies eight workers to Tokio's existing
+multithread runtime before CMA starts. Requests are four CPU cores and 256Mi;
+limits are eight CPU cores and 8Gi. The worker setting follows the container limit
+on Pod creation; it is not a live runtime resize. Production desktop measurements
+previously found CPU work occupying a sole worker and delaying frames and
+liveness responses. Additional workers do not replace profiling and moving
 expensive work off async workers; simultaneous CPU work can still delay IO.
 Apply this as an API-only rollout, preserving live Sandbox Pods and conversation
 history. Verify the worker count and public desktop input-to-pixel latency after
-the rollout. Rollback restores the previous worker setting on the same API image.
+the rollout. Any owner-approved rollback restores the recorded previous worker
+setting on the same API image. The namespace's `sandbox-limits` LimitRange permits
+Container max CPU `8` and memory `8Gi`; it is managed outside this repository's
+fixed `infra/` manifest list. Its defaults are unchanged by this parity update.
 
 Execution policy is pinned before each effect and participates in its operation
 fingerprint. A changed timeout or clone-depth environment value must not change
@@ -2080,6 +2087,13 @@ pressure returns Retry-After without changing conversation/lifecycle pools.
 
 ## API read and stream diagnostics
 
+`CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED` defaults to `false` and accepts only
+`true` or `false`. It independently enables the [bounded title-input reader](CMA_Bounded_Title_Transcript.md)
+for Agents already prepared in `CHRONO_AGENT_LOG_ADMISSION_AGENTS`. Enable it only
+after admission/public-window qualification. Disable it and restart the API to
+restore complete title reads while preserving the admission/public-window cohort
+and all retained history. No title or metadata write is part of this reader.
+
 The API emits content-free structured log metrics every ten seconds and once
 after the background-worker drain completes. The final sample follows all joined
 workers, including cancellation cleanup at the thirty-second worker deadline,
@@ -2200,6 +2214,24 @@ OCI source/version/revision labels. It inspects by immutable image ID and cleans
 its stopped verification container. Transfer/promotion retains the tested image
 ID/digest and existing provenance checks; do not rebuild or relabel to correct an
 identity. A candidate identity is not a release version.
+
+The loopback usage, build-identity and exact-image browser harnesses default to
+Chromium. Set `CMA_E2E_BROWSERS=chromium,firefox,webkit` to run all three pinned
+Playwright engines after `npx playwright install chromium firefox webkit` in
+`web/`. A custom `CMA_E2E_BROWSER_PATH` applies only to Chromium; Firefox/WebKit
+use their own installed engines. Unknown or duplicate engine names fail the run.
+For the compiled frontend, run the existing `e2e/usage.config.ts` and
+`e2e/build-identity.config.ts` configurations; repeat owner/Operations tests with
+`CMA_E2E_MEASURED_USAGE=true` for synthetic measured-source states.
+
+For an immutable candidate, run `.github/scripts/web-image-smoke.py <image>` from
+the repository root with the same browser selection. It verifies bundle/OCI
+identity before starting the image, passes the expected version/revision to the
+browser, mounts stale retained assets read-only, and cleans its container/mount.
+The build-identity check reads the serving artifact's static `build-info.json`
+and compares the copied value; it never consults a potentially unrelated local
+`dist` directory. The report prints the immutable image ID, source, version and
+browser selection. Keep this candidate evidence separate from live acceptance.
 
 For production acceptance, the lead compares a fresh browser's copied identity
 with the tested source, image labels and promoted digest. Retain all prior hashed
