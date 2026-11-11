@@ -14,6 +14,7 @@ use super::{
 };
 use crate::seconds_from_rfc3339;
 
+pub mod activation;
 pub mod ports;
 pub mod preflight;
 pub mod service;

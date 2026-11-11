@@ -75,7 +75,7 @@ pub struct RecoveryTarget {
 }
 
 impl RecoveryTarget {
-    fn from_context(context: &CapacityRecoveryContext<'_>) -> Result<Self, Error> {
+    pub(super) fn from_context(context: &CapacityRecoveryContext<'_>) -> Result<Self, Error> {
         let a = context.agent;
         Ok(Self {
             agent_id: a.id.clone(),
