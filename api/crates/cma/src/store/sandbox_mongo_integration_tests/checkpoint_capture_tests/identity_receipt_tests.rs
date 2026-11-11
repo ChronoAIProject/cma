@@ -79,10 +79,13 @@ async fn mongo_identity_terminal_preserves_receipt_and_predecessor_shape() {
             &mut AgentMessageAssembly::default(),
             ConversationUpdate::RuntimeOutput {
                 receipt: source(2, &"b".repeat(64)),
-                update: Some(Box::new(ConversationUpdate::TurnEndedForPrompt {
-                    prompt_id,
-                    response: PromptResponse::new(TurnStopReason::EndTurn),
-                })),
+                update: Some(
+                    Box::new(ConversationUpdate::TurnEndedForPrompt {
+                        prompt_id,
+                        response: PromptResponse::new(TurnStopReason::EndTurn),
+                    })
+                    .into(),
+                ),
             },
             MINUTE.into(),
         )

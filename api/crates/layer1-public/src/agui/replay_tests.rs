@@ -1,3 +1,4 @@
+use layer2_core::sandbox::AgentLiveFragment;
 #[path = "replay_telemetry_tests.rs"]
 mod telemetry_tests;
 
@@ -49,7 +50,7 @@ fn fragment(agent: &Agent, after_seq: u64) -> AgentLiveFragment {
 #[tokio::test]
 async fn live_frames_wait_for_the_captured_durable_high_water() {
     let (mut open, mut agent) = following().await;
-    open.held = Some(fragment(&agent, 6));
+    open.held = Some(fragment(&agent, 6).into());
     open.queue_live(&agent);
     assert!(open.pending.is_empty());
     assert!(open.held.is_some());
@@ -77,16 +78,16 @@ async fn stale_generations_turns_and_superseded_text_are_never_projected() {
     let mut superseded = valid.clone();
     superseded.after_seq = 3;
     for rejected in [stale, prior, foreign, superseded] {
-        open.held = Some(rejected);
+        open.held = Some(rejected.into());
         open.queue_live(&agent);
         assert!(open.pending.is_empty());
     }
-    open.held = Some(valid);
+    open.held = Some(valid.into());
     open.queue_live(&agent);
     assert_eq!(open.pending.len(), 1);
     open.pending.clear();
     open.ended = true;
-    open.held = Some(fragment(&agent, 5));
+    open.held = Some(fragment(&agent, 5).into());
     open.queue_live(&agent);
     assert!(open.pending.is_empty());
 }
@@ -112,7 +113,7 @@ async fn authorized_snapshot_keeps_live_identity_generation_turn_and_commit_fenc
             "future" => candidate.after_seq = 6,
             _ => (),
         }
-        open.held = Some(candidate);
+        open.held = Some(candidate.into());
         open.queue_authorized(layer2_core::sandbox::AgentEventStreamSnapshot {
             initial_model: agent.profile.content.model.clone(),
             created_at: "2026-09-05T00:00:00Z".into(),
