@@ -62,7 +62,10 @@ pub(super) async fn page(
         .projection(doc! {"_id": 1, "format_version": 1, "agent_id": 1,
         "work.request": 1, "work.revision": 1, "work.phase": 1,
         "work.ready_at": 1, "work.lease": 1})
-        .limit(i64::from(PAGE_SIZE))
+        // Negative limit requests one bounded batch. The driver serializes its
+        // absolute value with singleBatch:true, preserving wire batchSize32
+        // instead of incrementing an equal positive limit/batch pair to33.
+        .limit(-i64::from(PAGE_SIZE))
         .batch_size(PAGE_SIZE)
         .max_time(Duration::from_millis(1000))
         .await
