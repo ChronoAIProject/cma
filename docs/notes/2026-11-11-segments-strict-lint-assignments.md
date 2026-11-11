@@ -1,7 +1,6 @@
 # Combined CMA strict-lint wiring assignments
 
-**Current checkpoint, Wed 23:58 SGT:** integration source245f8e821 (last pushed2cf7d3fe6). Strict CMA65 dead-code diagnostics /0 type errors; pure contracts41pass/2482skip. Authenticated Mongo is queued under heavy-1; no current-head Mongo pass claimed. Narrow S1 operator pinb11107979 and format-2 pindaf605ab4 are consumed by S1f205616a4. New S2 registry pinad5641a71 is published for S5. Latest neutral S5 commands58ffd3b61 are available for the next merge. All four P1 activation gates remain open until executable qualification and review; the timestamp-parser source concern is withdrawn after inspection. The proposed PR remains one combined default-off PR, not yet ready. Detailed ownership, exact pins, six-finding closure ledger, gate list and Thu/Sun schedule follow below.
-
+**Current checkpoint, Thu 01:21 SGT:** committed combined Rust source `2c3537ee7`, awaiting the next push and fixed-head gates. Normal merges include develop `8d59f6154`, S1 `b680cf40f`, S3 `f4494faaa`, S4 `5fdfae281` and S5 `706f5a7d7`. The one-hour heavy-1 acquisition for source `21333475c` expired with exit75 before Cargo started: strict CMA was **not run**, with zero Rust/Mongo tests executed on that head. The new source fixes S2 v2 live discovery and admission-generation observation, corrects the retained fixture, integrates exact attachment-registry consumption and the measured recovery discovery predicate, and documents all strict switches. Background scheduling/loss routing, complete indexed response/transcript consumers and other owners' remaining v1 predicates are unfinished. Native proof remains deferred/Unsupported. All four P1 activation gates remain open. One combined default-off PR remains the plan; no integration PR is ready.
 
 Baseline: integration `5ea82dbc9`, 184 binary warnings and 35 test warnings (31 duplicates), plus 187 passing selected core/API tests. The 184 distinct binary diagnostics are inventoried in `2026-11-11-segments-lint-inventory.tsv`. Counts are source locations, not independent defects: an unwired entry point makes its whole implementation appear unused. Strict CMA Clippy has not passed.
 
@@ -138,17 +137,16 @@ S5 discovery alternates separate admitted/due and attaching/expired indexed keys
 
 S1 owns validator/index installation and immutable checksum (including both JSON files), drift/v1/missing-witness/unknown-field tests, actual encoded four-phase round trips, and bounded explain plans. S2 owns shared registry, runtime grants and coherent backup inventory. S5 owns codec, discovery and accepted-work service. This is agreement on the published contract, not a Mongo/runtime qualification result or activation authorization.
 
+## Historical combined gates at 2026-11-11 22:51 SGT; current PR plan below
 
-## Current combined gates and PR plan — 2026-11-11 22:51 SGT
-
-Source candidate **`2cf7d3fe6`** includes the accepted checkpoint, narrow S2 operator/migration dependency `b11107979`, S5 format-2 contract `daf605ab4`, and S1 `41ef81cab`, via normal merges. The only integration correction removes a duplicated production module declaration. Latest fetched S3 is `33d878350`, S4 is `191afaa86`, and S5 implementation is `1481b1d7f`. Those implementation checkpoints are already in the candidate; the later S5 contract is additive data, not the completed codec or worker. Develop remains `207be186c`; its merge freeze is still on.
+Source candidate **`2cf7d3fe6`** includes the accepted checkpoint, narrow S2 operator/migration dependency `b11107979`, S5 format-2 contract `daf605ab4`, and S1 `41ef81cab`, via normal merges. The only integration correction removes a duplicated production module declaration. Latest fetched S3 is `33d878350`, S4 is `191afaa86`, and S5 implementation is `1481b1d7f`. Those implementation checkpoints are already in the candidate; the later S5 contract is additive data, not the completed codec or worker. This is historical source; the merge freeze was subsequently lifted at22:58SGT. Current combined source/develop are named at the top.
 
 | Gate at 2cf7d3fe6 | Exact result / evidence |
 | --- | --- |
 | Formatting / source size / runner harness | `cargo fmt --all --check` passed; source size passed for **6,014 files**; all **31 mocked Mongo runner infrastructure tests passed**, zero failures/skips. Mocked tests are not actual Mongo evidence. |
 | Strict CMA Clippy, all targets/features, locked, warnings denied | Exit 101; **39 distinct dead_code locations, zero type errors**. S5 owns 37 (35 service/record/receipt locations, TransactionScope::insert_one, obsolete maintenance live_activities wrapper); S4 owns 2 (writer_reconcile Outcome and reconcile). This replaces the historical 33 count; the increase reflects added unconsumed receipt/witness code. |
 | Layer 3 affected adapter contracts | **22 passed, 657 skipped**, exit 0, at this exact head. Includes all seven restricted recovery tests. Model/adapter evidence does not establish a production native producer. |
-| Actual Mongo contracts | Queued under a fresh heavy-1 acquisition; exact selection will be enumerated by nextest and run in serial partitions of at most 40, one owned disposable replica set at a time. No current-head result yet. |
+| Actual Mongo contracts | **187 selected:182passed,5failed** at `2cf7d3fe6`, all5 serial partitions attempted; all owned fixtures removed. Four writer/bootstrap failures and one recovery immutable-carrier refusal failure are recorded later. Newer source awaits rerun. |
 
 Logs are 0600 in the lead notes: `2026-11-11-segments-lint-2cf7d3fe6.jsonl`, `2026-11-11-segments-adapter-2cf7d3fe6.log`, and the forthcoming `2026-11-11-segments-mongo-2cf7d3fe6.log`. Each gate separately acquires/releases the existing heavy-1 lock with a blocking acquisition allowance of 3600 seconds, two Cargo jobs, one target directory. The lock files are never removed. The actual Mongo coordinator preserves the canonical runner's fixture ownership, cleanup traps, exact selectors and test time budgets; it runs the selected ignored contracts, not mocked runner tests. Source HEAD stays fixed throughout a gate.
 
@@ -167,7 +165,7 @@ The PR stays unopened until the gates below pass and the functional inventory is
 5. Scale evidence at 1/10/100/1000 segments, fixed active segment/requested page and 100/200-entry pages: command/checkouts count, bytes, p50/p95/max, touched seals and peak memory. Work must follow requested page plus active state rather than lifetime. Long turns and output changes across segment boundaries must be indexed and bounded. No lifetime fallback for segmented data.
 6. Compatibility/security: actual supported old reader and certified rollback artifact (#1327), mixed old/new writers, default-off restart, grants limited to the exact sidecars, immutable migration checksum including format-2 schema/index sources, coherent backup/restore of source plus all sidecars, complete no-startup-DDL/refusal tests. Applying schema alone never grants writer or recovery admission. Fail closed on unknown generation/format/receipt and never repair by deleting history.
 7. A real pinned-runtime restricted recovery handshake and crash tests: original runtime/home/native identity and writer fence, independently observed state/output boundary, no new process/input/settings replay/ordinary reconnect, exact durable completion before attachment/output acknowledgement, and safe restart before/after completion. Missing capability remains typed Unsupported and blocks claiming #1351 recovered.
-8. Repository structure/source size, secret scan, changed manifest/config parity and canonical Mongo-runner registration tests. Prepare stage/kill-switch/evidence instructions for the release owner. Review at the exact head plus lead merge relay are mandatory; develop remains frozen until explicitly lifted. After merge, monitor exact develop push CI and fix forward/revert a real failure within one hour; release requires its green exact-batch artifact.
+8. Repository structure/source size, secret scan, changed manifest/config parity and canonical Mongo-runner registration tests. Prepare stage/kill-switch/evidence instructions for the release owner. Review at the exact head plus lead merge relay are mandatory; the develop freeze is currently lifted. After merge, monitor exact develop push CI and fix forward/revert a real failure within one hour; release requires its green exact-batch artifact.
 
 ### Remaining blockers and owner checkpoints
 
@@ -175,13 +173,13 @@ These ETAs are **integration planning estimates**, except S4's lead-confirmed 01
 
 | Slice / owner | Concrete remaining blocker | Next checkpoint / ETA (SGT) |
 | --- | --- | --- |
-| S1 / cma-cost | Consume `b11107979` and `daf605ab4`; install only format-2 recovery carrier validator and three discovery indexes; include exact JSON bytes in checksum. Existing `schema.rs` assumes every expected index is unique; compare against each index's own expected options so the three deliberately nonunique discovery indexes qualify without relaxing the unique segment/publication/evidence contracts. Add four-phase encoded fixtures, v1/missing-witness/unknown-field refusal, index drift and bounded explain tests. Corrected reader/audit Mongo gates and actual rollback artifact qualification remain. | Dependency unblocked now. Schema/compile checkpoint estimate Thu 02:00; executable Mongo/reader evidence Thu 08:00–12:00, final compatibility fixes by 18:00. |
-| S2 / cma-db-contention | Shared runtime authority and coherent backup inventory after S1 schema registration; consume S5 production service/worker constructors and minimal shared runtime dispatcher patch. Finish indexed long-turn/segmented response paging (deferred headers and unchanged-head optimization alone are incomplete). Integrate and run combined gates. | Shared inventory within 1 hour of schema pin; constructor wiring within 1 hour of executable S5 handoff. Response checkpoint estimate Thu 10:00–12:00; combined gates continue on each combined source head. |
-| S3 / cma-seg-2 | Current legacy transcript filter is linked but lifetime bounded/segmented transcript, current state/title/usage/approval consumers and required API/client integration are incomplete. Supply actual source constructors and cross-segment/scale parity evidence. | Complete indexed consumer checkpoint estimate Thu 10:00–12:00; qualified gates/fixes by 18:00. |
-| S4 / cma-seg-lead | Two lint locations: real writer_reconcile caller wiring, all original transaction-family coverage, exact unknown-outcome receipts, independently admitted CapacityRecovery empty-batch successor for segmented source, publication/failpoint/concurrency contracts. | **Lead-confirmed writer_reconcile checkpoint Thu 01:30.** Remaining writer/capacity successor evidence estimate Thu 10:00–14:00; final fixes by 18:00. |
-| S5 / cma-seg-3 | 37 lint locations await the actual admission/status/accepted-work service and worker. Publish canonical timestamp codec (`790ee7458` cited by contract), bounded two-stream discovery and constructors; remove genuinely superseded wrapper. Complete native retained-process proof producer and crash/restart/settlement tests. Shared dispatcher registration belongs to S2. | Service/codec/discovery checkpoint estimate Thu 06:00–10:00; native proof/runtime evidence Thu 12:00–16:00; final integration fixes by 18:00. This is the largest schedule risk. |
+| S1 / cma-cost | Operator/format-2 pins consumed; canonical schema/checksum/nonunique-index comparison and query-plan tests are integrated through `fa67a1409`. Remaining: combined real-Mongo qualification, any reader/audit failures, and actual rollback artifact qualification. | Source delivered. Mongo/reader evidence Thu08:00–12:00 estimate; final compatibility fixes by18:00. |
+| S2 / cma-db-contention | Runtime authority, strict flags, authenticated command composition and scoped root dispatch are implemented. Remaining: authenticated Mongo security gate; accepted-work scheduler/loss wiring; indexed long-turn/segmented response paging; combined integration qualification. New retained-reopen proof gap requires S5/#1652 coordination. | Fixed-head gates queued now. Background wiring Thu06:00 estimate; response source Thu10:00–12:00; qualification by18:00. |
+| S3 / cma-seg-2 | Legacy transcript and usage source/config are integrated. Segmented transcript/current-state/title/usage/approval consumers remain incomplete; no lifetime fallback may be used for segmented history. | Indexed consumer source Thu10:00–12:00 estimate; parity/scale and API gates by18:00. |
+| S4 / cma-seg-lead | Ordinary publication roots, reconciliation and durable keyed-attempt fence are integrated through `e363f788f`. Remaining: reproduce/fix the four earlier bootstrap/keyed/unknown Mongo failures, qualify all roots and admitted capacity successor, and cover newly added retained-reopen consumer before activation. | Lead-confirmed01:30checkpoint; combined root/unknown/concurrency gates Thu10:00–14:00 estimate, final fixes by18:00. |
+| S5 / cma-seg-3 | Format2codec, bounded discovery, commands, receipt-bound background port and completion retry are integrated through `bcbcc43da`. Remaining: integrate/qualify the published live registry consumer, real crash/ack/restart/security tests and bounded retained-reopen proof interface with #1652 owner. The native proof producer is deferred from the current S5 checkpoint and remains required for activation. S2 owns scheduler/shared loss routing. | Registry source delivered at `fc09a0eac`, pending normal integration. Native producer is explicitly deferred from the current S5 checkpoint; no source or qualification ETA is confirmed. Pinned-runtime evidence remains an activation/#1351 closure gate. Other integration fixes target Thu18:00. |
 
-**Earliest realistic combined strict-green estimate: Thu 11-12 12:00–16:00 SGT**, conditional on executable S5 constructors by 10:00, S4 reconciliation by 01:30, S1 schema completion, and a usable shared build slot. Removing warning locations alone may happen earlier; it is not PR-ready. Earliest complete PR-ready estimate is **Thu 18:00–22:00**, after real Mongo, bounded-consumer and runtime/compatibility gates. At 08:00 publish actual pins, counts and revised remaining times; do not carry these provisional estimates forward as facts. Any new cross-slice type/schema/semantic/test failure is relayed immediately with its owner.
+**Earliest realistic combined strict-green estimate: Thu 11-12 12:00–16:00 SGT**, conditional on real accepted-work scheduling/loss routing, bounded S2/S3 consumers, all S4 command roots and a usable shared build slot. S5 constructors and S1 schema source are already present; their source presence does not substitute for qualification. Removing warning locations alone may happen earlier; it is not PR-ready. The source review target remains **Thu 18:00–22:00**, after real Mongo, bounded-consumer and compatibility gates. Full recovery/activation qualification has no defensible ETA while the native proof producer is deferred. A source review must explicitly retain that blocker; it cannot be represented as completed #1351 delivery. At 08:00 publish actual pins, counts and revised remaining times; do not carry these provisional estimates forward as facts. Any new cross-slice type/schema/semantic/test failure is relayed immediately with its owner.
 
 ### Delivery and stabilization through Sun 11-15
 
@@ -191,11 +189,9 @@ Release order: additive schema under explicit reviewed operator authority; segme
 
 Production acceptance needs representative open-Agent/response/transcript/desktop samples, bounded scan/byte/checkout improvements, no correctness or availability regression, at least 36 minutes of canary watch **and a real natural rollover**, then staged expansion Fri–Sat and stable watch through Sun 11-15. No generated user input, erased history, broad Failed-to-Ready transition or inferred native state may fill an evidence gap. Recover the capacity-exceeded cohort only with original identity and exact receipts; parent/ledger readiness remains an external prerequisite. Close #1348–#1351 only after their own verified release evidence, not after source merge.
 
-
 ### Merge-freeze update — Wed 2026-11-11 22:58 SGT
 
 The lead lifted the develop merge freeze after retaining the exact `207be186c` release bytes. This supersedes earlier freeze status in this historical note. Segmentation still requires its own exact-head reviewer verdict, passed targeted local gates and explicit `MERGE #N (admin ok)` relay. Never merge over a failed job; for the known apt/DNS browser-install failure, rerun failed jobs first and record it. Use `--merge --admin --match-head-commit` at the reviewed head and leave protection settings as instructed. Monitor the resulting develop push CI and fix forward or revert a real regression within one hour. No segmentation merge is currently requested or ready.
-
 
 ## Pre-review closure ledger — cfce4f4b8, received Wed 23:01 SGT
 
@@ -214,24 +210,9 @@ S2 tracks closure links, source pins and actual test names/results in this ledge
 
 ## S5 accepted-work constructor checkpoint — Wed 23:13 SGT
 
-Published **`2ff67f6cbaddcb4ec5bea5b89e540ecf3c5403b6`** on
-`tl/cma-log-segments/capacity-recovery`, with current develop
-`4411f9b699f7dd632c0868ca92d206a0c9af6da5` normally merged.
-Concrete constructors and exact shared registry/authority gaps are in
-`notes/2026-11-11-1351-service-worker-handoff.md`. No shared root was edited.
-S2 can consume `RecoveryService::new` and
-`AgentWorker::run_capacity_recovery`. Native proof remains Unsupported.
+Published **`2ff67f6cbaddcb4ec5bea5b89e540ecf3c5403b6`** on `tl/cma-log-segments/capacity-recovery`, with current develop `4411f9b699f7dd632c0868ca92d206a0c9af6da5` normally merged. Concrete constructors and exact shared registry/authority gaps are in `notes/2026-11-11-1351-service-worker-handoff.md`. No shared root was edited. S2 can consume `RecoveryService::new` and `AgentWorker::run_capacity_recovery`. Native proof remains Unsupported.
 
-P2-6 source budget fix is `a8b18866f`; P1-3 completed-activation protocol
-is `bc130027c` plus production wiring `709c302b5`. Both findings remain
-OPEN until executable qualification and review. P1-3 additionally needs
-completed original-request scheduling, exact already-published registry detection
-and restricted loss routing. No claim that the receipt-only model establishes
-native recovery. Corrected CMA gate is queued with a blocking heavy-slot
-allowance of 3600 seconds; actual Mongo and core restart tests remain pending.
-Formatting/file-size checks and the full-history secret scan passed before
-this note; no Rust/Mongo current-head pass is claimed.
-
+P2-6 source budget fix is `a8b18866f`; P1-3 completed-activation protocol is `bc130027c` plus production wiring `709c302b5`. Both findings remain OPEN until executable qualification and review. P1-3 additionally needs completed original-request scheduling, exact already-published registry detection and restricted loss routing. No claim that the receipt-only model establishes native recovery. Corrected CMA gate is queued with a blocking heavy-slot allowance of 3600 seconds; actual Mongo and core restart tests remain pending. Formatting/file-size checks and the full-history secret scan passed before this note; no Rust/Mongo current-head pass is claimed.
 
 ## First complete combined Mongo batch — source 2cf7d3fe6
 
@@ -247,7 +228,6 @@ this note; no Rust/Mongo current-head pass is claimed.
 
 Full log: `2026-11-11-segments-mongo-2cf7d3fe6.log`; owner handoff: `2026-11-11-segments-mongo-failures-2cf7d3fe6.md`, both0600. Passing subsets include bounded reader/capture/audit/retention, real additive migration restart/drift and existing response/approval windows. No timeout/assertion/cache bound was weakened. Next combined batch consumes S1 `f205616a4`, S3 `09715a0fa`, S4 `a2e29f32a`, S5 `2ff67f6cb` and develop `4411f9b69`; newer code must be measured before any failure is closed.
 
-
 ## Second combined candidate — 631d92042
 
 Normally merged S1 `f205616a4`, S3 `09715a0fa`, S4 `a2e29f32a`, S5 `2ff67f6cb` and develop `4411f9b69`. Resolved only the expected shared migration checksum conflict (retain all new schema/index bytes) and transcript startup-config conflict (retain the existing strict process parser and production setter). S2 runtime authority/test checkpoint **`631d92042c76bf112e5909f4cf97efdafedf0f2a`** adds the missing gate, admission and format-2 carrier collections, three pure security regressions and an authenticated canonical-migrator/runtime-role regression. Backup/restore inventory is in `2026-11-11-segments-authority-backup.md` and its repository mirror. No live grants, schema, flags or runtime state changed.
@@ -258,19 +238,15 @@ S1 has supplied canonical format-2 registration/nonunique-index comparison and r
 
 S5 constructor consumption still needs an actual Layer2-authorized command/worker boundary in shared composition. Its new Cma RecoveryService takes a fresh Caller for every operation and exposes status/admit/run_one/discover, while the existing Layer1 route is read-only preflight. Discovery metadata must never be converted into a fabricated owner Caller. S2 will wire a protocol-neutral endpoint/worker interface; S5 retains domain authorization/accepted-work semantics and supplies its neutral contract. A provider-native confirmation producer is still absent; Unsupported must remain a refusal, not ordinary reconnect. No fake call or unused constructor registration is accepted as production wiring.
 
-
 ### Compile correction at 245f8e821
 
 Strict CMA at631d92042 exited101 with **seven compile diagnostics in three causes**: duplicated `bounded_transcript_reads` field/initializer after the S3 merge, S5 worker test passing Arc<Fixture> instead of its existing Runtime wrapper, and S3's u64-versus-usize telemetry assertion. Shared integration correction **`245f8e821378d7038d74bee80877c3962edc2e3b`** fixes those three without changing behavior or weakening assertions. Formatting and source size pass at this source (**6,043 files**). Strict CMA rerun is queued; a zero-length/in-progress diagnostic file is not a pass. No adapter/Mongo counts are claimed for the unbuildable intermediate head.
 
 The full pure recovery and authority filters now include the actual S5 worker/discovery/lineage tests in addition to codec, migration and operator tests; Layer2 recovery and Layer3 adapter gates remain separate lock acquisitions. The authenticated Mongo gate is separately owned and selected from the canonical authenticated runner, with no externally supplied URI accepted and no credential output. All local evidence files remain0600.
 
-
 Correction after reading `layer2-core/src/clock.rs:68`: the previous claim that `seconds_from_rfc3339` accepts noncanonical forms was incorrect. This shared parser already requires exactly20-character UTC seconds, ASCII numeric components and valid calendar round-trip at245f8e821. S5 correctly reuses it. No parser implementation blocker remains. Recovery-specific offset/fraction/invalid-calendar and lexical-order negative tests are supplied at8514f4d38 and await execution with the next combined source.
 
-
 S3 follow-up on09715a0fa: the new default `AgentLogStore::agent_log_transcript` contains a cfg(test)-only full-read/filter return while production returns None, followed by an unconditional Ok(None). Move the parity fixture behavior into the actual in-memory test-store implementation so the trait does not change semantics under cfg(test) or introduce unreachable test code. S3 owns that trait/test implementation. The real Mongo transcript regression must remain; this source review is not an executed strict Layer2 result.
-
 
 ## Combined strict-lint update — Wed 23:43 SGT
 
@@ -280,57 +256,27 @@ At immutable source `245f8e821378d7038d74bee80877c3962edc2e3b`, the strict CMA r
 
 The complete P1-3 contract still requires safe completed-request lookup/dispatch after process restart and restricted connection-loss routing. This helper by itself does not close P1-3 or advertise native recovery support.
 
-
 ### Narrow S2 registry dependency published
 
 S5 may normally merge **`origin/tl/cma-log-segments/recovery-registry` at `ad5641a7122e1b99417e2be7ce421b7a25d64f50`**, based on current develop `4c65d80e8`. This contains only the frozen `recovery_attachment_is_active` method, its shared module registration and three focused registry tests. Exact live publication, staged refusal, wrong identities/fences, fenced watermark, finished task, missing attachment and empty restarted registry are covered in source. `rustfmt` passed; executable tests await the combined gate, so this is a dependency pin and **not** a recovery readiness claim. S2's active test source remains unchanged at245f8e821; the pin was built through an isolated temporary git index without changing the worktree or its HEAD. Temporary index removed.
 
-
 ## S5 authorized neutral command pin — 58ffd3b61
 
-Published `58ffd3b61` on `tl/cma-log-segments/capacity-recovery`, with
-`origin/develop` normally merged. S2 can mount
-`Arc<AgentWorker>::capacity_recovery_commands(Arc<RecoveryService>)` as
-`Arc<dyn layer2_core::sandbox::agent_capacity_recovery::commands::CapacityRecoveryCommands>`.
-The object supplies `status(&Caller, &AgentId, Option<&RecoveryRequest>)`,
-`admit(&Caller, &RecoveryRequest)` and `resume(&Caller, &RecoveryRequest)`.
-Status is now a Layer2 type. The actual worker/store implementation reauthorizes
-all operations; no discovered owner ID may be converted to a Caller. HTTP adapters
-must expose safe status/outcome DTOs, not serialize private native facts in RecoveryWork.
-Discovery remains the existing bounded CMA service method for shared scheduling.
-This is an executable implementation boundary, not a fake constructor registration.
+Published `58ffd3b61` on `tl/cma-log-segments/capacity-recovery`, with `origin/develop` normally merged. S2 can mount `Arc<AgentWorker>::capacity_recovery_commands(Arc<RecoveryService>)` as `Arc<dyn layer2_core::sandbox::agent_capacity_recovery::commands::CapacityRecoveryCommands>`. The object supplies `status(&Caller, &AgentId, Option<&RecoveryRequest>)`, `admit(&Caller, &RecoveryRequest)` and `resume(&Caller, &RecoveryRequest)`. Status is now a Layer2 type. The actual worker/store implementation reauthorizes all operations; no discovered owner ID may be converted to a Caller. HTTP adapters must expose safe status/outcome DTOs, not serialize private native facts in RecoveryWork. Discovery remains the existing bounded CMA service method for shared scheduling. This is an executable implementation boundary, not a fake constructor registration.
 
-The canonical format-2 schema dependency `8ba9d5521` is normally merged. Carrier
-writes, discovery and completion/restart fixtures now use its installed validator
-and indexes. Explicit corruption/obsolete-format fixtures alone bypass validation.
-Canonical migration-ledger/authenticated-role qualification remains S1/S2-owned.
+The canonical format-2 schema dependency `8ba9d5521` is normally merged. Carrier writes, discovery and completion/restart fixtures now use its installed validator and indexes. Explicit corruption/obsolete-format fixtures alone bypass validation. Canonical migration-ledger/authenticated-role qualification remains S1/S2-owned.
 
-Timestamp correction: exact combined `245f8e821` and S5 both already contain the
-strict shared parser at `layer2-core/src/clock.rs:68`, introduced by `38550a154`.
-It requires exactly20 bytes, UTC Z, ASCII digits, bounded components and a valid
-calendar round-trip. Offset/fraction/calendar rejection is not missing source.
-`8514f4d38` adds recovery-specific negative codec/discovery/cursor tests and the
-fractional-second lexical-order trap; it does not duplicate the parser.
+Timestamp correction: exact combined `245f8e821` and S5 both already contain the strict shared parser at `layer2-core/src/clock.rs:68`, introduced by `38550a154`. It requires exactly20 bytes, UTC Z, ASCII digits, bounded components and a valid calendar round-trip. Offset/fraction/calendar rejection is not missing source. `8514f4d38` adds recovery-specific negative codec/discovery/cursor tests and the fractional-second lexical-order trap; it does not duplicate the parser.
 
-The S5 carrier identity failure had dependent-row validation before immutable CAS
-checks. Moving the latter before proposed-row encoding preserves Conflict for a
-changed requested_at that also invalidates ready_at. The original exact assertion
-is retained with actual-variant diagnostics. No refusal is weakened.
+The S5 carrier identity failure had dependent-row validation before immutable CAS checks. Moving the latter before proposed-row encoding preserves Conflict for a changed requested_at that also invalidates ready_at. The original exact assertion is retained with actual-variant diagnostics. No refusal is weakened.
 
-Executed core recovery at `5fa84974f`:46 passed,0 failed. Current S5 CMA tests are
-queued under the existing shared lock, two jobs, one target. New source is not yet
-Mongo/strict-lint certified. P1-3/P2-6 remain awaiting execution and exact-head review.
-The accepted registry signature is understood; AlreadyActivated integration and
-restricted loss/restart scheduling remain pending that shared pin. Native proof
-remains typed Unsupported. No PR-ready or activation claim.
-
+Executed core recovery at `5fa84974f`:46 passed,0 failed. Current S5 CMA tests are queued under the existing shared lock, two jobs, one target. New source is not yet Mongo/strict-lint certified. P1-3/P2-6 remain awaiting execution and exact-head review. The accepted registry signature is understood; AlreadyActivated integration and restricted loss/restart scheduling remain pending that shared pin. Native proof remains typed Unsupported. No PR-ready or activation claim.
 
 ### Completed current-head pure gates — 245f8e821
 
 Strict CMA completed with exit101: **65 distinct dead_code diagnostics, zero type errors** (binary65/test6; the six test-target diagnostics overlap the same65 locations). The recovery production-composition gap remains, so strict lint is red. The separately locked pure gate completed: **41 passed, 2,482 skipped**, including all three new runtime-authority success/refusal contracts, operator authority/parse contracts, migration-unit contracts and current recovery worker/codec/discovery units. No ignored Mongo contract is counted as a pass. The authenticated real-Mongo P1-2 gate is queued under its own blocking heavy-1 acquisition; adapter/domain and full combined Mongo gates remain pending for this source.
 
 New published checkpoints for the next normal integration: S4 `e363f788f` includes ordinary segmented worker/control/lifecycle roots (`b73af4da9`) and a durable unresolved-keyed-attempt fence (`37a4a8509`); S5 `b414a4655` adds post-first-completion authority recheck and its fixture wrapper fix; S3 `29092c940` adds bounded usage projection and its Mongo contract. They remain unqualified until merged and tested. A source commit is not closure of P1-1/P2-5/P1-3/P1-4.
-
 
 ### Production-composition handoff to S5 — exact remaining interface
 
@@ -355,38 +301,135 @@ pub trait CapacityRecoveryCommands: Send + Sync {
 
 **Separate S5 blocker:** background restart/connection-loss continuation still needs an explicit accepted-work authority contract, because the current ResourceAccessService has no accepted-background authorization entry. Discovery returns hints only. S5 must supply a receipt-bound, freshly revalidated accepted-work port (including current personal ownership/policy and parent intent) before S2 starts a dispatcher. Do not construct a personal Caller, retain an expired request Caller, or execute work from the metadata-only discovery page. Request-scoped wiring alone does not satisfy restart recovery; this is still a P1-3/strict-ready blocker. No authorization policy or production flag changes are made by this handoff.
 
-
 S5's requested neutral command boundary is now delivered at **58ffd3b61**. S2 will consume the existing `AgentWorker::capacity_recovery_commands` constructor instead of introducing a duplicate composition adapter. S5 retains its REST child/DTO/authorization tests; S2 retains root mounting and default-off config. Background authority and restricted connection-loss dispatch are still separate open dependencies, not solved by this request-scoped port.
-
 
 S2/S5 route registration contract: S5 exports `layer1_public::rest::agent_capacity_recovery_commands_router(commands: Arc<dyn CapacityRecoveryCommands>) -> axum::Router` from its existing recovery REST child. The original dry-run router remains read-only. S2 mounts the command router under existing human authentication/rate limits, constructs `RecoveryService` with current resource access and the already assembled AgentWorker, and wires `CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED=false` through strict process config plus infra declaration. The process switch controls new admission only; both durable admission gates still apply. Status and exact accepted-work continuation remain available with admission off. S5 owns request parsing, safe status/outcome DTOs (no private RecoveryWork serialization), and positive/negative HTTP authorization tests. S2 owns config/default/refusal tests and root registration. Background discovery is not made reachable by a dummy call; its accepted-work authority port remains required.
 
-
 ### S5 REST and restart-discovery checkpoint — 1573f9100
 
-Published `1573f9100` on the S5 branch. S2 can consume the existing neutral adapter
-and re-export/mount `agent_capacity_recovery_commands_router` from the recovery
-REST child. HTTP tests cover original identity, no input fields, bounded body,
-no private-native facts, anonymous/foreign/scoped credentials, disabled admission
-with accepted resume, Unknown/KnownAbort and failed activation. The route applies
-independent credential expiry to the awaited command. Shared config/root ownership
-is unchanged. The route gate is pending, not green.
+Published `1573f9100` on the S5 branch. S2 can consume the existing neutral adapter and re-export/mount `agent_capacity_recovery_commands_router` from the recovery REST child. HTTP tests cover original identity, no input fields, bounded body, no private-native facts, anonymous/foreign/scoped credentials, disabled admission with accepted resume, Unknown/KnownAbort and failed activation. The route applies independent credential expiry to the awaited command. Shared config/root ownership is unchanged. The route gate is pending, not green.
 
-`RecoveryService::discover_agent(&AgentId)` now implements the bounded restart
-lookup proposal through the frozen by-Agent index, including Completed requests.
-At most32 candidates/128KiB; limit33 detects overflow; simple collation and1000ms
-server bound. It grants no execution authority and no ordinary-reconnect fallback.
-A real-Mongo regression covers completed versus active streams,32/33 boundary,
-foreign-Agent isolation, missing index and no authority from candidate rows.
+`RecoveryService::discover_agent(&AgentId)` now implements the bounded restart lookup proposal through the frozen by-Agent index, including Completed requests. At most32 candidates/128KiB; limit33 detects overflow; simple collation and1000ms server bound. It grants no execution authority and no ordinary-reconnect fallback. A real-Mongo regression covers completed versus active streams,32/33 boundary, foreign-Agent isolation, missing index and no authority from candidate rows.
 
-Current CMA gate is still blocking for an existing heavy slot with3600s allowance.
-Only the earlier46 core tests and light gates have passed. Explicit accepted-work
-background authority and the narrow shared registry pin remain pending; native
-proof remains Unsupported as instructed. Repository handoff: 
-`docs/notes/2026-11-11-capacity-recovery-service.md`.
-
+Current CMA gate is still blocking for an existing heavy slot with3600s allowance. Only the earlier46 core tests and light gates have passed. Explicit accepted-work background authority and the narrow shared registry pin remain pending; native proof remains Unsupported as instructed. Repository handoff:  `docs/notes/2026-11-11-capacity-recovery-service.md`.
 
 S3 usage handoff29092c940: S2 takes the pending strict process registration for `CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED` (FeatureFlags, production store setter, composition and default-false infra declaration), replacing the current per-read environment fallback and test-only setter. S3 retains query/projection correctness and the missing segmented/current-state implementation. The filtered legacy query still accumulates usage rows across history, so it is not evidence that P1-4 or all bounded consumer work is complete. Its Mongo parity tests remain in the combined selection.
 
-
 At Thu00:03 SGT the still-unacquired authenticated gate wait at245f8e821 was cancelled (exit143, zero log bytes, verified no child/fixture). This is a reschedule to consume the newly published S5 route/constructor and S4 writer fixes before the next gate, not a test result or a lock timeout. No lock file was changed. Current-head real-Mongo qualification remains pending; the next combined source runs fresh separately acquired gates with the full3600-second wait allowance.
+
+### S5 accepted-background authority checkpoint — d84eb3977
+
+Published `d84eb3977` on the S5 branch. `AgentWorker::run_accepted_capacity_recovery(&RecoveryService, &RecoveryRequest)` now supplies the real background entry; its service method is `run_accepted`. It never constructs or retains a Caller. Each claim/complete/retry/reconcile/activation freshly verifies a private AcceptedAuthority against the exact carrier, immutable Publication, captured source and current Agent result revision/digest. The latter binds original ownership as well as native/input state; later revisions refuse conservatively. Current ResourceAccessSnapshot scope must be Person with the same owner. The following mutation transaction compares policy, shares, full lineage and parent snapshots again. This is accepted-work settlement only; admission still requires a currently authenticated Caller and both gates. Current parent intent continues to be enforced by the state machine and completed-activation checks.
+
+Mongo restart tests now call the background entry without a retained request Caller and include no-receipt, changed original request, later Agent revision and current organization-owner refusals before native IO. These are pending execution. Shared scheduling/loss routing can consume this entry after review; no dummy discovery call is needed to silence dead code. Please review this authority boundary explicitly.
+
+`8a9284dda` also adds `CompletedAttachment::{AlreadyActivated, Reattached}` to the runtime port and rechecks store authority around either outcome. The model covers repeat same-process activation with no second native reconnect or acknowledgement. The production runtime still needs the accepted exact registry helper pin to return AlreadyActivated; native proof remains Unsupported. No forged confirmation is used.
+
+The previous queued gate acquired a slot while source edits were in progress and correctly refused to start heavy work; no pass is claimed. Clean committed source is now queued for the CMA gate with a fresh blocking 3600-second allowance. The gate also rejects any source change during execution. One reusable target remains; no shared locks or other worktrees were modified.
+
+### S5 develop integration — bcbcc43da
+
+S5 now normally includes develop `8d59f6154` at published `bcbcc43da`. The merge retained both feature flags and both Mongo selector sets. The retained runtime recovery/reopen additions intersect the owned unpublished-recovery transaction: load/load_retained/load_reopen now share inspection while scoped unpublished proofs remain distinct. A generation maximum cannot establish the new retained-reopen history digest/semantic proof, so that segmented path refuses until bounded evidence is implemented. Add this new caller to the integration coverage matrix; it is not a successful segmented consumer or activation evidence. The new roots in sandbox_unpublished_recovery.rs still need S2's scoped dispatch registration along with the other pending roots. No history is silently skipped.
+
+Formatting/source-size passed at this head (6,082 files); canonical full candidate history scan passed (3,785 commits, zero findings). Mock Mongo runner tests are still executing; real Rust/Mongo gates remain queued. The earlier all-remote-ref scan was broader than the canonical candidate scan and had unrelated findings; only the canonical script result is the repository gate evidence. No allowlist, scanner setting or test assertion was weakened.
+
+## Thu 00:18 combined-source checkpoint and new compatibility gate
+
+Normal merges consumed the current S1 schema/index qualification and S5 accepted-background authority source. S2 production root commits are `5a4ec596c` (strict usage configuration), `100299dcb` (authenticated recovery command composition), and `21333475c` (transaction-bound retained assessment with bounded Agent/Workspace evidence). The registry dependency remains the separately published `ad5641a7122e1b99417e2be7ce421b7a25d64f50`; the operator dependency remains `b11107979231ec0da5683d8719722c8b4dfea15e`. S1 has consumed the latter and the frozen format-2 carrier pin. No v1 carrier is registered.
+
+The #1652 develop merge adds a **new P1-1 compatibility dependency**: retained reopen needs its original history digest, semantic proof and capacity proof. A certified maximum generation is insufficient. The combined source retains all legacy checks, uses the exclusive TransactionScope for segmented read-only retained assessment, and refuses segmented retained reopen. S2 owns root dispatch/qualification; S5 owns bounded captured recovery proof; the retained-reopen owner is cma-admission-scan. The lead should route that specific bounded-history proof dependency. This is an activation blocker, not a regression waived by a flag. New real-Mongo root tests cover actual gated adoption, read-only assessment, corrupt-envelope refusal and the 513-Workspace limit; execution pending.
+
+S2's scoped inspection now reuses the same bounded captured Agent and Workspace sets instead of repeating unbounded queries after capture. S5's 512-child/8MiB limits therefore survive this shared root. The legacy root remains unchanged. This source contribution advances P2-6; it does not establish combined gate success.
+
+**S5 registry consumer now published at `fc09a0eac16a2bed0a478668d1dc4c1bb19f573c` (next normal integration after the fixed-head gate):** consumes the published registry pin in `RestrictedRecoveryRuntime::reattach_completed` to return `AlreadyActivated` only for the exact current published target/fence, with the service's fresh pre/post authority checks retained. The fixed gate head still contains `bcbcc43da`, which unconditionally reconnects; no current gate covers the later pin. S2 takes background scheduler/shared loss routing using `run_accepted_capacity_recovery` and `discover_agent`; discovery itself never grants execution. The new private accepted authority boundary from `d84eb3977` must be explicitly reviewed. Native proof still returns Unsupported and requires its real producer/tests before activation.
+
+PR-ready evidence additions: retained reopen success on a valid segmented source (or a reviewed compatible alternative before any writer activation), real retained GET proof under the same exclusive transaction, authenticated runtime Mongo role success/refusal, and actual post-completion attachment activation through restart/loss. PR shape remains one combined default-off PR. Earliest strict-green estimate remains conditional Thu 12:00–16:00; full PR-ready Thu 18:00–22:00. Source readiness for bounded response/transcript pages remains Thu 10:00–12:00, with scale/parity evidence by 18:00. These are forecasts, not completed gates; refresh by 08:00 using measured results.
+
+Administrative verification: #1687 was already merged at `cd3babea89a1a1a0de00e19d7807b6c073f69c1d` on Wed19:35SGT, from unchanged reviewed head `41334d7c7c4c183110de9d2b67b774c7ed71a808`. All25 PR jobs are successful. The issue's merge comment already exists; no duplicate merge or branch-protection write was needed. #1421 is transferred to cma-admission-scan per lead relay. Segmentation integration stays the priority.
+
+Latest finding evidence ledger at `21333475c`: P1-1 ordinary roots implemented but Mongo qualification and retained-reopen compatibility pending; P1-2 grants/schema implemented with3pure security tests passed on earlier source, actual authenticated-role gate pending; P1-3 service/commands/restart protocol implemented but native producer, registry consumption and shared scheduler/loss routing pending; P1-4 indexed response/transcript consumers still incomplete; P2-5 durable attempt fence implemented, root restart/Mongo gate pending; P2-6 S5total-child budgets plus S2captured-root reuse implemented, oversized-child real-Mongo gate pending. **None is closed by source presence.** All four P1s still block writer/recovery activation.
+
+Light-gate results for the current combined source: formatting passed; source-size passed for6,116files; all31Mongo-runner harness tests passed, zero failed/skipped. The strict CMA job remains queued; no Rust/Mongo source gate has yet acquired the slot. The #1687 merge push run43013150034 was cancelled by a later develop push; current develop run43055008152 has no finished failures at the00:21check. Release still requires the exact final batch's fully green artifact.
+
+S2/S5 qualification case to retain: completed recovery followed by ordinary output or command progress advances the Agent revision. The accepted-background capability currently refuses a later revision deliberately; by-Agent discovery still returns the old Completed carrier. The shared routing contract must prove which operation remains eligible without treating discovery as authority or permanently diverting a healthy progressed Agent into a stale completion. Test crash-before-first-ack separately from later loss-after-progress, including current parent/policy changes. Exact completed-result refusal is safe, but is not evidence of availability after subsequent work. S5 owns the service decision/port, S2 owns the shared routing; native confirmation remains mandatory.
+
+### S5 exact published-attachment checkpoint — fc09a0eac
+
+Published `fc09a0eac` on the S5 branch with current develop `8d59f6154` normally merged. Consumed registry pin `ad5641a71`; RestrictedRecoveryRuntime now returns AlreadyActivated only from `recovery_attachment_is_active` at the original Agent, conversation, generation and committed writer fence. Staged/fenced/finished or mismatched entries do not qualify. Both runtime outcomes retain fresh pre/post store receipt/authority checks. No native confirmation or ACK is manufactured; no ordinary reconnect fallback exists. Native proof remains Unsupported.
+
+The CMA diagnostic build completed with21 passed/17 ignored/zero failures and no type errors, but the registry dependency merge overlapped its start at45fc44e33; the source guard invalidated the run, so this is NOT an exact-head pass. A fresh clean-source capacity filter (including the three shared registry tests) is queued under the existing heavy-slot locks. No source mutation is planned during this acquisition/run. Source-level source/consumer gaps remain with S2/S4/the retained reopen owner as recorded; no P1 closure or PR-ready claim.
+
+S2 source-review correction queued for the next checkpoint: the new retained-assessment regression initially reused the generic worker fixture whose first rows are conversation-open/status. Segmented adoption correctly requires the original Created row. A corrected fixture is prepared through the actual legacy Created append plus worker publication; it will be applied after the immutable-head lint gate. Do not interpret a fixture refusal as valid-history unavailability or relax adoption integrity to admit it. No actual Mongo test has yet run on this source.
+
+### P1-4 S2 indexed-reader ownership boundary
+
+S2 owns new `store/segment_response/indexed*` children, neutral response-page ports under `layer2-core/src/sandbox/store/agent_response_log*`, their authorized core read-service children, and public Responses projection/page children. S2 will reuse S1's captured snapshot and point proofs plus S4's immutable numeric output-change index; it will not reconstruct a whole prefix or invent compacted log entries. S1 retains the shared capture implementation; S4 retains `projection.rs` and its validator, as in the ownership manifest. The minimal shared exposure needed is `CapturedLog::validate_snapshot` and `projection::{evidence,read_evidence,EvidenceRecord}` at `pub(in crate::store)` visibility (same signatures, no semantic change); S2 can integrate that visibility-only delta alongside the actual caller, avoiding an unused standalone stub. No new writer format or index shape is required by this exposure.
+
+Required response parity includes empty/nonempty messages, first-terminal tool output versus later current tool output, historical models, queued/deferred command failures, gaps and usage after turn completion, cross-segment long turns, exact replay sequence numbers and current authority on every emitted page. Public terminal frames necessarily contain their documented response output; bounded source work must not be implemented by silently truncating that output. Current source has deferred headers and unchanged-head suppression, but those alone do not close P1-4.
+
+**S5 measured discovery delta still required:** S1 at `853b6cca7` measured64keys/documents for page2of32 with the factored predicate still present in integrated `agent_capacity_recovery/discovery.rs::filter`. The passing S1 contract repeats format/phase equality and the time cutoff in both `$or` arms; at1/100/1000terminal/future-history rows it examines only returned keys and zero documents. S5 owns the small production-predicate correction and actual-consumer regression; S2 will consume the pin normally. This is measured missing production wiring within P1-2, not an inference from an explain plan alone. Do not substitute the synthetic index test for the real consumer gate.
+
+
+**Reader-floor configuration gate (S2/S3):** after any Agent is adopted, closing writer/recovery admission must leave the v2 readers available. Current response-reader composition is optional behind the legacy optimization flag; its absence still leads to the lifetime-prefix path. Final indexed consumers must either always dispatch v2 while leaving legacy optimization default-off, or declare and qualify the minimum reader configuration retained during rollback. Disabling a required v2 reader is not an admissible kill switch. Test flag closure on retained adopted data, with current source/API output parity; this is part of P1-4/#1327, not satisfied by default-off deployment alone.
+
+
+### S5 measured-discovery consumer correction — 706f5a7d7
+
+Published `706f5a7d757eefc5c4a760ae997584471c48dd01` on the S5 branch, with current develop normally included. Commit `64a4d496d` consumes S1's qualified distributed keyset predicate in the actual discovery service. Each OR arm includes the format/phase index prefix and due-time cutoff. A real Mongo profiler regression calls both service streams across three pages at 1/100/1000 terminal/future rows; it requires bounded examined keys/documents, response bytes, explicit limit/batch/maxTimeMS, no COLLSCAN or blocking sort, and complete ordered results. Execution is pending; S1's synthetic explain result is not being claimed as the production consumer result.
+
+The discovery fixture now uses the carrier clock explicitly. The restart fixture now appends the original Created event through the legacy store before worker publication, so adoption receives a valid original history. Assertions and admission validation were not weakened. The previous queued gate was cancelled before acquisition; no test ran at fc09a0eac. A clean-source CMA capacity gate is queued at 706f5a7d7. Source remains fixed during that run. Formatting and canonical secret scan passed on this head (3790 commits, zero findings); file-size and mocked-runner checks are still executing. No P1/P2 closure, native recovery qualification or PR-ready claim.
+
+P1-3 later-progress boundary remains explicit: original completion authority requires the exact result Agent revision/digest, while ordinary progress changes that revision and can change active-turn/input facts. A later revision or absence of a discovery candidate cannot authorize ordinary reconnect. S2's shared loss routing needs a positive, bounded ordinary-publication/activation proof plus independently current parent/policy authority. S5 can expose a typed supersession decision when that proof is specified; no relaxed old-receipt permission or invented Caller is used. Native confirmation remains typed Unsupported per the lead's instruction; the deferred native producer is not part of this checkpoint.
+
+
+The next full Mongo batch will use `2026-11-12-segments-mongo-separate-slots.py`: compile/list in one heavy-1 acquisition, then acquire/release separately for every serial partition of at most40selected contracts. The existing one-owned-fixture cleanup and full-selection policy are preserved. Cleanup uncertainty stops further allocation. Every acquisition retains the full3600-second blocking allowance, at most2Cargo jobs and one target. This replaces the earlier coordinator's single lock across all partitions; no actual batch has run through the new coordinator yet.
+
+The canonical configuration-doc gate currently fails for four newly registered switches (capacity recovery, parent pacing, transcript and usage); its4parser tests pass. S2 has prepared the focused operations reference and canonical checker registration for the next source checkpoint. No configuration gate pass is claimed until that delta is applied and checked.
+
+
+**P1-1 actual command roots still require conversion (S4):** at `21333475c`, `store/agent_commands/reserve.rs:154` applies `document_schema_version:1` to the Agent admission fence; adopted v2 Agents cannot match. Its contextual-answer branch at190–246 also remains on the legacy trusted-summary/full-audit path. `agent_commands/targeted_control/fences.rs:85` and `queued_cancellation/fences.rs:77` apply the same v1 Agent fence; targeted-control apply and command reconciliation still contain complete-log reads. Convert the Agent predicate with exact captured-envelope authority while retaining v1 for unaffected parent/command records; do not mechanically replace every schema constant. Exercise real reserve, targeted control, queued cancellation and restart/reconciliation through public store roots on adopted data, with foreign/stale refusal and unknown outcomes. This extends the existing P1-1 caller coverage matrix, not its severity. The initial source map missed these ordinary roots; the writer/control/lifecycle checkpoint is not yet exhaustive.
+
+
+### S2 response evidence boundary — Thu 00:53 SGT
+
+Source review at `21333475c` identifies two missing compatibility facts for P1-4. `responses/model.rs::for_turn` returns the original profile model for model-less old turns only if no earlier UpdateSettings operation occurred; otherwise it returns `unknown`. Current per-turn facts retain only `model: Option<String>` and cannot distinguish those cases. `responses/v2/projection.rs` also observes legacy Usage rows through the next TurnStarted, including after completion; current per-turn facts record only UsageUpdated. Neither today's aggregate model nor lifetime totals is a valid substitute. Existing response output-change totals already distinguish empty-message event counts and immutable first-terminal tool output from later current output.
+
+S2 requests a narrow S4 projection addition, consumed by the S1 audit/bootstrap: keep a scalar `settings_changed` source fact, captured at each turn as `legacy_model_known`; keep the latest response-interval usage reference/tokens through the next turn (both Usage and matching UsageUpdated, including after terminal); preserve the original terminal and adjacent pre-write-failure source references. These must be folded by the existing shared publication/bootstrap paths, with exact source sequences, rather than inferred in the reader. S4 owns `agent_log_projection*` and projection persistence; S1 owns audit parity. S2 will own the neutral indexed response page port, Mongo evidence/point reader and public projection, and will not edit the S4 fold while S4 is wiring ordinary writers. The lead should relay this dependency with the already recorded command-root omissions.
+
+The response page contract remains a coherent captured Agent/turn/output-index observation, immutable ordinal cursor and bounded evidence/source points, with fresh authority before every release. The existing 4MiB result contract must distinguish result-size refusal from history-size refusal; pagination cannot silently truncate a terminal response. Empty pages, missing indexed rows, stale proof, unknown formats and corruption cannot authorize legacy lifetime fallback on v2. Actual long-turn and multi-segment golden replay, current tool output versus first-terminal replay output, settings history, post-terminal usage and revocation/backpressure are qualification gates.
+
+The shared build wait has not yet acquired heavy-1; the fixed source and HEAD remain unchanged. No additional Rust/Mongo pass is claimed. The #1687 GitHub state was independently re-read at Thu 00:49 SGT: merged from the reviewed head, all 25 PR checks successful, merge commit `cd3babea89a1a1a0de00e19d7807b6c073f69c1d`. No merge or protection mutation was needed.
+
+
+Next normal integration pins, fetched Thu 00:55 SGT: S1 `b680cf40f` adds reader/audit CI selection; S3 `f4494faaa` includes `f1070bee1` removing the unproven in-memory usage default; S4 `5fdfae281` includes `695ca2617` correcting original-transaction retry fixtures without releasing the caller's unresolved claim; S5 `706f5a7d7` adds exact registry consumption, distributed keyset predicates and the original-Created restart fixture. Current develop is still `8d59f6154`, already included. These pins are fetched, not yet merged into the fixed lint source.
+
+The operations-reference correction now passes the canonical configuration documentation check and all four parser tests (zero failures/skips). It documents the four registered switches and corrects stale format-2 registration/startup-DDL wording. This is a documentation/script working-tree delta only; Rust source under api remains byte-identical to `21333475c` and its queued lint result will name that Rust source. The documentation commit and updated plan mirror follow the gate; no source head has been moved.
+
+S5 exact-head CMA gate completed at `706f5a7d757eefc5c4a760ae997584471c48dd01`: cargo test --locked -p cma --bin cma capacity, 59passed/0failed/62ignored, compiled in3m49s and executed in0.08s under one existing shared heavy lock with two jobs. All three exact live recovery registry tests passed. The source guard confirmed unchanged clean HEAD; this replaces the earlier invalidated diagnostic as CMA unit evidence. Targeted actual Mongo is queued next; ignored tests are not counted as passed. One reusable target is retained; no owned Mongo resources exist before acquisition.
+
+
+Develop run `43055008152` completed successfully at source `8d59f6154f38540ab7e57f5496a1c81f49ef5b51`: all 25 jobs green, no failed/cancelled jobs (read Thu01:01SGT). This is develop evidence for the already merged work, not a segmentation candidate gate. No branch protection was changed.
+
+
+### Additional v2 discovery and aggregate-save roots — Thu 01:10 SGT
+
+P1-1 source review found `agent_worker_store.rs:86` still filters live-connection restart discovery to v1, and `:24` does the same for the command-admission generation hint. S5 `agent_failure_pacing/discovery.rs:29` likewise filters both due-work arms to v1. S1 `agents.rs:359` still requires v1 in the aggregate-only `save_agent` CAS. Thus even converted publication transactions cannot make adopted Agents discoverable or make ordinary aggregate-only recovery saves work. The existing constructor at `agents.rs:135` is a legitimate v1-new-record boundary; do not blanket-replace schema constants or change parent collection predicates.
+
+Ownership: S2 takes `api/crates/cma/src/store/agent_worker_store.rs` (absent from the exact manifest), including compatible live discovery and admission-generation observation plus tests in a focused shared-root module. S5 retains `agent_failure_pacing/discovery.rs` and its two bounded discovery arms. S1 retains `agents.rs` and must preserve the exact captured v2 envelope/projection identity in aggregate-only saves, including all existing CAS/cleanup/title/profile/worktree fences. S4 retains transactional publication and the command-reserve/control omissions reported earlier. Require actual adopted-fixture discovery, work claim, aggregate save, restart routing, malformed-v2 refusal and no version downgrade, alongside unchanged v1 behavior. Source conversion is not activation evidence.
+
+P1-3 shared routing must intercept completed recovery before the ordinary `schedule_agent_connection_recovery` route. Admitted/expired global discovery alone does not rediscover Completed carriers; by-Agent discovery supplies only candidates. Use the restart live-Agent enumeration after its v2 fix, plus exact original completed receipt/current revision checks. Later progress still requires an independently proven route and cannot silently reuse the old target or grant ordinary reconnect from absence. S2 owns this routing; S5 owns the typed receipt/supersession decision. Native proof remains a separate activation dependency.
+
+### S5 first actual Mongo result and fixture correction — c15bb553f
+
+At unchanged706f5a7d7, pinned disposable Mongo8.0.13 ran all18 S5 tests:16passed/2failed/0ignored in25.44s. Passing cases include both513-Agent/Workspace overflow refusals (P2-6), carrier identity/CAS/corruption, bounded two-stream and completed-by-Agent discovery, authority refusals, scoped fencing, unknown-receipt handling and pacing. The profiler setup failed canonical validation because a synthetic Completed timestamp differed from its result.published_at. Restart setup failed because simulated preceding work changed a fixture Agent without advancing its revision, leaving the Created integrity checkpoint falsely current. No production validation has been weakened. Both owned fixture failures are corrected in c15bb553f: coherent completed witness times, revision advance for simulated work, and the actual legacy append for the capacity failure so both aggregate heads remain consistent. Profiler samples no longer rely on ordering equal-millisecond timestamps; docsExamined is now bounded by that sample's returned count.
+
+The owned Mongo container and volume were removed on failure. A single bounded300-second shared-lock run is queued to rebuild/reexecute CMA units then run actual Mongo using the same target. The current source stays fixed during that run. P1-3 remains unqualified; P2-6 now has actual Mongo evidence on706f5a7d7, pending combined-root qualification and reviewer closure.
+
+
+### Integration checkpoint `2c3537ee7` — Thu 01:21 SGT
+
+Normal merges now include S1 `b680cf40f`, S3 `f4494faaa`, S4 `5fdfae281`, S5 `706f5a7d7`; develop `8d59f6154` is included. The only merge conflict was overlapping Mongo selector registration. The resolution retained the union of reader/audit, writer, recovery and retained-reopen selectors; it did not narrow a test set. S2 commits: `ce9da2336` operations/configuration documentation, `f5f103f08` valid original-Created retained fixture, `2c3537ee7` compatible live-Agent discovery and projected admission-generation hint. Two new real-Mongo regressions cover mixed-version keyset pages, missing Agents, no Agent rewrite and malformed-v2 refusal. They are source only until the Mongo gate executes.
+
+Light checks on this source: formatting passed; file size passed for6,118files; canonical configuration reference passed and its four parser tests passed. Mongo-runner harness execution is still pending completion. The one-hour lint acquisition at the previous source exited75 with only `already locked`; there were no Cargo children, no Rust diagnostics and no Mongo fixture. It is a scheduling timeout, not a code failure or pass. The next gate uses `2026-11-12-segments-single-gate.py`, full pinned `CMA_SEG_GATE_HEAD`, existing heavy-1 with3600s acquisition allowance, two Cargo jobs and one target. It rejects changed/dirty source before launch and during execution; both refusal guards were verified without launching Cargo. Actual authenticated-role evidence is prioritized next, then strict CMA, adapter and the separately acquired full Mongo partitions.
+
+Finding disposition after integration: P1-1 S2 discovery corrected in source; S1 aggregate-save and S5 due-work v1 filters still need their owners, in addition to S4 command roots. P1-2 complete authority/schema and real discovery source are integrated but the authenticated-role/consumer gates remain pending. P1-3 exact current registry consumption is integrated; completed-restart routing, later-progress proof and native production qualification remain open. P1-4 indexed consumers and model/legacy-usage parity remain open. P2-5 retry fixtures now retain the original unresolved attempt; P2-6 bounded children and scoped-root reuse remain pending actual-Mongo qualification. None is closed by these source merges.
