@@ -31,6 +31,7 @@ impl MetricsWorkers {
             &config.mongodb_database,
             &key,
             config.usage_metrics.budgets.clone(),
+            config.usage_metrics.reporting_pool_size,
         )
         .await
         .map_err(|e| e.to_string())?;
