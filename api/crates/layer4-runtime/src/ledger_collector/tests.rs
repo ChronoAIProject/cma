@@ -245,7 +245,7 @@ fn lifecycle_harness_preserves_live_and_unresolved_baselines() {
         let model = Model::new(
             format,
             &[
-                (0, Decision::RetainLive),
+                (1, Decision::RetainLive),
                 (u64::MAX, Decision::RetainUnknown),
             ],
         );

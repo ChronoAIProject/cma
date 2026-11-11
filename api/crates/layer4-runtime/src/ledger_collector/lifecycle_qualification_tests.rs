@@ -107,3 +107,21 @@ fn qualification_rejects_empty_invalid_or_overflowed_measurements() {
         assert!(proof.record(&work, completed(&metrics)).is_err());
     }
 }
+
+#[test]
+fn qualification_rejects_replay_or_reopen_that_changes_source_metrics() {
+    let metrics = baseline(SourceFormat::V2);
+    let proof = Qualification::new(metrics.clone()).unwrap();
+    proof.require_unchanged(&metrics).unwrap();
+    for case in 0..5 {
+        let mut after = metrics.clone();
+        match case {
+            0 => after.reclaimed_operations += 1,
+            1 => after.active_operations += 1,
+            2 => after.retained_groups += 1,
+            3 => after.preserved_source_sha256 = [9; 32],
+            _ => after.active_bytes += 1,
+        }
+        assert!(proof.require_unchanged(&after).is_err(), "case {case}");
+    }
+}

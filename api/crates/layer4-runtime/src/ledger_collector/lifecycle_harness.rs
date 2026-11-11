@@ -82,9 +82,13 @@ pub async fn lifetime<D: LifecycleDriver>(driver: D, cycles: u64) -> Result<Metr
     if driver.original_ack(first.operation).await? != original {
         return Err(Refusal::InvalidEvidence);
     }
+    qualification.require_unchanged(&driver.metrics().await?)?;
     driver.reject_retired_replay(&first, false).await?;
+    qualification.require_unchanged(&driver.metrics().await?)?;
     driver.reject_retired_replay(&first, true).await?;
-    driver.metrics().await
+    let final_metrics = driver.metrics().await?;
+    qualification.require_unchanged(&final_metrics)?;
+    Ok(final_metrics)
 }
 
 async fn complete_cycle<D: LifecycleDriver>(mut driver: D) -> Result<(D, Intent)> {
@@ -106,7 +110,8 @@ async fn complete_cycle<D: LifecycleDriver>(mut driver: D) -> Result<(D, Intent)
 
 impl LifecycleDriver for model::Model {
     async fn admit_completed_cycle(&self, cycle: u64) -> Result<CycleWork> {
-        self.add_cycle(cycle);
+        // Reserve the first nonzero key for a protected live baseline fixture.
+        self.add_cycle(cycle.checked_add(1).ok_or(Refusal::InvalidEvidence)?);
         Ok(CycleWork {
             groups: 1,
             operations: 6,

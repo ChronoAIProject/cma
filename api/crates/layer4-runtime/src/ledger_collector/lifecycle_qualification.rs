@@ -61,6 +61,13 @@ impl Qualification {
         }
         Ok(())
     }
+
+    pub(super) fn require_unchanged(&self, after: &Metrics) -> Result<()> {
+        if *after != self.previous {
+            return Err(Refusal::InvalidEvidence);
+        }
+        Ok(())
+    }
 }
 
 fn bounded(metrics: &Metrics) -> bool {
