@@ -253,3 +253,55 @@ transaction must repeat the source checks under its owned writer hold and requir
 the collector's complete-group and authoritative retirement evidence. Neither
 inspection nor comparison clears a pending archive hold, removes an active row,
 authorizes restore or proves reclaimed capacity.
+
+## Held V2 deactivation and accounting
+
+The create-only storage probe now also exercises a held V2 source transaction.
+The internal coordinator consumes both store owners and keeps the caller's owned
+exclusion guard through archive verification, source commit and closing both
+stores. Cancelling the caller's wait does not cancel the admitted coordinator.
+There is still no command that applies this operation to a retained home.
+
+Before source writes, the coordinator checks the pinned API observation and the
+complete retained archive, including all permanent replay indexes. The bounded
+selection admits only Completed operations, settled absence authority and
+consumed cleanup reservations. A skill additionally needs completed, authoritative
+absence of its parent home. Live processes, uncertain outcomes, unused cleanup
+reservations and resources absent from the API's settled sets refuse. Shared
+scope-budget rows are verified context and are never removed by this operation.
+
+One immediate source transaction audits the whole active store with bounded
+primary-key pages, reconciles accounting, and checks that the archive contains
+**every** active row for the resource group. It rejects a process using a selected
+Worktree even when that process belongs to another group. Exact columns and
+context must match before removing operation, authority and consumed cleanup
+rows. The same transaction reduces operation, terminal and authority totals,
+preserves outstanding reservations and shared counters, and increments revision
+once. The complete remaining state is audited again before commit.
+
+The retained archive's original context and source digest, together with the
+atomic after-accounting state, allow the same receipt to be reconstructed after
+a lost reply or process exit. Retry accepts only the exact original state or the
+expected revision/counters with the complete group absent. A partial transition,
+changed binding or later effect refuses. The receipt reports counts and hashes,
+before/after revision and free-page counts. It is not full-home restore admission:
+other home effects require the independent boundary in the restore plan. A future
+collector must durably acknowledge this transition before admitting another one;
+it cannot recover an old after-state receipt after unrelated later work.
+
+DELETE leaves pages available to SQLite for reuse; it does not shrink the file,
+raise the page ceiling or promise physical disk headroom. The selection is capped
+at 16,384 rows and 32 MiB, with at most 64 MiB of encoded archive payload. Each
+complete audit is capped at 262,144 rows and 256 MiB and checks a 30-second time
+budget between pages, with at most 64 rows / 2 MiB resident per scan page. An oversized
+or timed-out selection holds instead of weakening the audit.
+
+Every archive group remains pending after success, rollback and retry. Permanent
+replay refusal and the original archived bytes remain intact. Real-home execution
+still requires a published required archive dependency, qualified exclusion of
+all old writers, a fresh authoritative observation under that exclusion and an
+independent complete-home backup. Full restore admission, automatic collection,
+activation publication and release qualification remain separate work. Tests
+exercise 1,400 complete lifecycles (8,400 operations and 4,200 authority records),
+source-page reuse, live/shared preservation, injected transaction abort,
+process exit after commit, lost reply and cancelled-wait ownership.
