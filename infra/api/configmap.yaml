@@ -85,6 +85,7 @@ data:
   # Owner-consented same-image reopening only; admission remains off until qualified.
   CHRONO_RETAINED_REOPEN_ENABLED: "false"
   # Independent pending-approval reader; also requires trusted cohort membership.
+  CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED: "false"
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"

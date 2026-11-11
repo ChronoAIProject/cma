@@ -50,11 +50,7 @@ use declaration::validate_ready;
 
 #[path = "acp_calls.rs"]
 mod calls;
-
-#[path = "acp_write.rs"]
-mod write;
 pub(super) use calls::rpc_result;
-use write::retired_before_write;
 
 #[path = "acp_recovery.rs"]
 mod recovery;
@@ -85,6 +81,7 @@ struct ConversationState {
 
 pub(super) struct Bridge {
     pub(super) bounded_raw_output: bool,
+    pub(super) permission_state: Option<Mutex<super::permission_state::PermissionState>>,
     pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
     sink: Arc<Mutex<Sink>>,
     pub(super) pending: Pending,
@@ -219,9 +216,24 @@ impl Bridge {
                 "raw output bounds require retained runtime output".into(),
             ));
         }
+        let permission_state = if settings.bounded_permission_state {
+            if output_stream.is_none() {
+                return Err(AdapterError::Rejected(
+                    "permission bounds require retained runtime output".into(),
+                ));
+            }
+            let mut state = super::permission_state::PermissionState::new()?;
+            if let Some(prompt) = &recovered_prompt {
+                state.begin_prompt(prompt.as_str());
+            }
+            Some(Mutex::new(state))
+        } else {
+            None
+        };
         let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
+            permission_state,
             bounded_raw_output: settings.bounded_raw_output,
             subscription,
             sink: Arc::new(Mutex::new(sink)),
@@ -395,7 +407,7 @@ impl Bridge {
         prompt_id: Option<PromptIdentity>,
     ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
         if self.retired.load(Ordering::SeqCst) {
-            return Err(retired_before_write(prompt));
+            return Err(write::retired_before_write(prompt));
         }
         let remembered_prompt = prompt_id.clone();
         let id = prompt_id.map_or_else(
@@ -420,6 +432,9 @@ impl Bridge {
             .await
             .insert(id.clone(), PendingCall { answer, prompt });
         if prompt {
+            if let Some(state) = &self.permission_state {
+                state.lock().await.begin_prompt(&id);
+            }
             if let Some(prompt_id) = remembered_prompt.clone() {
                 self.remember_prompt(prompt_id).await;
             }
@@ -455,6 +470,9 @@ pub(super) enum Outcome {
         capability: Option<String>,
     },
 }
+
+#[path = "acp_write.rs"]
+mod write;
 
 #[cfg(test)]
 #[path = "acp_tests.rs"]

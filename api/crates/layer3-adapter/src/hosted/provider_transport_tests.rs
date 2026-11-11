@@ -298,6 +298,8 @@ async fn receive_websocket_json(
     serde_json::from_slice(&frame[1..]).expect("ACP request is JSON")
 }
 
+#[path = "provider_permission_open_tests.rs"]
+mod permission_open_tests;
 #[path = "provider_raw_output_open_tests.rs"]
 mod raw_output_open_tests;
 
