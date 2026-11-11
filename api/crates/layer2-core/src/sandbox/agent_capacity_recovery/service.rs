@@ -63,6 +63,21 @@ impl<S: CapacityRecoveryStore, R: CapacityRecoveryRuntime> CapacityRecoveryServi
         self.store.admit(caller, snapshot, work, next_agent).await
     }
 
+    async fn activate_completed(
+        &self,
+        caller: &Caller,
+        completed: &RecoveryWork,
+    ) -> Result<(), RecoveryError> {
+        let activation = self.store.activation(caller, completed).await?;
+        let (attachment, confirmation) = self.runtime.reattach_completed(&activation).await?;
+        activation.require_confirmation(&confirmation)?;
+        // Re-read authority, parents and the immutable result after native IO.
+        if self.store.activation(caller, completed).await? != activation {
+            return Err(RecoveryError::Conflict);
+        }
+        self.runtime.acknowledge(attachment, completed).await
+    }
+
     pub async fn resume(
         &self,
         caller: &Caller,
@@ -91,6 +106,9 @@ impl<S: CapacityRecoveryStore, R: CapacityRecoveryRuntime> CapacityRecoveryServi
                 work.validate()?;
                 if &work.request != request {
                     return Err(RecoveryError::Conflict);
+                }
+                if work.phase == RecoveryPhase::Completed {
+                    self.activate_completed(caller, &work).await?;
                 }
                 return Ok(CommitOutcome::Recorded(*work));
             }
