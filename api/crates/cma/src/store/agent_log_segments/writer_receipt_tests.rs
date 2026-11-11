@@ -7,6 +7,7 @@ fn receipt() -> Publication {
     Publication {
         id: identity(&agent_id, &incarnation, &key),
         format_version: 1,
+        agent_digest: None,
         agent_id,
         incarnation,
         publication_key: key,
@@ -45,7 +46,7 @@ fn receipts_require_every_binding_and_accept_only_bounded_intervals() {
     wrong_interval.first_seq += 1;
     assert!(wrong_interval.validate().is_err());
     let mut unknown_version = document;
-    unknown_version.insert("format_version", 2_i64);
+    unknown_version.insert("format_version", 3_i64);
     assert!(Publication::read(unknown_version).is_err());
 }
 
