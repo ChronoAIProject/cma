@@ -25,7 +25,7 @@ pub(crate) struct Selection {
     pub(super) authority: i64,
     pub(super) cleanup: i64,
     pub(super) group_digest: String,
-    pub(super) worktrees: BTreeSet<String>,
+    pub(super) worktrees: BTreeSet<(String, String)>,
 }
 
 impl Selection {
@@ -117,11 +117,7 @@ impl Selection {
                     let resource: ResourceKey =
                         serde_json::from_str(resource).map_err(|_| invalid())?;
                     if let ResourceKey::Worktree { workspace, name } = &resource {
-                        result.worktrees.insert(
-                            crate::worktree::expected_path(&config.home, workspace, name)
-                                .to_string_lossy()
-                                .into(),
-                        );
+                        result.worktrees.insert((workspace.clone(), name.clone()));
                     }
                     resources.insert((scope, resource.clone()));
                     for bytes in records.iter().flatten() {
