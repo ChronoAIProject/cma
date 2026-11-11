@@ -1,6 +1,6 @@
 # Segmentation combined PR: current assignments and gate ledger
 
-Updated Thu 2026-11-12 07:40 SGT. S2 owns
+Updated Thu 2026-11-12 07:59 SGT. S2 owns
 `tl/cma-log-segments/integration-20261111`. One default-off combined PR to develop;
 strict-green and PR by14:00, reviewer3 by15:30, explicit relay/merge by16:00,
 evening train19:00–22:00. Writer and recovery activation remain closed.
@@ -78,6 +78,7 @@ feature-gate suppression or fake call is an acceptable closure.
 | `557c07593` | Secret history | 3992commits,zero findings; later final head needs scan. |
 | `e28cb6beb` | Strict CMA all targets/features, -D warnings | PASS, zero diagnostics, 2m36s. Final S1/S4/S5 assembled source. |
 | `e28cb6beb` | Strict core/public/adapter all targets/features, -D warnings | PASS, zero diagnostics, 1m04s. Behavioral gates continue. |
+| `e28cb6beb` | Shared caller/configuration | 26passed/0failed,2674skipped; both required factory tests and strict default-off flag tests selected. |
 
 Original failed recovery cases: S4
 `capacity_later_service_retries_crash_and_refuses_foreign_or_stale_activation`,
@@ -158,3 +159,11 @@ assignments above; strict lint is not their behavioral closure. Supplemental
 selection covers remaining segment/operator/proof units, recovery HTTP cases and
 the partitioned real-Mongo inventory after the ten-step batch succeeds.
 All changed Rust/TypeScript files are independently confirmed below500lines.
+
+Current qualification status: the scheduler step is queued on heavy-1 after
+three successful steps (strict CMA, strict affected layers,26caller/configuration
+tests). The queue uses the required3600-second blocking wait; no pending test is
+reported as passed. The immutable e28source equals the pushed candidate under
+api/,infra/and.github/; subsequent commits so far are documentation only.
+The combined behavioral/Mongo runner and dependent supplemental runner continue
+serially, each releasing the shared slot between steps and stopping on failure.
