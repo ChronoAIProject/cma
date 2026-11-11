@@ -169,5 +169,7 @@
   {"operation":"PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons","positive":"feedback-reasons-save","negative":"feedback-reasons-put-foreign","proof":"contract"},
   {"operation":"PUT /api/v1/agents/{id}/service-access","positive":"agent-service-access-success","negative":"agent-service-access-forbidden","proof":"mongo-service-access"},
   {"operation":"PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","positive":"binding-conversation-put","negative":"binding-put-conversation-forbidden","proof":"binding-contract"},
-  {"operation":"PUT /api/v1/documents/{id}/shares/{subject}","positive":"document-grant-success","negative":"document-grant-foreign","proof":"probe"}
+  {"operation":"PUT /api/v1/documents/{id}/shares/{subject}","positive":"document-grant-success","negative":"document-grant-foreign","proof":"probe"},
+  {"operation":"GET /api/v1/sandboxes/{id}/runtime-recovery","positive":"retained-recovery-owner","negative":"retained-recovery-foreign","proof":"probe"},
+  {"operation":"POST /api/v1/sandboxes/{id}/runtime-recovery","positive":"retained-reopen-accepted","negative":"retained-reopen-foreign","proof":"probe"}
 ]

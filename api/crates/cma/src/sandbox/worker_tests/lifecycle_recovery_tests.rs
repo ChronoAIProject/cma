@@ -248,6 +248,16 @@ pub(super) async fn prepare_agent(
     now: SystemTime,
     number: u64,
 ) -> Agent {
+    prepare_agent_with_conversation(harness, sandbox, now, number, None).await
+}
+
+pub(super) async fn prepare_agent_with_conversation(
+    harness: &Harness,
+    sandbox: &Sandbox,
+    now: SystemTime,
+    number: u64,
+    conversation: Option<String>,
+) -> Agent {
     let mut agent = lifecycle_queue_tests::ready_agent(sandbox, now);
     agent.creation_key = format!("restore-agent-{number}");
     agent.work.next_fence = 3;
@@ -314,7 +324,7 @@ pub(super) async fn prepare_agent(
         .open_agent(
             &runtime,
             2,
-            &AgentOpenRequest::new(format!("agent:{}:open:v1", agent.id), options, None),
+            &AgentOpenRequest::new(format!("agent:{}:open:v1", agent.id), options, conversation),
             updates,
         )
         .await
