@@ -222,6 +222,11 @@ fn raw_sandbox_document(
 }
 
 pub(super) fn read_sandbox(document: &Document) -> Result<Sandbox, SandboxStoreError> {
+    let source = super::ledger_maintenance_pre_exclusion_records::source_document(document)
+        .map_err(|_| {
+            SandboxStoreError::Corrupt("ledger pre-exclusion envelope is invalid".into())
+        })?;
+    let document = &source;
     let sandbox: Sandbox = read_record(document).map_err(SandboxStoreError::Corrupt)?;
     sandbox.validate().map_err(|error| {
         SandboxStoreError::Corrupt(format!("stored sandbox is invalid: {error}"))

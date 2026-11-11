@@ -190,3 +190,14 @@ pub(crate) mod sandbox_metric_bindings;
 pub(crate) mod sandbox_metric_rollups;
 pub(crate) mod sandbox_usage_rollups;
 pub(crate) mod usage_reports;
+
+mod ledger_maintenance;
+mod ledger_maintenance_pre_exclusion;
+mod ledger_maintenance_pre_exclusion_records;
+mod ledger_maintenance_pre_exclusion_transaction;
+mod ledger_maintenance_records;
+mod ledger_maintenance_snapshot;
+#[cfg(test)]
+mod ledger_maintenance_test_support;
+mod ledger_maintenance_transaction;
+mod ledger_maintenance_writer;

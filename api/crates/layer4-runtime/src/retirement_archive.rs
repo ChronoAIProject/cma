@@ -428,3 +428,6 @@ fn storage_error() -> RuntimeError {
         "runtime mutation ledger storage requires verification",
     )
 }
+
+#[cfg(test)]
+mod indexed_restore;

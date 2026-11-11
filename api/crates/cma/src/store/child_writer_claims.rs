@@ -166,6 +166,35 @@ async fn apply(
             return Ok(false);
         }
     }
+    let class = match claim {
+        ChildWriterClaim::Agent(_) => {
+            layer2_core::sandbox::ledger_maintenance::LedgerWriterClass::AgentWorker
+        }
+        ChildWriterClaim::Workspace(_) => {
+            layer2_core::sandbox::ledger_maintenance::LedgerWriterClass::WorkspaceWorker
+        }
+    };
+    // The durable hold and the child lease share this transaction. Existing
+    // ownership, lifecycle and worker revision checks remain mandatory.
+    use super::ledger_maintenance::ApplyError as MaintenanceApplyError;
+    use layer2_core::sandbox::store::ledger_maintenance::LedgerMaintenanceStoreError as MaintenanceError;
+    match super::ledger_maintenance_writer::fence_writer(store, sandbox_id, class, None, session)
+        .await
+    {
+        Ok(()) => {}
+        Err(MaintenanceApplyError::Domain(MaintenanceError::WriterRefused(_))) => return Ok(false),
+        Err(MaintenanceApplyError::Domain(MaintenanceError::Corrupt)) => {
+            return Err(ClaimError::Domain(SandboxStoreError::Corrupt(
+                "ledger maintenance authority is inconsistent".into(),
+            )));
+        }
+        Err(MaintenanceApplyError::Domain(_)) => {
+            return Err(ClaimError::Domain(SandboxStoreError::Unavailable(
+                "ledger maintenance authority is unavailable".into(),
+            )));
+        }
+        Err(MaintenanceApplyError::Driver(error)) => return Err(ClaimError::Driver(error)),
+    }
     let parent_revision = signed(parent.revision, "writer claim parent revision")
         .map_err(|_| ClaimError::Domain(SandboxStoreError::Conflict))?;
     let locked = store
