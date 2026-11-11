@@ -106,10 +106,14 @@ async fn capacity_carrier_cannot_change_original_request_or_native_target() {
             _ => changed.work.revision += 1,
         }
         let mut scope = TransactionScope::start(&mut session).await.unwrap();
-        assert!(matches!(
-            records::replace(&store, &original, &changed, &mut scope).await,
-            Err(TransactionLogError::Domain(SandboxStoreError::Conflict))
-        ));
+        let result = records::replace(&store, &original, &changed, &mut scope).await;
+        assert!(
+            matches!(
+                result,
+                Err(TransactionLogError::Domain(SandboxStoreError::Conflict))
+            ),
+            "identity variant {variant}: {result:?}"
+        );
         scope.release().abort_transaction().await.unwrap();
     }
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
