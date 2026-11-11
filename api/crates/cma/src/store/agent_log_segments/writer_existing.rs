@@ -41,6 +41,19 @@ pub(in crate::store) async fn publish_existing(
     aggregate: AggregateUpdate,
 ) -> Result<Recorded, TransactionLogError> {
     let captured = capture::capture_transaction(store, input.current, scope).await?;
+    publish_captured(store, scope, &captured, input, aggregate).await
+}
+
+/// Reuse a caller's already captured source without repeating its bounded reads.
+/// Preparation still proves that it belongs to this exact transaction scope.
+pub(in crate::store) async fn publish_captured(
+    store: &MongoSandboxStore,
+    scope: &mut TransactionScope<'_>,
+    captured: &CapturedLog,
+    input: PublicationInput<'_>,
+    aggregate: AggregateUpdate,
+) -> Result<Recorded, TransactionLogError> {
+    captured.validate_transaction(store, scope)?;
     if captured.format() != CapturedFormat::Segmented {
         return Err(SandboxStoreError::Conflict.into());
     }
@@ -67,7 +80,7 @@ pub(in crate::store) async fn publish_existing(
     let next = input.next.clone();
     let logs = input.logs.to_vec();
     let latest_before = captured.latest_entry().cloned();
-    let plan = prepare(store, scope, &captured, input, None, admission.as_ref()).await?;
+    let plan = prepare(store, scope, captured, input, None, admission.as_ref()).await?;
     let publication = persist(store, scope, plan, aggregate).await?;
     Ok(Recorded {
         database: store.agents.namespace().db,

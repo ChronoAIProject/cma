@@ -332,3 +332,38 @@ Publication receipts must survive scope release and join the root's original
 commit/abort/Unknown handling. Unknown or absent/foreign receipt never permits a
 new plan or success. Gates use Rust1.96.1, two jobs, one target and the existing
 release-only lock with memory pause below10%. No PR or activation is authorized.
+
+
+## Confirmed runtime-loss handoff and receipt composition
+
+S2 confirmed the allocation in the shared assignments note at 02:35 SGT and
+issue comment 6804149689. The transferred paths also include
+`sandbox_reconciliation/agents.rs` and the whole shared
+`agent_capacity_recovery/source.rs`; this checkpoint consumes those existing
+helpers without changing their signatures. S5 continues to own `lineage.rs`
+and `records.rs::insert`, including the `TransactionScope::insert_one` consumer.
+
+The narrow dependency `c57b68cabd8e4fe156441f74e47feba903b6c13d`, based on
+shared scoped-contract commit `ecd84ecd3`, reuses only the exact S2 root dispatch
+from `c13eff3b5` and the accepted S5 lineage bounds/test from `a8b18866f`. It is
+normally merged into the writer branch; no mixed integration tip is imported.
+
+S4 additionally owns its existing writer helper paths
+`agent_log_segments/writer_existing.rs` and `writer_commit.rs`: the new
+`publish_captured` helper returns an exact `Recorded` receipt while reusing the
+caller's certified source and transaction scope. Runtime-loss receipts carry
+these publications through scope release and compare their complete original
+publication, Agent and log batch alongside the exact Sandbox/events at the
+original commit snapshot. Missing or foreign evidence stays unresolved.
+
+Canonical Mongo selector changes are confined to this root in
+`.github/scripts/mongo-contract-tests.sh` and its expected-prefix fixture
+`.github/scripts/mongo-contract-test-prefixes.mjs`. Large existing reconciliation
+tests are mechanically split below 500 lines. New production-root cases cover
+actual gated adoption, mixed v1/v2 children, unchanged terminal v2 fencing,
+corrupt capture, late validation rollback, parent CAS conflict, original receipt
+abort/restart/foreign/absence, uncertain commit and retry without replanning.
+
+The Thursday train plan is read and observed. This checkpoint is dependency
+work for the integration owner, not a standalone PR or an activation change.
+Gate results and the final source pin follow after qualification.
