@@ -1,29 +1,17 @@
 //! Authorized bounded status; a work row alone never proves storage completion.
 use layer2_core::resource_access::AuthorizedResource;
 use layer2_core::sandbox::agent_capacity_recovery::{
+    commands::RecoveryStatus,
     state::{RecoveryPhase, RecoveryRequest},
-    CapacityRecoveryDisposition,
 };
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::AgentId;
-use serde::Serialize;
 
 use super::{authority, receipts};
 use crate::store::{
     agent_log_integrity::TransactionLogError,
     agent_log_segments::transaction_scope::TransactionScope, sandbox_mongo::MongoSandboxStore,
 };
-
-#[derive(Debug, Serialize)]
-pub(crate) struct RecoveryStatus {
-    pub agent_id: AgentId,
-    pub disposition: CapacityRecoveryDisposition,
-    pub phase: Option<RecoveryPhase>,
-    pub attempts: u32,
-    pub retry_at: Option<String>,
-    /// The existing request identity is not an authorization or success token.
-    pub operation_key: Option<String>,
-}
 
 /// Call in an existing read transaction; no gate, carrier, audit or log writes.
 /// The supplied authorization must be freshly obtained by the existing resource

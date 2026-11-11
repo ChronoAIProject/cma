@@ -142,7 +142,10 @@ pub(in crate::store) async fn replace(
     scope: &mut TransactionScope<'_>,
 ) -> Result<(), TransactionLogError> {
     let filter = encode(current)?;
-    let mut encoded = encode(next)?;
+    // Classify changes to immutable identity or the expected revision as CAS
+    // conflicts before validating the proposed row's dependent fields. For
+    // example, changing requested_at can also invalidate ready_at; it must
+    // never bypass the original-request conflict boundary.
     if current.work.request != next.work.request
         || current.work.target != next.work.target
         || current.work.revision.checked_add(1) != Some(next.work.revision)
@@ -151,6 +154,7 @@ pub(in crate::store) async fn replace(
     {
         return Err(SandboxStoreError::Conflict.into());
     }
+    let mut encoded = encode(next)?;
     let next = encoded.remove("work").ok_or_else(invalid)?;
     let result = encoded.remove("result").ok_or_else(invalid)?;
     let updated = scope

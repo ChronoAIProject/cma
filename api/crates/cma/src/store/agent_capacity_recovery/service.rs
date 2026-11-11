@@ -152,15 +152,13 @@ impl RecoveryService {
         request: &RecoveryRequest,
     ) -> Result<CommitOutcome<RecoveryWork>, RecoveryError> {
         request.validate()?;
-        let authorized = self.authorize(caller, &request.agent_id).await?;
-        if let RecoveryLookup::Recorded(work) =
-            transactions::lookup_accepted(&self.store, &authorized, request).await?
-        {
+        if let RecoveryLookup::Recorded(work) = self.lookup(caller, request).await? {
             return Ok(CommitOutcome::Recorded(*work));
         }
         if !self.features.enabled {
             return Err(RecoveryError::Disabled);
         }
+        let authorized = self.authorize(caller, &request.agent_id).await?;
         let prepared = match preparation::prepare(&self.store, &authorized, request).await? {
             CommitOutcome::Recorded(prepared) => prepared,
             CommitOutcome::KnownAbort => return Ok(CommitOutcome::KnownAbort),
@@ -249,6 +247,15 @@ impl RecoveryService {
     ) -> Result<CommitOutcome<RecoveryWork>, RecoveryError> {
         let authorized = self.authorize(caller, &expected.request.agent_id).await?;
         transactions::reconcile(&self.store, &authorized, expected).await
+    }
+
+    /// Metadata candidates only, including completed work after process restart.
+    /// Overflow/absence never permits ordinary reconnect or proves KnownAbort.
+    pub(crate) async fn discover_agent(
+        &self,
+        agent_id: &AgentId,
+    ) -> Result<Vec<RecoveryRequest>, RecoveryError> {
+        discovery::for_agent(&self.store, agent_id).await
     }
 
     pub(crate) async fn discover(

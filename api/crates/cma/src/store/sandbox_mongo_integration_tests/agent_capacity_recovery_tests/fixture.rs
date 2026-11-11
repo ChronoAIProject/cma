@@ -1,6 +1,6 @@
 //! Real source/gate fixture; native transport is supplied separately by each test.
 use super::*;
-use crate::store::agent_log_segments::{schema, writer_admission, writer_gate};
+use crate::store::agent_log_segments::{schema, writer_gate};
 use layer2_core::sandbox::{RuntimeBinding, SandboxHome};
 use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
 
@@ -87,18 +87,6 @@ pub(super) async fn capacity_fixture(store: &MongoSandboxStore) -> Agent {
         .unwrap();
     let db = store.client.database(&store.agents.namespace().db);
     schema::migrate(&db).await.unwrap();
-    // Until the narrow S1 migration pin arrives, this fixture tests storage
-    // transactions, not canonical schema/isolated-role qualification (P1-2).
-    let existing = db.list_collection_names().await.unwrap();
-    for name in [
-        writer_gate::COLLECTION,
-        writer_admission::COLLECTION,
-        crate::store::agent_capacity_recovery::records::COLLECTION,
-    ] {
-        if !existing.iter().any(|value| value == name) {
-            db.create_collection(name).await.unwrap();
-        }
-    }
     let mut session = store.client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
     for name in [

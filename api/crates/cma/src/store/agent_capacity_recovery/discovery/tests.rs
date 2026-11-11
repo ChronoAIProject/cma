@@ -43,9 +43,18 @@ fn keyset_refuses_noncanonical_time_and_invalid_keys() {
     for now in [
         "2026-11-11T00:00:00+00:00",
         "2026-11-11T00:00:00.0Z",
+        "2026-02-29T00:00:00Z",
+        "2026-11-31T00:00:00Z",
+        "2026-11-11T24:00:00Z",
         "invalid",
     ] {
         assert!(filter(Stream::Admitted, None, now).is_err());
+        let cursor = Cursor {
+            stream: Stream::Admitted,
+            at: now.into(),
+            key: work().request.key().unwrap(),
+        };
+        assert!(filter(Stream::Admitted, Some(&cursor), NOW).is_err());
     }
     for key in [
         "bad".into(),
@@ -61,6 +70,28 @@ fn keyset_refuses_noncanonical_time_and_invalid_keys() {
             NOW
         )
         .is_err());
+    }
+}
+
+#[test]
+fn mixed_precision_due_rows_cannot_enter_lexical_ordering() {
+    // A fractional second sorts before the whole-second Z suffix, despite
+    // representing a later instant. Reject it rather than returning it early.
+    assert!("2026-11-11T00:00:00.1Z" < NOW);
+    for timestamp in [
+        "2026-11-11T00:00:00.1Z",
+        "2026-11-11T00:00:00+00:00",
+        "2026-02-29T00:00:00Z",
+    ] {
+        for stream in [Stream::Admitted, Stream::ExpiredLease] {
+            let mut row = row();
+            let work = row.get_document_mut("work").unwrap();
+            let (phase, _, _) = stream.fields();
+            work.insert("phase", phase);
+            work.insert("ready_at", timestamp);
+            work.insert("lease", doc! {"expires_at": timestamp});
+            assert!(candidate(&row, stream, phase, NOW).is_err(), "{timestamp}");
+        }
     }
 }
 
