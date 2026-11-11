@@ -52,3 +52,25 @@ fn reporting_pool_setting_is_validated_by_startup_configuration() {
         assert!(configured(&[(key, value)]).unwrap_err().contains(key));
     }
 }
+
+#[test]
+fn direct_oauth_resource_is_optional_and_requires_a_fixed_secure_audience() {
+    let key = "CHRONO_NYXID_OAUTH_API_RESOURCE";
+    assert!(configured(&[]).unwrap().nyxid_oauth_api_resource.is_none());
+    assert_eq!(
+        configured(&[(key, "https://issuer.example/api/v1/proxy/s/cma")])
+            .unwrap()
+            .nyxid_oauth_api_resource
+            .as_deref(),
+        Some("https://issuer.example/api/v1/proxy/s/cma")
+    );
+    for value in [
+        "not-url",
+        "http://untrusted.example/cma",
+        "https://user:secret@issuer.example/cma",
+        "https://issuer.example/cma?target=other",
+        "https://issuer.example/cma#fragment",
+    ] {
+        assert!(configured(&[(key, value)]).is_err());
+    }
+}
