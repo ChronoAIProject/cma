@@ -1,6 +1,6 @@
 use super::stream::{Following, Frame};
 use axum::response::sse::Event;
-use layer2_core::sandbox::{AgentLiveFragment, AgentLiveFragmentKind};
+use layer2_core::sandbox::{AgentLiveDelivery, AgentLiveFragmentKind};
 use serde_json::json;
 
 impl Following {
@@ -16,7 +16,7 @@ impl Following {
         });
     }
 
-    pub(super) fn current_live_fragment(&self, fragment: &AgentLiveFragment) -> bool {
+    pub(super) fn current_live_fragment(&self, fragment: &AgentLiveDelivery) -> bool {
         fragment.agent_id == self.header.id
             && Some(fragment.runtime_generation) == self.header.runtime_generation
             && Some(fragment.turn_sequence) == self.header.active_turn
@@ -25,7 +25,7 @@ impl Following {
     }
 
     pub(super) fn queue_live(&mut self) {
-        let mut fragments: Vec<AgentLiveFragment> = Vec::new();
+        let mut fragments: Vec<AgentLiveDelivery> = Vec::new();
         for _ in 0..128 {
             let received = match self.held.take() {
                 Some(fragment) => Ok(fragment),
@@ -41,15 +41,7 @@ impl Following {
                         break;
                     }
                     if let Some(previous) = fragments.last_mut() {
-                        if previous.message_id == fragment.message_id
-                            && previous.kind == fragment.kind
-                            && previous.turn_sequence == fragment.turn_sequence
-                            && previous.runtime_generation == fragment.runtime_generation
-                            && previous.after_seq == fragment.after_seq
-                            && previous.delta.len() + fragment.delta.len() <= 16 * 1024
-                        {
-                            previous.delta.push_str(&fragment.delta);
-                            previous.after_seq = fragment.after_seq;
+                        if previous.coalesce_legacy(&fragment, 16 * 1024) {
                             continue;
                         }
                     }
@@ -66,7 +58,7 @@ impl Following {
         self.queue_fragments(&mut fragments);
     }
 
-    fn queue_fragments(&mut self, fragments: &mut Vec<AgentLiveFragment>) {
+    fn queue_fragments(&mut self, fragments: &mut Vec<AgentLiveDelivery>) {
         self.live_batch_needs_validation |= !fragments.is_empty();
         for fragment in fragments.drain(..) {
             let mut body = json!({"agent_id": fragment.agent_id, "incarnation": self.identity,
