@@ -3,6 +3,7 @@
 mod agent_scheduler;
 mod agent_skills;
 mod agent_worker;
+mod capacity_scheduler;
 #[allow(
     dead_code,
     reason = "cleanup request seal awaits effect and restore integration"
