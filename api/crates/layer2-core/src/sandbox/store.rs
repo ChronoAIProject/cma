@@ -20,6 +20,10 @@ mod agent;
 pub use agent::AgentStore;
 mod agent_log;
 pub use agent_log::AgentLogStore;
+mod agent_response_log;
+pub use agent_response_log::{AgentResponseLogStore, AgentResponseLogWindow};
+mod agent_log_publication;
+pub use agent_log_publication::AgentLogPublicationIdentity;
 mod workspace_worker;
 pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore};
 
@@ -45,7 +49,7 @@ mod provenance;
 mod provenance_inventory;
 pub use provenance::{
     AgentProvenanceBackfillStore, AgentProvenanceSnapshot, AgentProvenanceStore,
-    ProvenanceBackfillOutcome,
+    ProvenanceBackfillOutcome, ProvenanceBackfillProgress,
 };
 pub use provenance_inventory::AgentProvenanceInventoryStore;
 mod agent_admission;

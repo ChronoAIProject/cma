@@ -22,9 +22,12 @@ test('static ELF passes and dynamic/interpreter or malformed binaries refuse', (
   assert.throws(() => elfContract(Buffer.alloc(20)));
 });
 test('qualification requires pinned SQLite, actual options and EXTRA reopen proof', () => {
-  const proof = { sqlite_version: '3.54.1', sqlite_source_id: '2026-10-01 00:00:00 ' + 'a'.repeat(64), compile_options: ['THREADSAFE=1'], journal_mode: 'delete', synchronous: 'extra', create_commit_reopen: 'passed', anchored_import_create_commit_reopen: 'passed', retirement_archive_copy_reopen_refusal: 'passed' };
+  const proof = { sqlite_version: '3.54.1', sqlite_source_id: '2026-10-01 00:00:00 ' + 'a'.repeat(64), compile_options: ['THREADSAFE=1'], journal_mode: 'delete', synchronous: 'extra', create_commit_reopen: 'passed', anchored_import_create_commit_reopen: 'passed', retirement_archive_copy_reopen_refusal: 'passed', synthetic_retirement_move_restore: 'passed', indexed_retirement_copy_reopen_refusal: 'passed' };
   validateSqlite(proof);
-  for (const change of [{sqlite_version:'3.0.0'}, {sqlite_source_id:'unknown'}, {compile_options:[]}, {synchronous:'full'}, {journal_mode:'wal'}, {create_commit_reopen:'failed'}, {anchored_import_create_commit_reopen:'failed'}, {anchored_import_create_commit_reopen:undefined}, {retirement_archive_copy_reopen_refusal:'failed'}, {retirement_archive_copy_reopen_refusal:undefined}, {extra:true}]) {
+  const missingIndexed = {...proof};
+  delete missingIndexed.indexed_retirement_copy_reopen_refusal;
+  assert.throws(() => validateSqlite(missingIndexed));
+  for (const change of [{sqlite_version:'3.0.0'}, {sqlite_source_id:'unknown'}, {compile_options:[]}, {synchronous:'full'}, {journal_mode:'wal'}, {create_commit_reopen:'failed'}, {anchored_import_create_commit_reopen:'failed'}, {anchored_import_create_commit_reopen:undefined}, {retirement_archive_copy_reopen_refusal:'failed'}, {retirement_archive_copy_reopen_refusal:undefined}, {synthetic_retirement_move_restore:'failed'}, {synthetic_retirement_move_restore:undefined}, {indexed_retirement_copy_reopen_refusal:'failed'}, {indexed_retirement_copy_reopen_refusal:undefined}, {extra:true}]) {
     assert.throws(() => validateSqlite({...proof, ...change}));
   }
 });

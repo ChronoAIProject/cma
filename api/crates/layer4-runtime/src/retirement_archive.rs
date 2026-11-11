@@ -1,6 +1,12 @@
 //! Exact retained bytes and indexed permanent replay refusal. Active-ledger
 //! deactivation is a separate, ordered step after this archive has committed.
 mod probe;
+mod probe_sources;
+mod transfer;
+pub(crate) use transfer::Direction;
+mod indexed;
+mod indexed_deactivation;
+pub(crate) use indexed_deactivation::deactivate_held;
 mod record;
 mod schema;
 #[cfg(test)]
@@ -27,6 +33,13 @@ pub(crate) struct Archive {
     path: PathBuf,
     identity: [(u64, u64); 3],
     anchor: Option<Arc<std::fs::File>>,
+    version: Version,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Version {
+    Legacy = 1,
+    Indexed = 2,
 }
 
 /// Only a complete source selection and authoritative settled-deletion proof
@@ -54,10 +67,21 @@ impl Archive {
         create: bool,
         pages: u32,
     ) -> Result<Self> {
+        Self::open_version(path, config, archive_id, create, pages, Version::Legacy).await
+    }
+
+    pub(crate) async fn open_version(
+        path: PathBuf,
+        config: RuntimeConfig,
+        archive_id: String,
+        create: bool,
+        pages: u32,
+        version: Version,
+    ) -> Result<Self> {
         let storage = Storage::open(path.clone(), create, pages).await?;
         let expected = config.clone();
         let storage = storage
-            .validate(move |db| schema::open(db, &expected, &archive_id, create))
+            .validate(move |db| schema::open(db, &expected, &archive_id, create, version))
             .await?;
         let identity = match identity(&path) {
             Ok(identity) => identity,
@@ -72,6 +96,7 @@ impl Archive {
             path,
             identity,
             anchor: None,
+            version,
         })
     }
 
@@ -84,7 +109,7 @@ impl Archive {
         let storage = Storage::open_anchored(Arc::clone(&directory), pages).await?;
         let expected = config.clone();
         let storage = storage
-            .validate(move |db| schema::open(db, &expected, &archive_id, true))
+            .validate(move |db| schema::open(db, &expected, &archive_id, true, Version::Legacy))
             .await?;
         Ok(Self {
             storage,
@@ -92,6 +117,7 @@ impl Archive {
             path: PathBuf::new(),
             identity: [(0, 0); 3],
             anchor: Some(directory),
+            version: Version::Legacy,
         })
     }
 
@@ -267,7 +293,8 @@ impl Archive {
             .await
     }
 
-    /// Called only after exact active-source deactivation is durably verified.
+    /// Fixture-only completion. Production transitions use transfer_group.
+    #[cfg(test)]
     pub(crate) async fn complete(&self, key: String, source_sha256: String) -> Result<()> {
         self.verify()?;
         if !record::digest(&key) || !record::digest(&source_sha256) {
