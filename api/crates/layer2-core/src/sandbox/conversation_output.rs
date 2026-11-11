@@ -1,7 +1,8 @@
 //! Durable output receipt validation and guarded checkpoint commits.
 use super::DurableAgentUpdateRecorder;
 use crate::sandbox::store::{
-    AgentConversationMutation, AgentMessageCheckpoint, AgentReopenGuard, SandboxStoreError,
+    AgentConversationCapacitySettlement, AgentConversationMutation, AgentMessageCheckpoint,
+    AgentReopenGuard, SandboxStoreError,
 };
 use crate::sandbox::{Agent, AgentConversationError, AgentUpdateOutcome};
 
@@ -13,6 +14,7 @@ impl DurableAgentUpdateRecorder {
         next: AgentMessageCheckpoint,
         mut mutation: Option<AgentConversationMutation>,
         guard: Option<&AgentReopenGuard>,
+        identified_terminal: bool,
     ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
         if let Some(guard) = guard {
             if let Some(mutation) = &mut mutation {
@@ -26,10 +28,33 @@ impl DurableAgentUpdateRecorder {
             self.store
                 .commit_agent_reopen_update(current, previous, next, mutation, guard.clone())
                 .await
-        } else {
+        } else if mutation.is_none() {
             self.store
-                .commit_agent_message_update(current, previous, next, mutation)
+                .commit_agent_message_update(current, previous, next, None)
                 .await
+        } else {
+            let result = self
+                .store
+                .commit_agent_message_update(
+                    current.clone(),
+                    previous.clone(),
+                    next.clone(),
+                    mutation.clone(),
+                )
+                .await;
+            match (result, mutation) {
+                (Err(SandboxStoreError::AgentLogCapacityExceeded), Some(mutation)) => {
+                    let settlement = AgentConversationCapacitySettlement::new(
+                        current,
+                        previous,
+                        next,
+                        mutation,
+                        identified_terminal,
+                    )?;
+                    self.store.commit_agent_capacity_update(settlement).await
+                }
+                (result, _) => result,
+            }
         }
     }
 }
@@ -116,5 +141,17 @@ pub(super) fn output_source_for_checkpoint(
         (Some(source), _) => Some(source.clone()),
         (None, Some(previous)) => Some(previous.clone()),
         (None, None) => None,
+    }
+}
+
+pub(super) fn store_error(error: SandboxStoreError) -> AgentConversationError {
+    match error {
+        SandboxStoreError::NotFound => AgentConversationError::NotFound,
+        SandboxStoreError::InvalidTransaction(detail) => {
+            AgentConversationError::InvalidState(detail)
+        }
+        SandboxStoreError::AgentLogCapacityExceeded => AgentConversationError::CapacityExceeded,
+        SandboxStoreError::Corrupt(detail) => AgentConversationError::Corrupt(detail),
+        other => AgentConversationError::Unavailable(other.to_string()),
     }
 }
