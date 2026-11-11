@@ -1,6 +1,7 @@
 //! Durable Agent history reads and append operations.
 
 use super::*;
+use crate::sandbox::{AgentOperationDelivery, AgentOperationKind};
 
 #[async_trait]
 pub trait AgentLogStore: Send + Sync {
@@ -220,8 +221,10 @@ pub trait AgentLogStore: Send + Sync {
             ));
         }
         #[cfg(not(test))]
-        let _ = agent;
-        Ok(None)
+        {
+            let _ = agent;
+            Ok(None)
+        }
     }
 
     /// Read only rows that can change usage through a captured Agent head.
@@ -253,7 +256,9 @@ pub trait AgentLogStore: Send + Sync {
             ));
         }
         #[cfg(not(test))]
-        let _ = agent;
-        Ok(None)
+        {
+            let _ = agent;
+            Ok(None)
+        }
     }
 }
