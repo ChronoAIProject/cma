@@ -25,6 +25,7 @@ mod profile_authoring;
 mod profile_policy;
 mod projections;
 mod provider_tool_relay;
+mod public_streams;
 mod rate_limit;
 mod read_telemetry;
 mod retirement_archive;
@@ -127,6 +128,16 @@ async fn main() {
         )
         .init();
 
+    if document_artifacts::quota_cli::is_command(&arguments) {
+        match document_artifacts::quota_cli::command(&arguments).await {
+            Ok(result) => println!("{result}"),
+            Err(reason) => {
+                eprintln!("document quota command refused: {reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if store::migrations::is_command(&arguments) {
         match store::migrations::command(&arguments).await {
             Ok(result) => println!("{result}"),
