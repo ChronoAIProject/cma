@@ -28,13 +28,6 @@ pub(in crate::store) async fn read_head(
 
 /// Retain the validated Agent for a caller's read-only complete fallback. This
 /// avoids rereading the envelope or invoking the writer/audit quarantine path.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumer lands in the dependent #1320 public-window slice"
-    )
-)]
 pub(in crate::store) async fn read_proven_agent(
     store: &MongoSandboxStore,
     agent_id: &AgentId,
