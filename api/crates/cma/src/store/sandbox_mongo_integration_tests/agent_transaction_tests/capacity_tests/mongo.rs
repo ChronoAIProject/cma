@@ -3,6 +3,7 @@ use crate::store::sandbox_mongo_integration_tests::capacity_fixtures::{
     fill_normal_capacity, fingerprint,
 };
 
+mod failure_prefix_tests;
 mod retry_tests;
 mod telemetry_tests;
 mod terminal_boundary_tests;
