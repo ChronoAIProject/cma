@@ -187,6 +187,14 @@ also binds store identity, generation, roots, accounting revision and page geome
 A source change invalidates continuation; this read-only audit establishes neither
 eligibility nor exclusion of writers.
 
+Completed V2 mutations discard a generation's derived budget row when both its
+pending-work and logical-process counts reach zero, in the same transaction as
+the receipt and counters. Existing admission and recovery readers already treat
+an absent budget row as zero. This prevents new empty generation rows from
+accumulating; journal receipts, authority, cleanup reservations and all nonzero
+budget rows stay retained. Historical empty rows are still valid input. This
+accounting cleanup does not retire resource history or repair an exhausted home.
+
 Archive schema 2 adds exact encoded V2 rows and their source context to the existing
 retirement index. Preparing one selected group commits its payloads and every
 scoped operation identity together. A copy error rolls that transaction back.

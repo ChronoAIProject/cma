@@ -114,7 +114,7 @@ pub(crate) async fn run(directory: &Path) -> Result<()> {
             }
         }
         let hash = digest.finalize();
-        if rows != 7 || previous.as_ref().is_some_and(|prior| prior != &hash) {
+        if rows != 6 || previous.as_ref().is_some_and(|prior| prior != &hash) {
             return Err(invalid());
         }
         previous = Some(hash);

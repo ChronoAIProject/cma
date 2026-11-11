@@ -23,6 +23,8 @@ pub(crate) use queries::ProcessFilter;
 mod processes_tests;
 mod schema;
 #[cfg(test)]
+mod scope_budget_tests;
+#[cfg(test)]
 mod tests;
 
 use std::path::PathBuf;
