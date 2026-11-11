@@ -220,7 +220,7 @@ async fn response_timeout<F: std::future::Future>(
     result
 }
 
-fn encode_request_body(request: &RequestFixture, symbols: &Symbols) -> Vec<u8> {
+pub(super) fn encode_request_body(request: &RequestFixture, symbols: &Symbols) -> Vec<u8> {
     assert!(
         request.body.is_none() || request.raw_body.is_none(),
         "body and rawBody are mutually exclusive"

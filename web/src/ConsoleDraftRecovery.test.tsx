@@ -63,6 +63,8 @@ it.each(['unavailable', 'network', 'timeout'])(
   'keeps rendered history and the exact draft read-only through a %s access refresh',
   async (failure) => {
     vi.useFakeTimers();
+    // Keep relative message ages stable while access-refresh timers advance.
+    vi.setSystemTime(new Date('2026-11-10T12:00:00Z'));
     const test = fixture();
     const { unmount } = render(test.show());
     await act(() => vi.advanceTimersByTimeAsync(0));
