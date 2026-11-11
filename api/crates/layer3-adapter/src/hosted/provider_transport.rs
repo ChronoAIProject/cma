@@ -40,6 +40,7 @@ pub struct ProviderHostedControlTransport {
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
     native_transport: NativeRuntimeTransport,
     native_http_budget: Arc<tokio::sync::Semaphore>,
+    shared_runtime_output: bool,
 }
 
 #[derive(Clone)]
@@ -82,6 +83,11 @@ impl ActiveLink {
 }
 
 impl ProviderHostedControlTransport {
+    pub fn with_shared_runtime_output(mut self, enabled: bool) -> Self {
+        self.shared_runtime_output = enabled;
+        self
+    }
+
     pub fn with_subscriptions(mut self, source: Arc<dyn super::HostedSubscriptionSource>) -> Self {
         self.subscriptions = Some(source);
         self

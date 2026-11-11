@@ -210,7 +210,8 @@ impl Bridge {
         };
         updates.send(ConversationUpdate::RuntimeOutput {
             receipt: RuntimeOutputReceipt::new(source, state.acknowledgements.clone()),
-            update: update.map(Box::new),
+            update: update
+                .map(|update| crate::RuntimeOutputUpdate::new(update, self.shared_runtime_output)),
         });
         Ok(())
     }
