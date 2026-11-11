@@ -62,6 +62,7 @@ mod runtime_attachment_tests;
 mod sdk_conformance_tests;
 mod settings_replay_tests;
 mod sign_in_tests;
+mod skill_home;
 mod skill_material_tests;
 mod staged_connection_tests;
 mod startup_failure_tests;
@@ -86,6 +87,17 @@ struct Harness<S = InMemorySandboxStore> {
 impl Harness {
     async fn new(skills: Arc<dyn AgentSkillResolver>) -> Self {
         Self::with_generation(skills, 1).await
+    }
+
+    async fn with_upgrade_support(skills: Arc<dyn AgentSkillResolver>) -> Self {
+        Self::with_store_services_home(
+            Arc::new(InMemorySandboxStore::default()),
+            skills,
+            1,
+            None,
+            true,
+        )
+        .await
     }
 
     async fn with_generation(skills: Arc<dyn AgentSkillResolver>, generation: u64) -> Self {
@@ -113,6 +125,15 @@ impl<S: FixtureStore> Harness<S> {
         generation: u64,
         services: Option<Vec<ServiceId>>,
     ) -> Self {
+        Self::with_store_services_home(store, skills, generation, services, false).await
+    }
+    async fn with_store_services_home(
+        store: Arc<S>,
+        skills: Arc<dyn AgentSkillResolver>,
+        generation: u64,
+        services: Option<Vec<ServiceId>>,
+        persistent_home: bool,
+    ) -> Self {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_788_537_600);
         let stamp = rfc3339_at(now);
         let owner = SubjectId::new("owner");
@@ -126,6 +147,11 @@ impl<S: FixtureStore> Harness<S> {
                 layer2_core::profiles::content_digest(&sandbox.profile.content).unwrap();
         }
         let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+        let adapter = if persistent_home {
+            skill_home::attach(adapter, &mut sandbox)
+        } else {
+            adapter
+        };
         let adapter = Arc::new(adapter);
         let runtime = adapter
             .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
@@ -153,7 +179,11 @@ impl<S: FixtureStore> Harness<S> {
             .await
             .unwrap();
         sandbox.runtime = Some(RuntimeBinding {
-            boot_id: None,
+            boot_id: if persistent_home {
+                Some(adapter.runtime_status(&runtime).await.unwrap().boot_id)
+            } else {
+                None
+            },
             provision_generation: Some(generation),
             runtime_id: runtime.0.clone(),
             runtime_version: CodexSandboxSpec::default().deployment.image.uri,
@@ -415,6 +445,12 @@ fn workspace(
 
 fn sandbox_spec(sandbox: &Sandbox) -> SandboxSpec {
     SandboxSpec {
+        home_volume: sandbox
+            .lifecycle
+            .home
+            .as_ref()
+            .and_then(|home| home.attachment())
+            .map(Box::new),
         sandbox_id: sandbox.id.to_string(),
         capacity: SandboxCapacity {
             cpu_millis: sandbox.profile.content.cpu_millis,

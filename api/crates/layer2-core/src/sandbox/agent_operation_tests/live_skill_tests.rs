@@ -51,12 +51,12 @@ async fn live_skill_admission_is_durable_idempotent_and_blocks_conversation_inpu
     changed.version = Some("2.0".into());
     assert!(matches!(
         service.install_skill(&owner(), &ready.id, changed).await,
-        Err(AgentOperationError::Conflict)
+        Err(AgentOperationError::StatusConflict { .. })
     ));
 }
 
 #[tokio::test]
-async fn installed_skill_version_change_is_reported_as_unsupported() {
+async fn profile_resolved_skill_upgrade_preserves_original_material() {
     let mut ready = test_agent(AgentStatus::Ready, None);
     let mut selected = reference();
     selected.version = None;
@@ -78,20 +78,26 @@ async fn installed_skill_version_change_is_reported_as_unsupported() {
 
     let mut requested = reference();
     requested.version = Some("1.1".into());
+    let pending = service
+        .install_skill(&owner(), &ready.id, requested)
+        .await
+        .unwrap();
+    assert_eq!(pending.profile, ready.profile);
+    assert_eq!(pending.work.resolved_skills, ready.work.resolved_skills);
     assert_eq!(
-        service.install_skill(&owner(), &ready.id, requested).await,
-        Err(AgentOperationError::SkillVersionUpgradeUnsupported {
-            id: "research".into(),
-            installed: "1.0".into(),
-            requested: "1.1".into(),
-        })
+        pending.work.live_skills[0].previous.as_ref(),
+        ready.work.resolved_skills.as_ref().unwrap().first()
     );
-    assert_eq!(store.get_agent(&ready.id).await.unwrap().unwrap(), ready);
+    assert_eq!(
+        pending.work.live_skills[0].reference.version.as_deref(),
+        Some("1.1")
+    );
+    assert_eq!(store.get_agent(&ready.id).await.unwrap().unwrap(), pending);
     assert!(inputs.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
-async fn profile_skill_version_change_is_reported_as_unsupported() {
+async fn profile_without_pinned_material_cannot_be_upgraded() {
     let store = Arc::new(InMemorySandboxStore::default());
     let mut ready = test_agent(AgentStatus::Ready, None);
     ready.profile.content.skills = vec![reference()];
@@ -105,14 +111,10 @@ async fn profile_skill_version_change_is_reported_as_unsupported() {
 
     let mut requested = reference();
     requested.version = Some("1.1".into());
-    assert_eq!(
+    assert!(matches!(
         service.install_skill(&owner(), &ready.id, requested).await,
-        Err(AgentOperationError::SkillVersionUpgradeUnsupported {
-            id: "research".into(),
-            installed: "1.0".into(),
-            requested: "1.1".into(),
-        })
-    );
+        Err(AgentOperationError::InvalidRequest(_))
+    ));
     assert_eq!(store.get_agent(&ready.id).await.unwrap().unwrap(), ready);
     assert!(inputs.lock().unwrap().is_empty());
 }

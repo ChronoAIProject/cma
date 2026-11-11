@@ -10,7 +10,8 @@ use layer2_core::{
         WorkspaceStatus, WorktreeStatus,
     },
 };
-use layer3_adapter::{AgentSkillInstallRequest, AgentSlot};
+#[path = "skill_request.rs"]
+mod skill_request;
 use std::time::SystemTime;
 
 impl AgentWorker {
@@ -108,10 +109,30 @@ impl AgentWorker {
                 .commit_skill(previous, agent, Vec::new(), now + started.elapsed())
                 .await?;
         }
-        let request = AgentSkillInstallRequest::new(
-            AgentSlot::new(agent.id.as_str()),
-            runtime_skills[0].clone(),
-        );
+        let previous = match &installation.previous {
+            Some(material) => match self
+                .dependencies
+                .skills
+                .runtime_skills(std::slice::from_ref(material))
+            {
+                Ok(skills)
+                    if validate_runtime_skills(std::slice::from_ref(material), &skills).is_ok() =>
+                {
+                    Some(skills[0].clone())
+                }
+                _ => {
+                    return self
+                        .finish_skill(
+                            agent,
+                            Some("skill_material_invalid"),
+                            now + started.elapsed(),
+                        )
+                        .await
+                }
+            },
+            None => None,
+        };
+        let request = skill_request::request(&agent, runtime_skills[0].clone(), previous);
         let fence = claimed_fence(&agent, &self.config.holder)?;
         match self
             .dependencies
@@ -126,7 +147,11 @@ impl AgentWorker {
             Err(layer3_adapter::AdapterError::Unsupported(_)) => {
                 self.finish_skill(
                     agent,
-                    Some("runtime_skill_install_unsupported"),
+                    Some(if request.upgrade.is_some() {
+                        "runtime_skill_version_upgrade_unsupported"
+                    } else {
+                        "runtime_skill_install_unsupported"
+                    }),
                     now + started.elapsed(),
                 )
                 .await
@@ -134,7 +159,21 @@ impl AgentWorker {
             Err(layer3_adapter::AdapterError::Rejected(_)) => {
                 self.finish_skill(
                     agent,
-                    Some("runtime_skill_install_rejected"),
+                    Some(if request.upgrade.is_some() {
+                        "runtime_skill_upgrade_rejected"
+                    } else {
+                        "runtime_skill_install_rejected"
+                    }),
+                    now + started.elapsed(),
+                )
+                .await
+            }
+            Err(layer3_adapter::AdapterError::OperationIdentityConflict(_))
+                if request.upgrade.is_some() =>
+            {
+                self.finish_skill(
+                    agent,
+                    Some("runtime_skill_upgrade_conflict"),
                     now + started.elapsed(),
                 )
                 .await
