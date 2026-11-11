@@ -20,7 +20,8 @@ pub(crate) async fn run(directory: &Path) -> Result<()> {
         };
         qualify(&path, anchored).await?;
     }
-    indexed::run(&directory.with_extension("retirement-indexed")).await
+    indexed::run(&directory.with_extension("retirement-indexed"), false).await?;
+    indexed::run(&directory.with_extension("retirement-collected"), true).await
 }
 
 async fn qualify(directory: &Path, anchored: bool) -> Result<()> {

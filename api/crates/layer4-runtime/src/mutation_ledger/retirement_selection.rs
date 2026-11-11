@@ -55,6 +55,29 @@ impl Selection {
         {
             return Err(invalid());
         }
+        Self::validated_rows(config, proof, context, rows)
+    }
+
+    /// Bounded group authority keeps its own protocol and exact evidence hash.
+    /// It is never relabelled as a whole-Sandbox retirement snapshot.
+    pub(crate) fn collected(
+        config: &RuntimeConfig,
+        proof: GroupProof,
+        context: Context,
+        rows: Vec<SourceRow>,
+        evidence: &crate::ledger_reclamation::CollectionEvidence,
+    ) -> Result<Self> {
+        context.validate(config)?;
+        evidence.validate_source(config, &proof, context.revision()?)?;
+        Self::validated_rows(config, proof, context, rows)
+    }
+
+    fn validated_rows(
+        config: &RuntimeConfig,
+        proof: GroupProof,
+        context: Context,
+        rows: Vec<SourceRow>,
+    ) -> Result<Self> {
         if rows.is_empty() || rows.len() > MAX_ROWS || rows.len() != proof.records as usize {
             return Err(invalid());
         }
