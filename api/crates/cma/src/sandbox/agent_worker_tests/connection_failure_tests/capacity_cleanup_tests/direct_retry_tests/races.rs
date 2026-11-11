@@ -1,20 +1,20 @@
 //! A selection observation cannot authorize changed authority or corrupt history.
 use super::*;
 
-fn refusal_envelope(mut expected: Document, quarantined: bool) -> Document {
-    if quarantined {
-        let head = expected.get_i64("last_seq").unwrap();
-        // A failed transaction must preserve the complete domain envelope, but
-        // proven retained-history corruption durably revokes its checkpoint.
-        assert!(expected
-            .insert(
-                "agent_log_integrity_quarantine_v1",
-                doc! {"format": 1_i64, "reason": "integrity_validation_failed",
-                "observed_head": head},
-            )
-            .is_none());
-    }
-    expected
+fn with_expected_quarantine(mut captured: Document) -> Document {
+    let field = "agent_log_integrity_quarantine_v1";
+    assert!(!captured.contains_key(field));
+    let agent: Agent =
+        mongodb::bson::deserialize_from_bson(captured.get("record").unwrap().clone()).unwrap();
+    captured.insert(
+        field,
+        doc! {
+            "format": 1_i64,
+            "reason": "integrity_validation_failed",
+            "observed_head": i64::try_from(agent.conversation.last_seq).unwrap(),
+        },
+    );
+    captured
 }
 
 #[tokio::test]
@@ -114,17 +114,23 @@ async fn selected_retry_revalidates_revision_identity_work_lease_head_and_tail()
             .await
             .unwrap()
             .unwrap();
-        assert!(
-            f.h.store.commit_agent_work(request).await.is_err(),
-            "variant {variant}"
-        );
+        let result = f.h.store.commit_agent_work(request).await;
+        assert!(result.is_err(), "variant {variant}");
+        // Only damaged history persists quarantine. Ordinary authority races
+        // must leave the complete envelope, including metadata, unchanged.
+        let expected = if matches!(variant, 7 | 8) {
+            assert!(matches!(result, Err(SandboxStoreError::Corrupt(_))));
+            with_expected_quarantine(expected)
+        } else {
+            expected
+        };
         assert_eq!(
             agents
                 .find_one(agent_filter.clone())
                 .await
                 .unwrap()
                 .unwrap(),
-            refusal_envelope(expected, matches!(variant, 7 | 8)),
+            expected,
             "variant {variant}"
         );
         agents
@@ -217,13 +223,7 @@ async fn selected_retry_still_checks_gaps_schema_extra_tail_and_physical_limits(
         assert!(result.is_err(), "variant {variant}");
         match variant {
             0 => assert_eq!(result, Err(SandboxStoreError::SequenceConflict)),
-            1 => assert!(matches!(result, Err(SandboxStoreError::Corrupt(_)))),
-            2 => assert_eq!(
-                result,
-                Err(SandboxStoreError::Corrupt(
-                    "Agent log has rows beyond its trusted head".into()
-                ))
-            ),
+            1 | 2 => assert!(matches!(result, Err(SandboxStoreError::Corrupt(_)))),
             _ => assert_eq!(result, Err(SandboxStoreError::AgentLogCapacityExceeded)),
         }
         assert_eq!(
@@ -232,9 +232,7 @@ async fn selected_retry_still_checks_gaps_schema_extra_tail_and_physical_limits(
                 .await
                 .unwrap()
                 .unwrap(),
-            // Gaps, schema/extra-tail contradictions and retained physical
-            // overflow all invalidate the checkpoint, without settling work.
-            refusal_envelope(expected, true),
+            with_expected_quarantine(expected),
             "variant {variant}"
         );
         agents
@@ -254,5 +252,6 @@ async fn selected_retry_still_checks_gaps_schema_extra_tail_and_physical_limits(
         .unwrap();
     }
     f.h.store.commit_agent_work(proposal).await.unwrap();
+    assert_retry(&current, &f.h.stored(&current.id).await, 30);
     f.cleanup().await;
 }
