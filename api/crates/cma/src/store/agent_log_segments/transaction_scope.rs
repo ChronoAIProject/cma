@@ -8,6 +8,8 @@ use uuid::Uuid;
 
 use crate::store::sandbox_mongo::start_transaction;
 
+mod page;
+
 pub(in crate::store) struct TransactionScope<'session> {
     session: &'session mut ClientSession,
     identity: TransactionIdentity,
@@ -51,6 +53,26 @@ impl<'session> TransactionScope<'session> {
             .find_one(filter)
             .session(&mut *self.session)
             .await
+    }
+
+    /// Bounded enumeration in this transaction. No cursor, callback or raw
+    /// session escapes; callers cannot change transaction identity mid-read.
+    pub(in crate::store) async fn find_page(
+        &mut self,
+        collection: &Collection<Document>,
+        filter: Document,
+        sort: Document,
+        limit: u32,
+    ) -> Result<Vec<Document>, mongodb::error::Error> {
+        page::validate_limit(limit)?;
+        let mut cursor = collection
+            .find(filter)
+            .sort(sort)
+            .limit(i64::from(limit))
+            .batch_size(limit)
+            .session(&mut *self.session)
+            .await?;
+        page::collect(cursor.stream(&mut *self.session), limit).await
     }
 
     pub(in crate::store) async fn update_one(
