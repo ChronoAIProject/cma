@@ -38,6 +38,28 @@ async fn small_result_above_both_history_limits_reads_only_original_references()
         );
         assert_eq!(f.source.counts.probes.load(Ordering::SeqCst), 1);
         assert_eq!(f.source.counts.points.load(Ordering::SeqCst), 3);
+        f.source.counts.probes.store(0, Ordering::SeqCst);
+        f.source.counts.points.store(0, Ordering::SeqCst);
+        let agent = f.agent.clone();
+        let legacy = f
+            .observe(move |source| {
+                Box::pin(async move {
+                    crate::responses::retrieve::indexed::complete(
+                        source,
+                        &crate::agent_page::AgentPageOrigin::test(),
+                        &agent,
+                        3,
+                    )
+                    .await
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(legacy.output.len(), 1);
+        assert_eq!(legacy.output[0].content[0].text, "small answer");
+        assert_eq!(f.source.counts.probes.load(Ordering::SeqCst), 2);
+        assert_eq!(f.source.counts.points.load(Ordering::SeqCst), 3);
     }
 }
 
