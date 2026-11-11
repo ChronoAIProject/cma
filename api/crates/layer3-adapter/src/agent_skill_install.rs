@@ -10,6 +10,17 @@ pub struct AgentSkillInstallRequest {
     pub request_sha256: String,
     pub agent_id: AgentSlot,
     pub skill: AgentSkill,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upgrade: Option<Box<AgentSkillUpgrade>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSkillUpgrade {
+    pub sequence: u64,
+    pub previous: AgentSkill,
+    /// Absent only for a skill materialized with the immutable Agent home.
+    pub previous_receipt: Option<AgentSkillInstallReceipt>,
 }
 
 impl AgentSkillInstallRequest {
@@ -20,9 +31,45 @@ impl AgentSkillInstallRequest {
             request_sha256: String::new(),
             agent_id,
             skill,
+            upgrade: None,
         };
         value.request_sha256 = value.computed_sha256();
         value
+    }
+    pub fn upgrade(
+        agent_id: AgentSlot,
+        skill: AgentSkill,
+        previous: AgentSkill,
+        previous_receipt: Option<AgentSkillInstallReceipt>,
+        sequence: u64,
+    ) -> Self {
+        let mut value = Self::new(agent_id, skill);
+        value.upgrade = Some(Box::new(AgentSkillUpgrade {
+            sequence,
+            previous,
+            previous_receipt,
+        }));
+        value.operation_id = value.expected_operation_id();
+        value.request_sha256 = value.computed_sha256();
+        value
+    }
+    pub fn sequence(&self) -> u64 {
+        self.upgrade.as_ref().map_or(0, |upgrade| upgrade.sequence)
+    }
+    pub fn expected_operation_id(&self) -> String {
+        match &self.upgrade {
+            Some(upgrade) => format!(
+                "agent:{}:skill:{}:upgrade:{}:v1",
+                self.agent_id.as_str(),
+                self.skill.id,
+                upgrade.sequence
+            ),
+            None => format!(
+                "agent:{}:skill:{}:install:v1",
+                self.agent_id.as_str(),
+                self.skill.id
+            ),
+        }
     }
     pub fn computed_sha256(&self) -> String {
         // The replaceable archive URL carries no content identity or credentials.
@@ -37,6 +84,20 @@ impl AgentSkillInstallRequest {
         let mut digest = Sha256::new();
         digest.update(b"chrono.agent.skill.install.v1\0");
         digest.update(content);
+        if let Some(upgrade) = &self.upgrade {
+            digest.update(b"\0upgrade:v1\0");
+            digest.update(
+                serde_json::to_vec(&(
+                    upgrade.sequence,
+                    &upgrade.previous.id,
+                    &upgrade.previous.name,
+                    &upgrade.previous.version,
+                    &upgrade.previous.archive_sha256,
+                    &upgrade.previous_receipt,
+                ))
+                .expect("serializable previous installation"),
+            );
+        }
         format!("{:x}", digest.finalize())
     }
     pub fn has_valid_sha256(&self) -> bool {
@@ -67,3 +128,7 @@ impl AgentSkillInstallReceipt {
         *self == Self::from_request(request)
     }
 }
+
+#[cfg(test)]
+#[path = "agent_skill_install_tests.rs"]
+mod tests;
