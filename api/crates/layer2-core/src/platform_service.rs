@@ -31,6 +31,7 @@ pub struct PlatformSettingsService {
     store: Arc<dyn PlatformSettingsStore>,
     activity: Arc<ActivityService>,
     model_budget_writes_enabled: bool,
+    model_request_budget_writes_enabled: bool,
 }
 
 impl PlatformSettingsService {
@@ -39,6 +40,7 @@ impl PlatformSettingsService {
             store,
             activity,
             model_budget_writes_enabled: false,
+            model_request_budget_writes_enabled: false,
         }
     }
 
@@ -50,6 +52,16 @@ impl PlatformSettingsService {
 
     pub fn model_budget_writes_enabled(&self) -> bool {
         self.model_budget_writes_enabled
+    }
+
+    /// Request policy needs its own compatible rollback reader after the foundation.
+    pub fn with_model_request_budget_writes_enabled(mut self, enabled: bool) -> Self {
+        self.model_request_budget_writes_enabled = enabled;
+        self
+    }
+
+    pub fn model_request_budget_writes_enabled(&self) -> bool {
+        self.model_budget_writes_enabled && self.model_request_budget_writes_enabled
     }
 
     /// Read policy for another application service, without opening an
@@ -80,6 +92,11 @@ impl PlatformSettingsService {
     ) -> Result<StoredPlatformSettings, CoreError> {
         caller.require(Capability::ConfigurePlatform)?;
         if !self.model_budget_writes_enabled && !settings.model_budget.is_empty_disabled() {
+            return Err(CoreError::ModelBudgetWritesUnavailable);
+        }
+        if !self.model_request_budget_writes_enabled()
+            && !settings.model_budget.request_models.is_empty()
+        {
             return Err(CoreError::ModelBudgetWritesUnavailable);
         }
         let current = self.current().await?;
