@@ -10,6 +10,8 @@ use mongodb::{
 use super::{AUDITS, COLLECTIONS, EVIDENCE, HEADS, PROJECTIONS, PUBLICATIONS, SEGMENTS};
 
 mod controls;
+mod index_contract;
+mod recovery;
 mod validators;
 use validators::validator;
 
@@ -22,6 +24,9 @@ fn unavailable(error: mongodb::error::Error) -> StoreError {
 }
 
 fn indexes(name: &str) -> Vec<IndexModel> {
+    if name == super::RECOVERY_WORK {
+        return recovery::indexes();
+    }
     let fields = match name {
         SEGMENTS => vec![
             (
@@ -204,21 +209,7 @@ async fn pending(database: &Database) -> Result<Vec<Step>, StoreError> {
             match matching.next() {
                 None => pending.push(Step::Index(name, Box::new(expected))),
                 Some(index) => {
-                    if matching.next().is_some()
-                        || !index.keys.iter().eq(expected.keys.iter())
-                        || !index.options.as_ref().is_some_and(|o| {
-                            o.unique == Some(true)
-                                && o.name.as_ref() == expected_name
-                                && o.partial_filter_expression
-                                    == expected
-                                        .options
-                                        .as_ref()
-                                        .and_then(|o| o.partial_filter_expression.clone())
-                                && o.sparse != Some(true)
-                                && o.hidden != Some(true)
-                                && o.collation.is_none()
-                        })
-                    {
+                    if matching.next().is_some() || !index_contract::matches(index, &expected) {
                         return Err(failed());
                     }
                 }
