@@ -2,8 +2,9 @@
 use super::{field, invalid, Connection, Result, RuntimeConfig, Sha256};
 use sha2::Digest;
 
-#[derive(Clone, PartialEq, Eq)]
-pub(in crate::mutation_ledger) struct Context {
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Context {
     pub(super) store: Vec<u8>,
     pub(super) generation: Vec<u8>,
     sandbox: String,
@@ -70,29 +71,35 @@ impl Context {
         let application: i64 = db
             .pragma_query_value(None, "application_id", |r| r.get(0))
             .map_err(|_| invalid())?;
-        if version != 2
-            || application != 0x434d4132
-            || context.store.len() != 16
-            || super::fence::decode(&context.generation)? != config.generation
-            || context.sandbox != config.sandbox_id
-            || context.home_identity != config.home_identity.clone().unwrap_or_default()
-            || context.admission != "fresh"
-            || context
+        if version != 2 || application != 0x434d4132 {
+            return Err(invalid());
+        }
+        context.validate(config)?;
+        Ok(context)
+    }
+
+    pub(crate) fn validate(&self, config: &RuntimeConfig) -> Result<()> {
+        if self.store.len() != 16
+            || super::fence::decode(&self.generation)? != config.generation
+            || self.sandbox != config.sandbox_id
+            || self.home_identity != config.home_identity.clone().unwrap_or_default()
+            || self.admission != "fresh"
+            || self
                 .roots
                 .iter()
                 .zip([&config.state_root, &config.home, &config.checkpoint_root])
                 .any(|(raw, expected)| raw.len() > 65536 || std::path::Path::new(raw) != expected)
-            || context.accounting.iter().any(|n| *n < 0)
-            || context.accounting[4] > context.accounting[2]
-            || context.geometry[0] != 4096
-            || context.geometry[1] < 1
-            || context.geometry[2] < 0
-            || context.geometry[2] > context.geometry[1]
-            || context.geometry[3] < context.geometry[1]
+            || self.accounting.iter().any(|n| *n < 0)
+            || self.accounting[4] > self.accounting[2]
+            || self.geometry[0] != 4096
+            || self.geometry[1] < 1
+            || self.geometry[2] < 0
+            || self.geometry[2] > self.geometry[1]
+            || self.geometry[3] < self.geometry[1]
         {
             return Err(invalid());
         }
-        Ok(context)
+        Ok(())
     }
 
     pub(super) fn bytes(&self) -> usize {
@@ -105,7 +112,7 @@ impl Context {
             + 9 * 8
     }
 
-    pub(in crate::mutation_ledger) fn hash_into(&self, digest: &mut Sha256) {
+    pub(crate) fn hash_into(&self, digest: &mut Sha256) {
         digest.update(b"cma-v2-retirement-inventory-context-v1\0");
         for value in [
             self.store.as_slice(),

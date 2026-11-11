@@ -176,3 +176,36 @@ The exact-image storage qualification now exercises source moves using only crea
 Before restoring even one record, the archive commits a pending state. A failed or interrupted restore therefore refuses serving startup. Retrying restore accepts only the exact retained original or an already-restored exact original; a changed/new active record, duplicate, missing pair, symlink, hard link or directory replacement refuses. Restore does not erase retirement indexes or authorize an older image to serve. This primitive does not prove that no later effects occurred elsewhere in the home; the full restore-admission workflow must enforce that boundary.
 
 This is the source-transition core, not the production cleanup command. It requires the caller to own a proved exclusive writer hold and a complete eligible group selection. A file lock on the archive cannot exclude an old raw writer; descriptor checks cannot replace that exclusion. The qualification fixture does not exercise the actual retained-home storage class, physical fencing, operator activation, V2 accounting or automatic authoritative collection. Those remain required before cleanup of a real home.
+
+## Held indexed-store archives
+
+The V2 source inventory uses bounded primary-key pages and reconciles global and
+per-generation accounting before its final page succeeds. Source columns retain
+raw operation identities and receipts, all folded authority blobs and high-water
+values, cleanup reservations, logical processes and scope counters. The inventory
+also binds store identity, generation, roots, accounting revision and page geometry.
+A source change invalidates continuation; this read-only audit establishes neither
+eligibility nor exclusion of writers.
+
+Archive schema 2 adds exact encoded V2 rows and their source context to the existing
+retirement index. Preparing one selected group commits its payloads and every
+scoped operation identity together. A copy error rolls that transaction back.
+After a lost reply, retry verifies the committed context, raw payloads, count,
+source digest and replay indexes without rereading mutable sources. Both archived
+and pending groups refuse later mutations on the retired resource. Shared scope
+counters are retained context; they are not independently retired resources.
+
+This representation requires retirement descriptor version 2 as well as archive
+database version 2. New readers retain version-1 support and require the descriptor
+and database versions to agree. The existing marker filenames remain the reader
+barrier: the frozen version-1 descriptor reader refuses version 2 before installation
+recovery. This source-level compatibility check does not qualify an actual recovery
+image; that qualification remains a release requirement.
+
+The create-only `--verify-ledger-storage` probe now also reports
+`indexed_retirement_copy_reopen_refusal: passed` after exercising synthetic V2
+archival, reopen, retry, permanent replay refusal and rejection by the version-1
+database reader. No active source rows are removed. V2 groups remain pending;
+the V1 file-transfer primitive refuses them. Accounting-checked transactional
+deactivation, complete-home restore admission, authoritative automatic collection
+and a supported real-home activation command remain required before cleanup.
