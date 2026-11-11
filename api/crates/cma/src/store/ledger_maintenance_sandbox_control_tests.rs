@@ -53,13 +53,20 @@ async fn retained_fixture(client: &Client, name: &str) -> Fixture {
 async fn v1_request(f: &Fixture) -> LedgerMaintenanceAdmission {
     let now = layer2_core::now_rfc3339();
     let (_, input) = support::pre_exclusion(&f.store, &f.parent, &now).await;
+    // The V1 admission digest has its own domain; do not substitute E1 bytes.
+    let source = f
+        .store
+        .inspect_ledger_maintenance(&input.caller, &f.parent.id)
+        .await
+        .unwrap()
+        .source;
     let p = input.accepted.plan();
     // Disposable persistence evidence only; no physical exclusion authority.
     let plan = LedgerMaintenancePlanV1 {
         format: "ledger-maintenance-plan-v1".into(),
         binding: LedgerBindingV1 {
             format: LEDGER_BINDING_FORMAT.into(),
-            sandbox_id: p.source.sandbox.id.to_string(),
+            sandbox_id: source.sandbox.id.to_string(),
             home_identity: p.home_identity.clone(),
             generation: p.generation,
             boot_id: p.boot_id.clone(),
@@ -68,12 +75,12 @@ async fn v1_request(f: &Fixture) -> LedgerMaintenanceAdmission {
             archive_id: uuid::Uuid::from_u128(1).to_string(),
             maintenance_id: p.operation_id.clone(),
             maintenance_epoch: 1,
-            sandbox_revision: p.source.sandbox.revision,
+            sandbox_revision: source.sandbox.revision,
             candidate_sha256: "c".repeat(64),
             recovery_sha256: "d".repeat(64),
             exclusion_receipt_sha256: "e".repeat(64),
         },
-        source: p.source.clone(),
+        source,
         consent_receipt_sha256: p.consent_receipt_sha256.clone(),
         requested_at: now.clone(),
     };
