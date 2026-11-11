@@ -55,23 +55,22 @@ class RetainedTests(unittest.TestCase):
             for value in ("test-a", "test-document", "CMA acceptance fixture"):
                 self.assertNotIn(value, rendered)
 
-    def test_original_uncertain_create_replays_and_restores_fixture(self):
+    def test_uncertain_create_never_replays_a_permanent_slot(self):
         with context() as p:
-            calls = []; live = False
+            calls = []
             def request(origin, path, method="GET", **kwargs):
-                nonlocal live
-                calls.append(kwargs["headers"]["Idempotency-Key"])
-                if not live:
-                    live = True; raise Refusal("synthetic_lost_response")
-                return 201, {}, b'{"id":"test-document","owner_subject":"test-a","revision":1}', 0
+                calls.append(method)
+                raise Refusal("synthetic_lost_response")
             p.http.request = request
             body = {"title": "CMA acceptance fixture", "markdown": "Synthetic."}
             with self.assertRaises(Refusal):
                 p.write("document_a_create", "a", "/api/v1/documents", "POST", body)
-            restart(p); retained.reconcile(p)
-            self.assertEqual(calls[0], calls[1]); self.assertEqual(len(calls), 2)
-            self.assertEqual(p.state["fixtures"]["document_a"]["id"], "test-document")
-            self.assertEqual(retained.load(p)["slots"]["a:document"]["status"], "retained")
+            restart(p)
+            before = retained.load(p)
+            with self.assertRaisesRegex(Refusal, "consumed_document_slot"):
+                retained.reconcile(p)
+            self.assertEqual(calls, ["POST"])
+            self.assertEqual(retained.load(p), before)
 
     def test_direct_create_and_unowned_mutations_refuse_before_http(self):
         with context() as p:

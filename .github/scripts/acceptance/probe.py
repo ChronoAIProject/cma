@@ -110,6 +110,10 @@ class Probe:
             owner = owners[0]
             retained.check_fixture(self, owner, "document", parts[4])
             if len(parts) == 5 and method == "PATCH":
+                if retained.source_slot_consumed(self, owner):
+                    if tenant != owner:
+                        raise Refusal("consumed_document_slot_forbids_dispatch")
+                    retained.validate(self, tenant, key, {"tenant": tenant, "path": path, "method": method, "body": body})
                 if tenant == owner:
                     doc = self.state["fixtures"]["document_" + owner]
                     if not isinstance(body.get("expected_revision"), int):
