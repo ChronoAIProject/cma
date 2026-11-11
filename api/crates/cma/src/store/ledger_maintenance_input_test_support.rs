@@ -49,12 +49,19 @@ pub(super) fn reservation(agent: &Agent, parent: &Sandbox, key: &str) -> Command
 }
 
 pub(super) fn claim_request(agent: &Agent, now: &str) -> CommandClaimRequest {
-    CommandClaimRequest {
+    let request = CommandClaimRequest {
         agent_id: agent.id.clone(),
         holder: "fixture-command-worker".into(),
         now: now.into(),
-        expires_at: NEXT.into(),
-    }
+        expires_at: layer2_core::rfc3339_at(
+            std::time::UNIX_EPOCH
+                + std::time::Duration::from_secs(
+                    layer2_core::seconds_from_rfc3339(now).unwrap() + 30,
+                ),
+        ),
+    };
+    request.validate().unwrap();
+    request
 }
 
 /// Build a newly proposed admission only before any hold is accepted. Never
