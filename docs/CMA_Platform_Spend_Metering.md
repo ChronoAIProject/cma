@@ -24,7 +24,7 @@ left open and that the request-reservation slice asked for:
 | --- | --- |
 | Freshness | The model ledger is exact at the transaction boundary; cloud spend is an operator observation plus a bounded projection; a source older than its bound closes new commitments but interrupts nothing. |
 | Outstanding liability | Every owner reservation and request hold is mirrored into one platform period row in the same transaction; it is released only by authoritative settlement or proven non-dispatch, never by time. |
-| Revision fencing | The period row records the settings revision and period it was evaluated under; a closure can be lifted only by a strictly newer revision; period and valuation changes on a nonempty row fail closed. |
+| Revision fencing | The period row records the settings revision and period it was evaluated under; a closure can be lifted only by a strictly newer revision; period changes on a nonempty row fail closed. |
 | Platform stop state | One durable row per period carries a set of typed closures. Liability-bearing admissions read it inside their transaction; zero-liability admissions read it without the settings fence; revival reads it at the service entry; running turns receive it through `SpendSource` behind a short cache; the pause sweep acts on it. #1478 adds its reasons to the same set. |
 
 Everything below is provider-neutral. "Model" means the metered model usage the
@@ -158,7 +158,6 @@ pub struct PlatformPeriodLedger {
     pub period_start: u64,
     pub period_end: u64,
     pub settings_revision: u64,          // revision the levels were last computed under
-    pub token_units: Option<[u64; 2]>,   // same guard as OwnerBudget: valuation cannot change under liability
     pub spent: u64,                      // settled model debits, this period
     pub reserved: u64,                   // outstanding model liability, this period
     pub adjustments: u64,                // operator corrections, section 2.3; 0 in this delivery
@@ -218,7 +217,6 @@ Mirroring `OwnerBudget`, any of the following makes admission return
 `BudgetError::Unavailable` and enters a `MeteringUnavailable` closure if one is
 not present (outside the refusing transaction, section 5.4):
 
-- `token_units` on the row differ from the admitting policy's valuation;
 - the policy's `period_start`/`period_end` differ from the row's while the row
   has nonzero `spent`, `reserved` or `adjustments` (a period cannot be edited
   under liability; the operator starts a new period instead);
@@ -374,8 +372,11 @@ Closures are removed only by the evaluator (section 6).
   the change is refused (section 4.2); with none, the new row starts at zero.
   Old rows are never deleted. A period whose end has passed is
   `MeteringUnavailable` until the operator rotates the policy.
-- **Valuation.** As for owners, `token_units` are pinned on first use;
-  changing valuation under liability fails closed and requires reconciliation.
+- **Valuation.** Accounting units are one shared unit; an owner policy's
+  `input/output_token_units` are that owner's price per token. Owner rows pin
+  their own valuation on first use and fail closed when it changes under
+  liability. The period row only sums amounts each owner already valued, so
+  owners priced differently add up directly and the row pins no valuation.
 - **Unknown commit outcomes** never produce a permit (unchanged from #1631).
 - **Write shape gate.** The new policy fields and the new row kind are a new
   persisted shape. Following #1621/#1631, a strict default-off deployment flag
@@ -588,8 +589,8 @@ Recorded during implementation:
     `committed` is below `disposable`, so the platform stops when the next
     allowance no longer fits (TC-126). Where one owner's allowance exceeds the
     remaining headroom this stops running work early; revisit with #1478.
-30. A token-valuation mismatch is one owner's condition, not a platform
-    metering fact: it refuses that admission with `budget_unavailable` and
-    enters no closure (section 4.2 otherwise unchanged). Evaluation runs on
-    every reconciliation attempt, at most once per 15 seconds, independent of
-    the sweep's other phases.
+30. Only owner rows pin a token valuation; the period row sums amounts that
+    are already valued in the shared accounting units, so owners with
+    different valuations are admitted side by side. Evaluation runs on every
+    reconciliation attempt, at most once per 15 seconds, independent of the
+    sweep's other phases.

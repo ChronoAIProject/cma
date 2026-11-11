@@ -172,9 +172,8 @@ async fn reserve(
     }
     let mut owner = owner_budget(store, agent, &policy, now, session).await?;
     owner.reserve(&policy, now).map_err(domain)?;
-    let units = [policy.input_token_units, policy.output_token_units];
     let period_start =
-        period::admit_liability(store, snapshot, units, policy.turn_limit, now, session).await?;
+        period::admit_liability(store, snapshot, policy.turn_limit, now, session).await?;
     save(store, &owner_key(agent), &owner, session).await?;
     save(
         store,
