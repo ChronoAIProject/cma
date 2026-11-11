@@ -163,7 +163,13 @@ async fn runtime_ack_requires_durable_success_and_survives_neither_abort_nor_ref
         };
         let update = ConversationUpdate::RuntimeOutput {
             receipt: layer3_adapter::RuntimeOutputReceipt::new(source.clone(), acknowledgements),
-            update: None,
+            update: Some(layer3_adapter::RuntimeOutputUpdate::new(
+                ConversationUpdate::Failed {
+                    message: "retained effect".repeat(4096),
+                    capability: None,
+                },
+                true,
+            )),
         };
         let recording = recorder.clone();
         let task = tokio::spawn(async move {
@@ -194,5 +200,92 @@ async fn runtime_ack_requires_durable_success_and_survives_neither_abort_nor_ref
         } else {
             assert!(acknowledged.try_recv().is_err());
         }
+    }
+}
+
+struct RetryOwnershipRecorder {
+    original: usize,
+    shared: bool,
+    attempts: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl AgentUpdateRecorder for RetryOwnershipRecorder {
+    async fn record_update(
+        &self,
+        _id: &AgentId,
+        _generation: u64,
+        _assembly: &mut AgentMessageAssembly,
+        update: ConversationUpdate,
+        _at: String,
+    ) -> Result<AgentUpdateOutcome, AgentConversationError> {
+        let ConversationUpdate::RuntimeOutput {
+            update: Some(effect),
+            ..
+        } = update
+        else {
+            panic!("retry must preserve the retained effect")
+        };
+        assert_eq!(effect.is_shared(), self.shared);
+        assert_eq!(
+            (&*effect as *const ConversationUpdate as usize) == self.original,
+            self.shared
+        );
+        if self
+            .attempts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            < 2
+        {
+            return Err(AgentConversationError::Unavailable(
+                "commit reply unavailable".into(),
+            ));
+        }
+        Ok(AgentUpdateOutcome {
+            appended: vec![],
+            turn_closed: false,
+        })
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn durable_retry_keeps_shared_effect_and_acknowledges_once_after_success() {
+    for shared in [false, true] {
+        let effect = layer3_adapter::RuntimeOutputUpdate::new(
+            ConversationUpdate::Failed {
+                message: "retry payload".repeat(4096),
+                capability: None,
+            },
+            shared,
+        );
+        let recorder = RetryOwnershipRecorder {
+            original: &*effect as *const ConversationUpdate as usize,
+            shared,
+            attempts: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let (sender, mut receiver) = mpsc::channel(1);
+        let source = layer3_adapter::RuntimeOutputSource {
+            stream_id: "test-stream".into(),
+            cursor: 7,
+            native_conversation_id: "test-conversation".into(),
+            payload_sha256: "a".repeat(64),
+        };
+        record_update(
+            &recorder,
+            &AgentId("agt_retry".into()),
+            1,
+            &mut AgentMessageAssembly::default(),
+            ConversationUpdate::RuntimeOutput {
+                receipt: layer3_adapter::RuntimeOutputReceipt::new(source.clone(), sender),
+                update: Some(effect),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            recorder.attempts.load(std::sync::atomic::Ordering::SeqCst),
+            3
+        );
+        assert_eq!(receiver.recv().await, Some(source));
+        assert_eq!(receiver.recv().await, None);
     }
 }

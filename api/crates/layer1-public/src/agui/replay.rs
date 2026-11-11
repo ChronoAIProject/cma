@@ -9,7 +9,7 @@ use axum::{
 use futures_util::stream;
 use layer2_core::{
     sandbox::{
-        Agent, AgentEventStreamAuthorization, AgentLiveFragment, AgentLiveFragmentKind,
+        Agent, AgentEventStreamAuthorization, AgentLiveDelivery, AgentLiveFragmentKind,
         AgentLiveSubscription, AgentLogEntry, AgentLogKind, AgentStatus, PendingAgentApprovals,
     },
     AgentId, Caller,
@@ -238,7 +238,7 @@ struct Following {
     ended: bool,
     watching: Option<AgentLiveSubscription>,
     committed_message_seq: u64,
-    held: Option<AgentLiveFragment>,
+    held: Option<AgentLiveDelivery>,
     authorization: Option<AgentEventStreamAuthorization>,
 }
 
