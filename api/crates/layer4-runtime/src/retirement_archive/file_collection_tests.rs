@@ -259,3 +259,5 @@ async fn file_completion_keeps_unsettled_selection_held_and_refuses_format_confu
 mod crashes;
 #[path = "file_collection_lifetime_tests.rs"]
 mod lifetimes;
+#[path = "file_collection_source_tests.rs"]
+mod source;

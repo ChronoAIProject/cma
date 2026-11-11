@@ -347,20 +347,35 @@ impl Snapshot {
                     return Err(invalid());
                 }
                 if disposition == Disposition::Absent {
-                    deleted.insert(key);
+                    deleted.insert((
+                        key,
+                        operation.operation_id.clone(),
+                        operation.request_sha256.clone(),
+                    ));
                 }
             } else {
                 let value: Authority =
                     serde_json::from_slice(&record.bytes).map_err(|_| invalid())?;
                 match authority.get(&key) {
-                    Some((fence, old))
-                        if *fence == value.authority_fence && *old != value.disposition =>
+                    Some((fence, old, old_operation, old_hash))
+                        if *fence == value.authority_fence
+                            && (*old != value.disposition
+                                || old_operation != &operation.operation_id
+                                || old_hash != &operation.request_sha256) =>
                     {
                         return Err(invalid())
                     }
-                    Some((fence, _)) if *fence >= value.authority_fence => {}
+                    Some((fence, _, _, _)) if *fence >= value.authority_fence => {}
                     _ => {
-                        authority.insert(key, (value.authority_fence, value.disposition));
+                        authority.insert(
+                            key,
+                            (
+                                value.authority_fence,
+                                value.disposition,
+                                operation.operation_id,
+                                operation.request_sha256,
+                            ),
+                        );
                     }
                 }
             }
@@ -372,10 +387,9 @@ impl Snapshot {
             } else {
                 resource
             };
-            if !deleted.contains(&key)
-                || authority
-                    .get(&key)
-                    .is_none_or(|(_, d)| *d != Disposition::Absent)
+            let (_, disposition, operation, request) = authority.get(&key).ok_or_else(invalid)?;
+            if *disposition != Disposition::Absent
+                || !deleted.contains(&(key, operation.clone(), request.clone()))
             {
                 return Err(invalid());
             }
