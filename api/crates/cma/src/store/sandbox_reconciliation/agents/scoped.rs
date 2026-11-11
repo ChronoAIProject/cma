@@ -13,11 +13,17 @@ use crate::store::{
         capture::CapturedLog,
         publication::{self, PublicationIdentity},
         transaction_scope::TransactionScope,
-        writer_commit::{self, AggregateUpdate, PublicationInput},
+        writer_commit::{self, AggregateUpdate, PublicationInput, Recorded},
     },
     agents::agent_replacement_fields,
     sandbox_mongo::MongoSandboxStore,
 };
+
+pub(in crate::store::sandbox_reconciliation) struct PublishedAgent {
+    pub agent: Agent,
+    pub logs: Vec<AgentLogEntry>,
+    pub recorded: Option<Recorded>,
+}
 
 /// The caller aborts every error. Captured proof belongs to this scope. No
 /// part of the Agent publication can be moved to a separate transaction.
@@ -28,7 +34,7 @@ pub(in crate::store::sandbox_reconciliation) async fn publish_agent(
     change: Option<&SandboxRuntimeLossAgentMutation>,
     request: &SandboxRuntimeLossRequest,
     scope: &mut TransactionScope<'_>,
-) -> Result<(Agent, Vec<AgentLogEntry>), ApplyError> {
+) -> Result<PublishedAgent, ApplyError> {
     if source.agent() != current {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
@@ -45,7 +51,11 @@ pub(in crate::store::sandbox_reconciliation) async fn publish_agent(
         if result.matched_count != 1 {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
-        return Ok((current.clone(), Vec::new()));
+        return Ok(PublishedAgent {
+            agent: current.clone(),
+            logs: Vec::new(),
+            recorded: None,
+        });
     };
     let batch = materialize_logs(change, &request.observed_at)?;
     let operation = PublicationIdentity {
@@ -66,7 +76,7 @@ pub(in crate::store::sandbox_reconciliation) async fn publish_agent(
         .map_err(ApplyError::Domain)?,
         appended_at: request.observed_at.clone(),
     };
-    let prepared = writer_commit::prepare(
+    let recorded = writer_commit::publish_captured(
         store,
         scope,
         source,
@@ -79,19 +89,15 @@ pub(in crate::store::sandbox_reconciliation) async fn publish_agent(
             result_digest: publication::result_digest(&(&change.agent, &batch))
                 .map_err(ApplyError::Domain)?,
         },
-        None,
-        None,
-    )
-    .await?;
-    writer_commit::persist(
-        store,
-        scope,
-        prepared,
         AggregateUpdate {
             filter,
             fields: agent_replacement_fields(&change.agent).map_err(ApplyError::Domain)?,
         },
     )
     .await?;
-    Ok((change.agent.clone(), batch))
+    Ok(PublishedAgent {
+        agent: change.agent.clone(),
+        logs: batch,
+        recorded: Some(recorded),
+    })
 }

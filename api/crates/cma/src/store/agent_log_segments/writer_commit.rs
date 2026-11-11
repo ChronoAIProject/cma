@@ -63,7 +63,7 @@ mod output;
 mod persistence;
 #[path = "writer_prepare.rs"]
 mod planning;
-pub(in crate::store) use existing::{publish_existing, Recorded};
+pub(in crate::store) use existing::{publish_captured, publish_existing, Recorded};
 
 /// Pure preparation in the caller's existing snapshot/majority transaction.
 /// Reject an unavailable or stale source proof before any database operation.
