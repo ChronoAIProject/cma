@@ -1669,9 +1669,63 @@ spec:
           imagePullPolicy: IfNotPresent
           terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
+        - name: web-assets-4f03c35a8032
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:f85b24cea3bb0ed96d9caa34db37d2d0fd43472d74ef9f98872d0f6ccff6952c
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              for file in /usr/share/nginx/html/assets/*; do [ -e "$file" ] || continue; name="${file##*/}"; [ -e "/compat/assets/$name" ] || cp -R "$file" "/compat/assets/$name"; done
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+          imagePullPolicy: IfNotPresent
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+        - name: web-assets-304b44fd9b9d
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:065109527c1fb775ef66241c80b0d23090833901e31c5ae04402fa73e2f89de4
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              for file in /usr/share/nginx/html/assets/*; do [ -e "$file" ] || continue; name="${file##*/}"; [ -e "/compat/assets/$name" ] || cp -R "$file" "/compat/assets/$name"; done
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          volumeMounts:
+            - name: web-assets-compat
+              mountPath: /compat
+          imagePullPolicy: IfNotPresent
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
       containers:
         - name: web
-          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:f85b24cea3bb0ed96d9caa34db37d2d0fd43472d74ef9f98872d0f6ccff6952c
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-web@sha256:065109527c1fb775ef66241c80b0d23090833901e31c5ae04402fa73e2f89de4
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

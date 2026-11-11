@@ -179,7 +179,10 @@ The train operator records the successful result in a 0600 JSON receipt with onl
 {
   "deployment_uid": "<from the public fence>",
   "generation": 0,
-  "secret": {"uid": "<from the public fence>", "resourceVersion": "<from the public fence>"},
+  "secret": {
+    "uid": "<from the public fence>",
+    "resourceVersion": "<from the public fence>"
+  },
   "owner_key_read_passed": true,
   "existing_channels_passed": true,
   "observation_passed": true,
@@ -230,22 +233,19 @@ image-only rollback if its data boundary permits it; keep these Secret reference
 and unchanged values in place. CMAEG's current forward-fix-only boundary still
 applies. Never use the pre-GitHub repository pin or run an old migrator.
 
-## Native typing drift and parity handoff
+## Native typing decision and parity handoff
 
-The recorded flag is `CMAEG_NATIVE_TYPING_ENABLED`, not a new WhatsApp intake
-activation. It controls Discord typing and private WhatsApp typing plus a read
-receipt. The **CMAEG feature/release owner**, **Discord integration/product owner**,
-and **WhatsApp integration/product/connection owner** must confirm intended
-activation and recipient/read-receipt behavior. The lead routes that decision;
-this repository has no CODEOWNERS mapping that identifies those people. NyxID's
-catalogue owner is needed only for an independent identity/introspection change,
-which this migration does not request. Keep the existing guarded repository flag
-and tests unchanged pending that decision.
+`CMAEG_NATIVE_TYPING_ENABLED` controls Discord typing and private WhatsApp typing
+plus a read receipt; it is not a new WhatsApp intake activation. The owner decision
+relayed on 2026-11-11 preserves production ON behavior. #1627 / #1624 deliberately
+align the repository ConfigMap and manifest contract to `true`; the absent-value
+application default remains `false`. See [native typing](CMAEG_Native_Typing.md)
+for the existing custody/writer gates and provider-acceptance limits.
 
 #1588 remains open until the Secret cutover and production verification are
-recorded. Native typing activation is a separate owner decision and does not gate
-#1588 closure. If this change lands before #1589, merge develop into the parity
-branch, retain these Secret references, remove its obsolete empty-placeholder
-apply guard and update the parity description with actual migration status. Only
-use cma-web-hotfix's final API handover for the image, generation, provenance and
-`TOKIO_WORKER_THREADS` downward-API stanza; a prior rollback report is insufficient.
+recorded. The separately resolved typing decision is not a Secret-cutover gate.
+#1589 integrates the Secret references and removes the obsolete empty-placeholder
+apply guard. Its Train E API generation 177 and Web generation 209 pins and
+provenance follow the verified release handover and fresh bounded readback,
+including the `TOKIO_WORKER_THREADS` downward-API stanza. Future train changes
+require another verified parity capture; a prior rollback report is insufficient.
