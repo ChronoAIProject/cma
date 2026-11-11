@@ -176,6 +176,8 @@ pub enum SandboxStoreError {
     AgentLogCapacityExceeded,
     #[error("sandbox limit reached: {live} of {limit}")]
     LimitReached { limit: u16, live: u16 },
+    #[error("global sandbox capacity is unavailable")]
+    GlobalCapacityReached,
     #[error("sandbox is not ready for workspace admission")]
     SandboxNotReady,
     #[error("workspace name is already live in the sandbox")]
