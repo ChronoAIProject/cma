@@ -311,3 +311,58 @@ async fn bounded_collection_invalid_request_has_zero_database_commands() {
     }
     assert!(trace.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn bounded_collection_partial_indexes_cannot_hide_a_live_shared_child() {
+    let (client, name) = database("collection_partial_index").await;
+    let db = client.database(&name);
+    let documents = collection_documents();
+    let request = request(&documents);
+    install(&db, &documents).await;
+    indexes(&db).await;
+    let (_, _, _, mut live) = hierarchy();
+    live.id = AgentId("shared-live-index-fixture".into());
+    live.status = AgentStatus::Ready;
+    live.conversation.conversation_id = Some("fixture-conversation".into());
+    live.conversation.runtime_generation = Some(1);
+    live.deleted_at = None;
+    db.collection::<Document>("agents")
+        .insert_one(crate::store::agents::agent_document(&live).unwrap())
+        .await
+        .unwrap();
+    db.collection::<Document>("agents")
+        .drop_indexes()
+        .await
+        .unwrap();
+    for keys in [
+        doc! {"worktree_id":1,"_id":1},
+        doc! {"record.worktree_id":1,"_id":1},
+    ] {
+        let options = mongodb::options::IndexOptions::builder()
+            .partial_filter_expression(doc! {"_id":"agt_atomic"})
+            .build();
+        db.collection::<Document>("agents")
+            .create_index(
+                mongodb::IndexModel::builder()
+                    .keys(keys)
+                    .options(options)
+                    .build(),
+            )
+            .await
+            .unwrap();
+    }
+    let observation = crate::store::ledger_collection::observe(&client, &db, &request).await;
+    assert_eq!(
+        db.collection::<Document>("agents")
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        2
+    );
+    db.drop().await.unwrap();
+    assert!(
+        observation.is_err(),
+        "partial index must not certify complete authority"
+    );
+}
