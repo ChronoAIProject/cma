@@ -13,6 +13,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "agent_skill_upgrade_preparation.rs"]
+mod preparation;
 #[path = "agent_skill_upgrade_retention.rs"]
 mod retention;
 #[cfg(test)]
@@ -27,6 +29,10 @@ struct Proof {
     request_sha256: String,
     previous_tree: String,
     new_tree: String,
+}
+fn recovery_conflict() -> RuntimeError {
+    let reason = layer3_adapter::AgentSkillUpgradeRefusal::RecoveryConflict;
+    RuntimeError::rejected(reason.code(), reason.to_string())
 }
 
 pub(crate) fn conflict(detail: &str) -> RuntimeError {
@@ -144,24 +150,25 @@ pub(crate) async fn install(
 ) -> Result<AgentSkillInstallReceipt> {
     crate::agent_skill_install::validate(request)?;
     let result = replace(config, client, request).await;
-    if result.as_ref().is_err_and(|error| !error.retryable) {
-        let evidence = config
-            .state_root
-            .join("skill-upgrades")
-            .join(format!("{}.json", request.request_sha256));
-        match std::fs::symlink_metadata(&evidence) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                if let Ok(parent) = root(config, request) {
-                    clean(&staging(&parent, request))?;
-                }
-            }
-            _ => {
-                // Publication may already have happened. A terminal failure would
-                // tell the Manager to expose the old version while disk contains
-                // the new one. Keep admitted work pending and all evidence intact.
-                return Err(RuntimeError::unavailable("agent_skill_upgrade_recovery_required",
-                    "Published upgrade evidence requires recovery; preserve both trees and the journal until the operation is reconciled."));
-            }
+    let evidence = config
+        .state_root
+        .join("skill-upgrades")
+        .join(format!("{}.json", request.request_sha256));
+    let before_proof = std::fs::symlink_metadata(&evidence)
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
+    let result = if before_proof
+        && result.as_ref().is_err_and(|error| error.retryable)
+        && preparation::exhausted(&evidence, request)?
+    {
+        Err(preparation::refusal())
+    } else if !before_proof && result.as_ref().is_err_and(|error| !error.retryable) {
+        Err(recovery_conflict())
+    } else {
+        result
+    };
+    if before_proof && result.as_ref().is_err_and(|error| !error.retryable) {
+        if let Ok(parent) = root(config, request) {
+            let _ = clean(&staging(&parent, request));
         }
     }
     result
@@ -181,12 +188,31 @@ async fn replace(
     let stage = staging(&parent, request);
     let candidate = stage.join("new");
     let expected = stage.join("previous");
-    let evidence = proof_path(config, request)?;
+    let evidence = config
+        .state_root
+        .join("skill-upgrades")
+        .join(format!("{}.json", request.request_sha256));
     let receipt = AgentSkillInstallReceipt::from_request(request);
-    let proof = match load_proof(&evidence, request)? {
+    // The correlated receipt proves exchange even if files changed afterward or
+    // the optional cleanup evidence is damaged. Never report the previous version.
+    if tree::receipt_matches(&target, &receipt).unwrap_or(false) {
+        let proof = load_proof(&evidence, request).ok().flatten();
+        return finish_published(
+            config,
+            request,
+            &parent,
+            &stage,
+            &expected,
+            proof.as_ref(),
+            receipt,
+        );
+    }
+    let evidence = proof_path(config, request)?;
+    let proof = match load_proof(&evidence, request).map_err(|_| recovery_conflict())? {
         Some(proof) => proof,
         None => {
             preflight(config, request)?;
+            preparation::begin(&evidence, request)?;
             retention::prepare(&stage)?;
             clean(&stage)?;
             crate::fs_durability::create_dir(&stage).map_err(io)?;
@@ -226,40 +252,62 @@ async fn replace(
             proof
         }
     };
-    // Repair a prior ambiguous proof-publication sync before any directory swap.
-    crate::fs_durability::sync_file(&evidence).map_err(io)?;
-    crate::fs_durability::sync_parent(&evidence).map_err(io)?;
-    root(config, request)?;
-    // The sidecar is durable before exchange. It permits recovery even when the
-    // original archives are unavailable, including after comparison-archive cleanup.
-    if tree::receipt_matches(&target, &receipt)? {
-        if tree::digest(&target, Some(&receipt))? != proof.new_tree {
-            return Err(conflict("published replacement was modified"));
-        }
-    } else {
-        if tree::digest(&target, upgrade.previous_receipt.as_ref())? != proof.previous_tree
-            || tree::digest(&candidate, Some(&receipt))? != proof.new_tree
-        {
-            return Err(conflict(
-                "previous installation or staged replacement changed",
-            ));
-        }
-        // Descriptor-relative exchange refuses symlinked parents and is serialized
-        // with every other supervisor mutation by the operation gate.
-        tree::exchange(config, request, &stage)?;
-        point(config, "exchanged")?;
+    // Without this request's receipt, only the two proved trees permit exchange.
+    // Every other observed state fails terminally with the previous version;
+    // preserve all staged, installed and journal evidence for owner action.
+    if tree::digest(&target, upgrade.previous_receipt.as_ref())
+        .ok()
+        .as_deref()
+        != Some(&proof.previous_tree)
+        || tree::digest(&candidate, Some(&receipt)).ok().as_deref() != Some(&proof.new_tree)
+    {
+        return Err(recovery_conflict());
     }
-    crate::fs_durability::sync_parent(&target).map_err(io)?;
-    if stage.exists() {
-        crate::fs_durability::sync_directory(&stage).map_err(io)?;
+    crate::fs_durability::sync_file(&evidence).map_err(|_| recovery_conflict())?;
+    crate::fs_durability::sync_parent(&evidence).map_err(|_| recovery_conflict())?;
+    root(config, request).map_err(|_| recovery_conflict())?;
+    if tree::exchange(config, request, &stage).is_err()
+        && !tree::receipt_matches(&target, &receipt).unwrap_or(false)
+    {
+        return Err(recovery_conflict());
+    }
+    point(config, "exchanged")?;
+    finish_published(
+        config,
+        request,
+        &parent,
+        &stage,
+        &expected,
+        Some(&proof),
+        receipt,
+    )
+}
+
+fn finish_published(
+    config: &RuntimeConfig,
+    request: &AgentSkillInstallRequest,
+    parent: &Path,
+    stage: &Path,
+    expected: &Path,
+    proof: Option<&Proof>,
+    receipt: AgentSkillInstallReceipt,
+) -> Result<AgentSkillInstallReceipt> {
+    crate::fs_durability::sync_directory(parent).map_err(io)?;
+    if crate::paths::path_is_directory(stage) {
+        crate::fs_durability::sync_directory(stage).map_err(io)?;
     }
     point(config, "exchange_synced")?;
-    // Only the freshly extracted comparison archive is disposable. The exchanged
-    // old tree may contain owner files or caches and stays outside discovery.
-    clean(&expected)?;
+    // Cleanup is optional after publication. A changed/missing tree, or a cleanup
+    // error, cannot undo the correlated receipt or keep conversation input blocked.
+    if proof.is_some() {
+        if let Err(error) = clean(expected) {
+            tracing::warn!(request_sha256 = %request.request_sha256, code = %error.code,
+                "published skill upgrade retained comparison data after cleanup failure");
+        }
+        // Remove only an empty container; never recursively delete unexpected entries.
+        let _ = crate::fs_durability::remove_dir(stage);
+    }
     point(config, "previous_retained")?;
-    // Keep the small proof beside runtime journal evidence. A crash before the
-    // terminal journal receipt can recover without fetching either archive again.
     Ok(receipt)
 }
 
