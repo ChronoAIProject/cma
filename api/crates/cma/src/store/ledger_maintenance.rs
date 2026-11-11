@@ -34,7 +34,7 @@ impl From<mongodb::error::Error> for ApplyError {
     }
 }
 impl ApplyError {
-    fn domain(self) -> Domain {
+    pub(super) fn domain(self) -> Domain {
         match self {
             Self::Domain(error) => error,
             Self::Driver(_) => Domain::Unavailable,

@@ -18,11 +18,14 @@ use mongodb::{
 use sha2::{Digest, Sha256};
 
 use super::ledger_maintenance::{refused, ApplyError};
+use super::ledger_maintenance_pre_exclusion_records as preparation;
 use super::ledger_maintenance_records;
 use super::sandbox_mongo::MongoSandboxStore;
 
 pub(super) struct Snapshot {
     pub inspection: LedgerMaintenanceInspection,
+    pub pre_exclusion:
+        Option<layer2_core::sandbox::ledger_maintenance_pre_exclusion::LedgerPreExclusionStateV1>,
     pub parent: Document,
     /// Actual rows, including sidecars, are retained for same-transaction fences.
     pub children: Vec<(Collection<Document>, Document)>,
@@ -33,6 +36,25 @@ pub(super) async fn load(
     caller: &Caller,
     sandbox: &SandboxId,
     session: &mut ClientSession,
+) -> Result<Snapshot, ApplyError> {
+    load_version(store, caller, sandbox, session, false).await
+}
+
+pub(super) async fn load_pre_exclusion(
+    store: &MongoSandboxStore,
+    caller: &Caller,
+    sandbox: &SandboxId,
+    session: &mut ClientSession,
+) -> Result<Snapshot, ApplyError> {
+    load_version(store, caller, sandbox, session, true).await
+}
+
+async fn load_version(
+    store: &MongoSandboxStore,
+    caller: &Caller,
+    sandbox: &SandboxId,
+    session: &mut ClientSession,
+    pre_exclusion_reader: bool,
 ) -> Result<Snapshot, ApplyError> {
     let parent = store
         .sandboxes
@@ -47,7 +69,12 @@ pub(super) async fn load(
     {
         return Err(refused(Refusal::NotFound));
     }
-    let sandbox = super::sandboxes::read_sandbox(&parent).map_err(|_| Domain::Corrupt)?;
+    let pre_exclusion = preparation::read(&parent)?;
+    if pre_exclusion.is_some() && !pre_exclusion_reader {
+        return Err(refused(Refusal::Conflict));
+    }
+    let source_parent = preparation::source_document(&parent)?;
+    let sandbox = super::sandboxes::read_sandbox(&source_parent).map_err(|_| Domain::Corrupt)?;
     if !caller.authorization.allows(Capability::ControlAnySandbox)
         && caller.subject != sandbox.owner
     {
@@ -69,10 +96,26 @@ pub(super) async fn load(
             .ok_or(Domain::Corrupt)?;
         ledger_maintenance_records::validate_audit(&receipt, state)?;
     }
+    if let Some(state) = &pre_exclusion {
+        let accepted = state.accepted().map_err(|_| Domain::Corrupt)?;
+        let receipt = super::ledger_maintenance_pre_exclusion_transaction::audit_collection(store)
+            .find_one(doc! {"_id":preparation::audit_key(&accepted, state.record_revision)})
+            .session(&mut *session)
+            .await?
+            .ok_or(Domain::Corrupt)?;
+        if preparation::outcome(&receipt, &accepted)? != *state {
+            return Err(Domain::Corrupt.into());
+        }
+    }
     let mut budget = ReadBudget {
         rows: 0,
         bytes: 0,
-        digest: Sha256::new_with_prefix(b"chrono.runtime.ledger.maintenance-source.v1\0"),
+        digest: if pre_exclusion_reader {
+            Sha256::new_with_prefix(b"chrono.runtime.ledger.pre-exclusion-source.v1\0")
+        } else {
+            Sha256::new_with_prefix(b"chrono.runtime.ledger.maintenance-source.v1\0")
+        },
+        pre_exclusion_reader,
         children: Vec::new(),
     };
     budget.count("sandboxes", &parent)?;
@@ -164,6 +207,7 @@ pub(super) async fn load(
             state,
         },
         parent,
+        pre_exclusion,
         children: budget.children,
     })
 }
@@ -189,6 +233,7 @@ struct ReadBudget {
     rows: usize,
     bytes: usize,
     digest: Sha256,
+    pre_exclusion_reader: bool,
     children: Vec<(Collection<Document>, Document)>,
 }
 
@@ -208,6 +253,15 @@ impl ReadBudget {
         let mut source = row.clone();
         source.remove("ledger_maintenance_fence_v1");
         if collection == "sandboxes" {
+            source = preparation::source_document(&source)?;
+            if self.pre_exclusion_reader {
+                // The new E1 hash grammar normalizes only its own version
+                // envelope. Existing V1 snapshot digests are unchanged.
+                source.insert(
+                    "document_schema_version",
+                    super::sandbox_mongo::DOCUMENT_SCHEMA_VERSION,
+                );
+            }
             source.remove(ledger_maintenance_records::FIELD);
         }
         let bytes = mongodb::bson::serialize_to_vec(&source).map_err(|_| Domain::Corrupt)?;

@@ -32,6 +32,20 @@ pub(super) async fn fence_writer(
         .session(&mut *session)
         .await?
         .ok_or_else(|| refused(LedgerMaintenanceAdmissionRefusal::NotFound))?;
+    if let Some(preparation) = super::ledger_maintenance_pre_exclusion_records::read(&parent)? {
+        let accepted = preparation.accepted().map_err(|_| Domain::Corrupt)?;
+        let audit = super::ledger_maintenance_pre_exclusion_transaction::audit_collection(store)
+            .find_one(doc! {"_id":super::ledger_maintenance_pre_exclusion_records::audit_key(&accepted, preparation.record_revision)})
+            .session(&mut *session)
+            .await?
+            .ok_or(Domain::Corrupt)?;
+        if super::ledger_maintenance_pre_exclusion_records::outcome(&audit, &accepted)?
+            != preparation
+        {
+            return Err(Domain::Corrupt.into());
+        }
+        preparation.check_writer(class).map_err(Domain::from)?;
+    }
     let actual = super::sandboxes::read_sandbox(&parent).map_err(|_| Domain::Corrupt)?;
     if actual.id != *sandbox {
         return Err(Domain::Corrupt.into());
