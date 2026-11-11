@@ -20,6 +20,7 @@ pub(crate) struct SuggestionWorker {
     runtime: Arc<dyn TitleRuntimeEndpoint>,
     model: String,
     writer_policy: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
+    request_budget: Option<Arc<dyn layer2_core::budget::RequestBudget>>,
 }
 
 impl SuggestionWorker {
@@ -29,14 +30,18 @@ impl SuggestionWorker {
         runtime: Arc<dyn TitleRuntimeEndpoint>,
         model: String,
     ) -> Arc<Self> {
-        Self::with_dependencies(
+        let mut worker = Self::with_dependencies(
             store.clone(),
             store.clone(),
             credentials,
             runtime,
             model,
             store.writer_policy.clone(),
-        )
+        );
+        Arc::get_mut(&mut worker)
+            .expect("new suggestion worker is exclusively owned")
+            .request_budget = Some(store);
+        worker
     }
 
     pub(super) fn with_dependencies(
@@ -55,6 +60,7 @@ impl SuggestionWorker {
             credentials,
             runtime,
             model,
+            request_budget: None,
         })
     }
 
@@ -153,13 +159,24 @@ impl SuggestionGenerator for SuggestionWorker {
         if current.status != SuggestionStatus::Running {
             return Err(refused());
         }
-        let generator = HttpSuggestionGenerator::new(
+        let mut generator = HttpSuggestionGenerator::new(
             &endpoint.endpoint.endpoint,
             &self.model,
             material.value,
             endpoint.authorization,
         )
         .ok_or_else(refused)?;
+        if let Some(budget) = &self.request_budget {
+            generator =
+                generator.with_request_budget(super::model_request_budget::RequestBudgetContext {
+                    budget: budget.clone(),
+                    scope: layer2_core::budget::RequestScope {
+                        agent_id: work.agent_id.clone(),
+                        turn_sequence: work.scope.turn_sequence,
+                        request_id: format!("suggestion:{}", work.id),
+                    },
+                });
+        }
         generator.generate(work).await
     }
 }

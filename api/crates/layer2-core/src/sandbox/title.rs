@@ -277,6 +277,7 @@ impl fmt::Debug for AgentTitleTranscript {
 /// Private inputs passed to the narrow runtime-facing generator.
 #[derive(Clone)]
 pub struct AgentTitleGenerationRequest {
+    turn_sequence: u64,
     model: String,
     owner_message: String,
     assistant_message: String,
@@ -289,6 +290,7 @@ impl AgentTitleGenerationRequest {
         transcript: &AgentTitleTranscript,
     ) -> Self {
         Self {
+            turn_sequence: transcript.turn_sequence(),
             model: context.model.clone(),
             owner_message: truncate_utf8_bytes(transcript.owner_message(), AGENT_TITLE_INPUT_BYTES),
             assistant_message: truncate_utf8_bytes(
@@ -301,6 +303,10 @@ impl AgentTitleGenerationRequest {
 
     pub fn model(&self) -> &str {
         &self.model
+    }
+
+    pub fn turn_sequence(&self) -> u64 {
+        self.turn_sequence
     }
 
     pub const fn system_prompt(&self) -> &'static str {
@@ -366,17 +372,33 @@ impl fmt::Debug for AgentTitleGenerationResponse {
 #[error("agent title generation failed")]
 pub struct AgentTitleGenerationError {
     permanent: bool,
+    budget: Option<crate::budget::BudgetError>,
 }
 
 impl AgentTitleGenerationError {
     pub const fn unavailable() -> Self {
-        Self { permanent: false }
+        Self {
+            permanent: false,
+            budget: None,
+        }
     }
     pub const fn permanent() -> Self {
-        Self { permanent: true }
+        Self {
+            permanent: true,
+            budget: None,
+        }
     }
     pub const fn is_permanent(self) -> bool {
         self.permanent
+    }
+    pub const fn budget(reason: crate::budget::BudgetError) -> Self {
+        Self {
+            permanent: false,
+            budget: Some(reason),
+        }
+    }
+    pub const fn budget_error(self) -> Option<crate::budget::BudgetError> {
+        self.budget
     }
 }
 
