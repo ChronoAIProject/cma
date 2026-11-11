@@ -61,8 +61,14 @@ async fn page(db: &mongodb::Database, find: Document, index: &str) -> Vec<Docume
     assert!(assert_index_plan(winning, index));
     let stats = explain.get_document("executionStats").unwrap();
     assert!(number(stats, "nReturned") <= PAGE);
-    assert!(number(stats, "totalDocsExamined") <= PAGE);
-    assert!(number(stats, "totalKeysExamined") <= 2 * (PAGE + 1));
+    assert!(
+        number(stats, "totalDocsExamined") <= PAGE,
+        "document scan exceeded the page: {stats:?}; plan: {winning:?}"
+    );
+    assert!(
+        number(stats, "totalKeysExamined") <= 2 * (PAGE + 1),
+        "key scan exceeded the page: {stats:?}; plan: {winning:?}"
+    );
     println!(
         "recovery index={index} returned={} examined_keys={} examined_documents={}",
         number(stats, "nReturned"),
@@ -128,10 +134,16 @@ async fn recovery_discovery_indexes_bound_each_keyset_page_and_exclude_terminal_
                 let mut filter =
                     doc! {"format_version":2_i64,"work.phase":phase,field:{"$lte":DUE}};
                 if let Some((at, after)) = &cursor {
-                    filter.insert(
-                        "$or",
-                        vec![doc! {field:{"$gt":at}}, doc! {field:at,"_id":{"$gt":after}}],
-                    );
+                    // Keep each seek fully bounded. Factoring the shared
+                    // predicates outside $or can put the cursor in FETCH,
+                    // scanning earlier rows before applying the page limit.
+                    // S5 must consume this qualified shape in its filter.
+                    filter = doc! {"$or":[
+                        {"format_version":2_i64,"work.phase":phase,
+                            field:{"$gt":at,"$lte":DUE}},
+                        {"format_version":2_i64,"work.phase":phase,
+                            field:{"$eq":at,"$lte":DUE},"_id":{"$gt":after}},
+                    ]};
                 }
                 let found = page(
                     &db,
