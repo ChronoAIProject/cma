@@ -57,6 +57,7 @@ ordering does not by itself qualify the other transaction caller families.
 | CMA all-target check |Reached new sources; found a missing test import, now fixed. Production wiring warnings remained. No corrected pass yet. |
 | New S4 unit gate |Two attempts each timed out after 600 seconds waiting for heavy-0, without starting Cargo. A subsequent nonblocking CMA-check acquisition also refused the occupied lock. |
 | New S4 Mongo tests |Source present; not executed |
+| Canonical Mongo runner harness |31 passed in source/archive modes; mock Cargo/Docker, not real Mongo |
 | Formatting / whitespace |Owned changes pass. Workspace fmt currently reports one inherited assertion-formatting diff in S1 capture_tests.rs:207; no S1 file was edited. |
 | Repository size |5,948 files passed after the dependency merges; all new S4 source/test files below 500 lines |
 | Secret scans |Staged deltas passed. Full history through fb1ad83c7: 3648 commits, no findings. Later deltas independently scanned. |
