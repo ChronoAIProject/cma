@@ -833,8 +833,10 @@ dry-run comparison, and a web-only patch for each phase. Recovery changes only
 image/provenance and retains both old and incoming assets. HTTP 200 for `/` alone
 does not prove the app mounts. CI runs `.github/scripts/web-image-smoke.py` on the
 exact native image before export, with an intentionally stale compatibility
-volume, and checks personal/Operations rendering, retained chunks and uncached
-404 responses. API data in that browser check is synthetic.
+volume, and checks personal/Operations rendering, reload/history navigation,
+retained chunks and uncached 404 responses. It also checks copied bundle identity
+against the same image's OCI labels and reporting backoff/recovery. API data in
+that browser check is synthetic; it does not prove production source coverage.
 
 ### Lifecycle Scheduling
 
@@ -1040,6 +1042,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_UPSTREAM_WIRE_API` | Exactly `responses` |
 | `CHRONO_PLATFORM_BASE_URL` | Required canonical HTTPS platform proxy origin; also the upstream for the runtime's explicitly granted GitHub API proxy |
 | `CHRONO_DOCUMENT_BUCKET` | Existing S3-backed bucket used for durable Markdown artifacts. Empty disables document source storage and runtime publication tools; writes fail explicitly instead of storing ephemeral documents. Production uses `chrono-platform-bot`. |
+| `CHRONO_AGENT_LOG_FLEET_PERCENT` | Canonical integer 0–100, default `0`; positive percentages require the explicit admission ID list to be empty. Stable Agent-hash buckets stage 10/50/100. Preparation is lazy and bounded before eligible writes; public reads never prepare. Stage changes/kill switch require a same-image API rollout; preserve quarantine and compatible-image floor. See [Fleet log activation](CMA_Fleet_Log_Activation.md). |
 | `CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED` | Strict boolean, default `false` in code and manifests. All writes retain 1,024 receipts / 12 MiB while off; compatible readers always accept bounded expanded aggregates. Enable only in a later train after the compatible reader is deployed, older workers have drained and that image is the pinned rollback target. Only owner grant/link revocations may spend the reserve; ordinary writes retain the old limits. Disabling it preserves expanded reads and exact retries. See [Document artifacts](Document_Artifacts.md) for activation and rollback. |
 | `CHRONO_STORAGE_CLIENT_ID` | Deployment-owned machine identity for the existing `chrono-storage-service` proxy. Required when the document bucket is configured. Never passed to runtime Agents or browsers. |
 | `CHRONO_STORAGE_CLIENT_SECRET` | Secret reference for the storage machine identity; required with a configured document bucket. Issued tokens are cached in memory and renewed before expiry or once after a 401. |
@@ -2085,6 +2088,14 @@ pressure returns Retry-After without changing conversation/lifecycle pools.
 
 ## API read and stream diagnostics
 
+`CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED` defaults to `false` and accepts only
+`true` or `false`. It independently enables the [bounded title-input reader](CMA_Bounded_Title_Transcript.md)
+for Agents selected by `CHRONO_AGENT_LOG_ADMISSION_AGENTS` or
+`CHRONO_AGENT_LOG_FLEET_PERCENT` with matching trusted metadata. Enable it only
+after admission/public-window qualification. Disable it and restart the API to
+restore complete title reads while preserving the admission/public-window cohort
+and all retained history. No title or metadata write is part of this reader.
+
 The API emits content-free structured log metrics every ten seconds and once
 after the background-worker drain completes. The final sample follows all joined
 workers, including cancellation cleanup at the thirty-second worker deadline,
@@ -2205,6 +2216,24 @@ OCI source/version/revision labels. It inspects by immutable image ID and cleans
 its stopped verification container. Transfer/promotion retains the tested image
 ID/digest and existing provenance checks; do not rebuild or relabel to correct an
 identity. A candidate identity is not a release version.
+
+The loopback usage, build-identity and exact-image browser harnesses default to
+Chromium. Set `CMA_E2E_BROWSERS=chromium,firefox,webkit` to run all three pinned
+Playwright engines after `npx playwright install chromium firefox webkit` in
+`web/`. A custom `CMA_E2E_BROWSER_PATH` applies only to Chromium; Firefox/WebKit
+use their own installed engines. Unknown or duplicate engine names fail the run.
+For the compiled frontend, run the existing `e2e/usage.config.ts` and
+`e2e/build-identity.config.ts` configurations; repeat owner/Operations tests with
+`CMA_E2E_MEASURED_USAGE=true` for synthetic measured-source states.
+
+For an immutable candidate, run `.github/scripts/web-image-smoke.py <image>` from
+the repository root with the same browser selection. It verifies bundle/OCI
+identity before starting the image, passes the expected version/revision to the
+browser, mounts stale retained assets read-only, and cleans its container/mount.
+The build-identity check reads the serving artifact's static `build-info.json`
+and compares the copied value; it never consults a potentially unrelated local
+`dist` directory. The report prints the immutable image ID, source, version and
+browser selection. Keep this candidate evidence separate from live acceptance.
 
 For production acceptance, the lead compares a fresh browser's copied identity
 with the tested source, image labels and promoted digest. Retain all prior hashed

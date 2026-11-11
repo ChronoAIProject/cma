@@ -6091,3 +6091,66 @@ data. Picker failures use the same error semantics and **Retry choices** action.
 No error or missing measurement is an empty result or a zero resource total.
 
 | 2026-11-10 | Honor usage Retry-After across report selections and bounded discovery, retaining distinct busy, unavailable, expired and denied states. |
+
+### 2026-11-10 — Usage over retained responsive Agent input
+
+The retained Agent composer fits changed text immediately. Width-driven fitting
+is coalesced into the next animation frame, outside ResizeObserver delivery, so
+opening Usage and resizing its background do not trigger a browser layout loop.
+Closing the Agent cancels any scheduled fitting. Keep the draft, focus and input
+semantics unchanged; browser-error checks remain strict across all engines.
+
+| 2026-11-10 | Schedule retained composer width fitting outside resize notifications for Usage dialog continuity in WebKit. |
+
+### 2026-11-10 — Usage filter menu resize placement
+
+Portalled menus place immediately when opened and follow scrolling. Content and
+anchor resize notifications schedule one placement in the next animation frame,
+so filtering a long choice list cannot resize its own observed box during delivery.
+Closing or unmounting cancels scheduled placement; focus and selection semantics
+remain unchanged.
+
+| 2026-11-10 | Coalesce menu resize placement outside observer delivery for searchable usage filters in WebKit. |
+
+## Admin Spend controls (2026-11-11)
+
+Operations → Platform settings includes a Spend controls section only for accounts
+with ConfigurePlatform. Use the existing operator form, Input, checkbox and Button
+patterns, two-column settings grid and single-column mobile layout. Subheadings
+reuse the strong small text token, with 24px top and 16px bottom spacing.
+
+Show configured exact accounting units explicitly; never infer currency or create
+policy defaults. Absent policies begin with blank required fields after an explicit
+Configure action. A disabled policy retains its configured values. Explain the
+current enforcement scope at the enable control and distinguish unavailable API
+capabilities from settings that are off. Decimal, exponent and unsafe integer input
+remains editable text until corrected; do not round a cap.
+
+The existing settings revision, save and conflict/uncertain-write recovery apply
+to spend edits. Explicit review preserves newer owner overrides and unedited
+settings. Server rejection keeps the draft and never produces a saved notice.
+Show the current revision's last platform-settings operation when its bounded
+activity lookup is permitted; unavailable names, permission, missing records and
+lookup errors remain explicit. Do not claim the audit identifies individual edits.
+
+Read-only save availability is separate from policy enablement. Missing or false
+availability shows “Saving spend controls is not available yet” and disables spend
+edits. Unchanged policy values remain visible and are preserved when other settings
+are saved. A refused edited draft stays visible and cannot be resubmitted until
+Refresh settings availability and explicit revision review permit the save.
+
+| Date | Change |
+| --- | --- |
+| 2026-11-11 | Add admin Spend controls using existing settings primitives, exact accounting-unit inputs, revision recovery and permission-aware audit attribution. |
+| 2026-11-11 | Respect server spend-write availability with readable retained policy, explicit refresh/review, and preserved unrelated settings saves. |
+
+### 2026-11-11 — Retained spend policy save availability
+
+Use the effective retained policy and every applicable server write gate for the
+settings Save action. A configured policy behind a closed gate makes the entire
+save unavailable, including unrelated edits; explain that the draft is retained.
+An empty disabled policy still permits unrelated settings saves. Only require the
+request-policy gate when request models are retained. Refresh and explicit review
+must not reopen Save without an available response for that policy.
+
+| 2026-11-11 | Align settings save availability with retained foundation/request policy gates and keep empty-policy unrelated saves available. |
