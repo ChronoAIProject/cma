@@ -154,6 +154,7 @@ fn pause(id: &SandboxId) -> SandboxInactivityPauseRequest {
         requested_at: LATER.into(),
         pause_after_seconds: 900,
         auto_pause_enabled: false,
+        cause: Default::default(),
     }
 }
 

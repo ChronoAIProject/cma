@@ -164,3 +164,38 @@ async fn resumed_idle_phase_reads_new_threshold_and_retries_unavailable_policy()
         && request.pause_after_seconds == 1_800
         && request.requested_at == rfc3339_at(resumed_at)));
 }
+
+struct Platform(Option<bool>);
+
+#[async_trait::async_trait]
+impl crate::sandbox::reconciliation::platform::PlatformSpendSweep for Platform {
+    async fn evaluate_platform_spend(
+        &self,
+        _: u64,
+    ) -> Result<Option<bool>, layer2_core::budget::BudgetError> {
+        Ok(self.0)
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_platform_spend_phase_drives_a_pause_of_quiet_sandboxes_and_leaves_busy_ones() {
+    use layer2_core::sandbox::store::InactivityPauseCause;
+    // Automatic inactivity pause stays disabled throughout.
+    let (store, reconciler, _) = live().await;
+    let reconciler = reconciler.with_platform_spend(Arc::new(Platform(Some(false))));
+    assert!(reconciler.run_due(now()).await.unwrap());
+    assert!(store.keys("pause").is_empty());
+    let (store, reconciler, _) = live().await;
+    let reconciler = reconciler.with_platform_spend(Arc::new(Platform(Some(true))));
+    assert!(reconciler.run_due(now()).await.unwrap());
+    // Eligibility (quiet Agents, no active turn or queued input) stays the
+    // store's decision; this fixture records every request it is offered.
+    let pauses = store.pauses.lock().unwrap();
+    assert_eq!(pauses.len(), 3);
+    assert!(pauses.iter().all(
+        |request| request.cause == InactivityPauseCause::PlatformSpendStop
+            && request.pause_after_seconds == 0
+            && request.auto_pause_enabled
+            && request.requested_at == rfc3339_at(now())
+    ));
+}
