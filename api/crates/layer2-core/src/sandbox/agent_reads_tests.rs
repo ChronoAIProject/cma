@@ -718,10 +718,15 @@ async fn transcript_reconstructs_completed_and_active_turns() {
         Some(8),
     )
     .await;
-    let transcript = service(store)
+    let transcript = service(store.clone())
         .transcript(&caller("owner", true), &agent.id)
         .await
         .unwrap();
+    let bounded = service(store.clone())
+        .transcript_bounded(&caller("owner", true), &agent.id)
+        .await
+        .unwrap();
+    assert_eq!(bounded, transcript);
     assert_eq!(transcript.agent_id, agent.id);
     assert_eq!(transcript.through_seq, 10);
     assert_eq!(transcript.turns.len(), 2);
