@@ -198,6 +198,8 @@ data:
   CHRONO_SERVER_RATE_INPUT_PER_MINUTE: "120"
   # Separate policy activation after exact-route classification review.
   CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED: "false"
+  # Per-process public stream lifetimes; zero keeps admission disabled.
+  CHRONO_PUBLIC_STREAM_LIMIT: "0"
   # GFE appends upstream then forwarding-rule addresses. Trust the chain only
   # from an official GFE TCP peer and skip its rightmost load-balancer token.
   CHRONO_SERVER_TRUSTED_PROXY_CIDRS: "35.191.0.0/16,130.211.0.0/22,2600:2d00:1:1::/64"
