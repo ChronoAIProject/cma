@@ -44,7 +44,7 @@ export const requiredPrefixes = [
   'store::sandbox_mongo_integration_tests::resource_access_tests::',
   'store::sandbox_maintenance::mongo_integration_tests::',
   'store::sandbox_maintenance::consented::scope_tests::',
-  'store::sandbox_reconciliation::mongo_integration_tests::channel_home_retention::',
+  'store::sandbox_reconciliation::mongo_integration_tests::',
   'sandbox::agent_worker_tests::sdk_conformance_tests::mongo_tests::',
   'sandbox::agent_worker_tests::first_message_contention_tests::',
   'sandbox::worker_tests::lifecycle_queue_contention_tests::',
