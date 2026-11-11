@@ -307,3 +307,11 @@ The archived operator result remains bound to `afc60d98a`: 56 passed, zero faile
 inherits it. Strict CMA remains failed at the enum diagnostic on that old source.
 The newer S5 boxed-enum pin is now available and will be normally integrated;
 S3 also published a delta-fix checkpoint for inspection and combined qualification.
+
+
+S4 checkpoint `6b665b1a4` is normally integrated. Preserve its source-specific
+124-pass report and scoped-root ownership acknowledgement separately in
+[S4 handoff evidence](2026-11-12-s4-handoff-evidence.md); these do not qualify the
+combined source. S4 also owns `sandbox_reconciliation/reconciliation.rs` and its
+focused root tests/local registration. Shared canonical selector additions are
+limited to those root tests and integrated by S2.
