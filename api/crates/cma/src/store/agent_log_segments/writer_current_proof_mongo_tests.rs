@@ -260,3 +260,44 @@ async fn current_publication_uses_unique_head_lookup_and_refuses_index_drift_or_
     scope.release().abort_transaction().await.unwrap();
     f.destroy().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn current_publication_survives_actual_audit_rebuild_without_new_publication() {
+    use crate::store::agent_log_segments::audit;
+    let mut f = fixture(2).await;
+    publish(&mut f, "original-before-audit").await;
+    let receipt = publish(&mut f, "later-before-audit").await;
+    let db = f.client.database(&f.store.agents.namespace().db);
+    for name in ["first-proof-audit", "second-proof-audit"] {
+        assert_eq!(
+            audit::run_unit(&f.client, &db, f.agent.id.as_str(), name, false)
+                .await
+                .unwrap(),
+            "complete"
+        );
+        assert_eq!(
+            audit::install(&f.client, &db, f.agent.id.as_str(), name)
+                .await
+                .unwrap(),
+            "installed"
+        );
+        let mut session = transaction(&f).await;
+        let mut scope = TransactionScope::start(&mut session).await.unwrap();
+        let proof = succeeded(current_publication::capture(&f.store, &f.agent, &mut scope).await);
+        assert_eq!(
+            proof.require_current(&f.store, &f.agent, &scope).unwrap(),
+            &receipt
+        );
+        scope.release().abort_transaction().await.unwrap();
+    }
+    assert_eq!(
+        collection(&f.store, PUBLICATIONS)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(f.store.agent_log.count_documents(doc! {}).await.unwrap(), 4);
+    f.destroy().await;
+}
