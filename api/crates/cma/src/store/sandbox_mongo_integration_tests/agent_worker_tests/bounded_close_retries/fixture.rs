@@ -1,5 +1,6 @@
 use super::*;
 use mongodb::event::cmap::CmapEvent;
+use mongodb::event::command::CommandEvent;
 
 pub(super) struct Fixture {
     pub client: Client,
@@ -7,6 +8,8 @@ pub(super) struct Fixture {
     pub store: MongoSandboxStore,
     pub agent: Agent,
     pub checkouts: Arc<AtomicU64>,
+    pub complete_reads: Arc<AtomicU64>,
+    pub ambiguous_commits: Arc<AtomicU64>,
     pub app: String,
 }
 
@@ -24,6 +27,31 @@ impl Fixture {
             if matches!(event, CmapEvent::ConnectionCheckedOut(_)) {
                 captured.fetch_add(1, Ordering::SeqCst);
             }
+        }));
+        let complete_reads = Arc::new(AtomicU64::new(0));
+        let ambiguous_commits = Arc::new(AtomicU64::new(0));
+        let complete = complete_reads.clone();
+        let ambiguous = ambiguous_commits.clone();
+        options.command_event_handler = Some(EventHandler::callback(move |event| match event {
+            CommandEvent::Started(event)
+                if event.command.get_str("find") == Ok(AGENT_LOG)
+                    && event.command.get_document("filter").is_ok_and(|filter| {
+                        filter.len() == 1 && filter.contains_key("agent_id")
+                    })
+                    && event.command.get_document("sort") == Ok(&doc! { "seq": 1 }) =>
+            {
+                complete.fetch_add(1, Ordering::SeqCst);
+            }
+            CommandEvent::Succeeded(event)
+                if event.command_name == "commitTransaction"
+                    && event
+                        .reply
+                        .get_document("writeConcernError")
+                        .is_ok_and(|error| error.get_i32("code") == Ok(50)) =>
+            {
+                ambiguous.fetch_add(1, Ordering::SeqCst);
+            }
+            _ => {}
         }));
         let client = Client::with_options(options).unwrap();
         let store = MongoSandboxStore::open(&client, &name).await.unwrap();
@@ -109,6 +137,8 @@ impl Fixture {
             store,
             agent,
             checkouts,
+            complete_reads,
+            ambiguous_commits,
             app,
         }
     }
