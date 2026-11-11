@@ -8,6 +8,49 @@ use super::super::agent_log_integrity::TransactionLogError;
 use super::super::lifecycle_execution::load_sandbox_agents;
 use super::super::sandbox_mongo::MongoSandboxStore;
 use super::PublishError;
+use crate::store::{
+    agent_capacity_recovery::{lineage, source::fence_filter_scoped},
+    agent_log_segments::{capture::capture_transaction, transaction_scope::TransactionScope},
+};
+
+pub(super) async fn validate_and_fence_scoped(
+    store: &MongoSandboxStore,
+    current: &Sandbox,
+    mutation: &SandboxCheckpointMutation,
+    scope: &mut TransactionScope<'_>,
+) -> Result<(), PublishError> {
+    if mutation.nonblocking {
+        return validate_checkpoint_mutation(current, &[], mutation).map_err(PublishError::Domain);
+    }
+    let agents = lineage::agents(store, &current.id, scope).await?;
+    let mut rows = Vec::with_capacity(agents.len());
+    for agent in agents {
+        let through = if agent.status.is_live() {
+            capture_transaction(store, &agent, scope).await?.through()
+        } else {
+            agent.conversation.last_seq
+        };
+        rows.push((agent, through));
+    }
+    validate_checkpoint_mutation(current, &rows, mutation).map_err(PublishError::Domain)?;
+    for (agent, _) in rows.iter().filter(|(agent, _)| agent.status.is_live()) {
+        let filter = fence_filter_scoped(store, agent, scope).await?;
+        let result = scope
+            .update_one(
+                &store.agents,
+                filter,
+                mongodb::bson::doc! {"$inc": {"checkpoint_publication_fence": 1_i64}},
+            )
+            .await
+            .map_err(PublishError::Driver)?;
+        if result.matched_count != 1 {
+            return Err(PublishError::Domain(
+                layer2_core::sandbox::store::SandboxStoreError::Conflict,
+            ));
+        }
+    }
+    Ok(())
+}
 
 pub(super) async fn validate_and_fence(
     store: &MongoSandboxStore,

@@ -16,6 +16,26 @@ use crate::store::{
     sandbox_mongo::{signed, MongoSandboxStore},
 };
 
+/// Dispatch hint only. The selected transaction still validates every envelope;
+/// concurrent adoption makes the legacy path refuse, never read a v2 lifetime.
+pub(in crate::store) async fn sandbox_uses_segments(
+    store: &MongoSandboxStore,
+    id: &layer2_core::SandboxId,
+) -> Result<bool, TransactionLogError> {
+    store
+        .agents
+        .find_one(doc! {
+            "sandbox_id": id.as_str(),
+            "$or": [
+                {"agent_log_format": {"$exists": true}},
+                {"document_schema_version": {"$ne": 1_i64}},
+            ],
+        })
+        .await
+        .map(|row| row.is_some())
+        .map_err(TransactionLogError::Driver)
+}
+
 /// The caller already owns a transaction. A segmented capture failure is never
 /// converted to None: only a positively identified legacy envelope selects the
 /// unchanged legacy validator. The same session binds envelope and aggregate.
