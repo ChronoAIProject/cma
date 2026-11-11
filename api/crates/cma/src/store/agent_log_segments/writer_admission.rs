@@ -40,6 +40,7 @@ pub(in crate::store) struct Admission {
     pub owner: String,
     pub publication_key: String,
     pub fingerprint: Binary,
+    pub appended_at: String,
     pub expected_agent_revision: i64,
     pub expected_seq: i64,
     pub admitted_at: String,
@@ -51,6 +52,9 @@ pub(in crate::store) struct Admission {
 
 impl Admission {
     pub fn read(row: Document) -> Result<Self, SandboxStoreError> {
+        for field in ["format_version", "expected_agent_revision", "expected_seq"] {
+            row.get_i64(field).map_err(|_| corrupt())?;
+        }
         let value: Self = bson::deserialize_from_document(row).map_err(|_| corrupt())?;
         value.validate()?;
         Ok(value)
@@ -68,6 +72,8 @@ impl Admission {
             || self.id
                 != publication::identity(&self.agent_id, &self.incarnation, &self.publication_key)
             || !digest::valid_digest(&self.fingerprint)
+            || self.appended_at.len() > 64
+            || seconds_from_rfc3339(&self.appended_at).is_none()
             || self.expected_agent_revision < 0
             || !(0..=super::MAX_SEQUENCE).contains(&self.expected_seq)
             || seconds_from_rfc3339(&self.admitted_at).is_none()
@@ -96,11 +102,13 @@ impl Admission {
         kind: AdmissionKind,
     ) -> Result<(), SandboxStoreError> {
         self.validate()?;
+        operation.validate()?;
         if self.agent_id != agent.id.as_str()
             || self.incarnation != digest::incarnation(agent)
             || self.owner != agent.owner.as_str()
             || self.publication_key != operation.key
             || self.fingerprint != operation.fingerprint
+            || self.appended_at != operation.appended_at
             || self.kind != kind
             || agent.revision < self.expected_agent_revision as u64
             || agent.conversation.last_seq < self.expected_seq as u64
@@ -119,6 +127,7 @@ pub(in crate::store) async fn read(
     operation: &PublicationIdentity,
     session: &mut ClientSession,
 ) -> Result<Option<Admission>, TransactionLogError> {
+    operation.validate()?;
     let incarnation = digest::incarnation(agent);
     let row = database
         .collection::<Document>(COLLECTION)
@@ -137,7 +146,8 @@ pub(in crate::store) async fn read(
         {
             return Err(corrupt().into());
         }
-        if value.fingerprint != operation.fingerprint {
+        if value.fingerprint != operation.fingerprint || value.appended_at != operation.appended_at
+        {
             return Err(SandboxStoreError::Conflict.into());
         }
     }
@@ -183,6 +193,7 @@ pub(in crate::store) async fn admit(
         owner: agent.owner.as_str().into(),
         publication_key: operation.key.clone(),
         fingerprint: operation.fingerprint.clone(),
+        appended_at: operation.appended_at.clone(),
         expected_agent_revision: i64::try_from(agent.revision).map_err(|_| corrupt())?,
         expected_seq: i64::try_from(agent.conversation.last_seq).map_err(|_| corrupt())?,
         admitted_at: admitted_at.into(),
