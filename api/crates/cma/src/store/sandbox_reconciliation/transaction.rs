@@ -84,7 +84,7 @@ pub(super) async fn apply(
     let rows = load_agents(store, &current.id, session).await?;
     let evidence = rows
         .iter()
-        .map(|(agent, summary)| (agent.clone(), summary.entry_count()))
+        .map(|(agent, source)| (agent.clone(), source.through()))
         .collect::<Vec<_>>();
     let mutation = match apply_sandbox_runtime_loss(&current, &evidence, request)
         .map_err(ApplyError::Domain)?
@@ -95,8 +95,7 @@ pub(super) async fn apply(
         SandboxRuntimeLossApplication::Persist(mutation) => mutation,
     };
     validate_in_transaction(store, &current.id, last_seq, session).await?;
-    let (agents, logs) =
-        publish_agents(store, rows, &mutation.agents, &request.observed_at, session).await?;
+    let (agents, logs) = publish_agents(store, rows, &mutation.agents, request, session).await?;
     let advanced = store.sandboxes.update_one(
         doc! {
             "_id": current.id.as_str(),
