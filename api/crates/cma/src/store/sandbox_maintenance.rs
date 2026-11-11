@@ -206,7 +206,7 @@ async fn preview(
         .start_session()
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let result = attempt(store, &request, &mut session).await;
+    let result = apply_attempt(store, &request, &mut session).await;
     let abort = session.abort_transaction().await;
     if result.is_ok() {
         abort.map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
