@@ -59,12 +59,21 @@ async fn different_owners_and_store_handles_cannot_overshoot_global_capacity() {
         left.sandbox_events.count_documents(doc! {}).await.unwrap(),
         3
     );
+    // Startup must accept the durable fence and recover capacity without a counter.
+    let restarted = MongoSandboxStore::open(&client, &database)
+        .await
+        .unwrap()
+        .with_global_sandbox_limit(3);
     for (index, sandbox) in winners {
         assert_eq!(
-            right.admit_sandbox(owned(index)).await.unwrap(),
+            restarted.admit_sandbox(owned(index)).await.unwrap(),
             SandboxAdmissionResult::Existing(sandbox)
         );
     }
+    assert_eq!(
+        restarted.admit_sandbox(owned(99)).await.unwrap_err(),
+        SandboxStoreError::GlobalCapacityReached
+    );
     assert_eq!(left.sandboxes.count_documents(doc! {}).await.unwrap(), 3);
     client.database(&database).drop().await.unwrap();
 }
