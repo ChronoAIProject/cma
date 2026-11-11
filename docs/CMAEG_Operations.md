@@ -652,6 +652,57 @@ boundaries. Each media derivation job runs in a `cmaeg.media.derive` span with
 a file name, URL, token or content. Info logs exclude bearer keys, reply tokens, event references, and
 message content. Provider-controlled parsing diagnostics are also excluded.
 
+The legacy turn runner emits one warn record, `provider turn start failed`, when
+provider start attempts end in a classified failure. It runs inside `cmaeg.turn`,
+so the `channel` field is the 16-character channel hash and `event_id` identifies
+the event. The record carries `provider` (the slug), `provider_call`,
+`gateway_detail` and `gateway_status` (the unchanged gateway classification),
+and `provider_error` (a static variant label). `provider_call` names the step in
+which the failure occurred, including local preparation and admission checks:
+`responses` for turn start and `conversation` for conversation ensure. It does
+not prove that an HTTP request reached the provider. The runner's local consumer
+and credential checks belong to the `responses` step. A successful ensure
+followed by a failed retried start reports `responses`; intermediate
+conversation-missing and busy retries do not emit this warning. Operators use
+the step together with the error label to distinguish a provider refusal at
+turn start from one at conversation creation, or from a gateway-local failure.
+
+For this legacy start path, the error labels have these meanings:
+
+| `provider_error` | What it establishes about the failed attempt |
+| --- | --- |
+| `unknown_provider` | Local provider registry lookup failed before sending the step's HTTP request. |
+| `invalid_request` | Local consumer/credential, metadata, event-context, URL or HTTP-header validation failed before sending the step's HTTP request. A connection may already have been established. |
+| `capacity` | The responses step could not acquire its local inflight permit immediately; it sent no HTTP request for that attempt. |
+| `busy` | Either the conversation step timed out waiting for a local inflight permit, or the provider returned a busy/readiness HTTP refusal. This label alone does not prove a request reached the provider. |
+| `unavailable` | Can occur before sending (worker-credential registration, management authentication, a closed conversation semaphore, connection/TLS failure), during transport or a timeout, or after a non-success, non-4xx HTTP response. This label alone does not establish whether a request reached the provider. |
+| `rejected`, `conversation_missing` | Derived from an HTTP response to the step's request. |
+
+These facts concern the failed attempt only: earlier attempts may have reached
+the provider, and auxiliary credential registration or authentication may
+already have occurred. The helper also supports the static `response_malformed`
+and `sse` labels, but the current legacy start/ensure calls do not produce those
+variants; stream parsing happens after start returns.
+
+For `provider_error="rejected"`, the record also carries `upstream_status` and
+`upstream_code`. The code is admitted only as a 1–64-byte machine token matching
+`[a-z0-9_.:-]+`; every other value becomes the fixed placeholder `unrecognized`,
+without truncating or escaping provider text. The client selects the first
+present value from `code`, `error.code`, then `type` in the refusal body. If that
+value is not a string, none is present, or the body cannot be read or parsed as
+JSON, the client substitutes `provider_error`. Thus
+`upstream_code="provider_error"` can mean this extraction fallback or the
+provider's own literal code; the record cannot distinguish them. This fallback
+is separate from the sanitizer's `unrecognized` placeholder.
+
+For this warning, the grammar-checked code is the only admitted provider text;
+free-form parsing diagnostics, response bodies and provider messages are
+excluded. Other error variants log only their static label, with no inner error
+strings or upstream fields. This warning never includes bearer keys, reply
+tokens, event references or message content. Callback problems, failure replies
+and metric labels retain their existing classifications; provider response
+bodies are not forwarded.
+
 A request handler that panics is answered with a 500 `internal` problem whose
 detail is `internal_error`, with the usual protocol headers and `x-request-id`;
 the gateway keeps serving every other request. The error log line is
