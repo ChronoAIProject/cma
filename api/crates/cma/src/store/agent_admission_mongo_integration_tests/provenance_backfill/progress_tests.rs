@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "progress_tests/contention.rs"]
+mod contention;
 #[path = "progress_tests/receipts.rs"]
 mod receipts;
 use crate::store::provenance_progress::{initialize, status, COLLECTION};
@@ -47,15 +49,34 @@ async fn progress_concurrency_and_restart_cannot_double_count() {
         store.durable_provenance_backfill_step(&left_owner),
         store.durable_provenance_backfill_step(&right_owner)
     );
-    let outcomes = [left.unwrap().unwrap(), right.unwrap().unwrap()];
+    let outcomes = [(&left_owner, left), (&right_owner, right)];
     assert_eq!(
         outcomes
             .iter()
-            .filter(|x| **x == ProvenanceBackfillProgress::Advanced)
+            .filter(|(_, result)| matches!(result, Ok(Some(ProvenanceBackfillProgress::Advanced))))
             .count(),
         1
     );
     let original = counts(&store).await;
+    // The loser can exhaust its bounded transaction retries while the winner
+    // still holds the control write lock. Inspect committed state, then prove
+    // that retrying the loser cannot advance or count the same observation.
+    for (owner, result) in outcomes {
+        match result {
+            Ok(Some(ProvenanceBackfillProgress::Advanced)) => {
+                assert_eq!(original.get_str("owner").unwrap(), owner);
+            }
+            Ok(Some(ProvenanceBackfillProgress::Busy)) | Err(SandboxStoreError::Unavailable(_)) => {
+                assert_ne!(original.get_str("owner").unwrap(), owner);
+                assert_eq!(
+                    store.durable_provenance_backfill_step(owner).await.unwrap(),
+                    Some(ProvenanceBackfillProgress::Busy)
+                );
+                assert_eq!(counts(&store).await, original);
+            }
+            other => panic!("unexpected concurrent progress result: {other:?}"),
+        }
+    }
     assert_eq!(
         original
             .get_document("counts")
