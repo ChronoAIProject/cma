@@ -1,0 +1,69 @@
+import type { CmaWebClient, ReadOptions } from './client';
+
+/** Share only pending reads inside one mounted identity scope; never cache authority. */
+export function coalesceDetailReads(client: CmaWebClient) {
+  const controllers = new Set<AbortController>();
+  const wrap = <T>(read: (id: string, options?: ReadOptions) => Promise<T>) => {
+    const pending = new Map<
+      string,
+      { controller: AbortController; result: Promise<T>; subscribers: number }
+    >();
+    return (id: string, options?: ReadOptions): Promise<T> => {
+      const signal = options?.signal;
+      if (signal?.aborted) return Promise.reject(signal.reason);
+      let entry = pending.get(id);
+      if (!entry) {
+        const controller = new AbortController();
+        controllers.add(controller);
+        const result = Promise.resolve().then(() => {
+          controller.signal.throwIfAborted();
+          return read(id, { signal: controller.signal });
+        });
+        entry = { controller, result, subscribers: 0 };
+        pending.set(id, entry);
+        const settled = entry;
+        const clear = () => {
+          if (pending.get(id) === settled) pending.delete(id);
+          controllers.delete(controller);
+        };
+        void result.then(clear, clear);
+      }
+      const shared = entry;
+      shared.subscribers += 1;
+      return new Promise<T>((resolve, reject) => {
+        let finished = false;
+        const finish = (complete: () => void) => {
+          if (finished) return;
+          finished = true;
+          signal?.removeEventListener('abort', abort);
+          shared.controller.signal.removeEventListener('abort', abort);
+          shared.subscribers -= 1;
+          if (!shared.subscribers) {
+            if (pending.get(id) === shared) pending.delete(id);
+            shared.controller.abort();
+          }
+          complete();
+        };
+        const abort = () => finish(() => reject(signal?.reason ?? shared.controller.signal.reason));
+        signal?.addEventListener('abort', abort, { once: true });
+        shared.controller.signal.addEventListener('abort', abort, { once: true });
+        void shared.result.then(
+          (value) => finish(() => resolve(value)),
+          (error: unknown) => finish(() => reject(error)),
+        );
+      });
+    };
+  };
+  return {
+    client: {
+      ...client,
+      readSandbox: wrap(client.readSandbox.bind(client)),
+      readWorkspace: wrap(client.readWorkspace.bind(client)),
+      readAgent: wrap(client.readAgent.bind(client)),
+    },
+    dispose() {
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
+    },
+  };
+}
