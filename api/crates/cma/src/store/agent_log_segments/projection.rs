@@ -10,7 +10,7 @@ use mongodb::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{corrupt, Head};
+use super::{collections::collection, corrupt, Head, EVIDENCE, PROJECTIONS};
 use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::MongoSandboxStore};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,10 +90,8 @@ pub(in crate::store) async fn read(
     head: &Head,
     session: &mut ClientSession,
 ) -> Result<AgentLogProjectionState, TransactionLogError> {
-    let find = store
-        .segment_logs
-        .projections
-        .find_one(doc! {"_id":&head.agent_id});
+    let projections = collection(store, PROJECTIONS);
+    let find = projections.find_one(doc! {"_id":&head.agent_id});
     // The head has already established this session's snapshot. Override the
     // collection's majority default, which cannot carry atClusterTime. A
     // transaction session has no snapshot_time and keeps its transaction concern.
@@ -132,7 +130,8 @@ pub(super) async fn evidence(
     key: &str,
     session: &mut ClientSession,
 ) -> Result<Option<EvidenceRecord>, TransactionLogError> {
-    let find = store.segment_logs.evidence.find_one(doc! {"agent_id":&head.agent_id,"incarnation":&head.incarnation,"evidence_generation":&head.evidence_generation,"kind":kind,"entity_key":key});
+    let evidence = collection(store, EVIDENCE);
+    let find = evidence.find_one(doc! {"agent_id":&head.agent_id,"incarnation":&head.incarnation,"evidence_generation":&head.evidence_generation,"kind":kind,"entity_key":key});
     let find = if session.snapshot_time().is_some() {
         find.read_concern(ReadConcern::snapshot())
     } else {
