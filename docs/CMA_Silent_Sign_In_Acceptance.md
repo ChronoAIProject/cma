@@ -64,7 +64,13 @@ Also exercise:
   logout before/during/after transaction commit on independent API replicas, with
   binding and session cookies separately. Confirm active rows remain predecessor-readable.
 - Roll an old-start/new-callback and new-start/old-callback pair with activation
-  off. Both complete; old callback reservations expire through their original TTL.
+  off. Predecessor-start/new-callback completes inline to its stored return target;
+  new-start/old-callback completes with the unused reservation covered by its TTL.
+  Logout before a predecessor callback must leave a tombstone that refuses it.
+- Verify binding cookies use Max-Age=660 (ten-minute attempt plus one-minute
+  callback margin), and tombstones do not expire earlier. Hold a successful
+  callback response before browser delivery, log out using only its binding
+  cookie, then deliver the response: the session must remain revoked.
 - Slow consent: extend pending custody with the continuation; a completed valid
   continuation must not fail because the original reservation expired.
 - At 4,095 / 4,096 / 4,097 bytes of the encoded complete login URL, verify boundaries

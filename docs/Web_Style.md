@@ -6204,3 +6204,5 @@ are percent-encoded ASCII. Existing loading, error, focus/reconnection and draft
 isolation patterns remain authoritative; no new visual control is introduced.
 
 | 2026-11-11 | Restore explicit sign-in preference recovery with response-order fencing, clear private drafts before Sign out navigation, and bound fully encoded login URLs while retaining oversized setup drafts. |
+
+| 2026-11-11 | Bound browser login binding cookies to the ten-minute attempt plus one-minute callback margin; complete predecessor callbacks inline without changing the sign-in UI or retained draft behavior. |

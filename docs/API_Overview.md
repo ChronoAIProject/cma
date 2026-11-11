@@ -98,19 +98,24 @@ There is no visible half-promoted session. Failed commits or revocations never
 report success; failed logout preserves cookies needed for retry.
 
 New attempts carry additive `custody_reserved: true` and `started_at` fields.
-Unmarked predecessor attempts still complete with fresh issuance: a new replica
-adopts their binding unless a bounded logout tombstone forbids it. Before provider
-I/O or session issuance, a same-origin callback handoff establishes a longer-lived
-binding cookie and a fresh single-use state, preserving the original PKCE, intent
-and expiry. This handles a predecessor callback whose original ten-minute cookie
-would otherwise expire before a delayed response arrives. Predecessor readers ignore the new fields and continue their
-own callback behavior; unused reservations retain the existing TTL cleanup.
-Consent escalation renews a live pending reservation to its new attempt expiry
-without upsert or resurrection. The binding cookie lasts through the maximum
-attempt-plus-session lifetime, and a committed link lasts through session expiry,
-so an admitted callback retains a browser revocation handle through a delayed response. Replay does
-not clear an in-flight handle. Success establishes the fresh session before
-expiring the binding cookie; terminal valid failures revoke before clearing it.
+Unmarked predecessor attempts complete inline with fresh issuance: a new replica
+reserves their binding before provider I/O, unless a logout tombstone forbids it.
+The original single-use state, PKCE, intent and expiry are preserved. Predecessor
+readers ignore the additive fields and continue their existing callback behavior;
+unused reservations retain the existing TTL cleanup.
+
+Binding cookies have `Max-Age=660`: the ten-minute attempt lifetime plus a
+one-minute margin for callback I/O and response processing. The margin does not
+extend attempt validity or session authority. Abandoned attempts therefore leave
+only short-lived browser cookies. Logout tombstones last at least the same
+660 seconds; existing longer durable preference retention is preserved. Consent
+renews only live pending custody and starts the same bounded cookie window.
+
+While a callback response is in flight, logout carrying its binding cookie
+revokes any already-issued session in the same transaction. Success establishes
+the fresh session cookie before clearing the binding cookie; replay never clears
+another in-flight handle, and terminal valid failures revoke before clearing it.
+A response that never reaches the browser discloses no session token to a client.
 No callback or navigation creates resources or submits input. Existing sessions
 still require live authorization and the bounded inspection policy in
 [Identity interruption policy](Identity_Outage_Policy.md).
