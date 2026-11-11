@@ -267,6 +267,21 @@ pub(super) fn ensure_append_batch_size(pending: usize) -> Result<(), SandboxStor
     }
 }
 
+/// Refuse recovery near normal capacity before any native reopen. Startup
+/// metadata and the reopen/publication suffix need ordinary log capacity; the
+/// stop/delete reserves are never borrowed to make a failed Agent usable.
+pub(super) fn ensure_reopen_capacity(summary: &LogSummary) -> Result<(), SandboxStoreError> {
+    capacity_allows(
+        summary.entry_count,
+        summary.encoded_bytes,
+        64,
+        512 * 1024,
+        AppendCapacity::Normal,
+    )
+    .then_some(())
+    .ok_or_else(capacity_error)
+}
+
 fn capacity_allows(
     existing_count: u64,
     existing_bytes: usize,
@@ -292,3 +307,7 @@ impl From<SandboxStoreError> for TransactionLogError {
         Self::Domain(error)
     }
 }
+
+#[cfg(test)]
+#[path = "agent_log_integrity/reopen_capacity_tests.rs"]
+mod reopen_capacity_tests;
