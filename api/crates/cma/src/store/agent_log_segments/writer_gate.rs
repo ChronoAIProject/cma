@@ -6,12 +6,15 @@ use mongodb::{
     ClientSession, Database,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
 use crate::store::agent_log_integrity::TransactionLogError;
 use crate::store::sandbox_mongo::is_duplicate_key;
 
 pub(in crate::store) const COLLECTION: &str = "agent_log_gates";
+#[path = "writer_gate_slots.rs"]
+pub(in crate::store) mod slots;
 const MAX_COHORT: usize = 64;
 const MAX_POLICY_JSON: usize = 48 * 1024;
 
@@ -38,6 +41,8 @@ pub(in crate::store) struct Policy {
     pub enabled: bool,
     pub agents: Vec<String>,
     pub owners: Vec<String>,
+    pub cohort_seed: String,
+    pub basis_points: u16,
 }
 
 impl Policy {
@@ -56,7 +61,16 @@ impl Policy {
             .len()
             .checked_add(self.owners.len())
             .ok_or_else(invalid)?;
-        if count > MAX_COHORT || (self.enabled && count == 0) {
+        if count > MAX_COHORT
+            || self.basis_points > 10_000
+            || self.cohort_seed.len() > 128
+            || self
+                .cohort_seed
+                .chars()
+                .any(|c| c.is_control() || c.is_whitespace())
+            || (self.basis_points > 0 && self.cohort_seed.is_empty())
+            || (self.enabled && count == 0 && self.basis_points == 0)
+        {
             return Err(invalid());
         }
         for group in [&self.agents, &self.owners] {
@@ -75,11 +89,36 @@ impl Policy {
         Ok(())
     }
 
-    pub fn selects(&self, agent_id: &str, owner: &str) -> bool {
+    fn validate_for(&self, name: GateName) -> Result<(), SandboxStoreError> {
+        self.validate()?;
+        if name == GateName::CapacityRecovery
+            && (!self.owners.is_empty() || self.basis_points != 0 || !self.cohort_seed.is_empty())
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
+    pub fn selects(&self, agent_id: &str, owner: &str, incarnation: &str) -> bool {
         self.enabled
             && (self.agents.iter().any(|id| id == agent_id)
-                || self.owners.iter().any(|id| id == owner))
+                || self.owners.iter().any(|id| id == owner)
+                || (self.basis_points > 0
+                    && cohort_bucket(&self.cohort_seed, agent_id, incarnation) < self.basis_points))
     }
+}
+
+/// Stable across processes and releases, and bound to the original creation.
+pub(in crate::store) fn cohort_bucket(seed: &str, agent: &str, incarnation: &str) -> u16 {
+    let mut hash = Sha256::new();
+    hash.update(b"cma.agent-log.cohort.v1\0");
+    for field in [seed, agent, incarnation] {
+        super::digest::field(&mut hash, field.as_bytes());
+    }
+    let bytes: [u8; 32] = hash.finalize().into();
+    // A fixed big-endian 64-bit prefix makes membership portable. Modulo bias
+    // is < 1 / 2^64 and does not depend on process-random map hashing.
+    (u64::from_be_bytes(bytes[..8].try_into().expect("eight digest bytes")) % 10_000) as u16
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,10 +130,14 @@ pub(in crate::store) struct GateRecord {
     pub revision: i64,
     pub admission_fence: i64,
     pub policy: Policy,
+    pub slots: Vec<slots::Slot>,
 }
 
 impl GateRecord {
     pub fn read(name: GateName, document: Document) -> Result<Self, SandboxStoreError> {
+        for field in ["format_version", "revision", "admission_fence"] {
+            document.get_i64(field).map_err(|_| invalid())?;
+        }
         let gate: Self = bson::deserialize_from_document(document).map_err(|_| invalid())?;
         if gate.name != name
             || gate.format_version != 1
@@ -103,7 +146,8 @@ impl GateRecord {
         {
             return Err(invalid());
         }
-        gate.policy.validate()?;
+        gate.policy.validate_for(name)?;
+        slots::validate(&gate)?;
         Ok(gate)
     }
 }
@@ -142,7 +186,11 @@ pub(in crate::store) async fn select_and_fence(
     let Some(gate) = read(database, name, session).await? else {
         return Ok(None);
     };
-    if !gate.policy.selects(agent.id.as_str(), agent.owner.as_str()) {
+    if !gate.policy.selects(
+        agent.id.as_str(),
+        agent.owner.as_str(),
+        &super::digest::incarnation(agent),
+    ) {
         return Ok(None);
     }
     if gate.admission_fence == i64::MAX {
@@ -173,7 +221,7 @@ pub(in crate::store) async fn replace(
     policy: Policy,
     session: &mut ClientSession,
 ) -> Result<GateRecord, TransactionLogError> {
-    policy.validate()?;
+    policy.validate_for(name)?;
     let revision = expected_revision
         .checked_add(1)
         .filter(|n| *n > 0)
@@ -182,12 +230,20 @@ pub(in crate::store) async fn replace(
     if current.as_ref().map_or(0, |gate| gate.revision) != expected_revision {
         return Err(SandboxStoreError::Conflict.into());
     }
+    if current.as_ref().is_some_and(|gate| {
+        !gate.policy.cohort_seed.is_empty() && gate.policy.cohort_seed != policy.cohort_seed
+    }) {
+        return Err(SandboxStoreError::Conflict.into());
+    }
     let next = GateRecord {
         name,
         format_version: 1,
         revision,
         admission_fence: current.as_ref().map_or(0, |gate| gate.admission_fence),
         policy,
+        slots: current
+            .as_ref()
+            .map_or_else(Vec::new, |gate| gate.slots.clone()),
     };
     let row = bson::serialize_to_document(&next).map_err(|_| invalid())?;
     let collection = database.collection::<Document>(COLLECTION);
