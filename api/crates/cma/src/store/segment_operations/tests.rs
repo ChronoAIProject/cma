@@ -15,7 +15,7 @@ fn status(grants: Vec<Bson>) -> Document {
 #[test]
 fn explicit_commands_retain_audit_identity_and_gate_cas() {
     for (flag, expected) in [
-        ("--agent-log-audit-unit", AuditAction::Unit),
+        ("--agent-log-audit-unit", AuditAction::RunUnit),
         ("--agent-log-audit-cancel", AuditAction::Cancel),
         ("--agent-log-audit-install", AuditAction::Install),
     ] {
@@ -57,7 +57,7 @@ fn unknown_or_unbounded_arguments_fail_before_database_access() {
     }
     assert!(parse::operation(&args(&[
         "--agent-log-audit-unit",
-        &"x".repeat(129),
+        &"x".repeat(513),
         "audit"
     ]))
     .is_err());

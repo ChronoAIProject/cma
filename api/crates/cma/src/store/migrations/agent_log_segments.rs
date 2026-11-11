@@ -12,6 +12,8 @@ pub(super) fn checksum() -> String {
     let mut digest = Sha256::new();
     digest.update(include_bytes!("agent_log_segments.rs"));
     digest.update(include_bytes!("../agent_log_segments/schema.rs"));
+    digest.update(include_bytes!("../agent_log_segments/schema/controls.rs"));
+    digest.update(include_bytes!("../agent_log_segments/schema/validators.rs"));
     format!("{:x}", digest.finalize())
 }
 

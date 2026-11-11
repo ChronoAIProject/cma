@@ -73,13 +73,20 @@ async fn execute(arguments: &[String]) -> Result<Value> {
         }
         Operation::Audit { action, agent, id } => {
             let result = match action {
-                AuditAction::Unit => audit::run_unit(&client, &database, &agent, &id, false).await,
+                AuditAction::RunUnit => {
+                    audit::run_unit(&client, &database, &agent, &id, false).await
+                }
                 AuditAction::Cancel => audit::run_unit(&client, &database, &agent, &id, true).await,
                 AuditAction::Install => audit::install(&client, &database, &agent, &id).await,
             };
             let status = result
                 .map_err(|_| "audit refused or commit uncertain; resume the original audit ID")?;
-            Ok(json!({"operation":action.name(),"status":status}))
+            let operation = match action {
+                AuditAction::RunUnit => "audit_unit",
+                AuditAction::Cancel => "audit_cancel",
+                AuditAction::Install => "audit_install",
+            };
+            Ok(json!({"operation":operation,"status":status}))
         }
         Operation::Role(_) => unreachable!("role print returned before database access"),
     }
