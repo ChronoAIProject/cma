@@ -231,36 +231,53 @@ head and checkpoint CAS, log integrity and the original runtime generation still
 apply. An unknown commit never grants permission to choose another outcome.
 
 If the entire native terminal batch fits the stop/failure reserve, the turn
-retains its native completed/cancelled/failed outcome. If it cannot fit, the
-writer attempts exactly one compact `TurnFailed` with
-`agent_log_capacity_exceeded`. Any earlier refused output likewise selects that
-failure. A refusal is never silently converted to success. The existing atomic
-batch ceiling is 64 entries; a 100-entry proposal is compacted before validating
-its terminal receipt, and the ordinary live fold emits only a few entries per
-native update. Tests also exercise actual recorder overflow at the count ceiling
-and a 1 MiB final flush beyond the 512 KiB byte reserve.
+retains its native completed/cancelled/failed outcome. If it cannot fit, or if an
+earlier output was refused, settlement uses `FailedForPrompt` with
+`agent_log_capacity_exceeded`. The same fold as live failure first flushes the
+saved assistant prefix, then appends the typed failure. Text already committed
+to the checkpoint and streamed live therefore remains visible after reload when
+that complete failure batch fits. The Response is failed; the partial text is
+not presented as a successful answer. Refused tool/model output is not invented.
 
-Compact failure records are independent of assistant text size. They include
-`TurnFailed`, the Agent status transition, applicable first-input failure state,
-and any small usage observation from the refused batch. The original cumulative
-and turn usage checkpoint is carried into the settlement. `store/budget/mod.rs`
-uses `UsageUpdated` plus `conversation.observations.usage.current_turn` to update
-the turn reservation before closing it in this same transaction; the budget test
-checks consumed units, settled reservation and public Response usage exactly
-once. Existing conservative liability accounting is unchanged.
+Only if that failure batch also exceeds the remaining stop reserve does the
+writer select fixed failure records with private retention. This is a bounded
+sequence of immutable candidates: native terminal, failure with the visible
+prefix, then private-prefix failure. Each fallback requires a known-aborted
+capacity rejection; an unknown commit instead reconciles the exact attempted
+candidate. No alternate candidate may be published while its predecessor's
+commit remains uncertain. There is still at most one durable terminal.
 
-An unflushed prefix was already accepted into the private checkpoint. Compact
-settlement preserves that entire checkpoint, byte for byte, in the additive
-`agents.agent_capacity_prefix_v1` envelope field. It does not truncate it or
-publish it as an answer. The failure detail explicitly directs recovery to that
-retained prefix. The active checkpoint becomes the small terminal receipt and
-keeps its previous output high-water mark. An operator can export the retained
-prefix under the affected owner's authority; it is not lost when the native
-home is later removed. Runtime output omitted from the public log is not ACKed:
-the live recorder closes that attachment after recording the capacity failure,
-and leaves that output in the native journal. Native success is ACKed only after
-its full terminal batch commits. Unknown-commit proof checks Agent, retained log,
-active receipt and retained prefix together.
+The existing atomic batch ceiling is 64 entries; a 100-entry proposal is reduced
+to failure before validating its terminal receipt, and the ordinary live fold
+emits only a few entries per native update. Tests cover actual count overflow,
+a 1 MiB final flush beyond the 512 KiB byte reserve, and exact count/BSON-byte
+boundaries for prefix publication. One entry or byte beyond the complete public
+failure batch selects private retention without partial writes.
+
+The fixed failure records are independent of assistant text size: `TurnFailed`,
+the Agent status transition, applicable first-input failure state, and any small
+usage observation from the refused batch. The original cumulative and turn usage
+checkpoint is carried into every candidate. `store/budget/mod.rs` uses
+`UsageUpdated` plus `conversation.observations.usage.current_turn` before closing
+the reservation in this transaction. Tests check consumed units, the settled
+reservation and public Response usage exactly once. Existing conservative
+liability accounting is unchanged.
+
+When the prefix is too large to publish, its entire original checkpoint is
+preserved in `agents.agent_capacity_prefix_v1`. It is not truncated. The
+owner-facing failure states: partial output could not be saved in the
+conversation history, is retained privately, and can be recovered through
+support/operator export. The runbook below retains that export procedure. This
+private field is absent when the failure fold successfully publishes the prefix.
+The prefix is not lost when the native home is later removed.
+
+Both failure variants keep the previous runtime output high-water mark and do
+not ACK refused output. The live recorder closes that attachment after recording
+the capacity failure and leaves the refused frame in the native journal. Native
+success is ACKed only after its full terminal batch commits. Unknown-commit
+proof checks Agent, retained log and active receipt, plus the retained prefix
+when the selected candidate requires it. Regression tests exercise committed
+and unproved outcomes for both visible-prefix and privately retained failures.
 
 Both outcomes leave the Agent `Failed / agent_log_capacity_exceeded`, with no
 pending work or live lifecycle lease. Turn completion means the admitted task
@@ -330,7 +347,9 @@ the transaction lifetime or capacity ceilings to make this test pass.
 Migration ID: `2026-11-11-am-capacity-prefix-v1`; owner: Agent Manager backend;
 operator: the release/incident owner. Source/executable hashes are recorded in the
 candidate evidence ledger. This is additive expansion plus finite settlement of
-already-admitted work, not a backfill or general new-work admission.
+already-admitted work, not a backfill or general new-work admission. The D1
+visibility correction adds no stored format: it prefers the existing public
+failure fold and narrows private retention to prefixes that cannot fit.
 
 The old and current `record` schema, message checkpoint version 1, events,
 collections, indexes and TTLs are unchanged. The new envelope field contains the
@@ -341,7 +360,8 @@ reopen the store. Active checkpoint carry cannot overwrite it. Unknown-commit
 reconciliation requires it when the compact proof included a prefix.
 
 The writer gate is the finite known-aborted capacity proof plus exact snapshot
-CAS. No new ordinary work is admitted and the Agent becomes Failed; there is no
+CAS; private-prefix writing additionally requires that the visible-prefix
+failure batch was proved not to fit. No new ordinary work is admitted and the Agent becomes Failed; there is no
 startup scan, new configuration, background writer, DDL, backfill or contraction.
 Reader deployment is needed for the operator to understand/export the prefix,
 but strict predecessor `record` and checkpoint decoders remain compatible. A
