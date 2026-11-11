@@ -33,6 +33,22 @@ pub(in crate::store) struct Head {
 
 impl Head {
     pub(in crate::store) fn read(document: Document) -> Result<Self, SandboxStoreError> {
+        require_int64(
+            &document,
+            &[
+                "format_version",
+                "revision",
+                "active_ordinal",
+                "active_start_seq",
+                "last_seq",
+                "active_count",
+                "active_bytes",
+                "lifetime_count",
+                "lifetime_bytes",
+                "projection_format",
+                "projection_through",
+            ],
+        )?;
         let head: Self = bson::deserialize_from_document(document).map_err(|_| corrupt())?;
         head.validate()?;
         Ok(head)
@@ -109,6 +125,19 @@ impl Seal {
     }
 
     pub(in crate::store) fn read(document: Document) -> Result<Self, SandboxStoreError> {
+        require_int64(
+            &document,
+            &[
+                "format_version",
+                "ordinal",
+                "start_seq",
+                "end_seq",
+                "entry_count",
+                "encoded_bytes",
+                "prefix_count",
+                "prefix_bytes",
+            ],
+        )?;
         if bson::serialize_to_vec(&document)
             .map_err(|_| corrupt())?
             .len()
@@ -220,6 +249,13 @@ impl Seal {
         }
         Ok(())
     }
+}
+
+fn require_int64(document: &Document, fields: &[&str]) -> Result<(), SandboxStoreError> {
+    if fields.iter().any(|field| document.get_i64(field).is_err()) {
+        return Err(corrupt());
+    }
+    Ok(())
 }
 
 fn predecessor_valid(ordinal: i64, digest: &Option<Binary>) -> bool {
