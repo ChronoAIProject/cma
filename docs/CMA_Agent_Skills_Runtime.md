@@ -42,6 +42,13 @@ requested versions. Updating a CMAEG channel profile with the same change
 returns HTTP 409 with `binding_skill_version_update_unsupported`; the channel
 must be recreated with the requested profile.
 
+Bounded skill-admission revision contention returns HTTP 503
+`instance_service_unavailable`; it does not establish that the Agent is busy.
+A ready child waits until its parent has published Active (or is rotating
+credentials) before admitting a skill. See the
+[upgrade investigation](CMA_Agent_Skill_Upgrade_Investigation.md) for the original
+idle refusal and the remaining same-process upgrade proof blocker.
+
 Admission persists separate live-skill work inside the Agent aggregate, leaving
 the immutable profile and initial material untouched. The existing worker lease
 serializes work. Before runtime mutation, the worker resolves and durably pins
