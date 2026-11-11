@@ -14,6 +14,9 @@ mod failures;
 #[path = "ledger_maintenance_progress_tests.rs"]
 mod progress;
 
+#[path = "ledger_maintenance_child_claim_tests.rs"]
+mod child_claims;
+
 #[tokio::test]
 #[ignore = "requires an owned disposable MongoDB replica set"]
 async fn inspect_and_disabled_admission_write_nothing_and_conceal_foreign_markers() {
