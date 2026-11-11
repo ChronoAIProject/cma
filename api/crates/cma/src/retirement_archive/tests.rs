@@ -115,8 +115,12 @@ pub(crate) fn qualify(temp: &Temp, request: &mut Request) {
         home_identity: request.home_identity.clone(),
         roots_sha256: request.roots_sha256().unwrap(),
         epoch: request.epoch,
-        qualified_at: layer2_core::rfc3339_at(now),
-        expires_at: layer2_core::rfc3339_at(now + 3600),
+        qualified_at: layer2_core::rfc3339_at(
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(now),
+        ),
+        expires_at: layer2_core::rfc3339_at(
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(now + 3600),
+        ),
         writer_matrix_sha256: "e".repeat(64),
         provider_finality_sha256: "f".repeat(64),
         physical_fence_sha256: "a".repeat(64),
