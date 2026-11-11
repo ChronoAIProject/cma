@@ -97,11 +97,6 @@ impl FeatureFlags {
             )?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
-            retained_context_lookup: flag(lookup, "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED")?,
-            event_driven_reconciliation: flag(
-                lookup,
-                "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
-            )?,
         };
         if flags.sandbox_batched_reads && !flags.sandbox_snapshot_reads {
             return Err("CHRONO_SANDBOX_BATCHED_READS_ENABLED requires CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED".into());
