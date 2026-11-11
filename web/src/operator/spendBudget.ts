@@ -19,11 +19,16 @@ export interface OwnerBudget {
   max_unobserved_units: Amount;
   usage_timeout_seconds: Amount;
 }
+export interface RequestModelBudget {
+  model: string;
+  input_overhead_tokens: Amount;
+}
 export interface SpendBudget {
   enabled: boolean;
   platform?: PlatformBudget;
   default_policy?: OwnerBudget;
   owners: { owner: string; policy: OwnerBudget }[];
+  request_models?: RequestModelBudget[];
 }
 export const platformAmounts = {
   period_cap: 'Platform period cap (accounting units)',
@@ -93,6 +98,18 @@ export function spendBudget(value: unknown): SpendBudget | undefined {
     )
   )
     return;
+  if (
+    value.request_models !== undefined &&
+    (!Array.isArray(value.request_models) ||
+      !value.request_models.every(
+        (entry) =>
+          object(entry) &&
+          typeof entry.model === 'string' &&
+          (typeof entry.input_overhead_tokens === 'number' ||
+            typeof entry.input_overhead_tokens === 'string'),
+      ))
+  )
+    return;
   return value as unknown as SpendBudget;
 }
 // Retain invalid text for correction; never round a decimal or unsafe integer into a cap.
@@ -103,6 +120,19 @@ export function exactAmount(text: string): Amount {
 }
 export const budgetChanged = (before: unknown, after: unknown) =>
   JSON.stringify(before) !== JSON.stringify(after);
+
+export function spendListConflict(before: unknown, edited: unknown, latest: unknown): boolean {
+  const base = spendBudget(before),
+    draft = spendBudget(edited),
+    current = spendBudget(latest);
+  if (!base || !draft || !current) return false;
+  return (['owners', 'request_models'] as const).some(
+    (key) =>
+      budgetChanged(base[key], draft[key]) &&
+      budgetChanged(base[key], current[key]) &&
+      budgetChanged(draft[key], current[key]),
+  );
+}
 
 export function reviewSpendBudget(before: unknown, edited: unknown, latest: unknown): unknown {
   if (!budgetChanged(before, edited)) return latest;
@@ -129,6 +159,10 @@ export function reviewSpendBudget(before: unknown, edited: unknown, latest: unkn
   }
   return {
     ...current,
+    owners: budgetChanged(base.owners, draft.owners) ? draft.owners : current.owners,
+    ...(budgetChanged(base.request_models, draft.request_models)
+      ? { request_models: draft.request_models }
+      : {}),
     enabled: base.enabled === draft.enabled ? current.enabled : draft.enabled,
     platform: policy(base.platform, draft.platform, current.platform),
     default_policy: policy(base.default_policy, draft.default_policy, current.default_policy),
