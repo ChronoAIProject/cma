@@ -13,6 +13,7 @@ use super::agent_log_telemetry::ScanCaller;
 use super::sandbox_mongo::{signed, MongoSandboxStore};
 
 pub(super) mod integrity;
+mod segmented;
 use integrity::{LogReadIntegrity, PreparedIntegrity, ReadHead};
 
 #[derive(Clone, Copy)]
@@ -109,38 +110,8 @@ pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
     };
     let entries = if let Some(segmented) = &head.segmented {
         let (after, through) = window.bounds(head.last_seq)?;
-        let mut entries = Vec::new();
-        // A segmented history has per-segment integrity bounds. Walk those
-        // pages independently so a compatibility complete read remains
-        // available for valid histories larger than the legacy 10,128-row /
-        // 4 MiB physical scan budget.
-        let mut page_after = after.min(head.last_seq);
-        while page_after < through.min(head.last_seq) {
-            let page_through = page_after
-                .saturating_add(super::agent_log_segment_reads::PAGE_SIZE)
-                .min(through.min(head.last_seq));
-            super::agent_log_segments::visit_range(
-                store,
-                segmented,
-                super::agent_log_segments::LogRange {
-                    after: page_after,
-                    through: page_through,
-                    limit: u16::try_from(page_through - page_after)
-                        .map_err(|_| SandboxStoreError::InvalidPage)?,
-                },
-                &mut session,
-                true,
-                |entry| {
-                    head.validate_lineage(&entry)?;
-                    entries.push(entry);
-                    Ok(())
-                },
-            )
-            .await
-            .map_err(transaction_error)?;
-            page_after = page_through;
-        }
-        entries
+        segmented::read_compatibility_window(store, &head, segmented, after, through, &mut session)
+            .await?
     } else if head.trusted {
         let (after, through) = window.bounds(head.last_seq)?;
         let entries = read_bounded(
