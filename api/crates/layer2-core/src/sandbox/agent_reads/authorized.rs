@@ -119,6 +119,14 @@ impl AgentReadService {
     }
 
     async fn read_transcript(&self, agent: &Agent) -> Result<AgentTranscript, AgentReadError> {
+        if let Some(transcript) = self
+            .store
+            .agent_log_transcript_projection(agent)
+            .await
+            .map_err(super::store_error)?
+        {
+            return Ok(transcript);
+        }
         let (entries, bounded) = match self.store.agent_log_transcript(agent).await {
             Ok(Some(entries)) => (entries, true),
             Ok(None) => (self.complete_log(agent).await?, false),
@@ -140,6 +148,14 @@ impl AgentReadService {
         &self,
         agent: &Agent,
     ) -> Result<AgentUsageReading, AgentReadError> {
+        if let Some(reading) = self
+            .store
+            .agent_log_usage_projection(agent)
+            .await
+            .map_err(super::store_error)?
+        {
+            return Ok(reading);
+        }
         if let Some(entries) = self
             .store
             .agent_log_usage(agent)

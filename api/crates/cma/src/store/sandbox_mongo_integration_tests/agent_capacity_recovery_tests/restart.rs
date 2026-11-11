@@ -39,12 +39,12 @@ impl CapacityRecoveryRuntime for Native {
         let key = work.request.key()?;
         Ok(CompletedAttachment::Reattached {
             attachment: (key.clone(), activation.writer_fence()),
-            confirmation: RecoveryConfirmation {
+            confirmation: Box::new(RecoveryConfirmation {
                 operation_key: key,
                 target: work.target.clone(),
                 authority_fence: activation.writer_fence(),
                 native_state: ConfirmedNativeState::Idle,
-            },
+            }),
         })
     }
     async fn acknowledge(
