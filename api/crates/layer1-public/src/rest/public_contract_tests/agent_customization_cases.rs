@@ -98,6 +98,10 @@ impl SandboxCredentialPrerequisite for Connections {
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let mode = name.strip_prefix("agent_customization_")?;
     let mut fixture = agents::fixture().await;
+    fixture.state.agent_operations = fixture
+        .state
+        .agent_operations
+        .with_skill_upgrades_enabled(mode != "upgrade_disabled");
     let agent = agents::seeded_agent(
         "agt_contract",
         if mode == "stopped" {
@@ -131,10 +135,19 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             .agent_operations
             .with_connections(Arc::new(Connections(connection)));
     }
-    let support = Arc::new(RuntimeSupport(mode != "unsupported", mode == "upgrade"));
+    let support = Arc::new(RuntimeSupport(
+        mode != "unsupported",
+        matches!(mode, "upgrade" | "upgrade_disabled"),
+    ));
     if matches!(
         mode,
-        "installed" | "failed" | "upgrade" | "upgraded" | "upgrade_failed"
+        "installed"
+            | "failed"
+            | "upgrade"
+            | "upgraded"
+            | "upgrade_failed"
+            | "upgrade_disabled"
+            | "upgrade_closed"
     ) {
         settle_skill(
             &fixture,
@@ -146,10 +159,10 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             "1.0",
         )
         .await;
-        if matches!(mode, "upgraded" | "upgrade_failed") {
+        if matches!(mode, "upgraded" | "upgrade_failed" | "upgrade_closed") {
             settle_skill(
                 &fixture,
-                if mode == "upgraded" {
+                if matches!(mode, "upgraded" | "upgrade_closed") {
                     "installed"
                 } else {
                     "failed"
@@ -158,6 +171,12 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             )
             .await;
         }
+    }
+    if mode == "upgrade_closed" {
+        fixture.state.agent_operations = fixture
+            .state
+            .agent_operations
+            .with_skill_upgrades_enabled(false);
     }
     let models = agent_models_router(
         fixture.state.reads.clone(),

@@ -99,7 +99,8 @@ async fn ten_idle_upgrades_of_profile_and_live_skills_preserve_conversation_and_
             Authorization::new([Capability::UseOwnSandboxes]),
         );
         let operations =
-            AgentOperationService::new(harness.store.clone(), harness.registry.clone());
+            AgentOperationService::new(harness.store.clone(), harness.registry.clone())
+                .with_skill_upgrades_enabled(true);
         if !profile {
             operations
                 .install_skill(&caller, &ready.id, reference("1.0"))
@@ -190,7 +191,8 @@ async fn rejected_upgrade_retains_effective_previous_and_all_failure_evidence() 
         ready.owner.clone(),
         Authorization::new([Capability::UseOwnSandboxes]),
     );
-    let operations = AgentOperationService::new(harness.store.clone(), harness.registry.clone());
+    let operations = AgentOperationService::new(harness.store.clone(), harness.registry.clone())
+        .with_skill_upgrades_enabled(true);
     operations
         .install_skill(&caller, &ready.id, reference("1.1"))
         .await
@@ -238,6 +240,7 @@ async fn worker_restart_after_material_pin_before_runtime_mutation_uses_no_catal
         Authorization::new([Capability::UseOwnSandboxes]),
     );
     AgentOperationService::new(harness.store.clone(), harness.registry.clone())
+        .with_skill_upgrades_enabled(true)
         .install_skill(&caller, &ready.id, reference("1.1"))
         .await
         .unwrap();

@@ -1722,6 +1722,69 @@
         "bodyKind": "json"
       },
       "captures": {}
+    },
+    {
+      "id": "agent-skills-upgrade-gate-closed",
+      "operation": "POST /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_upgrade_disabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-skills-install-version-upgrade-unsupported"
+        },
+        "body": {
+          "id": "research",
+          "version": "1.1"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-skill-upgrade-disabled",
+          "title": "agent skill upgrade disabled",
+          "status": 409,
+          "detail": "New skill upgrades are not enabled. No upgrade was admitted. After upgrades are enabled, make a new attempt with a new Idempotency-Key.",
+          "code": "agent_skill_upgrade_disabled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-skills-upgrade-read-after-closure",
+      "operation": "GET /api/v1/agents/{id}/skills",
+      "scenario": "agent_customization_upgrade_closed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "version": "1.1",
+              "source": "ornn",
+              "status": "installed"
+            }
+          ],
+          "pending": false,
+          "can_install": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
     }
   ]
 }
