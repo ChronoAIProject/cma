@@ -8,7 +8,7 @@ use layer2_core::{
     sandbox::{
         agent_capacity_recovery::{
             activation::RecoveryActivation,
-            ports::{CapacityRecoveryRuntime, RecoveryError},
+            ports::{CapacityRecoveryRuntime, CompletedAttachment, RecoveryError},
             state::{
                 ConfirmedNativeState, RecoveryClaim, RecoveryConfirmation, RecoveryPhase,
                 RecoveryWork,
@@ -79,7 +79,7 @@ impl CapacityRecoveryRuntime for RestrictedRecoveryRuntime {
     async fn reattach_completed(
         &self,
         activation: &RecoveryActivation,
-    ) -> Result<(Self::Attachment, RecoveryConfirmation), RecoveryError> {
+    ) -> Result<CompletedAttachment<Self::Attachment>, RecoveryError> {
         let attached = self
             .connect(
                 activation.completed(),
@@ -88,7 +88,10 @@ impl CapacityRecoveryRuntime for RestrictedRecoveryRuntime {
             )
             .await?;
         activation.require_confirmation(&attached.1)?;
-        Ok(attached)
+        Ok(CompletedAttachment::Reattached {
+            attachment: attached.0,
+            confirmation: attached.1,
+        })
     }
 
     async fn acknowledge(

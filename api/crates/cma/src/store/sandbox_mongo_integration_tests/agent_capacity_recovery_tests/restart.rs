@@ -4,7 +4,9 @@ use super::*;
 use crate::store::agent_capacity_recovery::{records, RecoveryService};
 use layer2_core::sandbox::agent_capacity_recovery::{
     activation::RecoveryActivation,
-    ports::{CapacityRecoveryRuntime, ClaimOutcome, CommitOutcome, RecoveryError},
+    ports::{
+        CapacityRecoveryRuntime, ClaimOutcome, CommitOutcome, CompletedAttachment, RecoveryError,
+    },
     service::CapacityRecoveryFeatures,
     state::{
         ConfirmedNativeState, RecoveryClaim, RecoveryConfirmation, RecoveryRequest, RecoveryWork,
@@ -31,19 +33,19 @@ impl CapacityRecoveryRuntime for Native {
     async fn reattach_completed(
         &self,
         activation: &RecoveryActivation,
-    ) -> Result<(Self::Attachment, RecoveryConfirmation), RecoveryError> {
+    ) -> Result<CompletedAttachment<Self::Attachment>, RecoveryError> {
         self.attaches.fetch_add(1, Ordering::SeqCst);
         let work = activation.completed();
         let key = work.request.key()?;
-        Ok((
-            (key.clone(), activation.writer_fence()),
-            RecoveryConfirmation {
+        Ok(CompletedAttachment::Reattached {
+            attachment: (key.clone(), activation.writer_fence()),
+            confirmation: RecoveryConfirmation {
                 operation_key: key,
                 target: work.target.clone(),
                 authority_fence: activation.writer_fence(),
                 native_state: ConfirmedNativeState::Idle,
             },
-        ))
+        })
     }
     async fn acknowledge(
         &self,
