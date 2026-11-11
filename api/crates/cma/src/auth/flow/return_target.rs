@@ -1,13 +1,33 @@
 //! The CMA workflow paths a sign-in may return to.
 
 pub(super) fn app_return_target(value: &str) -> Result<String, ()> {
-    if value == "/" {
-        return Ok(value.to_owned());
-    }
-    if value.len() > 256 || value.contains(['?', '#', '\\', '%']) {
+    let (path, query) = value
+        .split_once('?')
+        .map_or((value, None), |(path, query)| (path, Some(query)));
+    if value.len() > 25064
+        || value.contains(['#', '\\'])
+        || value.bytes().any(|b| b.is_ascii_control() || b == b' ')
+    {
         return Err(());
     }
-    let segments = value
+    if let Some(query) = query {
+        let mut keys = std::collections::HashSet::new();
+        for (key, _) in url::form_urlencoded::parse(query.as_bytes()) {
+            if !keys.insert(key.clone())
+                || !((path == "/bots/new" && key == "setup")
+                    || (path.starts_with("/sandboxes/") && key == "tab"))
+            {
+                return Err(());
+            }
+        }
+    }
+    if path == "/" {
+        return Ok(value.to_owned());
+    }
+    if path.len() > 256 || path.contains('%') {
+        return Err(());
+    }
+    let segments = path
         .strip_prefix('/')
         .ok_or(())?
         .split('/')
@@ -44,4 +64,31 @@ pub(super) fn opaque_path_segment(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn preserves_only_bounded_ui_query_state_without_changing_path_authority() {
+        for target in [
+            "/sandboxes/sbx_1?tab=access",
+            "/bots/new?setup=%7B%22name%22%3A%22draft%22%7D",
+        ] {
+            assert_eq!(app_return_target(target).unwrap(), target);
+        }
+        for target in [
+            "/sandboxes/sbx_1?tab=access&tab=activity",
+            "/bots/new?setup=a&next=%2F%2Fevil.test",
+            "/bots/new?token=authority",
+            "/bots/new#token=authority",
+            "/bots/new\r\nLocation: https://evil.test",
+            "/sandboxes/../?tab=access",
+            "//evil.test?tab=access",
+            "/%2Fexample?tab=access",
+        ] {
+            assert!(app_return_target(target).is_err(), "{target}");
+        }
+        assert!(app_return_target(&format!("/bots/new?setup={}", "a".repeat(25065))).is_err());
+    }
 }

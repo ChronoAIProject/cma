@@ -11,7 +11,7 @@ use axum::{
 use layer1_public::AuthenticatedCaller;
 use layer2_core::{Authorization, Capability};
 
-use super::{entitlements, profile::Profile, AuthState, AUTH_COOKIE};
+use super::{entitlements, profile::Profile, AuthState, AUTH_COOKIE, SIGNED_OUT_COOKIE};
 
 pub(super) async fn read(
     State(auth): State<Arc<AuthState>>,
@@ -72,31 +72,65 @@ fn is_visitor(authorization: &Authorization) -> bool {
 
 pub(super) async fn logout(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {
     auth.identity_store.clear();
-    if let Some(value) = request_cookie(&headers, AUTH_COOKIE) {
-        if let Err(error) = auth.revoke_browser_login(value).await {
-            tracing::error!(error = %error, "could not revoke browser authentication");
-            return super::middleware::store_failure();
+    // Every pending callback carries its binding cookie even after consuming
+    // its one-use state. Revoking the same custody row fences session issuance.
+    let mut failed = std::collections::HashSet::new();
+    for (name, value) in request_cookies(&headers) {
+        if name == AUTH_COOKIE || name.starts_with(super::flow::BINDING_COOKIE_PREFIX) {
+            if let Err(error) = auth.revoke_browser_login(value).await {
+                tracing::error!(error = %error, "could not revoke browser authentication");
+                failed.insert(name);
+            }
         }
     }
-    let mut response = StatusCode::SEE_OTHER.into_response();
-    response.headers_mut().insert(
+    let mut response = if !failed.is_empty() {
+        super::middleware::store_failure()
+    } else {
+        StatusCode::SEE_OTHER.into_response()
+    };
+    if !failed.contains(AUTH_COOKIE) {
+        response.headers_mut().insert(
+            header::SET_COOKIE,
+            expired_cookie(AUTH_COOKIE, auth.secure_cookies()),
+        );
+    }
+    response.headers_mut().append(
         header::SET_COOKIE,
-        expired_cookie(AUTH_COOKIE, auth.secure_cookies()),
+        issued_cookie(
+            SIGNED_OUT_COOKIE,
+            "1",
+            auth.secure_cookies(),
+            30 * 24 * 60 * 60,
+        ),
     );
-    response
-        .headers_mut()
-        .insert(header::LOCATION, HeaderValue::from_static("/"));
+    for (name, _) in request_cookies(&headers) {
+        if name.starts_with(super::flow::BINDING_COOKIE_PREFIX) && !failed.contains(name) {
+            response.headers_mut().append(
+                header::SET_COOKIE,
+                expired_cookie(name, auth.secure_cookies()),
+            );
+        }
+    }
+    if failed.is_empty() {
+        response
+            .headers_mut()
+            .insert(header::LOCATION, HeaderValue::from_static("/"));
+    }
     response
 }
 
 pub(super) fn request_cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    request_cookies(headers).find_map(|(candidate, value)| (candidate == name).then_some(value))
+}
+
+fn request_cookies(headers: &HeaderMap) -> impl Iterator<Item = (&str, &str)> {
     headers
-        .get(header::COOKIE)?
-        .to_str()
-        .ok()?
-        .split(';')
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
         .filter_map(|part| part.trim().split_once('='))
-        .find_map(|(candidate, value)| (candidate == name && !value.is_empty()).then_some(value))
+        .filter(|(_, value)| !value.is_empty())
 }
 
 pub(super) fn issued_cookie(name: &str, value: &str, secure: bool, max_age: u64) -> HeaderValue {

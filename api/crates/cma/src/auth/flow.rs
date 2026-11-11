@@ -19,13 +19,15 @@ use sha2::{Digest as _, Sha256};
 use super::{
     identity,
     middleware::store_failure,
-    persistence::{DurableSubjectTokens, LoginAttempt, SecretDigest, SecretValue},
+    persistence::{BrowserLogin, DurableSubjectTokens, LoginAttempt, SecretDigest, SecretValue},
     session_routes::{issued_cookie, logout, read, request_cookie, urlencode},
     signup_options::signup_options,
     token::random_token,
-    AuthMode, AuthState, AUTH_COOKIE, AUTH_COOKIE_LIFETIME,
+    AuthMode, AuthState, AUTH_COOKIE, AUTH_COOKIE_DOMAIN, AUTH_COOKIE_LIFETIME,
 };
 
+mod callback;
+use callback::callback;
 mod return_target;
 mod silent;
 
@@ -34,7 +36,7 @@ use silent::LoginPrompt;
 
 const ATTEMPT_DOMAIN: &str = "oidc-login-attempt";
 const BINDING_DOMAIN: &str = "oidc-browser-binding";
-const BINDING_COOKIE_PREFIX: &str = "cma_login_";
+pub(super) const BINDING_COOKIE_PREFIX: &str = "cma_login_";
 const ATTEMPT_LIFETIME: Duration = Duration::from_secs(10 * 60);
 const DEFAULT_ACCESS_TOKEN_LIFETIME: Duration = Duration::from_secs(15 * 60);
 const MAX_ACCESS_TOKEN_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
@@ -88,6 +90,16 @@ pub fn router(auth: Arc<AuthState>) -> Router {
         .route("/auth/logout", get(logout))
         .merge(super::actor_links::routes())
         .with_state(auth)
+        .layer(axum::middleware::map_response(
+            |mut response: Response| async move {
+                if !response.headers().contains_key(header::CACHE_CONTROL) {
+                    response
+                        .headers_mut()
+                        .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+                }
+                response
+            },
+        ))
 }
 
 /// Reuse the established browser-bound PKCE flow for an opaque actor-link intent.
@@ -105,6 +117,7 @@ pub(super) async fn actor_login(auth: Arc<AuthState>, link_id: &str) -> Response
         None,
         intent,
         false,
+        None,
     )
     .await
 }
@@ -142,6 +155,14 @@ async fn login(
             return refusal;
         }
     }
+    if silent
+        && (headers
+            .get("sec-fetch-site")
+            .is_some_and(|site| site != "same-origin" && site != "none")
+            || (headers.contains_key(header::ORIGIN) && !auth.permits_browser_origin(&headers)))
+    {
+        return Redirect::to(return_to.as_deref().unwrap_or("/")).into_response();
+    }
     begin_login(auth, return_to, params.screen, silent).await
 }
 
@@ -151,7 +172,7 @@ async fn begin_login(
     screen: Option<LoginScreen>,
     silent: bool,
 ) -> Response {
-    begin_login_with_intent(auth, return_to, screen, None, silent).await
+    begin_login_with_intent(auth, return_to, screen, None, silent, None).await
 }
 
 async fn begin_login_with_intent(
@@ -160,6 +181,7 @@ async fn begin_login_with_intent(
     screen: Option<LoginScreen>,
     actor_link_intent: Option<super::actor_links::ActorLoginIntent>,
     silent: bool,
+    continuation_binding: Option<&str>,
 ) -> Response {
     let AuthMode::Provider {
         client_id,
@@ -171,32 +193,64 @@ async fn begin_login_with_intent(
     };
     let metadata = match auth.metadata().await {
         Ok(metadata) => metadata,
-        Err(error) => return provider_failure("identity_discovery_failed", error),
+        Err(error) => {
+            return silent::fallback(
+                silent,
+                return_to.as_deref(),
+                provider_failure("identity_discovery_failed", error),
+            )
+        }
     };
     let verifier = random_token();
-    let state = random_token();
-    let browser_binding = random_token();
+    // Presentation marker only; state and binding validation still decide authority.
+    let state = if silent {
+        format!("s.{}", random_token())
+    } else {
+        random_token()
+    };
+    let browser_binding = continuation_binding
+        .map(str::to_owned)
+        .unwrap_or_else(random_token);
+    let expires_at = SystemTime::now() + ATTEMPT_LIFETIME;
+    if continuation_binding.is_none() {
+        if let Err(error) = auth
+            .store
+            .reserve_browser_login(
+                SecretDigest::identify(AUTH_COOKIE_DOMAIN, &browser_binding),
+                expires_at,
+            )
+            .await
+        {
+            tracing::error!(error = %error, "could not reserve browser login");
+            return silent::fallback(silent, return_to.as_deref(), store_failure());
+        }
+    }
     let cookie_name = binding_cookie_name(&state);
     let attempt = LoginAttempt {
         id: SecretDigest::identify(ATTEMPT_DOMAIN, &state),
         browser_binding: SecretDigest::identify(BINDING_DOMAIN, &browser_binding),
         verifier: SecretValue::new(verifier.clone()),
-        return_to,
+        return_to: return_to.clone(),
         actor_link_intent,
         silent,
-        expires_at: SystemTime::now() + ATTEMPT_LIFETIME,
+        consent_requested: continuation_binding.is_some(),
+        expires_at,
     };
     if let Err(error) = auth.store.put_login_attempt(attempt).await {
         tracing::error!(error = %error, "could not persist login attempt");
-        return store_failure();
+        return silent::fallback(silent, return_to.as_deref(), store_failure());
     }
     let redirect_uri = format!("{}/auth/callback", public_url.trim_end_matches('/'));
     let mut authorization_url = match reqwest::Url::parse(&metadata.authorization_endpoint) {
         Ok(url) if matches!(url.scheme(), "http" | "https") => url,
         _ => {
-            return provider_failure(
-                "identity_discovery_failed",
-                "invalid authorization endpoint",
+            return silent::fallback(
+                silent,
+                return_to.as_deref(),
+                provider_failure(
+                    "identity_discovery_failed",
+                    "invalid authorization endpoint",
+                ),
             )
         }
     };
@@ -209,7 +263,7 @@ async fn begin_login_with_intent(
         ("code_challenge", &code_challenge(&verifier)),
         ("code_challenge_method", "S256"),
     ]);
-    if silent {
+    if silent && continuation_binding.is_none() {
         authorization_url
             .query_pairs_mut()
             .append_pair("prompt", "none");
@@ -232,190 +286,6 @@ async fn begin_login_with_intent(
             ATTEMPT_LIFETIME.as_secs(),
         ),
     );
-    response
-}
-
-async fn callback(
-    State(auth): State<Arc<AuthState>>,
-    Query(params): Query<CallbackParams>,
-    headers: HeaderMap,
-) -> Response {
-    let AuthMode::Provider {
-        client_id,
-        client_secret,
-        public_url,
-        ..
-    } = &auth.mode
-    else {
-        return Redirect::to("/").into_response();
-    };
-    let Some(state) = params.state.as_deref() else {
-        return login_failure(StatusCode::BAD_REQUEST, "login_state_missing", None);
-    };
-    let cookie_name = binding_cookie_name(state);
-    let Some(binding) = request_cookie(&headers, &cookie_name) else {
-        return login_failure(
-            StatusCode::BAD_REQUEST,
-            "login_browser_binding_missing",
-            Some((&cookie_name, auth.secure_cookies())),
-        );
-    };
-    let attempt = match auth
-        .store
-        .take_login_attempt(
-            &SecretDigest::identify(ATTEMPT_DOMAIN, state),
-            &SecretDigest::identify(BINDING_DOMAIN, binding),
-        )
-        .await
-    {
-        Ok(Some(attempt)) => attempt,
-        Ok(None) => {
-            return login_failure(
-                StatusCode::BAD_REQUEST,
-                "login_state_invalid",
-                Some((&cookie_name, auth.secure_cookies())),
-            )
-        }
-        Err(error) => {
-            tracing::error!(error = %error, "could not consume login attempt");
-            return store_failure();
-        }
-    };
-    if attempt.expires_at <= SystemTime::now() {
-        return login_failure(
-            StatusCode::BAD_REQUEST,
-            "login_state_expired",
-            Some((&cookie_name, auth.secure_cookies())),
-        );
-    }
-    if attempt.silent {
-        if let Some(response) = silent::declined_callback(
-            &auth,
-            &attempt,
-            params.error.as_deref(),
-            &headers,
-            &cookie_name,
-        )
-        .await
-        {
-            return response;
-        }
-    }
-    if params.error.is_some() {
-        return login_failure(
-            StatusCode::UNAUTHORIZED,
-            "login_cancelled",
-            Some((&cookie_name, auth.secure_cookies())),
-        );
-    }
-    let Some(code) = params
-        .code
-        .as_deref()
-        .filter(|code| !code.trim().is_empty())
-    else {
-        return login_failure(
-            StatusCode::BAD_REQUEST,
-            "login_code_missing",
-            Some((&cookie_name, auth.secure_cookies())),
-        );
-    };
-    let metadata = match auth.metadata().await {
-        Ok(metadata) => metadata,
-        Err(error) => return provider_failure("identity_discovery_failed", error),
-    };
-    let redirect_uri = format!("{}/auth/callback", public_url.trim_end_matches('/'));
-    let response = match auth
-        .http
-        .post(&metadata.token_endpoint)
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", redirect_uri.as_str()),
-            ("client_id", client_id.as_str()),
-            ("client_secret", client_secret.as_str()),
-            ("code_verifier", attempt.verifier.expose()),
-        ])
-        .send()
-        .await
-    {
-        Ok(response) => response,
-        Err(error) => return provider_failure("identity_token_exchange_failed", error.to_string()),
-    };
-    if !response.status().is_success() {
-        return provider_failure(
-            "identity_token_exchange_failed",
-            format!(
-                "identity token endpoint returned HTTP {}",
-                response.status().as_u16()
-            ),
-        );
-    }
-    let token = match response.json::<TokenResponse>().await {
-        Ok(token) if !token.access_token.trim().is_empty() => token,
-        _ => return provider_failure("identity_token_exchange_failed", "invalid token response"),
-    };
-    let lifetime = Duration::from_secs(
-        token
-            .expires_in
-            .unwrap_or(DEFAULT_ACCESS_TOKEN_LIFETIME.as_secs()),
-    )
-    .min(MAX_ACCESS_TOKEN_LIFETIME);
-    let (subject, permission_names, profile) =
-        match identity::resolve_subject(&auth, &metadata, &token.access_token).await {
-            Ok(identity) => identity,
-            Err(error) => return provider_failure("identity_resolution_failed", error),
-        };
-    let authorization = crate::permissions::capabilities_from_permissions(permission_names);
-    if let Err(error) = auth
-        .store_sign_in(
-            subject.clone(),
-            DurableSubjectTokens {
-                access_token: SecretValue::new(token.access_token),
-                refresh_token: token.refresh_token.map(SecretValue::new),
-                expires_at: SystemTime::now() + lifetime,
-            },
-            authorization,
-            profile.clone(),
-        )
-        .await
-    {
-        tracing::error!(error = %error, "could not persist signed-in subject");
-        return store_failure();
-    }
-    auth.note_sign_in(&subject, &profile).await;
-    let browser_login = match auth.issue_browser_login(subject.clone()).await {
-        Ok(value) => value,
-        Err(error) => {
-            tracing::error!(error = %error, "could not persist browser login");
-            return store_failure();
-        }
-    };
-    if auth
-        .retain_actor_login_completion(&attempt, &browser_login, &subject)
-        .await
-        .is_err()
-    {
-        return login_failure(
-            StatusCode::FORBIDDEN,
-            "actor_login_intent_expired",
-            Some((&cookie_name, auth.secure_cookies())),
-        );
-    }
-    let mut response = Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response();
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        issued_cookie(&cookie_name, "", auth.secure_cookies(), 0),
-    );
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        issued_cookie(
-            AUTH_COOKIE,
-            &browser_login,
-            auth.secure_cookies(),
-            AUTH_COOKIE_LIFETIME.as_secs(),
-        ),
-    );
-    silent::clear_signed_out(&mut response, &headers, auth.secure_cookies());
     response
 }
 
@@ -471,3 +341,7 @@ mod tests;
 #[cfg(test)]
 #[path = "flow_registration_tests.rs"]
 mod registration_tests;
+
+#[cfg(test)]
+#[path = "flow_golive_tests.rs"]
+mod golive_tests;

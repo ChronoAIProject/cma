@@ -24,6 +24,7 @@ async fn login_attempts_are_binding_checked_and_single_use() {
             return_to: None,
             actor_link_intent: None,
             silent: false,
+            consent_requested: false,
             expires_at: SystemTime::now() + Duration::from_secs(60),
         })
         .await

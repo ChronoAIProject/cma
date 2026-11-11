@@ -1,6 +1,6 @@
 //! Encrypted MongoDB persistence for browser/OIDC authentication authority.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use layer2_core::{Authorization, StoreError, SubjectId};
 use mongodb::{
@@ -46,6 +46,8 @@ const SUBJECT_KIND: &str = "subject-auth";
 mod actor_links;
 #[path = "auth_api_bearers.rs"]
 mod api_bearers;
+#[path = "auth_browser_logins.rs"]
+mod browser_logins;
 #[path = "auth_login_documents.rs"]
 mod login_documents;
 #[path = "auth_proxy_grants.rs"]
@@ -56,7 +58,8 @@ struct BrowserLoginDoc {
     #[serde(rename = "_id")]
     id: Binary,
     document_schema_version: i64,
-    subject: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    subject: Option<String>,
     expires_at: DateTime,
 }
 
@@ -73,6 +76,8 @@ struct LoginAttemptDoc {
     actor_link_intent: Option<CipherEnvelope>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     silent: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    consent_requested: bool,
     expires_at: DateTime,
 }
 
@@ -352,47 +357,25 @@ impl AuthStore for MongoAuthStore {
             .transpose()
     }
 
+    async fn reserve_browser_login(
+        &self,
+        id: SecretDigest,
+        expires_at: SystemTime,
+    ) -> Result<(), StoreError> {
+        self.reserve_browser_login_record(id, expires_at).await
+    }
+    async fn complete_browser_login(&self, login: BrowserLogin) -> Result<bool, StoreError> {
+        self.complete_browser_login_record(login).await
+    }
+    #[cfg(test)]
     async fn put_browser_login(&self, login: BrowserLogin) -> Result<(), StoreError> {
-        let id = binary(*login.id.as_bytes());
-        self.browser_logins
-            .replace_one(
-                doc! {
-                    "_id": &id,
-                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                },
-                Self::browser_login_to_doc(login),
-            )
-            .upsert(true)
-            .await
-            .map_err(|error| StoreError::Unavailable(format!("store browser login: {error}")))?;
-        Ok(())
+        self.put_browser_login_record(login).await
     }
-
     async fn browser_login(&self, id: &SecretDigest) -> Result<Option<BrowserLogin>, StoreError> {
-        self.browser_logins
-            .find_one(doc! { "_id": binary(*id.as_bytes()) })
-            .await
-            .map_err(|error| StoreError::Unavailable(format!("read browser login: {error}")))?
-            .map(|document| {
-                schema::require_current(document.document_schema_version)?;
-                Ok(BrowserLogin {
-                    id: digest(&document.id, "browser login")?,
-                    subject: SubjectId::new(document.subject),
-                    expires_at: document.expires_at.to_system_time(),
-                })
-            })
-            .transpose()
+        self.browser_login_record(id).await
     }
-
     async fn delete_browser_login(&self, id: &SecretDigest) -> Result<(), StoreError> {
-        self.browser_logins
-            .delete_one(doc! {
-                "_id": binary(*id.as_bytes()),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-            })
-            .await
-            .map_err(|error| StoreError::Unavailable(format!("delete browser login: {error}")))?;
-        Ok(())
+        self.delete_browser_login_record(id).await
     }
 
     async fn insert_subject(&self, state: SubjectAuthState) -> Result<bool, StoreError> {
