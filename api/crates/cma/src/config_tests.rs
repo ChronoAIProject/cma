@@ -396,6 +396,7 @@ fn interface_feature_flags_are_strict_independent_booleans() {
     assert!(!config.features.trigger_command_admission);
     assert!(!config.features.nyxid_resource_request);
     assert!(!config.features.document_revocation_reserve);
+    assert!(!config.features.event_driven_reconciliation);
     for key in [
         "CHRONO_RETAINED_REOPEN_ENABLED",
         "CHRONO_MODEL_BUDGET_WRITES_ENABLED",
@@ -404,6 +405,7 @@ fn interface_feature_flags_are_strict_independent_booleans() {
         "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
         "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED",
         "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
+        "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
     ] {
         let config = configured(&[(key, "true")]).unwrap();
         assert_eq!(config.features.retained_reopen_enabled, key == "CHRONO_RETAINED_REOPEN_ENABLED");
@@ -439,6 +441,10 @@ fn interface_feature_flags_are_strict_independent_booleans() {
         assert_eq!(
             config.features.document_revocation_reserve,
             key == "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED"
+        );
+        assert_eq!(
+            config.features.event_driven_reconciliation,
+            key == "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED"
         );
         assert!(!configured(&[(key, "false")]).unwrap().features.document_revocation_reserve);
         assert_eq!(
