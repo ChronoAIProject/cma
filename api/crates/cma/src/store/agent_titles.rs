@@ -11,8 +11,7 @@ use layer2_core::sandbox::{
 use mongodb::bson::{doc, Document, Timestamp};
 use mongodb::options::ReadConcern;
 
-use super::agent_log::scan_complete_log_with_snapshot_session;
-use super::agent_log_integrity::TransactionLogError;
+use super::agent_log_integrity::{read::read_proven_agent, scan_collection, TransactionLogError};
 use super::agent_title_claims::acquire_claim;
 use super::agent_title_state::read_title_state;
 use super::agent_title_writes::{complete_title, set_user_title};
@@ -170,14 +169,41 @@ pub(super) async fn transcript_at_snapshot(
     if let Some(transcript) = bounded::read(store, agent, session).await? {
         return Ok(Some(transcript));
     }
+    // Complete fallback is still a reader. Validate shared proof without the
+    // explicit audit wrapper, whose corruption path persists quarantine.
+    let (proven, _) = read_proven_agent(store, &agent.id, session)
+        .await
+        .map_err(map_store_error)?
+        .ok_or(AgentTitleStoreError::NotFound)?;
+    if &proven != agent {
+        return Err(AgentTitleStoreError::SequenceConflict);
+    }
     let mut logs = Vec::new();
-    scan_complete_log_with_snapshot_session(
+    scan_collection(
         ScanCaller::TitleDiscovery,
-        store,
+        &store.agent_log,
         &agent.id,
         agent.conversation.last_seq,
         session,
+        true,
         |entry| {
+            if entry.agent_id != agent.id {
+                return Err(SandboxStoreError::SequenceConflict);
+            }
+            if let layer2_core::sandbox::AgentLogKind::Created {
+                workspace_id,
+                worktree_id,
+            } = &entry.kind
+            {
+                if entry.seq != 1
+                    || workspace_id != &agent.workspace_id
+                    || worktree_id != agent.creation_worktree_id()
+                {
+                    return Err(SandboxStoreError::Corrupt(
+                        "Agent creation log lineage does not match".into(),
+                    ));
+                }
+            }
             logs.push(entry);
             Ok(())
         },

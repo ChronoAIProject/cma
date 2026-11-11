@@ -28,9 +28,11 @@ Agents outside the cohort take the original path without an extra proof read.
 
 Missing, stale or unsupported metadata falls back to complete validation.
 Corrupt, ahead-of-head or quarantined proof, invalid requested rows and missing
-tail evidence refuse the read. Successful bounded reads perform no writes,
-preparation, repair, audit or transaction lifecycle operations. The existing
-complete scanner retains its audit/quarantine behavior. As with the shared
+tail evidence refuse the read. Both bounded and complete reads perform no writes,
+preparation, repair, audit or transaction lifecycle operations. Complete fallback
+uses the shared read-only proof and plain complete traversal, preserving structural,
+physical-capacity and creation-lineage validation. Existing quarantine is honored;
+only explicit audits and writers may persist a new quarantine marker. As with the shared
 public-window proof, immutable rows outside the requested prefix and validated
 tail depend on the provider's writer/audit contract; this is not a fresh lifetime
 scrub on every read.
@@ -109,8 +111,11 @@ CPU/decoded-byte improvements and checkout improvements are separate outcomes.
 These fixtures do not establish fleet savings or a production latency forecast.
 
 Validation: formatting, cma tests/all-features clippy, 26 existing title-domain
-tests, the strict switch parser test and 14 real-Mongo title contracts passed.
-The Mongo contracts include seven new bounded-consumer tests, existing claim and
-unknown-commit cases, and task-title authorization/setup recovery. The owned
-disposable replica and volume were removed. Manifest parsing/default, configuration
-documentation, source-size and secret checks also passed; hosted CI is separate.
+tests, the strict switch parser test and the real-Mongo title contracts are required.
+The Mongo contracts include bounded-consumer tests, existing claim and
+unknown-commit cases, and task-title authorization/setup recovery. Corrupt complete
+fallback tests cover missing/stale/unsupported metadata, both disabled gates,
+prefix/byte fallback, lineage, codec, capacity and shared-proof refusal. Both title
+input and candidate reads must leave the Agent document exactly unchanged and emit
+no write/transaction-control command. Executed results are recorded in the PR;
+hosted CI is separate.
