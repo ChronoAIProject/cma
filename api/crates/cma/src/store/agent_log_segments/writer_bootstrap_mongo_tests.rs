@@ -1,6 +1,6 @@
 use super::*;
 use crate::store::agent_log_segments::{
-    publication, writer_admission as admission, writer_bootstrap,
+    projection, publication, writer_admission as admission, writer_bootstrap,
     writer_gate::{self as gate, slots},
 };
 use crate::store::sandbox_mongo::start_transaction;
@@ -19,10 +19,32 @@ async fn legacy_fixture() -> Fixture {
         AgentLogKind::OwnerMessage {
             content: "fixture input".into(),
         },
+        AgentLogKind::ToolCallStarted {
+            call_id: "staged-tool".into(),
+            title: "tool".into(),
+            kind: "execute".into(),
+            status: "running".into(),
+        },
     ];
     kinds.extend((0..65).map(|_| AgentLogKind::AgentMessage {
         content: "fixture output".into(),
     }));
+    kinds.push(AgentLogKind::ToolCallUpdated {
+        call_id: "staged-tool".into(),
+        title: None,
+        status: "completed".into(),
+        output: Some(layer2_core::sandbox::RecordedToolOutput {
+            text: "first".into(),
+            truncated: false,
+        }),
+    });
+    kinds.push(AgentLogKind::ToolOutputReported {
+        call_id: "staged-tool".into(),
+        output: layer2_core::sandbox::RecordedToolOutput {
+            text: "late".into(),
+            truncated: false,
+        },
+    });
     kinds.push(AgentLogKind::TurnCompleted { turn_sequence: 3 });
     let rows = kinds
         .into_iter()
@@ -165,7 +187,33 @@ async fn bootstrap_stages_multiple_fenced_batches_without_exposing_or_rewriting_
         .try_collect()
         .await
         .unwrap();
-    assert_eq!(evidence.len(), 67);
+    assert_eq!(evidence.len(), 136);
+    let changes = evidence
+        .iter()
+        .filter(|row| row.get_str("kind").unwrap() == "output_change")
+        .collect::<Vec<_>>();
+    assert_eq!(changes.len(), 67);
+    let terminal = changes
+        .iter()
+        .find(|row| row.get_i64("change_ordinal").unwrap() == 66)
+        .unwrap();
+    let change: projection::Evidence =
+        bson::deserialize_from_document((**terminal).clone()).unwrap();
+    let projection::EvidenceRecord::OutputChange { change } = change.record else {
+        panic!("output change")
+    };
+    assert_eq!(change.tool.unwrap().output_sequence, Some(71));
+    let tool = evidence
+        .iter()
+        .find(|row| row.get_str("kind").unwrap() == "tool_output")
+        .unwrap();
+    let tool: projection::Evidence = bson::deserialize_from_document(tool.clone()).unwrap();
+    let projection::EvidenceRecord::ToolOutput { tool } = tool.record else {
+        panic!("tool output")
+    };
+    assert_eq!(tool.start_sequence, 5);
+    assert_eq!(tool.terminal_sequence, Some(71));
+    assert_eq!(tool.output_sequence, Some(72));
     let generation = evidence[0].get_str("evidence_generation").unwrap();
     for row in &evidence {
         assert_eq!(row.get_i64("head_revision").unwrap(), 1);
