@@ -74,7 +74,7 @@ pub(in crate::store::sandbox_reconciliation) async fn apply_scoped(
     published.sort_by(|left, right| left.id.cmp(&right.id));
     logs.sort_by(|left, right| (&left.agent_id, left.seq).cmp(&(&right.agent_id, right.seq)));
     persist_sandbox(
-        store, request, &current, last_seq, mutation, published, logs, session,
+        store, request, &current, last_seq, *mutation, published, logs, session,
     )
     .await
 }
