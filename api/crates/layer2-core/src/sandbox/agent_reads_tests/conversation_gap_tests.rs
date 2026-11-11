@@ -302,3 +302,55 @@ async fn zero_and_overflowing_gap_counts_remain_corrupt() {
         ));
     }
 }
+
+#[tokio::test]
+async fn bounded_transcript_projection_matches_the_complete_fold_and_keeps_denials() {
+    let failure = TypedFailure {
+        class: "provider_failure".into(),
+        detail: "provider stopped".into(),
+    };
+    for terminal in [
+        None,
+        Some(AgentLogKind::TurnFailed {
+            turn_sequence: 3,
+            failure: failure.clone(),
+        }),
+        Some(AgentLogKind::TurnInterrupted { turn_sequence: 3 }),
+    ] {
+        let mut kinds = vec![
+            opened(),
+            start(3),
+            AgentLogKind::TurnMetadataSet {
+                turn_sequence: 3,
+                metadata: [("mode".into(), "review".into())].into_iter().collect(),
+            },
+            owner(),
+            answer("partial answer"),
+            AgentLogKind::ConversationGap { frames: 1 },
+        ];
+        if let Some(terminal) = terminal.clone() {
+            kinds.push(terminal);
+        }
+        let active = terminal.is_none().then_some(3);
+        let (store, current) = gap_history(kinds, active).await;
+        let reads = service(store);
+        let complete = reads
+            .transcript(&caller("owner", true), &current.id)
+            .await
+            .unwrap();
+        let bounded = reads
+            .transcript_bounded(&caller("owner", true), &current.id)
+            .await
+            .unwrap();
+        assert_eq!(bounded, complete);
+        assert_eq!(bounded.turns[0].metadata["mode"], "review");
+    }
+
+    let (store, current) = gap_history(vec![opened(), start(3), owner()], Some(3)).await;
+    assert!(matches!(
+        service(store)
+            .transcript_bounded(&caller("owner", false), &current.id)
+            .await,
+        Err(AgentReadError::Unauthorized)
+    ));
+}
