@@ -1,5 +1,5 @@
 //! Synthetic, create-only exact-image/storage qualification. No retained source
-//! is opened, deactivated, restored or admitted by this probe.
+//! is opened or admitted. Only create-only synthetic sources are moved/restored.
 use std::collections::BTreeMap;
 use std::os::unix::fs::DirBuilderExt;
 use std::path::Path;
@@ -78,6 +78,7 @@ async fn qualify(directory: &Path, anchored: bool) -> Result<()> {
             bytes: serde_json::to_vec(&authority).map_err(|_| invalid())?,
         },
     ];
+    let sources = Arc::new(super::probe_sources::Sources::create(directory, &records)?);
     let mut digest = Sha256::new();
     for record in &records {
         record.hash_into(&mut digest);
@@ -117,8 +118,32 @@ async fn qualify(directory: &Path, anchored: bool) -> Result<()> {
     let archive = Archive::open(directory.to_owned(), config, id, false, 256).await?;
     let result = async {
         expect_refused(&archive, &operation).await?;
+        let selected = sources.clone();
         archive
-            .complete(proof.key.clone(), proof.source_sha256.clone())
+            .transfer_group(proof.clone(), Direction::Deactivate, move |record| {
+                selected.transfer(record, false)
+            })
+            .await?;
+        if sources.counts()? != (0, 2) {
+            return Err(invalid());
+        }
+        archive.require_ready().await?;
+        let selected = sources.clone();
+        let restored = archive
+            .transfer_group(proof.clone(), Direction::RestoreHeld, move |record| {
+                selected.transfer(record, true)
+            })
+            .await?;
+        if restored.complete || sources.counts()? != (2, 0) || archive.require_ready().await.is_ok()
+        {
+            return Err(invalid());
+        }
+        expect_refused(&archive, &operation).await?;
+        let selected = sources.clone();
+        archive
+            .transfer_group(proof.clone(), Direction::Deactivate, move |record| {
+                selected.transfer(record, false)
+            })
             .await?;
         let repeated = archive.prepare(proof, |_| Err(invalid())).await?;
         if !repeated.complete || repeated.records != 2 {
