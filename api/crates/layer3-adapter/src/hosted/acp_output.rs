@@ -227,11 +227,14 @@ impl Bridge {
             })?,
             payload_sha256: format!("{:x}", Sha256::digest(&held.payload)),
         };
-        updates.send(ConversationUpdate::RuntimeOutput {
-            receipt: RuntimeOutputReceipt::new(source, state.acknowledgements.clone()),
-            update: update
-                .map(|update| crate::RuntimeOutputUpdate::new(update, self.shared_runtime_output)),
-        }).await;
+        updates
+            .send(ConversationUpdate::RuntimeOutput {
+                receipt: RuntimeOutputReceipt::new(source, state.acknowledgements.clone()),
+                update: update.map(|update| {
+                    crate::RuntimeOutputUpdate::new(update, self.shared_runtime_output)
+                }),
+            })
+            .await;
         Ok(())
     }
 
