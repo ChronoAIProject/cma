@@ -1,5 +1,5 @@
 //! Full event context travels atomically with a turn and is read from its provider.
-use super::{ProviderClient, ProviderError};
+use super::{context_retry, ContextFailure, ProviderClient, ProviderError};
 use cmaeg_core::{
     activity::Activity,
     channel::Secret,
@@ -58,11 +58,36 @@ impl ProviderClient {
         event: &EventId,
         agent_key: &Secret,
     ) -> Result<Option<EventContextSnapshot>, ProviderError> {
+        self.find_event_context_once(provider, binding, conversation, event, agent_key)
+            .await
+            .map_err(|failure| failure.error)
+    }
+
+    pub(crate) async fn find_event_context_with_retry(
+        &self,
+        provider: &ProviderSlug,
+        binding: &BindingId,
+        conversation: &ConversationId,
+        event: &EventId,
+        agent_key: &Secret,
+    ) -> Result<Option<EventContextSnapshot>, ContextFailure> {
+        context_retry::retry(|| {
+            self.find_event_context_once(provider, binding, conversation, event, agent_key)
+        })
+        .await
+    }
+
+    async fn find_event_context_once(
+        &self,
+        provider: &ProviderSlug,
+        binding: &BindingId,
+        conversation: &ConversationId,
+        event: &EventId,
+        agent_key: &Secret,
+    ) -> Result<Option<EventContextSnapshot>, ContextFailure> {
         self.record_worker_key(agent_key).await?;
         if matches!(event.as_str(), "." | "..") {
-            return Err(ProviderError::InvalidRequest(
-                "invalid event identifier".into(),
-            ));
+            return Err(ProviderError::InvalidRequest("invalid event identifier".into()).into());
         }
         let handle = self.handle(provider)?;
         let mut url = handle
@@ -86,7 +111,7 @@ impl ProviderClient {
             .timeout(Duration::from_secs(3))
             .send()
             .await
-            .map_err(|_| ProviderError::Unavailable("provider context is unavailable".into()))?;
+            .map_err(ContextFailure::transport)?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
@@ -94,28 +119,27 @@ impl ProviderClient {
             return Err(ProviderError::Rejected {
                 status: response.status().as_u16(),
                 code: "provider_context_not_authorized".into(),
-            });
+            }
+            .into());
         }
         if !response.status().is_success() {
-            return Err(ProviderError::Unavailable(
-                "provider context is unavailable".into(),
+            return Err(ContextFailure::response(
+                response.status().as_u16(),
+                response.headers().get(reqwest::header::RETRY_AFTER),
             ));
         }
         if response.content_length().is_some_and(|len| len > 1_048_576) {
-            return Err(ProviderError::ResponseMalformed(
-                "context response exceeds limit".into(),
-            ));
+            return Err(
+                ProviderError::ResponseMalformed("context response exceeds limit".into()).into(),
+            );
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| ProviderError::Unavailable("provider context is unavailable".into()))?
-        {
+        while let Some(chunk) = response.chunk().await.map_err(ContextFailure::transport)? {
             if bytes.len() + chunk.len() > 1_048_576 {
                 return Err(ProviderError::ResponseMalformed(
                     "context response exceeds limit".into(),
-                ));
+                )
+                .into());
             }
             bytes.extend_from_slice(&chunk);
         }
@@ -125,7 +149,8 @@ impl ProviderClient {
         if snapshot.conversation_id != *conversation || snapshot.activity.event_id != *event {
             return Err(ProviderError::ResponseMalformed(
                 "provider context identity mismatch".into(),
-            ));
+            )
+            .into());
         }
         Ok(Some(snapshot))
     }
