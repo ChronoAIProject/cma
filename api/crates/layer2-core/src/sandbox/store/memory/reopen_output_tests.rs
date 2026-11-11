@@ -38,7 +38,7 @@ fn output(
             },
             acks,
         ),
-        update: update.map(Box::new),
+        update: update.map(|update| Box::new(update).into()),
     }
 }
 

@@ -9,7 +9,7 @@ use crate::failure::Result;
 use crate::mutation_ledger::retirement_inventory::{Context, SourceRow};
 
 #[path = "indexed_verification.rs"]
-mod verification;
+pub(super) mod verification;
 
 impl Archive {
     pub(crate) async fn prepare_indexed(
@@ -24,11 +24,15 @@ impl Archive {
         let config = context.scoped_config(&self.config)?;
         let directory = self.path.clone();
         let anchor = self.anchor.clone();
+        let version = self.version;
         let receipt = self.storage.call(move |db| {
             let tx = db.transaction().map_err(|_| storage_error())?;
             if let Some(receipt) = existing(&tx, &proof)? {
                 verification::group(&tx, &config, &proof, &receipt, Some(&context))?;
                 return Ok(receipt);
+            }
+            if version == Version::Collection {
+                super::collection::require_selection(&tx, &config, &proof, context.revision()?)?;
             }
             super::require_reserve(&directory, anchor.as_deref())?;
             tx.execute("INSERT INTO retired_groups VALUES (?,?,?,?,1,0)",
@@ -140,7 +144,7 @@ impl Archive {
 }
 
 fn check(version: Version, proof: &GroupProof) -> Result<()> {
-    if version != Version::Indexed
+    if !matches!(version, Version::Indexed | Version::Collection)
         || !record::digest(&proof.key)
         || !record::digest(&proof.source_sha256)
         || !record::digest(&proof.observation_sha256)
