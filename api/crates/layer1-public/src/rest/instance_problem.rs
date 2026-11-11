@@ -345,6 +345,20 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn exhausted_skill_admission_is_service_unavailable_without_a_busy_claim() {
+        let response = InstanceProblem::from(AgentOperationError::Unavailable(
+            "skill admission contention".into(),
+        ))
+        .into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "instance_service_unavailable");
+    }
+
+    #[tokio::test]
     async fn skill_version_upgrade_refusal_has_a_named_conflict_code() {
         let response = InstanceProblem::from(AgentOperationError::SkillVersionUpgradeUnsupported {
             id: "research".into(),
