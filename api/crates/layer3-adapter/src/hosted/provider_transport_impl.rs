@@ -132,6 +132,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         } else {
             None
         };
+        settings.bounded_raw_output = self.bounded_raw_output;
         let recovered_prompt = settings.recovered_prompt.take();
         let opened = Bridge::open_with_subscription_and_prompt(
             socket,

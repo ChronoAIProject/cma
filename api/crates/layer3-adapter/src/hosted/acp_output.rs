@@ -1,11 +1,11 @@
 //! Hold domain frames through native identity verification, preserving wire order.
 
-use std::collections::VecDeque;
+use std::sync::Arc;
 
 use futures_util::SinkExt as _;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
 use tokio_tungstenite::tungstenite::Message;
 
 use super::{Bridge, LANE_OUTPUT_ACK, MAX_FRAME_BYTES};
@@ -14,6 +14,10 @@ use crate::{AdapterError, ConversationUpdate, RuntimeOutputReceipt, RuntimeOutpu
 
 const STARTUP_BYTES: usize = 8 * 1024 * 1024;
 const HEADER_BYTES: usize = 24;
+
+#[path = "acp_output_memory.rs"]
+mod memory;
+use memory::OutputQueue;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,13 +42,16 @@ struct HeldOutput {
     payload: Vec<u8>,
     /// Bootstrap RPCs must run now; their domain effect still owns this cursor.
     prepared: Option<Option<ConversationUpdate>>,
+    // Last field: release only after the payload and queued node are gone.
+    _storage: Option<OwnedSemaphorePermit>,
 }
 
 pub(super) struct ReliableOutput {
     stream: uuid::Uuid,
     last_received: Option<u64>,
     session: Option<String>,
-    queued: VecDeque<HeldOutput>,
+    queued: OutputQueue,
+    raw_budget: Option<Arc<Semaphore>>,
     queued_bytes: usize,
     acknowledgements: mpsc::Sender<RuntimeOutputSource>,
     durable_progress: tokio::sync::watch::Sender<u64>,
@@ -54,12 +61,14 @@ impl ReliableOutput {
     pub(super) fn new(
         stream: uuid::Uuid,
         acknowledgements: mpsc::Sender<RuntimeOutputSource>,
+        bounded: bool,
     ) -> Self {
         Self {
             stream,
             last_received: None,
             session: None,
-            queued: VecDeque::new(),
+            queued: OutputQueue::new(bounded),
+            raw_budget: memory::process_budget(bounded),
             queued_bytes: 0,
             acknowledgements,
             durable_progress: tokio::sync::watch::channel(0).0,
@@ -97,18 +106,22 @@ impl Bridge {
         {
             return Err(fail());
         }
-        state.last_received = Some(cursor);
+        if state.session.is_none() && state.queued_bytes.saturating_add(bytes.len()) > STARTUP_BYTES
+        {
+            return Err(AdapterError::Unavailable(
+                "retained runtime startup output exceeded its bound".into(),
+            ));
+        }
+        // Refuse before copying, queue allocation, accepted cursor, or effects.
+        let storage = memory::reserve(state.raw_budget.as_ref(), bytes.len() - HEADER_BYTES)?;
         let mut held = HeldOutput {
             cursor,
             payload: bytes[HEADER_BYTES..].to_vec(),
             prepared: None,
+            _storage: storage,
         };
+        state.last_received = Some(cursor);
         if state.session.is_none() {
-            if state.queued_bytes.saturating_add(bytes.len()) > STARTUP_BYTES {
-                return Err(AdapterError::Unavailable(
-                    "retained runtime startup output exceeded its bound".into(),
-                ));
-            }
             if self.bootstrap_output(&held.payload).await {
                 let effect = self.capture_output(&held.payload).await?;
                 held.prepared = Some(match effect {
@@ -170,6 +183,7 @@ impl Bridge {
         let mut state = state.lock().await;
         state.session = Some(session.to_owned());
         while let Some(held) = state.queued.pop_front() {
+            state.queued_bytes -= held.payload.len() + HEADER_BYTES;
             self.deliver_output(&state, held, updates).await?;
         }
         state.queued_bytes = 0;
@@ -250,3 +264,7 @@ impl Bridge {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "acp_output_budget_tests.rs"]
+mod budget_tests;

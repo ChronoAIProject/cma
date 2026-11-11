@@ -56,6 +56,7 @@ impl ProviderHostedControlTransport {
             archive_factory,
             state: Arc::new(Mutex::new(TransportState::default())),
             subscriptions: None,
+            bounded_raw_output: false,
             native_transport: NativeRuntimeTransport::Direct,
             native_http_budget: Arc::new(tokio::sync::Semaphore::new(32)),
         })
