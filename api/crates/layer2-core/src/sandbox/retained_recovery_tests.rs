@@ -74,7 +74,7 @@ fn assessment_never_substitutes_image_or_changes_authority() {
 
 #[test]
 fn complete_children_do_not_become_recovery_permission() {
-    for case in 0..9 {
+    for case in 0..11 {
         let mut held = snapshot();
         let child = &mut held.agents[0];
         match case {
@@ -98,6 +98,8 @@ fn complete_children_do_not_become_recovery_permission() {
                 let duplicate = child.clone();
                 held.agents.push(duplicate);
             }
+            9 => child.status = AgentStatus::Starting,
+            10 => child.status = AgentStatus::Failed,
             _ => unreachable!(),
         }
         assert!(held.source().is_err(), "case {case}");
@@ -113,11 +115,101 @@ fn complete_children_do_not_become_recovery_permission() {
 }
 
 #[test]
+fn complete_workspace_evidence_refuses_work_failure_and_foreign_authority() {
+    use crate::profiles::{WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileSnapshot};
+    use crate::sandbox::{
+        WorkspaceOrigin, WorkspaceSource, WorkspaceStatus, WorkspaceWorkLease, WorkspaceWorkState,
+        WorkspaceWorkStep,
+    };
+    let mut held = snapshot();
+    held.workspaces.push(Workspace {
+        id: held.agents[0].workspace_id.clone(),
+        sandbox_id: held.sandbox.id.clone(),
+        owner: held.sandbox.owner.clone(),
+        origin: WorkspaceOrigin::Manual,
+        profile: WorkspaceProfileSnapshot {
+            id: crate::WorkspaceProfileId("wkp_retained".into()),
+            revision: 1,
+            digest: "a".repeat(64),
+            content: WorkspaceProfileContent {
+                location: WorkspaceLocation::Directory {
+                    name: "project".into(),
+                },
+                name: "project".into(),
+                setup_commands: vec![],
+                agent_profiles: vec![],
+            },
+        },
+        name: "project".into(),
+        path: "/home/cma/project".into(),
+        source: WorkspaceSource::Empty,
+        resolved_commit: Some("c".repeat(40)),
+        status: WorkspaceStatus::Ready,
+        work: WorkspaceWorkState::new(WorkspaceWorkStep::None, NOW.into()),
+        next_worktree_number: 1,
+        created_at: NOW.into(),
+        ready_at: Some(NOW.into()),
+        failed: None,
+        removed_at: None,
+        revision: 1,
+    });
+    held.source().unwrap();
+    for case in 0..7 {
+        let mut changed = held.clone();
+        let workspace = &mut changed.workspaces[0];
+        match case {
+            0 => {
+                workspace.status = WorkspaceStatus::Preparing;
+                workspace.ready_at = None;
+                workspace.resolved_commit = None;
+                workspace.work = WorkspaceWorkState::new(WorkspaceWorkStep::Prepare, NOW.into());
+            }
+            1 => {
+                workspace.status = WorkspaceStatus::Removing;
+                workspace.work = WorkspaceWorkState::new(WorkspaceWorkStep::Remove, NOW.into());
+            }
+            2 => {
+                workspace.work.next_fence = 2;
+                workspace.work.lease = Some(WorkspaceWorkLease {
+                    holder: "workspace-worker".into(),
+                    fence: 1,
+                    expires_at: "2026-09-05T01:00:00Z".into(),
+                })
+            }
+            3 => {
+                workspace.status = WorkspaceStatus::Failed;
+                workspace.failed = Some(TypedFailure {
+                    class: "terminal_validation".into(),
+                    detail: "fixture".into(),
+                });
+            }
+            4 => workspace.owner = crate::SubjectId("foreign-owner".into()),
+            5 => workspace.sandbox_id = crate::SandboxId("sbx_foreign".into()),
+            6 => {
+                let duplicate = workspace.clone();
+                changed.workspaces.push(duplicate);
+            }
+            _ => unreachable!(),
+        }
+        let before = changed.clone();
+        assert!(changed.source().is_err(), "workspace case {case}");
+        assert_eq!(changed, before);
+    }
+    held.agents.clear();
+    held.workspaces[0].status = WorkspaceStatus::Removed;
+    held.workspaces[0].removed_at = Some(NOW.into());
+    held.source().unwrap();
+}
+
+#[test]
 fn consumed_one_shot_is_preserved_and_active_lifecycle_is_not_native_health() {
     let mut held = snapshot();
     held.sandbox.lifecycle.unpublished_recovery_attempted = true;
-    held.source().unwrap();
+    let before = held.clone();
+    assert!(held.source().is_err());
+    assert_eq!(held, before);
     assert!(held.sandbox.lifecycle.unpublished_recovery_attempted);
+    let mut held = snapshot();
     held.sandbox.status = SandboxStatus::Active;
     held.sandbox.failure = None;
     assert!(matches!(
