@@ -47,10 +47,15 @@ The canonical additive schema registers unique
 `agent_log_publication_head(agent_id, incarnation, head_revision)`. Shared
 publication increments the head for every write, including revision-only work.
 The proof captures S1's certified segmented source in the caller's transaction,
-then performs one explicitly hinted lookup: limit 2, batch size 2, single batch,
-maximum 1 second and 16 KiB per receipt. Exactly one format-2 publication must
-match current Agent revision, head revision, sequence, incarnation, ordinal,
-previous seal and full Agent digest. No lifetime publication enumeration occurs.
+then performs one explicitly hinted newest-first lookup at or below the captured
+head revision: limit 2, batch size 2, single batch,
+maximum 1 second and 16 KiB per receipt. The newest publication must be format 2 and
+match current Agent revision, sequence, incarnation, ordinal,
+previous seal and full Agent digest. The second row must have a strictly earlier
+head revision. Audit rebuilds only advance head revision/evidence generation, so
+a positively matching current Agent/source witness remains valid after rebuild.
+A newer incompatible/v1 publication is never skipped in favor of an older one.
+No lifetime publication enumeration occurs.
 Missing/old/ambiguous evidence or a missing index refuses; it grants no ordinary
 reconnect permission and never establishes KnownAbort.
 
