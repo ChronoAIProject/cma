@@ -13,10 +13,34 @@ fn usage_opt_in_is_strict_and_does_not_enable_other_consumers() {
         assert!(!flags.bounded_transcript_reads);
         assert!(!flags.bounded_response_reads);
         assert!(!flags.paged_response_events);
+        assert!(!flags.capacity_recovery_enabled);
     }
     for value in ["", "1", "TRUE", " true "] {
         assert!(FeatureFlags::from_lookup(&mut |key| {
             Ok((key == USAGE).then(|| value.to_owned()))
+        })
+        .is_err());
+    }
+}
+
+#[test]
+fn recovery_admission_requires_its_own_strict_default_off_switch() {
+    const RECOVERY: &str = "CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED";
+    for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == RECOVERY)
+                .then(|| value.map(str::to_owned))
+                .flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.capacity_recovery_enabled, enabled);
+        assert!(!flags.bounded_usage_reads);
+        assert!(!flags.bounded_transcript_reads);
+        assert!(!flags.bounded_response_reads);
+    }
+    for value in ["", "1", "TRUE", " true "] {
+        assert!(FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == RECOVERY).then(|| value.to_owned()))
         })
         .is_err());
     }
