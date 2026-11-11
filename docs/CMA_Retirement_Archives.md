@@ -94,7 +94,8 @@ and retained references. The existing full-log scanner checks sequence continuit
 authoritative head and refuses quarantine or mismatched creation lineage. Exact
 BSON length framing is preserved. Embedded Agent
 artifact bodies are included. Document artifact revisions are read through the
-existing document store adapter and matched to their metadata hashes and sizes.
+existing document store adapter in read-only mode (no creation OAuth scope and
+local write refusal) and matched to their metadata hashes and sizes.
 A second independent snapshot/census must match before manifest publication.
 The Mongo census is bounded to two million documents and 32 GiB; exceeding a
 budget refuses capture. The command normalizes its own parent hold bookkeeping to the retained original
