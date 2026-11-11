@@ -13,6 +13,8 @@ mod bootstrap;
 mod atomicity;
 #[path = "writer_capture_tests.rs"]
 mod capture_contract;
+#[path = "writer_current_proof_mongo_tests.rs"]
+mod current_proof;
 #[path = "writer_keyed_mongo_tests.rs"]
 mod keyed_caller;
 #[path = "writer_keyed_restart_mongo_tests.rs"]

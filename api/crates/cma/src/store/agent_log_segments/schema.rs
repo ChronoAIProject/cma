@@ -38,10 +38,16 @@ fn indexes(name: &str) -> Vec<IndexModel> {
                 doc! {"agent_id":1,"incarnation":1,"start_seq":1},
             ),
         ],
-        PUBLICATIONS => vec![(
-            "agent_log_publication_key",
-            doc! {"agent_id":1,"incarnation":1,"publication_key":1},
-        )],
+        PUBLICATIONS => vec![
+            (
+                "agent_log_publication_key",
+                doc! {"agent_id":1,"incarnation":1,"publication_key":1},
+            ),
+            (
+                super::current_publication::INDEX,
+                doc! {"agent_id":1,"incarnation":1,"head_revision":1},
+            ),
+        ],
         EVIDENCE => vec![
             (
                 "agent_log_evidence_generation",
