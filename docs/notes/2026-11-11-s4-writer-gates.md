@@ -73,3 +73,20 @@ Final Cargo cleanup: deleted only this worktree's `api/target`, freeing 1.32 GB
 includes other team cleanup and is not attributed entirely to S4. No owned Cargo
 process, per-gate output copy, Mongo container or volume remains. Requested local
 notes and the dedicated worktree are retained for review.
+
+## Captured publication dependency checkpoint
+
+The whole-publication planner now passes all 10 core projection tests, and
+layer2-core all-target Clippy passes with warnings denied. Source commits
+`11f4fcc69` and `3b39a8d58` add the pure planner and production-capture Mongo
+cases respectively; the Mongo cases have not executed yet.
+
+Normally merged authorized S1 capture `5b8a823fc947cdabf3018b8eee524fa27f5f96bc`
+and S2 output-index contract `9327ec32f`. The S1 conflict retained S4's queued
+original-source check; both sides had removed the duplicate generation update.
+
+The next CMA check refused to start because `.heavy-0.lock` was absent.
+`lockf -k -n` preserved the no-create rule; no build ran without a shared lock.
+The existing 942 MB target is retained for the immediately pending CMA/Mongo
+gates. No disposable Mongo resources exist. Output evidence and caller wiring
+remain in progress; no PR/review-ready or activation claim.
