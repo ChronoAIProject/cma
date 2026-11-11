@@ -30,7 +30,11 @@ pub(super) async fn run(path: &Path) -> Result<()> {
     for collected in [false, true] {
         qualify(path, &config, &id, collected).await?;
     }
-    Ok(())
+    // Both owners are closed. Reuse this create-only synthetic allocation for
+    // the new format without increasing the 128 MiB image probe footprint.
+    std::fs::remove_dir_all(path).map_err(|_| invalid())?;
+    std::fs::remove_dir_all(path.with_extension("source")).map_err(|_| invalid())?;
+    super::super::collection_storage_probe::run(path, &config).await
 }
 
 async fn qualify(path: &Path, config: &RuntimeConfig, id: &str, collected: bool) -> Result<()> {

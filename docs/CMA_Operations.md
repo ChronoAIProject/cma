@@ -1047,6 +1047,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_PLATFORM_BASE_URL` | Required canonical HTTPS platform proxy origin; also the upstream for the runtime's explicitly granted GitHub API proxy |
 | `CHRONO_DOCUMENT_BUCKET` | Existing S3-backed bucket used for durable Markdown artifacts. Empty disables document source storage and runtime publication tools; writes fail explicitly instead of storing ephemeral documents. Production uses `chrono-platform-bot`. |
 | `CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED` | Strict boolean, default `false`. Reuses trusted metadata for ordinary single-failure CloseProcess publication within the shared cohort. Capacity settlement, successful effects and unknown-commit reconciliation retain complete proofs. Disable and restart for rollback; preserve all history and quarantine. See [Bounded close retries](CMA_Bounded_Close_Retries.md). |
+| `CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED` | `false` | Require retained runtime output and bound compact pending/replay permission state across attachments. See [permission state bounds](CMA_Permission_State_Bounds.md). |
 | `CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED` | Strict boolean, default `false`. Enables a proven 200-row/4-MiB suffix for pending-approval reads only for the shared trusted cohort. A missing reset boundary, oversized suffix or untrusted metadata retains complete validation. Independent of admission/public-window and title activation. Disable and restart the API for rollback; keep all original history and metadata. See [Bounded pending-approval recovery](CMA_Bounded_Approval_Reads.md). |
 | `CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED` | Strict boolean, default `false`. Enables scoped retry pacing for parent-not-ready capacity attempts after compatible workers and the durable attempt receipt are deployed. It only delays eligible retries; it never changes terminal state, input authority, recovery receipts or attachment ownership. Disable and restart to restore the prior scheduling cadence; accepted attempts continue from their recorded fence. |
 | `CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED` | Strict boolean, default `false`. Enables the trusted format-2 transcript projection and paged source reads for the shared cohort. The reader validates the maintained projection and falls back to the exact legacy fold for legacy, corrupt or unsupported histories; it never disables decoding of already segmented records. Disable and restart for rollback while retaining readable history and cursors. See [Bounded transcript reads](CMA_Bounded_Title_Transcript.md). |
@@ -2257,3 +2258,23 @@ with the tested source, image labels and promoted digest. Retain all prior hashe
 web assets needed by open tabs and the batch's compatible reader floor through
 normal deployment procedures. Verify an existing tab continues working and names
 its original bundle. This UI change does not authorize deployment or asset removal.
+
+## Sandbox detail read rollout
+
+`CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED` defaults to `false` and accepts only exact
+`true` or `false`. When enabled, Sandbox hierarchy reads use one consistent Mongo
+snapshot session instead of a read-only transaction plus abort. Workspace reads,
+record validation and the fresh final authorization fence retain their existing
+behavior. Disable the flag to return to the transaction reader; no data migration
+or writer change is involved.
+
+`CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED` independently defaults to `false` and
+accepts only exact `true` or `false`. It emits the allowlisted auth, hierarchy,
+colors, names and final-fence durations and completion/error/cancellation outcome,
+without identifiers, error strings or inherited request spans. Enable it before
+reader activation to collect a baseline, and disable it after the measurement
+window. Optional enrichment retains its existing fallback behavior.
+
+See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
+boundaries, local comparison, security/concurrency tests and the next batching
+proposal. Production flag changes remain part of the approved release process.
