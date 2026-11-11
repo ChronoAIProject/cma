@@ -3,7 +3,7 @@
 use super::*;
 use crate::store::agent_log_segments::{
     self as segments, capture,
-    publication::{self, PublicationIdentity},
+    publication::{self, Publication, PublicationIdentity},
     transaction_scope::TransactionScope,
     writer_admission::{Admission, AdmissionKind},
     writer_bootstrap::BootstrapPlan,
@@ -13,7 +13,14 @@ use crate::store::agent_log_segments::{
 use layer2_core::sandbox::{store::AgentLogPublicationIdentity, Agent};
 use mongodb::bson::{spec::BinarySubtype, Binary};
 
+mod claim;
 mod preparation;
+pub(in crate::store) mod settlement;
+
+pub(in crate::store) struct Attempt {
+    pub(in crate::store) next: Agent,
+    pub(in crate::store) publication: Publication,
+}
 
 pub(super) async fn append(
     store: &MongoSandboxStore,
@@ -35,6 +42,7 @@ pub(super) async fn append(
         if let Some(entry) = writer_reconcile::replay(store, id, &operation, &kind).await? {
             return Ok(entry);
         }
+        claim::ensure_clear(store, id).await?;
         let (current, entry, admission_kind) = source(store, id, &operation, &kind).await?;
         let (admission, bootstrap) =
             preparation::prepare(store, &current, &operation, admission_kind).await?;
@@ -42,20 +50,26 @@ pub(super) async fn append(
         let mut scope = TransactionScope::start(&mut session)
             .await
             .map_err(driver)?;
-        let result = publish(
-            store,
-            &mut scope,
-            &current,
-            &entry,
-            &operation,
-            admission.as_ref(),
-            bootstrap.as_ref(),
-        )
+        let claim = claim::Claim::acquire(store, &current, &operation, &entry).await?;
+        let result = async {
+            claim.consume(store, &mut scope).await?;
+            publish(
+                store,
+                &mut scope,
+                &current,
+                &entry,
+                &operation,
+                admission.as_ref(),
+                bootstrap.as_ref(),
+            )
+            .await
+        }
         .await;
-        let next = match result {
-            Ok(next) => next,
+        let attempted = match result {
+            Ok(attempted) => attempted,
             Err(error) => {
-                let _ = scope.release().abort_transaction().await;
+                scope.release().abort_transaction().await.map_err(driver)?;
+                claim.release_known_abort(store).await?;
                 if let Some(entry) = writer_reconcile::replay(store, id, &operation, &kind).await? {
                     return Ok(entry);
                 }
@@ -76,24 +90,33 @@ pub(super) async fn append(
         if matches!(entry.kind, AgentLogKind::TurnCompleted { .. }) {
             if let Err(error) = crate::store::suggestions::enqueue(
                 store,
-                &next,
+                &attempted.next,
                 std::slice::from_ref(&entry),
                 session,
             )
             .await
             {
                 let _ = session.abort_transaction().await;
+                claim.release_known_abort(store).await?;
                 return Err(domain(error));
             }
         }
         match commit_transaction(session).await {
             CommitOutcome::Committed => return Ok(entry),
             CommitOutcome::Retry(_) => {
+                // TransientTransactionError positively establishes KnownAbort.
                 let _ = session.abort_transaction().await;
+                claim.release_known_abort(store).await?;
             }
             CommitOutcome::Unknown(_) => {
-                return writer_reconcile::replay(store, id, &operation, &kind).await?
-                    .ok_or_else(|| SandboxStoreError::Unavailable("keyed Agent log publication remains unknown; retain its original identity".into()));
+                return settlement::after_unknown(
+                    store,
+                    &operation,
+                    &entry,
+                    &attempted,
+                    session.operation_time(),
+                )
+                .await;
             }
             CommitOutcome::Failed(error) => return Err(driver(error)),
         }
@@ -154,7 +177,7 @@ async fn publish(
     operation: &PublicationIdentity,
     admission: Option<&Admission>,
     bootstrap: Option<&BootstrapPlan>,
-) -> Result<Agent, TransactionLogError> {
+) -> Result<Attempt, TransactionLogError> {
     let row = scope
         .find_one(&store.agents, doc! {"_id":current.id.as_str()})
         .await
@@ -182,7 +205,7 @@ async fn publish(
         admission,
     )
     .await?;
-    writer_commit::persist(
+    let publication = writer_commit::persist(
         store,
         scope,
         plan,
@@ -192,7 +215,7 @@ async fn publish(
         },
     )
     .await?;
-    Ok(next)
+    Ok(Attempt { next, publication })
 }
 
 fn driver(_: mongodb::error::Error) -> SandboxStoreError {

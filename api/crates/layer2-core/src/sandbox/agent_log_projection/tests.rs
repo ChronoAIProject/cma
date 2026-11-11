@@ -1,4 +1,6 @@
 use super::*;
+#[path = "response_tests.rs"]
+mod response_tests;
 use crate::profiles::{AgentProfileContent, AgentProfileSnapshot, PermissionLevel, ThinkingEffort};
 use crate::sandbox::{AgentOrigin, AgentStatus, AgentWorkState, AgentWorkStep, ConversationState};
 use crate::{

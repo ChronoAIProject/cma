@@ -1,106 +1,107 @@
-# S4 publication progress — 2026-11-11
+# S4 writer publication progress — 2026-11-11
 
-Part of #1350 and transactional #1349. Branch:
-`tl/cma-log-segments/writer-publication`.
+Part of #1350 and transactional #1349. Branch
+`tl/cma-log-segments/writer-publication`. The published source checkpoint
+`0513eae62` includes the actual keyed append entry, S1 point/visitor
+forwarding and the lifecycle checkpoint transaction root. This is a source handoff,
+not a review-ready PR or production activation. The merge freeze is lifted; review
+verdict and the lead merge relay still apply.
 
-## Published dependency and implementation checkpoints
+## Consumed dependencies
 
-- Original frozen signatures: `453b417426e015459d24cc4e95d9f13586949a03`,
-  delivered at 18:53 SGT within the requested 20-minute window after normally
-  merging S1 `5ed7eaae1`.
-- The approved transaction-scope amendment and supporting registrations at
-  `29f8789f6dd7c11d2914159cff56fa9942ff4bb0` are normally merged in `0e7b3e264`.
-  This resolves the missing fold exports, sidecar handles, writer declarations,
-  receipt append-time schema and transaction-context API.
-- `223edd276` adopts the amended `writer_commit::{prepare,persist}` signatures:
-  parameter two is `&mut TransactionScope<'_>`. Preparation validates the opaque
-  capture before assembly. Prepared plans bind the private transaction stamp and
-  database; persistence rejects another session, a later transaction on the same
-  session, or another database before writes. The public helper never starts,
-  commits or retries the publication transaction.
-- `c6419fa83` implements `writer_bootstrap::stage(store, current, operation,
-  admission, permit) -> Result<BootstrapPlan, TransactionLogError>`. It reads S1's
-  exact bounded legacy snapshot and point proofs, folds original source, and
-  stages a private generation with at most 64 evidence rows or 1 MiB per write
-  transaction. Individual evidence records are capped at 256 KiB. Every batch
-  checks the original durable admission and renews the exact live permit in the
-  same transaction. Unknown commit returns no plan. Final publication rechecks
-  exact source/aggregate identity and consumes the live fence. Original BSON
-  remains untouched. Staged facts start at segmented head revision one,
-  independently of the original Agent revision.
-- `e323461e9` normally merges current develop after the freeze lift and is pushed.
-  The source branch includes develop's merged response foundation; it does not
-  import the mixed segmentation integration tip.
-- `8a9fbba2d` requires an original point-proved queued owner input and unconsumed
-  indexed evidence before publishing its turn. The semantic fold rejects invented
-  or consumed queued references and requires complete aggregate queue coverage.
-  Native generation maxima now advance in one fold location.
+Normally merged S1 scoped capture/compile fixes
+`5b8a823fc947cdabf3018b8eee524fa27f5f96bc`, S2 output-index contract
+`9327ec32f`, bounded scope page method `9e5c47a72`, S1 executable
+qualification/snapshot correction `d5d934731`, and the plan-authorized canonical
+Mongo registration `9011a3796` (including S5 scoped checkpoint helpers).
+No mixed integration tip was imported. Private transaction stamps and database binding remain
+mandatory; snapshot capture and raw transaction capture cannot authorize writes.
 
-Existing S4 implementation includes deterministic default-off gate selection,
-separate recovery admission, bounded preparation slots, exact stable-time
-publication receipts, whole-batch capacity planning, independent native-generation
-maxima, bounded projection deltas and touched-evidence CAS. Persistence performs
-one Agent CAS plus original BSON, optional seal, Head, projection/evidence and
-receipt writes in the caller transaction. Any helper error requires aborting all
-caller writes. Storage-only recovery preserves conversation/worktree identity
-and cannot produce Ready. S5 owns eligibility and the durable recovery carrier.
+## Executable source now present
 
-## Executable status and tests
+- `writer_commit::{prepare,persist}` validates the captured source and exact
+  publication, then writes one Agent CAS, original BSON, optional seal/head,
+  projection/evidence and immutable receipt in the caller's transaction.
+- The pure core planner validates the complete batch, immutable source lineage,
+  source queue and final aggregate before returning changes.
+- Invisible bootstrap uses the original admission and fenced permit, bounded
+  writes and exact final recapture. Source-based renewal every 64 rows also
+  covers diagnostic-only histories that produce no evidence rows.
+- Output publication/bootstrap uses the unchanged S2 model: mutable turn/tool
+  facts and immutable numeric output-change rows. First-terminal evidence
+  remains unchanged when later output updates current tool state.
+- `AgentLogStore::append_agent_log_keyed` now performs real admission/staging,
+  same-scope publication and exact receipt/event replay after later appends.
+  Default-closed legacy adoption refuses without mutation. Fitting segmented
+  appends need no new gate admission. Unknown outcome returns its retained
+  identity without starting another publication.
+- Lifecycle checkpoint capture now starts the exclusive scope at its real
+  transaction root, consumes S5 bounded capture/fencing for segmented children,
+  then releases the scope before existing parent/event writes. A later domain
+  failure aborts those earlier fences. Legacy checkpoint validation is retained.
+  Agent-log appends from this lifecycle family are still pending conversion.
+- Point/range/predecessor visitor ports forward to the S1 format-aware adapters.
+  The existing unkeyed append compatibility path remains legacy.
 
-The first `cargo check --locked --offline -p cma --tests` actually ran under
-`lockf` on heavy-0 with two Cargo jobs. It failed with 14 diagnostics. S4 repaired
-its test-result handling and BSON comparison. The remaining diagnostics were
-relayed to S1 through the lead: retention.rs holds a cursor-stream session borrow
-across a sidecar query; capture/snapshot tests require Debug on TransactionLogError;
-and schema_tests.rs needs an explicit String for IndexOptions::name.
+The keyed caller consumes the prepared publication and releases the exclusive
+scope before existing suggestion-domain work and final commit. A later domain
+error aborts the entire transaction. No raw-session accessor was widened. This
+ordering does not by itself qualify the other transaction caller families.
 
-Five core projection tests passed, including a 30,000-event long turn, original
-model/native facts, late usage, generation maxima, exact queued input and refusal
-cases. Core clippy with warnings denied passed after fixing its guarded-match
-finding. Exact commands and limits are in `2026-11-11-s4-writer-gates.md`. All current S4 Rust sources and
-tests are below 500 lines; formatting and whitespace checks pass. Staged secret
-checks pass. The earlier legacy assessment's 65 unit / 6 Mongo tests do not
-certify this candidate.
+## Evidence and limits
 
-Mongo test sources now cover committed rollover; abort and late receipt conflict;
-domain/result/session fencing; later-transaction and database rejection; staged
-multi-batch source preservation/invisibility; and replaced permits/changed original
-requests. These new Mongo cases remain unexecuted. They are not substitutes for
-end-to-end caller, unknown-commit failpoint, near-capacity or old-binary evidence.
+| Check | Actual result |
+| --- | --- |
+| Core projection units | 10 passed at the whole-publication source checkpoint |
+| Core all-target clippy, warnings denied |Passed before output/caller additions |
+| CMA all-target check |Reached new sources; found a missing test import, now fixed. Production wiring warnings remained. No corrected pass yet. |
+| New S4 unit gate |Two attempts each timed out after 600 seconds waiting for heavy-0, without starting Cargo. A subsequent nonblocking CMA-check acquisition also refused the occupied lock. |
+| New S4 Mongo tests |Source present; not executed |
+| Canonical Mongo runner harness |31 passed in source/archive modes; mock Cargo/Docker, not real Mongo |
+| Formatting / whitespace |Owned changes pass. Workspace fmt currently reports one inherited assertion-formatting diff in S1 capture_tests.rs:207; no S1 file was edited. |
+| Repository size |5,948 files passed after the dependency merges; all new S4 source/test files below 500 lines |
+| Secret scans |Staged deltas passed. Full history through fb1ad83c7: 3648 commits, no findings. Later deltas independently scanned. |
 
-S1 transaction capture and captured-context validation still return typed
-Unavailable, so public preparation remains closed through that proof boundary.
-There is no executable production adoption/rollover success claim or review-ready
-PR. The staging producer is source-complete but awaits its Mongo gate.
+New tests cover production captured-source commit/abort; wrong/later transaction
+and snapshot refusal; bootstrap recapture/replaced permit; output atomicity and
+missing index; same-source competition and different Agents in one database;
+gate-close continuation; legacy append rejection; known-abort retry; commit
+failpoint with later-head reconciliation; actual keyed trait adoption/replay;
+and sealed-source point integrity. Their presence is not a passing Mongo gate.
 
-## Outstanding integration and implementation
+## Remaining work and handoffs
 
-- S1: publish the small compile fixes; complete transaction/segmented capture and
-  exact point certification. Gate/admission schema and migration/inventory/grants
-  wiring remain integration requirements.
-- S2: register writer persistence/bootstrap Mongo tests in the canonical runner
-  using `test(store::agent_log_segments::writer_commit::persistence::tests::)`.
-  Publish the exact protocol-neutral output-index types/fold signature requested
-  in #1350 comment-6794296472. S4 will maintain those facts atomically; no second
-  response-paging schema is being invented in the writer.
-- S4: complete the nine caller families, output-index publication/bootstrap,
-  crash/retry/lease-race/old-new tests, clippy and canonical Mongo gates. Close the
-  source-proof integration only when S1 provides executable certification.
-- One planned S4 PR follows green local gates and exact-head review. Merge requires
-  the lead relay. The develop merge freeze was explicitly lifted during this
-  work; no S4 PR has been opened or merged, and no activation occurred.
+- S1: additive output numeric validator/index plus gate/admission schema and
+  the inherited capture-test formatting correction. Transaction capture now has
+  S1 executable certification (36 Mongo tests at bb6b4f801); this is not a
+  combined S4 test result. Audit/rebuild must preserve the output evidence of its
+  promoted generation; it can reuse the shared S4 fold/encoder.
+- S2: remaining shared scoped-helper ownership and operator/migration/authority
+  assembly. The canonical runner dependency is consumed at 9011a3796, as
+  authorized by the updated strict-lint assignment. The mixed integration
+  branch was not imported.
+- S4: conversation/worker/admission/reuse roots, lifecycle log publication,
+  and bounded command evidence are still incomplete. Preserve original command, lease, checkpoint,
+  budget and authorization semantics; no blanket dead-code allowance or fake
+  reference replaces this wiring. Exact shared-helper requests are posted in
+  #1350 comment-6795669495.
+- S3/S5: their owned title/trigger/recovery callers and scoped checkpoint/domain
+  adapters. Full caller coverage and old-binary/release qualification remain
+  integration acceptance gates.
+
+No PR is open. Required strict CMA lint and real-Mongo gates are not green.
+Project 9 remains In Progress; milestone comments are on #1350/#1349/#1348.
 
 ## Resource discipline
 
-Heavy commands invoked `lockf` on assigned heavy-0 with CARGO_BUILD_JOBS=2.
-The earlier runner incorrectly omitted `-k`, so macOS could remove the shared
-lock file on exit. This was reported immediately after checking the platform
-manual. Future gates must use `lockf -k -n` to preserve the existing file and
-refuse to create a missing one. The gate note records this resource-rule failure;
-no active S4 build or lock waiter remains.
-Only one target, `api/target`, was used; no per-gate copies or Mongo containers/
-volumes were created. The first cleanup removed 5,604 bytes of completed comment
-drafts: `CLEANED 0.00 GB`. After gates finished, the target was removed, freeing
-1.32 GB (1.23 GiB): `CLEANED 1.32 GB`. No owned build process remains. Requested
-local notes are retained and mirrored here. Temporary comment files are removed
-after posting; the dedicated worktree remains for review.
+Use only the assigned existing heavy-0 with `lockf -k -n`, two Cargo jobs and
+one `api/target`. Never delete or recreate a shared lock. The previous omission
+of -k is recorded in the gate note and was reported. The current inode remained
+160171589 throughout the latest source work and queued gate attempts.
+
+No Mongo resources were created. Cleanup removed the owned target, checksum-verified
+local nextest 0.9.151 copy and temporary gate logs: 1,343,286,598 bytes
+(1.34 GB). Both shared lock files were preserved; disk readback was 61 GiB free.
+Previously reported cleanup was `CLEANED 1.32 GB`; other teammates' freed disk
+space is not attributed to this work. Retain requested notes and the
+dedicated worktree for the lead's eventual removal.

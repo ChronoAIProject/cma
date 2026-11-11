@@ -172,8 +172,10 @@ async fn load_for_inspection(
                 // These are full-prefix certified maxima. A missing point row
                 // never proves the proposed generation was unpublished.
                 if require_reopen {
+                    observation.finish(Reason::Unavailable);
                     return Err(ApplyError::Domain(SandboxStoreError::Unavailable(
-                        "segmented retained reopen requires bounded history evidence".into(),
+                        "segmented retained reopen requires its original bounded history proof"
+                            .into(),
                     )));
                 }
                 if require_unpublished
