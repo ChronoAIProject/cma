@@ -15,6 +15,14 @@ Only the release owner changes production configuration after review and artifac
 qualification. Turning it off blocks new requests but retains accepted operations
 and permits exact-key receipt retries.
 
+`CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED` is an independent strict boolean,
+defaulting to `false` in code and the manifest. When enabled, connection
+publication defers before native runtime inspection while its Sandbox, Workspace
+or Worktree is not ready. The retry observation retains Agent, command and parent
+revisions so an authority change can wake the worker. This read-only readiness
+check does not admit retained recovery or segmented writes. Disable the flag and
+restart to restore the original pacing; keep accepted work and recovery receipts.
+
 After deployment and activation, open the existing Agent's **Sandbox details**,
 click **Recover on the same image**, then **Recover my Sandbox**. Review the
 current Sandbox before confirming. A read-only assessment precedes the dialog;
