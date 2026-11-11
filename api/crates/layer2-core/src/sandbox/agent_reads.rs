@@ -48,6 +48,7 @@ mod stream;
 pub use stream::{AgentEventStreamAuthorization, AgentEventStreamSnapshot};
 #[path = "agent_reads/response.rs"]
 mod response;
+pub use response::indexed::AgentOutputObservation;
 #[path = "agent_reads/window.rs"]
 mod window;
 pub use window::{
