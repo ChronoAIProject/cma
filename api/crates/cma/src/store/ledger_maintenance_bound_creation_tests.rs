@@ -96,7 +96,7 @@ async fn bound_agent_creation_and_mutating_replay_refuse_under_hold_without_part
     let binding = ready(&store).await;
     let parent = parent(&store, &binding).await;
     ready_workspace(&store, &binding).await;
-    let existing = agent_request(&store, &binding, "existing").await;
+    let existing = agent_request(&store, &binding, "existing_conversation").await;
     let original = match store.admit_agent(existing.clone()).await.unwrap() {
         AgentAdmissionResult::Created(creation) => creation,
         _ => panic!("expected a new bound Agent"),
@@ -111,7 +111,7 @@ async fn bound_agent_creation_and_mutating_replay_refuse_under_hold_without_part
         fence + 1,
         "bound replay really writes its authorization fence"
     );
-    let pending = agent_request(&store, &binding, "pending").await;
+    let pending = agent_request(&store, &binding, "pending_conversation").await;
     let (policy, input) = pre_exclusion(&store, &parent, NOW).await;
     store.admit_pre_exclusion(policy, input).await.unwrap();
     let before = all_rows(&store).await;
