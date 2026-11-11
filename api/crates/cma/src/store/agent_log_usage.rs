@@ -12,13 +12,19 @@ use super::sandbox_mongo::{signed, MongoSandboxStore};
 const ROLLOUT_FLAG: &str = "CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED";
 
 impl MongoSandboxStore {
+    #[cfg(test)]
+    pub(crate) fn with_bounded_usage_reads(mut self, enabled: bool) -> Self {
+        self.bounded_usage_reads = enabled;
+        self
+    }
+
     pub(super) async fn read_usage_log(
         &self,
         expected: &Agent,
     ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
         // S2 owns process-config registration. Until that contract is wired,
         // an absent flag is deliberately closed and preserves complete reads.
-        if std::env::var(ROLLOUT_FLAG).as_deref() != Ok("true") {
+        if !self.bounded_usage_reads && std::env::var(ROLLOUT_FLAG).as_deref() != Ok("true") {
             return Ok(None);
         }
         let mut session = self
