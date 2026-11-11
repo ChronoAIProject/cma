@@ -26,6 +26,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
     stores.sandbox_model = Arc::new(
         (*stores.sandbox_model)
             .clone()
+            .with_fleet_log_percentage(config.agent_log_fleet_percent)
             .prepare_bounded_admission(&config.bounded_admission_agents)
             .await?,
     );
