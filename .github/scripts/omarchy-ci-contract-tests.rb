@@ -19,6 +19,22 @@ module OmarchyCIContractTests
       workflow = value["ci"]
       (workflow["on"] || workflow[true])["push"]["branches"] = ["prototype"]
     end
+    [["develop"], ["tl/release/**"], ["develop", "**"]].each do |branches|
+      reject.call("missing or overly broad release trigger") do |value|
+        workflow = value["ci"]
+        (workflow["on"] || workflow[true])["push"]["branches"] = branches
+      end
+    end
+    reject.call("release push skips path-only changes") do |value|
+      workflow = value["ci"]
+      (workflow["on"] || workflow[true])["push"]["paths"] = ["api/**"]
+    end
+    reject.call("release runs share develop cancellation") do |value|
+      value["ci"]["concurrency"]["group"] = "ci-${{ github.workflow }}"
+    end
+    reject.call("release ref runs can overlap") do |value|
+      value["ci"]["concurrency"]["cancel-in-progress"] = false
+    end
     names = CIContract.load_inputs["ci"]["jobs"]["omarchy"]["steps"].map { |step| step["name"] }.compact
     names.each do |name|
       %w[removed skipped changed-failure-policy fake-success].each do |mutation|

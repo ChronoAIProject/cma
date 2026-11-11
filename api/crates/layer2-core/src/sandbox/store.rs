@@ -12,6 +12,7 @@ use super::{
 
 mod sandbox;
 pub use sandbox::SandboxStore;
+pub mod ledger_collection;
 mod service_traits;
 pub use super::binding::BindingStore;
 pub use service_traits::*;
@@ -20,6 +21,10 @@ mod agent;
 pub use agent::AgentStore;
 mod agent_log;
 pub use agent_log::AgentLogStore;
+mod agent_response_log;
+pub use agent_response_log::{AgentResponseLogStore, AgentResponseLogWindow};
+mod agent_log_publication;
+pub use agent_log_publication::AgentLogPublicationIdentity;
 mod workspace_worker;
 pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore};
 
@@ -45,7 +50,7 @@ mod provenance;
 mod provenance_inventory;
 pub use provenance::{
     AgentProvenanceBackfillStore, AgentProvenanceSnapshot, AgentProvenanceStore,
-    ProvenanceBackfillOutcome,
+    ProvenanceBackfillOutcome, ProvenanceBackfillProgress,
 };
 pub use provenance_inventory::AgentProvenanceInventoryStore;
 mod agent_admission;
@@ -176,6 +181,8 @@ pub enum SandboxStoreError {
     AgentLogCapacityExceeded,
     #[error("sandbox limit reached: {live} of {limit}")]
     LimitReached { limit: u16, live: u16 },
+    #[error("global sandbox capacity is unavailable")]
+    GlobalCapacityReached,
     #[error("sandbox is not ready for workspace admission")]
     SandboxNotReady,
     #[error("workspace name is already live in the sandbox")]
@@ -388,6 +395,7 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    retained_reopen_receipts: HashMap<SandboxId, super::RetainedReopenReceipt>,
     suggestions: HashMap<String, super::suggestions::SuggestionWork>,
     binding_association_index: std::collections::BTreeMap<(SubjectId, AgentId, String), ()>,
     binding_key_history: std::collections::HashSet<String>,
