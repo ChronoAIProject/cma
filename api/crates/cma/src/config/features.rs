@@ -1,6 +1,7 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub bounded_raw_output: bool,
     pub output_json_budget: bool,
     pub bounded_update_relay: bool,
     pub bounded_live_fragments: bool,
@@ -41,6 +42,7 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
             output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
             bounded_update_relay: flag(lookup, "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED")?,
             bounded_live_fragments: flag(lookup, "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED")?,
@@ -439,6 +441,30 @@ mod output_json_tests {
         for value in ["", "1", "TRUE", " true "] {
             assert!(FeatureFlags::from_lookup(&mut |key| {
                 Ok((key == KEY).then(|| value.to_owned()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod raw_output_tests {
+    use super::*;
+
+    #[test]
+    fn raw_output_bounds_require_their_own_strict_opt_in() {
+        let key = "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED";
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |name| {
+                Ok((name == key).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_raw_output, expected);
+            assert!(!flags.retained_reopen_enabled && !flags.bounded_approval_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |name| {
+                Ok((name == key).then(|| value.to_owned()))
             })
             .is_err());
         }
