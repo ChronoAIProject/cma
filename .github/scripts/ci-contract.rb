@@ -70,7 +70,7 @@ module CIContract
     require!(prepare["id"] == "api-cargo-cache", "API cache identity changed")
     inject = step(images, "Inject API Cargo cache mounts", "python3 .github/scripts/api-cargo-cache.py inject", base)
     extract = step(images, "Extract API Cargo cache before pruning", "python3 .github/scripts/api-cargo-cache.py extract",
-      "#{base} && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'")
+      "github.event_name == 'push' && github.ref == 'refs/heads/develop' && #{base} && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'")
     require!(extract["id"] == "api-cargo-cache-export", "API cache extraction output changed")
     require!([inject, extract].all? { |row| row["timeout-minutes"] == 3 }, "API cache transfers must be bounded")
     revision = "0057852bfaa89a56745cba8c7296529d2fc39830"
@@ -81,7 +81,7 @@ module CIContract
         "uses" => "actions/cache/restore@#{revision}", "timeout-minutes" => 3, "continue-on-error" => true,
         "with" => shared.merge("restore-keys" => "${{ steps.api-cargo-cache.outputs.prefix }}", "fail-on-cache-miss" => false) },
       { "name" => "Save accepted API Cargo cache archive",
-        "if" => "success() && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'",
+        "if" => "success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'",
         "uses" => "actions/cache/save@#{revision}", "timeout-minutes" => 3, "continue-on-error" => true, "with" => shared },
     ]
     expected.each do |wanted|
@@ -133,6 +133,10 @@ module CIContract
     desktop = step(images, "Retain desktop image evidence", nil, "always() && matrix.component == 'runtime-desktop'")
     require!(desktop["uses"] == "actions/upload-artifact@v4" && desktop.dig("with", "if-no-files-found") == "error", "desktop execution evidence must be retained")
     order(images, ["Load native image for scanning", "Vulnerability scan", "Execute desktop image contract", "Retain desktop image evidence", "Export tested native image"])
+    build = step(images, "Build image for all target platforms")
+    require!(build.dig("with", "cache-from") == "type=gha,scope=${{ matrix.component }}" &&
+      build.dig("with", "cache-to") == "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,mode=max,scope={0}', matrix.component) || '' }}",
+      "image caches must restore per component and export only on develop pushes")
     native_image_artifacts(images)
     api_cargo_cache(ci, images)
     runtime = job(publish, "runtime-image-gate", "Runtime image evidence")
