@@ -79,7 +79,7 @@ incomplete managed update or a consumed automatic-recovery attempt. This failure
 class is only a candidate: the fresh complete proof is mandatory.
 
 Every retained Agent must be Paused and idle, with its original conversation
-published on a strictly older generation. No queued/first input, uncertain
+published on a strictly older generation. No queued or unfinished first input, uncertain
 operation delivery, stop, cleanup debt or pending skill installation may remain.
 Every Workspace and Worktree must be Ready and idle. The complete command
 inventory must be terminal and command lanes unleased. Child counts are capped
@@ -105,7 +105,8 @@ an unused current-generation process journal and authority scope: even a complet
 old open cannot be replayed when its bridge is absent. Persistent journals must all
 be completed with matching authority, with no pending/failed/indeterminate receipt,
 cleanup record, temporary write or format barrier. At most 128 journal plus authority
-rows and 16 MiB qualify, leaving conservative room below the V1 ledger limits for
+rows and 16 MiB qualify, with at least 64 MiB of filesystem space available,
+leaving conservative room below the V1 ledger limits for
 all 16 children and their cleanup. A second inventory digest must match. Indexed
 or partial ledger formats refuse until separately qualified; this route never
 migrates a ledger or modifies a terminal receipt. Runtime-owned validation still
