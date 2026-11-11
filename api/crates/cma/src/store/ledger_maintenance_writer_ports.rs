@@ -90,3 +90,38 @@ pub(super) async fn control(
         }),
     })
 }
+
+/// Generic parent-save admission. This legacy administrative port may publish
+/// lifecycle or credential state; it cannot bypass either hold format. More
+/// specialized writers still require their own guard in the owning transaction.
+pub(super) async fn parent_save(
+    store: &MongoSandboxStore,
+    sandbox: &SandboxId,
+    session: &mut ClientSession,
+) -> Result<(), super::sandbox_events::TransactionEventError> {
+    use super::sandbox_events::TransactionEventError as EventError;
+    use layer2_core::sandbox::store::SandboxStoreError;
+    super::ledger_maintenance_writer::fence_writer(
+        store,
+        sandbox,
+        LedgerWriterClass::Administration,
+        None,
+        session,
+    )
+    .await
+    .map_err(|error| match error {
+        ApplyError::Driver(error) => EventError::Driver(error),
+        ApplyError::Domain(error) => EventError::Domain(match error {
+            LedgerMaintenanceStoreError::WriterRefused(_) => SandboxStoreError::Conflict,
+            LedgerMaintenanceStoreError::Refused(LedgerMaintenanceAdmissionRefusal::NotFound) => {
+                SandboxStoreError::NotFound
+            }
+            LedgerMaintenanceStoreError::Corrupt => {
+                SandboxStoreError::Corrupt("ledger maintenance authority is inconsistent".into())
+            }
+            _ => {
+                SandboxStoreError::Unavailable("ledger maintenance authority is unavailable".into())
+            }
+        }),
+    })
+}
