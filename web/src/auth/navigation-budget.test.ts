@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
-import { MAX_LOGIN_URL_BYTES } from '../../../sdk/typescript/src/auth';
+import { MAX_LOGIN_URL_BYTES } from '@chronoai/cma-sdk';
 import { createNyxidAuthProvider, signInPath, silentReturnTarget } from './nyxid';
 import { readFatherDraft } from '../bots/fatherDraft';
 
