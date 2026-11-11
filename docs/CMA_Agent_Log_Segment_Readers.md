@@ -62,7 +62,10 @@ the source-byte budget. They check only requested sealed membership and reuse th
 captured active hashes. Reads in a transaction also recheck the aggregate/head
 because a transaction can see its own writes.
 
-Snapshot proofs bind the established snapshot, session and database. Transaction
+Snapshot proofs bind the established snapshot, session and database. The initial
+read requires a snapshot timestamp returned by the server without forcing a
+snapshot concern onto an ordinary session; a cached driver timestamp alone is
+insufficient. Transaction
 proofs instead bind the private stamp from the exclusive `TransactionScope`;
 consuming that scope releases the session for caller commit or abort. A later
 transaction gets a fresh stamp, even on the same session. A raw transaction-mode
@@ -132,8 +135,11 @@ exact-head PR evidence; this document is not a passing-gate claim.
 Passing fenced audit/rebuild and near-capacity resource tests, retention regressions,
 executable predecessor/rollback qualification and the full integrated foreground
 caller inventory remain required before #1348 closes. Release-owner production
-verification must observe real boundary replay and natural rollover without
-synthetic user input; elapsed time alone cannot satisfy that evidence.
+verification for this reader phase checks retained legacy history, cursors/SSE,
+identity, and unchanged format/head distribution through authorized read-only
+surfaces, with segmented emission closed. Real boundary replay and natural
+rollover belong to the later writer activation gate; elapsed time alone cannot
+satisfy that separate evidence requirement.
 
 `.github/scripts/agent-log-predecessor-tests.py` archives the original pinned
 pre-segmentation store and injects a test module only. It exercises unchanged
