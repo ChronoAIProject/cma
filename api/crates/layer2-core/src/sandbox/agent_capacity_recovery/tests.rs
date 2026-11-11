@@ -12,7 +12,11 @@ const NOW: &str = lifecycle_test_support::NOW;
 const LATER: &str = "2026-09-05T00:31:01Z";
 
 mod plan;
+mod recovery;
+mod recovery_faults;
+mod recovery_store;
 
+#[derive(Clone)]
 struct Fixture {
     agent: Agent,
     sandbox: Sandbox,
