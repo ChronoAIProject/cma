@@ -28,6 +28,7 @@ fn carrier(
             work.next_fence += 1;
         } else {
             work.completed_at = Some(at.into());
+            stored.result.published_at = at.into();
         }
     }
     let key = work.request.key().unwrap();
@@ -113,7 +114,14 @@ async fn capacity_discovery_consumer_bounds_examined_work_across_keyset_pages() 
         }).sort(doc! {"ts": 1}).await.unwrap().try_collect().await.unwrap();
         // Require actual-consumer samples, including all continuation pages.
         assert_eq!(operations.len(), 6, "noise={noise}: {operations:?}");
-        for (operation, count) in operations.iter().zip([32, 32, 1, 32, 32, 1]) {
+        let mut counts: Vec<_> = operations
+            .iter()
+            .map(|operation| number(operation, "nreturned"))
+            .collect();
+        counts.sort_unstable();
+        assert_eq!(counts, [1, 1, 32, 32, 32, 32]);
+        for operation in &operations {
+            let count = number(operation, "nreturned");
             let command = operation.get_document("command").unwrap();
             assert_eq!(
                 command.get_str("find").unwrap(),
@@ -126,9 +134,8 @@ async fn capacity_discovery_consumer_bounds_examined_work_across_keyset_pages() 
                 command.get_str("hint").unwrap(),
                 "agent_capacity_recovery_due" | "agent_capacity_recovery_expired"
             ));
-            assert_eq!(number(operation, "nreturned"), count);
             assert!(
-                number(operation, "docsExamined") <= 32,
+                number(operation, "docsExamined") <= count,
                 "noise={noise}: {operation:?}"
             );
             assert!(
