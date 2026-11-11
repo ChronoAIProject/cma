@@ -248,6 +248,19 @@ impl AgentLogProjectionState {
             return Err("Agent steering fence has no adjacent owner message".into());
         }
         let changes = self.apply(agent, entry, queued_owner)?;
+        match entry.kind {
+            AgentLogKind::ConversationOpened {
+                runtime_generation, ..
+            } => {
+                self.max_opened_generation = self.max_opened_generation.max(runtime_generation);
+            }
+            AgentLogKind::RuntimeGenerationRetired {
+                runtime_generation, ..
+            } => {
+                self.max_retired_generation = self.max_retired_generation.max(runtime_generation);
+            }
+            _ => {}
+        }
         self.through_seq = entry.seq;
         Ok(changes)
     }
@@ -256,13 +269,20 @@ impl AgentLogProjectionState {
         agent
             .validate_worktree_recoveries()
             .map_err(|e| e.to_string())?;
+        let maximum = self.max_opened_generation.max(self.max_retired_generation);
+        if self
+            .latest_conversation
+            .as_ref()
+            .map(|(_, generation)| *generation)
+            != (maximum != 0).then_some(maximum)
+            || (maximum != 0 && self.max_opened_generation == 0)
+            || (self.max_retired_generation != 0
+                && self.max_retired_generation == self.max_opened_generation)
+            || maximum > 9_007_199_254_740_991
+        {
+            return Err("Agent generation maxima disagree with the certified projection".into());
+        }
         if self.through_seq != agent.conversation.last_seq
-            || self
-                .latest_conversation
-                .as_ref()
-                .map_or(0, |(_, generation)| *generation)
-                != self.max_opened_generation.max(self.max_retired_generation)
-            || (self.latest_conversation.is_some() && self.max_opened_generation == 0)
             || self.steering.is_some()
             || self.active.as_ref().map(|turn| turn.turn_sequence) != agent.conversation.active_turn
             || (self.active.is_none()

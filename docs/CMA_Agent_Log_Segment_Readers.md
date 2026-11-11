@@ -48,6 +48,25 @@ its physical row or replay byte budget fail explicitly. Full history remains a
 paged consumer obligation under #1349; this foundation does not claim complete
 transcript or response projection support.
 
+## Captured source checkpoint
+
+The captured-source port currently implements read-only legacy snapshot capture.
+It requires exact equality with the supplied Agent, preserves the existing
+quarantine proof, folds one physically bounded prefix once, and retains only
+semantic state, the latest entry and original BSON leaf digests. Its independent
+opened/retired generation maxima come from that validated prefix. Requested
+points must be unique, ascending, inside the captured prefix and within the
+bounded source-byte budget. Point reads reuse the established snapshot and hashes;
+they cannot reuse a proof from another session, database or mode.
+
+Transaction capture and segmented semantic capture remain typed Unavailable.
+Transaction publication requires a transaction-scope binding that rejects reuse
+in a later transaction on the same session. The driver session ID alone cannot
+prove that binding. Segmented capture additionally requires the writer-owned
+certified generation maxima and projection reader. These refusal paths do not
+start transactions, write quarantine, create sidecars or authorize recovery.
+This checkpoint is not an executable writer or a review-ready foundation claim.
+
 ## Additive migration and retention
 
 The reader migration adds the six sidecars: heads, segments, publications,
