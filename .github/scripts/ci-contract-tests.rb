@@ -34,6 +34,7 @@ end
 guarded = mode == "release" ? [
   ["ci", "trigger-release-contract", "Debian desktop fixture regressions"],
   ["ci", "trigger-release-contract", "Ledger image qualification regressions"],
+  ["ci", "trigger-release-contract", "Migration matrix evidence regressions"],
   ["ci", "images", "Qualify exact runtime ledger storage"],
   ["ci", "images", "Execute desktop image contract"],
   ["ci", "images", "Execute built runtime image contract"],
@@ -438,6 +439,11 @@ else
       initialize = steps.find { |row| row["name"] == "Initialize isolated evidence path" }
       steps.delete(initialize)
       steps.push(initialize)
+    end
+  end
+  ["${{ vars.CMA_E2E_PUBLIC_ID }}", "${{ secrets.CMA_E2E_PUBLIC_ID }}"].each do |expression|
+    reject.call("unmasked or unsynchronized smoke public ID") do |value|
+      value["nightly-staging"]["jobs"]["smoke"]["env"]["CMA_E2E_PUBLIC_ID"] = expression
     end
   end
   reject.call("unprotected mutation") { |value| value["nightly-staging"]["jobs"]["journeys"].delete("environment") }

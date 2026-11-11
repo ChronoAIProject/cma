@@ -115,6 +115,7 @@ module CIContract
     step(gate, "Release workflow and Gateway source contracts", "ruby .github/scripts/ci-contract.rb release")
     step(gate, "Release contract mutation regressions", "ruby .github/scripts/ci-contract-tests.rb release")
     step(gate, "Runtime image evidence and provenance regressions", "node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs")
+    step(gate, "Migration matrix evidence regressions", "node --test .github/scripts/migration-matrix.test.mjs")
     step(gate, "Debian desktop fixture regressions", <<~SH)
       python3 .github/scripts/desktop-browser-input-tests.py
       node --test .github/scripts/desktop-browser-page.test.cjs
@@ -206,6 +207,9 @@ module CIContract
     require!(workflow.dig("concurrency", "cancel-in-progress") == false, "remote writers cannot be cancelled by a newer run")
     triggers = workflow["on"] || workflow[true]
     require!(triggers.keys.sort == %w[schedule workflow_dispatch], "remote campaign cannot execute on PR code")
+    require!(workflow.dig("jobs", "smoke", "env", "CMA_E2E_PUBLIC_ID") ==
+      "${{ vars.CMA_E2E_PUBLIC_ID == secrets.CMA_E2E_PUBLIC_ID && secrets.CMA_E2E_PUBLIC_ID || '' }}",
+      "smoke public ID must match its referenced redaction mirror")
     %w[smoke journeys].each do |id|
       row = workflow.fetch("jobs").fetch(id)
       require!(!row.fetch("env").key?("CMA_E2E_OUTPUT_DIR"), "runner evidence path must be initialized at step runtime")

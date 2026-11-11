@@ -8,7 +8,9 @@ use mongodb::bson::{doc, Document};
 use mongodb::options::{IndexOptions, ReadConcern};
 use mongodb::{Collection, IndexModel};
 
-use super::agent_log_integrity::{ensure_append_capacity, AppendCapacity, TransactionLogError};
+use super::agent_log_integrity::{
+    prepare_append, trusted_summary, AppendCapacity, SemanticCheckpoint, TransactionLogError,
+};
 pub(super) use super::agent_log_integrity::{
     scan_complete_log_with_session, scan_complete_log_with_snapshot_session,
 };
@@ -16,10 +18,16 @@ use super::agent_log_reads::scan_read_log;
 use super::agents::read_agent;
 use super::sandbox_mongo::{
     commit_transaction, i64_field_matches, is_duplicate_key, is_transient, read_record,
-    record_bson, require_version, signed, start_transaction, string_field_matches, unsigned,
+    record_bson, require_version, signed, start_transaction, string_field_matches,
     wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
     TRANSACTION_ATTEMPTS,
 };
+
+mod receipt;
+use receipt::reconcile_append_after_unknown;
+mod latest_turn;
+#[cfg(test)]
+mod receipt_tests;
 
 pub(super) fn agent_log_indexes() -> Vec<IndexModel> {
     vec![IndexModel::builder()
@@ -45,7 +53,7 @@ pub(super) async fn ensure_indexes(
         })
 }
 
-fn log_id(id: &AgentId, seq: u64) -> String {
+pub(super) fn log_id(id: &AgentId, seq: u64) -> String {
     format!("{}:{seq:020}", id.as_str())
 }
 
@@ -92,7 +100,7 @@ pub(super) fn verify_complete_log(
     Ok(())
 }
 
-async fn append_in_transaction(
+pub(in crate::store) async fn append_in_transaction(
     store: &MongoSandboxStore,
     session: &mut mongodb::ClientSession,
     agent_id: &AgentId,
@@ -105,7 +113,6 @@ async fn append_in_transaction(
             "_id": agent_id.as_str(),
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         })
-        .projection(doc! { "document_schema_version": 1, "last_seq": 1 })
         .session(&mut *session)
         .await
         .map_err(TransactionLogError::Driver)?;
@@ -127,20 +134,47 @@ async fn append_in_transaction(
     require_version(&aggregate)
         .map_err(SandboxStoreError::Corrupt)
         .map_err(TransactionLogError::Domain)?;
-    let previous = aggregate
-        .get_i64("last_seq")
-        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
-        .and_then(|seq| unsigned(seq, "agent log sequence").map_err(SandboxStoreError::Corrupt))
-        .map_err(TransactionLogError::Domain)?;
-    let complete = scan_complete_log_with_session(
-        ScanCaller::Other,
+    let agent = read_agent(&aggregate).map_err(TransactionLogError::Domain)?;
+    let previous = agent.conversation.last_seq;
+    let (complete, semantic) = match trusted_summary(
         store,
-        agent_id,
-        previous,
+        &agent,
+        &aggregate,
+        ScanCaller::Other,
         session,
-        |_| Ok(()),
+        false,
     )
-    .await?;
+    .await?
+    {
+        Some(summary) => {
+            let semantic = summary.semantic().cloned().ok_or_else(|| {
+                TransactionLogError::Domain(SandboxStoreError::Corrupt(
+                    "trusted Agent log metadata has no semantic checkpoint".into(),
+                ))
+            })?;
+            (summary, semantic)
+        }
+        None => {
+            let mut entries = Vec::new();
+            let summary = scan_complete_log_with_session(
+                ScanCaller::Other,
+                store,
+                agent_id,
+                previous,
+                session,
+                |entry| {
+                    entries.push(entry);
+                    Ok(())
+                },
+            )
+            .await?;
+            let semantic = crate::store::agent_log_integrity::audit_checkpoint(
+                store, &agent, &entries, session,
+            )
+            .await?;
+            (summary, semantic)
+        }
+    };
     let seq = previous.checked_add(1).ok_or(TransactionLogError::Domain(
         SandboxStoreError::SequenceConflict,
     ))?;
@@ -150,9 +184,18 @@ async fn append_in_transaction(
         appended_at,
         kind,
     };
-    ensure_append_capacity(
+
+    let mut next_agent = agent.clone();
+    next_agent.conversation.last_seq = seq;
+    let semantic = semantic
+        .after_append(std::slice::from_ref(&entry), &next_agent)
+        .map_err(TransactionLogError::Domain)?;
+    let integrity = prepare_append(
+        &agent,
         &complete,
         std::slice::from_ref(&entry),
+        agent.revision,
+        semantic,
         AppendCapacity::Normal,
     )
     .map_err(TransactionLogError::Domain)?;
@@ -176,6 +219,7 @@ async fn append_in_transaction(
                 "$set": {
                     "last_seq": next,
                     "record.conversation.last_seq": next,
+                    "agent_log_integrity_v1": integrity.integrity,
                 }
             },
         )
@@ -189,7 +233,8 @@ async fn append_in_transaction(
     }
     store
         .agent_log
-        .insert_one(log_document(&entry).map_err(TransactionLogError::Domain)?)
+        .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+        .insert_one(&integrity.documents[0])
         .session(&mut *session)
         .await
         .map_err(|error| {
@@ -213,61 +258,15 @@ async fn append_in_transaction(
     Ok(entry)
 }
 
-async fn reconcile_append_after_unknown(
-    store: &MongoSandboxStore,
-    expected: &AgentLogEntry,
-    snapshot_time: mongodb::bson::Timestamp,
-) -> Result<Option<AgentLogEntry>, SandboxStoreError> {
-    let mut session = store
-        .client
-        .start_session()
-        .snapshot(true)
-        .snapshot_time(snapshot_time)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let agent = store
-        .agents
-        .find_one(doc! { "_id": expected.agent_id.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_agent)
-        .transpose()?;
-    let Some(agent) = agent else {
-        return Ok(None);
-    };
-    if agent.conversation.last_seq != expected.seq {
-        return Ok(None);
-    }
-    let mut found = None;
-    scan_complete_log_with_snapshot_session(
-        ScanCaller::UnknownCommitProof,
-        store,
-        &expected.agent_id,
-        agent.conversation.last_seq,
-        &mut session,
-        |entry| {
-            if entry.seq == expected.seq {
-                if &entry != expected {
-                    return Err(SandboxStoreError::SequenceConflict);
-                }
-                found = Some(entry);
-            }
-            Ok(())
-        },
-    )
-    .await
-    .map_err(|error| match error {
-        TransactionLogError::Domain(error) => error,
-        TransactionLogError::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
-    })?;
-    Ok(found)
-}
-
 #[async_trait::async_trait]
 impl AgentLogStore for MongoSandboxStore {
+    async fn agent_latest_started_turn(
+        &self,
+        agent: &layer2_core::sandbox::Agent,
+    ) -> Result<Option<u64>, SandboxStoreError> {
+        latest_turn::read(self, agent).await
+    }
+
     async fn append_agent_log(
         &self,
         agent_id: &AgentId,
