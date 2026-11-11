@@ -78,6 +78,11 @@ pub(super) async fn settle(
         .checked_add(actual)
         .filter(|n| *n <= i64::MAX as u64)
         .ok_or_else(|| domain(BudgetError::Unavailable))?;
+    let reserved = record.reserved;
+    super::super::period::mirror(store, record.period_start, session, |platform| {
+        platform.settle(reserved, actual)
+    })
+    .await?;
     record.settled = Some(usage);
     save(store, &owner_key, &owner, session).await?;
     save(store, &ledger_key, &ledger, session).await?;
