@@ -73,3 +73,7 @@ publication does not install this protection in a running runtime. Image
 publication, default-pin activation and eligible runtime replacement are separate
 operations. Preserve the owner-interruption and retained-identity requirements
 in `CLAUDE.md` and follow `docs/Release.md` for release activation.
+
+For nonmutating physical occupancy and authoritative retirement-candidate counts,
+see [Runtime ledger retirement preflight](CMA_Runtime_Ledger_Retirement.md).
+That diagnostic does not free capacity or authorize archival.
