@@ -4,9 +4,20 @@ use layer3_adapter::{RuntimeOutputReceipt, RuntimeOutputSource};
 #[path = "agent_output_identity_tests.rs"]
 mod identity_tests;
 
+#[path = "shared_output_tests.rs"]
+mod shared_output_tests;
+
 const STREAM: &str = "d99003d1-0c3c-46cd-aa47-9bbdbed50b12";
 
 fn retained(cursor: u64, update: Option<ConversationUpdate>) -> ConversationUpdate {
+    retained_policy(cursor, update, false)
+}
+
+fn retained_policy(
+    cursor: u64,
+    update: Option<ConversationUpdate>,
+    shared: bool,
+) -> ConversationUpdate {
     let (ack, _) = tokio::sync::mpsc::channel(1);
     ConversationUpdate::RuntimeOutput {
         receipt: RuntimeOutputReceipt::new(
@@ -18,7 +29,7 @@ fn retained(cursor: u64, update: Option<ConversationUpdate>) -> ConversationUpda
             },
             ack,
         ),
-        update: update.map(Box::new),
+        update: update.map(|update| layer3_adapter::RuntimeOutputUpdate::new(update, shared)),
     }
 }
 
