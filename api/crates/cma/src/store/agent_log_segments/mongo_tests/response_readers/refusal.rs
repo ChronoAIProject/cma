@@ -9,7 +9,17 @@ async fn indexed_response_refuses_missing_foreign_stale_and_malformed_evidence()
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let (agent, _) = fixtures::source(&store, 2, false).await;
     fixtures::certify(&client, &db, &agent, 2).await;
-    let filter = doc! {"agent_id":agent.id.as_str(),"kind":"output_change"};
+    let head = Head::read(
+        store
+            .segment_logs
+            .heads
+            .find_one(doc! {"_id":agent.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    let filter = doc! {"_id":segments::projection::identity(&head,"output_change","3:0")};
     let original = store
         .segment_logs
         .evidence
@@ -19,9 +29,9 @@ async fn indexed_response_refuses_missing_foreign_stale_and_malformed_evidence()
         .unwrap();
     for mutation in [
         None,
-        Some(doc! {"incarnation":"foreign"}),
-        Some(doc! {"head_revision":i64::MAX}),
-        Some(doc! {"record.change.ordinal":9_i64}),
+        Some(doc! {"incarnation":"f".repeat(64)}),
+        Some(doc! {"head_revision":head.revision+1}),
+        Some(doc! {"change_ordinal":9_i64,"record.change.ordinal":9_i64}),
     ] {
         store
             .segment_logs
