@@ -5,9 +5,16 @@ use crate::store::{
     agent_capacity_recovery::{lineage, source::capture_segmented_scoped},
     agent_log_segments::transaction_scope::TransactionScope,
 };
-use layer2_core::{sandbox::Agent, AgentId};
+use layer2_core::{
+    sandbox::{Agent, Workspace},
+    AgentId,
+};
 
-pub(super) struct NativeFacts(BTreeMap<AgentId, (Agent, u64, u64)>);
+pub(super) struct NativeFacts {
+    pub(super) agents: Vec<Agent>,
+    pub(super) workspaces: Vec<Workspace>,
+    segmented: BTreeMap<AgentId, (Agent, u64, u64)>,
+}
 
 impl NativeFacts {
     async fn capture(
@@ -15,24 +22,30 @@ impl NativeFacts {
         id: &SandboxId,
         scope: &mut TransactionScope<'_>,
     ) -> Result<Self, ApplyError> {
+        let agents = lineage::agents(store, id, scope).await?;
+        let workspaces = lineage::workspaces(store, id, scope).await?;
         let mut rows = BTreeMap::new();
-        for agent in lineage::agents(store, id, scope).await? {
-            if let Some(source) = capture_segmented_scoped(store, &agent, scope).await? {
+        for agent in &agents {
+            if let Some(source) = capture_segmented_scoped(store, agent, scope).await? {
                 rows.insert(
                     agent.id.clone(),
                     (
-                        agent,
+                        agent.clone(),
                         source.max_opened_generation(),
                         source.max_retired_generation(),
                     ),
                 );
             }
         }
-        Ok(Self(rows))
+        Ok(Self {
+            agents,
+            workspaces,
+            segmented: rows,
+        })
     }
 
     pub(super) fn for_agent(&self, agent: &Agent) -> Result<Option<(u64, u64)>, ApplyError> {
-        match self.0.get(&agent.id) {
+        match self.segmented.get(&agent.id) {
             Some((source, opened, retired)) if source == agent => Ok(Some((*opened, *retired))),
             Some(_) => Err(ApplyError::Domain(SandboxStoreError::Conflict)),
             None => Ok(None),
