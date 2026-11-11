@@ -132,7 +132,7 @@ pub(crate) async fn transcript(
             )
             .await
     } else {
-        state.reads.transcript(&caller, &id).await
+        state.reads.transcript_bounded(&caller, &id).await
     };
     value
         .map_err(InstanceProblem::from)
