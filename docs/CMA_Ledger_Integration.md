@@ -124,10 +124,9 @@ acknowledgement, exact binding/revision checks, cancellation-safe ownership and 
 qualified maintenance permit. Restore requires full-home no-newer-effects proof.
 No background collector is scheduled merely by deploying this groundwork.
 
-The `ledger_collection_contract` integration-test target compiles the held
-coordinator in normal CI without registering a production worker. It exercises
-the existing in-memory restart, cancellation and lifecycle models. Passing those
-models does not qualify real V1/V2 storage, physical exclusion or recovery.
+The executing collector and its coordinator models remain in the separate B2
+slice. This groundwork does not register a production collector worker or claim
+that model tests qualify real V1/V2 storage, physical exclusion or recovery.
 
 The held V2 source core also accepts an explicit bounded-collection evidence
 adapter. It validates the original candidate page, request and authority batch
