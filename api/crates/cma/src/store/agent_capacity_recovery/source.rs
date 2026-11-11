@@ -8,8 +8,9 @@ use mongodb::{
 use crate::store::{
     agent_log_integrity::TransactionLogError,
     agent_log_segments::{
-        capture::{self, CaptureMode, CapturedLog},
+        capture::{self, CapturedLog},
         read_format,
+        transaction_scope::TransactionScope,
     },
     agents::read_agent,
     sandbox_mongo::{signed, MongoSandboxStore},
@@ -27,7 +28,24 @@ pub(in crate::store) async fn capture_segmented(
     if read_format(&row)?.is_none() {
         return Ok(None);
     }
-    capture::capture(store, agent, session, CaptureMode::Transaction)
+    // A raw session cannot establish a transaction stamp, even if its caller
+    // already started a transaction. Only the scoped entry can capture v2.
+    Err(SandboxStoreError::Unavailable(
+        "segmented recovery consumer requires an exclusive transaction scope".into(),
+    )
+    .into())
+}
+
+pub(in crate::store) async fn capture_segmented_scoped(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    scope: &mut TransactionScope<'_>,
+) -> Result<Option<CapturedLog>, TransactionLogError> {
+    let row = current_row_scoped(store, agent, scope).await?;
+    if read_format(&row)?.is_none() {
+        return Ok(None);
+    }
+    capture::capture_transaction(store, agent, scope)
         .await
         .map(Some)
 }
@@ -44,6 +62,23 @@ async fn current_row(
         .await
         .map_err(TransactionLogError::Driver)?
         .ok_or(SandboxStoreError::NotFound)?;
+    validate_row(agent, row)
+}
+
+async fn current_row_scoped(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    scope: &mut TransactionScope<'_>,
+) -> Result<Document, TransactionLogError> {
+    let row = scope
+        .find_one(&store.agents, doc! {"_id": agent.id.as_str()})
+        .await
+        .map_err(TransactionLogError::Driver)?
+        .ok_or(SandboxStoreError::NotFound)?;
+    validate_row(agent, row)
+}
+
+fn validate_row(agent: &Agent, row: Document) -> Result<Document, TransactionLogError> {
     if read_agent(&row)? != *agent {
         return Err(SandboxStoreError::Conflict.into());
     }
@@ -59,6 +94,19 @@ pub(in crate::store) async fn fence_filter(
     session: &mut ClientSession,
 ) -> Result<Document, TransactionLogError> {
     let row = current_row(store, agent, session).await?;
+    envelope_filter(agent, &row)
+}
+
+pub(in crate::store) async fn fence_filter_scoped(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    scope: &mut TransactionScope<'_>,
+) -> Result<Document, TransactionLogError> {
+    let row = current_row_scoped(store, agent, scope).await?;
+    envelope_filter(agent, &row)
+}
+
+fn envelope_filter(agent: &Agent, row: &Document) -> Result<Document, TransactionLogError> {
     let number = |value, name| signed(value, name).map_err(SandboxStoreError::Corrupt);
     let mut filter = doc! {
         "_id": agent.id.as_str(), "owner": agent.owner.as_str(),
