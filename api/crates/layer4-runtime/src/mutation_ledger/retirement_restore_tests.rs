@@ -40,10 +40,25 @@ async fn cycle(fixture: &Fixture, source: &Ledger, name: &str) {
 }
 
 async fn prepare() -> (Fixture, Ledger, Retained, DeactivationReceipt) {
+    prepare_source(false).await
+}
+
+async fn prepare_source(noncanonical: bool) -> (Fixture, Ledger, Retained, DeactivationReceipt) {
     let mut fixture = Fixture::new();
     fixture.config.home_identity = Some("a".repeat(43));
     let source = fixture.open(true).await;
     cycle(&fixture, &source, "restore-fixture").await;
+    if noncanonical {
+        source.test_retirement_storage(|db| {
+            // Semantically identical fixture payloads with distinct original bytes.
+            db.execute_batch("UPDATE operations SET identity=CAST(CAST(identity AS TEXT)||' ' AS BLOB),
+                record=CAST(CAST(record AS TEXT)||char(10) AS BLOB);
+                UPDATE authority SET present=CASE WHEN present IS NULL THEN NULL ELSE CAST(CAST(present AS TEXT)||' ' AS BLOB) END,
+                first_absent=CAST(CAST(first_absent AS TEXT)||' ' AS BLOB),
+                last_absent=CAST(CAST(last_absent AS TEXT)||char(10) AS BLOB)").unwrap();
+            Ok(())
+        }).await.unwrap();
+    }
     let key = ledger_retired_agent_key("restore-fixture");
     let mut cursor = None;
     let mut context = None;
@@ -101,6 +116,9 @@ async fn prepare() -> (Fixture, Ledger, Retained, DeactivationReceipt) {
         .unwrap();
     (fixture, source, retained, receipt)
 }
+
+#[path = "retirement_restore_transaction_tests.rs"]
+mod transaction_tests;
 
 fn bytes(fixture: &Fixture) -> (Vec<u8>, Vec<u8>) {
     (

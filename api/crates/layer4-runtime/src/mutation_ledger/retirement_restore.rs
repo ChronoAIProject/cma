@@ -9,6 +9,10 @@ use super::{
 };
 use crate::failure::RuntimeError;
 
+#[cfg(test)]
+#[path = "retirement_restore_transaction.rs"]
+mod transaction;
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct RestoreSourceAssessment {
     pub(crate) format: &'static str,
@@ -41,29 +45,7 @@ impl Ledger {
                 // Normalize all query/callback failures before returning to the
                 // worker: inspection must never spend its emergency reserve.
                 let tx = db.transaction().map_err(|_| changed())?;
-                let current = Context::read(&tx, &config).map_err(|_| changed())?;
-                let mut expected = original.context.clone();
-                expected.accounting = original.after_accounting().map_err(|_| changed())?;
-                expected.geometry[2] =
-                    i64::try_from(transition.free_pages_after).map_err(|_| changed())?;
-                if current != expected
-                    || digest(&current) != transition.after_sha256
-                    || scan::group(&tx, &config, &current, &original)
-                        .map_err(|_| changed())?
-                        .0
-                        != 0
-                {
-                    return Err(changed());
-                }
-                // Shared scope projections survived deactivation. Missing or changed
-                // rows cannot be treated as permission to recreate an old snapshot.
-                for row in &original.rows {
-                    if matches!(row, SourceRow::Auxiliary(Auxiliary::Scope { .. }))
-                        && !source_check::matches(&tx, row).map_err(|_| changed())?
-                    {
-                        return Err(changed());
-                    }
-                }
+                compare_source(&tx, &config, &original, &transition)?;
                 tx.rollback().map_err(|_| changed())?;
                 Ok(RestoreSourceAssessment {
                     format: "runtime-ledger-restore-source-assessment-v1",
@@ -81,6 +63,38 @@ impl Ledger {
             })
             .await
     }
+}
+
+fn compare_source(
+    db: &rusqlite::Connection,
+    config: &crate::config::RuntimeConfig,
+    original: &Selection,
+    transition: &DeactivationReceipt,
+) -> Result<Context> {
+    validate_transition(original, transition)?;
+    let current = Context::read(db, config).map_err(|_| changed())?;
+    let mut expected = original.context.clone();
+    expected.accounting = original.after_accounting().map_err(|_| changed())?;
+    expected.geometry[2] = i64::try_from(transition.free_pages_after).map_err(|_| changed())?;
+    if current != expected
+        || digest(&current) != transition.after_sha256
+        || scan::group(db, config, &current, original)
+            .map_err(|_| changed())?
+            .0
+            != 0
+    {
+        return Err(changed());
+    }
+    // Shared projections survived deactivation; do not recreate an old snapshot
+    // over a changed row, even if aggregate accounting still matches.
+    for row in &original.rows {
+        if matches!(row, SourceRow::Auxiliary(Auxiliary::Scope { .. }))
+            && !source_check::matches(db, row).map_err(|_| changed())?
+        {
+            return Err(changed());
+        }
+    }
+    Ok(current)
 }
 
 fn validate_transition(original: &Selection, transition: &DeactivationReceipt) -> Result<()> {
