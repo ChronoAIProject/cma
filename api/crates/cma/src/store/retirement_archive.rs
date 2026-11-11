@@ -409,9 +409,16 @@ pub(super) async fn holds_checkpoint_key(database: &Database, key: &str) -> Resu
     use futures_util::TryStreamExt;
     let mut cursor = majority_collection(database, "sandboxes")
         .find(doc! {"record.lifecycle.retirement_archive":{"$exists":true}})
+        .max_time(std::time::Duration::from_secs(10))
+        .limit(1001)
         .await
         .map_err(|_| REFUSED)?;
+    let mut examined = 0;
     while let Some(document) = cursor.try_next().await.map_err(|_| REFUSED)? {
+        examined += 1;
+        if examined > 1000 {
+            return Err(REFUSED);
+        }
         let sandbox = read_sandbox(&document).map_err(|_| REFUSED)?;
         if sandbox.retirement_archive_pending()
             && key.starts_with(&format!(
