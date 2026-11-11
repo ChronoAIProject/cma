@@ -17,8 +17,32 @@ use super::{
 use transaction::ApplyError;
 
 #[cfg(test)]
-mod mongo_integration_tests;
-mod transaction;
+pub(in crate::store) mod mongo_integration_tests;
+pub(in crate::store) mod transaction;
+
+pub(super) async fn retained_snapshot(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+) -> Result<layer2_core::sandbox::RetainedRecoverySnapshot, SandboxStoreError> {
+    let mut session = store.client.start_session().await.map_err(unavailable)?;
+    let result = async {
+        if sandbox_uses_segments(store, id).await? {
+            let scope = TransactionScope::start(&mut session)
+                .await
+                .map_err(ApplyError::Driver)?;
+            transaction::load_retained_scoped(store, id, scope).await
+        } else {
+            start_transaction(&mut session)
+                .await
+                .map_err(ApplyError::Driver)?;
+            transaction::load_retained(store, id, &mut session).await
+        }
+    }
+    .await
+    .map_err(ApplyError::domain);
+    let _ = session.abort_transaction().await;
+    result
+}
 
 pub(super) async fn snapshot(
     store: &MongoSandboxStore,
