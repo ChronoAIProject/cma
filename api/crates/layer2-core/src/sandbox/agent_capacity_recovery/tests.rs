@@ -15,6 +15,8 @@ mod plan;
 mod preflight;
 mod recovery;
 mod recovery_faults;
+mod recovery_races;
+mod recovery_restart;
 mod recovery_store;
 
 #[derive(Clone)]

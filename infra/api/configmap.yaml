@@ -99,6 +99,8 @@ data:
   CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "false"
   # Response projection uses a proven target-turn window; independent rollout.
   CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
+  # New recovery admission also requires both durable gates; accepted work survives closure.
+  CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED: "false"
   CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED: "false"
   CHRONO_TASK_EXPERIENCE_POLICY: '{"mode":"disabled","accounts":[],"capabilities":[]}'
   # Independent placement rollout selections; these do not attest continuity.
