@@ -67,6 +67,7 @@ pub(crate) struct SandboxReconciler {
     progress: tokio::sync::Mutex<Option<sweep::Progress>>,
     binding_holds: binding_holds::BindingHolds,
     platform_spend: Option<Arc<dyn platform::PlatformSpendSweep>>,
+    platform_schedule: platform::PlatformSpendSchedule,
 }
 
 impl SandboxReconciler {
@@ -93,6 +94,7 @@ impl SandboxReconciler {
             progress: tokio::sync::Mutex::new(None),
             binding_holds: Default::default(),
             platform_spend: None,
+            platform_schedule: Default::default(),
         }
     }
 
