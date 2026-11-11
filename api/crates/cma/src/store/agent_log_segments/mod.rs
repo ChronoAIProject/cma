@@ -37,6 +37,7 @@ pub(in crate::store) const PUBLICATIONS: &str = "agent_log_publications";
 pub(in crate::store) const PROJECTIONS: &str = "agent_log_projections";
 pub(in crate::store) const EVIDENCE: &str = "agent_log_evidence";
 pub(in crate::store) const AUDITS: &str = "agent_log_audits";
+pub(in crate::store) const RECOVERY_WORK: &str = "agent_capacity_recovery_work";
 pub(in crate::store) const COLLECTIONS: &[&str] = &[
     HEADS,
     SEGMENTS,
@@ -46,6 +47,7 @@ pub(in crate::store) const COLLECTIONS: &[&str] = &[
     AUDITS,
     writer_gate::COLLECTION,
     writer_admission::COLLECTION,
+    RECOVERY_WORK,
 ];
 pub(in crate::store) const FORMAT: &str = "segmented_v1";
 pub(in crate::store) const READER: &str = "agent_log_segments_v1";
