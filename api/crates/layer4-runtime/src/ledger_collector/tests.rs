@@ -9,6 +9,8 @@ mod lifecycle_harness;
 mod model;
 use lifecycle_harness::until_complete;
 use model::{digest, Call, Model};
+#[path = "checkpoint_tests.rs"]
+mod checkpoint_tests;
 #[path = "window_tests.rs"]
 mod window_tests;
 

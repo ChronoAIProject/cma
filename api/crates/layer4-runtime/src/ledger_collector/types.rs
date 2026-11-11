@@ -179,9 +179,15 @@ impl Checkpoint {
             && self.cursor.as_ref().is_none_or(|s| {
                 !s.is_empty() && s.len() <= 4096 && !s.chars().any(char::is_control)
             })
-            && (!self.complete || (self.page.is_none() && self.pending.is_none()))
+            && (!self.complete
+                || (self.page.is_none() && self.pending.is_none() && self.cursor.is_none()))
             && self.page.as_ref().is_none_or(|p| {
-                p.valid() && p.source_revision == self.source_revision && p.cursor == self.cursor
+                p.valid()
+                    && p.source_revision == self.source_revision
+                    && p.cursor == self.cursor
+                    && p.groups
+                        .first()
+                        .is_none_or(|first| self.after_group.is_none_or(|after| *first > after))
             })
             && self.pending.as_ref().is_none_or(|p| {
                 p.valid()
@@ -190,7 +196,7 @@ impl Checkpoint {
                     && self
                         .page
                         .as_ref()
-                        .is_some_and(|page| page.groups.contains(&p.intent.group))
+                        .is_some_and(|page| page.groups.first() == Some(&p.intent.group))
             })
     }
 }
