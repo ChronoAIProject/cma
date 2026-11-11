@@ -122,6 +122,24 @@ pub(in crate::store) async fn claim(
 }
 
 impl Permit {
+    pub(in crate::store) fn validate_admission(
+        &self,
+        admission: &Admission,
+    ) -> Result<(), SandboxStoreError> {
+        let expected_name = match admission.kind {
+            AdmissionKind::Activation => GateName::Segments,
+            AdmissionKind::CapacityRecovery => GateName::CapacityRecovery,
+            AdmissionKind::Rollover => return Err(invalid()),
+        };
+        if self.name != expected_name
+            || self.slot.holder != admission.id
+            || self.slot.fingerprint != admission.fingerprint
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        Ok(())
+    }
+
     /// Fence token for the staged generation; never use the gate policy revision
     /// as a preparation lease, since independent claims share that revision.
     pub fn fence(&self) -> i64 {
@@ -167,17 +185,7 @@ impl Permit {
         admission: &Admission,
         session: &mut ClientSession,
     ) -> Result<(), TransactionLogError> {
-        let expected_name = match admission.kind {
-            AdmissionKind::Activation => GateName::Segments,
-            AdmissionKind::CapacityRecovery => GateName::CapacityRecovery,
-            AdmissionKind::Rollover => return Err(invalid().into()),
-        };
-        if self.name != expected_name
-            || self.slot.holder != admission.id
-            || self.slot.fingerprint != admission.fingerprint
-        {
-            return Err(SandboxStoreError::Conflict.into());
-        }
+        self.validate_admission(admission)?;
         let result = database.collection::<Document>(COLLECTION).update_one(
             doc! {"_id":self.name.as_str(),"format_version":1_i64,
                 "slots":{"$elemMatch":bson::serialize_to_document(&self.slot).map_err(|_| invalid())?},
