@@ -34,6 +34,7 @@ fn create_only_probe_reports_the_actual_bundled_sqlite_and_refuses_existing_stat
     assert_eq!(report["synchronous"], "extra");
     assert_eq!(report["create_commit_reopen"], "passed");
     assert_eq!(report["anchored_import_create_commit_reopen"], "passed");
+    assert_eq!(report["retirement_archive_copy_reopen_refusal"], "passed");
     let path = database.join("ledger.sqlite3");
     let before = std::fs::read(&path).unwrap();
     assert!(!run().status.success());
