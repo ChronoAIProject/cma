@@ -12,6 +12,7 @@ pub(super) struct Counts {
     pub entered: tokio::sync::Notify,
     pub release: tokio::sync::Notify,
 }
+#[derive(Clone)]
 pub(super) struct Data {
     pub metadata: AgentOutputMetadata,
     pub rows: BTreeMap<u64, AgentLogEntry>,
@@ -130,7 +131,7 @@ impl AgentOutputReader for Reader {
         Ok(self
             .data
             .rows
-            .range(after + 1..)
+            .range(after + 1..=self.metadata.index.as_ref().unwrap().through_sequence)
             .take(usize::from(limit))
             .map(|(_, row)| row.clone())
             .collect())
@@ -138,6 +139,7 @@ impl AgentOutputReader for Reader {
 }
 
 pub(super) struct IndexedFixture {
+    pub state: crate::AgentConversationState,
     pub agent: Agent,
     pub reads: Arc<AgentReadService>,
     pub access: Arc<ResourceAccessService>,
@@ -193,8 +195,12 @@ pub(super) fn update(call: &str, status: &str) -> AgentLogKind {
     }
 }
 
-pub(super) async fn make(mut kinds: Vec<AgentLogKind>) -> IndexedFixture {
-    let (state, store) = crate::rest::agents_tests::conversation_fixture().await;
+pub(super) async fn make(kinds: Vec<AgentLogKind>) -> IndexedFixture {
+    make_turn(kinds, 3).await
+}
+
+pub(super) async fn make_turn(mut kinds: Vec<AgentLogKind>, target: u64) -> IndexedFixture {
+    let (mut state, store) = crate::rest::agents_tests::conversation_fixture().await;
     let mut agent = crate::rest::agents_tests::seeded_agent(
         "agt_indexed",
         AgentStatus::Ready,
@@ -231,14 +237,23 @@ pub(super) async fn make(mut kinds: Vec<AgentLogKind>) -> IndexedFixture {
     let mut index = None;
     let mut changes = vec![];
     let mut tools = BTreeMap::<String, AgentToolOutputState>::new();
+    let mut inside = false;
     for row in &rows {
         for change in fold.observe(&agent, row, None).unwrap() {
             if let AgentLogEvidenceChange::Turn(turn) = change {
-                facts = Some(*turn);
+                if turn.turn_sequence == target {
+                    facts = Some(*turn);
+                }
             }
         }
         if matches!(row.kind, AgentLogKind::TurnStarted { .. }) {
-            index = Some(AgentTurnOutputIndex::start(row).unwrap());
+            inside = row.seq == target;
+            if inside {
+                index = Some(AgentTurnOutputIndex::start(row).unwrap());
+            }
+            continue;
+        }
+        if !inside {
             continue;
         }
         if let Some(index) = &mut index {
@@ -355,7 +370,9 @@ pub(super) async fn make(mut kinds: Vec<AgentLogKind>) -> IndexedFixture {
             failure: None,
         },
     };
+    state.reads = reads.clone();
     IndexedFixture {
+        state,
         agent,
         reads,
         access,
@@ -367,6 +384,16 @@ pub(super) async fn make(mut kinds: Vec<AgentLogKind>) -> IndexedFixture {
 }
 
 impl IndexedFixture {
+    pub fn mutate(&mut self, mutate: impl FnOnce(&mut Data)) {
+        let mut data = (*self.source.data).clone();
+        mutate(&mut data);
+        self.source = Arc::new(Source {
+            data: Arc::new(data),
+            counts: self.source.counts.clone(),
+        });
+        self.reads = self.reads.with_response_logs(Some(self.source.clone()));
+    }
+
     pub async fn observe<T: Send, F: Send>(&self, operation: F) -> Result<T, AgentReadError>
     where
         F: for<'a, 'b> FnOnce(
