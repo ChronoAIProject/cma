@@ -103,13 +103,15 @@
       "request": {
         "method": "GET",
         "path": "/auth/logout",
-        "headers": {}
+        "headers": {
+          "sec-fetch-site": "same-origin"
+        }
       },
       "response": {
         "status": 303,
         "setCookies": [
           "cma_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
-          "cma_signed_out=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000"
+          "cma_signed_out=1000; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000"
         ],
         "headers": {
           "cache-control": "no-store",
@@ -237,14 +239,15 @@
         "method": "GET",
         "path": "/auth/logout",
         "headers": {
-          "cookie": "cma_session=contract-browser"
+          "cookie": "cma_session=contract-browser",
+          "sec-fetch-site": "same-origin"
         }
       },
       "response": {
         "status": 303,
         "setCookies": [
           "cma_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
-          "cma_signed_out=1; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000"
+          "cma_signed_out=1000; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000"
         ],
         "headers": {
           "cache-control": "no-store",
@@ -668,13 +671,14 @@
         "method": "GET",
         "path": "/auth/logout",
         "headers": {
-          "cookie": "cma_session=contract-browser"
+          "cookie": "cma_session=contract-browser",
+          "sec-fetch-site": "same-origin"
         }
       },
       "response": {
         "status": 503,
         "setCookies": [
-          "cma_signed_out=1; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000"
+          "cma_signed_out=1000; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000"
         ],
         "headers": {
           "cache-control": "no-store",
@@ -1039,6 +1043,133 @@
         "headers": {
           "cache-control": "no-store",
           "location": "/t/public-contract/placement-contract"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-silent-suppressed",
+      "operation": "GET /auth/session",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {
+          "cookie": "cma_signed_out=1000"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": false,
+          "silent_sign_in": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-silent-explicit-resumed",
+      "operation": "GET /auth/session",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {
+          "cookie": "cma_signed_out=1000; cma_signed_in=1001.tPuWtswBg6ow3ijL_D8GUCvru5vfPBWFZJlojAkSTa4"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": false,
+          "silent_sign_in": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-silent-preference-logout",
+      "operation": "GET /auth/logout",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/logout",
+        "headers": {
+          "cookie": "cma_signed_in=1001.tPuWtswBg6ow3ijL_D8GUCvru5vfPBWFZJlojAkSTa4",
+          "sec-fetch-site": "same-origin"
+        }
+      },
+      "response": {
+        "status": 303,
+        "setCookies": [
+          "cma_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
+          "cma_signed_out=1000; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000"
+        ],
+        "headers": {
+          "cache-control": "no-store",
+          "location": "/"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-silent-later-logout",
+      "operation": "GET /auth/session",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {
+          "cookie": "cma_signed_out=1000; cma_signed_in=1001.tPuWtswBg6ow3ijL_D8GUCvru5vfPBWFZJlojAkSTa4"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": false,
+          "silent_sign_in": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-cross-site-logout",
+      "operation": "GET /auth/logout",
+      "scenario": "auth_trusted",
+      "request": {
+        "method": "GET",
+        "path": "/auth/logout",
+        "headers": {
+          "sec-fetch-site": "cross-site"
+        }
+      },
+      "response": {
+        "status": 303,
+        "setCookies": [
+          "cma_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+        ],
+        "headers": {
+          "cache-control": "no-store",
+          "location": "/"
         },
         "body": null,
         "bodyKind": "empty"
