@@ -141,6 +141,18 @@ pub trait CapacityRecoveryStore: Send + Sync {
     ) -> Result<CommitOutcome<RecoveryWork>, RecoveryError>;
 }
 
+/// A current process-local attachment is already published at the exact
+/// committed identity/fence, or a newly retained connection needs activation.
+/// AlreadyActivated never substitutes for the store's fresh receipt/authority
+/// checks and carries no invented native confirmation.
+pub enum CompletedAttachment<A> {
+    AlreadyActivated,
+    Reattached {
+        attachment: A,
+        confirmation: RecoveryConfirmation,
+    },
+}
+
 /// Intentionally has no Message, Steer, settings/context replay, first-message,
 /// open-new-conversation or runtime-replacement method. An implementation must
 /// use the original open receipt and reconnect only the pinned native target.
@@ -160,7 +172,7 @@ pub trait CapacityRecoveryRuntime: Send + Sync {
     async fn reattach_completed(
         &self,
         _activation: &RecoveryActivation,
-    ) -> Result<(Self::Attachment, RecoveryConfirmation), RecoveryError> {
+    ) -> Result<CompletedAttachment<Self::Attachment>, RecoveryError> {
         Err(RecoveryError::Unavailable)
     }
 

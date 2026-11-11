@@ -113,8 +113,8 @@ async fn live_completion_restart_activates_exact_receipt_without_replaying_input
             assert_eq!(s.successors, 1);
             assert_eq!(s.publications, 1);
             let r = runtime.0.lock().unwrap();
-            assert_eq!(r.reconnects.len(), 3);
-            assert_eq!(r.acknowledgement_attempts, 2 + usize::from(boundary == 2));
+            assert_eq!(r.reconnects.len(), 2);
+            assert_eq!(r.acknowledgement_attempts, 1 + usize::from(boundary == 2));
             assert_eq!(r.acknowledgements, 1);
             assert_eq!(r.activated.len(), 1);
             assert!(r.reconnects.iter().all(|target| target == &r.reconnects[0]));
