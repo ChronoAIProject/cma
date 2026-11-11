@@ -48,6 +48,15 @@ already changes the stored schema. Until the gate opens, keep the section absent
 or completely empty and disabled.
 Outstanding reservations and recorded stop decisions remain effective.
 
+Operations > Settings > Spend controls edits the platform policy, default owner
+policy and explicit owner overrides through the same revision-checked settings
+save. New entries start blank. Removing an override returns that owner to the
+default, or outside enforcement when no default exists. Removing the default
+restricts the configured scope to explicit owners; an isolated rehearsal must
+preserve every other owner's effective policy. Saves retain existing liabilities.
+If both a draft and the server changed the same owner list, the UI retains the
+draft and requires loading current values before reapplying list changes.
+
 Each owner policy contains `owner_day_limit`, `turn_limit`, `max_calls_per_turn`,
 `day_timezone`, `input_token_units`,
 `output_token_units`, `max_unobserved_units` and `usage_timeout_seconds`. Units

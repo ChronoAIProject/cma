@@ -129,3 +129,33 @@ errors without advancing cursors.
 This is deterministic protocol evidence, not a measured live chrono-goals run.
 G3 still requires the real runtime's sync, check, build, status PR, exact-head CI
 wait and merge timestamps.
+
+
+## Expiry before an original Responses admission
+
+An expired `Pending` or `Prepared` target with no response projection or delivery
+checkpoint settles as `Refused` with `event_expired_before_start`. `Prepared`
+means that the original Responses POST has not started; it can still contain
+continuation preparation and an indexed media work head. `Starting` and `Unknown`
+remain uncertain and keep their original recovery semantics.
+
+Prepared expiry makes no provider POST. Media effects independently check the
+original expiry and refused parent before fetching, uploading, appending or
+sending. The media worker refuses outstanding indexed obligations and removes
+the head only after terminal evidence is durable. Before cleanup the expired
+work is inert; after cleanup a late derivative cannot recreate a head. Retained
+provider-side preparation receipts grant no supplement or delivery authority.
+
+The precise `429 conversation_not_ready` and `503
+verified_sender_context_unavailable` paths retain the same frozen body and key
+and use the existing five-second cooldown. A separate sealed receipt retains the
+last precise non-admission code without changing the strict target-state schema.
+On expiry, the public Activity API reports `state:failed`,
+`refusal_code:event_expired_before_start`, and `last_non_admission_code` when
+known. A restart repairs these fields from the terminal target and receipt.
+There is no automatic Feishu failure reply.
+
+Clock-advanced tests cover 429 recovery, prepared media with a retained upload
+and an in-flight transcript, restart and active-head cleanup, and public Activity
+reporting after repeated 503 responses. They prove no original POST, upload,
+supplement or late reply after expiry.

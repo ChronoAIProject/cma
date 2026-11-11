@@ -9,6 +9,32 @@ mod home_tests {
 }
 
 #[test]
+fn response_input_tier_requires_explicit_boolean_and_preserves_existing_rates() {
+    let key = "CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED";
+    for (values, enabled) in [
+        (vec![], false),
+        (vec![(key, "false")], false),
+        (vec![(key, "true")], true),
+    ] {
+        let limits = configured(&values).unwrap().rate_limits;
+        assert_eq!(limits.response_input_tier_enabled, enabled);
+        assert_eq!(limits.create_per_minute.get(), 10);
+        assert_eq!(limits.input_per_minute.get(), 120);
+    }
+    for value in ["", "TRUE", "1", " true ", "yes"] {
+        assert!(configured(&[(key, value)]).unwrap_err().contains(key));
+    }
+    assert_eq!(
+        configured(&[(key, "true"), ("CHRONO_SERVER_RATE_INPUT_PER_MINUTE", "17")])
+            .unwrap()
+            .rate_limits
+            .input_per_minute
+            .get(),
+        17
+    );
+}
+
+#[test]
 fn reporting_pool_setting_is_validated_by_startup_configuration() {
     assert_eq!(
         configured(&[]).unwrap().usage_metrics.reporting_pool_size,

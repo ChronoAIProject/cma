@@ -201,6 +201,10 @@ the gateway's master keys and CMA service credential as environment variables.
 
 All documentation lives in `docs/`, and every file in it is markdown. The only documentation outside it is this file, `README.md`, and markdown under `sdk/*/docs/`; SDK documentation lives beside its implementation and is the source rendered by the frontend.
 
+Data changes across stores follow [CMA Data Migrations](docs/CMA_Data_Migrations.md).
+Record the reader floor, gated writers, recovery artifacts and completion evidence
+for each release. The standard supplements every existing continuity and CI rule.
+
 ---
 
 ## 3. The four-layer architecture
