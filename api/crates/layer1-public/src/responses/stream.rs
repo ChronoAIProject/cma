@@ -93,6 +93,11 @@ fn open_inner(
                 return Some((Ok::<_, Infallible>(sse_event(value)), open));
             }
             if open.pagination_required {
+                if let Some(held) = &open.authorization {
+                    if open.state.reads.validate_event_stream(held).await.is_err() {
+                        return None;
+                    }
+                }
                 open.pagination_required = false;
                 open.ended = true;
                 let value = envelope(
@@ -193,7 +198,9 @@ fn open_inner(
                 }
             }
             if open.indexed
-                && serde_json::to_vec(&open.tools).map_or(true, |b| b.len() > 4 * 1024 * 1024)
+                && (serde_json::to_vec(&open.tools).map_or(true, |b| b.len() > 4 * 1024 * 1024)
+                    || serde_json::to_vec(&open.pending)
+                        .map_or(true, |b| b.len() > 6 * 4 * 1024 * 1024))
             {
                 open.pending.clear();
                 open.pagination_required = true;

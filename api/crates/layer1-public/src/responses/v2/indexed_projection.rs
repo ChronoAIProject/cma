@@ -4,7 +4,7 @@ use crate::responses::v2::{output::OutputProjection, V2OutputItem};
 use layer2_core::sandbox::agent_output_index::{
     AgentOutputChange, AgentOutputTotals, AgentToolOutputState,
 };
-use layer2_core::sandbox::store::indexed::{OUTPUT_PAGE_BYTES, OUTPUT_PAGE_CHANGES};
+use layer2_core::sandbox::store::indexed::OUTPUT_PAGE_BYTES;
 use layer2_core::sandbox::{AgentOutputObservation, AgentReadError};
 
 #[path = "indexed_projection/metadata.rs"]
@@ -46,7 +46,10 @@ pub(in crate::responses) async fn output_page(
         .as_ref()
         .ok_or_else(corrupt)?
         .changes;
-    let changes = source.changes(from, OUTPUT_PAGE_CHANGES).await?;
+    // One item group shares one bounded original-point request. An index has
+    // no payload byte-size summary; combining unrelated groups could multiply
+    // the source-byte budget before the public item budget is checked.
+    let changes = source.changes(from, 1).await?;
     let mut items = Vec::new();
     let mut bytes = 2048;
     let mut next = from;
@@ -54,7 +57,7 @@ pub(in crate::responses) async fn output_page(
         if change.after.items > change.before.items {
             let item = current_item(source, &change).await?;
             let size = serde_json::to_vec(&item).map_err(|_| corrupt())?.len();
-            if size > OUTPUT_PAGE_BYTES {
+            if size + 2048 > OUTPUT_PAGE_BYTES {
                 return Err(AgentReadError::Unavailable(
                     "one output item exceeds the page budget".into(),
                 ));

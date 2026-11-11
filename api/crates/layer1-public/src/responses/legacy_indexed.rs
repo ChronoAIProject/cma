@@ -74,7 +74,7 @@ pub(in crate::responses) async fn messages(
     if from > index.totals.messages || limit == 0 || limit > 8 {
         return Err(AgentReadError::InvalidPage);
     }
-    let through = index.totals.messages.min(from + u64::from(limit));
+    let through = index.totals.messages.min(from.saturating_add(1));
     let mut messages = vec![];
     let mut bytes = 2048;
     for ordinal in from..through {
