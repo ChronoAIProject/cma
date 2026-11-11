@@ -3,7 +3,7 @@
 use super::*;
 use crate::mutation_ledger::Ledger;
 
-pub(super) async fn run(path: &Path) -> Result<()> {
+pub(super) async fn run(path: &Path, collected: bool) -> Result<()> {
     let config = RuntimeConfig::from_values(BTreeMap::from([
         (
             "CHRONO_SANDBOX_ID".into(),
@@ -61,13 +61,37 @@ pub(super) async fn run(path: &Path) -> Result<()> {
     for row in &rows {
         row.hash_into(&mut digest);
     }
-    let proof = GroupProof {
+    let mut proof = GroupProof {
         key: group_key(&operation),
         source_sha256: format!("{:x}", digest.finalize()),
         observation_sha256: format!("{:x}", Sha256::digest(observation(&config, &operation)?)),
         records: rows.len() as u32,
     };
     let id = uuid::Uuid::new_v4().to_string();
+    let (binding, originals) = super::super::collection_probe::artifacts(
+        &config,
+        &id,
+        context.revision()?,
+        layer3_adapter::runtime_ledger_collection::CollectionGroup::Agent {
+            agent_id: "indexed-probe".into(),
+        },
+    )?;
+    let collection = || {
+        crate::ledger_reclamation::CollectionEvidence::parse(
+            &binding,
+            &group_key(&operation),
+            originals.clone(),
+        )
+    };
+    if collected {
+        let evidence = collection()?;
+        if evidence.originals() != originals.each_ref().map(Vec::as_slice)
+            || evidence.operation_id().is_empty()
+        {
+            return Err(invalid());
+        }
+        proof.observation_sha256 = evidence.observation_sha256().into();
+    }
     let archive = Archive::open_version(
         path.to_owned(),
         config.clone(),
@@ -132,9 +156,13 @@ pub(super) async fn run(path: &Path) -> Result<()> {
     }
     expect_refused(&archive, &operation).await?;
     let observation = observation(&config, &operation)?;
-    let first =
+    let first = if collected {
+        super::super::deactivate_collected_held(archive, ledger, proof.clone(), collection()?, ())
+            .await?
+    } else {
         super::super::deactivate_held(archive, ledger, proof.clone(), observation.clone(), ())
-            .await?;
+            .await?
+    };
     let archive = Archive::open_version(
         path.to_owned(),
         config.clone(),
@@ -155,7 +183,11 @@ pub(super) async fn run(path: &Path) -> Result<()> {
         return Err(invalid());
     }
     expect_refused(&archive, &operation).await?;
-    let retry = super::super::deactivate_held(archive, ledger, proof, observation, ()).await?;
+    let retry = if collected {
+        super::super::deactivate_collected_held(archive, ledger, proof, collection()?, ()).await?
+    } else {
+        super::super::deactivate_held(archive, ledger, proof, observation, ()).await?
+    };
     if retry != first {
         return Err(invalid());
     }
