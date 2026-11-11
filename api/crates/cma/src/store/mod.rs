@@ -59,6 +59,7 @@ pub mod directory;
 mod durability;
 mod encryption;
 mod media_uploads;
+pub(crate) mod provenance_progress;
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
 #[cfg(test)]
