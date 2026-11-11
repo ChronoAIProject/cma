@@ -58,16 +58,14 @@ pub use tokens::ProviderMetadata;
 
 #[cfg(test)]
 use persistence::MemoryAuthStore;
-use persistence::{AuthStore, BrowserLogin, DurableSubjectTokens, SecretDigest, SubjectAuthState};
+use persistence::{AuthStore, DurableSubjectTokens, SecretDigest, SubjectAuthState};
 use profile::Profile;
 
 pub const AUTH_COOKIE: &str = "cma_session";
 const AUTH_COOKIE_DOMAIN: &str = "browser-login";
 const AUTH_COOKIE_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
-/// Set by the web client as it signs out of CMA. Logout ends the CMA cookie
-/// but not the provider's session, so a silent sign-in would otherwise undo
-/// it. It can only decline a silent sign-in, so it need not be authenticated.
-/// A completed interactive sign-in clears it.
+/// Server-owned 30-day automatic-sign-in opt-out. Explicit login remains
+/// available but never clears it, so delayed callbacks cannot undo logout.
 const SIGNED_OUT_COOKIE: &str = "cma_signed_out";
 
 /// How CMA establishes the caller attached to an HTTP request.
@@ -359,13 +357,14 @@ impl AuthState {
         }
     }
 
+    #[cfg(test)]
     pub(super) async fn issue_browser_login(
         &self,
         subject: SubjectId,
     ) -> Result<String, StoreError> {
         let value = token::random_token();
         self.store
-            .put_browser_login(BrowserLogin {
+            .put_browser_login(persistence::BrowserLogin {
                 id: SecretDigest::identify(AUTH_COOKIE_DOMAIN, &value),
                 subject,
                 expires_at: SystemTime::now() + AUTH_COOKIE_LIFETIME,

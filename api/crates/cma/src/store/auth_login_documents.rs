@@ -25,6 +25,7 @@ impl MongoAuthStore {
                 })
                 .transpose()?,
             silent: attempt.silent,
+            consent_requested: attempt.consent_requested,
             expires_at: DateTime::from_system_time(attempt.expires_at),
         })
     }
@@ -33,7 +34,7 @@ impl MongoAuthStore {
         BrowserLoginDoc {
             id: binary(*login.id.as_bytes()),
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
-            subject: login.subject.0,
+            subject: Some(login.subject.0),
             expires_at: DateTime::from_system_time(login.expires_at),
         }
     }
@@ -65,6 +66,7 @@ impl MongoAuthStore {
             return_to: document.return_to,
             actor_link_intent,
             silent: document.silent,
+            consent_requested: document.consent_requested,
             expires_at: document.expires_at.to_system_time(),
         })
     }
