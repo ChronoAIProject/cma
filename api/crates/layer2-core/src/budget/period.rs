@@ -149,6 +149,14 @@ impl PlatformPeriodLedger {
                 closures: Vec::new(),
             });
         }
+        if liability > 0 && self.has_liability() && self.token_units != Some(token_units) {
+            // One owner's valuation differs from the period's pinned one: that
+            // is not a platform metering fact, so refuse this admission only.
+            return Err(Refusal {
+                reason: BudgetError::Unavailable,
+                closures: Vec::new(),
+            });
+        }
         let mut next = self.clone();
         let committed = match next.admissible(policy, token_units, liability, now) {
             Ok(committed) => committed,
@@ -207,9 +215,6 @@ impl PlatformPeriodLedger {
             return Err(BudgetError::Unavailable);
         }
         if liability > 0 {
-            if self.has_liability() && self.token_units != Some(token_units) {
-                return Err(BudgetError::Unavailable);
-            }
             self.token_units = Some(token_units);
         }
         self.committed(policy, now)
