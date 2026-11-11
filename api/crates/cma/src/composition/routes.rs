@@ -13,7 +13,7 @@ pub(super) fn compose(
     connections: Arc<BrowserConnections>,
     auth: Arc<AuthState>,
     recorder: Arc<ActivityRecorder>,
-    limits: Arc<RateLimiters>,
+    (limits, reads): (Arc<RateLimiters>, Arc<crate::expensive_reads::ReadBudget>),
     stores: Arc<MongoStores>,
     tools: Router,
 ) -> Router {
@@ -29,7 +29,7 @@ pub(super) fn compose(
             crate::rate_limit::enforce,
         ))
         .layer(axum::middleware::from_fn_with_state(
-            crate::expensive_reads::ReadBudget::new(),
+            reads,
             crate::expensive_reads::enforce,
         ))
         .layer(axum::middleware::from_fn_with_state(
