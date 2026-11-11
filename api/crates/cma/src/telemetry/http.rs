@@ -13,19 +13,24 @@ use std::{
     time::Instant,
 };
 
-pub(crate) async fn observe(request: Request, next: Next) -> Response {
+pub(crate) async fn observe(mut request: Request, next: Next) -> Response {
     let route = request
         .extensions()
         .get::<MatchedPath>()
         .map_or("unmatched", MatchedPath::as_str)
         .to_owned();
     let method = method_label(request.method());
+    let attribution = super::request::Attribution::default();
+    request.extensions_mut().insert(attribution.clone());
+    let protocol = super::request::protocol(&route);
     let started = Instant::now();
     let mut attempt = Attempt {
         route: route.clone(),
         method,
         started,
         responded: false,
+        attribution: attribution.clone(),
+        protocol,
     };
     metrics::counter!("cma_http_attempts_total", "route" => route.clone(), "method" => method)
         .increment(1);
@@ -34,6 +39,9 @@ pub(crate) async fn observe(request: Request, next: Next) -> Response {
     let response = next.run(request).await;
     attempt.responded = true;
     let status = response.status().as_u16().to_string();
+    let consumer = attribution.consumer();
+    metrics::counter!("cma_http_classified_responses_total", "route" => route.clone(), "method" => method, "status" => status.clone(), "consumer" => consumer, "protocol" => protocol).increment(1);
+    metrics::histogram!("cma_http_classified_headers_seconds", "route" => route.clone(), "method" => method, "consumer" => consumer, "protocol" => protocol).record(started.elapsed().as_secs_f64());
     metrics::counter!("cma_http_responses_total", "route" => route.clone(), "method" => method, "status" => status).increment(1);
     metrics::histogram!("cma_http_response_headers_seconds", "route" => route.clone(), "method" => method).record(started.elapsed().as_secs_f64());
     let sse = response
@@ -81,9 +89,12 @@ struct Attempt {
     method: &'static str,
     started: Instant,
     responded: bool,
+    attribution: super::request::Attribution,
+    protocol: &'static str,
 }
 impl Drop for Attempt {
     fn drop(&mut self) {
+        metrics::counter!("cma_http_classified_attempts_total", "route" => self.route.clone(), "method" => self.method, "consumer" => self.attribution.consumer(), "protocol" => self.protocol).increment(1);
         metrics::gauge!("cma_http_in_flight", "route" => self.route.clone(), "method" => self.method).decrement(1.);
         if !self.responded {
             metrics::counter!("cma_http_before_headers_cancelled_total", "route" => self.route.clone(), "method" => self.method).increment(1);
