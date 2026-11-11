@@ -72,6 +72,7 @@ async fn canonical_migrator_and_isolated_runtime_cover_controls_and_format2_work
     let runtime_db = runtime.database(&name);
     isolation::verify(&runtime_db).await.unwrap();
     let store = MongoSandboxStore::open(&runtime, &name).await.unwrap();
+    assert!(store.capacity_recovery_work_exists().await.unwrap());
     let agent = records::test_support::agent();
     let operation = publication::PublicationIdentity {
         key: "role-contract".into(),

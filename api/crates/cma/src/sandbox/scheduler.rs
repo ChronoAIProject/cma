@@ -6,6 +6,7 @@ use tokio::sync::{watch, Notify};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::MissedTickBehavior;
 
+use super::capacity_scheduler::CapacityRecoverySweep;
 use super::worker::SandboxWorker;
 use super::workspace_worker::WorkspaceWorker;
 
@@ -27,6 +28,19 @@ trait SandboxSweep: Send + Sync {
 }
 
 #[async_trait::async_trait]
+impl SandboxSweep for CapacityRecoverySweep {
+    async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        CapacityRecoverySweep::run_due(self, now)
+            .await
+            .map_err(|_| {
+                SandboxStoreError::Unavailable(
+                    "accepted capacity recovery discovery unavailable".into(),
+                )
+            })
+    }
+}
+
+#[async_trait::async_trait]
 impl SandboxSweep for SandboxWorker {
     async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
         let _priority = crate::background::shared().foreground();
@@ -43,6 +57,15 @@ impl SandboxSweep for WorkspaceWorker {
 }
 
 impl SandboxScheduler {
+    pub(crate) fn for_capacity_recovery(worker: Arc<CapacityRecoverySweep>) -> Self {
+        Self {
+            worker,
+            sweep_interval: Duration::from_secs(5),
+            concurrent_sweeps: 1,
+            admitted: Arc::new(Notify::new()),
+        }
+    }
+
     pub(crate) fn new(worker: Arc<SandboxWorker>) -> Self {
         Self {
             worker,
