@@ -35,6 +35,7 @@ mod routing;
 #[cfg(test)]
 mod routing_tests;
 pub use routing::{BindingEventRouter, BindingRouteError};
+mod sender_context;
 mod stream;
 #[cfg(test)]
 pub(crate) mod tests;
