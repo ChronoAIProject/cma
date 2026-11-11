@@ -94,6 +94,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
 #[derive(Clone)]
 pub struct MongoSandboxStore {
     pub(super) segment_logs: super::agent_log_segments::SegmentCollections,
+    pub(super) global_sandbox_limit: u16,
     #[cfg(test)]
     pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
     pub(super) bounded_approval_reads: bool,
@@ -188,6 +189,7 @@ impl MongoSandboxStore {
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
             segment_logs: super::agent_log_segments::SegmentCollections::new(&database),
+            global_sandbox_limit: 0,
             #[cfg(test)]
             request_budget_clock: None,
             bounded_admission_agents: Default::default(),
