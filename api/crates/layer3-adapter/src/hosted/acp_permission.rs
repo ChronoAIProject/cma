@@ -83,13 +83,14 @@ impl Bridge {
     }
 
     async fn refuse_permission_capacity(&self, call: &serde_json::Value) {
-        let _ = self
-            .send(&serde_json::json!({
-                "jsonrpc":"2.0", "id":call, "error":{
-                    "code":-32002, "message":"runtime permission retention refused"
-                }
-            }))
-            .await;
+        let frame = serde_json::json!({
+            "jsonrpc":"2.0", "id":call, "error":{
+                "code":-32002, "message":"runtime permission retention refused"
+            }
+        });
+        // A peer that does not read cannot keep policy refusal waiting on the
+        // sink. Timeout still propagates the original refusal without a receipt.
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), self.send(&frame)).await;
     }
 
     pub(super) async fn bounded_permission_answer(
