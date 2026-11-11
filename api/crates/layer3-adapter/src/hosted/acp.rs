@@ -50,7 +50,11 @@ use declaration::validate_ready;
 
 #[path = "acp_calls.rs"]
 mod calls;
+
+#[path = "acp_write.rs"]
+mod write;
 pub(super) use calls::rpc_result;
+use write::retired_before_write;
 
 #[path = "acp_recovery.rs"]
 mod recovery;
@@ -80,6 +84,7 @@ struct ConversationState {
 }
 
 pub(super) struct Bridge {
+    pub(super) bounded_raw_output: bool,
     pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
     sink: Arc<Mutex<Sink>>,
     pub(super) pending: Pending,
@@ -209,9 +214,15 @@ impl Bridge {
             .ok_or_else(|| AdapterError::Unavailable("runtime closed before Ready".into()))?
             .map_err(|error| AdapterError::Unavailable(format!("Ready read failed: {error}")))?;
         let output_stream = validate_ready(declaration, expected_agent)?;
+        if settings.bounded_raw_output && output_stream.is_none() {
+            return Err(AdapterError::Rejected(
+                "raw output bounds require retained runtime output".into(),
+            ));
+        }
         let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
+            bounded_raw_output: settings.bounded_raw_output,
             subscription,
             sink: Arc::new(Mutex::new(sink)),
             pending: Arc::new(Mutex::new(HashMap::new())),
@@ -219,8 +230,13 @@ impl Bridge {
             next_id: AtomicI64::new(1),
             recovery: Mutex::new(recovery::PromptRecovery::new(recovered_prompt)),
             conversation: Mutex::new(ConversationState::default()),
-            output: output_stream
-                .map(|stream| Mutex::new(output::ReliableOutput::new(stream, acknowledgements))),
+            output: output_stream.map(|stream| {
+                Mutex::new(output::ReliableOutput::new(
+                    stream,
+                    acknowledgements,
+                    settings.bounded_raw_output,
+                ))
+            }),
             blocked: Mutex::new(HashMap::new()),
             answered: Arc::new(Mutex::new(HashMap::new())),
             owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
@@ -418,56 +434,6 @@ impl Bridge {
             return Err(error);
         }
         Ok(waiting)
-    }
-
-    pub(super) async fn send(&self, frame: &serde_json::Value) -> crate::Result<()> {
-        self.send_frame(frame, false).await
-    }
-
-    async fn send_frame(&self, frame: &serde_json::Value, prompt: bool) -> crate::Result<()> {
-        if self.retired.load(Ordering::SeqCst) {
-            return Err(retired_before_write(prompt));
-        }
-        let body = serde_json::to_vec(frame)
-            .map_err(|_| AdapterError::Rejected("ACP frame could not be encoded".into()))?;
-        if body.len() > MAX_FRAME_BYTES {
-            return Err(AdapterError::Rejected(
-                "ACP frame exceeds the size limit".into(),
-            ));
-        }
-        let mut framed = Vec::with_capacity(body.len() + 1);
-        framed.push(LANE_CONVERSATION);
-        framed.extend_from_slice(&body);
-        self.sink
-            .lock()
-            .await
-            .send(Message::Binary(framed))
-            .await
-            .map_err(|error| {
-                AdapterError::Unavailable(format!("conversation write failed: {error}"))
-            })
-    }
-
-    pub(super) async fn retire(&self) {
-        if !self.retired.swap(true, Ordering::SeqCst) {
-            self.pending.lock().await.clear();
-            self.blocked.lock().await.clear();
-            let _ = self.sink.lock().await.close().await;
-        }
-    }
-
-    async fn finish(&self) {
-        self.retired.store(true, Ordering::SeqCst);
-        self.pending.lock().await.clear();
-        self.blocked.lock().await.clear();
-    }
-}
-
-fn retired_before_write(prompt: bool) -> AdapterError {
-    if prompt {
-        AdapterError::PromptNotWritten("conversation link has retired".into())
-    } else {
-        AdapterError::Unavailable("conversation link has retired".into())
     }
 }
 
