@@ -165,7 +165,7 @@ pub(super) async fn ready_with_created(store: &MongoSandboxStore, suffix: &str) 
         .unwrap();
     let logs = vec![
         AgentLogKind::ConversationOpened {
-            conversation_id: conversation_id.into(),
+            conversation_id,
             runtime_generation: 1,
         },
         AgentLogKind::StatusChanged {
