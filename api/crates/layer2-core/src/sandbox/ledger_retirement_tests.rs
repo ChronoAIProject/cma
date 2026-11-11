@@ -163,3 +163,62 @@ fn ledger_retirement_accepts_settled_deletion_with_retained_warm_history() {
     assert!(result.contains_agent("agent"));
     assert!(result.contains_worktree("workspace", "wt-1"));
 }
+
+#[test]
+fn ledger_collection_evidence_uses_shared_binding_validation_and_hash() {
+    use layer3_adapter::{
+        runtime_ledger_collection::{
+            CollectionGroup, CollectionRequest, LedgerGroupEvidenceV1, COLLECTION_FORMAT,
+        },
+        runtime_ledger_maintenance::{
+            LedgerBindingV1, LedgerSourceFormatV1, LEDGER_BINDING_FORMAT,
+        },
+    };
+    for source_format in [LedgerSourceFormatV1::V1, LedgerSourceFormatV1::V2] {
+        let mut hierarchy = fixture();
+        hierarchy.sandbox.runtime.as_mut().unwrap().boot_id = Some("b".repeat(32));
+        let snapshot = observation(&hierarchy);
+        let mut request = CollectionRequest {
+            format: COLLECTION_FORMAT.into(),
+            operation_id: uuid::Uuid::from_u128(2).to_string(),
+            binding: LedgerBindingV1 {
+                format: LEDGER_BINDING_FORMAT.into(),
+                sandbox_id: snapshot.sandbox_id,
+                home_identity: snapshot.home_identity,
+                generation: snapshot.generation,
+                boot_id: "b".repeat(32),
+                roots_sha256: "a".repeat(64),
+                source_format,
+                archive_id: uuid::Uuid::from_u128(1).to_string(),
+                maintenance_id: "fixture-maintenance".into(),
+                maintenance_epoch: 1,
+                sandbox_revision: snapshot.sandbox_revision,
+                candidate_sha256: "c".repeat(64),
+                recovery_sha256: "d".repeat(64),
+                exclusion_receipt_sha256: "e".repeat(64),
+            },
+            active_revision: 1,
+            page_sha256: "f".repeat(64),
+            groups: vec![CollectionGroup::Agent {
+                agent_id: "agent".into(),
+            }],
+        };
+        let observe = |request: &CollectionRequest| {
+            hierarchy.ledger_collection_observation(request, NOW.into(), "a".repeat(64), 4, 1024)
+        };
+        let result = observe(&request).unwrap();
+        assert!(result.validate_for(&request));
+        let evidence: LedgerGroupEvidenceV1 = serde_json::from_slice(&result.evidence[0]).unwrap();
+        assert_eq!(
+            evidence.binding_sha256,
+            request.binding.binding_sha256().unwrap()
+        );
+        request.binding.boot_id = "c".repeat(32);
+        assert!(request.validate());
+        assert!(observe(&request).is_err());
+        request.binding.boot_id = "b".repeat(32);
+        request.binding.archive_id = "fixture-archive".into();
+        assert!(!request.validate());
+        assert!(observe(&request).is_err());
+    }
+}
