@@ -183,6 +183,7 @@ async fn retained_recovery_get_mongo_good_and_corrupt_evidence_never_writes_when
     for case in [
         "good",
         "prepared",
+        "unsupported_metadata",
         "native_unavailable",
         "identity",
         "lineage",
@@ -235,12 +236,15 @@ async fn retained_recovery_get_mongo_good_and_corrupt_evidence_never_writes_when
             "gap" => {
                 f.store.agent_log.delete_one(log_filter).await.unwrap();
             }
-            "metadata" => {
+            "metadata" | "unsupported_metadata" => {
+                // Unknown versions fall back to complete validation; a known
+                // envelope missing its required fields is corrupt evidence.
+                let format = if case == "metadata" { 1_i64 } else { 99_i64 };
                 f.store
                     .agents
                     .update_one(
                         doc! {"_id": agent.id.as_str()},
-                        doc! {"$set": {"agent_log_integrity_v1": {"format": 99_i64}}},
+                        doc! {"$set": {"agent_log_integrity_v1": {"format": format}}},
                     )
                     .await
                     .unwrap();
@@ -301,7 +305,10 @@ async fn retained_recovery_get_mongo_good_and_corrupt_evidence_never_writes_when
             serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
         f.assert_read_commands();
         assert_eq!(f.documents().await, before, "GET changed documents: {case}");
-        if matches!(case, "good" | "prepared" | "native_unavailable") {
+        if matches!(
+            case,
+            "good" | "prepared" | "unsupported_metadata" | "native_unavailable"
+        ) {
             assert_eq!(status, StatusCode::OK, "{case}: {body}");
             assert_eq!(body["admission_enabled"], false);
             assert_eq!(
