@@ -42,6 +42,8 @@ pub(crate) enum InstanceProblem {
         installed: String,
         requested: String,
     },
+    SkillInstallUnsupported,
+    SkillNotReady,
     OperationInFlight,
     CheckpointInProgress,
     DeliveryAmbiguous,
@@ -223,9 +225,19 @@ impl IntoResponse for InstanceProblem {
                 StatusCode::CONFLICT,
                 "agent-skill-version-upgrade-unsupported",
                 &format!(
-                    "Skill {id:?} is already installed at version {installed:?}; changing it to version {requested:?} is unsupported on an existing Agent. Create a replacement Agent with the requested profile."
+                    "Skill {id:?} is already installed at version {installed:?}; this runtime does not support upgrading it to version {requested:?}. No upgrade was admitted. After runtime support becomes available, make a new attempt with a new Idempotency-Key."
                 ),
                 "agent_skill_version_upgrade_unsupported",
+            ),
+            Self::SkillInstallUnsupported => (
+                StatusCode::CONFLICT, "agent-skill-install-unsupported",
+                "This Agent runtime does not support installing skills. No installation was admitted. After runtime support becomes available, make a new attempt with a new Idempotency-Key.",
+                "agent_skill_install_unsupported",
+            ),
+            Self::SkillNotReady => (
+                StatusCode::CONFLICT, "agent-not-ready",
+                "The Agent or its Sandbox is not ready and idle. No skill operation was admitted. After it becomes ready and idle, make a new attempt with a new Idempotency-Key.",
+                "agent_not_ready",
             ),
             Self::WorkspaceNotReady => (
                 StatusCode::CONFLICT,
@@ -375,6 +387,6 @@ mod tests {
         assert!(body["detail"]
             .as_str()
             .unwrap()
-            .contains("replacement Agent"));
+            .contains("new Idempotency-Key"));
     }
 }
