@@ -28,7 +28,7 @@ impl AgentReadService {
 
     pub fn with_sessions(
         self: &Arc<Self>,
-        sessions: Arc<dyn super::store::SandboxSessionStore>,
+        sessions: Arc<dyn super::super::store::SandboxSessionStore>,
     ) -> Arc<Self> {
         Arc::new(Self {
             store: self.store.clone(),
