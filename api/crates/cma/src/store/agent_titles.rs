@@ -166,6 +166,9 @@ pub(super) async fn transcript_at_snapshot(
     agent: &Agent,
     session: &mut mongodb::ClientSession,
 ) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
+    if let Some(transcript) = bounded::segmented_read(store, agent, session).await? {
+        return Ok(Some(transcript));
+    }
     if let Some(transcript) = bounded::read(store, agent, session).await? {
         return Ok(Some(transcript));
     }
