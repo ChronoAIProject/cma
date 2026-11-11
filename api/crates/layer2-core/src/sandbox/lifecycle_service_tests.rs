@@ -184,6 +184,14 @@ impl crate::budget::PlatformSpendLedger for FixedSpend {
     ) -> Result<crate::budget::PlatformSpendState, crate::budget::BudgetError> {
         Err(crate::budget::BudgetError::Unavailable)
     }
+
+    async fn record_cloud_observation(
+        &self,
+        _: crate::budget::CloudObservationInput,
+        _: u64,
+    ) -> Result<crate::budget::PlatformSpendState, crate::budget::ObservationError> {
+        Err(crate::budget::ObservationError::Unavailable)
+    }
 }
 
 fn closed(reason: crate::budget::ClosureReason) -> Arc<FixedSpend> {
