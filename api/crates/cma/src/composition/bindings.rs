@@ -106,6 +106,7 @@ pub(super) fn responses(
     gateway: Option<&crate::config::GatewayConfig>,
     retained_context_lookup: bool,
 ) -> Result<Router, String> {
+    let reads = reads.with_response_logs(stores.sandbox_model.response_log_reader());
     let mut state =
         layer1_public::responses::v2::ResponsesV2State::new(agent_page_origin, commands, reads)
             .with_bindings(layer2_core::sandbox::binding::BindingAccessService::new(
