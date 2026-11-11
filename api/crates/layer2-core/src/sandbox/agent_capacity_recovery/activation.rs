@@ -10,6 +10,7 @@ use crate::sandbox::{
 pub struct RecoveryActivation {
     completed: RecoveryWork,
     agent: Agent,
+    target: RecoveryTarget,
 }
 
 impl RecoveryActivation {
@@ -19,14 +20,31 @@ impl RecoveryActivation {
         context: &CapacityRecoveryContext<'_>,
         work: &RecoveryWork,
     ) -> Result<Self, RecoveryError> {
+        if RecoveryTarget::from_context(context)? != work.target
+            || context.agent.work.next_fence != work.next_fence
+        {
+            return Err(RecoveryError::Conflict);
+        }
+        Self::capture_current(context, work)
+    }
+
+    /// Domain proposal for a positively proven current publication. The store
+    /// must verify the original receipt and current full-Agent publication in
+    /// the same transaction as fresh authority, and recapture after native IO.
+    /// This does not rewrite the completed work or authorize input replay.
+    pub fn capture_current(
+        context: &CapacityRecoveryContext<'_>,
+        work: &RecoveryWork,
+    ) -> Result<Self, RecoveryError> {
         work.validate()?;
         let a = context.agent;
         let s = context.sandbox;
         let w = context.workspace;
+        let target = RecoveryTarget::from_context(context)?;
         if work.phase != RecoveryPhase::Completed
             || !context.same_lineage()
-            || RecoveryTarget::from_context(context)? != work.target
-            || a.work.next_fence != work.next_fence
+            || !same_native_identity(&target, &work.target)
+            || a.work.next_fence < work.next_fence
             || work.next_fence <= 1
             || a.work.step != AgentWorkStep::None
             || a.work.lease.is_some()
@@ -40,6 +58,10 @@ impl RecoveryActivation {
                 a.status,
                 AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval
             )
+            || (a.status == AgentStatus::Ready) != target.active_turn.is_none()
+            || target
+                .active_turn
+                .is_some_and(|seq| seq > a.conversation.last_seq)
             || s.status != SandboxStatus::Active
             || s.retired_at.is_some()
             || !s.credential.delivered
@@ -63,12 +85,14 @@ impl RecoveryActivation {
             || context.worktree.validate_prerequisites(w).is_err()
             || w.validate_prerequisites(s).is_err()
             || w.resolved_commit.as_ref() != Some(&context.worktree.base_commit)
+            || a.validate_conversation().is_err()
         {
             return Err(RecoveryError::Conflict);
         }
         Ok(Self {
             completed: work.clone(),
             agent: a.clone(),
+            target,
         })
     }
 
@@ -78,9 +102,13 @@ impl RecoveryActivation {
     pub fn agent(&self) -> &Agent {
         &self.agent
     }
-    /// The committed claim's native fence, never a newly invented lease.
+    /// The current target is separate from the immutable recovery result.
+    pub fn target(&self) -> &RecoveryTarget {
+        &self.target
+    }
+    /// The currently durable allocated fence, never a newly invented lease.
     pub fn writer_fence(&self) -> u64 {
-        self.completed.next_fence - 1
+        self.agent.work.next_fence - 1
     }
 
     pub fn require_confirmation(
@@ -93,14 +121,25 @@ impl RecoveryActivation {
             ConfirmedNativeState::WaitingApproval => AgentStatus::WaitingApproval,
         };
         if confirmation.operation_key != self.completed.request.key()?
-            || confirmation.target != self.completed.target
+            || confirmation.target != self.target
             || confirmation.authority_fence != self.writer_fence()
             || status != self.agent.status
             || matches!(confirmation.native_state, ConfirmedNativeState::Idle)
-                != self.completed.target.active_turn.is_none()
+                != self.target.active_turn.is_none()
         {
             return Err(RecoveryError::InvalidEvidence);
         }
         Ok(())
     }
+}
+
+fn same_native_identity(current: &RecoveryTarget, original: &RecoveryTarget) -> bool {
+    current.agent_id == original.agent_id
+        && current.creation_key == original.creation_key
+        && current.creation_fingerprint == original.creation_fingerprint
+        && current.conversation_id == original.conversation_id
+        && current.conversation_generation == original.conversation_generation
+        && current.runtime == original.runtime
+        && current.home_identity == original.home_identity
+        && current.original_open == original.original_open
 }
