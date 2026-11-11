@@ -151,3 +151,5 @@ export {
   type AgentEnvironment,
   type EnvironmentFeature,
 } from './agent-environment.js';
+
+export { reportBrowserFault, type BrowserFault } from './browser-telemetry.js';

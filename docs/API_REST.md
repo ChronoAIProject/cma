@@ -2431,6 +2431,7 @@ SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both exp
 | `GET /api/v1/agents/{id}/preferences` | - | - | 200 AgentPreferencesView |
 | `PATCH /api/v1/agents/{id}/preferences` | UpdateAgentPreferencesRequest; key | - | 200 AgentPreferencesView |
 
+| `POST /api/v1/telemetry/browser` | Anonymous, bounded browser diagnostic category; no durable receipt. |
 <!-- openapi-operations:end -->
 
 ## Contract Verification
@@ -2592,3 +2593,15 @@ Reads use the reporting pool/circuit, a two-second Mongo deadline and a five-sec
 HTTP deadline. Open circuits return 429 before database access; source failures
 return 503. Responses are `private, no-store`. An unavailable page is not zero
 allocation; consumers should retain the loaded count and offer a bounded retry.
+
+### Browser diagnostic reports
+
+`POST /api/v1/telemetry/browser` accepts anonymous JSON such as
+`{"kind":"react_error"}` and returns 204. Fixed kinds are `uncaught_error`,
+`unhandled_rejection`, `react_error`, `resource_error`, `chunk_error`. The body
+is limited to 256 bytes; unknown kinds or additional fields return 422, oversized
+bodies return 413. The local 20/sec process budget returns 429 with Retry-After,
+in addition to normal pre-auth network admission. No identity or durable
+activity record is created. This untrusted signal is diagnostic only. Send no
+exception text, stack, page URL, credentials or resource identifiers. The web
+bootstrap reports each category at most once per page and does not retry.
