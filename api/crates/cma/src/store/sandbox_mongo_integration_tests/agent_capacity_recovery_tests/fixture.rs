@@ -5,7 +5,7 @@ use layer2_core::sandbox::{RuntimeBinding, SandboxHome};
 use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
 
 pub(super) async fn capacity_fixture(store: &MongoSandboxStore) -> Agent {
-    let mut agent = ready_with_created(store).await;
+    let mut agent = ready_with_created(store, "activation").await;
     let mut sandbox = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
     sandbox.runtime = Some(RuntimeBinding {
         runtime_id: "retained-runtime".into(),
@@ -129,8 +129,8 @@ pub(super) async fn capacity_fixture(store: &MongoSandboxStore) -> Agent {
 
 // Adoption must prove the original Created row. The generic worker fixture
 // deliberately starts at ConversationOpened and cannot qualify this contract.
-async fn ready_with_created(store: &MongoSandboxStore) -> Agent {
-    let (_, mut worktree, claimed) = claimed_agent_work_fixture(store, "activation").await;
+pub(super) async fn ready_with_created(store: &MongoSandboxStore, suffix: &str) -> Agent {
+    let (_, mut worktree, claimed) = claimed_agent_work_fixture(store, suffix).await;
     store
         .append_agent_log(
             &claimed.id,
@@ -143,8 +143,8 @@ async fn ready_with_created(store: &MongoSandboxStore) -> Agent {
         .await
         .unwrap();
     let current = store.get_agent(&claimed.id).await.unwrap().unwrap();
-    let conversation_id = "conversation-activation";
-    let mut claimed = ready_publication_claim(current, conversation_id);
+    let conversation_id = format!("conversation-{suffix}");
+    let mut claimed = ready_publication_claim(current, &conversation_id);
     // Simulated preceding work steps change state and must advance revision;
     // the Created checkpoint cannot remain bound to this changed aggregate.
     claimed.revision += 1;
