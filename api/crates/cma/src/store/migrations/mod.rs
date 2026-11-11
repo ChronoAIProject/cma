@@ -134,7 +134,9 @@ async fn apply_indexes(
 }
 
 // Keep the original one-step CLI spelling compatible; explicit IDs select new steps.
-fn invocation(arguments: &[String]) -> Result<(Step, &str, Option<(&str, &str)>)> {
+type Invocation<'a> = (Step, &'a str, Option<(&'a str, &'a str)>);
+
+fn invocation(arguments: &[String]) -> Result<Invocation<'_>> {
     let values: Vec<_> = arguments.iter().map(String::as_str).collect();
     match values.as_slice() {
         [command @ ("--migration-plan" | "--migration-status" | "--print-migration-role")] => {
