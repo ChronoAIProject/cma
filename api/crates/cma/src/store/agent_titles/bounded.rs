@@ -17,10 +17,19 @@ pub(super) async fn segmented_read(
     expected: &Agent,
     session: &mut ClientSession,
 ) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
-    let entries = agent_log_segment_reads::selected_until(
+    let mut entries = Vec::new();
+    let mut complete = false;
+    let Some(through) = agent_log_segment_reads::title_through(store, expected, session)
+        .await
+        .map_err(map_store_error)?
+    else {
+        return Ok(None);
+    };
+    let visited = agent_log_segment_reads::visit_selected(
         store,
         expected,
         session,
+        through,
         |kind| {
             matches!(
                 kind,
@@ -42,11 +51,20 @@ pub(super) async fn segmented_read(
                     }
             )
         },
-        |entries| AgentTitleTranscript::from_agent_log(expected, entries).is_some(),
+        |entry| {
+            if !complete {
+                entries.push(entry);
+                complete = AgentTitleTranscript::from_agent_log(expected, &entries).is_some();
+            }
+            Ok(())
+        },
     )
     .await
     .map_err(map_store_error)?;
-    Ok(entries.and_then(|entries| AgentTitleTranscript::from_agent_log(expected, &entries)))
+    if visited.is_none() {
+        return Ok(None);
+    }
+    Ok(AgentTitleTranscript::from_agent_log(expected, &entries))
 }
 
 /// None requests the existing complete fold; it never means that no title is

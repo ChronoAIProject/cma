@@ -169,6 +169,15 @@ pub(super) async fn transcript_at_snapshot(
     if let Some(transcript) = bounded::segmented_read(store, agent, session).await? {
         return Ok(Some(transcript));
     }
+    if crate::store::agent_log_segment_reads::is_segmented(store, agent, session)
+        .await
+        .map_err(map_store_error)?
+    {
+        // A certified segmented projection may prove that no title-eligible
+        // turn exists. Do not route that valid result through the legacy
+        // complete reader, which intentionally rejects format-2 metadata.
+        return Ok(None);
+    }
     if let Some(transcript) = bounded::read(store, agent, session).await? {
         return Ok(Some(transcript));
     }
