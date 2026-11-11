@@ -73,7 +73,7 @@ async fn frozen_v1_descriptor_refuses_v2_before_installation_recovery() {
 fn unknown_descriptor_version_refuses_before_archive_open_or_installation_effects() {
     let fixture = Fixture::new();
     let mut descriptor = fixture.descriptor();
-    descriptor.version = 4;
+    descriptor.version = 5;
     fixture.publish(&descriptor);
     assert!(select(&fixture.config).is_err());
     assert!(installation_marker(&fixture.config).is_err());
@@ -168,4 +168,70 @@ fn collection_descriptor_without_active_v2_refuses_before_any_store_open() {
     fixture.publish(&descriptor);
     assert!(select(&fixture.config).is_err());
     assert!(!fixture.config.state_root.join(DATABASE).exists());
+}
+
+#[tokio::test]
+async fn file_collection_reader_refuses_pending_work_and_never_adopts_v2() {
+    use crate::ledger_reclamation::CollectionEvidence;
+    use layer3_adapter::runtime_ledger_collection::CollectionGroup;
+    let fixture = Fixture::new();
+    Archive::open_version(
+        fixture.config.state_root.join(DATABASE),
+        fixture.config.clone(),
+        fixture.id.clone(),
+        true,
+        PAGES,
+        Version::FileCollection,
+    )
+    .await
+    .unwrap()
+    .close()
+    .await
+    .unwrap();
+    let mut descriptor = fixture.descriptor();
+    descriptor.version = 4;
+    fixture.publish(&descriptor);
+    assert!(v1_descriptor::Descriptor::load(&fixture.config).is_err());
+    let reader = fixture.reader().await;
+    reader.require_ready().await.unwrap();
+    let (binding, bytes) = crate::retirement_archive::collection_probe::file_artifacts(
+        &fixture.config,
+        &fixture.id,
+        1,
+        CollectionGroup::Agent {
+            agent_id: "selected".into(),
+        },
+    )
+    .unwrap();
+    let evidence = CollectionEvidence::parse(
+        &binding,
+        &crate::retirement_archive::group_key(&operation("selected")),
+        bytes,
+    )
+    .unwrap();
+    reader
+        .archive
+        .retain_collection(evidence, "a".repeat(64))
+        .await
+        .unwrap();
+    let store = Store::new(fixture.config.clone(), None).with_retirement(Some(reader));
+    assert!(store.require_serving().await.is_err());
+    assert!(store.admit(5, &[operation("live")]).await.is_err());
+    assert!(store
+        .started(&mut crate::mutation_store::Cursor::default())
+        .await
+        .is_err());
+    store.close_retirement().await.unwrap();
+    assert!(select(&fixture.config)
+        .unwrap()
+        .open(&fixture.config)
+        .await
+        .is_err());
+    let ledger = fixture.ledger(true).await.unwrap();
+    let mut descriptor = fixture.descriptor();
+    descriptor.version = 4;
+    assert!(descriptor.active_v2_sha256.is_some());
+    fixture.publish(&descriptor);
+    assert!(select(&fixture.config).is_err());
+    Arc::try_unwrap(ledger).ok().unwrap().close().await.unwrap();
 }
