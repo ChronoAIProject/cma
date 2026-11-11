@@ -243,14 +243,36 @@ The composed identity/discovery/static routes also include:
 | Operation | Meaning |
 |---|---|
 | `GET /openapi.json` | Anonymous machine-readable contract |
-| `GET /auth/login` | Begin NyxID OAuth; return destination is validated |
-| `GET /auth/callback` | Complete identity exchange; never starts Agent work |
-| `GET /auth/session` | Browser identity, capabilities, visitor flag and effective usage presentation policy; 401 when signed out |
-| `POST /auth/logout` | Revoke browser login and expire cookie; redirect to `/` |
+| `GET /auth/login` | Begin NyxID OAuth; return destination is validated; `prompt=none` reuses a NyxID session without interaction |
+| `GET /auth/callback` | Complete browser-bound single-use PKCE exchange; accept and ignore `error_description`/`error_uri`; silent failures return to validated target, never starting Agent work |
+| `GET /auth/session` | Browser identity, capabilities, visitor flag and effective usage presentation policy; 401 when signed out, reporting startup-gated `silent_sign_in` (default false) |
+| `GET /auth/logout` | Revoke active/pending browser custody, expire session and establish automatic-sign-in suppression; redirect to `/` only after durable revocation |
 | `GET /embed/v1.js` | Fixed versioned-by-integrity embed script; no credential access |
 | `POST /api/v1/mcp` | Typed 501 `interface_not_available` |
 | `GET /.well-known/agent-card.json` | Public provider card for binding Responses; A2A JSON-RPC remains unavailable |
 | `/api/v1/a2a` | Typed 501 `interface_not_available` |
+
+Browser identity/flow responses use `Cache-Control: no-store`; anonymous signup
+options retain their public five-minute cache. Every `Set-Cookie` header must be
+preserved separately. Same-origin logout records its time; successful interactive
+sign-in records the attempt's start time and a non-authenticating binding reference
+in a separate cookie. The start must follow the logout marker and the durable proof must still be active
+to re-enable silent entry; same-origin logout revokes it, so stale responses and replica clock skew
+cannot overrule callback fencing. Suppressed anonymous
+sessions advertise `silent_sign_in: false`. Cross-site logout still revokes its
+session but cannot establish this new opt-out.
+
+Callbacks mint fresh session tokens and atomically link them to pending binding
+custody; either cookie revokes the session. Predecessor attempts remain readable,
+and new fields are additive. Predecessor callbacks reserve custody and complete
+inline; logout tombstones prevent resurrection. Binding cookies last 660 seconds
+(ten-minute attempt plus a one-minute callback margin); tombstones last at least
+that long. Consent renews only live pending custody. The complete
+encoded absolute login URL is limited to 4,096 ASCII bytes, measured after query
+encoding. Server and SDKs reject oversized or non-ASCII inputs; the web retains
+large drafts and uses path-only explicit sign-in instead of navigating to an
+oversized URL. See [authentication and rollout](API_Overview.md#authentication-and-visitors)
+for hop evidence, the shared boundary contract, and deployment/rollback order.
 
 `GET /auth/signup-options` appears in the checked inventory. Its four-field
 response is exactly `{ email_signup, social_providers, invite_code_required,

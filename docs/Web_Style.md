@@ -2383,6 +2383,43 @@ the centre column of the collapsed portal frame and scrolls as one page:
   alert with Try again.
 - Copy never names the agent provider; CMA is the brand.
 
+A browser without a CMA sign-in may still be signed in to NyxID. When the API
+advertises silent sign-in, the opening identity read checks once before showing
+this surface. Navigating inside the SPA from a skipped page to an eligible page
+gets the same opportunity. An attempt marker prevents a second round trip in
+that tab until successful authentication. The existing **Signing you in** state
+lasts at most 10 seconds if navigation is stopped; navigation failure shows the
+ordinary signed-out surface without an error. A valid provider session returns
+to the address opened, including `/`; consent may show NyxID's consent screen.
+A provider refusal or bound automatic exchange failure returns signed out.
+
+Preserve the existing `setup` query on `/bots/new` and `tab` query on Sandbox
+pages through the backend's validated return target. The complete encoded absolute
+login URL, including origin and options, must fit the shared 4 KiB budget. If a
+setup draft exceeds that budget, keep it in the current URL and tab storage,
+skip silent sign-in, and use a path-only return for explicit sign-in. Return
+targets are percent-encoded ASCII; unknown or duplicate query keys are excluded
+because they may carry undefined redirect or authority data. Addresses with
+fragments skip silent sign-in so share tokens stay in the browser. Public
+Trigger, Launch, share-link and document journeys retain their own explicit
+sign-in.
+
+Focus, visibility and online refreshes never navigate. Background identity
+outages preserve mounted authenticated views. Anonymous presentation and a
+stopped round trip retain owner-scoped unsubmitted drafts and command identities.
+Sign out clears private task and Agent-creation drafts before navigating; a
+verified different owner clears the previous owner's retained private state
+before mounting the new view. Nothing automatically creates or submits work.
+
+Same-origin server logout records an opt-out of automatic sign-in. A later
+successful explicit Sign in or Create account re-enables silent sign-in when
+the attempt started after that logout and its durable preference proof remains
+active. Logout revokes that proof, so delayed responses cannot reopen a revoked
+sign-in. An opted-out anonymous browser receives a false capability hint and
+stays on the ordinary signed-out surface. No new control or visual primitive is
+introduced. Deployment activation follows the default-off startup flag and
+compatible-image rollout in the API Overview.
+
 A public Trigger URL has its own complete read-only landing (§13b), not this
 generic gate. Sign in and Create account preserve the canonical local return
 route and the visitor's bounded intent. No page accepts credentials, and no
@@ -6083,6 +6120,8 @@ saving. Use existing form spacing, labels and validation; introduce no new token
 
 | 2026-11-06 | Preserve the owner’s existing keyboard focus when the conversation becomes ready; computer Home/End/Arrow navigation keeps focus on its selected tab while initial composer focus remains available on an otherwise unfocused page. |
 
+| 2026-11-06 | Check for a live NyxID session once, silently, before showing the signed-out surface (§20), keeping the existing Signing you in state for at most 10 seconds and never repeating after an explicit Sign out. |
+
 | 2026-11-07 | Integrate Workspace v3 with stable streaming recovery, retained sidebar status, deterministic desktop reconnection, mounted identity retries and complete-cohort resource usage; preserve channel queue policy independently of composer follow-ups. |
 
 ### 2026-11-10 — Usage reporting backoff
@@ -6186,3 +6225,5 @@ silently replace concurrent list changes. Independent field edits still use the
 existing explicit revision review. Disabled policies retain every entered value.
 
 | 2026-11-11 | Complete owner-override and request-model editing with blank inputs, independent availability, validation and conservative list-conflict recovery. |
+
+| 2026-11-11 | Complete §20 silent sign-in for opening and eligible SPA navigation with default-off activation, same-origin logout suppression and durable explicit-sign-in recovery, a 4 KiB encoded login URL budget, oversized-draft retention, private draft clearing before Sign out, and bounded browser bindings with inline predecessor completion. |
