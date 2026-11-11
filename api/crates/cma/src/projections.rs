@@ -19,6 +19,9 @@ use layer2_core::{OperationStore, RuntimeCapabilities};
 use layer3_adapter::{AdapterError, RuntimeHandle, SandboxAdapter};
 #[path = "projections/agent_v2.rs"]
 mod agent_v2;
+#[cfg(test)]
+#[path = "projections/response_readers_tests.rs"]
+mod response_readers_tests;
 
 pub(crate) struct AgentProjectionServices {
     suggestions: Option<Arc<dyn layer2_core::sandbox::suggestions::SuggestionStore>>,
@@ -35,6 +38,16 @@ pub(crate) struct AgentProjectionServices {
 }
 
 impl AgentProjectionServices {
+    pub(crate) fn with_response_logs(
+        mut self,
+        reader: Option<Arc<dyn layer2_core::sandbox::store::AgentResponseLogStore>>,
+    ) -> Self {
+        // All response routes, including legacy streams, share this service.
+        // Retained adopted histories need the reader even after admission closes.
+        self.reads = self.reads.with_response_logs(reader);
+        self
+    }
+
     pub(crate) fn with_suggestions(
         mut self,
         store: Arc<dyn layer2_core::sandbox::suggestions::SuggestionStore>,
