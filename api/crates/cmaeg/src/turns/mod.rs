@@ -8,6 +8,8 @@ pub mod outcomes;
 mod preparation;
 mod projection;
 mod refusal;
+#[cfg(test)]
+mod refusal_tests;
 pub mod render_input;
 pub mod render_media;
 pub mod routed;
