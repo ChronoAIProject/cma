@@ -102,6 +102,16 @@ async fn main() {
         }
         return;
     }
+    if store::segment_operations::is_command(&arguments) {
+        match store::segment_operations::command(&arguments).await {
+            Ok(result) => println!("{result}"),
+            Err(reason) => {
+                eprintln!("Agent log operation refused: {reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if arguments == ["--print-runtime-role"] {
         match std::env::var("CHRONO_MONGODB_DATABASE") {
             Ok(database) => println!("{}", store::isolation::role(&database)),
