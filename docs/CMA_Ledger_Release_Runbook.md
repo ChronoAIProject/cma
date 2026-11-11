@@ -113,7 +113,7 @@ accounting; do not query or edit the SQLite files manually. A baseline/legacy
 response has unknown counts. It cannot be relabelled a V2 observation.
 
 Include all retained homes and unresolved/unreachable homes in the coverage
-count. V1 threshold is journal >=717 of1024 **or** authority >=2868 of4096.
+count. V1 threshold is journal >=717 of 1024 **or** authority >=2868 of 4096.
 Journal temporary files consume its scan count; historical generations have
 separate preservation obligations. Capacity refusals require attention regardless
 of percentage. For V2 use outstanding/limit and
@@ -133,6 +133,11 @@ measured, unknown and over-threshold totals. Do not claim a safe-until date.
 **HOLD until the qualified release mechanism and its exact commands are supplied.**
 The current observer and detached archive commands cannot perform this step.
 Maintenance Requested is not Excluded. C's structural binding is not a permit.
+The frozen execution binding includes the actual exclusion-receipt hash. E1
+therefore needs a separately versioned pre-exclusion admission artifact, followed
+by an atomic hold-preserving transition to the immutable execution binding after
+E2/E3. Do not use a placeholder hash or mutate already accepted plan bytes. That
+bootstrap and its complete writer integration remain unqualified.
 
 The release procedure must supply all of the following evidence, in this order:
 
