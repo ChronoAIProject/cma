@@ -105,6 +105,7 @@ pub(super) fn responses(
     bindings: &BindingComposition,
     gateway: Option<&crate::config::GatewayConfig>,
     paged_events: bool,
+    retained_context_lookup: bool,
 ) -> Result<Router, String> {
     let reads = reads.with_response_logs(stores.sandbox_model.response_log_reader());
     let mut state =
@@ -112,7 +113,8 @@ pub(super) fn responses(
             .with_paged_events(paged_events)
             .with_bindings(layer2_core::sandbox::binding::BindingAccessService::new(
                 stores.sandbox_model.clone(),
-            ));
+            ))
+            .with_retained_context_lookup(retained_context_lookup);
     if let Some(gateway) = gateway {
         state = state.with_event_router(super::event_routing::CmaEventRouter::new(
             stores.sandbox_model.clone(),
