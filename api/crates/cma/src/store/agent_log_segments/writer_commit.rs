@@ -1,17 +1,21 @@
 //! Frozen caller-owned publication transaction boundary.
 //!
-//! These temporary refusal bodies are the integration owner's frozen compile
-//! contract. They perform no writes and cannot produce a prepared publication
-//! or completed receipt. Executable planning/persistence replaces them in place.
+//! Preparation validates the exclusive captured transaction proof. Persistence
+//! consumes only an opaque plan bound to that same scope and database, and never
+//! commits or retries the caller's transaction.
 use layer2_core::sandbox::{store::SandboxStoreError, Agent, AgentLogEntry};
 use mongodb::bson::{Binary, Document};
 
 use super::{
     capture::CapturedLog,
     publication::{Publication, PublicationIdentity},
-    transaction_scope::TransactionScope,
+    transaction_scope::{TransactionIdentity, TransactionScope},
     writer_admission::Admission,
     writer_bootstrap::BootstrapPlan,
+    writer_gate::slots::Permit,
+    writer_plan::{EncodedBatch, PublicationPlan, SourceFormat},
+    writer_projection::ProjectionDelta,
+    Head,
 };
 use crate::store::{
     agent_log_integrity::{AppendCapacity, TransactionLogError},
@@ -28,41 +32,55 @@ pub(in crate::store) struct PublicationInput<'a> {
 }
 
 pub(in crate::store) struct AggregateUpdate {
+    /// Existing validated domain/lease predicate; publication adds source guards.
     pub filter: Document,
+    /// `agent_replacement_fields(next)` plus caller-owned checkpoint/domain fields.
+    /// Omit segment/schema/integrity fields; publication owns those and last_seq.
     pub fields: Document,
 }
 
 pub(in crate::store) struct PreparedPublication {
-    _private: (),
+    transaction: TransactionIdentity,
+    database: String,
+    current: Agent,
+    next: Agent,
+    source: SourceFormat,
+    before: Head,
+    batch: EncodedBatch,
+    plan: PublicationPlan,
+    delta: ProjectionDelta,
+    evidence: Vec<planning::EvidenceWrite>,
+    receipt: Publication,
+    admission: Option<Admission>,
+    permit: Option<Permit>,
 }
 
+#[path = "writer_persist.rs"]
+mod persistence;
+#[path = "writer_prepare.rs"]
+mod planning;
+
 /// Pure preparation in the caller's existing snapshot/majority transaction.
-/// Refuse pending source/bootstrap certification before any durable side effect.
+/// Reject an unavailable or stale source proof before any database operation.
 pub(in crate::store) async fn prepare(
-    _store: &MongoSandboxStore,
-    _scope: &mut TransactionScope<'_>,
-    _captured: &CapturedLog,
-    _input: PublicationInput<'_>,
-    _bootstrap: Option<&BootstrapPlan>,
-    _admission: Option<&Admission>,
+    store: &MongoSandboxStore,
+    scope: &mut TransactionScope<'_>,
+    captured: &CapturedLog,
+    input: PublicationInput<'_>,
+    bootstrap: Option<&BootstrapPlan>,
+    admission: Option<&Admission>,
 ) -> Result<PreparedPublication, TransactionLogError> {
-    Err(pending())
+    captured.validate_transaction(store, scope)?;
+    planning::assemble(store, scope, captured, input, bootstrap, admission).await
 }
 
 /// Own the single Agent CAS and all log/projection/receipt writes in the caller's
 /// transaction. The caller must abort that transaction on any helper error.
 pub(in crate::store) async fn persist(
-    _store: &MongoSandboxStore,
-    _scope: &mut TransactionScope<'_>,
-    _prepared: PreparedPublication,
-    _aggregate: AggregateUpdate,
+    store: &MongoSandboxStore,
+    scope: &mut TransactionScope<'_>,
+    prepared: PreparedPublication,
+    aggregate: AggregateUpdate,
 ) -> Result<Publication, TransactionLogError> {
-    Err(pending())
-}
-
-fn pending() -> TransactionLogError {
-    SandboxStoreError::Unavailable(
-        "certified atomic Agent log publication is not available in this writer checkpoint".into(),
-    )
-    .into()
+    persistence::persist(store, scope, prepared, aggregate).await
 }
