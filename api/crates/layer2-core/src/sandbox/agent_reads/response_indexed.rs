@@ -142,7 +142,7 @@ pub type OutputReadFuture<'a, T> =
 impl AgentReadService {
     /// Personal compatibility reads retain their actual authenticated caller.
     /// They neither synthesize a resource credential nor create a shared grant.
-    pub async fn with_owned_output_observation<T: Send, F: Send>(
+    pub async fn with_owned_output_observation<T: Send, F>(
         &self,
         caller: &Caller,
         id: &AgentId,
@@ -150,7 +150,7 @@ impl AgentReadService {
         operation: F,
     ) -> Result<Option<T>, AgentReadError>
     where
-        F: for<'a, 'b> FnOnce(&'a mut AgentOutputObservation<'b>) -> OutputReadFuture<'a, T>,
+        F: Send + for<'a, 'b> FnOnce(&'a mut AgentOutputObservation<'b>) -> OutputReadFuture<'a, T>,
     {
         require(caller)?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
@@ -216,14 +216,14 @@ impl AgentReadService {
     }
     /// Runs all indexed probes/points for one page or bounded result inside one
     /// IO deadline. The store snapshot is dropped before releasing the result.
-    pub async fn with_output_observation<T: Send, F: Send>(
+    pub async fn with_output_observation<T: Send, F>(
         &self,
         authorization: &AgentEventStreamAuthorization,
         turn: Option<u64>,
         operation: F,
     ) -> Result<Option<T>, AgentReadError>
     where
-        F: for<'a, 'b> FnOnce(&'a mut AgentOutputObservation<'b>) -> OutputReadFuture<'a, T>,
+        F: Send + for<'a, 'b> FnOnce(&'a mut AgentOutputObservation<'b>) -> OutputReadFuture<'a, T>,
     {
         let result = authorization
             .bounded(async {
