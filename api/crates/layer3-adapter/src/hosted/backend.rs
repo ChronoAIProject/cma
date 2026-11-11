@@ -21,6 +21,8 @@ pub struct RuntimeRecoveryCommand {
 /// Kernel-specific settings used while opening its ACP conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostedAgentOpenSettings {
+    /// Trusted transport policy; the provider renderer cannot override it.
+    pub bounded_raw_output: bool,
     /// Transport-owned compact permission retention policy.
     pub bounded_permission_state: bool,
     /// Transport policy, overwritten from trusted composition before attachment.
@@ -53,6 +55,7 @@ pub trait HostedAgentRuntime: Send + Sync {
 
     fn open_settings(&self, request: &AgentOpenRequest) -> Result<HostedAgentOpenSettings> {
         Ok(HostedAgentOpenSettings {
+            bounded_raw_output: false,
             bounded_permission_state: false,
             output_json_budget: false,
             shared_runtime_output: false,
