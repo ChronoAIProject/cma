@@ -13,6 +13,7 @@ use super::agent_log_telemetry::ScanCaller;
 use super::sandbox_mongo::{signed, MongoSandboxStore};
 
 pub(super) mod integrity;
+mod segmented;
 use integrity::{LogReadIntegrity, PreparedIntegrity, ReadHead};
 
 #[derive(Clone, Copy)]
@@ -109,39 +110,8 @@ pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
     };
     let entries = if let Some(segmented) = &head.segmented {
         let (after, through) = window.bounds(head.last_seq)?;
-        let mut entries = Vec::new();
-        let mut bytes = 0_usize;
-        if through - after > super::agent_log_segments::MAX_ENTRIES as u64 {
-            return Err(SandboxStoreError::AgentLogCapacityExceeded);
-        }
-        super::agent_log_segments::visit_range(
-            store,
-            segmented,
-            super::agent_log_segments::LogRange {
-                after: after.min(head.last_seq),
-                through: through.min(head.last_seq),
-                limit: u16::try_from(through - after)
-                    .map_err(|_| SandboxStoreError::InvalidPage)?,
-            },
-            &mut session,
-            true,
-            |entry| {
-                head.validate_lineage(&entry)?;
-                bytes = bytes.saturating_add(
-                    serde_json::to_vec(&entry)
-                        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?
-                        .len(),
-                );
-                if bytes > 4 * 1024 * 1024 {
-                    return Err(SandboxStoreError::AgentLogCapacityExceeded);
-                }
-                entries.push(entry);
-                Ok(())
-            },
-        )
-        .await
-        .map_err(transaction_error)?;
-        entries
+        segmented::read_compatibility_window(store, &head, segmented, after, through, &mut session)
+            .await?
     } else if head.trusted {
         let (after, through) = window.bounds(head.last_seq)?;
         let entries = read_bounded(
