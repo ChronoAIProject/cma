@@ -133,11 +133,11 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
             None
         };
         let recovered_prompt = settings.recovered_prompt.take();
-        let opened = Bridge::open_with_subscription_and_prompt(
+        let opened = Bridge::open_with_relay_policy(
             socket,
             launch.request.agent_id.as_str(),
             launch.request.cwd.clone(),
-            (settings, subscription),
+            (settings, subscription, self.bounded_update_relay),
             resume_conversation,
             recovered_prompt,
             updates,
