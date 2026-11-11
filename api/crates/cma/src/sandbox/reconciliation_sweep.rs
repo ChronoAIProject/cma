@@ -325,6 +325,9 @@ impl Sweep {
                 // A sweep can yield or retry after policy changes. Never carry
                 // enablement, grace or a threshold across an admission attempt.
                 // A platform spend stop is a platform action, not inactivity.
+                // Re-read per candidate (cached per interval): a lift mid-sweep
+                // must not keep pausing with the platform notice.
+                self.platform_stop = reconciler.platform_spend_stop(now).await;
                 let (pause_after_seconds, cause) = if self.platform_stop {
                     (0, InactivityPauseCause::PlatformSpendStop)
                 } else {
