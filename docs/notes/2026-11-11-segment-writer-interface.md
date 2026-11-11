@@ -4,7 +4,8 @@ Part of #1350 and transactional #1349. This is the implementation contract for
 `tl/cma-log-segments/writer-publication`, following the published five-slice plan.
 It fixes the integration boundary; executable acceptance is still required.
 The earlier `writer` assessment branch and old integration remain preserved.
-Develop merge freeze remains in force. No flag or production write is enabled.
+The lead lifted the develop merge freeze. Review verdict and an explicit merge
+relay remain required. No flag or production write is enabled.
 
 ## Ownership and common base
 
@@ -132,8 +133,10 @@ head advancement does not invalidate the earlier exact outcome.
 Implementation lives in `agent_log_segments/writer_commit.rs`, with pure
 planning in `writer_plan.rs`, bootstrap in `writer_bootstrap.rs`, projection
 updates in `writer_projection.rs`, and reconciliation in `writer_reconcile.rs`.
-The contract names below are mapped onto existing types, without a parallel
-transaction framework. S1/S2 publish the required registry/shared ports.
+The signatures below include the approved TransactionScope amendment in
+`2026-11-11-segments-dependency-contract.md`. Start the exclusive scope before
+capture; release consumes it before caller commit/abort. Snapshot capture and
+raw CaptureMode::Transaction cannot grant publication authority.
 
 ```rust
 // Public within crate::store; fields are validated, not caller assertions.
@@ -150,7 +153,7 @@ struct PublicationInput<'a> {
 // caller's transaction, then reused for semantic validation and planning.
 async fn prepare(
     store: &MongoSandboxStore,
-    session: &mut ClientSession,
+    scope: &mut TransactionScope<'_>,
     captured: &CapturedLog,
     input: PublicationInput<'_>,
     bootstrap: Option<&BootstrapPlan>,
@@ -167,10 +170,10 @@ struct AggregateUpdate {
 
 async fn persist(
     store: &MongoSandboxStore,
-    session: &mut ClientSession,
+    scope: &mut TransactionScope<'_>,
     prepared: PreparedPublication,
     aggregate: AggregateUpdate,
-) -> Result<PublicationReceipt, TransactionLogError>;
+) -> Result<Publication, TransactionLogError>;
 ```
 
 `CapturedLog` is the S1 proof bound to the exact aggregate revision/global head,

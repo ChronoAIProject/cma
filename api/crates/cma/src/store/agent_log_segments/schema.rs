@@ -9,6 +9,12 @@ use mongodb::{
 
 use super::{AUDITS, COLLECTIONS, EVIDENCE, HEADS, PROJECTIONS, PUBLICATIONS, SEGMENTS};
 
+mod controls;
+mod index_contract;
+mod recovery;
+mod validators;
+use validators::validator;
+
 fn failed() -> StoreError {
     StoreError::Malformed("Agent log segment DDL is absent, partial or incompatible; run the reviewed additive migration".into())
 }
@@ -18,6 +24,9 @@ fn unavailable(error: mongodb::error::Error) -> StoreError {
 }
 
 fn indexes(name: &str) -> Vec<IndexModel> {
+    if name == super::RECOVERY_WORK {
+        return recovery::indexes();
+    }
     let fields = match name {
         SEGMENTS => vec![
             (
@@ -60,7 +69,7 @@ fn indexes(name: &str) -> Vec<IndexModel> {
         ],
         _ => vec![],
     };
-    fields
+    let mut result: Vec<_> = fields
         .into_iter()
         .map(|(name, keys)| {
             IndexModel::builder()
@@ -73,127 +82,36 @@ fn indexes(name: &str) -> Vec<IndexModel> {
                 )
                 .build()
         })
-        .collect()
-}
-
-fn validator(name: &str) -> Document {
-    let mut properties =
-        doc! {"_id":{"bsonType":"string"},"format_version":{"bsonType":"long","enum":[1_i64]}};
-    let (strings, numbers, binaries): (&[&str], &[&str], &[&str]) = match name {
-        HEADS => (
-            &[
-                "incarnation",
-                "migration_id",
-                "required_reader",
-                "evidence_generation",
-            ],
-            &[
-                "revision",
-                "active_ordinal",
-                "active_start_seq",
-                "last_seq",
-                "active_count",
-                "active_bytes",
-                "lifetime_count",
-                "lifetime_bytes",
-                "projection_format",
-                "projection_through",
-            ],
-            &[],
-        ),
-        SEGMENTS => (
-            &[
-                "agent_id",
-                "incarnation",
-                "digest_version",
-                "sealing_operation",
-                "source_format",
-                "storage_kind",
-            ],
-            &[
-                "ordinal",
-                "start_seq",
-                "end_seq",
-                "entry_count",
-                "encoded_bytes",
-                "prefix_count",
-                "prefix_bytes",
-            ],
-            &["leaf_digests", "seal_digest"],
-        ),
-        PUBLICATIONS => (
-            &["agent_id", "incarnation", "publication_key", "appended_at"],
-            &[
-                "expected_revision",
-                "expected_seq",
-                "first_seq",
-                "last_seq",
-                "result_revision",
-                "head_revision",
-                "active_ordinal",
-            ],
-            &["fingerprint", "result_digest"],
-        ),
-        PROJECTIONS => (
-            &["incarnation", "evidence_generation"],
-            &["through_seq", "head_revision"],
-            &[],
-        ),
-        EVIDENCE => (
-            &[
-                "agent_id",
-                "incarnation",
-                "kind",
-                "entity_key",
-                "evidence_generation",
-            ],
-            &["through_seq", "head_revision"],
-            &[],
-        ),
-        AUDITS => (
-            &[
-                "agent_id",
-                "incarnation",
-                "audit_id",
-                "holder",
-                "status",
-                "result_generation",
-            ],
-            &[
-                "fence",
-                "expires_at_ms",
-                "through_seq",
-                "head_revision",
-                "step",
-            ],
-            &[],
-        ),
-        _ => unreachable!("fixed segment collection inventory"),
-    };
-    for field in strings {
-        properties.insert(*field, doc! {"bsonType":"string"});
+        .collect();
+    if name == EVIDENCE {
+        result.push(
+            IndexModel::builder()
+                .keys(doc! {"agent_id":1,"incarnation":1,"evidence_generation":1,
+                "kind":1,"turn_sequence":1,"change_ordinal":1})
+                .options(
+                    IndexOptions::builder()
+                        .name("agent_log_output_change_seek".to_owned())
+                        .unique(true)
+                        .partial_filter_expression(doc! {"kind":"output_change"})
+                        .build(),
+                )
+                .build(),
+        );
     }
-    for field in numbers {
-        properties.insert(*field, doc! {"bsonType":"long","minimum":0_i64});
+    if name == super::writer_admission::COLLECTION {
+        result.push(
+            IndexModel::builder()
+                .keys(doc! {"agent_id":1,"incarnation":1,"publication_key":1})
+                .options(
+                    IndexOptions::builder()
+                        .name("agent_log_admission_key".to_owned())
+                        .unique(true)
+                        .build(),
+                )
+                .build(),
+        );
     }
-    for field in binaries {
-        properties.insert(*field, doc! {"bsonType":"binData"});
-    }
-    if matches!(name, HEADS | SEGMENTS | PUBLICATIONS) {
-        properties.insert("previous_seal", doc! {"bsonType":["null","binData"]});
-    }
-    if matches!(name, PROJECTIONS | EVIDENCE) {
-        properties.insert("record", doc! {"bsonType":"object"});
-    }
-    if name == AUDITS {
-        properties.insert("captured_head", doc! {"bsonType":"object"});
-        properties.insert("captured_agent", doc! {"bsonType":"object"});
-        properties.insert("format_version", doc! {"bsonType":"long","enum":[2_i64]});
-        properties.insert("completed", doc! {"bsonType":"object"});
-        properties.insert("stage", doc! {"bsonType":["null","object"]});
-    }
-    let required: Vec<_> = properties.keys().cloned().collect();
-    doc! {"$jsonSchema":{"bsonType":"object","required":required,"additionalProperties":false,"properties":properties}}
+    result
 }
 
 #[cfg(test)]
@@ -291,17 +209,7 @@ async fn pending(database: &Database) -> Result<Vec<Step>, StoreError> {
             match matching.next() {
                 None => pending.push(Step::Index(name, Box::new(expected))),
                 Some(index) => {
-                    if matching.next().is_some()
-                        || !index.keys.iter().eq(expected.keys.iter())
-                        || !index.options.as_ref().is_some_and(|o| {
-                            o.unique == Some(true)
-                                && o.name.as_ref() == expected_name
-                                && o.partial_filter_expression.is_none()
-                                && o.sparse != Some(true)
-                                && o.hidden != Some(true)
-                                && o.collation.is_none()
-                        })
-                    {
+                    if matching.next().is_some() || !index_contract::matches(index, &expected) {
                         return Err(failed());
                     }
                 }
