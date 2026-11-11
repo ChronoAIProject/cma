@@ -321,6 +321,8 @@ of the public contract.
 | `POST /api/v1/sandboxes/{id}/revive` |
 | `POST /api/v1/sandboxes/{id}/always-on` |
 | `POST /api/v1/sandboxes/{id}/runtime-update` |
+| `GET /api/v1/sandboxes/{id}/runtime-recovery` |
+| `POST /api/v1/sandboxes/{id}/runtime-recovery` |
 | `POST /api/v1/sandboxes/{id}/service-access` |
 
 ### service connections
