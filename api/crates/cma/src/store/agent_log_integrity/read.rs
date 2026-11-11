@@ -44,12 +44,15 @@ pub(in crate::store) async fn read_proven_agent(
         return Ok(None);
     };
     let agent = crate::store::agents::read_agent(&row)?;
+    if store.bounded_log_enabled(agent_id) && row.contains_key(QUARANTINE_FIELD) {
+        fleet::telemetry::record(fleet::telemetry::Event::Quarantined);
+    }
     let proof = proof::read_only_summary(store, &agent, &row, session, true)
         .await
         .map_err(|error| match error {
             TransactionLogError::Domain(error) => error,
             TransactionLogError::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
         })?;
-    let trusted = proof.is_some() && store.bounded_admission_agents.contains(agent_id);
+    let trusted = proof.is_some() && store.bounded_log_enabled(agent_id);
     Ok(Some((agent, trusted)))
 }

@@ -109,7 +109,7 @@ pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
     };
     let entries = if head.trusted {
         let (after, through) = window.bounds(head.last_seq)?;
-        read_bounded(
+        let entries = read_bounded(
             store,
             agent_id,
             after,
@@ -119,8 +119,19 @@ pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
             usize::MAX,
         )
         .await?
-        .ok_or(SandboxStoreError::AgentLogCapacityExceeded)?
+        .ok_or(SandboxStoreError::AgentLogCapacityExceeded)?;
+        if !matches!(window, Window::Prefix { .. }) {
+            super::agent_log_integrity::fleet::telemetry::record(
+                super::agent_log_integrity::fleet::telemetry::Event::WindowScanAvoided,
+            );
+        }
+        entries
     } else {
+        if store.bounded_log_enabled(agent_id) {
+            super::agent_log_integrity::fleet::telemetry::record(
+                super::agent_log_integrity::fleet::telemetry::Event::Fallback,
+            );
+        }
         let mut entries = Vec::new();
         scan_collection(
             ScanCaller::PublicWindowPrefix,
