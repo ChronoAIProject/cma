@@ -149,6 +149,8 @@ impl<S: CapacityRecoveryStore, R: CapacityRecoveryRuntime> CapacityRecoveryServi
             if completed != &expected {
                 return Err(RecoveryError::InvalidEvidence);
             }
+            let activation = self.store.activation(caller, completed).await?;
+            activation.require_confirmation(&confirmation)?;
             self.runtime.acknowledge(attachment, completed).await?;
         }
         // Unknown/known-abort drops the attachment without acknowledging it.
