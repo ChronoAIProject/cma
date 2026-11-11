@@ -284,3 +284,5 @@ data:
   # AgentKey service floor. Public skill material is served by ornn-api.
   CHRONO_BASELINE_SERVICES: "chrono-llm-public,ornn-api"
   RUST_LOG: "info"
+  # Shared retained live-fragment budget; deployment qualification is separate.
+  CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED: "false"
