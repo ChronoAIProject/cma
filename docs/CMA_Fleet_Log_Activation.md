@@ -111,9 +111,8 @@ Release owner uses a fully green develop batch artifact. At every stage record
 source/image, percentage, eligible natural request counts, first-preparation and
 steady-state behavior, checkout wait p50/p95, admission/open-Agent p50/p95, scans/s,
 bytes/s and 503s over matched windows. A minimum 30-minute watch precedes each
-expansion; missing natural samples remain unverified. Exclude known unhealthy
-Agents according to the release plan rather than treating a successful selector
-as an activation certificate. No production test messages or database edits are
+expansion; missing natural samples remain unverified. Retain separate incident handling for known unhealthy/full-ledger Agents;
+selection does not certify their recovery or eligibility. No production test messages or database edits are
 authorized to the implementation owner.
 
 Stop expansion and use same-image percentage-zero rollback on correctness or

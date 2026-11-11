@@ -248,3 +248,70 @@ async fn fleet_message_reservation_keeps_exact_replay_and_authority_deadlines() 
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
+async fn failed_fleet_preparation_keeps_the_existing_append_fallback_usable() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let app = format!("fleet-preparation-{}", uuid::Uuid::new_v4().simple());
+    let name = format!("cma_fleet_failure_{}", uuid::Uuid::new_v4().simple());
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.app_name = Some(app.clone());
+    let client = Client::with_options(options).unwrap();
+    let (legacy, agent, _) = fixture(&name, &client).await;
+    let (mut store, agent) = prepare_history(legacy, agent, 1_000).await;
+    store.bounded_admission_agents.clear();
+    remove_metadata(&store, &agent.id).await;
+    let store = store.with_fleet_log_percentage(100);
+    admin
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": { "times": 1_i32 },
+            "data": { "failCommands": ["update"], "appName": app,
+                "errorCode": 91_i32, "errorLabels": ["TransientTransactionError"] }
+        })
+        .await
+        .unwrap();
+    store.prepare_fleet_log(&agent.id).await;
+    admin
+        .database("admin")
+        .run_command(doc! { "configureFailPoint": "failCommand", "mode": "off" })
+        .await
+        .unwrap();
+    let row = store
+        .agents
+        .find_one(doc! { "_id": agent.id.as_str() })
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!row.contains_key(INTEGRITY_FIELD));
+    assert!(!row.contains_key(QUARANTINE_FIELD));
+    isolated(async {
+        assert_eq!(
+            store
+                .append_agent_log(&agent.id, NOW.into(), kind())
+                .await
+                .unwrap()
+                .seq,
+            1_001
+        );
+        assert_eq!(
+            snapshot(ScanCaller::RecoveryProof, true)[0],
+            0,
+            "failed preparation is cooling down"
+        );
+        assert_eq!(
+            snapshot(ScanCaller::Other, true)[0],
+            1,
+            "ordinary append repairs metadata"
+        );
+        store
+            .append_agent_log(&agent.id, NOW.into(), kind())
+            .await
+            .unwrap();
+        assert_eq!(snapshot(ScanCaller::Other, true)[0], 1);
+    })
+    .await;
+    client.database(&name).drop().await.unwrap();
+}
