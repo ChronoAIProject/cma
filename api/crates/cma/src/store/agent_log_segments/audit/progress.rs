@@ -163,6 +163,9 @@ async fn claim_transaction(
 }
 
 pub(super) fn read(row: Document, agent: &str, audit: &str) -> Result<Progress, SandboxStoreError> {
+    if bson::serialize_to_vec(&row).map_err(|_| corrupt())?.len() > MAX_PROGRESS_BYTES {
+        return Err(corrupt());
+    }
     for field in [
         "format_version",
         "expires_at_ms",
@@ -173,9 +176,19 @@ pub(super) fn read(row: Document, agent: &str, audit: &str) -> Result<Progress, 
     ] {
         row.get_i64(field).map_err(|_| corrupt())?;
     }
-    let checkpoint = row.get_document("completed").map_err(|_| corrupt())?;
-    for field in ["next_ordinal", "checked_entries", "checked_bytes"] {
-        checkpoint.get_i64(field).map_err(|_| corrupt())?;
+    checkpoint_types(row.get_document("completed").map_err(|_| corrupt())?)?;
+    Head::read(
+        row.get_document("captured_head")
+            .map_err(|_| corrupt())?
+            .clone(),
+    )?;
+    if let Ok(stage) = row.get_document("stage") {
+        if stage
+            .get_str("phase")
+            .is_ok_and(|phase| phase == "promoting")
+        {
+            checkpoint_types(stage.get_document("completed").map_err(|_| corrupt())?)?;
+        }
     }
     let progress: Progress = bson::deserialize_from_document(row).map_err(|_| corrupt())?;
     progress.captured_head.validate()?;
@@ -231,6 +244,7 @@ pub(super) fn read(row: Document, agent: &str, audit: &str) -> Result<Progress, 
                 || completed.checked_entries > progress.through_seq
                 || completed.checked_entries - checkpoint.checked_entries > MAX_ENTRIES
                 || completed.checked_bytes < checkpoint.checked_bytes
+                || completed.checked_bytes > progress.captured_head.lifetime_bytes
                 || completed.checked_bytes - checkpoint.checked_bytes > MAX_BYTES
                 || completed.semantic.through_seq != completed.checked_entries as u64
                 || *tail != (completed.next_ordinal == progress.captured_head.active_ordinal + 1)
@@ -243,4 +257,11 @@ pub(super) fn read(row: Document, agent: &str, audit: &str) -> Result<Progress, 
         }
     }
     Ok(progress)
+}
+
+fn checkpoint_types(row: &Document) -> Result<(), SandboxStoreError> {
+    for field in ["next_ordinal", "checked_entries", "checked_bytes"] {
+        row.get_i64(field).map_err(|_| corrupt())?;
+    }
+    Ok(())
 }
