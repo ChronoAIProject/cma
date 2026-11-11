@@ -256,4 +256,7 @@ fn transport_reason(error: &reqwest::Error) -> Reason {
 #[path = "agent_models/diagnostic_tests.rs"]
 mod diagnostic_tests;
 #[cfg(test)]
+#[path = "agent_models/nyxid_contract_tests.rs"]
+mod nyxid_contract_tests;
+#[cfg(test)]
 mod tests;

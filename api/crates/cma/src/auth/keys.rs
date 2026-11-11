@@ -21,6 +21,8 @@ pub(crate) use bots::owner_matches;
 mod catalog;
 mod grant;
 mod identifiers;
+#[cfg(test)]
+mod nyxid_contract_tests;
 mod provided;
 mod scope_plan;
 use grant::minted_key_from_response;
