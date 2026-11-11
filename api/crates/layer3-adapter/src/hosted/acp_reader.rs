@@ -91,7 +91,14 @@ async fn dispatch(reader: &Bridge, frame: Result<Message, Error>, updates: &Upda
                 }
             }
             Some((LANE_CONVERSATION_GAP, payload)) => {
-                if let Some(frames) = gap_count(payload) {
+                let frames = match &reader.json_pools {
+                    Some(pools) => match pools.decode(payload) {
+                        Ok(frame) => frame.get("frames").and_then(serde_json::Value::as_u64),
+                        Err(_) => return false,
+                    },
+                    None => gap_count(payload),
+                };
+                if let Some(frames) = frames {
                     updates.send(ConversationUpdate::Lost { frames }).await;
                 }
                 if reader.output.is_some() {
