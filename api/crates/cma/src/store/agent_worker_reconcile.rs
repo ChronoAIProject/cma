@@ -99,31 +99,40 @@ async fn reconcile_publication_snapshot(
     {
         return Ok(false);
     }
-    let first_receipt_seq = receipt.logs.first().map(|entry| entry.seq);
-    let mut receipt_offset = 0;
-    scan_complete_log_with_snapshot_session(
-        ScanCaller::UnknownCommitProof,
-        store,
-        &receipt.agent.id,
-        receipt.agent.conversation.last_seq,
-        session,
-        |entry| {
-            if first_receipt_seq.is_some_and(|first| entry.seq >= first) {
-                let Some(expected) = receipt.logs.get(receipt_offset) else {
-                    return Err(SandboxStoreError::SequenceConflict);
-                };
-                if &entry != expected {
-                    return Err(SandboxStoreError::SequenceConflict);
+    if let Some(recorded) = &receipt.segmented {
+        if recorded.next != receipt.agent
+            || recorded.logs != receipt.logs
+            || !recorded.matches(store, session).await?
+        {
+            return Ok(false);
+        }
+    } else {
+        let first_receipt_seq = receipt.logs.first().map(|entry| entry.seq);
+        let mut receipt_offset = 0;
+        scan_complete_log_with_snapshot_session(
+            ScanCaller::UnknownCommitProof,
+            store,
+            &receipt.agent.id,
+            receipt.agent.conversation.last_seq,
+            session,
+            |entry| {
+                if first_receipt_seq.is_some_and(|first| entry.seq >= first) {
+                    let Some(expected) = receipt.logs.get(receipt_offset) else {
+                        return Err(SandboxStoreError::SequenceConflict);
+                    };
+                    if &entry != expected {
+                        return Err(SandboxStoreError::SequenceConflict);
+                    }
+                    receipt_offset += 1;
                 }
-                receipt_offset += 1;
-            }
-            Ok(())
-        },
-    )
-    .await
-    .map_err(log_error)?;
-    if receipt_offset != receipt.logs.len() {
-        return Ok(false);
+                Ok(())
+            },
+        )
+        .await
+        .map_err(log_error)?;
+        if receipt_offset != receipt.logs.len() {
+            return Ok(false);
+        }
     }
     if let Some(event) = receipt.event.as_ref() {
         if reconcile_event_with_snapshot_session(store, event, session)
