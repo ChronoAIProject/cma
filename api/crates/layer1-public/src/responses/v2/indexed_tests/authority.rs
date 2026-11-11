@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn ownership_change_while_points_wait_discards_the_private_result() {
+async fn deletion_while_points_wait_discards_the_private_result() {
     let mut kinds = beginning();
     kinds.extend([
         message("private result"),
@@ -28,7 +28,8 @@ async fn ownership_change_while_points_wait_discards_the_private_result() {
     });
     f.source.counts.entered.notified().await;
     let mut changed = f.agent.clone();
-    changed.owner = SubjectId::new("owner-b");
+    changed.status = AgentStatus::Deleted;
+    changed.deleted_at = Some(AT.into());
     changed.revision += 1;
     f.store.save_agent(f.agent.revision, changed).await.unwrap();
     f.source.counts.stall.store(false, Ordering::SeqCst);
@@ -75,4 +76,113 @@ async fn adopted_unbound_stream_keeps_reading_with_legacy_optimization_off() {
         "response.failed"
     );
     assert!(body.next().await.is_none());
+}
+
+async fn shared(
+    f: &IndexedFixture,
+) -> (
+    ResourceShare,
+    layer2_core::sandbox::AgentEventStreamAuthorization,
+) {
+    let share = f
+        .access
+        .change_share(
+            &context("owner-a"),
+            Some("fixture-credential"),
+            ShareCommand {
+                selector: ResourceSelector::Agent {
+                    agent_id: f.agent.id.clone(),
+                },
+                change: ShareChange::Create {
+                    target_org_id: SubjectId::new("org"),
+                    mode: ShareMode::View,
+                },
+                expected_share_revision: None,
+                idempotency_key: "indexed-share".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let held = f
+        .reads
+        .authorize_event_stream(&context("reader"), Some("fixture-credential"), &f.agent.id)
+        .await
+        .unwrap();
+    (share.share, held)
+}
+
+#[tokio::test]
+async fn share_revocation_during_source_read_discards_the_result() {
+    let mut kinds = beginning();
+    kinds.extend([
+        message("private"),
+        AgentLogKind::TurnCompleted { turn_sequence: 3 },
+    ]);
+    let f = make(kinds).await;
+    let (share, held) = shared(&f).await;
+    f.source.counts.stall.store(true, Ordering::SeqCst);
+    let reads = f.reads.clone();
+    let reading = f.reading.clone();
+    let task = tokio::spawn(async move {
+        reads
+            .with_output_observation(&held, Some(3), move |source| {
+                Box::pin(async move {
+                    projection::indexed::complete(
+                        source,
+                        &crate::agent_page::AgentPageOrigin::test(),
+                        reading,
+                    )
+                    .await
+                })
+            })
+            .await
+    });
+    f.source.counts.entered.notified().await;
+    f.access
+        .change_share(
+            &context("owner-a"),
+            None,
+            ShareCommand {
+                selector: share.selector,
+                change: ShareChange::Revoke { share_id: share.id },
+                expected_share_revision: Some(share.revision),
+                idempotency_key: "indexed-revoke".into(),
+            },
+        )
+        .await
+        .unwrap();
+    f.source.counts.stall.store(false, Ordering::SeqCst);
+    f.source.counts.release.notify_one();
+    assert!(task.await.unwrap().is_err());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_slow_indexed_read_cannot_extend_the_original_deadline() {
+    let mut kinds = beginning();
+    kinds.extend([
+        message("private"),
+        AgentLogKind::TurnCompleted { turn_sequence: 3 },
+    ]);
+    let f = make(kinds).await;
+    let (_, held) = shared(&f).await;
+    f.source.counts.stall.store(true, Ordering::SeqCst);
+    let reads = f.reads.clone();
+    let reading = f.reading.clone();
+    let task = tokio::spawn(async move {
+        reads
+            .with_output_observation(&held, Some(3), move |source| {
+                Box::pin(async move {
+                    projection::indexed::complete(
+                        source,
+                        &crate::agent_page::AgentPageOrigin::test(),
+                        reading,
+                    )
+                    .await
+                })
+            })
+            .await
+    });
+    f.source.counts.entered.notified().await;
+    tokio::time::advance(Duration::from_secs(16)).await;
+    assert!(task.await.unwrap().is_err());
 }

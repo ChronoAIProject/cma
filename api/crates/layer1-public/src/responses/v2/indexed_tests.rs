@@ -27,3 +27,11 @@ mod large_history;
 mod pagination;
 #[path = "indexed_tests/parity.rs"]
 mod parity;
+
+#[path = "indexed_tests/history.rs"]
+mod history;
+#[path = "indexed_tests/integrity.rs"]
+mod integrity;
+
+#[path = "indexed_tests/http.rs"]
+mod http;
