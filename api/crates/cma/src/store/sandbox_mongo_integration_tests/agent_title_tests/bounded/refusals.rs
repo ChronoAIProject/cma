@@ -4,12 +4,25 @@ use crate::store::agent_log_integrity::{INTEGRITY_FIELD, QUARANTINE_FIELD};
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn title_prefix_keeps_disabled_missing_stale_and_unknown_metadata_on_full_reads() {
-    for case in ["disabled", "missing", "stale", "unsupported"] {
+    for case in [
+        "switch_off",
+        "cohort_off",
+        "missing",
+        "stale",
+        "unsupported",
+    ] {
         let mut f = Fixture::new(1_000, 6, false, 64).await;
         let filter = doc! { "_id": f.agent.id.as_str() };
         let update = match case {
-            "disabled" => {
-                f.store = MongoSandboxStore::open(&f.client, &f.name).await.unwrap();
+            "switch_off" => {
+                f.store = f.store.with_bounded_title_reads(false);
+                None
+            }
+            "cohort_off" => {
+                f.store = MongoSandboxStore::open(&f.client, &f.name)
+                    .await
+                    .unwrap()
+                    .with_bounded_title_reads(true);
                 None
             }
             "missing" => Some(doc! { "$unset": { INTEGRITY_FIELD: "" } }),
@@ -40,6 +53,13 @@ async fn title_prefix_keeps_disabled_missing_stale_and_unknown_metadata_on_full_
             assert!(reads::snapshot(AGENT_LOG)[2] >= 1_000, "{case}");
         })
         .await;
+        if matches!(case, "switch_off" | "cohort_off") {
+            assert_eq!(
+                f.used(before),
+                6,
+                "disabled reads keep their original query budget"
+            );
+        }
         eprintln!(
             "title_prefix_untrusted case={case} checkouts={}",
             f.used(before)

@@ -21,6 +21,13 @@ use super::sandbox_mongo::MongoSandboxStore;
 
 mod bounded;
 
+impl MongoSandboxStore {
+    pub(crate) fn with_bounded_title_reads(mut self, enabled: bool) -> Self {
+        self.bounded_title_reads = enabled;
+        self
+    }
+}
+
 #[async_trait::async_trait]
 impl AgentTitleStore for MongoSandboxStore {
     async fn agent_title_candidates(

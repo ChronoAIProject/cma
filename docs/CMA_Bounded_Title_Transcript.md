@@ -9,7 +9,8 @@ the setup turn when recorded as such. The unchanged domain fold returns as soon
 as that turn completes. A proven prefix containing that terminal event therefore
 produces the same title input as the complete history.
 
-For an Agent in `CHRONO_AGENT_LOG_ADMISSION_AGENTS` with more than 200 entries,
+With `CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED=true`, for an Agent in
+`CHRONO_AGENT_LOG_ADMISSION_AGENTS` with more than 200 entries,
 the reader uses #1591's shared `read_proven_agent` interface in the title read's
 existing Mongo snapshot. It requires the same captured Agent and trusted proof,
 then reads sequences 1–200 through the unique Agent/sequence index. Requested
@@ -52,11 +53,16 @@ open under #1349 and its prerequisites.
 
 ## Activation and verification
 
-The existing cohort is default-empty in configuration and the API manifest.
-Preparation and cohort selection remain owned by #1591's release procedure;
-this PR adds no configuration key, index, document format, projection, backfill
-or writer. Closing the cohort restores complete reads on the same compatible
-image and preserves all metadata, quarantine and source history. This is a
+`CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED` defaults to `false` in the parser and
+API manifest and accepts only the exact strings `true` or `false`. It is
+independent of the existing default-empty admission cohort, so an already-active
+admission/public-window cohort does not silently activate title reads on upgrade.
+Preparation and cohort selection remain owned by #1591's release procedure.
+The release owner qualifies admission and public windows first, then enables
+title reads for that fixed cohort. Setting the title switch to `false` and
+restarting the API restores complete title reads without disabling admission or
+public windows. All metadata, quarantine and source history are preserved.
+This adds no index, document format, projection, backfill or writer. It is a
 compatible read optimization under the [migration standard](CMA_Data_Migrations.md),
 with no new data emission or reader-floor change.
 
@@ -66,8 +72,9 @@ and scan time with checkout count/wait tails and HTTP latency/503s. Record eligi
 title-read sample counts and fallback frequency; fleet gains cannot be inferred
 from a fixture or from the historical caller percentage. Missing samples remain
 unverified. Stop cohort expansion for output mismatch, integrity refusal, growing
-fallback load or availability regression, and use the shared cohort rollback
-procedure. No production input, title write or cohort activation is performed
+fallback load or availability regression, and disable the title switch. The
+shared cohort rollback remains available for a shared proof failure.
+No production input, title write or cohort activation is performed
 by this implementation's verification.
 
 Real-Mongo tests compare the exact domain input against full reads at 1,000 and
