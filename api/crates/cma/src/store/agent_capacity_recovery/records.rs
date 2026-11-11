@@ -4,12 +4,13 @@ use layer2_core::sandbox::{
 };
 use mongodb::{
     bson::{self, doc, Document},
-    ClientSession, Collection,
+    Collection,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::store::{
-    agent_log_integrity::TransactionLogError, durability::majority_collection,
+    agent_log_integrity::TransactionLogError,
+    agent_log_segments::transaction_scope::TransactionScope, durability::majority_collection,
     sandbox_mongo::MongoSandboxStore,
 };
 
@@ -28,11 +29,10 @@ struct Row {
 pub(super) async fn read(
     store: &MongoSandboxStore,
     key: &str,
-    session: &mut ClientSession,
+    scope: &mut TransactionScope<'_>,
 ) -> Result<Option<RecoveryWork>, TransactionLogError> {
-    let row = collection(store)
-        .find_one(doc! {"_id": key})
-        .session(session)
+    let row = scope
+        .find_one(&collection(store), doc! {"_id": key})
         .await
         .map_err(TransactionLogError::Driver)?;
     row.map(decode).transpose().map_err(Into::into)
@@ -67,7 +67,7 @@ pub(super) fn collection(store: &MongoSandboxStore) -> Collection<Document> {
 pub(super) async fn insert(
     store: &MongoSandboxStore,
     work: &RecoveryWork,
-    session: &mut ClientSession,
+    scope: &mut TransactionScope<'_>,
 ) -> Result<(), TransactionLogError> {
     work.validate().map_err(|_| invalid())?;
     let key = work.request.key().map_err(|_| invalid())?;
@@ -79,9 +79,8 @@ pub(super) async fn insert(
     if bson::serialize_to_vec(&row).map_err(|_| invalid())?.len() > 32 * 1024 {
         return Err(invalid().into());
     }
-    collection(store)
-        .insert_one(row)
-        .session(session)
+    scope
+        .insert_one(&collection(store), row)
         .await
         .map_err(|error| {
             if crate::store::sandbox_mongo::is_duplicate_key(&error) {
