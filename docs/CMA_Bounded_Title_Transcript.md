@@ -81,6 +81,36 @@ Real-Mongo tests compare the exact domain input against full reads at 1,000 and
 10,000 entries, count all proof/prefix checkouts and consumed log rows, and cover
 setup exclusion, the 200-entry boundary, byte fallback, untrusted/corrupt evidence,
 an outside-prefix gap on fallback and a concurrent append after snapshot capture.
-Transactional title regression tests retain their original coverage. Local
-checkout/row measurements and executed gates are recorded in the PR after running
-these fixtures; they are not a production latency forecast.
+Transactional title regression tests retain their original coverage.
+
+## Local measurements and limits
+
+Mongo 8.0.13 CMAP counters, with approximately 4 KiB messages in later turns,
+include the original title-envelope read, all shared proof queries and the
+prefix/full cursor. Both paths return identical domain title input.
+
+| Retained entries | Complete-reader checkouts | Successful-prefix checkouts | Complete-reader log documents | Prefix/proof log documents |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 | 6 | 5 | 1,001 | 201 |
+| 10,000 | 8 | 5 | 10,001 | 201 |
+
+Fallback costs remain material. At 1,000 entries, a task ending at sequence 201
+or 600, or an oversized prefix, used **10 checkouts**: the attempted prefix and
+proof precede the original complete reader. With the title switch or cohort
+off, the same prepared history keeps its original six checkouts. Missing or
+unsupported metadata used five, and stale metadata used seven; those include the
+extra attempted proof and are different metadata states from the six-checkout
+prepared baseline. A 200-entry history bypasses the shortcut entirely.
+
+In the 1,000-entry fixture, if all unsuccessful attempts cost ten checkouts,
+more than 80% of attempts must use the successful prefix to reduce checkout count
+overall. Production qualification must measure its actual history/fallback mix;
+CPU/decoded-byte improvements and checkout improvements are separate outcomes.
+These fixtures do not establish fleet savings or a production latency forecast.
+
+Validation: formatting, cma tests/all-features clippy, 26 existing title-domain
+tests, the strict switch parser test and 14 real-Mongo title contracts passed.
+The Mongo contracts include seven new bounded-consumer tests, existing claim and
+unknown-commit cases, and task-title authorization/setup recovery. The owned
+disposable replica and volume were removed. Manifest parsing/default, configuration
+documentation, source-size and secret checks also passed; hosted CI is separate.
