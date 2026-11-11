@@ -212,10 +212,10 @@ describe('silent sign-in', () => {
     );
   });
 
-  it('sends the home page to the Agent Manager', async () => {
+  it('returns the home page to its original address', async () => {
     const { replace } = stubLocation('/');
     expect((await anonymous()).signInSilently?.()).toBe(true);
-    expect(replace).toHaveBeenCalledWith('/auth/login?return_to=%2Fagent-manager&prompt=none');
+    expect(replace).toHaveBeenCalledWith('/auth/login?return_to=%2F&prompt=none');
   });
 
   it('is not attempted against a control plane that does not offer it', async () => {
@@ -255,10 +255,12 @@ describe('silent sign-in', () => {
     expect(replace).toHaveBeenCalledTimes(1);
   });
 
-  it('marks the browser signed out for the control plane to enforce', async () => {
-    stubLocation('/agent-manager');
-    await createNyxidAuthProvider().signOut();
-    expect(document.cookie).toContain('cma_signed_out=1');
+  it('navigates to server-owned logout and suppresses another tab attempt locally', async () => {
+    const { assign } = stubLocation('/agent-manager');
+    const provider = await anonymous();
+    await provider.signOut();
+    expect(assign).toHaveBeenCalledWith('/auth/logout');
+    expect(provider.signInSilently?.()).toBe(false);
   });
 
   it('leaves visitor journeys, share links and pages it cannot return to', async () => {
@@ -280,9 +282,11 @@ describe('silent sign-in', () => {
     }
   });
 
-  it('leaves an address with a query or fragment to the explicit sign-in', async () => {
+  it('leaves unknown query state and bearer-bearing fragments to explicit sign-in', async () => {
     for (const [search, hash] of [
-      ['?setup=draft', ''],
+      ['?next=https://foreign.example', ''],
+      ['?setup=x?y&token=authority', ''],
+      ['?setup=' + '界'.repeat(9000), ''],
       ['?tab=access', ''],
       ['', '#turn'],
     ]) {
@@ -290,6 +294,46 @@ describe('silent sign-in', () => {
       expect((await anonymous()).signInSilently?.(), `${search}${hash}`).toBe(false);
       expect(replace).not.toHaveBeenCalled();
     }
+  });
+
+  it('preserves setup drafts and Sandbox tabs through the validated return target', async () => {
+    for (const [path, search] of [
+      ['/bots/new', '?setup=%7B%22name%22%3A%22Draft%22%7D'],
+      ['/sandboxes/sbx_1', '?tab=access'],
+    ]) {
+      sessionStorage.clear();
+      const { replace } = stubLocation(path!, search!);
+      expect((await anonymous()).signInSilently?.()).toBe(true);
+      const target = new URL(replace.mock.calls[0]![0] as string, 'https://cma.example');
+      expect(target.searchParams.get('return_to')).toBe(path! + search!);
+    }
+  });
+
+  it('does not reuse a stale hint after rejection, an outage or malformed identity', async () => {
+    for (const [status, body] of [
+      [403, { authenticated: false, silent_sign_in: true }],
+      [503, { code: 'identity_unavailable' }],
+      [200, {}],
+      [401, null],
+    ] as const) {
+      const { replace } = stubLocation('/agent-manager');
+      const provider = await anonymous();
+      stubFetch(() => jsonResponse(status, body));
+      await provider.current();
+      expect(provider.signInSilently?.()).toBe(false);
+      expect(replace).not.toHaveBeenCalled();
+    }
+  });
+
+  it('does not loop when the browser refuses navigation', async () => {
+    const { replace } = stubLocation('/agent-manager');
+    replace.mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    const provider = await anonymous();
+    expect(provider.signInSilently?.()).toBe(false);
+    expect(provider.signInSilently?.()).toBe(false);
+    expect(replace).toHaveBeenCalledTimes(1);
   });
 
   it('does not try when storage is unavailable, since it could not stop a loop', async () => {

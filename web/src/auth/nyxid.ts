@@ -38,16 +38,6 @@ const LOGOUT_ENDPOINT = '/auth/logout';
  */
 const SILENT_ATTEMPT_KEY = 'cma.auth.silent-attempt';
 
-/**
- * Set as this browser signs out of CMA, which ends the CMA cookie but not the
- * provider's session. The control plane declines every silent sign-in while it
- * is present, including one already in flight in another tab, and clears it
- * when the person next signs in. A cookie rather than storage, so the control
- * plane is the one enforcing it.
- */
-const SIGNED_OUT_COOKIE = 'cma_signed_out';
-const SIGNED_OUT_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
-
 /** The longest return target the control plane accepts. */
 const RETURN_TARGET_MAX_LENGTH = 256;
 
@@ -103,8 +93,9 @@ export function handleFor(subject: string, displayName?: string, email?: string)
 export function signInPath(returnTo?: string, options?: SignInOptions): string {
   const target = new URL(LOGIN_ENDPOINT, window.location.origin);
   if (returnTo !== undefined) {
-    const route = parseRoute(returnTo);
-    if (route.kind === 'not_found' || routePath(route) !== returnTo)
+    const [path] = returnTo.split('?');
+    const route = parseRoute(path ?? '');
+    if (route.kind === 'not_found' || routePath(route) !== path || !returnQueryAllowed(returnTo))
       throw new Error('The sign-in destination is not a CMA page.');
     target.searchParams.set('return_to', returnTo);
   }
@@ -117,8 +108,8 @@ export function signInPath(returnTo?: string, options?: SignInOptions): string {
  *
  * Only addresses the control plane accepts as a sign-in return target qualify:
  * a refused target would strand the person on an error rather than the page
- * they opened. A return target carries no query or fragment, so an address
- * with either is left to the explicit sign-in, which retains what it needs.
+ * they opened. Only defined, non-authorizing setup/tab query state is restored. Fragments
+ * stay in the browser because they may carry share credentials.
  * Visitor journeys and share links run their own sign-in, which retains the
  * link's authority across the round trip.
  */
@@ -128,7 +119,7 @@ export function silentReturnTarget(location: {
   readonly hash: string;
 }): string | undefined {
   const { pathname } = location;
-  if (location.search !== '' || location.hash !== '') return undefined;
+  if (location.hash !== '' || !returnQueryAllowed(pathname + location.search)) return undefined;
   if (pathname.length > RETURN_TARGET_MAX_LENGTH) return undefined;
   const segments = pathname.split('/').slice(1);
   if (
@@ -142,7 +133,6 @@ export function silentReturnTarget(location: {
   if (routePath(route) !== pathname) return undefined;
   switch (route.kind) {
     case 'home':
-      return '/agent-manager';
     case 'agent_manager':
     case 'event_gateway':
     case 'image_manager':
@@ -157,10 +147,40 @@ export function silentReturnTarget(location: {
     case 'triggers':
     case 'trigger':
     case 'trigger_embed':
-      return pathname;
+      return pathname + location.search;
     default:
       return undefined;
   }
+}
+
+/** Only UI-defined query state is restored; unknown redirect/authority parameters fail closed. */
+function returnQueryAllowed(value: string): boolean {
+  if (
+    new TextEncoder().encode(value).length > 25064 ||
+    Array.from(value).some(
+      (character) =>
+        character.charCodeAt(0) <= 32 ||
+        character.charCodeAt(0) === 127 ||
+        character === '#' ||
+        character === '\\',
+    )
+  )
+    return false;
+  const split = value.indexOf('?');
+  const path = split < 0 ? value : value.slice(0, split);
+  const query = split < 0 ? undefined : value.slice(split + 1);
+  if (query === undefined) return true;
+  const keys = new Set<string>();
+  for (const [key] of new URLSearchParams(query)) {
+    if (keys.has(key)) return false;
+    keys.add(key);
+    if (
+      !(path === '/bots/new' && key === 'setup') &&
+      !(path?.startsWith('/sandboxes/') && key === 'tab')
+    )
+      return false;
+  }
+  return true;
 }
 
 /** Storage can refuse access outright; read that as "do not try". */
@@ -183,6 +203,7 @@ export function createNyxidAuthProvider(): AuthProvider {
   let silentSignInOffered = false;
   return {
     async current(): Promise<AuthState> {
+      silentSignInOffered = false;
       let response: Response;
       const timeout = AbortSignal.timeout(IDENTITY_TIMEOUT_MS);
       try {
@@ -206,7 +227,10 @@ export function createNyxidAuthProvider(): AuthProvider {
       if (response.status === 401 || response.status === 403) {
         try {
           const anonymous = (await response.json()) as IdentityResponse;
-          silentSignInOffered = anonymous.silent_sign_in === true;
+          silentSignInOffered =
+            response.status === 401 &&
+            anonymous?.authenticated === false &&
+            anonymous.silent_sign_in === true;
         } catch {
           silentSignInOffered = false;
         }
@@ -277,8 +301,10 @@ export function createNyxidAuthProvider(): AuthProvider {
       // Also a navigation. The control plane clears the cookie and redirects
       // back, so the app reloads already signed out rather than holding stale
       // state it would have to reconcile.
-      const secure = window.location.protocol === 'https:' ? '; Secure' : '';
-      document.cookie = `${SIGNED_OUT_COOKIE}=1; Path=/; Max-Age=${SIGNED_OUT_MAX_AGE_SECONDS}; SameSite=Lax${secure}`;
+      remember(() => {
+        sessionStorage.setItem(SILENT_ATTEMPT_KEY, '1');
+        return true;
+      });
       window.location.assign(LOGOUT_ENDPOINT);
     },
 
@@ -296,8 +322,12 @@ export function createNyxidAuthProvider(): AuthProvider {
       target.searchParams.set('prompt', 'none');
       // Replace: the anonymous page was never somewhere the person chose to
       // be, so Back should not return to it.
-      window.location.replace(`${target.pathname}${target.search}`);
-      return true;
+      try {
+        window.location.replace(`${target.pathname}${target.search}`);
+        return true;
+      } catch {
+        return false;
+      }
     },
   };
 }
