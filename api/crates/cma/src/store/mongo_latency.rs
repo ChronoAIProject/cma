@@ -63,7 +63,7 @@ impl Window {
 }
 
 #[derive(Clone)]
-struct Observer(Arc<Mutex<Window>>);
+struct Observer(Arc<Mutex<Window>>, &'static str);
 
 impl Observer {
     fn checked_out(&self, key: u64, duration: Duration) {
@@ -74,9 +74,11 @@ impl Observer {
                 window.in_use_peak = window.in_use_peak.max(window.checked_out.len());
             } else {
                 window.untracked = window.untracked.saturating_add(1);
-                metrics::counter!("cma_mongo_connection_tracking_overflow_total").increment(1);
+                metrics::counter!("cma_mongo_connection_tracking_overflow_total", "pool" => self.1)
+                    .increment(1);
             }
-            metrics::gauge!("cma_mongo_connections_tracked").set(window.checked_out.len() as f64);
+            metrics::gauge!("cma_mongo_connections_tracked", "pool" => self.1)
+                .set(window.checked_out.len() as f64);
         }
         self.record(0, duration, false);
     }
@@ -85,7 +87,8 @@ impl Observer {
         let started = {
             let mut window = self.0.lock().unwrap_or_else(|error| error.into_inner());
             let started = window.checked_out.remove(&key);
-            metrics::gauge!("cma_mongo_connections_tracked").set(window.checked_out.len() as f64);
+            metrics::gauge!("cma_mongo_connections_tracked", "pool" => self.1)
+                .set(window.checked_out.len() as f64);
             started
         };
         if let Some(started) = started {
@@ -96,8 +99,8 @@ impl Observer {
     fn record(&self, index: usize, duration: Duration, failed: bool) {
         let operation = LABELS[index];
         let outcome = if failed { "failed" } else { "ok" };
-        metrics::counter!("cma_mongo_pool_events_total", "operation" => operation, "outcome" => outcome).increment(1);
-        metrics::histogram!("cma_mongo_pool_operation_seconds", "operation" => operation, "outcome" => outcome).record(duration.as_secs_f64());
+        metrics::counter!("cma_mongo_pool_events_total", "pool" => self.1, "operation" => operation, "outcome" => outcome).increment(1);
+        metrics::histogram!("cma_mongo_pool_operation_seconds", "pool" => self.1, "operation" => operation, "outcome" => outcome).record(duration.as_secs_f64());
         let now = Instant::now();
         let completed = {
             let mut window = self.0.lock().unwrap_or_else(|error| error.into_inner());
@@ -118,6 +121,7 @@ impl Observer {
                 }
                 tracing::info!(
                     parent: None,
+                    pool = self.1,
                     operation,
                     window_ms = now.duration_since(window.started).as_millis(),
                     count = sample.count,
@@ -136,42 +140,51 @@ impl Observer {
 }
 
 pub(super) fn observe(options: &mut ClientOptions) {
-    metrics::gauge!("cma_mongo_connections_tracked").set(0);
-    metrics::gauge!("cma_mongo_pool_max_connections")
-        .set(options.max_pool_size.unwrap_or(10) as f64);
-    let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
-    attach(options, observer);
+    options.cmap_event_handler = Some(EventHandler::callback(observer(options, "application")));
 }
 
+/// Each independently configured client keeps its own bounded occupancy state.
+/// The fixed purpose label is never a URI, database, address or client identity.
+pub(crate) fn observer(
+    options: &ClientOptions,
+    pool: &'static str,
+) -> impl Fn(CmapEvent) + Send + Sync + 'static {
+    metrics::gauge!("cma_mongo_connections_tracked", "pool" => pool).set(0);
+    metrics::gauge!("cma_mongo_pool_max_connections", "pool" => pool)
+        .set(options.max_pool_size.unwrap_or(10) as f64);
+    let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))), pool);
+    move |event| record_event(&observer, event)
+}
+
+#[cfg(test)]
 fn attach(options: &mut ClientOptions, observer: Observer) {
-    // Command monitoring makes mongodb 3.9 decode complete commands and replies
-    // before invoking the callback, even when it only reads duration. Keep it
-    // disabled so diagnostics do not add BSON decoding to every database call.
-    options.cmap_event_handler = Some(EventHandler::callback(move |event| match event {
+    options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        record_event(&observer, event)
+    }));
+}
+
+fn record_event(observer: &Observer, event: CmapEvent) {
+    // Command monitoring remains disabled: it decodes complete BSON commands/replies.
+    match event {
         CmapEvent::ConnectionCheckoutStarted(_) => {
-            // A cancelled checkout need not emit a matching end event in the
-            // pinned driver. Starts minus ends cannot represent queue depth.
-            metrics::counter!("cma_mongo_checkout_started_total").increment(1)
+            // Cancellation can omit the end event; starts minus ends is not queue depth.
+            metrics::counter!("cma_mongo_checkout_started_total", "pool" => observer.1).increment(1)
         }
-        CmapEvent::ConnectionCheckedOut(event) => {
-            observer.checked_out(
-                connection_key(&event.address, event.connection_id),
-                event.duration,
-            );
-        }
+        CmapEvent::ConnectionCheckedOut(event) => observer.checked_out(
+            connection_key(&event.address, event.connection_id),
+            event.duration,
+        ),
         CmapEvent::ConnectionCheckedIn(event) => {
             observer.returned(connection_key(&event.address, event.connection_id), false)
         }
         CmapEvent::ConnectionClosed(event) => {
             observer.returned(connection_key(&event.address, event.connection_id), true)
         }
-        CmapEvent::ConnectionCheckoutFailed(event) => {
-            observer.record(0, event.duration, true);
-        }
+        CmapEvent::ConnectionCheckoutFailed(event) => observer.record(0, event.duration, true),
         CmapEvent::ConnectionReady(event) => observer.record(1, event.duration, false),
         CmapEvent::PoolCleared(_) => observer.record(2, Duration::ZERO, false),
         _ => {}
-    }));
+    }
 }
 
 // Driver IDs are only unique within a server's pool. Keep a bounded, ephemeral

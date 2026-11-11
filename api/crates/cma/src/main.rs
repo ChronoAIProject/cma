@@ -187,6 +187,13 @@ async fn serve() -> Result<(), String> {
             .sandbox_control_scheduler
             .spawn(shutdown.subscribe()),
     );
+    shutdown.push(composition.worker_observations.spawn(shutdown.subscribe()));
+    shutdown.push(
+        composition
+            .native_warm_pools
+            .clone()
+            .spawn_observations(shutdown.subscribe()),
+    );
     shutdown.push(composition.native_warm_pools.spawn(shutdown.subscribe()));
     shutdown.push(composition.native_prepared.spawn(shutdown.subscribe()));
     shutdown.push(composition.agent_access_worker.spawn(shutdown.subscribe()));

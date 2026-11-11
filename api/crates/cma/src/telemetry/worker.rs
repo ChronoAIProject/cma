@@ -1,4 +1,4 @@
-//! Scheduler liveness and bounded local progress, not fleet-wide durable backlog.
+//! Local scheduler liveness and phase health. Success can include an idle scan.
 const WORKERS: [&str; 5] = [
     "launches",
     "agent_commands",
@@ -12,7 +12,7 @@ pub(super) fn initialize() {
         metrics::gauge!("cma_worker_alive", "worker" => worker).set(0);
         metrics::gauge!("cma_worker_heartbeat_timestamp_seconds", "worker" => worker).set(0);
         for phase in ["discovery", "execution", "reconciliation"] {
-            metrics::gauge!("cma_worker_progress_timestamp_seconds", "worker" => worker, "phase" => phase).set(0);
+            metrics::gauge!("cma_worker_phase_success_timestamp_seconds", "worker" => worker, "phase" => phase).set(0);
         }
     }
 }
@@ -43,8 +43,8 @@ impl Drop for Worker {
 
 pub(crate) fn completed(worker: &'static str, phase: &'static str, outcome: &'static str) {
     metrics::counter!("cma_worker_operations_total", "worker" => worker, "phase" => phase, "outcome" => outcome).increment(1);
-    if outcome == "ok" {
-        metrics::gauge!("cma_worker_progress_timestamp_seconds", "worker" => worker, "phase" => phase).set(super::timestamp());
+    if matches!(outcome, "ok" | "idle" | "attempted") {
+        metrics::gauge!("cma_worker_phase_success_timestamp_seconds", "worker" => worker, "phase" => phase).set(super::timestamp());
     }
 }
 
@@ -69,4 +69,26 @@ mod tests {
         assert!(text.contains("cma_worker_local_queued{worker=\"agent_commands\"} 0"));
         assert!(text.contains("cma_worker_heartbeat_timestamp_seconds{worker=\"agent_commands\"}"));
     }
+}
+
+#[cfg(test)]
+#[test]
+fn idle_scan_is_phase_health_without_claiming_business_progress() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    metrics::with_local_recorder(&recorder, || {
+        completed("native_warm_pools", "execution", "idle");
+        let before = handle.render();
+        completed("native_warm_pools", "execution", "error");
+        let success = |text: &str| {
+            text.lines()
+                .find(|line| line.starts_with("cma_worker_phase_success_timestamp_seconds{"))
+                .unwrap()
+                .to_owned()
+        };
+        assert_eq!(success(&before), success(&handle.render()));
+        assert!(!handle
+            .render()
+            .contains("cma_worker_progress_timestamp_seconds"));
+    });
 }
