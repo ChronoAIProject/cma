@@ -491,3 +491,9 @@ unchanged delta through a narrow normal merge; S2 retains this root's ownership.
 The `service.rs::discover_agent` facade exists only for Mongo contract tests;
 S4 restricts its exposure to test builds. Production restart already consumes
 bounded `discovery::for_agent` directly; S5's restart file needs no caller edit.
+
+### Qualified composition checkpoint
+
+`fbe13913292cbf8230ab403685cd5d76d43bed64`: strict CMA has zero warnings; 107 units and 56 Mongo tests pass; fmt, the 6186-file size check, configuration coverage, 31 runner/4 parser checks and the 3875-commit source secret scan pass.
+Evidence: `docs/notes/2026-11-12-s5-composition-wiring.md`; no missing interface. Shared slot 1, two jobs, minimum RAM 26%, zero pauses; owned cleanup 2.372 GB; locks retained.
+Project 9 stays In Progress. S2 owns the combined PR/review/merge; activation remains closed pending separate qualification.
