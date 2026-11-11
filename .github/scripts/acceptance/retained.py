@@ -35,6 +35,11 @@ def reserve(p, actor, key, intent):
     binding = {"key_sha256": fingerprint(key), "intent_sha256": canonical_hash(intent)}
     entry = ledger["slots"].get(slot)
     if entry:
+        if category in ("document", "edit"):
+            fixture = p.state["fixtures"].get("document_" + actor, {})
+            if entry["status"] != "retained" or not fixture.get("id"):
+                raise Refusal("consumed_document_slot_requires_existing_fixture")
+            check_fixture(p, actor, "document", fixture["id"])
         if any(entry.get(k) != v for k, v in binding.items()):
             raise Refusal("retained_fixture_cap_requires_original_operation")
         if entry["status"] == "pending" and not 0 <= time.time() - entry["created_at"] < 23 * 3600:
@@ -48,18 +53,20 @@ def reserve(p, actor, key, intent):
     write_private(NAME, ledger)
 
 
-def validate(p, actor, key, intent):
+def validate(p, actor, key, intent, dispatch=True):
     entry = load(p)["slots"].get(actor + ":" + str(kind(intent)), {})
     if (not key or entry.get("key_sha256") != fingerprint(key)
             or entry.get("intent_sha256") != canonical_hash(intent)):
         raise Refusal("retained_write_not_reserved")
+    if dispatch and kind(intent) in ("document", "edit") and entry.get("status") != "pending":
+        raise Refusal("consumed_document_slot_forbids_dispatch")
 
 
 def observed(p, actor, key, intent, status, body):
     category = kind(intent)
     if not category:
         return
-    validate(p, actor, key, intent)
+    validate(p, actor, key, intent, dispatch=False)
     ledger = load(p); entry = ledger["slots"][actor + ":" + category]
     if status in (200, 201, 202) and isinstance(body, dict):
         resource_id = body.get("report_id") if category == "report" else body.get("id")
@@ -83,6 +90,33 @@ def check_fixture(p, actor, category, value):
     entry = load(p)["slots"].get(actor + ":" + category, {})
     if entry.get("resource_sha256") != fingerprint(value):
         raise Refusal("fixture_not_in_private_retention_ledger")
+
+
+def preflight_documents(p):
+    """Prove both retained fixtures before either actor can mutate a document."""
+    slots = load(p)["slots"]
+    for actor in ("a", "b"):
+        entry = slots.get(actor + ":document")
+        fixture = p.state["fixtures"].get("document_" + actor)
+        if entry is None:
+            if fixture or actor + ":edit" in slots:
+                raise Refusal("document_fixture_history_inconsistent")
+            continue
+        if entry.get("status") != "retained" or not fixture or not fixture.get("id"):
+            raise Refusal("consumed_document_slot_requires_existing_fixture")
+        check_fixture(p, actor, "document", fixture["id"])
+        response = p.request(actor, "/api/v1/documents/" + fixture["id"])
+        if response[0] != 200:
+            raise Refusal("retained_document_absent_or_unavailable_no_replacement")
+        current = decode(response[2])
+        if (current.get("id") != fixture["id"]
+                or current.get("owner_subject") != p.accounts[actor]["subject"]
+                or current.get("revision") != fixture["revision"]):
+            raise Refusal("retained_document_identity_or_revision_changed")
+
+
+def source_slot_consumed(p, actor):
+    return actor + ":edit" in load(p)["slots"]
 
 
 def reconcile(p):
