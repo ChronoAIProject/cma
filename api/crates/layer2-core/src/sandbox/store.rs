@@ -12,6 +12,7 @@ use super::{
 
 mod sandbox;
 pub use sandbox::SandboxStore;
+pub mod ledger_collection;
 mod service_traits;
 pub use super::binding::BindingStore;
 pub use service_traits::*;
@@ -20,6 +21,10 @@ mod agent;
 pub use agent::AgentStore;
 mod agent_log;
 pub use agent_log::AgentLogStore;
+mod agent_response_log;
+pub use agent_response_log::{AgentResponseLogStore, AgentResponseLogWindow};
+mod agent_log_publication;
+pub use agent_log_publication::AgentLogPublicationIdentity;
 mod workspace_worker;
 pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore};
 

@@ -16,6 +16,15 @@ model used by the broker. No model, rate, allowance or framing bound is enabled
 implicitly. The existing admin settings capability, revision CAS and audit
 contract applies to this section.
 
+Operations > Settings > Spend controls edits the request-model list using blank
+model-name and framing-overhead inputs. The editor validates every entry and
+refuses duplicate names. It remains unavailable until request-write availability
+is explicitly true; an empty model list still permits foundation edits when
+their own gate is open. A retained nonempty list requires both gates for every
+settings save. Concurrent changes to the same list require loading the current
+server list before reapplying the retained draft. Saving a list never activates
+enforcement or certifies provider finality.
+
 ## Reader baseline before request policy saves
 
 This extension has a separate strict deployment boolean,
