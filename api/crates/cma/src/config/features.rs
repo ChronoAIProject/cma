@@ -9,6 +9,7 @@ pub(crate) struct FeatureFlags {
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
     pub document_revocation_reserve: bool,
+    pub document_quotas: bool,
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
 }
@@ -27,6 +28,7 @@ impl FeatureFlags {
             }
         }
         Ok(Self {
+            document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
@@ -75,6 +77,25 @@ mod approval_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn document_quotas_require_an_independent_strict_opt_in() {
+        let key = "CHRONO_DOCUMENT_QUOTAS_ENABLED";
+        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |name| {
+                Ok((name == key).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.document_quotas, enabled);
+            assert!(!flags.document_revocation_reserve);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |name| Ok(
+                (name == key).then(|| value.to_owned())
+            ))
+            .is_err());
+        }
+    }
 
     #[test]
     fn bounded_title_reads_require_an_explicit_boolean_opt_in() {
