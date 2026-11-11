@@ -112,13 +112,17 @@ fn walk(
         )
         .map_err(|_| conflict("skill entry changed during comparison"))?;
         let before = file.metadata().map_err(io)?;
-        if before.ino() != metadata.st_ino || before.dev() != metadata.st_dev as u64 {
+        #[cfg(target_os = "macos")]
+        let device = metadata.st_dev as u64;
+        #[cfg(not(target_os = "macos"))]
+        let device = metadata.st_dev;
+        if before.ino() != metadata.st_ino || before.dev() != device {
             return Err(conflict("skill entry changed during comparison"));
         }
         let relative = format!("{prefix}{name}");
         hash.update((relative.len() as u64).to_be_bytes());
         hash.update(relative.as_bytes());
-        hash.update((metadata.st_mode as u32 & 0o177777).to_be_bytes());
+        hash.update((before.mode() & 0o177777).to_be_bytes());
         if kind == libc::S_IFDIR {
             walk(&file, &(relative + "/"), None, hash, entries, bytes)?;
         } else {
