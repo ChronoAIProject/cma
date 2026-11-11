@@ -1,4 +1,4 @@
-//! Durable additive skills; profile material remains immutable.
+//! Durable skill installation history; profile material remains immutable.
 use super::{
     Agent, AgentLogKind, AgentOperationError, AgentOperationService, AgentStatus, AgentWorkState,
     AgentWorkStep, ResolvedAgentSkill, SandboxModelError,
@@ -6,6 +6,9 @@ use super::{
 use crate::profiles::SkillRef;
 use crate::{now_rfc3339, AgentId, Caller};
 use serde::{Deserialize, Serialize};
+
+const MAX_SKILLS: usize = 32;
+const MAX_ATTEMPTS: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -18,6 +21,9 @@ pub enum AgentSkillInstallStatus {
 #[serde(deny_unknown_fields)]
 pub struct AgentSkillInstallation {
     pub reference: SkillRef,
+    /// Exact effective installation being replaced; absent on legacy additive work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<ResolvedAgentSkill>,
     pub status: AgentSkillInstallStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<ResolvedAgentSkill>,
@@ -28,6 +34,7 @@ impl AgentSkillInstallation {
     pub fn new(reference: SkillRef) -> Self {
         Self {
             reference,
+            previous: None,
             status: AgentSkillInstallStatus::Pending,
             material: None,
             error: None,
@@ -55,13 +62,25 @@ pub(super) fn validate_installations(
     work: &AgentWorkState,
     profile: &[SkillRef],
 ) -> Result<(), SandboxModelError> {
-    let valid = work.live_skills.len() + profile.len() <= 32
+    let valid = skill_count(work, profile) <= MAX_SKILLS
+        && work.live_skills.len() <= MAX_ATTEMPTS
         && work.live_skills.iter().enumerate().all(|(index, item)| {
+            let previous = effective_before(work, &item.reference.id, index);
             valid_reference(&item.reference)
-                && !profile.iter().any(|r| r.id == item.reference.id)
-                && !work.live_skills[..index]
-                    .iter()
-                    .any(|r| r.reference.id == item.reference.id)
+                && match &item.previous {
+                    Some(expected) => {
+                        previous == Some(expected)
+                            && expected.validate().is_ok()
+                            && item.reference.source == expected.source
+                            && item.reference.version.as_deref() != Some(expected.version.as_str())
+                    }
+                    None => {
+                        !profile.iter().any(|r| r.id == item.reference.id)
+                            && !work.live_skills[..index]
+                                .iter()
+                                .any(|r| r.reference.id == item.reference.id)
+                    }
+                }
                 && item.material.as_ref().is_none_or(|m| {
                     m.validate().is_ok()
                         && m.id == item.reference.id
@@ -92,6 +111,67 @@ pub(super) fn validate_installations(
         Err(SandboxModelError::invalid_value("agent.work.live_skills"))
     }
 }
+/// Latest runtime-confirmed material; failed attempts never replace it.
+pub fn effective<'a>(
+    work: &'a AgentWorkState,
+    id: &crate::SkillId,
+) -> Option<&'a ResolvedAgentSkill> {
+    effective_before(work, id, work.live_skills.len())
+}
+fn effective_before<'a>(
+    work: &'a AgentWorkState,
+    id: &crate::SkillId,
+    end: usize,
+) -> Option<&'a ResolvedAgentSkill> {
+    work.live_skills[..end]
+        .iter()
+        .rev()
+        .find(|item| item.reference.id == *id && item.status == AgentSkillInstallStatus::Installed)
+        .and_then(|item| item.material.as_ref())
+        .or_else(|| work.resolved_skills.as_ref()?.iter().find(|m| m.id == *id))
+}
+fn skill_count(work: &AgentWorkState, profile: &[SkillRef]) -> usize {
+    profile
+        .iter()
+        .map(|r| &r.id)
+        .chain(work.live_skills.iter().map(|r| &r.reference.id))
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+}
+/// Capacity for a new identifier and for replacing an installed identifier.
+/// Activity, ownership and observed runtime support are checked separately.
+pub fn capacity(agent: &Agent) -> (bool, bool) {
+    if agent.work.live_skills.len() >= MAX_ATTEMPTS {
+        return (false, false);
+    }
+    let installed = agent
+        .work
+        .live_skills
+        .iter()
+        .filter(|item| item.status == AgentSkillInstallStatus::Installed)
+        .filter_map(|item| item.material.as_ref())
+        .chain(agent.work.resolved_skills.iter().flatten());
+    let upgrade = installed.into_iter().any(|material| {
+        valid_reference(&SkillRef {
+            source: material.source,
+            id: material.id.clone(),
+            version: Some(material.version.clone()),
+        })
+    });
+    (
+        skill_count(&agent.work, &agent.profile.content.skills) < MAX_SKILLS,
+        upgrade,
+    )
+}
+
+fn intent(agent: &Agent, reference: SkillRef) -> AgentSkillInstallation {
+    let previous = effective(&agent.work, &reference.id).cloned();
+    AgentSkillInstallation {
+        previous,
+        ..AgentSkillInstallation::new(reference)
+    }
+}
+
 pub fn idle(agent: &Agent) -> bool {
     agent.status == AgentStatus::Ready
         && agent.work.step == AgentWorkStep::None
@@ -127,7 +207,7 @@ pub fn is_install_admission(current: &Agent, next: &Agent) -> bool {
     };
     if !idle(current)
         || !valid_reference(&item.reference)
-        || *item != AgentSkillInstallation::new(item.reference.clone())
+        || *item != intent(current, item.reference.clone())
         || next.work.live_skills.len() != current.work.live_skills.len() + 1
         || !next.work.live_skills.starts_with(&current.work.live_skills)
         || validate_installations(&next.work, &next.profile.content.skills).is_err()
@@ -157,79 +237,61 @@ impl AgentOperationService {
         }
         for _ in 0..super::agent_operation_service::MAX_OPERATION_COMMIT_RETRIES {
             let current = self.owned_agent(caller, id).await?;
-            if let Some(existing) = current
-                .work
-                .live_skills
-                .iter()
-                .find(|i| i.reference.id == reference.id)
-            {
-                return if existing.reference == reference {
-                    Ok(current)
-                } else if existing.status == AgentSkillInstallStatus::Pending {
-                    Err(AgentOperationError::Conflict)
-                } else {
-                    Err(AgentOperationError::SkillVersionUpgradeUnsupported {
-                        id: reference.id.as_str().into(),
-                        installed: existing
-                            .material
-                            .as_ref()
-                            .map(|material| material.version.clone())
-                            .or_else(|| existing.reference.version.clone())
-                            .unwrap_or_default(),
-                        requested: reference.version.clone().unwrap_or_default(),
-                    })
-                };
-            }
-            if let Some(existing) = current
-                .work
-                .resolved_skills
-                .as_ref()
-                .and_then(|skills| skills.iter().find(|s| s.id == reference.id))
-            {
-                return if reference.version.as_ref() == Some(&existing.version) {
-                    Ok(current)
-                } else {
-                    Err(AgentOperationError::SkillVersionUpgradeUnsupported {
-                        id: reference.id.as_str().into(),
-                        installed: existing.version.clone(),
-                        requested: reference.version.clone().unwrap_or_default(),
-                    })
-                };
-            }
-            if let Some(existing) = current
-                .profile
-                .content
-                .skills
-                .iter()
-                .find(|skill| skill.id == reference.id)
-            {
-                return if existing.version == reference.version {
-                    Err(AgentOperationError::InvalidRequest(
-                        "skill already selected or skill limit reached".into(),
-                    ))
-                } else {
-                    Err(AgentOperationError::SkillVersionUpgradeUnsupported {
-                        id: reference.id.as_str().into(),
-                        installed: existing.version.clone().unwrap_or_default(),
-                        requested: reference.version.clone().unwrap_or_default(),
-                    })
-                };
+            if let Some(existing) = current.work.live_skills.last().filter(|item| {
+                item.status == AgentSkillInstallStatus::Pending && item.reference == reference
+            }) {
+                let _ = existing;
+                return Ok(current);
             }
             if !idle(&current) {
                 return Err(AgentOperationError::StatusConflict {
                     status: current.status,
                 });
             }
-            if current.work.live_skills.len() + current.profile.content.skills.len() >= 32
-                || current
+            let previous = effective(&current.work, &reference.id);
+            if previous.is_some_and(|m| {
+                m.source == reference.source && Some(&m.version) == reference.version.as_ref()
+            }) {
+                return Ok(current);
+            }
+            if previous.is_none() {
+                // Failed additive work retains its original per-skill identity.
+                // It cannot be silently reinterpreted as a fresh installation.
+                if let Some(existing) = current
+                    .work
+                    .live_skills
+                    .iter()
+                    .find(|i| i.reference.id == reference.id)
+                {
+                    return if existing.reference == reference {
+                        Ok(current)
+                    } else {
+                        Err(AgentOperationError::InvalidRequest(
+                            "previous skill installation failed; no confirmed version to upgrade"
+                                .into(),
+                        ))
+                    };
+                }
+                if current
                     .profile
                     .content
                     .skills
                     .iter()
                     .any(|s| s.id == reference.id)
-            {
+                {
+                    return Err(AgentOperationError::InvalidRequest(
+                        "previous skill material is unavailable".into(),
+                    ));
+                }
+                if skill_count(&current.work, &current.profile.content.skills) >= MAX_SKILLS {
+                    return Err(AgentOperationError::InvalidRequest(
+                        "skill limit reached".into(),
+                    ));
+                }
+            }
+            if current.work.live_skills.len() >= MAX_ATTEMPTS {
                 return Err(AgentOperationError::InvalidRequest(
-                    "skill already selected or skill limit reached".into(),
+                    "skill installation history limit reached".into(),
                 ));
             }
             self.require_agent_connections(&current).await?;
@@ -251,7 +313,7 @@ impl AgentOperationService {
             let mut next = current.clone();
             next.work
                 .live_skills
-                .push(AgentSkillInstallation::new(reference.clone()));
+                .push(intent(&current, reference.clone()));
             next.work.schedule(AgentWorkStep::InstallSkill, at.clone());
             let logs = vec![AgentLogKind::SkillInstallationChanged {
                 skill_id: reference.id.as_str().into(),
@@ -296,6 +358,7 @@ pub fn validate_install_work(
     let new = next.work.live_skills.last().ok_or(Error::Conflict)?;
     if old.status != AgentSkillInstallStatus::Pending
         || old.reference != new.reference
+        || old.previous != new.previous
         || current.work.live_skills.len() != next.work.live_skills.len()
         || current.work.live_skills[..current.work.live_skills.len() - 1]
             != next.work.live_skills[..next.work.live_skills.len() - 1]
