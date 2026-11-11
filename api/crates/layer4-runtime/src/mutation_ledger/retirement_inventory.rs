@@ -18,12 +18,22 @@ mod auxiliary;
 mod binary;
 #[path = "retirement_context.rs"]
 mod context;
+#[path = "retirement_deactivation.rs"]
+mod deactivation;
 #[path = "retirement_encoding.rs"]
 mod encoding;
+#[path = "retirement_scan.rs"]
+mod scan;
+#[path = "retirement_selection.rs"]
+mod selection;
 #[path = "retirement_source_check.rs"]
 mod source_check;
 pub(crate) use auxiliary::Auxiliary;
 pub(crate) use context::Context;
+pub(crate) use deactivation::DeactivationReceipt;
+pub(crate) use selection::{
+    Selection, MAX_BYTES as MAX_SELECTION_BYTES, MAX_ROWS as MAX_SELECTION_ROWS,
+};
 
 const ROWS: usize = 64;
 const BYTES: usize = 2 * 1024 * 1024;

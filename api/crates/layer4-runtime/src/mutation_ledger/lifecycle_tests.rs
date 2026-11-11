@@ -6,7 +6,7 @@ use layer3_adapter::{
 };
 use serde_json::{json, Value};
 
-pub(super) fn lifecycle(config: &RuntimeConfig, name: &str) -> Vec<(Operation, Value)> {
+pub(crate) fn lifecycle(config: &RuntimeConfig, name: &str) -> Vec<(Operation, Value)> {
     let agent = AgentSlot::new(name);
     let cwd = crate::worktree::expected_path(&config.home, "workspace", name)
         .to_string_lossy()

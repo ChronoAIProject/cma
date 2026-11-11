@@ -5,6 +5,8 @@ mod probe_sources;
 mod transfer;
 pub(crate) use transfer::Direction;
 mod indexed;
+mod indexed_deactivation;
+pub(crate) use indexed_deactivation::deactivate_held;
 mod record;
 mod schema;
 #[cfg(test)]

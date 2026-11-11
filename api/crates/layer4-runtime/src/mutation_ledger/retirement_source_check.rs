@@ -52,7 +52,7 @@ impl Ledger {
 
 // IS preserves NULL distinctions; BLOB comparison preserves exact raw bytes.
 // No row contents are loaded or logged while comparing the active store.
-fn matches(db: &Connection, row: &SourceRow) -> Result<bool> {
+pub(super) fn matches(db: &Connection, row: &SourceRow) -> Result<bool> {
     let result = match row {
         SourceRow::Operation { scope, id, identity, status, normal, record } => db.query_row(
             "SELECT EXISTS(SELECT 1 FROM operations WHERE scope=? AND operation_id=?
