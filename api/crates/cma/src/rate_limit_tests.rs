@@ -101,26 +101,29 @@ fn time_on_day(day: u64, seconds: u64) -> SystemTime {
 #[test]
 fn tiers_are_generic_http_work_classes() {
     assert_eq!(
-        request_tier(&request(
-            Method::POST,
-            "/api/v1/profile-authoring/repositories/resolve"
-        )),
+        request_tier(
+            &request(
+                Method::POST,
+                "/api/v1/profile-authoring/repositories/resolve"
+            ),
+            false
+        ),
         RequestTier::Default
     );
     assert_eq!(
-        request_tier(&request(Method::GET, "/livez")),
+        request_tier(&request(Method::GET, "/livez"), false),
         RequestTier::Health
     );
     assert_eq!(
-        request_tier(&request(Method::GET, "/api/v1/resources")),
+        request_tier(&request(Method::GET, "/api/v1/resources"), false),
         RequestTier::Default
     );
     assert_eq!(
-        request_tier(&request(Method::POST, "/api/v1/resources")),
+        request_tier(&request(Method::POST, "/api/v1/resources"), false),
         RequestTier::Create
     );
     assert_eq!(
-        request_tier(&request(Method::POST, "/api/v1/resources/id/input")),
+        request_tier(&request(Method::POST, "/api/v1/resources/id/input"), false),
         RequestTier::Input
     );
 }
