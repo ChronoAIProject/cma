@@ -132,6 +132,7 @@ async fn reject(server: &mut ServerSocket, request: &serde_json::Value) {
 
 fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentOpenSettings {
     HostedAgentOpenSettings {
+        shared_runtime_output: false,
         already_initialized_error: Some(serde_json::json!({
             "code": -32603, "message": "Internal error",
             "data": { "details": "Already initialized" },
