@@ -171,12 +171,41 @@ locations are capture/latest-entry and transaction-scope consumer methods,
 request digests, and writer reconciliation. They require real integrated
 production callers; no suppression or fake call was added.
 
+## Frozen storage-shape and discovery qualification
+
+At `853b6cca7f4cd2f986bdadc3041eb9ef1952c35c`, all four focused recovery
+schema/index Mongo cases passed. They accept all four synthetic phase shapes
+and reject twenty malformed variants, preserving the original stored row after
+each refusal. These hand-authored storage fixtures are explicitly not actual
+codec output or recovery authority.
+
+The first discovery test exposed a real query-shape problem: the factored
+cursor predicate matching S5 `discovery::filter` at `2ff67f6cb` examined 64 keys
+and documents to return its second 32-row page. The corrected predicate repeats
+format/phase equality and the time cutoff inside both `$or` arms. No scan,
+byte, row or time bound was relaxed. The original production filter still needs
+this change from its owner; a passing index test is not a production-consumer
+qualification.
+
+Across 1/100/1000 terminal/future-history rows, the corrected covered discovery
+pages and Agent-history page examined exactly their returned keys (zero, one or
+32) and zero documents. Timestamp ties, crossing into a later timestamp, empty
+final pages, both discovery streams and exclusions are exercised. A separate
+pinned-Mongo diagnostic at 65/1024/8192 eligible rows also confirmed bounded
+index seeks for the distributed predicate. These measurements demonstrate the
+index/query contract, not an unbounded-worst-case claim about the old planner.
+
+All nine recorded owned fixtures and volumes were verified absent at this
+checkpoint. The subsequent normal merge of develop `4c65d80e8` preserves both
+independent Mongo-store fields and initializers for segmentation and the
+new default-off global admission limit. A resulting-head qualification follows.
+
 ## Open pre-review and release gates
 
 Pre-review P1-2 remains open. Schema/index registration and the tests above are
 S1's portion, not proof of working isolated runtime authority. Required follow-up:
-actual codec-bound four-phase carrier fixtures and shape-refusal tests; bounded
-explain/keyset discovery evidence; S2's runtime grants/coherent backup inventory
+actual codec-bound four-phase carrier fixtures; adoption and qualification of
+the corrected S5 production discovery predicate; S2's runtime grants/coherent backup inventory
 and actual isolated-role success/missing/foreign-grant tests; final schema and
 codec agreement with resumable attachment activation. Any changed persisted
 activation fields must update the frozen definition and checksum before release.
