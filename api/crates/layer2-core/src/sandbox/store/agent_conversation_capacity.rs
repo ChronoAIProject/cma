@@ -19,6 +19,9 @@ pub struct AgentConversationCapacitySettlement {
     next: AgentMessageCheckpoint,
     mutation: AgentConversationMutation,
     refused: Vec<AgentLogEntry>,
+    original_mutation: AgentConversationMutation,
+    original_checkpoint: AgentMessageCheckpoint,
+    compact: bool,
 }
 
 impl AgentConversationCapacitySettlement {
@@ -52,12 +55,15 @@ impl AgentConversationCapacitySettlement {
         {
             return Err(SandboxStoreError::AgentLogCapacityExceeded);
         }
+        let original_mutation = attempted_mutation.clone();
+        let original_checkpoint = attempted.clone();
         let at = attempted_mutation.appended_at.clone();
-        let failure = TypedFailure {
+        let mut failure = TypedFailure {
             class: AGENT_LOG_CAPACITY_FAILURE.into(),
             detail: "Durable Agent history reached its lifetime budget. Retained output and runtime identity are preserved. This Agent cannot continue under the current limits; inspect capacity before explicit recovery or replacement.".into(),
         };
-        let native_terminal = identified_terminal
+        let native_terminal = attempted.outcome.appended.len() <= super::MAX_AGENT_LOG_BATCH_SIZE
+            && identified_terminal
             && attempted.outcome.turn_closed
             && attempted_mutation.agent.status == AgentStatus::Ready
             && attempted_mutation
@@ -75,10 +81,13 @@ impl AgentConversationCapacitySettlement {
         let mut mutation = if native_terminal {
             attempted_mutation
         } else {
-            let prefix = previous
+            let prefix = AgentMessageAssembly::default();
+            if previous
                 .as_ref()
-                .map(|value| value.assembly.clone())
-                .unwrap_or_default();
+                .is_some_and(|value| !value.assembly.is_empty())
+            {
+                failure.detail.push_str(" The unflushed assistant prefix is retained in the private capacity checkpoint for operator export; it was not published as a completed answer.");
+            }
             // Capacity is not evidence that an ambiguous input reached native
             // execution. Preserve its delivery facts while settling this turn.
             let update = ConversationUpdate::WithoutPromptEvidence(Box::new(
@@ -102,6 +111,32 @@ impl AgentConversationCapacitySettlement {
             else {
                 return Err(SandboxStoreError::Conflict);
             };
+            let mut agent = change.agent;
+            // Consumption is authoritative even when its enclosing append was
+            // refused. Do not carry unrelated metadata or delivery changes.
+            agent.conversation.observations.usage = original_mutation
+                .agent
+                .conversation
+                .observations
+                .usage
+                .clone();
+            let mut logs: Vec<_> = original_mutation
+                .agent_logs
+                .iter()
+                .filter(|kind| {
+                    matches!(
+                        kind,
+                        AgentLogKind::Usage { .. } | AgentLogKind::UsageUpdated { .. }
+                    )
+                })
+                .cloned()
+                .collect();
+            logs.extend(change.logs);
+            agent.conversation.last_seq = current
+                .conversation
+                .last_seq
+                .checked_add(logs.len() as u64)
+                .ok_or(SandboxStoreError::SequenceConflict)?;
             AgentConversationMutation {
                 settings_fence: None,
                 command_claim: None,
@@ -111,9 +146,9 @@ impl AgentConversationCapacitySettlement {
                 expected_agent_revision: current.revision,
                 expected_last_seq: current.conversation.last_seq,
                 runtime_generation: attempted.runtime_generation,
-                agent: change.agent,
+                agent,
                 appended_at: at.clone(),
-                agent_logs: change.logs,
+                agent_logs: logs,
             }
         };
         mutation.agent.status = AgentStatus::Failed;
@@ -140,6 +175,11 @@ impl AgentConversationCapacitySettlement {
         next.after_seq = mutation.agent.conversation.last_seq;
         next.assembly = AgentMessageAssembly::default();
         next.outcome.turn_closed = true;
+        if !native_terminal {
+            // The refused output remains in the native journal. This terminal
+            // settles the public task, but does not acknowledge missing content.
+            next.output = previous.as_ref().and_then(|value| value.output.clone());
+        }
         next.outcome.appended = mutation
             .agent_logs
             .iter()
@@ -158,7 +198,34 @@ impl AgentConversationCapacitySettlement {
             next,
             mutation,
             refused: attempted.outcome.appended,
+            original_mutation,
+            original_checkpoint,
+            compact: !native_terminal,
         })
+    }
+
+    /// Only a known-aborted native settlement may select this fallback; an
+    /// unknown commit must reconcile its original checkpoint unchanged.
+    pub fn compact_failure(&self) -> Result<Option<Self>, SandboxStoreError> {
+        if self.compact {
+            return Ok(None);
+        }
+        Self::new(
+            self.current.clone(),
+            self.previous.clone(),
+            self.original_checkpoint.clone(),
+            self.original_mutation.clone(),
+            false,
+        )
+        .map(Some)
+    }
+
+    /// Preserve the entire original durable prefix outside the active checkpoint
+    /// when fixed-size failure records must leave it out of the public log.
+    pub fn retained_prefix(&self) -> Option<&AgentMessageCheckpoint> {
+        self.previous
+            .as_ref()
+            .filter(|value| self.compact && !value.assembly.is_empty())
     }
 
     pub fn current(&self) -> &Agent {
