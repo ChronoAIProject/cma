@@ -2,7 +2,8 @@ use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
-    AgentWorkMutation, SandboxStoreError, VersionedWorktree, MAX_AGENT_WORK_RECEIPTS,
+    AgentRetryObservation, AgentWorkMutation, SandboxStoreError, VersionedWorktree,
+    MAX_AGENT_WORK_RECEIPTS,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentWorkReceipt, AgentWorkStep, Sandbox, SandboxEventKind,
@@ -44,6 +45,7 @@ pub(in crate::sandbox) struct WorkerFailure {
     class: &'static str,
     detail: String,
     retryable: bool,
+    observation: Option<AgentRetryObservation>,
 }
 
 impl WorkerFailure {
@@ -52,6 +54,7 @@ impl WorkerFailure {
             class,
             detail: detail.into(),
             retryable: true,
+            observation: None,
         }
     }
 
@@ -60,6 +63,7 @@ impl WorkerFailure {
             class,
             detail: detail.into(),
             retryable: false,
+            observation: None,
         }
     }
 
@@ -173,22 +177,28 @@ impl AgentWorker {
         agent.updated_at = stamp.clone();
         agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
         bump_log_sequence(&mut agent, 1)?;
-        self.dependencies
-            .store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: expected,
-                holder: self.config.holder.clone(),
-                fence,
-                agent,
-                worktree: None,
-                appended_at: stamp,
-                sandbox_event: None,
-                agent_logs: vec![AgentLogKind::WorkStepFailed {
-                    step,
-                    failure: failure.typed(),
-                }],
-            })
-            .await
+        let mutation = AgentWorkMutation {
+            expected_agent_revision: expected,
+            holder: self.config.holder.clone(),
+            fence,
+            agent,
+            worktree: None,
+            appended_at: stamp,
+            sandbox_event: None,
+            agent_logs: vec![AgentLogKind::WorkStepFailed {
+                step,
+                failure: failure.typed(),
+            }],
+        };
+        match failure.observation {
+            Some(observed) => {
+                self.dependencies
+                    .store
+                    .commit_agent_work_retry(mutation, observed)
+                    .await
+            }
+            None => self.dependencies.store.commit_agent_work(mutation).await,
+        }
     }
 
     async fn fail_startup(
