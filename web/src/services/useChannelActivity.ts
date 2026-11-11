@@ -31,6 +31,8 @@ export interface ActivityDelivery {
   recipients?: { kind: string; id: string; thread_id: string | null }[];
 }
 export interface ActivityConsumer {
+  refusal_code?: string | null;
+  last_non_admission_code?: string | null;
   consumer_id: string;
   display_name?: string | null;
   agent_id?: string | null;
@@ -123,6 +125,9 @@ export function useChannelActivity(channelId: string, owner: string, active: boo
                 (consumer) =>
                   typeof consumer.consumer_id !== 'string' ||
                   typeof consumer.state !== 'string' ||
+                  (consumer.refusal_code != null && typeof consumer.refusal_code !== 'string') ||
+                  (consumer.last_non_admission_code != null &&
+                    typeof consumer.last_non_admission_code !== 'string') ||
                   !Array.isArray(consumer.deliveries) ||
                   consumer.deliveries.some(
                     (delivery) =>
