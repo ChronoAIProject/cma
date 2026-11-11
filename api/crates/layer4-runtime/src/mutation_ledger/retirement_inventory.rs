@@ -14,6 +14,8 @@ use crate::mutation_journal::{Operation, Record, Status};
 mod accounting;
 #[path = "retirement_auxiliary.rs"]
 mod auxiliary;
+#[path = "retirement_binary.rs"]
+mod binary;
 #[path = "retirement_context.rs"]
 mod context;
 #[path = "retirement_encoding.rs"]
@@ -68,15 +70,18 @@ pub(crate) enum SourceRow {
     Operation {
         scope: Vec<u8>,
         id: String,
+        #[serde(with = "binary")]
         identity: Vec<u8>,
         status: i64,
         normal: bool,
+        #[serde(with = "binary::optional")]
         record: Option<Vec<u8>>,
     },
     Authority {
         scope: Vec<u8>,
         resource: String,
         high: Vec<u8>,
+        #[serde(with = "binary::folded")]
         records: [Option<Vec<u8>>; 3],
     },
 }
