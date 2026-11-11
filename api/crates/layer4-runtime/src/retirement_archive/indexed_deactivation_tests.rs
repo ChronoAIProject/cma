@@ -368,3 +368,6 @@ mod lifetime_tests;
 
 #[path = "indexed_deactivation_crash_tests.rs"]
 mod crash_tests;
+
+#[path = "indexed_restore_tests.rs"]
+mod restore_tests;

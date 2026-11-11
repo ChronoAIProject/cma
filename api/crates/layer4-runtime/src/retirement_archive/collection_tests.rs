@@ -11,6 +11,8 @@ use layer3_adapter::runtime_ledger_maintenance::LedgerBindingV1;
 mod crash;
 #[path = "collection_failure_tests.rs"]
 mod failures;
+#[path = "collection_lifetime_tests.rs"]
+mod lifetime;
 
 struct Intent {
     binding: LedgerBindingV1,

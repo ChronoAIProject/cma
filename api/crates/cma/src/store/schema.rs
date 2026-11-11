@@ -58,11 +58,16 @@ pub(super) async fn refuse_unknown_versions(
 ) -> Result<(), StoreError> {
     for name in collections {
         let session_leases = *name == super::sandbox_mongo::SANDBOX_SESSIONS;
+        let ledger_pre_exclusion = *name == "sandboxes";
         let mut unsupported = database
             .collection::<Document>(name)
             .find(unknown_version_filter())
-            .limit(if session_leases { 0 } else { 1 })
-            .projection(if session_leases {
+            .limit(if session_leases || ledger_pre_exclusion {
+                0
+            } else {
+                1
+            })
+            .projection(if session_leases || ledger_pre_exclusion {
                 doc! {} // The complete shape must match the known legacy writer.
             } else {
                 doc! { "_id": 1, "document_schema_version": 1 }
@@ -77,6 +82,12 @@ pub(super) async fn refuse_unknown_versions(
         })? {
             if session_leases && super::sandbox_sessions::is_legacy_v1(&document) {
                 legacy_count += 1;
+            } else if ledger_pre_exclusion
+                && super::ledger_maintenance_pre_exclusion_records::read(&document)
+                    .is_ok_and(|state| state.is_some())
+                && super::sandboxes::read_sandbox(&document).is_ok()
+            {
+                // Explicit held format; global schema-v1 and other collections stay unchanged.
             } else {
                 return Err(StoreError::Malformed(format!(
                     "collection {name} contains an unsupported document schema version"
