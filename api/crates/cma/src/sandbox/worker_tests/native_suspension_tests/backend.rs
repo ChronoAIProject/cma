@@ -32,6 +32,7 @@ pub(super) struct NativeBackend {
     pub run_before_suspend: Arc<AtomicBool>,
     pub interrupted_workspace: Arc<AtomicBool>,
     pub calls: ActionLog,
+    pub inputs: Arc<Mutex<Vec<layer3_adapter::ConversationInput>>>,
     pub inspected_generations: Arc<Mutex<Vec<u64>>>,
 }
 
@@ -390,9 +391,18 @@ impl HostedBackend for NativeBackend {
         settings: HostedAgentOpenSettings,
         updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
     ) -> layer3_adapter::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
-        self.inner
+        let (mut channel, receipt) = self
+            .inner
             .open_agent(&self.pod(handle).await?, launch, resume, settings, updates)
-            .await
+            .await?;
+        let original = channel.input;
+        let inputs = self.inputs.clone();
+        channel.input = layer3_adapter::ConversationInputSender::spawn(8, move |input| {
+            inputs.lock().unwrap().push(input.clone());
+            let original = original.clone();
+            async move { original.send(input).await }
+        });
+        Ok((channel, receipt))
     }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> layer3_adapter::Result<()> {
         self.calls.push("delete-retained");
