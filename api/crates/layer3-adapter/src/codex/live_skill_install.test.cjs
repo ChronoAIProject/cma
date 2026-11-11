@@ -55,6 +55,24 @@ function config(directory, provider, origin) {
   ].join("\n"));
 }
 
+function processTree(root) {
+  // npm's CLI launcher can itself spawn the native executable. Observe the
+  // entire child tree so a stable launcher PID cannot hide a native restart.
+  // Debian's image need not install ps: Linux exposes children through procfs.
+  const parents = process.platform === "darwin" ? execFileSync("/bin/ps",
+    ["-axo", "pid=,ppid="], { encoding: "utf8" }).trim().split("\n")
+    .map(line => line.trim().split(/\s+/).map(Number)) : null;
+  const processes = [root];
+  for (let index = 0; index < processes.length; index++) {
+    const pid = processes[index];
+    const children = parents ? parents.filter(row => row[1] === pid).map(row => row[0]) :
+      readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8").trim().split(/\s+/).filter(Boolean).map(Number);
+    processes.push(...children);
+  }
+  assert(processes.length > 1, "bridge must own the running native process tree");
+  return processes.sort((a, b) => a - b);
+}
+
 
 test("pinned running Codex discovers an added skill and refreshes its latest catalog after replacement", { timeout: 120000 }, async () => {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
@@ -80,6 +98,7 @@ test("pinned running Codex discovers an added skill and refreshes its latest cat
     };
     const before = await prompt();
     const nativePid = readFileSync(join(directory, "native-control.pid"), "utf8");
+    const processIds = processTree(bridge.pid);
     assert(!before.includes(description));
     const staging = join(home, "skills", ".stage-live-install");
     mkdirSync(staging);
@@ -122,6 +141,7 @@ test("pinned running Codex discovers an added skill and refreshes its latest cat
     process.kill(bridge.pid, 0);
     assert.equal(readFileSync(join(directory, "native-control.pid"), "utf8"), nativePid);
     process.kill(Number(nativePid), 0);
+    assert.deepEqual(processTree(bridge.pid), processIds);
 
   } finally {
     await bridge.close(); await fixture.close(); rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
