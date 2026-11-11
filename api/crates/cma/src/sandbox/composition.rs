@@ -164,7 +164,7 @@ impl SandboxLifecycleComposition {
                     Arc::clone(&workspace_worker),
                 )),
                 agents: Arc::new(DurableLiveAgentStopper::new(
-                    dependencies.store,
+                    dependencies.store.clone(),
                     Arc::clone(&registry),
                 )),
                 registry,
