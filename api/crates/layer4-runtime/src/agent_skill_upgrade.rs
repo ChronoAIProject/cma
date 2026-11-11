@@ -13,6 +13,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "agent_skill_upgrade_retention.rs"]
+mod retention;
 #[cfg(test)]
 #[path = "agent_skill_upgrade_tests.rs"]
 mod tests;
@@ -37,7 +39,11 @@ fn io(error: std::io::Error) -> RuntimeError {
     )
 }
 fn staging(parent: &Path, request: &AgentSkillInstallRequest) -> PathBuf {
-    parent.join(format!(".cma-upgrade-{}", request.request_sha256))
+    parent
+        .parent()
+        .expect("skills has a home")
+        .join(".cma-skill-upgrades")
+        .join(&request.request_sha256)
 }
 fn proof_path(config: &RuntimeConfig, request: &AgentSkillInstallRequest) -> Result<PathBuf> {
     let parent = config.state_root.join("skill-upgrades");
@@ -106,6 +112,11 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     file.sync_all().map_err(io)
 }
 fn clean(path: &Path) -> Result<()> {
+    let parent = path.parent().expect("staging has a parent");
+    if std::fs::symlink_metadata(parent).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+        return Ok(());
+    }
+    tree::directory(parent)?;
     match std::fs::symlink_metadata(path) {
         Ok(m) if m.is_dir() && !m.is_symlink() => {
             crate::fs_durability::remove_dir_all(path).map_err(io)
@@ -134,17 +145,22 @@ pub(crate) async fn install(
     crate::agent_skill_install::validate(request)?;
     let result = replace(config, client, request).await;
     if result.as_ref().is_err_and(|error| !error.retryable) {
-        if let Ok(parent) = root(config, request) {
-            let evidence = config
-                .state_root
-                .join("skill-upgrades")
-                .join(format!("{}.json", request.request_sha256));
-            // Terminal pre-publication refusals must not accumulate extracted
-            // archives. After proof publication, retain ambiguous evidence.
-            if std::fs::symlink_metadata(&evidence)
-                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
-            {
-                clean(&staging(&parent, request))?;
+        let evidence = config
+            .state_root
+            .join("skill-upgrades")
+            .join(format!("{}.json", request.request_sha256));
+        match std::fs::symlink_metadata(&evidence) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if let Ok(parent) = root(config, request) {
+                    clean(&staging(&parent, request))?;
+                }
+            }
+            _ => {
+                // Publication may already have happened. A terminal failure would
+                // tell the Manager to expose the old version while disk contains
+                // the new one. Keep admitted work pending and all evidence intact.
+                return Err(RuntimeError::unavailable("agent_skill_upgrade_recovery_required",
+                    "Published upgrade evidence requires recovery; preserve both trees and the journal until the operation is reconciled."));
             }
         }
     }
@@ -171,21 +187,26 @@ async fn replace(
         Some(proof) => proof,
         None => {
             preflight(config, request)?;
+            retention::prepare(&stage)?;
             clean(&stage)?;
             crate::fs_durability::create_dir(&stage).map_err(io)?;
-            crate::skills::install_prepared(config, client, &upgrade.previous, &expected).await?;
+            crate::skills::install_prepared(config, client, &upgrade.previous, &expected)
+                .await.map_err(|error| {
+                    if error.code == "skill_unavailable" {
+                        RuntimeError::rejected("agent_skill_upgrade_previous_unavailable",
+                            "Previous archive is absent from the warm cache and cannot be fetched; restore access to that exact version or its checksum-verified cache before a new attempt.")
+                    } else { error }
+                })?;
             point(config, "previous_extracted")?;
             // A profile installation has no marker. Live installations must carry
             // the exact previous receipt; a marker alone never proves its files.
             if std::fs::symlink_metadata(expected.join(MARKER)).is_ok() {
                 return Err(conflict("previous archive contains a reserved receipt"));
             }
-            let previous_tree = tree::digest(&expected, None)?;
-            if tree::digest(&target, upgrade.previous_receipt.as_ref())? != previous_tree {
-                return Err(conflict(
-                    "previous installation was modified or has unexpected content",
-                ));
-            }
+            let previous =
+                tree::prove_previous(&expected, &target, upgrade.previous_receipt.as_ref())?;
+            retention::reserve(&stage, previous.bytes)?;
+            let previous_tree = previous.digest();
             crate::skills::install_prepared(config, client, &request.skill, &candidate).await?;
             point(config, "new_extracted")?;
             let new_tree = tree::digest(&candidate, None)?;
@@ -210,7 +231,7 @@ async fn replace(
     crate::fs_durability::sync_parent(&evidence).map_err(io)?;
     root(config, request)?;
     // The sidecar is durable before exchange. It permits recovery even when the
-    // original archives are unavailable, including after partial old-tree cleanup.
+    // original archives are unavailable, including after comparison-archive cleanup.
     if tree::receipt_matches(&target, &receipt)? {
         if tree::digest(&target, Some(&receipt))? != proof.new_tree {
             return Err(conflict("published replacement was modified"));
@@ -233,8 +254,10 @@ async fn replace(
         crate::fs_durability::sync_directory(&stage).map_err(io)?;
     }
     point(config, "exchange_synced")?;
-    clean(&stage)?;
-    point(config, "old_removed")?;
+    // Only the freshly extracted comparison archive is disposable. The exchanged
+    // old tree may contain owner files or caches and stays outside discovery.
+    clean(&expected)?;
+    point(config, "previous_retained")?;
     // Keep the small proof beside runtime journal evidence. A crash before the
     // terminal journal receipt can recover without fetching either archive again.
     Ok(receipt)
