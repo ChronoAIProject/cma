@@ -92,6 +92,7 @@ data:
   CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED: "false"
   # Response projection uses a proven target-turn window; independent rollout.
   CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
+  CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED: "false"
   CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED: "false"
   CHRONO_RESPONSE_PAGED_EVENTS_ENABLED: "false"
   CHRONO_TASK_EXPERIENCE_POLICY: '{"mode":"disabled","accounts":[],"capabilities":[]}'
