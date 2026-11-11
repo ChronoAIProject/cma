@@ -2,6 +2,8 @@ SEGMENTS PLAN READY notes/2026-11-11-log-segments-plan.md slices 5
 
 Prepared 2026-11-11 SGT. Integration owner: cma-db-contention. Assigned engineers: cma-cost, cma-db-contention, cma-seg-2, cma-seg-lead (writer engineer), cma-seg-3. Dedicated reviewer: cma-reviewer-3; security/compatibility review also required for authority, publication and recovery changes. This replaces the earlier next-week/Thu-18:00 planning target. Scope is implementation, delivery and stabilization through Sun 2026-11-15. Source integration target is Fri 11-13 06:00 SGT at the latest; weekend trains are approved.
 
+**Current integration constraint: DEVELOP MERGE FREEZE is active until the lead relays `MERGE FREEZE LIFTED`.** Previously authorized merges are paused. Continue topic-branch work and reviews; do not merge any PR to develop or change protection. Train W needs one fully green exact-head run. Run42993284820 ended with23green/2cancelled jobs, not a green release artifact. All merge windows below are conditional on the lift.
+
 The plan assigns five parallel slices, including the two user-facing #1349 gaps. Historical checkpoints supply reusable code, not a certified integrated implementation. The code target is feasible only if the reader/writer contracts freeze tonight and integrated tests start Thursday; the upper estimates leave little review/fix margin. No safety gate is waived to meet a date. Production changes remain with the release owner, through the lead.
 
 **Scope and ownership boundary**
