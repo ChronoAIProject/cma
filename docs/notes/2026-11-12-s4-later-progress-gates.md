@@ -1,3 +1,8 @@
+# S4 later-progress gate evidence
+
+Exact author-source gate record, preserved from the handoff.
+
+```json
 {
   "source_sha": "2144909cede519ed286184a7fffe1af3e645a47b",
   "branch": "tl/cma-log-segments/writer-publication",
@@ -66,3 +71,4 @@
     "shared_locks_retained": true
   }
 }
+```

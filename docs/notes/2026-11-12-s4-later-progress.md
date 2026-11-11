@@ -84,7 +84,7 @@ Unit execution took 1.463 seconds after compilation; Mongo execution took
 177.547 seconds. All six positive current-publication proof cases pass. Strict,
 units and Mongo each exited zero, and the API source diff remained empty before
 and after execution. Machine-readable results are in
-[the gate summary](2026-11-12-s4-later-progress-gates.json).
+[the gate summary](2026-11-12-s4-later-progress-gates.md).
 
 The earlier actual runs remain recorded separately:
 
