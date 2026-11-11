@@ -111,7 +111,11 @@ where
             session,
             true,
             |entry| {
-                head.validate_lineage(&entry)?;
+                super::agent_log_reads::integrity::validate_lineage(
+                    &entry,
+                    &expected.workspace_id,
+                    expected.creation_worktree_id(),
+                )?;
                 if entry.agent_id != expected.id || entry.seq != expected_seq {
                     return Err(SandboxStoreError::SequenceConflict);
                 }

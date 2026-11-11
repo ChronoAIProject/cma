@@ -21,21 +21,7 @@ impl ReadHead {
         &self,
         entry: &AgentLogEntry,
     ) -> Result<(), SandboxStoreError> {
-        if let AgentLogKind::Created {
-            workspace_id,
-            worktree_id,
-        } = &entry.kind
-        {
-            if entry.seq != 1
-                || workspace_id != &self.workspace_id
-                || worktree_id != &self.creation_worktree_id
-            {
-                return Err(SandboxStoreError::Corrupt(
-                    "Agent creation log lineage does not match".into(),
-                ));
-            }
-        }
-        Ok(())
+        validate_lineage(entry, &self.workspace_id, &self.creation_worktree_id)
     }
 
     fn from_agent(agent: &Agent, trusted: bool) -> Self {
@@ -47,6 +33,27 @@ impl ReadHead {
             creation_worktree_id: agent.creation_worktree_id().clone(),
         }
     }
+}
+
+/// Shared creation-lineage check for legacy and certified segmented readers.
+pub(in crate::store) fn validate_lineage(
+    entry: &AgentLogEntry,
+    expected_workspace: &WorkspaceId,
+    expected_worktree: &WorktreeId,
+) -> Result<(), SandboxStoreError> {
+    if let AgentLogKind::Created {
+        workspace_id,
+        worktree_id,
+    } = &entry.kind
+    {
+        if entry.seq != 1 || workspace_id != expected_workspace || worktree_id != expected_worktree
+        {
+            return Err(SandboxStoreError::Corrupt(
+                "Agent creation log lineage does not match".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[async_trait::async_trait]
