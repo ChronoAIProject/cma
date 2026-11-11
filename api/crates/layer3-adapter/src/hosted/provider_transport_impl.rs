@@ -132,6 +132,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         } else {
             None
         };
+        settings.bounded_permission_state = self.bounded_permission_state;
         let recovered_prompt = settings.recovered_prompt.take();
         let opened = Bridge::open_with_subscription_and_prompt(
             socket,
