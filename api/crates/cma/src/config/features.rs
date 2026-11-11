@@ -2,6 +2,7 @@
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
     pub parent_not_ready_pacing_enabled: bool,
+    pub bounded_raw_output: bool,
     pub output_json_budget: bool,
     pub bounded_update_relay: bool,
     pub bounded_live_fragments: bool,
@@ -42,6 +43,7 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
             parent_not_ready_pacing_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED",
@@ -478,3 +480,6 @@ mod parent_pacing_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod raw_output_tests;
