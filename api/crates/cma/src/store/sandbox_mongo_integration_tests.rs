@@ -112,6 +112,7 @@ mod launch_command_tests;
 mod log_integrity_tests;
 mod persistence_tests;
 mod profile_transaction_tests;
+mod response_projection_tests;
 mod sandbox_lifecycle_tests;
 mod sandbox_usage_tests;
 mod schema_admission_tests;
