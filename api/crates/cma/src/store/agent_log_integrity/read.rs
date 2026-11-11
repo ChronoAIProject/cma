@@ -1,6 +1,53 @@
-//! Snapshot-preserving proof adapter for bounded public log readers.
+//! Read-only integrity proof for public log readers and complete assessments.
 use super::*;
 use mongodb::options::ReadConcern;
+
+/// Complete assessment inside the caller's transaction. Retain the shared
+/// quarantine/metadata/tail proof and creation lineage without audit side effects.
+pub(in crate::store) async fn scan_complete_log_with_session(
+    caller: ScanCaller,
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    session: &mut mongodb::ClientSession,
+) -> Result<LogSummary, TransactionLogError> {
+    let row = store
+        .agents
+        .find_one(doc! { "_id": agent.id.as_str() })
+        .session(&mut *session)
+        .await
+        .map_err(TransactionLogError::Driver)?
+        .ok_or(SandboxStoreError::NotFound)?;
+    if crate::store::agents::read_agent(&row)? != *agent {
+        return Err(SandboxStoreError::Conflict.into());
+    }
+    proof::read_only_summary(store, agent, &row, session, false).await?;
+    scan::scan_collection(
+        caller,
+        &store.agent_log,
+        &agent.id,
+        agent.conversation.last_seq,
+        session,
+        false,
+        |entry| {
+            if let layer2_core::sandbox::AgentLogKind::Created {
+                workspace_id,
+                worktree_id,
+            } = &entry.kind
+            {
+                if entry.seq != 1
+                    || workspace_id != &agent.workspace_id
+                    || worktree_id != agent.creation_worktree_id()
+                {
+                    return Err(SandboxStoreError::Corrupt(
+                        "Agent creation log lineage does not match".into(),
+                    ));
+                }
+            }
+            Ok(())
+        },
+    )
+    .await
+}
 
 #[derive(Debug, PartialEq, Eq)]
 #[cfg(test)]
