@@ -119,6 +119,11 @@ pub(super) fn agent_metadata(
     .merge(rest::agent_provider_associations_router(
         AgentProviderAssociationService::new(stores.sandbox_model.clone(), access.clone()),
     ))
+    .merge(rest::agent_capacity_recovery_router(Arc::new(
+        layer2_core::sandbox::agent_capacity_recovery::preflight::CapacityRecoveryPreflightService::new(
+            access.clone(),
+        ),
+    )))
     .merge(rest::agent_provenance_router(AgentProvenanceService::new(
         stores.sandbox_model.clone(),
         access,
