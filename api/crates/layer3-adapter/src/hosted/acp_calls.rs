@@ -1,10 +1,29 @@
 //! RPC response deadlines advance only when startup output is durably acknowledged.
 use std::time::Duration;
 
-use super::{Bridge, CALL_DEADLINE, SIGN_IN_DEADLINE};
+use super::{Bridge, CALL_DEADLINE, RETAINED_HISTORY_IDLE_DEADLINE, SIGN_IN_DEADLINE};
 use crate::AdapterError;
 
+struct RetainedLoad<'a>(&'a tokio::sync::watch::Sender<Option<tokio::time::Instant>>);
+
+impl Drop for RetainedLoad<'_> {
+    fn drop(&mut self) {
+        self.0.send_replace(None);
+    }
+}
+
 impl Bridge {
+    pub(in crate::hosted) async fn load_retained_session(
+        &self,
+        params: serde_json::Value,
+    ) -> crate::Result<serde_json::Value> {
+        self.retained_history_deadline
+            .send_replace(Some(tokio::time::Instant::now() + SIGN_IN_DEADLINE));
+        let _loading = RetainedLoad(&self.retained_history_deadline);
+        self.call_within("session/load", params, RETAINED_HISTORY_IDLE_DEADLINE)
+            .await
+    }
+
     pub(in crate::hosted) async fn call(
         &self,
         method: &str,
