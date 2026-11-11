@@ -4,12 +4,12 @@ use crate::store::agent_log_segments::{publication, writer_gate as gate};
 use crate::store::sandbox_mongo::{commit_transaction, CommitOutcome};
 use layer2_core::sandbox::store::AgentLogPublicationIdentity;
 
-async fn fixture(suffix: &str) -> (Client, String, MongoSandboxStore, Agent) {
+pub(super) async fn fixture(suffix: &str) -> (Client, String, MongoSandboxStore, Agent) {
     let (client, name) = database(suffix).await;
     let db = client.database(&name);
     segments::schema::migrate(&db).await.unwrap();
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let agent = ready_conversation_fixture(&store, suffix).await;
+    let agent = ready_source(&store, suffix).await;
     let mut session = client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
     gate::replace(
@@ -52,6 +52,76 @@ async fn fixture(suffix: &str) -> (Client, String, MongoSandboxStore, Agent) {
         .unwrap();
     assert_eq!(row.get_i64("document_schema_version").unwrap(), 2);
     (client, name, store, agent)
+}
+
+// The general worker fixture starts at its open event. Adoption additionally
+// requires the original Created row, so build this retained source through the
+// actual legacy append and worker publication boundaries.
+pub(super) async fn ready_source(store: &MongoSandboxStore, suffix: &str) -> Agent {
+    let (_, mut worktree, claimed) = claimed_agent_work_fixture(store, suffix).await;
+    store
+        .append_agent_log(
+            &claimed.id,
+            NOW.into(),
+            AgentLogKind::Created {
+                workspace_id: claimed.workspace_id.clone(),
+                worktree_id: claimed.creation_worktree_id().clone(),
+            },
+        )
+        .await
+        .unwrap();
+    let claimed = store.get_agent(&claimed.id).await.unwrap().unwrap();
+    let conversation_id = format!("retained-conversation-{suffix}");
+    let claimed = ready_publication_claim(claimed, &conversation_id);
+    replace_agent_fixture(store, &claimed).await;
+    let fence = claimed.work.lease.as_ref().unwrap().fence;
+    let mut ready = claimed.clone();
+    ready
+        .work
+        .advance(
+            "worker",
+            fence,
+            AgentWorkStep::PublishConnection,
+            NOW.into(),
+        )
+        .unwrap();
+    ready
+        .transition(AgentStatus::Ready, NOW.into(), None)
+        .unwrap();
+    let logs = vec![
+        AgentLogKind::ConversationOpened {
+            conversation_id,
+            runtime_generation: 1,
+        },
+        AgentLogKind::StatusChanged {
+            from: AgentStatus::Starting,
+            to: AgentStatus::Ready,
+        },
+    ];
+    ready.conversation.last_seq += logs.len() as u64;
+    let expected_worktree_revision = worktree.revision;
+    worktree.transition(WorktreeStatus::Ready).unwrap();
+    store
+        .commit_agent_work(AgentWorkMutation {
+            expected_agent_revision: claimed.revision,
+            holder: "worker".into(),
+            fence,
+            agent: ready.clone(),
+            worktree: Some(VersionedWorktree {
+                expected_revision: expected_worktree_revision,
+                worktree,
+            }),
+            appended_at: NOW.into(),
+            sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+                agent_id: ready.id.clone(),
+                from: AgentStatus::Starting,
+                to: AgentStatus::Ready,
+            }),
+            agent_logs: logs,
+        })
+        .await
+        .unwrap();
+    ready
 }
 
 async fn rows(store: &MongoSandboxStore, agent: &Agent) -> Vec<Document> {
