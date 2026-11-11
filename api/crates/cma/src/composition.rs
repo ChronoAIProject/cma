@@ -62,10 +62,13 @@ impl ControlPlaneComposition {
             retirement,
             Arc::clone(&activity),
         ));
-        let settings = Arc::new(PlatformSettingsService::new(
-            stores.settings.clone(),
-            Arc::clone(&activity),
-        ));
+        let settings = Arc::new(
+            PlatformSettingsService::new(stores.settings.clone(), Arc::clone(&activity))
+                .with_model_budget_writes_enabled(config.features.model_budget_writes_enabled)
+                .with_model_request_budget_writes_enabled(
+                    config.features.model_request_budget_writes_enabled,
+                ),
+        );
         let sandbox_policy = Arc::new(LiveSandboxPolicy::new(
             Arc::clone(&settings),
             config.baseline_services.clone(),

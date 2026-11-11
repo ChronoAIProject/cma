@@ -14,6 +14,7 @@ mod agent_control_receipt;
 mod agent_control_store;
 mod agent_control_transaction;
 mod agent_conversation_store;
+mod agent_failure_pacing;
 mod agent_lifecycle_operations;
 mod agent_log;
 mod agent_log_integrity;
@@ -45,6 +46,7 @@ pub(crate) mod bot_setups;
 pub(crate) mod bots;
 #[cfg(test)]
 mod bots_mongo_integration_tests;
+mod budget;
 mod channel_storage_retention;
 mod checkpoint_capture;
 mod checkpoint_objects;
@@ -57,6 +59,7 @@ pub mod directory;
 mod durability;
 mod encryption;
 mod media_uploads;
+pub(crate) mod provenance_progress;
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
 #[cfg(test)]
@@ -69,6 +72,7 @@ mod hierarchy;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
+pub(crate) mod ledger_retirement;
 mod legacy_history;
 mod lifecycle_execution;
 pub(crate) mod lifecycle_transaction;
@@ -80,6 +84,7 @@ mod marketplace_query;
 mod marketplace_support;
 mod marketplace_visibility;
 mod message_feedback;
+pub(crate) mod migrations;
 pub mod mongo;
 mod mongo_latency;
 pub(crate) mod mongo_read_telemetry;

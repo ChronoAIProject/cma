@@ -20,6 +20,8 @@ export function operatorFailure(error: unknown): OperatorFailure {
       operator_conflict:
         'The resource changed before the operation completed. Refresh its current state.',
       settings_conflict: 'Platform settings changed. Your draft has been retained.',
+      model_budget_writes_unavailable:
+        'Saving spend controls is not available yet. Your draft has been retained.',
       invalid_request: 'Review the settings fields before saving again.',
       invalid_admin_request: 'Review the selected filters before trying again.',
       marketplace_disabled: 'The marketplace is disabled. The current default is retained.',

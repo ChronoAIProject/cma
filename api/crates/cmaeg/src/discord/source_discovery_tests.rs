@@ -13,7 +13,12 @@ impl SourcePort for Port {
     fn revision<'a>(&'a self, _: &'a str) -> BoxFuture<'a, Result<String, GatewayError>> {
         Box::pin(async { Ok("revision".into()) })
     }
-    fn connect<'a>(&'a self, _: &'a str, _: watch::Receiver<bool>) -> BoxFuture<'a, Attempt> {
+    fn connect<'a>(
+        &'a self,
+        _: &'a str,
+        _: watch::Receiver<bool>,
+        _: super::super::status::StatusAttempt,
+    ) -> BoxFuture<'a, Attempt> {
         panic!("scanner must not connect")
     }
 }
