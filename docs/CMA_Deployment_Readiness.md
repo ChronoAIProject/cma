@@ -1902,3 +1902,34 @@ after preparation and setup have returned validated receipts; check the same
 Workspace path and PV, preserved original archive/journal, and the real resolved
 Git commit. An ineligible or uncertain outcome must retain the data and fail
 closed rather than publish a synthetic Ready state.
+
+### Skill upgrade reader floor
+
+The complete Agent Manager reader/worker/projection floor is `afe28c28c`; the
+runtime replacement implementation floor is `7b0df83c9` (or compatible successors).
+Idle skill replacement adds `AgentSkillInstallation.previous`, omitted when
+absent. The first admitted upgrade raises the Agent Manager reader floor to the
+reader/validator/worker implementing this field, including after failure or
+completion. Original profile material and prior installation entries remain
+immutable. Ordinary records without an upgrade keep their predecessor shape.
+The first runtime upgrade authority/journal write likewise requires the runtime
+replacement reader and its recovery proofs; retaining only the new API is not
+permission to downgrade that runtime state.
+
+Deploy the compatible Agent Manager and drain predecessor workers before
+selecting the new runtime. Runtime status advertises `agent_skill_upgrade` only
+for explicit `application/vnd.chrono.agent-skill-upgrade-status.v1+json` requests;
+false is omitted and embedded status remains unchanged. An older Manager never
+requests this media type, so a newer runtime remains status-readable during API
+rollback before the first upgrade admission. Negotiation tests compare the
+legacy response before and after an opted-in read and exercise embedded frames.
+
+After an upgrade intent exists, approved API rollback/recovery images must keep
+the new readers and worker. Restore the prior web or use a compatible forward
+repair while keeping those readers, the latest runtime default, and each live
+Sandbox's recorded runtime, home and conversation. Pre-feature API rollback is
+unsupported after admission; do not erase completed/failed upgrade evidence or
+interrupt Sandboxes to accommodate it. See [Agent skills](CMA_Agent_Skills_Runtime.md)
+for the durable operation, proof and compatibility table. Production qualification
+must bind tests to actual candidate and approved recovery artifacts; local decoder
+and filesystem tests alone are not a historical-image rollout matrix.
