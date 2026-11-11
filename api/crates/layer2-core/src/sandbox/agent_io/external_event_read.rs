@@ -20,69 +20,6 @@ fn log_phase(phase: &'static str, started: Instant) {
     );
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-    use std::sync::{Arc, Mutex};
-
-    #[derive(Clone, Default)]
-    struct Logs(Arc<Mutex<Vec<u8>>>);
-
-    impl Write for Logs {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
-        type Writer = Self;
-
-        fn make_writer(&'a self) -> Self {
-            self.clone()
-        }
-    }
-
-    #[test]
-    fn phase_timing_does_not_inherit_request_identity() {
-        let logs = Logs::default();
-        let subscriber = tracing_subscriber::fmt()
-            .without_time()
-            .with_ansi(false)
-            .with_writer(logs.clone())
-            .finish();
-        let _guard = tracing::subscriber::set_default(subscriber);
-        let request = tracing::info_span!(
-            "http.request",
-            request_id = "request-identity",
-            uri = "/bindings/binding-identity/conversations/conversation-identity/events/event-identity"
-        );
-        let _entered = request.enter();
-        log_phase("retained_command_lookup", Instant::now());
-        drop(TotalTiming(Instant::now()));
-        let output = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
-        assert_eq!(output.lines().count(), 2);
-        assert!(output.contains("phase=\"retained_command_lookup\""));
-        assert!(output.contains("phase=\"total\""));
-        for private in [
-            "request-identity",
-            "binding-identity",
-            "conversation-identity",
-            "event-identity",
-        ] {
-            assert!(
-                !output.contains(private),
-                "inherited request field: {private}"
-            );
-        }
-    }
-}
-
 struct TotalTiming(Instant);
 
 impl Drop for TotalTiming {
@@ -240,5 +177,68 @@ impl AgentCommandService {
             .external_event()
             .cloned()
             .ok_or(CommandLedgerError::Corrupt.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct Logs(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Logs {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Logs {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self {
+            self.clone()
+        }
+    }
+
+    #[test]
+    fn phase_timing_does_not_inherit_request_identity() {
+        let logs = Logs::default();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(logs.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let request = tracing::info_span!(
+            "http.request",
+            request_id = "request-identity",
+            uri = "/bindings/binding-identity/conversations/conversation-identity/events/event-identity"
+        );
+        let _entered = request.enter();
+        log_phase("retained_command_lookup", Instant::now());
+        drop(TotalTiming(Instant::now()));
+        let output = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        assert_eq!(output.lines().count(), 2);
+        assert!(output.contains("phase=\"retained_command_lookup\""));
+        assert!(output.contains("phase=\"total\""));
+        for private in [
+            "request-identity",
+            "binding-identity",
+            "conversation-identity",
+            "event-identity",
+        ] {
+            assert!(
+                !output.contains(private),
+                "inherited request field: {private}"
+            );
+        }
     }
 }
