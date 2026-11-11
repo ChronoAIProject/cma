@@ -160,9 +160,11 @@ unsupported segmented proof fails closed. Legacy fallback remains bounded by the
 old physical limit; segmented foreground code never falls back to lifetime scans.
 Each consumer needs its own query/byte test and integration caller-inventory row.
 
-Pacing is a separate single-purpose commit. Only unchanged PublishConnection
-`agent_parent_not_ready` / `agent_runtime_unavailable` read-only failures use
-persisted exponential delay capped at five minutes, default off. Parent progress,
+Pacing is a separate single-purpose commit. Unchanged PublishConnection
+`agent_parent_not_ready` read-only observations use the independently default-off
+`CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED` flag. They reuse persisted
+exponential delay capped at five minutes; existing `agent_runtime_unavailable`
+pacing keeps its current configuration and behavior. Parent progress,
 new authoritative work or stop/delete bypasses stale delay; lease replacement and
 restart preserve fencing/attempt counts. Existing ledger-hold backoff is untouched.
 Every actual attempt and effect receipt remains honest. Measure maximum wake delay;
