@@ -4,8 +4,7 @@ use sha2::{Digest as _, Sha256};
 use super::acp::{Blocked, Bridge};
 use super::update_relay::UpdateRelay;
 use crate::{
-    ConversationUpdate, PermissionDecision, PermissionOption, PermissionOptionKind,
-    PermissionRequest, SessionUpdate,
+    ConversationUpdate, PermissionDecision, PermissionOption, PermissionOptionKind, SessionUpdate,
 };
 
 const PERMISSION_LOCATOR_VERSION: u8 = 1;
@@ -13,10 +12,10 @@ const PERMISSION_ID_DOMAIN: &[u8] = b"chrono-hosted-permission-v1\0";
 const MAX_PERMISSION_CALL_BYTES: usize = 256;
 
 impl Bridge {
-    pub(super) async fn receive(&self, payload: &[u8], updates: &UpdateRelay) {
+    pub(super) async fn receive(&self, payload: &[u8], updates: &UpdateRelay) -> crate::Result<()> {
         let Ok(frame) = serde_json::from_slice::<serde_json::Value>(payload) else {
             tracing::warn!(bytes = payload.len(), "ACP conversation frame was not JSON");
-            return;
+            return Ok(());
         };
 
         if let Some(id) = frame.get("id") {
@@ -38,14 +37,14 @@ impl Bridge {
                         ));
                     }
                     let _ = waiting.answer.send(frame);
-                    return;
+                    return Ok(());
                 }
                 if let Some(id) = id.as_str() {
                     if self.recover_prompt_result(id, frame.clone(), updates).await {
                         self.orphaned_prompt_response
                             .store(false, std::sync::atomic::Ordering::SeqCst);
                         self.answered.lock().await.clear();
-                        return;
+                        return Ok(());
                     }
                     let already_completed = self.prompt_was_completed(id).await;
                     if !already_completed {
@@ -63,7 +62,7 @@ impl Bridge {
                                     true,
                                     Some(prompt_id),
                                 ));
-                                return;
+                                return Ok(());
                             }
                         }
                     }
@@ -79,14 +78,14 @@ impl Bridge {
                     // close whichever turn happens to be active.
                     self.answered.lock().await.clear();
                 }
-                return;
+                return Ok(());
             }
         }
 
         match frame.get("method").and_then(serde_json::Value::as_str) {
             Some("cma/codex/credentials") => self.subscription_credential(&frame).await,
             Some("session/update") => self.session_update(&frame, updates).await,
-            Some("session/request_permission") => self.blocked_on(frame, updates).await,
+            Some("session/request_permission") => self.blocked_on(frame, updates).await?,
             Some("elicitation/create") => self.sign_in(&frame, updates).await,
             Some(method) => {
                 if let Some(id) = frame.get("id") {
@@ -105,6 +104,7 @@ impl Bridge {
             }
             None => {}
         }
+        Ok(())
     }
 
     async fn subscription_credential(&self, frame: &serde_json::Value) {
@@ -179,56 +179,7 @@ impl Bridge {
         }
     }
 
-    async fn blocked_on(&self, frame: serde_json::Value, updates: &UpdateRelay) {
-        let Some(params) = frame.get("params") else {
-            return;
-        };
-        let Ok(request) = serde_json::from_value::<crate::RequestPermissionRequest>(params.clone())
-        else {
-            tracing::warn!("ACP permission request has an unreadable shape");
-            return;
-        };
-        let session = request.session_id.0.to_string();
-        if self.session().await.as_deref() != Ok(session.as_str()) {
-            tracing::warn!("discarding permission request for another conversation");
-            self.refuse_invalid_call(&frame).await;
-            return;
-        }
-        let Some(call) = frame.get("id").cloned().filter(valid_call) else {
-            tracing::warn!("ACP permission request has an invalid correlation id");
-            return;
-        };
-        let locator = permission_locator(&session, &call, &request.options);
-        let id = permission_id(&locator);
-        if let Some(answer) = self.answered.lock().await.get(&id).cloned() {
-            let _ = self.send(&answer).await;
-            return;
-        }
-        let owns_prompt_waiter = self
-            .owned_prompt_waiters
-            .load(std::sync::atomic::Ordering::SeqCst)
-            > 0;
-        self.blocked.lock().await.insert(
-            id.clone(),
-            Blocked {
-                call,
-                options: request.options.clone(),
-                owns_prompt_waiter,
-            },
-        );
-        self.route_update(
-            &session,
-            ConversationUpdate::Asked(PermissionRequest {
-                id,
-                locator: Some(locator),
-                request,
-            }),
-            updates,
-        )
-        .await;
-    }
-
-    async fn refuse_invalid_call(&self, frame: &serde_json::Value) {
+    pub(super) async fn refuse_invalid_call(&self, frame: &serde_json::Value) {
         if let Some(id) = frame.get("id") {
             let _ = self
                 .send(&serde_json::json!({
@@ -301,7 +252,7 @@ struct HostedPermissionLocator {
     options: Vec<StoredPermissionOption>,
 }
 
-fn permission_locator(
+pub(super) fn permission_locator(
     session: &str,
     call: &serde_json::Value,
     options: &[PermissionOption],
@@ -421,7 +372,7 @@ fn prompt_outcome(frame: &serde_json::Value) -> Option<super::acp::Outcome> {
     terminal.then(|| super::acp_turn::turn_outcome(frame.clone()))
 }
 
-fn valid_call(call: &serde_json::Value) -> bool {
+pub(super) fn valid_call(call: &serde_json::Value) -> bool {
     matches!(
         call,
         serde_json::Value::String(_) | serde_json::Value::Number(_)

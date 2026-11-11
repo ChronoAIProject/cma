@@ -12,6 +12,9 @@ use crate::{
 
 pub(super) type ServerSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
 
+#[path = "acp_permission_tests.rs"]
+mod permission_tests;
+
 #[path = "acp_access_tool_tests.rs"]
 mod access_tool_tests;
 #[path = "acp_channel_tool_tests.rs"]
@@ -136,6 +139,7 @@ pub(super) fn settings(
 ) -> HostedAgentOpenSettings {
     HostedAgentOpenSettings {
         bounded_raw_output: false,
+        bounded_permission_state: false,
         already_initialized_error: Some(serde_json::json!({
             "code": -32603, "message": "Internal error",
             "data": { "details": "Already initialized" },

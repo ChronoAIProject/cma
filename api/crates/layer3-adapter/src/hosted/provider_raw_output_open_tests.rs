@@ -118,6 +118,7 @@ async fn open_with_raw_output_policy(enabled: bool) {
             fenced,
             None,
             HostedAgentOpenSettings {
+                bounded_permission_state: false,
                 bounded_raw_output: !enabled,
                 already_initialized_error: None,
                 open_completion: None,
