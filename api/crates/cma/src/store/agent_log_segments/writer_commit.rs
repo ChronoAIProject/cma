@@ -1,17 +1,15 @@
 //! Frozen caller-owned publication transaction boundary.
 //!
-//! Preparation remains closed until the captured source/session proof can be
-//! checked. Persistence consumes only an opaque prepared plan and never commits
-//! or retries the caller's transaction.
+//! Preparation validates the exclusive captured transaction proof. Persistence
+//! consumes only an opaque plan bound to that same scope and database, and never
+//! commits or retries the caller's transaction.
 use layer2_core::sandbox::{store::SandboxStoreError, Agent, AgentLogEntry};
-use mongodb::{
-    bson::{Binary, Document},
-};
+use mongodb::bson::{Binary, Document};
 
 use super::{
     capture::CapturedLog,
-    transaction_scope::{TransactionIdentity, TransactionScope},
     publication::{Publication, PublicationIdentity},
+    transaction_scope::{TransactionIdentity, TransactionScope},
     writer_admission::Admission,
     writer_bootstrap::BootstrapPlan,
     writer_gate::slots::Permit,
@@ -63,16 +61,17 @@ mod persistence;
 mod planning;
 
 /// Pure preparation in the caller's existing snapshot/majority transaction.
-/// Refuse pending source/bootstrap certification before any durable side effect.
+/// Reject an unavailable or stale source proof before any database operation.
 pub(in crate::store) async fn prepare(
-    _store: &MongoSandboxStore,
-    _scope: &mut TransactionScope<'_>,
-    _captured: &CapturedLog,
-    _input: PublicationInput<'_>,
-    _bootstrap: Option<&BootstrapPlan>,
-    _admission: Option<&Admission>,
+    store: &MongoSandboxStore,
+    scope: &mut TransactionScope<'_>,
+    captured: &CapturedLog,
+    input: PublicationInput<'_>,
+    bootstrap: Option<&BootstrapPlan>,
+    admission: Option<&Admission>,
 ) -> Result<PreparedPublication, TransactionLogError> {
-    Err(pending())
+    captured.validate_transaction(store, scope)?;
+    planning::assemble(store, scope, captured, input, bootstrap, admission).await
 }
 
 /// Own the single Agent CAS and all log/projection/receipt writes in the caller's
@@ -84,11 +83,4 @@ pub(in crate::store) async fn persist(
     aggregate: AggregateUpdate,
 ) -> Result<Publication, TransactionLogError> {
     persistence::persist(store, scope, prepared, aggregate).await
-}
-
-fn pending() -> TransactionLogError {
-    SandboxStoreError::Unavailable(
-        "certified atomic Agent log publication is not available in this writer checkpoint".into(),
-    )
-    .into()
 }

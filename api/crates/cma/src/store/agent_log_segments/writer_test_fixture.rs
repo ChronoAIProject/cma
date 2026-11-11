@@ -101,7 +101,7 @@ pub(super) async fn fixture(count: i64) -> Fixture {
 }
 
 impl Fixture {
-    pub fn prepared(&self, session: &ClientSession) -> PreparedPublication {
+    pub fn prepared(&self, scope: &TransactionScope<'_>) -> PreparedPublication {
         let logs = [AgentLogEntry {
             agent_id: self.agent.id.clone(),
             seq: self.head.last_seq as u64 + 1,
@@ -150,7 +150,8 @@ impl Fixture {
         )
         .unwrap();
         PreparedPublication {
-            session_id: session.id().clone(),
+            transaction: scope.identity(),
+            database: self.store.agents.namespace().db,
             current: self.agent.clone(),
             next,
             source: SourceFormat::Segmented,
