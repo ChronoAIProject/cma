@@ -24,6 +24,9 @@ use super::super::sandbox_mongo::{signed, unsigned, MongoSandboxStore, DOCUMENT_
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::super::workspaces::read_workspace;
 
+mod scoped;
+pub(super) use scoped::{apply_scoped, load_scoped};
+
 #[derive(Debug)]
 pub(in crate::store) enum ApplyError {
     Domain(SandboxStoreError),
@@ -74,9 +77,7 @@ pub(super) async fn load(
     id: &SandboxId,
     session: &mut ClientSession,
 ) -> Result<(SandboxUnpublishedRecoverySnapshot, u64), ApplyError> {
-    load_for_inspection(store, id, session, true, false)
-        .await
-        .map(|(snapshot, seq, _)| (snapshot, seq))
+    load_with_sources(store, id, session, None).await
 }
 
 pub(in crate::store) async fn load_reopen(
@@ -84,7 +85,7 @@ pub(in crate::store) async fn load_reopen(
     id: &SandboxId,
     session: &mut ClientSession,
 ) -> Result<(SandboxUnpublishedRecoverySnapshot, u64, String), ApplyError> {
-    load_for_inspection(store, id, session, true, true).await
+    load_for_inspection(store, id, session, true, true, None).await
 }
 
 pub(super) async fn load_retained(
@@ -92,7 +93,8 @@ pub(super) async fn load_retained(
     id: &SandboxId,
     session: &mut ClientSession,
 ) -> Result<layer2_core::sandbox::RetainedRecoverySnapshot, ApplyError> {
-    let (snapshot, last_seq, _) = load_for_inspection(store, id, session, false, false).await?;
+    let (snapshot, last_seq, _) =
+        load_for_inspection(store, id, session, false, false, None).await?;
     validate_in_transaction(store, id, last_seq, session).await?;
     Ok(layer2_core::sandbox::RetainedRecoverySnapshot {
         sandbox: snapshot.sandbox,
@@ -101,12 +103,24 @@ pub(super) async fn load_retained(
     })
 }
 
+async fn load_with_sources(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+    session: &mut ClientSession,
+    sources: Option<&scoped::NativeFacts>,
+) -> Result<(SandboxUnpublishedRecoverySnapshot, u64), ApplyError> {
+    load_for_inspection(store, id, session, true, false, sources)
+        .await
+        .map(|(snapshot, seq, _)| (snapshot, seq))
+}
+
 async fn load_for_inspection(
     store: &MongoSandboxStore,
     id: &SandboxId,
     session: &mut ClientSession,
     require_unpublished: bool,
     require_reopen: bool,
+    sources: Option<&scoped::NativeFacts>,
 ) -> Result<(SandboxUnpublishedRecoverySnapshot, u64, String), ApplyError> {
     let document = store
         .sandboxes
@@ -131,6 +145,28 @@ async fn load_for_inspection(
     let mut history_digest = Sha256::new();
     for agent in &agents {
         let mut observation = Observation::new(Stage::PublicationLog);
+        if let Some(facts) = sources
+            .map(|sources| sources.for_agent(agent))
+            .transpose()?
+            .flatten()
+        {
+            if require_reopen {
+                return Err(ApplyError::Domain(SandboxStoreError::Unavailable(
+                    "segmented retained reopen requires bounded history evidence".into(),
+                )));
+            }
+            if require_unpublished
+                && generation
+                    .is_some_and(|generation| facts.0 >= generation || facts.1 >= generation)
+            {
+                observation.finish(Reason::PublishedGeneration);
+                return Err(ApplyError::Domain(SandboxStoreError::InvalidTransaction(
+                    "runtime generation was already published",
+                )));
+            }
+            observation.finish(Reason::Success);
+            continue;
+        }
         match capture_segmented(store, agent, session).await {
             Ok(Some(source)) => {
                 // These are full-prefix certified maxima. A missing point row
@@ -261,7 +297,17 @@ pub(super) async fn apply(
     request: &SandboxUnpublishedRecoveryRequest,
     session: &mut ClientSession,
 ) -> Result<Receipt, ApplyError> {
-    let (current, last_seq) = load(store, &request.snapshot.sandbox.id, session).await?;
+    apply_with_sources(store, request, session, None).await
+}
+
+async fn apply_with_sources(
+    store: &MongoSandboxStore,
+    request: &SandboxUnpublishedRecoveryRequest,
+    session: &mut ClientSession,
+    sources: Option<&scoped::NativeFacts>,
+) -> Result<Receipt, ApplyError> {
+    let (current, last_seq) =
+        load_with_sources(store, &request.snapshot.sandbox.id, session, sources).await?;
     let mutation =
         apply_unpublished_runtime_recovery(&current, request).map_err(ApplyError::Domain)?;
     validate_in_transaction(store, &current.sandbox.id, last_seq, session).await?;

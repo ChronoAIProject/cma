@@ -1,6 +1,6 @@
 //! Transactional model stub, not a replacement for S1/S4 or Mongo proofs.
 use super::*;
-use crate::sandbox::agent_capacity_recovery::{ports::*, state::*};
+use crate::sandbox::agent_capacity_recovery::{activation::RecoveryActivation, ports::*, state::*};
 use crate::{Authorization, Caller, Capability};
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
@@ -24,6 +24,7 @@ pub(super) struct State {
     pub successors: usize,
     pub publications: usize,
     pub source_available: bool,
+    pub completion_response_fault: Option<fn(&mut RecoveryWork)>,
     pub logs: Vec<AgentLogEntry>,
 }
 
@@ -43,6 +44,7 @@ impl Store {
             successors: 0,
             publications: 0,
             source_available: true,
+            completion_response_fault: None,
             logs: vec![failure],
         })))
     }
@@ -249,7 +251,7 @@ impl CapacityRecoveryStore for Store {
         let mut s = self.0.lock().unwrap();
         authorize(&s, caller)?;
         let work = s.work.as_ref().ok_or(RecoveryError::Conflict)?;
-        let (next_work, next_agent, log) =
+        let (mut next_work, next_agent, log) =
             work.complete(&s.fixture.context(), claim, confirmation, now)?;
         let fault = std::mem::take(&mut s.fault);
         if matches!(fault, Fault::BeforeCommit) {
@@ -272,7 +274,26 @@ impl CapacityRecoveryStore for Store {
             s.unresolved = true;
             return Ok(CommitOutcome::Unknown);
         }
+        if let Some(corrupt) = s.completion_response_fault {
+            corrupt(&mut next_work);
+        }
         Ok(CommitOutcome::Recorded(next_work))
+    }
+
+    async fn activation(
+        &self,
+        caller: &Caller,
+        completed: &RecoveryWork,
+    ) -> Result<RecoveryActivation, RecoveryError> {
+        let s = self.0.lock().unwrap();
+        authorize(&s, caller)?;
+        if s.unresolved || !s.source_available {
+            return Err(RecoveryError::Unavailable);
+        }
+        if s.work.as_ref() != Some(completed) {
+            return Err(RecoveryError::Conflict);
+        }
+        RecoveryActivation::capture(&s.fixture.context(), completed)
     }
 
     async fn retry(
@@ -300,6 +321,9 @@ impl CapacityRecoveryStore for Store {
 pub(super) struct RuntimeState {
     pub reconnects: Vec<RecoveryTarget>,
     pub acknowledgements: usize,
+    pub activated: std::collections::HashSet<(String, u64)>,
+    pub acknowledgement_attempts: usize,
+    pub acknowledgement_unavailable: bool,
     pub unavailable: bool,
     pub mismatch: bool,
     pub delay: std::time::Duration,
@@ -344,13 +368,55 @@ impl CapacityRecoveryRuntime for Runtime {
         ))
     }
 
+    async fn reattach_completed(
+        &self,
+        activation: &RecoveryActivation,
+    ) -> Result<CompletedAttachment<Self::Attachment>, RecoveryError> {
+        let mut s = self.0.lock().unwrap();
+        let work = activation.completed();
+        if s.activated
+            .contains(&(work.request.key()?, activation.writer_fence()))
+        {
+            return Ok(CompletedAttachment::AlreadyActivated);
+        }
+        s.reconnects.push(work.target.clone());
+        if s.unavailable {
+            return Err(RecoveryError::Unavailable);
+        }
+        let confirmation = RecoveryConfirmation {
+            operation_key: work.request.key()?,
+            target: work.target.clone(),
+            authority_fence: activation.writer_fence(),
+            native_state: match activation.agent().status {
+                AgentStatus::Ready => ConfirmedNativeState::Idle,
+                AgentStatus::Working => ConfirmedNativeState::Working,
+                AgentStatus::WaitingApproval => ConfirmedNativeState::WaitingApproval,
+                _ => return Err(RecoveryError::InvalidEvidence),
+            },
+        };
+        Ok(CompletedAttachment::Reattached {
+            attachment: (
+                confirmation.operation_key.clone(),
+                confirmation.authority_fence,
+            ),
+            confirmation: Box::new(confirmation),
+        })
+    }
+
     async fn acknowledge(
         &self,
-        _: Self::Attachment,
+        attachment: Self::Attachment,
         completed: &RecoveryWork,
     ) -> Result<(), RecoveryError> {
         assert_eq!(completed.phase, RecoveryPhase::Completed);
-        self.0.lock().unwrap().acknowledgements += 1;
+        let mut s = self.0.lock().unwrap();
+        s.acknowledgement_attempts += 1;
+        if s.acknowledgement_unavailable {
+            return Err(RecoveryError::Unavailable);
+        }
+        if s.activated.insert(attachment) {
+            s.acknowledgements += 1;
+        }
         Ok(())
     }
 }
