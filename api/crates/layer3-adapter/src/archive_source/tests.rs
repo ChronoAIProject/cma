@@ -159,3 +159,28 @@ fn reconstruction_refuses_traversal_duplicate_entries_and_existing_symlink_paren
     assert!(!source.join("escaped").exists());
     assert_eq!(std::fs::read(source.join("data")).unwrap(), b"original");
 }
+
+#[test]
+fn evidence_creation_refuses_symlink_shared_parents_and_changed_replays() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    let temp = Temp::new();
+    let private = temp.0.join("private");
+    std::fs::create_dir(&private).unwrap();
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let evidence = private.join("receipt");
+    publish_private_file(&evidence, b"original").unwrap();
+    publish_private_file(&evidence, b"original").unwrap();
+    assert_eq!(read_private_file(&evidence, 64).unwrap(), b"original");
+    assert!(publish_private_file(&evidence, b"changed").is_err());
+    assert_eq!(std::fs::metadata(&evidence).unwrap().mode() & 0o777, 0o600);
+    let linked = temp.0.join("linked");
+    symlink(&private, &linked).unwrap();
+    assert!(publish_private_file(&linked.join("escaped"), b"refused").is_err());
+    assert!(!private.join("escaped").exists());
+    let alias = private.join("alias");
+    symlink(&evidence, &alias).unwrap();
+    assert!(publish_private_file(&alias, b"original").is_err());
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o777)).unwrap();
+    assert!(publish_private_file(&private.join("shared"), b"refused").is_err());
+    assert!(!private.join("shared").exists());
+}

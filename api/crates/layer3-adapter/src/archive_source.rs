@@ -24,6 +24,9 @@ pub fn read_private_file(path: &Path, limit: usize) -> Result<Vec<u8>> {
     use std::os::unix::ffi::OsStrExt;
     let parent = Directory::root(path.parent().ok_or(INVALID)?)?;
     let file = parent.file(path.file_name().ok_or(INVALID)?.as_bytes())?;
+    private_bytes(file, limit)
+}
+fn private_bytes(file: File, limit: usize) -> Result<Vec<u8>> {
     let metadata = file.metadata().map_err(|_| INVALID)?;
     if metadata.mode() & 0o077 != 0
         || metadata.uid() != unsafe { libc::geteuid() }
@@ -39,6 +42,26 @@ pub fn read_private_file(path: &Path, limit: usize) -> Result<Vec<u8>> {
         return Err(INVALID);
     }
     Ok(bytes)
+}
+
+/// Create immutable private evidence through its retained parent descriptor.
+/// A retry may reconcile identical bytes but cannot overwrite an earlier result.
+pub fn publish_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::{io::Write, os::unix::ffi::OsStrExt};
+    let parent = Directory::root(path.parent().ok_or(INVALID)?)?;
+    let metadata = parent.metadata()?;
+    if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o022 != 0 {
+        return Err(INVALID);
+    }
+    let name = path.file_name().ok_or(INVALID)?.as_bytes();
+    if let Some(mut file) = parent.create_private(name)? {
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|_| INVALID)?;
+    } else if private_bytes(parent.file(name)?, bytes.len())? != bytes {
+        return Err(INVALID);
+    }
+    parent.sync()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
