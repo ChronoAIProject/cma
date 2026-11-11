@@ -6,6 +6,10 @@ insufficient-credit recovery is described in [model credit recovery](CMA_Model_C
 
 ## Scope and enforcement boundary
 
+The follow-up [CMA request reservation contract](CMA_Model_Request_Reservations.md)
+adds pre-request holds for titles and contextual suggestions. Runtime model
+calls still require the gateway contract described below.
+
 The current adapter enforces admission reservations and requests a safe stop
 from recorded model usage. It does **not** prove a strict ceiling on provider
 spend. Provider usage arrives after model requests; the configured unobserved
