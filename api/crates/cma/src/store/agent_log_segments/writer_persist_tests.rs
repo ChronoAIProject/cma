@@ -15,10 +15,16 @@ mod atomicity;
 mod capture_contract;
 #[path = "writer_keyed_mongo_tests.rs"]
 mod keyed_caller;
+#[path = "writer_keyed_restart_mongo_tests.rs"]
+mod keyed_restart;
 #[path = "writer_keyed_settlement_mongo_tests.rs"]
 mod keyed_settlement;
 #[path = "writer_lifecycle_mongo_tests.rs"]
 mod lifecycle_caller;
+#[path = "writer_lifecycle_child_mongo_tests.rs"]
+mod lifecycle_child;
+#[path = "writer_original_callers_mongo_tests.rs"]
+mod original_callers;
 #[path = "writer_output_mongo_tests.rs"]
 mod output_index;
 #[path = "writer_unknown_mongo_tests.rs"]

@@ -121,6 +121,14 @@ pub(super) fn sandbox_indexes() -> Vec<IndexModel> {
                     .build(),
             )
             .build(),
+        IndexModel::builder()
+            .keys(doc! { "retired_at": 1, "_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("sandboxes_global_live".to_string())
+                    .build(),
+            )
+            .build(),
     ]
 }
 
