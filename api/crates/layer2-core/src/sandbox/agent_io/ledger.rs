@@ -96,6 +96,8 @@ pub enum CommandReservationResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommandLedgerError {
+    #[error(transparent)]
+    Budget(crate::budget::BudgetError),
     #[error("invalid command reservation")]
     Invalid,
     #[error("command authority or Agent is unavailable")]
@@ -119,6 +121,7 @@ pub enum CommandLedgerError {
 impl CommandLedgerError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::Budget(reason) => reason.code(),
             Self::Invalid => "invalid_agent_command",
             Self::NotFound => "agent_not_found",
             Self::IdempotencyConflict => "agent_command_key_conflict",

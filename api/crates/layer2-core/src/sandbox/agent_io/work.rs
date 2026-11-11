@@ -48,6 +48,9 @@ pub enum CommandFailureCode {
     RuntimeUnavailable,
     RuntimeLost,
     ExecutionFailed,
+    OwnerBudgetExhausted,
+    TurnBudgetExhausted,
+    BudgetUnavailable,
 }
 
 impl CommandFailureCode {
@@ -55,9 +58,32 @@ impl CommandFailureCode {
     /// public projections. Missing prerequisites prevent execution; they do not
     /// establish revoked authority, a missing Agent, or a transient outage.
     /// Keep the precise variants for diagnostics and reading retained records.
+    pub fn budget_error(self) -> Option<crate::budget::BudgetError> {
+        use crate::budget::BudgetError;
+        match self {
+            Self::OwnerBudgetExhausted => Some(BudgetError::OwnerExhausted),
+            Self::TurnBudgetExhausted => Some(BudgetError::TurnExhausted),
+            Self::BudgetUnavailable => Some(BudgetError::Unavailable),
+            _ => None,
+        }
+    }
+
+    pub fn from_budget(reason: crate::budget::BudgetError) -> Self {
+        use crate::budget::BudgetError;
+        match reason {
+            BudgetError::OwnerExhausted => Self::OwnerBudgetExhausted,
+            BudgetError::TurnExhausted => Self::TurnBudgetExhausted,
+            BudgetError::Unavailable | BudgetError::InvalidPolicy => Self::BudgetUnavailable,
+        }
+    }
+
     pub fn legacy_code(self) -> Self {
         match self {
-            Self::CredentialSetupRequired | Self::ConnectionsRequired => Self::ExecutionFailed,
+            Self::CredentialSetupRequired
+            | Self::ConnectionsRequired
+            | Self::OwnerBudgetExhausted
+            | Self::TurnBudgetExhausted
+            | Self::BudgetUnavailable => Self::ExecutionFailed,
             code => code,
         }
     }
@@ -248,7 +274,12 @@ impl AdmittedAgentCommand {
             );
         }
         self.work.failure = Some(CommandFailure {
-            code: code.legacy_code(),
+            // Mongo stores new budget precision in an additive sidecar.
+            code: if code.budget_error().is_some() {
+                code
+            } else {
+                code.legacy_code()
+            },
             at: now,
         });
         Ok(())
