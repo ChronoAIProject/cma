@@ -24,7 +24,7 @@ use crate::store::{
 };
 
 pub(crate) struct RecoveryService {
-    store: MongoSandboxStore,
+    pub(super) store: MongoSandboxStore,
     access: Arc<ResourceAccessService>,
     features: CapacityRecoveryFeatures,
 }
@@ -44,6 +44,17 @@ impl RecoveryService {
         completed: &RecoveryWork,
     ) -> Result<RecoveryActivation, RecoveryError> {
         let authorized = self.authorize(caller, &completed.request.agent_id).await?;
+        self.activation_authorized(&authorized, completed).await
+    }
+
+    pub(super) async fn activation_authorized(
+        &self,
+        authorized: &dyn super::authority::RecoveryAuthority,
+        completed: &RecoveryWork,
+    ) -> Result<RecoveryActivation, RecoveryError> {
+        authorized
+            .require_request(&completed.request)
+            .map_err(transactions::error)?;
         let mut session = self
             .store
             .client
@@ -56,7 +67,7 @@ impl RecoveryService {
         let checked = async {
             let current = super::authority::capture(
                 &self.store,
-                &authorized,
+                authorized,
                 &completed.request.agent_id,
                 &mut scope,
             )
@@ -71,7 +82,7 @@ impl RecoveryService {
             }
             let activation = RecoveryActivation::capture(&context, completed)
                 .map_err(|_| layer2_core::sandbox::store::SandboxStoreError::Conflict)?;
-            super::authority::require(&authorized)?;
+            super::authority::require(authorized)?;
             Ok(activation)
         }
         .await;

@@ -23,7 +23,7 @@ owns its public re-export, authenticated mounting and default-off process config
 POST bodies are the original `RecoveryRequest`: Agent, creation key/fingerprint,
 original failure sequence and requested-at timestamp. Path and body Agent must
 match. The timestamp is exactly UTC whole-second `YYYY-MM-DDTHH:MM:SSZ`, with a
-valid calendar date. Bodies are limited to4096 bytes and reject unknown fields;
+valid calendar date. Bodies are limited to 4096 bytes and reject unknown fields;
 there is no input, settings or context replay field. Responses contain only
 bounded disposition/phase, operation identity, attempts and retry/completion time.
 They never serialize retained native/runtime/home identifiers or input digests.
@@ -31,9 +31,9 @@ They never serialize retained native/runtime/home identifiers or input digests.
 All responses, including extractor errors, are private/no-store. Binding and
 request-bound-read credentials cannot use the personal command boundary.
 Independent credential expiry bounds the entire awaited command. An ambiguous
-reply must be reconciled using the unchanged request: HTTP202 `unknown` is not
-success or permission to resend input. Known abort is HTTP409; unavailable
-activation is HTTP503. New admission being disabled does not cancel accepted work.
+reply must be reconciled using the unchanged request: HTTP 202 `unknown` is not
+success or permission to resend input. Known abort is HTTP 409; unavailable
+activation is HTTP 503. New admission being disabled does not cancel accepted work.
 
 ## Completed activation and restart
 
@@ -46,23 +46,25 @@ completion publication. A Retiring parent or changed fence refuses.
 P1-3 is still open pending exact live-registry AlreadyActivated handling and
 restricted background/loss dispatch. The active discovery streams exclude
 Completed. `RecoveryService::discover_agent` uses the frozen by-Agent index to
-find up to32 original requests for one disconnected Agent, including completed
-work. Its limit/batch33 detects overflow; queries use simple collation,
-maxTimeMS1000 and a128KiB candidate byte cap. No unbounded completed scan or new
+find up to 32 original requests for one disconnected Agent, including completed
+work. Its limit/batch 33 detects overflow; queries use simple collation,
+maxTimeMS 1000 and a 128 KiB candidate byte cap. No unbounded completed scan or new
 index is introduced. Candidates, empty results and absent carriers grant no
 authority, prove no KnownAbort and permit no ordinary reconnect fallback.
 
-Background continuation needs an explicit accepted-work authority port. It must
-bind current personal ownership/policy and the original published result without
-constructing a Caller from an owner ID or retaining an expired request Caller.
-Publication incarnation alone does not bind owner. Exact result-revision/digest
-checks and current parent/stop intent remain necessary. The shared registry
-presence helper is process-local evidence only, not durable native proof.
+`AgentWorker::run_accepted_capacity_recovery` provides an accepted-work background
+entry without a Caller. Each store step reissues an opaque receipt-bound authority:
+current scope must be personal; request identity, exact result revision/digest,
+source and immutable publication must match the current Agent including owner.
+The mutation transaction then rechecks policy, shares and every parent snapshot.
+It cannot admit work, fabricate a principal or authorize from metadata. A later
+Agent revision refuses conservatively rather than inferring unchanged ownership.
+Shared scheduling and restricted loss routing still require integration and tests.
 
 ## Bounded child consumers
 
-Recovery child enumeration returns a complete set only within512 children and
-8MiB BSON across every page; a transaction page itself is bounded to4MiB. It
+Recovery child enumeration returns a complete set only within 512 children and
+8 MiB BSON across every page; a transaction page itself is bounded to 4 MiB. It
 refuses oversized Agent or Workspace sets before mutation and does not retain a
 second complete document vector. Tests assert durable rows are unchanged.
 

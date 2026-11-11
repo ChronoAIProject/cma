@@ -77,9 +77,7 @@ pub(super) async fn load(
     id: &SandboxId,
     session: &mut ClientSession,
 ) -> Result<(SandboxUnpublishedRecoverySnapshot, u64), ApplyError> {
-    load_for_inspection(store, id, session, true, false, None)
-        .await
-        .map(|(snapshot, seq, _)| (snapshot, seq))
+    load_with_sources(store, id, session, None).await
 }
 
 pub(in crate::store) async fn load_reopen(
@@ -162,14 +160,24 @@ async fn load_for_inspection(
             .flatten()
         {
             Some(facts) => Some(facts),
-            None => capture_segmented(store, agent, session)
-                .await?
-                .map(|source| {
+            None => match capture_segmented(store, agent, session).await {
+                Ok(source) => source.map(|source| {
                     (
                         source.max_opened_generation(),
                         source.max_retired_generation(),
                     )
                 }),
+                Err(error) => {
+                    observation.finish(match &error {
+                        TransactionLogError::Driver(_)
+                        | TransactionLogError::Domain(SandboxStoreError::Unavailable(_)) => {
+                            Reason::Unavailable
+                        }
+                        _ => Reason::CorruptHistory,
+                    });
+                    return Err(error.into());
+                }
+            },
         };
         if let Some((opened, retired)) = facts {
             if require_reopen {
