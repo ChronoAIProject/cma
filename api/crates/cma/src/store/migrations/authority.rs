@@ -1,30 +1,53 @@
 use cma_service_auth::mongodb_authority::{verify_shared_schema, MongoAuthorityMode};
 use mongodb::bson::{doc, Document};
 
-use super::{ledger::COLLECTION, Result};
+use super::{ledger::COLLECTION, steps::Step, Result};
 
+#[cfg(test)]
 pub(super) fn role(database: &str, apply: bool) -> Document {
-    doc! {"createRole":"cma_am_migrator","privileges":[
-        {"resource":{"db":database,"collection":COLLECTION},
-         "actions":if apply {vec!["find","insert","update","createCollection"]} else {vec!["find"]}},
-        {"resource":{"db":database,"collection":"activity"},
-         "actions":if apply {vec!["listIndexes","createIndex","createCollection"]} else {vec!["listIndexes"]}}
-    ],"roles":[]}
+    role_for(database, apply, Step::Activity)
 }
 
+pub(super) fn role_for(database: &str, apply: bool, step: Step) -> Document {
+    let mut grants = vec![doc! {"resource":{"db":database,"collection":COLLECTION},
+    "actions":if apply {vec!["find","insert","update","createCollection"]} else {vec!["find"]}}];
+    for collection in step.collections() {
+        let actions = if !apply {
+            vec!["listIndexes"]
+        } else if step == Step::Activity {
+            vec!["listIndexes", "createIndex", "createCollection"]
+        } else {
+            vec!["listIndexes", "createIndex"]
+        };
+        grants.push(doc! {"resource":{"db":database,"collection":collection}, "actions":actions});
+    }
+    doc! {"createRole":"cma_am_migrator","privileges":grants,"roles":[]}
+}
+
+#[cfg(test)]
 pub(super) fn verify(
     status: &Document,
     database: &str,
     mode: MongoAuthorityMode,
     apply: bool,
 ) -> Result<()> {
-    verify_shared_schema(status, database, &role(database, apply))
+    verify_for(status, database, mode, apply, Step::Activity)
+}
+
+pub(super) fn verify_for(
+    status: &Document,
+    database: &str,
+    mode: MongoAuthorityMode,
+    apply: bool,
+    step: Step,
+) -> Result<()> {
+    verify_shared_schema(status, database, &role_for(database, apply, step))
         .map_err(|_| "migration database authority is insufficient")?;
     if mode == MongoAuthorityMode::Isolated {
         let info = status
             .get_document("authInfo")
             .map_err(|_| "migration authority malformed")?;
-        let permitted = role(database, true);
+        let permitted = role_for(database, true, step);
         for grant in info
             .get_array("authenticatedUserPrivileges")
             .map_err(|_| "migration grants malformed")?
