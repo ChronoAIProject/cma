@@ -5,10 +5,13 @@ mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
     pub parent_not_ready_pacing_enabled: bool,
+    pub bounded_permission_state: bool,
     pub retained_reopen_enabled: bool,
     pub model_budget_writes_enabled: bool,
     pub model_request_budget_writes_enabled: bool,
     pub bounded_title_reads: bool,
+    pub sandbox_snapshot_reads: bool,
+    pub sandbox_detail_timings: bool,
     pub bounded_response_reads: bool,
     pub bounded_transcript_reads: bool,
     pub bounded_usage_reads: bool,
@@ -41,7 +44,10 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED",
             )?,
+            bounded_permission_state: flag(lookup, "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED")?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
+            sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
+            sandbox_detail_timings: flag(lookup, "CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
@@ -175,6 +181,40 @@ mod close_retry_tests {
 }
 
 #[cfg(test)]
+mod sandbox_read_tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_snapshot_and_timings_are_independent_strict_opt_ins() {
+        for key in [
+            "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED",
+            "CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED",
+        ] {
+            for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+                let flags = FeatureFlags::from_lookup(&mut |name| {
+                    Ok((name == key).then(|| value.map(str::to_owned)).flatten())
+                })
+                .unwrap();
+                assert_eq!(
+                    flags.sandbox_snapshot_reads,
+                    enabled && key.contains("SNAPSHOT")
+                );
+                assert_eq!(
+                    flags.sandbox_detail_timings,
+                    enabled && key.contains("TIMINGS")
+                );
+            }
+            for invalid in ["", "1", "TRUE", " true "] {
+                assert!(FeatureFlags::from_lookup(&mut |name| {
+                    Ok((name == key).then(|| invalid.to_owned()))
+                })
+                .is_err());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod response_tests {
     use super::*;
 
@@ -218,6 +258,31 @@ mod paged_event_tests {
             assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
                 == "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")
                 .then(|| value.into())))
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod permission_bound_tests {
+    use super::*;
+
+    #[test]
+    fn permission_state_requires_its_own_strict_opt_in() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_permission_state, expected);
+            assert!(!flags.bounded_response_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED").then(|| value.into()))
+            })
             .is_err());
         }
     }
