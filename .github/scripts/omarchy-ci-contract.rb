@@ -56,8 +56,6 @@ module OmarchyCIContract
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           ARGS
             ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
-            type=gha,scope=runtime-desktop
-            type=gha,scope=runtime
           CACHE
       { "name" => "Release Omarchy build cache before image checks", "run" => <<~'SH' },
         image_id=$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')
