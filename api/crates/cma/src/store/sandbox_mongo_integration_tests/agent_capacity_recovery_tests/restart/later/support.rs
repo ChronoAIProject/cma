@@ -104,7 +104,7 @@ pub(super) async fn progress(
     next.conversation.managed_guidance_revision += 1;
     next.status = AgentStatus::Working;
     next.conversation.active_turn = Some(current.conversation.last_seq + 1);
-    next.conversation.last_seq += 2;
+    next.conversation.last_seq += 3;
     let logs = vec![
         AgentLogEntry {
             agent_id: current.id.clone(),
@@ -114,6 +114,14 @@ pub(super) async fn progress(
                 turn_sequence: current.conversation.last_seq + 1,
                 model: None,
                 origin_key: None,
+            },
+        },
+        AgentLogEntry {
+            agent_id: current.id.clone(),
+            seq: current.conversation.last_seq + 2,
+            appended_at: now.clone(),
+            kind: AgentLogKind::OwnerMessage {
+                content: "later fixture input".into(),
             },
         },
         AgentLogEntry {
