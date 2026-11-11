@@ -97,6 +97,9 @@ impl AgentOutputObservation<'_> {
                 "original output points do not match their references",
             ));
         }
+        for row in &rows {
+            validation::point(self.metadata(), row)?;
+        }
         Ok(rows
             .into_iter()
             .map(|row| AgentVisibleLogEntry::from_entry(row, self.personal))
@@ -128,6 +131,9 @@ impl AgentOutputObservation<'_> {
             })
         {
             return Err(corrupt("original source page is not consecutive"));
+        }
+        for row in &rows {
+            validation::point(self.metadata(), row)?;
         }
         Ok(rows
             .into_iter()
