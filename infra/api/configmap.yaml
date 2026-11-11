@@ -96,6 +96,7 @@ data:
   CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "false"
   # Response projection uses a proven target-turn window; independent rollout.
   CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
+  CHRONO_RESPONSE_PAGED_EVENTS_ENABLED: "false"
   CHRONO_TASK_EXPERIENCE_POLICY: '{"mode":"disabled","accounts":[],"capabilities":[]}'
   # Independent placement rollout selections; these do not attest continuity.
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
