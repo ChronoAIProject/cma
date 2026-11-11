@@ -9,6 +9,7 @@ use super::{
 
 mod legacy;
 mod observe;
+mod publication;
 pub use legacy::BoundedAgentLogFold;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,6 +187,7 @@ impl AgentLogTurnFacts {
 
 /// At most a fixed number of evidence upserts per source event. Sets that grow
 /// with history live in indexed rows, never arrays in the current-state record.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentLogEvidenceChange {
     Turn(Box<AgentLogTurnFacts>),
     Message {
