@@ -33,7 +33,45 @@ The two Retiring-parent cases are successful *dispositions* when retirement and
 cleanup are preserved; they are not recovered running Agents. No blanket
 Failed→Ready rewrite and no change to the generic Agent transition graph.
 
+## Read-only dry-run HTTP contract
+
+`GET /api/v1/agents/{id}/capacity-recovery/dry-run` requires current
+`OperateAgent` authority, including fresh resource/share policy and membership
+where applicable. It remains available when recovery admission is disabled.
+The successful JSON object contains exactly `agent_id`, `disposition`,
+`observed_revision`, `through_seq` and `evaluated_at`. It exposes no original
+input, runtime/home identity, open receipt, settings, operation fingerprint or
+native-state proof. `evidence_required` is an observation that further certified
+source work is needed; it is not admission or a recovery-success assertion.
+
+The service rechecks current coherent ancestry before release and does not read
+or append the log, create recovery work or contact the runtime. A retiring parent
+continues to return cleanup-only intent. Existing first/queued messages and all
+receipts remain unchanged.
+
+Responses carry `Cache-Control: private, no-store`, including authentication
+extractor refusals and dependency/authorization errors. Missing authentication
+returns 401, a concealed foreign/unknown resource 404, insufficient current
+operation authority 403, changed authority 409 and unavailable authority/source
+metadata 503. The route has no POST/admission operation. Production admission
+and completed-status routes remain separate acceptance work.
+
 ## Reuse and code boundaries
+
+The current storage checkpoint uses recovery carrier BSON format 2. Its strict
+`result` witness records the original Agent result hash, log-batch hash, Agent
+revision, global through sequence and publication timestamp. S4's immutable
+publication digest binds that witness and the full recovery work with domain
+`cma.capacity-recovery.result/v2`. The witness contains no input or Agent snapshot.
+Earlier draft format-1 carrier rows are refused; this default-off carrier has
+not been activated in production. The domain work record remains format 1.
+
+Receipt reads verify the original admission, exact work revision and publication
+result, current certified segmented source, historical seal coordinates and the
+single retained completion status event. A later Agent revision or owner stop
+does not rewrite the original result. Missing publication evidence remains
+unresolved. Returning a completed receipt does not reconnect or activate the
+native process; that remains a separately fenced runtime responsibility.
 
 The integration plan assigns S5 capacity recovery, checkpoint/maintenance/
 unpublished recovery and scoped retry pacing. S1 owns raw-BSON validation,

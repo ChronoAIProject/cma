@@ -63,6 +63,29 @@ impl<S: CapacityRecoveryStore, R: CapacityRecoveryRuntime> CapacityRecoveryServi
         self.store.admit(caller, snapshot, work, next_agent).await
     }
 
+    async fn activate_completed(
+        &self,
+        caller: &Caller,
+        completed: &RecoveryWork,
+    ) -> Result<(), RecoveryError> {
+        let activation = self.store.activation(caller, completed).await?;
+        let attached = self.runtime.reattach_completed(&activation).await?;
+        // Re-read authority, parents and the immutable result after native IO.
+        if self.store.activation(caller, completed).await? != activation {
+            return Err(RecoveryError::Conflict);
+        }
+        match attached {
+            CompletedAttachment::AlreadyActivated => Ok(()),
+            CompletedAttachment::Reattached {
+                attachment,
+                confirmation,
+            } => {
+                activation.require_confirmation(&confirmation)?;
+                self.runtime.acknowledge(attachment, completed).await
+            }
+        }
+    }
+
     pub async fn resume(
         &self,
         caller: &Caller,
@@ -92,6 +115,9 @@ impl<S: CapacityRecoveryStore, R: CapacityRecoveryRuntime> CapacityRecoveryServi
                 if &work.request != request {
                     return Err(RecoveryError::Conflict);
                 }
+                if work.phase == RecoveryPhase::Completed {
+                    self.activate_completed(caller, &work).await?;
+                }
                 return Ok(CommitOutcome::Recorded(*work));
             }
             ClaimOutcome::Unknown => return Ok(CommitOutcome::Unknown),
@@ -118,12 +144,21 @@ impl<S: CapacityRecoveryStore, R: CapacityRecoveryRuntime> CapacityRecoveryServi
             .await?;
         if let CommitOutcome::Recorded(completed) = &outcome {
             completed.validate()?;
-            if completed.phase != RecoveryPhase::Completed
-                || completed.request != claim.work.request
-                || completed.target != claim.work.target
-            {
+            // A receipt for another lease attempt cannot authorize this
+            // attachment, even when it names the same request/native target.
+            let mut expected = claim.work.clone();
+            expected.phase = RecoveryPhase::Completed;
+            expected.revision = expected
+                .revision
+                .checked_add(1)
+                .ok_or(RecoveryError::InvalidEvidence)?;
+            expected.lease = None;
+            expected.completed_at = Some(current);
+            if completed != &expected {
                 return Err(RecoveryError::InvalidEvidence);
             }
+            let activation = self.store.activation(caller, completed).await?;
+            activation.require_confirmation(&confirmation)?;
             self.runtime.acknowledge(attachment, completed).await?;
         }
         // Unknown/known-abort drops the attachment without acknowledging it.

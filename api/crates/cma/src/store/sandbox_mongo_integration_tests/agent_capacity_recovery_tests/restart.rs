@@ -1,0 +1,288 @@
+//! Durable Mongo completion/restart evidence; the native port is a counted stub.
+//! Production native proof remains Unsupported and requires separate qualification.
+use super::*;
+use crate::sandbox::binding_lifecycle_test_support::{
+    CapacityRecoveryReconnect, DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
+    LiveAgentConnectionLossHandler, ReconnectAction, RecoveryReconnect,
+};
+use crate::store::agent_capacity_recovery::{records, RecoveryService, RestartDecision};
+use layer2_core::sandbox::agent_capacity_recovery::{
+    activation::RecoveryActivation,
+    ports::{
+        CapacityRecoveryRuntime, ClaimOutcome, CommitOutcome, CompletedAttachment, RecoveryError,
+    },
+    service::CapacityRecoveryFeatures,
+    state::{
+        ConfirmedNativeState, RecoveryClaim, RecoveryConfirmation, RecoveryRequest, RecoveryWork,
+    },
+};
+use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::OnceLock;
+use std::time::{Duration, SystemTime};
+
+#[derive(Clone, Default)]
+struct Native {
+    attaches: Arc<AtomicUsize>,
+    acknowledges: Arc<AtomicUsize>,
+    fail_ack: Arc<AtomicBool>,
+}
+#[async_trait::async_trait]
+impl CapacityRecoveryRuntime for Native {
+    type Attachment = (String, u64);
+    async fn reattach_existing(
+        &self,
+        _: &RecoveryClaim,
+    ) -> Result<(Self::Attachment, RecoveryConfirmation), RecoveryError> {
+        panic!("completed restart must never repeat the original claim or runtime step")
+    }
+    async fn reattach_completed(
+        &self,
+        activation: &RecoveryActivation,
+    ) -> Result<CompletedAttachment<Self::Attachment>, RecoveryError> {
+        self.attaches.fetch_add(1, Ordering::SeqCst);
+        let work = activation.completed();
+        let key = work.request.key()?;
+        Ok(CompletedAttachment::Reattached {
+            attachment: (key.clone(), activation.writer_fence()),
+            confirmation: Box::new(RecoveryConfirmation {
+                operation_key: key,
+                target: work.target.clone(),
+                authority_fence: activation.writer_fence(),
+                native_state: ConfirmedNativeState::Idle,
+            }),
+        })
+    }
+    async fn acknowledge(
+        &self,
+        (key, fence): Self::Attachment,
+        work: &RecoveryWork,
+    ) -> Result<(), RecoveryError> {
+        assert_eq!(key, work.request.key()?);
+        assert_eq!(fence + 1, work.next_fence);
+        if self.fail_ack.swap(false, Ordering::SeqCst) {
+            return Err(RecoveryError::Unavailable);
+        }
+        self.acknowledges.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn capacity_completed_mongo_restart_retries_activation_without_republication() {
+    let (client, name) = database("capacity_completed_restart").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let agent = fixture::capacity_fixture(&store).await;
+    let caller = Caller::new(
+        agent.owner.clone(),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    let request = RecoveryRequest {
+        agent_id: agent.id.clone(),
+        creation_key: agent.creation_key.clone(),
+        creation_fingerprint: agent.creation_fingerprint.clone(),
+        failure_seq: agent.conversation.last_seq,
+        requested_at: layer2_core::now_rfc3339(),
+    };
+    let service = RecoveryService::new(store.clone(), transactions::access(&store))
+        .with_features(CapacityRecoveryFeatures { enabled: true });
+    assert!(matches!(
+        service.restart_decision(&agent.id).await.unwrap(),
+        RestartDecision::Legacy
+    ));
+    assert_eq!(
+        service
+            .run_accepted(&Native::default(), &request, "no-receipt")
+            .await,
+        Err(RecoveryError::Conflict)
+    );
+    assert!(matches!(
+        service.admit(&caller, &request).await.unwrap(),
+        CommitOutcome::Recorded(_)
+    ));
+    assert!(matches!(
+        service.restart_decision(&agent.id).await.unwrap(),
+        RestartDecision::Deferred
+    ));
+    let at = SystemTime::now();
+    let now = layer2_core::rfc3339_at(at);
+    let expiry = layer2_core::rfc3339_at(at + Duration::from_secs(60));
+    let ClaimOutcome::Claimed(claim) = service
+        .claim(&caller, &request, "original", &now, &expiry)
+        .await
+        .unwrap()
+    else {
+        panic!("claim must be durable");
+    };
+    let confirmation = RecoveryConfirmation {
+        operation_key: request.key().unwrap(),
+        target: claim.work.target.clone(),
+        authority_fence: claim.work.lease.as_ref().unwrap().fence,
+        native_state: ConfirmedNativeState::Idle,
+    };
+    let CommitOutcome::Recorded(completed) = service
+        .complete(&caller, &claim, &confirmation, &now)
+        .await
+        .unwrap()
+    else {
+        panic!("completion must be durable");
+    };
+    // Crash before activation; no in-memory attachment survives this point.
+    let saved = store.get_agent(&agent.id).await.unwrap().unwrap();
+    let carrier = records::collection(&store)
+        .find_one(doc! {"_id": request.key().unwrap()})
+        .await
+        .unwrap();
+    let publications = store
+        .segment_logs
+        .publications
+        .count_documents(doc! {})
+        .await
+        .unwrap();
+    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let restarted = Arc::new(RecoveryService::new(
+        reopened.clone(),
+        transactions::access(&reopened),
+    ));
+    let native = Native::default();
+    let router = Arc::new(RecoveryReconnect::new(
+        restarted.clone(),
+        native.clone(),
+        "restart".into(),
+    ));
+    // The actual restart discovery must include this completed schema-v2 Agent
+    // even though completion leaves no pending ordinary work.
+    let live = reopened
+        .live_agent_connections(&PageRequest::new(32, None).unwrap())
+        .await
+        .unwrap();
+    assert!(live
+        .items
+        .iter()
+        .any(|candidate| candidate.agent_id == agent.id));
+    native.fail_ack.store(true, Ordering::SeqCst);
+    assert_eq!(
+        router.route(&agent.id).await,
+        Err(RecoveryError::Unavailable)
+    );
+    // The real loss handler must route the exact completion through recovery,
+    // never schedule ordinary PublishConnection or change the durable Agent.
+    let route: Arc<dyn CapacityRecoveryReconnect> = router.clone();
+    let installed = Arc::new(OnceLock::from(route));
+    let handler = DurableAgentConnectionLossHandler::with_capacity_recovery(
+        Arc::new(reopened.clone()),
+        installed,
+    );
+    handler
+        .connection_lost(LiveAgentAttachmentIdentity {
+            agent_id: agent.id.clone(),
+            conversation_id: completed.target.conversation_id.clone(),
+            runtime_generation: completed.target.conversation_generation,
+            authority_fence: completed.next_fence - 1,
+            nonce: 1,
+        })
+        .await;
+    assert_eq!(
+        restarted.lookup(&caller, &request).await.unwrap(),
+        layer2_core::sandbox::agent_capacity_recovery::ports::RecoveryLookup::Recorded(Box::new(
+            completed
+        ))
+    );
+    assert_eq!(native.attaches.load(Ordering::SeqCst), 2);
+    assert_eq!(native.acknowledges.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        store.get_agent(&agent.id).await.unwrap(),
+        Some(saved.clone())
+    );
+    assert_eq!(
+        records::collection(&store)
+            .find_one(doc! {"_id": request.key().unwrap()})
+            .await
+            .unwrap(),
+        carrier
+    );
+    assert_eq!(
+        store
+            .segment_logs
+            .publications
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        publications
+    );
+    // A different original timestamp shares an operation key but must not gain
+    // receipt-bound background permission.
+    let mut different = request.clone();
+    different.requested_at = "2026-11-11T00:00:00Z".into();
+    assert_eq!(
+        restarted.run_accepted(&native, &different, "restart").await,
+        Err(RecoveryError::Conflict)
+    );
+    assert_eq!(native.attaches.load(Ordering::SeqCst), 2);
+    // A later Agent revision no longer has exact original-result authority,
+    // even if its incarnation and native conversation remain unchanged.
+    let mut advanced = saved.clone();
+    advanced.revision += 1;
+    replace_agent_fixture(&store, &advanced).await;
+    assert_eq!(router.route(&agent.id).await, Ok(ReconnectAction::Deferred));
+    assert_eq!(
+        restarted.run_accepted(&native, &request, "restart").await,
+        Err(RecoveryError::Conflict)
+    );
+    assert_eq!(native.attaches.load(Ordering::SeqCst), 2);
+    replace_agent_fixture(&store, &saved).await;
+    // A current organization sidecar must never become personal accepted-work
+    // authority just because it uses the same subject text as the old owner.
+    let parent = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
+    let policy = layer2_core::resource_access::ResourcePolicyRecord {
+        sandbox_id: parent.id.clone(),
+        sandbox_created_at: parent.created_at.clone(),
+        owner: layer2_core::resource_access::ResourceOwner::Organization {
+            subject: parent.owner.clone(),
+        },
+        organization_evidence: Some(
+            layer2_core::resource_access::OrganizationOwnershipEvidence {
+                issuer: "fixture".into(),
+                organization: parent.owner.clone(),
+                admitted_by: layer2_core::resource_access::ResourceActor::Human {
+                    subject: SubjectId::new("fixture"),
+                },
+                verified_at: NOW.into(),
+            },
+        ),
+        revision: 1,
+    };
+    store
+        .resource_policies
+        .insert_one(crate::store::resource_access::records::policy_document(&policy).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        restarted.run_accepted(&native, &request, "restart").await,
+        Err(RecoveryError::Conflict)
+    );
+    assert_eq!(native.attaches.load(Ordering::SeqCst), 2);
+    store
+        .resource_policies
+        .delete_one(doc! {"_id": parent.id.as_str()})
+        .await
+        .unwrap();
+    let mut parent = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
+    parent.status = SandboxStatus::Retiring;
+    parent.revision += 1;
+    store
+        .sandboxes
+        .update_one(
+            doc! {"_id": parent.id.as_str()},
+            doc! {"$set":
+            crate::store::sandboxes::sandbox_replacement_fields(&parent).unwrap()},
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        restarted.run_accepted(&native, &request, "restart").await,
+        Err(RecoveryError::Conflict)
+    );
+    assert_eq!(native.attaches.load(Ordering::SeqCst), 2);
+    client.database(&name).drop().await.unwrap();
+}
