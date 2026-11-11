@@ -11,7 +11,7 @@ use layer2_core::{
             ports::{CapacityRecoveryRuntime, CompletedAttachment, RecoveryError},
             state::{
                 ConfirmedNativeState, RecoveryClaim, RecoveryConfirmation, RecoveryPhase,
-                RecoveryWork,
+                RecoveryTarget, RecoveryWork,
             },
         },
         Agent, AgentUpdateRecorder,
@@ -71,7 +71,9 @@ impl CapacityRecoveryRuntime for RestrictedRecoveryRuntime {
             .as_ref()
             .ok_or(RecoveryError::Conflict)?
             .fence;
-        let attached = self.connect(&claim.work, &claim.agent, fence).await?;
+        let attached = self
+            .connect(&claim.work, &claim.work.target, &claim.agent, fence)
+            .await?;
         attached.1.validate_for(claim)?;
         Ok(attached)
     }
@@ -80,7 +82,7 @@ impl CapacityRecoveryRuntime for RestrictedRecoveryRuntime {
         &self,
         activation: &RecoveryActivation,
     ) -> Result<CompletedAttachment<Self::Attachment>, RecoveryError> {
-        let target = &activation.completed().target;
+        let target = activation.target();
         if self.registry.recovery_attachment_is_active(
             &LiveAgentTarget {
                 agent_id: target.agent_id.clone(),
@@ -97,6 +99,7 @@ impl CapacityRecoveryRuntime for RestrictedRecoveryRuntime {
         let attached = self
             .connect(
                 activation.completed(),
+                activation.target(),
                 activation.agent(),
                 activation.writer_fence(),
             )
@@ -155,10 +158,11 @@ impl RestrictedRecoveryRuntime {
     async fn connect(
         &self,
         work: &RecoveryWork,
+        target: &RecoveryTarget,
         agent: &Agent,
         fence: u64,
     ) -> Result<(RetainedAttachment, RecoveryConfirmation), RecoveryError> {
-        let request = native_request(work, agent, fence)?;
+        let request = native_request(work, target, agent, fence)?;
         let (updates, receiver) = mpsc::channel(128);
         let connection = self
             .adapter
@@ -183,7 +187,7 @@ impl RestrictedRecoveryRuntime {
         };
         let confirmation = RecoveryConfirmation {
             operation_key: request.operation_key,
-            target: work.target.clone(),
+            target: target.clone(),
             authority_fence: request.writer_fence,
             native_state,
         };
@@ -205,18 +209,19 @@ impl RestrictedRecoveryRuntime {
 
 fn native_request(
     work: &RecoveryWork,
+    target: &RecoveryTarget,
     agent: &Agent,
     fence: u64,
 ) -> Result<CapacityRecoveryRequest, RecoveryError> {
     work.validate()?;
-    let target = &work.target;
     if agent.id != target.agent_id
         || agent.creation_key != target.creation_key
         || agent.creation_fingerprint != target.creation_fingerprint
         || agent.conversation.conversation_id.as_ref() != Some(&target.conversation_id)
         || agent.conversation.runtime_generation != Some(target.conversation_generation)
-        || agent.work.next_fence != work.next_fence
-        || fence.checked_add(1) != Some(work.next_fence)
+        || agent.conversation.active_turn != target.active_turn
+        || agent.work.next_fence < work.next_fence
+        || fence.checked_add(1) != Some(agent.work.next_fence)
     {
         return Err(RecoveryError::Conflict);
     }
