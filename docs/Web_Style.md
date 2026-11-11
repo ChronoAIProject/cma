@@ -2383,19 +2383,33 @@ the centre column of the collapsed portal frame and scrolls as one page:
   alert with Try again.
 - Copy never names the agent provider; CMA is the brand.
 
-A browser without a CMA sign-in may still be signed in to NyxID. Before the
-first paint of this surface, the identity check asks NyxID once, without any
-NyxID screen, and keeps the existing **Signing you in** loading state while the
-page leaves. A NyxID session returns the person, signed in, to the address they
-opened; one that needs CMA approved continues to NyxID's own consent screen.
-Otherwise the browser returns to the same address and this surface is shown,
-with no error and no second attempt in that tab. A page that has not left after
-10 seconds shows this surface rather than holding the loading state. The check
-runs only on addresses the control plane accepts as a sign-in return, without a
-query or fragment, and never on a public Trigger, Launch, share link or
-document; later identity refreshes on focus or reconnection never leave the
-page. After an explicit Sign out it is not made again until the person signs
-in, because CMA sign-out does not end the NyxID session.
+A browser without a CMA sign-in may still be signed in to NyxID. When the API
+advertises silent sign-in, the opening identity read checks once before showing
+this surface. Navigating inside the SPA from a skipped page to an eligible page
+gets the same opportunity. An attempt marker prevents a second round trip in
+that tab until successful authentication. The existing **Signing you in** state
+lasts at most 10 seconds if navigation is stopped; navigation failure shows the
+ordinary signed-out surface without an error. A valid provider session returns
+to the address opened, including `/`; consent may show NyxID's consent screen.
+A provider refusal or bound automatic exchange failure returns signed out.
+
+Preserve the existing `setup` query on `/bots/new` and `tab` query on Sandbox
+pages through the backend's validated return target. Unknown/duplicate query
+keys are excluded because they have no defined UI restoration meaning and may
+carry redirect or authority data. Fragments are excluded because share tokens
+must remain in the browser. Public Trigger, Launch, share-link and document
+journeys retain their own explicit sign-in. Focus, visibility and online refreshes
+never navigate. Background identity outages preserve mounted authenticated
+views; anonymous presentation and a stopped round trip retain owner-scoped
+unsubmitted drafts and command identities. Explicit logout or verification of
+a different owner clears that retained private state before mounting the new
+owner's view; nothing automatically creates or submits work.
+
+Server logout establishes a 30-day browser opt-out of automatic sign-in. Explicit
+Sign in and Create account still work and do not erase this preference, so a
+late callback cannot undo a newer logout. No new control or visual primitive is
+introduced. Deployment activation is governed by the default-off startup flag
+and compatible-image rollout in the API Overview.
 
 A public Trigger URL has its own complete read-only landing (§13b), not this
 generic gate. Sign in and Create account preserve the canonical local return
@@ -6170,3 +6184,5 @@ must not reopen Save without an available response for that policy.
 | 2026-11-11 | Align settings save availability with retained foundation/request policy gates and keep empty-policy unrelated saves available. |
 
 | 2026-11-06 | Check for a live NyxID session once, silently, before showing the signed-out surface (§20), keeping the existing Signing you in state for at most 10 seconds and never repeating after an explicit Sign out. |
+
+| 2026-11-11 | Finish silent sign-in rollout gating, server-owned logout suppression and callback fencing, eligible SPA navigation, bounded UI query restoration and owner-scoped draft preservation; retain all prior changelog entries. |

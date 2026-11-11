@@ -56,7 +56,7 @@ let logout = client.auth().logout_url()?;
 Login and logout helpers construct explicit browser navigation URLs only. The
 OAuth callback belongs to browser authentication and is not an SDK token
 exchange. Return targets must be canonical CMA workflow paths; absolute URLs,
-fragments, query strings, and arbitrary redirects are refused before transport.
+fragments, unknown query strings, and arbitrary redirects are refused before transport.
 
 ## Renewable Sandbox Authority
 
@@ -80,3 +80,11 @@ sign-in, but an ambiguous creation failure is not automatically safe to replay.
 admission checks setup again; store and provider outages remain dependency
 errors. The SDK does not perform an OAuth token exchange or obtain refresh
 credentials for a backend client.
+
+Return destinations also support `/agent-manager`, `/event-gateway`, `/image-manager`,
+Bot pages and the public actor-link completion path. A single `setup` query on
+`/bots/new` and a single `tab` query on `/sandboxes/{id}` are preserved; duplicate
+or unknown keys and fragments are rejected. Paths are limited to 256 bytes and
+the complete target to 25,064 UTF-8 bytes. The anonymous `silent_sign_in` hint is
+controlled by the API startup flag, default false; the SDK continues projecting
+`SignedOut`. Logout is server-owned and emits separate session/suppression cookies.
