@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use super::{invalid, storage_error, Archive, GroupProof};
 use crate::failure::Result;
+use crate::ledger_reclamation::CollectionEvidence;
 use crate::mutation_ledger::{
     retirement_inventory::{
         Context, DeactivationReceipt, Selection, MAX_SELECTION_BYTES, MAX_SELECTION_ROWS,
@@ -28,6 +29,31 @@ pub(crate) async fn deactivate_held(
     deactivate_checked(archive, source, proof, observation, exclusion, |_| Ok(())).await
 }
 
+/// Bounded evidence variant of the same consume/close held core. This remains
+/// an internal seam: the caller's guard is not proof of production exclusion.
+pub(crate) async fn deactivate_collected_held(
+    archive: Archive,
+    source: Ledger,
+    proof: GroupProof,
+    evidence: CollectionEvidence,
+    exclusion: impl Send + 'static,
+) -> Result<DeactivationReceipt> {
+    deactivate_with(
+        archive,
+        source,
+        proof,
+        Eligibility::Collected(Box::new(evidence)),
+        exclusion,
+        |_| Ok(()),
+    )
+    .await
+}
+
+pub(super) enum Eligibility {
+    Legacy(Vec<u8>),
+    Collected(Box<CollectionEvidence>),
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum Boundary {
     Verified,
@@ -40,6 +66,25 @@ pub(super) async fn deactivate_checked(
     source: Ledger,
     proof: GroupProof,
     observation: Vec<u8>,
+    exclusion: impl Send + 'static,
+    boundary: impl FnMut(Boundary) -> Result<()> + Send + 'static,
+) -> Result<DeactivationReceipt> {
+    deactivate_with(
+        archive,
+        source,
+        proof,
+        Eligibility::Legacy(observation),
+        exclusion,
+        boundary,
+    )
+    .await
+}
+
+async fn deactivate_with(
+    archive: Archive,
+    source: Ledger,
+    proof: GroupProof,
+    observation: Eligibility,
     exclusion: impl Send + 'static,
     mut boundary: impl FnMut(Boundary) -> Result<()> + Send + 'static,
 ) -> Result<DeactivationReceipt> {
@@ -75,12 +120,37 @@ async fn apply(
     archive: &Arc<Archive>,
     source: &Ledger,
     proof: GroupProof,
-    observation: Vec<u8>,
+    observation: Eligibility,
     boundary: &mut (impl FnMut(Boundary) -> Result<()> + Send),
     exclusion: Arc<Mutex<impl Send + 'static>>,
 ) -> Result<DeactivationReceipt> {
+    if archive.version != super::Version::Indexed {
+        return Err(invalid());
+    }
+    let selection = selection(archive, proof, observation).await?;
+    archive.verify()?;
+    boundary(Boundary::Verified)?;
+    let receipt = source
+        .deactivate_retirement(selection, (archive.clone(), exclusion))
+        .await?;
+    boundary(Boundary::Committed)?;
+    Ok(receipt)
+}
+
+/// Reuse exact held source validation for a qualified completion coordinator.
+/// This method only builds a selection; it does not grant serving or exclusion.
+pub(super) async fn selection(
+    archive: &Arc<Archive>,
+    proof: GroupProof,
+    observation: Eligibility,
+) -> Result<Selection> {
     archive.verify()?;
     super::require_reserve(&archive.path, archive.anchor.as_deref())?;
+    if matches!(&observation, Eligibility::Collected(evidence)
+        if evidence.binding().archive_id != archive.archive_id)
+    {
+        return Err(invalid());
+    }
     if proof.records == 0 || proof.records as usize > MAX_SELECTION_ROWS {
         return Err(invalid());
     }
@@ -118,18 +188,14 @@ async fn apply(
         return Err(invalid());
     }
     let (context, rows, _) = std::mem::take(&mut *collected.lock().map_err(|_| invalid())?);
-    let selection = Selection::new(
-        &archive.config,
-        proof,
-        context.ok_or_else(invalid)?,
-        rows,
-        &observation,
-    )?;
-    archive.verify()?;
-    boundary(Boundary::Verified)?;
-    let receipt = source
-        .deactivate_retirement(selection, (archive.clone(), exclusion))
-        .await?;
-    boundary(Boundary::Committed)?;
-    Ok(receipt)
+    let context = context.ok_or_else(invalid)?;
+    let selection = match observation {
+        Eligibility::Legacy(bytes) => {
+            Selection::new(&archive.config, proof, context, rows, &bytes)?
+        }
+        Eligibility::Collected(evidence) => {
+            Selection::collected(&archive.config, proof, context, rows, &evidence)?
+        }
+    };
+    Ok(selection)
 }
