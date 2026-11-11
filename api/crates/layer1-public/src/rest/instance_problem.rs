@@ -167,10 +167,19 @@ impl From<AgentOperationError> for InstanceProblem {
     }
 }
 
+/// The owner has not exhausted anything of theirs when the platform stops:
+/// 503, and never a `Retry-After`, because lifting needs an operator revision.
+pub(crate) fn budget_status(reason: layer2_core::budget::BudgetError) -> StatusCode {
+    match reason {
+        layer2_core::budget::BudgetError::PlatformExhausted => StatusCode::SERVICE_UNAVAILABLE,
+        _ => StatusCode::PAYMENT_REQUIRED,
+    }
+}
+
 impl IntoResponse for InstanceProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code): (_, _, &str, _) = match &self {
-            Self::Budget(reason) => (StatusCode::PAYMENT_REQUIRED, "model-budget-refused", reason.guidance(), reason.code()),
+            Self::Budget(reason) => (budget_status(*reason), "model-budget-refused", reason.guidance(), reason.code()),
             Self::ResourceAccess(error) => return super::resource_access_problem::ResourceProblem(error.clone()).into_response(),
             Self::Connection(error) => return super::instances_problem::HierarchyProblem::connection(error.clone()).into_response(),
             Self::Forbidden => (

@@ -56,6 +56,7 @@ impl FirstMessageRecord {
                         | "owner_budget_exhausted"
                         | "turn_budget_exhausted"
                         | "budget_unavailable"
+                        | "platform_budget_exhausted"
                 ) && !failure.retryable
                     && self.failed_at.as_ref() == Some(&failure.occurred_at)
             })

@@ -256,6 +256,7 @@ mod compatibility_tests {
             CommandFailureCode::OwnerBudgetExhausted,
             CommandFailureCode::TurnBudgetExhausted,
             CommandFailureCode::BudgetUnavailable,
+            CommandFailureCode::PlatformBudgetExhausted,
         ] {
             let retained = CommandStatusView {
                 receipt: CommandReceiptView {
