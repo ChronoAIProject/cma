@@ -2,6 +2,7 @@
 //! one existing transaction. Refusal is the only permitted unimplemented path.
 use async_trait::async_trait;
 
+use super::activation::RecoveryActivation;
 use super::state::{RecoveryClaim, RecoveryConfirmation, RecoveryRequest, RecoveryWork};
 use super::{CapacityRecoveryContext, CapacityRecoveryDisposition};
 use crate::sandbox::{Agent, AgentLogEntry, Sandbox, Workspace, Worktree};
@@ -121,6 +122,16 @@ pub trait CapacityRecoveryStore: Send + Sync {
         now: &str,
     ) -> Result<CommitOutcome<RecoveryWork>, RecoveryError>;
 
+    /// Re-read exact completed publication, current Agent/native/input identity
+    /// and live parents. Absence or unresolved evidence never authorizes attach.
+    async fn activation(
+        &self,
+        _caller: &Caller,
+        _completed: &RecoveryWork,
+    ) -> Result<RecoveryActivation, RecoveryError> {
+        Err(RecoveryError::Unavailable)
+    }
+
     async fn retry(
         &self,
         caller: &Caller,
@@ -141,6 +152,17 @@ pub trait CapacityRecoveryRuntime: Send + Sync {
         &self,
         claim: &RecoveryClaim,
     ) -> Result<(Self::Attachment, RecoveryConfirmation), RecoveryError>;
+
+    /// Reattach the exact committed native fence after a crash before activation.
+    /// A provider must atomically replace an older connection for the same
+    /// operation/fence, reject a newer fence, and retain unacknowledged output.
+    /// No input/settings replay or new native process is permitted.
+    async fn reattach_completed(
+        &self,
+        _activation: &RecoveryActivation,
+    ) -> Result<(Self::Attachment, RecoveryConfirmation), RecoveryError> {
+        Err(RecoveryError::Unavailable)
+    }
 
     /// Called only after an exact durable completed receipt, never on Unknown.
     /// A dropped/unacknowledged attachment must leave output available to retry.
