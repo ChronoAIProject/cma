@@ -17,6 +17,8 @@ mod fixtures;
 use fixtures::*;
 mod authority;
 mod bounds;
+mod capture_bounds;
+mod capture_tests;
 mod ranges;
 mod retention;
 mod schema_tests;
