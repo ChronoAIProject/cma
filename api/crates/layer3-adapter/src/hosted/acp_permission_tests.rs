@@ -86,8 +86,8 @@ fn request(update: &ConversationUpdate) -> &crate::PermissionRequest {
         ConversationUpdate::RuntimeOutput {
             update: Some(update),
             ..
-        }
-        | ConversationUpdate::WithoutPromptEvidence(update) => request(update),
+        } => request(update),
+        ConversationUpdate::WithoutPromptEvidence(update) => request(update),
         ConversationUpdate::Asked(request) => request,
         other => panic!("expected permission, got {other:?}"),
     }
@@ -261,17 +261,15 @@ async fn socket_reader_stops_on_pressure_without_receipt_ack_or_terminal() {
             .borrow(),
         0
     );
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while opened.bridge.owned_prompt_waiters.load(Ordering::SeqCst) != 0 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    drop(capture);
     assert!(
-        prompt_effects.try_recv().is_err(),
+        tokio::time::timeout(Duration::from_secs(2), prompt_effects.recv())
+            .await
+            .unwrap()
+            .is_none(),
         "link refusal cannot synthesize a legacy terminal"
     );
+    assert_eq!(opened.bridge.owned_prompt_waiters.load(Ordering::SeqCst), 0);
     opened.bridge.retire().await;
     opened.relay.abort();
     let _ = opened.relay.await;
