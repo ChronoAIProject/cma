@@ -4,6 +4,20 @@ use super::*;
 
 #[async_trait]
 pub trait AgentLogStore: Send + Sync {
+    /// Publish one exact durable operation. Implementations without keyed
+    /// receipts refuse; silently delegating to unkeyed append would discard
+    /// retry identity and could repeat an uncertain publication.
+    async fn append_agent_log_keyed(
+        &self,
+        _agent_id: &AgentId,
+        _identity: &AgentLogPublicationIdentity,
+        _kind: AgentLogKind,
+    ) -> Result<AgentLogEntry, SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "keyed Agent log publication is not supported by this store".into(),
+        ))
+    }
+
     async fn append_agent_log(
         &self,
         agent_id: &AgentId,
@@ -75,6 +89,51 @@ pub trait AgentLogStore: Send + Sync {
             return Err(SandboxStoreError::SequenceConflict);
         }
         Ok(entries)
+    }
+
+    /// Stream one validated source interval into a bounded projection. Mongo
+    /// overrides this to retain only one raw BSON row at a time. The visitor is
+    /// called for every row, even after its output byte budget has been filled.
+    async fn visit_agent_log_range(
+        &self,
+        agent_id: &AgentId,
+        after: u64,
+        through: u64,
+        limit: u16,
+        visit: &mut (dyn FnMut(AgentLogEntry) -> Result<(), SandboxStoreError> + Send),
+    ) -> Result<(), SandboxStoreError> {
+        for entry in self
+            .agent_log_range(agent_id, after, through, limit)
+            .await?
+        {
+            visit(entry)?;
+        }
+        Ok(())
+    }
+
+    /// Stream a page and, when present, its one immediate predecessor. This
+    /// lets replay bind steering input without a full active scan per message.
+    /// The predecessor is evidence only and is never a delivered page entry.
+    async fn visit_agent_log_page_with_predecessor(
+        &self,
+        agent_id: &AgentId,
+        after: u64,
+        through: u64,
+        limit: u16,
+        visit: &mut (dyn FnMut(AgentLogEntry) -> Result<(), SandboxStoreError> + Send),
+    ) -> Result<(), SandboxStoreError> {
+        if limit == 0 || limit > MAX_PAGE_SIZE || after > through {
+            return Err(SandboxStoreError::InvalidPage);
+        }
+        if after > 0 {
+            let previous = self
+                .agent_log_entry(agent_id, after)
+                .await?
+                .ok_or(SandboxStoreError::SequenceConflict)?;
+            visit(previous)?;
+        }
+        self.visit_agent_log_range(agent_id, after, through, limit, visit)
+            .await
     }
 
     /// Read one immutable entry for message metadata. The caller must first

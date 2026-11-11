@@ -8,7 +8,7 @@ use crate::config::RuntimeConfig;
 use crate::failure::{Result, RuntimeError};
 use crate::ledger_format::io;
 use crate::mutation_journal::Operation;
-use crate::retirement_archive::Archive;
+use crate::retirement_archive::{Archive, Version};
 use descriptor::Descriptor;
 
 pub(crate) const BARRIER: &str = "mutation-retirement-v1.required.json";
@@ -44,12 +44,17 @@ impl Selection {
             require_absent(config)?;
             return Ok(None);
         };
-        let archive = Archive::open(
+        let archive = Archive::open_version(
             config.state_root.join(DATABASE),
             config.clone(),
             descriptor.archive.clone(),
             false,
             descriptor.pages,
+            match descriptor.version {
+                1 => Version::Legacy,
+                2 => Version::Indexed,
+                _ => return Err(hold()),
+            },
         )
         .await?;
         let reader = Reader {
