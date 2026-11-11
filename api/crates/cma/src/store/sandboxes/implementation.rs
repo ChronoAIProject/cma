@@ -49,6 +49,11 @@ impl SandboxStore for MongoSandboxStore {
     }
 
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
+        if self.global_sandbox_limit != 0 {
+            return Err(SandboxStoreError::InvalidTransaction(
+                "global capacity requires transactional sandbox admission",
+            ));
+        }
         if !sandbox.credential.service_grants.is_empty()
             || sandbox.credential.service_scope.is_some()
         {
