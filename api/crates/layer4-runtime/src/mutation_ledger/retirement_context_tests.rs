@@ -90,8 +90,8 @@ async fn retirement_inventory_retains_historical_processes_reservations_and_cont
         }
     }
     assert_eq!((cleanup, processes), (3, 1));
-    assert_eq!(scopes, [(0, 0, 0), (generation, 0, 1)]);
-    assert_eq!(rows.len(), 12);
+    assert_eq!(scopes, [(generation, 0, 1)]);
+    assert_eq!(rows.len(), 11);
     assert_eq!(ledger.snapshot().await.unwrap(), before);
     assert_eq!(
         before.processes, 0,
@@ -246,6 +246,17 @@ async fn retirement_inventory_preserves_consumed_cleanup_and_empty_scope_project
             .await
             .unwrap();
     }
+    // Historical writers retain empty scope rows. New completions prune them,
+    // but inventory and archival must still preserve an older exact source.
+    ledger
+        .storage
+        .call(|db| {
+            db.execute("INSERT INTO scope_budget VALUES (zeroblob(8),0,0)", [])
+                .unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
     let (rows, _, _) = inventory(&ledger).await;
     let cleanup = rows
         .iter()
