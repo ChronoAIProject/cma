@@ -187,3 +187,5 @@ feature flags in the only conflict. New source qualification runs under the
 same release-only lock and memory floor; earlier results stay bound to5b49c51d6.
 
 Merged source `e094ffeea` requalified:47distinct unit/configuration tests and76real-Mongo tests passed; strict101with22shared diagnostics andzero type errors. Evidence and source-bound counts are in `2026-11-12-s4-postreview-gates.md`.
+
+Final implementation pin `bc075a36aa45ac8fc826d4999748a9bcc8071c6d` includes the narrow response-facts dependency `99f9826f4b98ff3784c03492ce877f883700526b`. Final gates: 47 unit/config tests and 77 real-Mongo tests passed; strict CMA exited 101 with 22 shared wiring diagnostics and zero type errors. Detailed commands, counts and hashes are in `2026-11-12-s4-postreview-gates.md`. P1-1 remains open; P2-5 has passing corrected Mongo evidence. All activation remains closed.
