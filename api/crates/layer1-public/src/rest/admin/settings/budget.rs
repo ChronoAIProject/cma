@@ -1,5 +1,6 @@
 use layer2_core::budget::{
-    BudgetPolicy, BudgetSettings, OwnerBudgetPolicy, PlatformBudgetPolicy, RequestModelPolicy,
+    BudgetPolicy, BudgetSettings, CloudSpendPolicy, OwnerBudgetPolicy, PlatformBudgetPolicy,
+    RequestModelPolicy,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -41,6 +42,17 @@ struct PlatformBudgetPolicyBody {
     stop_percent: u8,
     protected_reserve: u64,
     lag_allowance: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cloud: Option<CloudSpendPolicyBody>,
+}
+
+/// Required together when present; absent means the cloud source is not
+/// configured, which closes commitments once budgets are enabled.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct CloudSpendPolicyBody {
+    run_rate_units_per_day: u64,
+    max_observation_age_seconds: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -154,7 +166,10 @@ impl From<PlatformBudgetPolicyBody> for PlatformBudgetPolicy {
             stop_percent: value.stop_percent,
             protected_reserve: value.protected_reserve,
             lag_allowance: value.lag_allowance,
-            cloud: None,
+            cloud: value.cloud.map(|cloud| CloudSpendPolicy {
+                run_rate_units_per_day: cloud.run_rate_units_per_day,
+                max_observation_age_seconds: cloud.max_observation_age_seconds,
+            }),
         }
     }
 }
@@ -168,6 +183,10 @@ impl From<PlatformBudgetPolicy> for PlatformBudgetPolicyBody {
             stop_percent: value.stop_percent,
             protected_reserve: value.protected_reserve,
             lag_allowance: value.lag_allowance,
+            cloud: value.cloud.map(|cloud| CloudSpendPolicyBody {
+                run_rate_units_per_day: cloud.run_rate_units_per_day,
+                max_observation_age_seconds: cloud.max_observation_age_seconds,
+            }),
         }
     }
 }

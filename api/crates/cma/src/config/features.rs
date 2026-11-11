@@ -3,6 +3,7 @@
 pub(crate) struct FeatureFlags {
     pub model_budget_writes_enabled: bool,
     pub model_request_budget_writes_enabled: bool,
+    pub platform_spend_writes_enabled: bool,
     pub bounded_title_reads: bool,
     pub bounded_response_reads: bool,
     pub v2_ui_transport: bool,
@@ -35,6 +36,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED",
             )?,
+            platform_spend_writes_enabled: flag(lookup, "CHRONO_PLATFORM_SPEND_WRITES_ENABLED")?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
             v2_ui_transport: flag(lookup, "CHRONO_V2_UI_TRANSPORT_ENABLED")?,
