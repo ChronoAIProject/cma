@@ -1,4 +1,6 @@
 use super::*;
+#[path = "indexed_collection_tests.rs"]
+mod collection_tests;
 #[path = "indexed_deactivation_tests.rs"]
 mod deactivation_tests;
 #[path = "indexed_encoding_tests.rs"]

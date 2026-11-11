@@ -177,6 +177,7 @@ impl ControlPlaneComposition {
             authoring_bounds,
         );
         let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone())
+            .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
         let native_warm_pools = runtime.warm_pools;
@@ -203,6 +204,8 @@ impl ControlPlaneComposition {
             Arc::clone(&operations),
         )
         .with_runtime_updates(runtime.updates)
+        .with_retained_recovery(runtime.recovery)
+        .with_retained_reopening(runtime.reopen)
         .with_user_directory(Arc::clone(&users))
         .with_sandbox_colors(layer2_core::sandbox::colors::SandboxColorService::new(
             stores.sandbox_colors.clone(),
