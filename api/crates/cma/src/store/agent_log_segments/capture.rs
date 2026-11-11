@@ -11,6 +11,7 @@ use mongodb::{
 mod legacy;
 mod point_reads;
 mod segmented;
+mod snapshot;
 use super::transaction_scope::{TransactionIdentity, TransactionScope};
 
 use super::Head;
@@ -95,15 +96,7 @@ pub(in crate::store) async fn capture(
     if mode != CaptureMode::Snapshot {
         return Err(pending());
     }
-    let row = store
-        .agents
-        .find_one(doc! {"_id": current.id.as_str()})
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut *session)
-        .await
-        .map_err(TransactionLogError::Driver)?
-        .ok_or_else(super::corrupt)?;
-    let at = session.snapshot_time().ok_or_else(pending)?;
+    let (row, at) = snapshot::agent(store, current, session).await?;
     let actual = crate::store::agents::read_agent(&row)?;
     if &actual != current {
         return Err(SandboxStoreError::SequenceConflict.into());

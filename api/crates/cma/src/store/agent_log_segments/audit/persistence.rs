@@ -134,7 +134,9 @@ pub(super) async fn promote_batch(
         .find(filter)
         .sort(doc! {"_id":1})
         .limit(MAX_ROWS as i64 + 1)
-        .batch_size(MAX_ROWS as u32)
+        // Include the lookahead in the same bounded reply. Otherwise every
+        // full promotion page needs another getMore for its single extra row.
+        .batch_size(MAX_ROWS as u32 + 1)
         .await
         .map_err(unavailable)?;
     let mut batch = Batch::default();
