@@ -244,7 +244,8 @@ pub use conversation::{
     MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 pub use conversation_recorder::{
-    AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription, DurableAgentUpdateRecorder,
+    AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription,
+    DurableAgentUpdateRecorder,
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
