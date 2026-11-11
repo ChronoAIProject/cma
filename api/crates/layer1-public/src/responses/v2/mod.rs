@@ -50,6 +50,7 @@ pub struct ResponsesV2State {
     reads: Arc<AgentReadService>,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     event_router: Option<Arc<dyn BindingEventRouter>>,
+    retained_context_lookup: bool,
 }
 impl ResponsesV2State {
     pub fn with_event_router(mut self, router: Arc<dyn BindingEventRouter>) -> Self {
@@ -64,6 +65,14 @@ impl ResponsesV2State {
         self
     }
 
+    /// Enables the single-read retained-context path only for an explicit
+    /// rollout. The legacy path remains the default until its security and
+    /// latency evidence is accepted.
+    pub fn with_retained_context_lookup(mut self, enabled: bool) -> Self {
+        self.retained_context_lookup = enabled;
+        self
+    }
+
     pub fn new(
         agent_page_origin: crate::agent_page::AgentPageOrigin,
         commands: Arc<AgentCommandService>,
@@ -75,6 +84,7 @@ impl ResponsesV2State {
             reads,
             bindings: None,
             event_router: None,
+            retained_context_lookup: false,
         }
     }
 }
