@@ -114,4 +114,16 @@ pub trait AgentLogStore: Send + Sync {
         }
         Ok(entries)
     }
+
+    /// Read only rows that can change the public transcript for a captured
+    /// Agent. `None` means the store cannot prove a bounded projection for the
+    /// requested format, so callers must use the complete compatibility read.
+    /// The returned rows retain their durable sequence numbers and ordering;
+    /// the existing transcript fold remains the semantic authority.
+    async fn agent_log_transcript(
+        &self,
+        _agent: &Agent,
+    ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+        Ok(None)
+    }
 }

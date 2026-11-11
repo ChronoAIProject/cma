@@ -8,6 +8,7 @@ use mongodb::bson::{doc, Document};
 use mongodb::options::{IndexOptions, ReadConcern};
 use mongodb::{Collection, IndexModel};
 
+pub(super) use super::agent_log_codec::{log_document, log_id, read_entry};
 use super::agent_log_integrity::{
     prepare_append, trusted_summary, AppendCapacity, SemanticCheckpoint, TransactionLogError,
 };
@@ -17,8 +18,7 @@ pub(super) use super::agent_log_integrity::{
 use super::agent_log_reads::{read_window, Window};
 use super::agents::read_agent;
 use super::sandbox_mongo::{
-    commit_transaction, i64_field_matches, is_duplicate_key, is_transient, read_record,
-    record_bson, require_version, signed, start_transaction, string_field_matches,
+    commit_transaction, is_duplicate_key, is_transient, require_version, signed, start_transaction,
     wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
     TRANSACTION_ATTEMPTS,
 };
@@ -53,52 +53,8 @@ pub(super) async fn ensure_indexes(
         })
 }
 
-pub(super) fn log_id(id: &AgentId, seq: u64) -> String {
-    format!("{}:{seq:020}", id.as_str())
-}
-
-pub(super) fn log_document(entry: &AgentLogEntry) -> Result<Document, SandboxStoreError> {
-    Ok(doc! {
-        "_id": log_id(&entry.agent_id, entry.seq),
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-        "agent_id": entry.agent_id.as_str(),
-        "seq": signed(entry.seq, "agent log sequence").map_err(SandboxStoreError::Corrupt)?,
-        "record": record_bson(entry).map_err(SandboxStoreError::Corrupt)?,
-    })
-}
-
-pub(super) fn read_entry(document: &Document) -> Result<AgentLogEntry, SandboxStoreError> {
-    let entry: AgentLogEntry = read_record(document).map_err(SandboxStoreError::Corrupt)?;
-    let seq = signed(entry.seq, "agent log sequence").map_err(SandboxStoreError::Corrupt)?;
-    if !string_field_matches(document, "_id", &log_id(&entry.agent_id, entry.seq))
-        || !string_field_matches(document, "agent_id", entry.agent_id.as_str())
-        || !i64_field_matches(document, "seq", seq)
-    {
-        return Err(SandboxStoreError::Corrupt(
-            "agent log query fields disagree with its record".into(),
-        ));
-    }
-    Ok(entry)
-}
-
 #[cfg(test)]
-pub(super) fn verify_complete_log(
-    agent_id: &AgentId,
-    last_seq: u64,
-    logs: &[AgentLogEntry],
-) -> Result<(), SandboxStoreError> {
-    let expected_len =
-        usize::try_from(last_seq).map_err(|_| SandboxStoreError::SequenceConflict)?;
-    if logs.len() != expected_len
-        || logs
-            .iter()
-            .enumerate()
-            .any(|(offset, entry)| entry.agent_id != *agent_id || entry.seq != offset as u64 + 1)
-    {
-        return Err(SandboxStoreError::SequenceConflict);
-    }
-    Ok(())
-}
+pub(super) use super::agent_log_codec::verify_complete_log;
 
 pub(in crate::store) async fn append_in_transaction(
     store: &MongoSandboxStore,
@@ -416,25 +372,13 @@ impl AgentLogStore for MongoSandboxStore {
         )
         .await
     }
-}
 
-#[cfg(test)]
-fn verify_contiguous(
-    after: u64,
-    last_seq: u64,
-    limit: u16,
-    entries: &[AgentLogEntry],
-) -> Result<(), SandboxStoreError> {
-    let expected_len = last_seq.saturating_sub(after).min(u64::from(limit)) as usize;
-    if entries.len() != expected_len {
-        return Err(SandboxStoreError::SequenceConflict);
+    async fn agent_log_transcript(
+        &self,
+        expected: &layer2_core::sandbox::Agent,
+    ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+        self.read_transcript_log(expected).await
     }
-    for (offset, entry) in entries.iter().enumerate() {
-        if entry.seq != after + offset as u64 + 1 {
-            return Err(SandboxStoreError::SequenceConflict);
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
