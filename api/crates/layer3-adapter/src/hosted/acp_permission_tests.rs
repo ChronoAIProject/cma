@@ -4,6 +4,9 @@ use crate::hosted::permission_state::{MAX_ENTRIES, MAX_OPTION_BYTES};
 #[path = "acp_permission_uncertainty_tests.rs"]
 mod uncertainty;
 
+#[path = "acp_integrated_policy_tests.rs"]
+mod integrated;
+
 fn stream_id() -> uuid::Uuid {
     uuid::Uuid::from_u128(19)
 }
@@ -29,6 +32,18 @@ async fn open(
     Arc<AtomicBool>,
     mpsc::Receiver<ConversationUpdate>,
 ) {
+    open_policies(enabled, false).await
+}
+
+async fn open_policies(
+    enabled: bool,
+    combined: bool,
+) -> (
+    OpenedBridge,
+    ServerSocket,
+    Arc<AtomicBool>,
+    mpsc::Receiver<ConversationUpdate>,
+) {
     let (client, mut server) = socket_pair().await;
     let fail_flush = Arc::new(AtomicBool::new(false));
     let socket: Socket = Box::new(uncertainty::UncertainSocket {
@@ -48,11 +63,14 @@ async fn open(
     let (sender, mut received) = mpsc::channel(8);
     let mut configured = settings(None, false);
     configured.bounded_permission_state = enabled;
-    let opening = Bridge::open(
+    configured.output_json_budget = combined;
+    configured.shared_runtime_output = combined;
+    let opening = Bridge::open_with_relay_policy(
         socket,
         "agent-1",
         "/workspace".into(),
-        configured,
+        (configured, None, combined),
+        None,
         None,
         sender,
     );
