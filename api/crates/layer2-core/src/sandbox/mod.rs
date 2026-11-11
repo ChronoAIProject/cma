@@ -74,6 +74,7 @@ mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;
 pub mod ledger_census;
+pub mod ledger_collection_artifact;
 pub mod ledger_maintenance;
 mod ledger_retirement;
 mod lifecycle_bootstrap;
@@ -272,12 +273,13 @@ pub use first_message::{
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use hierarchy::{
     AgentHierarchySummary, HierarchyCounts, HierarchyReadError, HierarchyReadService,
-    HierarchyReadStore, OwnerSandboxQuery, SandboxHierarchyReading, SandboxHierarchyRecord,
-    SandboxHierarchySummary, SandboxHierarchyView, SandboxInventoryReading, SandboxInventoryRecord,
-    SandboxSnapshotDownload, SharedHierarchyAgent, SharedSandboxHierarchy, SharedSandboxSummary,
-    SharedWorkspaceHierarchy, SharedWorkspaceSummary, SharedWorktreeSummary,
-    WorkspaceHierarchyReading, WorkspaceHierarchyRecord, WorkspaceHierarchySummary,
-    WorkspaceHierarchyView, WorktreeHierarchyReading, WorktreeHierarchySummary,
+    HierarchyReadStore, OwnerSandboxQuery, SandboxDetailPhase, SandboxDetailTimer,
+    SandboxHierarchyReading, SandboxHierarchyRecord, SandboxHierarchySummary, SandboxHierarchyView,
+    SandboxInventoryReading, SandboxInventoryRecord, SandboxSnapshotDownload, SharedHierarchyAgent,
+    SharedSandboxHierarchy, SharedSandboxSummary, SharedWorkspaceHierarchy, SharedWorkspaceSummary,
+    SharedWorktreeSummary, WorkspaceHierarchyReading, WorkspaceHierarchyRecord,
+    WorkspaceHierarchySummary, WorkspaceHierarchyView, WorktreeHierarchyReading,
+    WorktreeHierarchySummary,
 };
 pub use home::SandboxHome;
 pub use inactivity::{
