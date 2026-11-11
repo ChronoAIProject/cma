@@ -221,11 +221,16 @@ fn expected_settlement(mut rows: Vec<Document>, hold: &RequestHold) -> Vec<Docum
     for row in &mut rows {
         let key = row.get_str("_id").unwrap().to_owned();
         let record = row.get_document_mut("record").unwrap();
-        if key == owner_key || key == ledger_key {
+        let period = key.starts_with("platform:");
+        if key == owner_key || key == ledger_key || period {
             let remaining = record.get_i64("reserved").unwrap() - reserved;
             let spent = record.get_i64("spent").unwrap() + actual;
             record.insert("reserved", remaining);
             record.insert("spent", spent);
+            if period {
+                let revision = record.get_i64("revision").unwrap() + 1;
+                record.insert("revision", revision);
+            }
         } else if key == request_key {
             record.insert(
                 "settled",

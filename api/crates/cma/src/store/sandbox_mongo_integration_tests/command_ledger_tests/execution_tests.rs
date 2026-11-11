@@ -481,3 +481,6 @@ async fn operation_command_lookup_is_exact_and_rejects_duplicate_bindings() {
 
 #[path = "budget_execution_tests.rs"]
 mod budget_execution;
+
+#[path = "platform_period_tests.rs"]
+mod platform_period_tests;

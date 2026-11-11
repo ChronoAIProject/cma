@@ -64,6 +64,7 @@ async fn commit_conversation(
     ensure_append_batch_size(mutation.agent_logs.len())?;
     store.prepare_fleet_log(&mutation.agent.id).await;
     let _writer = store.agent_writes.lock(&mutation.agent.id).await;
+    let _platform = store.conversation_platform_guard(&mutation).await;
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
         contention::backoff(attempt).await;
