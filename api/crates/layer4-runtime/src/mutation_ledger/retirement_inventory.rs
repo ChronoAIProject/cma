@@ -180,60 +180,64 @@ impl Ledger {
         self.verify()?;
         let config = self.config.clone();
         self.storage
-            .call(move |db| {
-                let tx = db.transaction().map_err(|_| storage_error())?;
-                let context = Context::read(&tx, &config)?;
-                if cursor
-                    .as_ref()
-                    .is_some_and(|cursor| cursor.context != context)
-                {
-                    return Err(invalid());
-                }
-                let (kind, after, mut audit) = cursor.map_or_else(
-                    || {
-                        (
-                            Kind::Operations,
-                            (Vec::new(), String::new()),
-                            accounting::Audit::default(),
-                        )
-                    },
-                    |cursor| (cursor.kind, cursor.after, cursor.audit),
-                );
-                let (rows, more) = page(&tx, &config, kind, &after, BYTES - context.bytes())?;
-                for row in &rows {
-                    audit.observe(&tx, row)?;
-                }
-                if !more {
-                    audit.end_table(&tx, kind)?;
-                    if kind == Kind::Processes {
-                        audit.finish(&context)?;
-                    }
-                }
-                let next = if more {
-                    let (scope, key) = rows.last().ok_or_else(invalid)?.key();
-                    Some(Cursor {
-                        context: context.clone(),
-                        audit,
-                        kind,
-                        after: (scope.to_vec(), key.into()),
-                    })
-                } else {
-                    kind.next().map(|kind| Cursor {
-                        context: context.clone(),
-                        audit,
-                        kind,
-                        after: (Vec::new(), String::new()),
-                    })
-                };
-                tx.commit().map_err(|_| storage_error())?;
-                Ok(Page {
-                    context,
-                    rows,
-                    next,
-                })
-            })
+            // Normalize before the worker handles the result. An inspection
+            // failure must never release its durable emergency reserve.
+            .call(move |db| inventory(db, &config, cursor).map_err(|_| invalid()))
             .await
     }
+}
+
+fn inventory(db: &mut Connection, config: &RuntimeConfig, cursor: Option<Cursor>) -> Result<Page> {
+    let tx = db.transaction().map_err(|_| storage_error())?;
+    let context = Context::read(&tx, config)?;
+    if cursor
+        .as_ref()
+        .is_some_and(|cursor| cursor.context != context)
+    {
+        return Err(invalid());
+    }
+    let (kind, after, mut audit) = cursor.map_or_else(
+        || {
+            (
+                Kind::Operations,
+                (Vec::new(), String::new()),
+                accounting::Audit::default(),
+            )
+        },
+        |cursor| (cursor.kind, cursor.after, cursor.audit),
+    );
+    let (rows, more) = page(&tx, config, kind, &after, BYTES - context.bytes())?;
+    for row in &rows {
+        audit.observe(&tx, row)?;
+    }
+    if !more {
+        audit.end_table(&tx, kind)?;
+        if kind == Kind::Processes {
+            audit.finish(&context)?;
+        }
+    }
+    let next = if more {
+        let (scope, key) = rows.last().ok_or_else(invalid)?.key();
+        Some(Cursor {
+            context: context.clone(),
+            audit,
+            kind,
+            after: (scope.to_vec(), key.into()),
+        })
+    } else {
+        kind.next().map(|kind| Cursor {
+            context: context.clone(),
+            audit,
+            kind,
+            after: (Vec::new(), String::new()),
+        })
+    };
+    tx.commit().map_err(|_| storage_error())?;
+    Ok(Page {
+        context,
+        rows,
+        next,
+    })
 }
 
 fn field(digest: &mut Sha256, bytes: Option<&[u8]>) {
@@ -399,6 +403,9 @@ mod accounting_tests;
 #[cfg(test)]
 #[path = "retirement_context_tests.rs"]
 mod context_tests;
+#[cfg(test)]
+#[path = "retirement_inspection_tests.rs"]
+mod inspection_tests;
 #[cfg(test)]
 #[path = "retirement_inventory_tests.rs"]
 mod tests;
