@@ -94,11 +94,27 @@ impl DurableAgentUpdateRecorder {
     where
         S: AgentConversationUpdateStore + 'static,
     {
+        Self::with_live_budget(store, writer_policy, spend_source, false)
+    }
+
+    pub fn with_live_budget<S>(
+        store: Arc<S>,
+        writer_policy: Arc<super::super::task_experience::TaskExperiencePolicy>,
+        spend_source: Option<Arc<dyn crate::budget::SpendSource>>,
+        bounded_live_fragments: bool,
+    ) -> Arc<Self>
+    where
+        S: AgentConversationUpdateStore + 'static,
+    {
         Arc::new(Self {
             store,
             writer_policy,
             spend_source,
-            live: live::AgentLiveHub::default(),
+            live: if bounded_live_fragments {
+                live::AgentLiveHub::with_budget(super::live_budget::LiveBudget::process())
+            } else {
+                live::AgentLiveHub::default()
+            },
         })
     }
 }

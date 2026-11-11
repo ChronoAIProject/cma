@@ -14,7 +14,7 @@ use axum::{
 use layer2_core::{
     sandbox::{
         agent_io::{AgentEventKind, AgentMessageRole},
-        AgentEventStreamAuthorization, AgentEventStreamHeader, AgentLiveFragment,
+        AgentEventStreamAuthorization, AgentEventStreamHeader, AgentLiveDelivery,
         AgentLiveSubscription,
     },
     AgentId,
@@ -101,7 +101,7 @@ async fn open(
 pub(super) struct Frame {
     pub event: Event,
     pub live: bool,
-    pub fragment: Option<AgentLiveFragment>,
+    pub fragment: Option<AgentLiveDelivery>,
 }
 pub(super) struct Following {
     pub state: AgentV2State,
@@ -117,7 +117,7 @@ pub(super) struct Following {
     pub pending: VecDeque<Frame>,
     deferred_live: VecDeque<Frame>,
     pub watching: Option<AgentLiveSubscription>,
-    pub held: Option<AgentLiveFragment>,
+    pub held: Option<AgentLiveDelivery>,
     pub committed_message: u64,
     initial_gap: bool,
     discarded_fragments: u64,
