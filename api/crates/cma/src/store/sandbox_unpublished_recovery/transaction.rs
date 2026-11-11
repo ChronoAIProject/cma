@@ -144,7 +144,10 @@ async fn load_for_inspection(
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
     let last_seq = unsigned(last_seq, "recovery event sequence")
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?;
-    let agents = load_sandbox_agents(store, id, session).await?;
+    let agents = match sources {
+        Some(sources) => sources.agents.clone(),
+        None => load_sandbox_agents(store, id, session).await?,
+    };
     let generation = sandbox
         .unpublished_recovery_binding()
         .and_then(|binding| binding.provision_generation);
@@ -259,22 +262,27 @@ async fn load_for_inspection(
             ensure_reopen_capacity(&summary).map_err(ApplyError::Domain)?;
         }
     }
-    let mut cursor = store
-        .workspaces
-        .find(doc! { "sandbox_id": id.as_str() })
-        .sort(doc! { "_id": 1 })
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?;
-    let mut workspaces = Vec::new();
-    while let Some(document) = cursor
-        .stream(&mut *session)
-        .try_next()
-        .await
-        .map_err(ApplyError::Driver)?
-    {
-        workspaces.push(read_workspace(&document).map_err(ApplyError::Domain)?);
-    }
+    let workspaces = if let Some(sources) = sources {
+        sources.workspaces.clone()
+    } else {
+        let mut cursor = store
+            .workspaces
+            .find(doc! { "sandbox_id": id.as_str() })
+            .sort(doc! { "_id": 1 })
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        let mut workspaces = Vec::new();
+        while let Some(document) = cursor
+            .stream(&mut *session)
+            .try_next()
+            .await
+            .map_err(ApplyError::Driver)?
+        {
+            workspaces.push(read_workspace(&document).map_err(ApplyError::Domain)?);
+        }
+        workspaces
+    };
     Ok((
         SandboxUnpublishedRecoverySnapshot {
             sandbox,
