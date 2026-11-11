@@ -268,7 +268,7 @@ pub(super) async fn range_with_snapshot(
     let mut expected_seq = after + 1;
     segments::visit_range(
         store,
-        segmented,
+        &segmented,
         LogRange {
             after,
             through,
