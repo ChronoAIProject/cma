@@ -3,8 +3,9 @@
 Pre-review 2 baseline: `34bcc3667`, including normal slice/develop merges; branch
 `tl/cma-log-segments/integration-20261111`; develop `8167d01d8` is included.
 Mechanical follow-ups are `efc880523` and `3cb7a3348`, detailed below.
-Latest code assembly `8c44436f7` includes proof/schema pin `c4e4b995a`,
-S1 `f0d9746ef`, S4 `984d881ee`, S5 `3aaa55395` and develop `ce72ee311`;
+Latest code assembly `b3052f1b6` includes proof/schema pin `c4e4b995a`,
+S1 `f0d9746ef`, S4/S5 `2dbb5d81c`, config split `3fc57ec55` and develop
+`ce72ee311`;
 combined gates are queued against that immutable source.
 No integration PR is ready. Pre-review 2 has four unresolved P1s; P1-2 is
 closed in source, while exact combined qualification remains a release gate.
@@ -23,8 +24,8 @@ closing an issue whose production acceptance is still missing.
 | S1 readers/schema | `f0d9746ef` (compatibility correction `b9d390634`; readers `e955d37f1`) | Exact index drift and shared-reader qualification; response consumers now owned by S1 under the 01:55 allocation below. |
 | S2 composition / integration | scheduler `541c3f7f2`; merge checkpoint `e47527cbf` | Shared registration, runtime authority, accepted-work scheduler qualification, completed-work/loss routing composition and combined gates. |
 | S3 transcript consumers | `c62ab928f` (`bc08dc4a0` fixes) | Fixture sequence corrected; title/usage facts use projections. Transcript still traverses lifetime data; golden parity, pagination and scale evidence remain open. |
-| S4 publication | `984d881ee` (composition gates `fbe139132`) | Remaining command/discovery/claim roots; response-interval metadata; segmented capacity successor; combined root qualification. |
-| S5 capacity recovery | `3aaa55395` | Current activation domain helpers, later-progress restart/loss tests and strict BSON/discovery corrections integrated; S4 service caller and actual current-source qualification pending. |
+| S4 publication | `2dbb5d81c` (prior composition gates `fbe139132`) | Remaining command/discovery/claim roots; response-interval metadata; segmented capacity successor; combined root qualification. |
+| S5 capacity recovery | `2dbb5d81c` | Current activation domain helpers, later-progress restart/loss tests and strict BSON/discovery corrections integrated; S4 service caller and actual current-source qualification pending. |
 | Develop | `8167d01d8` | Normally included; later develop merges require affected checks at the resulting candidate. |
 
 S2's new scheduler retains at most 32 candidates, executes at most two original
@@ -448,7 +449,46 @@ The merge preserves the canonical blocker ledger and both owners' evidence.
 Duplicate pacing declarations are kept once; the unchanged raw-output test is
 registered once in S4's child module. No production permission was weakened.
 
-S1 reports shared features.rs at506lines on its caller branch. S2 will publish
-a narrow cohesive reconciliation-test extraction from develop for normal merge.
+S1 reported shared features.rs at506lines on its caller branch. S2 published
+`3fc57ec55` on `tl/cma-log-segments/config-test-split` for normal merge;
+the existing reconciliation test is unchanged and the parent shrinks26lines.
 Heavy-0 restoration was relayed by the lead (new inode162845701); all owned
 lockf calls already include -k, and heavy-1 keeps its guarded original inode.
+
+### S1 required develop-sync conflict resolution
+
+The pre-push fetch advanced develop to `ce72ee311` and conflicts directly in
+`api/crates/cma/src/config/features.rs`: raw-output rollout versus the retained
+quota and response branch settings. The normal merge must preserve both. Since
+this now requires editing that shared file to complete the mandated develop
+sync, S1 will mechanically extract the two conflicting cohesive test modules
+into `api/crates/cma/src/config/features/quota_tests.rs` and
+`api/crates/cma/src/config/features/raw_output_tests.rs`, preserving test names
+and all flags/parser mappings. This closes the source-size failure introduced
+by the combined declarations; no shared composition behavior is changed beyond
+the develop merge. S2 retains every other shared-root edit. Gates retain their
+actual tested source pins; configuration tests must run after this resolution.
+
+### S1 published response caller checkpoint — b24fb1c57
+
+Normal push complete: `tl/cma-log-segments/reader-foundation` at
+`b24fb1c570858392125c8ec6e5eb2d71688b137a`; caller-only commit
+`982360fa279ba8f633c0fea53ac0cf7389d5ff79`. S2 can merge normally. The latest
+normal develop sync consumes `ce72ee311`, preserves all fields/functions/keys
+from both parents, and keeps the shared configuration at 492 lines by moving
+quota/raw-output tests into their same-named child modules. This supersedes the
+earlier request for S2 to split the oversized file. Two factory tests passed at
+`74dfc3406`; current configuration, public response and strict CMA gates remain
+pending. Activation stays closed; this is a source checkpoint, not PR ready.
+
+
+### Combined caller qualification source —b3052f1b6
+
+The old8c strict waiter was canceled before acquiring a slot or starting Cargo;
+its source export is removed. The immutable replacement includes S4 caller and
+S1's narrow size dependency. Its batch is strict CMA, scheduler/config, adapter,
+authenticated Mongo, all current capacity-recovery Mongo (including the3S5 and
+2S4 later-progress functions), then retained assessment/discovery Mongo. Every
+step separately uses the existing heavy-1 with -k -n -t3600 and2jobs.
+One target retained; no combined heavy pass claimed. The S1 handoff is
+[config-test-split](2026-11-12-config-test-split-handoff.md).
