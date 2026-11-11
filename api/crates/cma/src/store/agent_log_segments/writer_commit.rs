@@ -55,6 +55,8 @@ pub(in crate::store) struct PreparedPublication {
     permit: Option<Permit>,
 }
 
+#[path = "writer_output.rs"]
+mod output;
 #[path = "writer_persist.rs"]
 mod persistence;
 #[path = "writer_prepare.rs"]
