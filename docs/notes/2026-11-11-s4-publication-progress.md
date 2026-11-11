@@ -23,7 +23,7 @@ mandatory; snapshot capture and raw transaction capture cannot authorize writes.
 - The pure core planner validates the complete batch, immutable source lineage,
   source queue and final aggregate before returning changes.
 - Invisible bootstrap uses the original admission and fenced permit, bounded
-  writes and exact final recapture. Source-based renewal every64 rows also
+  writes and exact final recapture. Source-based renewal every 64 rows also
   covers diagnostic-only histories that produce no evidence rows.
 - Output publication/bootstrap uses the unchanged S2 model: mutable turn/tool
   facts and immutable numeric output-change rows. First-terminal evidence
@@ -45,14 +45,14 @@ ordering does not by itself qualify the other transaction caller families.
 
 | Check | Actual result |
 | --- | --- |
-| Core projection units |10passed at the whole-publication source checkpoint |
+| Core projection units | 10 passed at the whole-publication source checkpoint |
 | Core all-target clippy, warnings denied |Passed before output/caller additions |
 | CMA all-target check |Reached new sources; found a missing test import, now fixed. Production wiring warnings remained. No corrected pass yet. |
-| New S4 unit gate |First attempt timed out after600s waiting for heavy-0, without starting Cargo. Second acquisition pending at this checkpoint. |
+| New S4 unit gate |Two attempts each timed out after 600 seconds waiting for heavy-0, without starting Cargo. A subsequent nonblocking CMA-check acquisition also refused the occupied lock. |
 | New S4 Mongo tests |Source present; not executed |
 | Formatting / whitespace |Passed on current source |
-| Repository size |5917files passed; all new S4 source/test files below500lines |
-| Secret scans |Staged deltas passed. Full history throughfb1ad83c7:3648commits, no findings. Later deltas independently scanned. |
+| Repository size |5,917 files passed; all new S4 source/test files below 500 lines |
+| Secret scans |Staged deltas passed. Full history through fb1ad83c7: 3648 commits, no findings. Later deltas independently scanned. |
 
 New tests cover production captured-source commit/abort; wrong/later transaction
 and snapshot refusal; bootstrap recapture/replaced permit; output atomicity and
@@ -66,7 +66,7 @@ and sealed-source point integrity. Their presence is not a passing Mongo gate.
 - S1: transaction certification and additive output numeric validator/index plus
   gate/admission schema. Audit/rebuild must preserve the output evidence of its
   promoted generation; it can reuse the shared S4 fold/encoder.
-- S2: narrow canonical Mongo runner dependency fromd6368d023, plus the existing
+- S2: narrow canonical Mongo runner dependency from d6368d023, plus the existing
   operator/migration/authority assembly. The mixed integration branch is not
   imported into this slice.
 - S4: conversation/worker/lifecycle/admission/reuse roots and bounded command
@@ -79,18 +79,18 @@ and sealed-source point integrity. Their presence is not a passing Mongo gate.
   integration acceptance gates.
 
 No PR is open. Required strict CMA lint and real-Mongo gates are not green.
-Project9 remains In Progress; milestone comments are on#1350/#1349/#1348.
+Project 9 remains In Progress; milestone comments are on #1350/#1349/#1348.
 
 ## Resource discipline
 
-Use only the assigned existing heavy-0 with`lockf -k -n`, two Cargo jobs and
-one`api/target`. Never delete or recreate a shared lock. The previous omission
-of-k is recorded in the gate note and was reported. The current inode remained
+Use only the assigned existing heavy-0 with `lockf -k -n`, two Cargo jobs and
+one `api/target`. Never delete or recreate a shared lock. The previous omission
+of -k is recorded in the gate note and was reported. The current inode remained
 160171589 throughout the latest source work and queued gate attempts.
 
-One1.2GiB target is retained for immediate gate reuse; no Mongo resources were
-created. A checksum-verified local copy of CI's nextest0.9.151 is prepared for
-the Mongo gate. Temporary tools/logs will be removed when no longer needed.
-Previously reported own cleanup remains`CLEANED1.32GB`; other teammates' freed
-disk space is not attributed to this work. Retain requested notes and the
+No Mongo resources were created. Cleanup removed the owned target, checksum-verified
+local nextest 0.9.151 copy and temporary gate logs: 1,343,286,598 bytes
+(1.34 GB). Both shared lock files were preserved; disk readback was 61 GiB free.
+Previously reported cleanup was `CLEANED 1.32 GB`; other teammates' freed disk
+space is not attributed to this work. Retain requested notes and the
 dedicated worktree for the lead's eventual removal.

@@ -90,3 +90,26 @@ The next CMA check refused to start because `.heavy-0.lock` was absent.
 The existing 942 MB target is retained for the immediately pending CMA/Mongo
 gates. No disposable Mongo resources exist. Output evidence and caller wiring
 remain in progress; no PR/review-ready or activation claim.
+
+## Output and caller checkpoint gate disposition
+
+Published source checkpoint: `2777afa105da8cd516ffe7d6d9795b47c6013aeb`.
+The next source fix renews bootstrap permits every 64 source rows even when no
+evidence is emitted.
+
+The corrected CMA/unit gate could not execute: two 600-second heavy-0 waits
+expired, and a final nonblocking lock attempt also refused the occupied lock.
+The earlier CMA check found one missing test import, which was fixed; no
+corrected executable pass is claimed. New Mongo cases remain unexecuted.
+Core 10-test and core-Clippy passes are limited to the earlier core checkpoint.
+Formatting, whitespace, repository size and staged secret scans passed.
+
+Cleanup removed 1,343,286,598 bytes (1.34 GB) of owned target, local
+nextest tool and temporary logs. No Mongo container or volume was created. No
+S4 gate process or waiter remains. Shared lock files were neither removed nor
+created; requested notes and the dedicated worktree remain.
+
+Required next handoff: an available assigned heavy-lock slot; S1 output numeric
+DDL and transaction certification; a narrow S2 canonical runner dependency and
+remaining scoped caller contracts. Other publication families are still pending.
+No PR or production activation is claimed.
