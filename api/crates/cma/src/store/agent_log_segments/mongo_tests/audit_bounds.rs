@@ -49,7 +49,10 @@ async fn near_capacity_audit_keeps_source_bounds_and_limits_each_write_transacti
             }
             CommandEvent::Started(event)
                 if event.command_name == "update"
-                    && event.command.get_bool("autocommit") == Ok(false) =>
+                    && event
+                        .command
+                        .get_bool("autocommit")
+                        .is_ok_and(|value| !value) =>
             {
                 let key = format!(
                     "{:?}:{}",
