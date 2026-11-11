@@ -6,6 +6,7 @@ pub(crate) struct FeatureFlags {
     pub model_request_budget_writes_enabled: bool,
     pub bounded_title_reads: bool,
     pub bounded_response_reads: bool,
+    pub bounded_transcript_reads: bool,
     pub paged_response_events: bool,
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
@@ -43,6 +44,10 @@ impl FeatureFlags {
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
+            bounded_transcript_reads: flag(
+                lookup,
+                "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED",
+            )?,
             paged_response_events: flag(lookup, "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")?,
             v2_ui_transport: flag(lookup, "CHRONO_V2_UI_TRANSPORT_ENABLED")?,
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
@@ -203,6 +208,30 @@ mod paged_event_tests {
         for value in ["", "1", "TRUE", " true "] {
             assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
                 == "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")
+                .then(|| value.into())))
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod transcript_tests {
+    use super::*;
+    #[test]
+    fn transcript_reads_require_an_independent_strict_opt_in() {
+        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_transcript_reads, enabled);
+            assert!(!flags.bounded_response_reads && !flags.bounded_title_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
+                == "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED")
                 .then(|| value.into())))
             .is_err());
         }

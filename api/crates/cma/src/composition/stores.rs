@@ -31,6 +31,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_fleet_log_percentage(config.agent_log_fleet_percent)
             .with_bounded_title_reads(config.features.bounded_title_reads)
             .with_bounded_response_reads(config.features.bounded_response_reads)
+            .with_bounded_transcript_reads(config.features.bounded_transcript_reads)
             .prepare_bounded_admission(&config.bounded_admission_agents)
             .await?,
     );
