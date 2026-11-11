@@ -7,7 +7,7 @@ use layer3_adapter::runtime_ledger_collection::{
 fn collection_documents() -> Vec<(&'static str, Document)> {
     let mut documents = documents();
     let mut parent = crate::store::sandboxes::read_sandbox(&documents[0].1).unwrap();
-    parent.runtime.as_mut().unwrap().boot_id = Some("fixture-boot".into());
+    parent.runtime.as_mut().unwrap().boot_id = Some("b".repeat(32));
     documents[0].1 = crate::store::sandboxes::sandbox_document(&parent, 0).unwrap();
     documents
 }
@@ -29,8 +29,8 @@ fn request(documents: &[(&str, Document)]) -> CollectionRequest {
         binding: serde_json::from_value(serde_json::json!({
             "format":"runtime-ledger-binding-v1", "sandbox_id":parent.id.as_str(),
             "home_identity":parent.lifecycle.home.as_ref().unwrap().attachment().unwrap().identity().unwrap(),
-            "generation":1, "boot_id":"fixture-boot", "roots_sha256":"a".repeat(64),
-            "source_format":"v2", "archive_id":"fixture-archive", "maintenance_id":"fixture-maintenance",
+            "generation":1, "boot_id":"b".repeat(32), "roots_sha256":"a".repeat(64),
+            "source_format":"v2", "archive_id":uuid::Uuid::from_u128(1).to_string(), "maintenance_id":"fixture-maintenance",
             "maintenance_epoch":1, "sandbox_revision":parent.revision,
             "candidate_sha256":"b".repeat(64), "recovery_sha256":"c".repeat(64),
             "exclusion_receipt_sha256":"d".repeat(64),
@@ -191,7 +191,7 @@ async fn bounded_collection_refuses_missing_drift_foreign_quarantine_and_wrong_b
             }
             4 => request.binding.generation += 1,
             5 => request.binding.sandbox_revision += 1,
-            6 => request.binding.boot_id = "different-boot".into(),
+            6 => request.binding.boot_id = "c".repeat(32),
             _ => {
                 documents[3]
                     .1
@@ -290,13 +290,17 @@ async fn bounded_collection_missing_index_refuses_without_creating_it() {
 async fn bounded_collection_invalid_request_has_zero_database_commands() {
     let (client, trace) = traced_client().await;
     let db = client.database("unused_collection_refusal");
-    for case in 0..4 {
+    for case in 0..8 {
         let mut request = request(&collection_documents());
         match case {
             0 => request.binding.maintenance_epoch = 0,
             1 => request.groups.push(request.groups[0].clone()),
             2 => request.page_sha256.clear(),
-            _ => request.active_revision = 0,
+            3 => request.active_revision = 0,
+            4 => request.binding.boot_id = "fixture-boot".into(),
+            5 => request.binding.archive_id = "fixture-archive".into(),
+            6 => request.binding.sandbox_id.push(' '),
+            _ => request.binding.archive_id = uuid::Uuid::nil().to_string(),
         }
         assert_eq!(
             crate::store::ledger_collection::observe(&client, &db, &request)
