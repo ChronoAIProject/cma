@@ -144,6 +144,9 @@ async fn begin_login_with_intent(
     else {
         return Redirect::to(return_to.as_deref().unwrap_or("/")).into_response();
     };
+    if matches!(screen, Some(LoginScreen::Register)) && !auth.registration_open().await {
+        return super::records::registration_closed(None);
+    }
     let metadata = match auth.metadata().await {
         Ok(metadata) => metadata,
         Err(error) => return provider_failure("identity_discovery_failed", error),
@@ -321,6 +324,16 @@ async fn callback(
             Ok(identity) => identity,
             Err(error) => return provider_failure("identity_resolution_failed", error),
         };
+    match auth.admit_registration(&subject).await {
+        Ok(super::records::RegistrationDecision::Closed) => {
+            return super::records::registration_closed(Some((&cookie_name, auth.secure_cookies())))
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::error!(error = %error, "could not read the platform admission state");
+            return store_failure();
+        }
+    }
     let authorization = crate::permissions::capabilities_from_permissions(permission_names);
     if let Err(error) = auth
         .store_sign_in(
