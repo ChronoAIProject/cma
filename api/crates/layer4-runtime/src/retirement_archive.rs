@@ -1,6 +1,9 @@
 //! Exact retained bytes and indexed permanent replay refusal. Active-ledger
 //! deactivation is a separate, ordered step after this archive has committed.
 mod probe;
+mod probe_sources;
+mod transfer;
+pub(crate) use transfer::Direction;
 mod record;
 mod schema;
 #[cfg(test)]
@@ -267,7 +270,8 @@ impl Archive {
             .await
     }
 
-    /// Called only after exact active-source deactivation is durably verified.
+    /// Fixture-only completion. Production transitions use transfer_group.
+    #[cfg(test)]
     pub(crate) async fn complete(&self, key: String, source_sha256: String) -> Result<()> {
         self.verify()?;
         if !record::digest(&key) || !record::digest(&source_sha256) {
