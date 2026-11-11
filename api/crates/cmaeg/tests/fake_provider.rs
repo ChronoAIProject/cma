@@ -327,13 +327,6 @@ async fn responses(
     let attachments = String::from_utf8_lossy(&body).contains("[Attachments:");
     let candidate = received("POST", "/api/v2/responses".into(), &headers, &body);
     record(&state, "POST", "/api/v2/responses".into(), headers, body);
-    if let Some((status, code)) = &state.config.response_refusal {
-        return (
-            StatusCode::from_u16(*status).unwrap(),
-            Json(json!({"error":{"code":code}})),
-        )
-            .into_response();
-    }
     if attachments {
         if let Some(gate) = &state.config.attachment_gate {
             gate.acquire().await.unwrap().forget();
@@ -349,6 +342,13 @@ async fn responses(
         return (
             StatusCode::NOT_FOUND,
             Json(json!({"code":"conversation_missing"})),
+        )
+            .into_response();
+    }
+    if let Some((status, code)) = &state.config.response_refusal {
+        return (
+            StatusCode::from_u16(*status).unwrap(),
+            Json(json!({"error":{"code":code,"message":"private provider diagnostic"}})),
         )
             .into_response();
     }
