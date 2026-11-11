@@ -201,6 +201,8 @@ it('keeps image source that arrives asynchronously while an earlier save is bein
   acknowledge!({ ...view, revision: 4, source_revision: 4 });
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes'));
   expect(content).toHaveValue(withImage);
-  expect(documentDraft('owner', id)?.markdown).toBe(withImage);
-  expect(documentDraft('owner', id)?.sourceRevision).toBe(4);
+  await waitFor(() => {
+    expect(documentDraft('owner', id)?.markdown).toBe(withImage);
+    expect(documentDraft('owner', id)?.sourceRevision).toBe(4);
+  });
 });
