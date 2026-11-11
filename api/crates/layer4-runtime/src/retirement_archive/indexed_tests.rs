@@ -1,4 +1,6 @@
 use super::*;
+#[path = "indexed_encoding_tests.rs"]
+mod encoding_tests;
 use crate::mutation_ledger::{
     retirement_inventory::{Context, SourceRow},
     Ledger,

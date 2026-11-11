@@ -9,7 +9,9 @@ use super::{
     SourceRow, BYTES,
 };
 
-pub(crate) const ENCODED_LIMIT: usize = 8 * 1024 * 1024;
+// Earlier held preparations used numeric arrays. Retain their read budget;
+// new writes must also fit SQLite's complete row, including keys and headers.
+const ENCODED_LIMIT: usize = 8 * 1024 * 1024;
 
 impl SourceRow {
     pub(crate) fn encode(&self, config: &RuntimeConfig) -> Result<Vec<u8>> {
@@ -18,7 +20,12 @@ impl SourceRow {
         }
         validate(config, self)?;
         let bytes = serde_json::to_vec(self).map_err(|_| invalid())?;
-        if bytes.len() > ENCODED_LIMIT {
+        let (scope, key) = self.key();
+        // Two 64-byte digests, the integer kind and six SQLite serial/length
+        // headers fit in 256 bytes; scope and source key are stored separately.
+        if bytes.len() + scope.len() + key.len() + 256
+            > crate::ledger_storage::MAX_VALUE_BYTES as usize
+        {
             return Err(invalid());
         }
         Ok(bytes)
