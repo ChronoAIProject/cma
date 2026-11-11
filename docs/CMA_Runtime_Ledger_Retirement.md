@@ -225,3 +225,28 @@ database reader. No active source rows are removed. V2 groups remain pending;
 the V1 file-transfer primitive refuses them. Accounting-checked transactional
 deactivation, complete-home restore admission, authoritative automatic collection
 and a supported real-home activation command remain required before cleanup.
+
+## Verify indexed sources before a transition
+
+Archive inspection validates the complete group, source digest, context and
+permanent replay indexes before exposing its first row. It then streams the
+original columns in one read transaction, without collecting the whole history
+in memory. Corruption in the final row refuses before any callback. Inspection
+errors or cancellation never mark the group complete; an owned guard captured by
+the storage callback remains held until that admitted worker finishes.
+
+Active-source comparison accepts pages of at most 64 rows and 2 MiB including
+context. Each comparison rechecks the exact store, generation, revision and page
+geometry, then compares every original column using the table's primary key.
+Raw JSON whitespace and NULL distinctions matter. The operation, authority,
+cleanup-budget, scope-budget and logical-process tables are all covered. Missing,
+duplicate, reordered, changed or oversized inputs refuse without source writes.
+The shipped create-only storage probe exercises archive-to-source comparison.
+
+These are current observations, not a reserved selection or complete-group
+eligibility proof. A successful page does not exclude another effect afterward
+or prove that omitted rows do not belong to the group. The eventual deactivation
+transaction must repeat the source checks under its owned writer hold and require
+the collector's complete-group and authoritative retirement evidence. Neither
+inspection nor comparison clears a pending archive hold, removes an active row,
+authorizes restore or proves reclaimed capacity.
