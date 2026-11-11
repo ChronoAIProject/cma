@@ -40,22 +40,33 @@ pub struct Refusal {
 /// Today's engine: the 256-command inbound queue in front of the 8 sharded workers.
 pub struct ShardedScheduler {
     inbound: mpsc::Sender<DeliveryCommand>,
+    _monitor: super::queue::Monitor,
 }
 impl ShardedScheduler {
     pub fn new(inbound: mpsc::Sender<DeliveryCommand>) -> Self {
-        Self { inbound }
+        let monitor = super::queue::inbound_monitor(&inbound);
+        Self {
+            inbound,
+            _monitor: monitor,
+        }
     }
 }
 impl DeliverySink for ShardedScheduler {
     /// Waits for room in the inbound queue. Stream commands carry no receipt
     /// a caller must complete, so a closed queue is reported without them.
     fn submit(&self, c: DeliveryCommand) -> BoxFuture<'_, Result<(), Refused>> {
-        Box::pin(async move { self.inbound.send(c).await.map_err(|_| Refused::Closed) })
+        Box::pin(async move {
+            let mut wait = super::queue::Wait::new("inbound");
+            let result = self.inbound.send(c).await.map_err(|_| Refused::Closed);
+            wait.finish(if result.is_ok() { "accepted" } else { "closed" });
+            result
+        })
     }
     /// Never drops a refused command itself, so a receipt it carries is never
     /// completed implicitly, possibly under a caller's lock.
     fn try_submit(&self, c: DeliveryCommand) -> Result<(), Refusal> {
-        self.inbound.try_send(c).map_err(|error| {
+        let mut wait = super::queue::Wait::new("inbound");
+        let result = self.inbound.try_send(c).map_err(|error| {
             let (reason, command) = match error {
                 TrySendError::Full(command) => (Refused::Capacity, command),
                 TrySendError::Closed(command) => (Refused::Closed, command),
@@ -64,13 +75,21 @@ impl DeliverySink for ShardedScheduler {
                 reason,
                 command: Box::new(command),
             }
-        })
+        });
+        wait.finish(match &result {
+            Ok(_) => "accepted",
+            Err(refusal) => match refusal.reason {
+                Refused::Capacity => "full",
+                Refused::Closed => "closed",
+            },
+        });
+        result
     }
     fn terminal(&self, turn: Arc<LaunchRequest>, outcome: TurnOutcome) {
         // A stalled delivery sink must not keep a timed-out turn alive indefinitely.
         let command = DeliveryCommand::StreamOutcome { turn, outcome };
-        if let Err(error) = self.inbound.try_send(command) {
-            let (TrySendError::Full(command) | TrySendError::Closed(command)) = error;
+        if let Err(refusal) = self.try_submit(command) {
+            let command = *refusal.command;
             tracing::warn!(
                 reason = failure_reason(&command),
                 "turn failure could not reach delivery sink"
