@@ -19,6 +19,23 @@ pub(crate) fn artifacts(
     revision: u64,
     group: CollectionGroup,
 ) -> Result<(LedgerBindingV1, [Vec<u8>; 3])> {
+    artifacts_for(config, archive, revision, group, LedgerSourceFormatV1::V2)
+}
+pub(crate) fn file_artifacts(
+    config: &RuntimeConfig,
+    archive: &str,
+    revision: u64,
+    group: CollectionGroup,
+) -> Result<(LedgerBindingV1, [Vec<u8>; 3])> {
+    artifacts_for(config, archive, revision, group, LedgerSourceFormatV1::V1)
+}
+fn artifacts_for(
+    config: &RuntimeConfig,
+    archive: &str,
+    revision: u64,
+    group: CollectionGroup,
+    source_format: LedgerSourceFormatV1,
+) -> Result<(LedgerBindingV1, [Vec<u8>; 3])> {
     let binding = LedgerBindingV1 {
         format: LEDGER_BINDING_FORMAT.into(),
         sandbox_id: config.sandbox_id.clone(),
@@ -26,7 +43,7 @@ pub(crate) fn artifacts(
         generation: config.generation,
         boot_id: "b".repeat(32),
         roots_sha256: "c".repeat(64),
-        source_format: LedgerSourceFormatV1::V2,
+        source_format,
         archive_id: archive.into(),
         maintenance_id: "synthetic-held-probe".into(),
         maintenance_epoch: 1,

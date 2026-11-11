@@ -18,7 +18,7 @@ pub(crate) struct SourceRecord {
 }
 
 impl SourceRecord {
-    pub(super) fn operation(&self, config: &RuntimeConfig) -> Result<Operation> {
+    pub(crate) fn operation(&self, config: &RuntimeConfig) -> Result<Operation> {
         if self.scope > config.generation || self.bytes.is_empty() || !canonical(&self.name) {
             return Err(invalid());
         }

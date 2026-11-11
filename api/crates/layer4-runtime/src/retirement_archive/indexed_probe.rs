@@ -34,7 +34,10 @@ pub(super) async fn run(path: &Path) -> Result<()> {
     // the new format without increasing the 128 MiB image probe footprint.
     std::fs::remove_dir_all(path).map_err(|_| invalid())?;
     std::fs::remove_dir_all(path.with_extension("source")).map_err(|_| invalid())?;
-    super::super::collection_storage_probe::run(path, &config).await
+    super::super::collection_storage_probe::run(path, &config).await?;
+    std::fs::remove_dir_all(path).map_err(|_| invalid())?;
+    std::fs::remove_dir_all(path.with_extension("source")).map_err(|_| invalid())?;
+    super::super::file_collection_probe::run(path, &config).await
 }
 
 async fn qualify(path: &Path, config: &RuntimeConfig, id: &str, collected: bool) -> Result<()> {

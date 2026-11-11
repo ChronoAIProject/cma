@@ -25,8 +25,12 @@ pub(super) fn open(
             tx.execute_batch(include_str!("indexed.sql"))
                 .map_err(|_| storage_error())?;
         }
-        if version == Version::Collection {
+        if matches!(version, Version::Collection | Version::FileCollection) {
             tx.execute_batch(include_str!("collection.sql"))
+                .map_err(|_| storage_error())?;
+        }
+        if version == Version::FileCollection {
+            tx.execute_batch(include_str!("file_collection.sql"))
                 .map_err(|_| storage_error())?;
         }
         tx.pragma_update(None, "application_id", APPLICATION_ID)
@@ -59,6 +63,13 @@ pub(super) fn open(
         }
     }
     let sql = match version {
+        Version::FileCollection => concat!(
+            include_str!("schema.sql"),
+            "\n",
+            include_str!("collection.sql"),
+            "\n",
+            include_str!("file_collection.sql")
+        ),
         Version::Collection => concat!(
             include_str!("schema.sql"),
             "\n",

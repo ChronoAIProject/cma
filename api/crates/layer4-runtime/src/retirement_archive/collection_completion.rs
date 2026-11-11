@@ -36,6 +36,18 @@ impl Archive {
         proof: GroupProof,
         source: DeactivationReceipt,
     ) -> Result<CollectionCompletion> {
+        self.acknowledge_with_file_source(reference, evidence, proof, source, None)
+            .await
+    }
+
+    pub(super) async fn acknowledge_with_file_source(
+        &self,
+        reference: CollectionReference,
+        evidence: CollectionEvidence,
+        proof: GroupProof,
+        source: DeactivationReceipt,
+        file_source: Option<crate::ledger_import::collection_source::Snapshot>,
+    ) -> Result<CollectionCompletion> {
         self.verify_collection(&evidence.binding().archive_id)?;
         let completion = CollectionCompletion::new(&reference, &evidence, &proof, source)?;
         let binding = evidence.binding().clone();
@@ -51,7 +63,18 @@ impl Archive {
                 collection::require_slot(&tx, &reference.operation_id)?;
                 let receipt = super::existing(&tx, &proof)?.ok_or_else(invalid)?;
                 if receipt.complete { return Err(invalid()); }
-                super::indexed::verification::group(&tx, &config, &proof, &receipt, None)?;
+                verify_group(&tx, &config, &binding, &proof, &receipt)?;
+                if reference.archive_version == 4 {
+                    let next = file_source.as_ref().ok_or_else(invalid)?;
+                    let (revision,before) = super::file_collection_state::read(&tx)?.ok_or_else(invalid)?;
+                    let counts = before.counts(&proof.key);
+                    if revision != expected.before_revision || before.hash()? != expected.before_sha256
+                        || before.without(&proof.key) != *next || next.hash()? != expected.after_sha256
+                        || counts != [expected.operations,expected.authority] || expected.cleanup != 0 {
+                        return Err(invalid());
+                    }
+                    super::file_collection_state::write(&tx,expected.after_revision,next)?;
+                } else if file_source.is_some() { return Err(invalid()); }
                 super::require_reserve(&directory, anchor.as_deref())?;
                 let bytes = serde_json::to_vec(&expected).map_err(|_| invalid())?;
                 tx.execute("INSERT INTO collection_acknowledgements VALUES (?,?,?)",
@@ -129,8 +152,7 @@ pub(super) fn read(
         return Err(invalid());
     }
     let receipt = super::existing(db, &proof)?.ok_or_else(invalid)?;
-    super::indexed::verification::group(db, config, &proof, &receipt, None)
-        .map_err(|_| invalid())?;
+    verify_group(db, config, accepted, &proof, &receipt).map_err(|_| invalid())?;
     let still_pending: bool = db
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM collection_pending WHERE operation_id=?)",
@@ -142,4 +164,21 @@ pub(super) fn read(
         return Err(invalid());
     }
     Ok(Some(completion))
+}
+
+fn verify_group(
+    db: &Connection,
+    config: &crate::config::RuntimeConfig,
+    accepted: &LedgerBindingV1,
+    proof: &GroupProof,
+    receipt: &super::Receipt,
+) -> Result<()> {
+    match accepted.source_format {
+        layer3_adapter::runtime_ledger_maintenance::LedgerSourceFormatV1::V1 => {
+            super::verification::group(db, config, proof, receipt)
+        }
+        layer3_adapter::runtime_ledger_maintenance::LedgerSourceFormatV1::V2 => {
+            super::indexed::verification::group(db, config, proof, receipt, None).map(|_| ())
+        }
+    }
 }

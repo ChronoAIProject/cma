@@ -126,7 +126,9 @@ impl Archive {
 
     pub(super) fn verify_collection(&self, archive_id: &str) -> Result<()> {
         self.verify()?;
-        if self.version != Version::Collection || archive_id != self.archive_id {
+        if !matches!(self.version, Version::Collection | Version::FileCollection)
+            || archive_id != self.archive_id
+        {
             return Err(invalid());
         }
         Ok(())
@@ -138,8 +140,16 @@ impl Archive {
             || binding.sandbox_id != self.config.sandbox_id
             || Some(&binding.home_identity) != self.config.home_identity.as_ref()
             || binding.generation > self.config.generation
-            || binding.source_format
-                != layer3_adapter::runtime_ledger_maintenance::LedgerSourceFormatV1::V2
+            || !matches!(
+                (self.version, binding.source_format),
+                (
+                    Version::Collection,
+                    layer3_adapter::runtime_ledger_maintenance::LedgerSourceFormatV1::V2
+                ) | (
+                    Version::FileCollection,
+                    layer3_adapter::runtime_ledger_maintenance::LedgerSourceFormatV1::V1
+                )
+            )
         {
             return Err(invalid());
         }
