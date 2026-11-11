@@ -220,3 +220,6 @@ fn events(bytes: &[u8]) -> Vec<Value> {
         .map(|line| serde_json::from_str(line).unwrap())
         .collect()
 }
+
+#[path = "indexed_tests.rs"]
+mod indexed_tests;
