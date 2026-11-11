@@ -51,6 +51,7 @@ test('Agent open, send, active stream and cached return', async ({ page, baseURL
   const fixture = new LocalAgentV2();
   const observed = new PerformanceObserver(page);
   let events: ReturnType<typeof setInterval> | undefined;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
   try {
     fixture.append(
       { type: 'turn_started', turn_sequence: 1 },
@@ -64,6 +65,11 @@ test('Agent open, send, active stream and cached return', async ({ page, baseURL
     fixture.append({ type: 'message', role: 'assistant', content: 'Previous recorded answer' });
     fixture.append({ type: 'turn_completed', turn_sequence: 1 });
     await fixture.route(page, baseURL!);
+    // Sparse fixture output still models an SSE keepalive. WebKit can retain
+    // a small trailing HTTP chunk until another network write arrives.
+    heartbeat = setInterval(() => {
+      for (const stream of fixture.streams) stream.write(': fixture keepalive\n\n');
+    }, 1000);
     await page.route('**/api/v2/ui/task-experience', (route) =>
       route.fulfill({
         status: 404,
@@ -185,6 +191,7 @@ test('Agent open, send, active stream and cached return', async ({ page, baseURL
     throw error;
   } finally {
     clearInterval(events);
+    clearInterval(heartbeat);
     await observed.save(info);
     await info.attach('fixture-boundary', {
       body: JSON.stringify({
