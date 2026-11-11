@@ -2,13 +2,13 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use axum::body::{to_bytes, Body};
-use axum::http::{HeaderMap, Request};
+use axum::http::Request;
 use futures_util::StreamExt;
 use layer2_core::SubjectId;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use super::{BodyKind, Case, RequestFixture, Scenario, Symbols};
+use super::{response_headers::ResponseHeaders, BodyKind, Case, RequestFixture, Scenario, Symbols};
 use crate::AuthenticatedSubject;
 
 const MAX_RAW_BODY_REPEAT: usize = 2 * 1024 * 1024 + 1;
@@ -51,7 +51,11 @@ pub(super) async fn run(scenario: &Scenario, symbols: &mut Symbols, case: &mut C
         "{} status",
         case.id
     );
-    let headers = response_headers(response.headers());
+    let ResponseHeaders {
+        headers,
+        set_cookies,
+    } = ResponseHeaders::read(response.headers());
+    let expected_headers = case.response.expected_headers();
     let body = match case.response.body_kind {
         BodyKind::Json => {
             let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
@@ -138,56 +142,33 @@ pub(super) async fn run(scenario: &Scenario, symbols: &mut Symbols, case: &mut C
     let headers: BTreeMap<String, String> =
         serde_json::from_value(symbols.normalize(symbols.response_tokens(
             serde_json::to_value(headers).unwrap(),
-            &serde_json::to_value(&case.response.headers).unwrap(),
+            &serde_json::to_value(&expected_headers.headers).unwrap(),
+        )))
+        .unwrap();
+    let set_cookies: Vec<String> =
+        serde_json::from_value(symbols.normalize(symbols.response_tokens(
+            serde_json::to_value(set_cookies).unwrap(),
+            &serde_json::to_value(&expected_headers.set_cookies).unwrap(),
         )))
         .unwrap();
     let normalized = symbols.normalize(symbols.response_tokens(body, &case.response.body));
     if record {
         case.response.headers = headers;
+        case.response.set_cookies = set_cookies;
         case.response.body = normalized;
     } else {
         assert_eq!(
-            headers, case.response.headers,
+            headers, expected_headers.headers,
             "{} response headers (excluding derived content-length)",
+            case.id
+        );
+        assert_eq!(
+            set_cookies, expected_headers.set_cookies,
+            "{} response Set-Cookie headers",
             case.id
         );
         assert_eq!(normalized, case.response.body, "{} response body", case.id);
     }
-}
-
-fn response_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
-    let mut values = BTreeMap::new();
-    for (name, value) in headers {
-        assert!(
-            values
-                .insert(name.as_str().to_owned(), value.to_str().unwrap().to_owned())
-                .is_none(),
-            "single-value header fixtures cannot represent repeated {name}"
-        );
-    }
-    values.remove("content-length");
-    values
-}
-
-#[test]
-fn repeated_response_headers_cannot_hide_earlier_values() {
-    for name in ["set-cookie", "cache-control"] {
-        let mut headers = HeaderMap::new();
-        headers.append(name, "unexpected=earlier".parse().unwrap());
-        headers.append(name, "expected=last".parse().unwrap());
-        assert!(std::panic::catch_unwind(|| response_headers(&headers)).is_err());
-    }
-}
-
-#[test]
-fn single_value_response_headers_keep_exact_values_except_derived_length() {
-    let mut headers = HeaderMap::new();
-    headers.insert("set-cookie", "expected=last".parse().unwrap());
-    headers.insert("content-length", "0".parse().unwrap());
-    assert_eq!(
-        response_headers(&headers),
-        BTreeMap::from([("set-cookie".into(), "expected=last".into())])
-    );
 }
 
 async fn response_timeout<F: std::future::Future>(
