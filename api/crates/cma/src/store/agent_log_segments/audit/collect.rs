@@ -49,7 +49,11 @@ pub(super) async fn run(
         .find(doc! {"agent_id":&progress.agent_id,"seq":{"$gte":start,"$lte":end}})
         .sort(doc! {"seq":1})
         .limit(MAX_ENTRIES + 1)
-        .batch_size(persistence::MAX_ROWS as u32)
+        // Source replies and evidence writes have independent bounds. Reading
+        // more source rows per reply keeps command work bounded when one row
+        // produces both semantic and output-index evidence. Mongo still caps
+        // each reply; persistence retains its smaller row/byte transaction cap.
+        .batch_size(512)
         .read_concern(ReadConcern::snapshot())
         .session(&mut snapshot)
         .await
@@ -58,6 +62,7 @@ pub(super) async fn run(
     let mut bytes = 0_i64;
     let mut semantic = progress.completed.semantic.clone();
     let mut batch = Batch::default();
+    let mut output_index = output::resume(database, progress, &staged, &output).await?;
     while let Some(raw) = telemetry
         .next_in_session(&mut rows, &mut snapshot)
         .await
@@ -113,6 +118,24 @@ pub(super) async fn run(
             .map_err(SandboxStoreError::Corrupt)?
         {
             let row = projection::plan(&staged, change)?;
+            if !batch.push(&row)? {
+                persistence::write(client, database, progress, &batch).await?;
+                batch = Batch::default();
+                if !batch.push(&row)? {
+                    return Err(corrupt());
+                }
+            }
+        }
+        for row in output::observe(
+            database,
+            &staged,
+            &output,
+            &batch,
+            &mut output_index,
+            &entry,
+        )
+        .await?
+        {
             if !batch.push(&row)? {
                 persistence::write(client, database, progress, &batch).await?;
                 batch = Batch::default();
@@ -220,7 +243,7 @@ async fn bounds(
     Ok((seal, start, end, bytes, tail))
 }
 
-async fn lookup(
+pub(super) async fn lookup(
     database: &Database,
     staged: &Head,
     output: &Head,

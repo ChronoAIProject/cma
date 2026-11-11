@@ -53,25 +53,15 @@ pub(super) fn plan(
     {
         return Err(corrupt());
     }
-    state
-        .validate_aggregate(current)
+    let (state, changes) = state
+        .plan_publication(current, next, logs)
         .map_err(SandboxStoreError::Corrupt)?;
-    let mut state = state.clone();
     let mut evidence = BTreeMap::new();
-    for entry in logs {
-        let queued = AgentLogProjectionState::queued_owner(entry);
-        for change in state
-            .observe(next, entry, queued)
-            .map_err(SandboxStoreError::Corrupt)?
-        {
-            let row = projection::plan(after, change)?;
-            let key = row.get_str("_id").map_err(|_| corrupt())?.to_owned();
-            evidence.insert(key, row);
-        }
+    for change in changes {
+        let row = projection::plan(after, change)?;
+        let key = row.get_str("_id").map_err(|_| corrupt())?.to_owned();
+        evidence.insert(key, row);
     }
-    state
-        .validate_aggregate(next)
-        .map_err(SandboxStoreError::Corrupt)?;
     for row in evidence.values() {
         projection::read_evidence(
             after,

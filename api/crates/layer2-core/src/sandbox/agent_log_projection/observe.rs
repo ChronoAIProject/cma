@@ -36,13 +36,11 @@ impl AgentLogProjectionState {
             AgentLogKind::Created {
                 workspace_id,
                 worktree_id,
-            } => {
-                if entry.seq != 1
-                    || workspace_id != &agent.workspace_id
-                    || worktree_id != agent.creation_worktree_id()
-                {
-                    return Err("Agent creation lineage is invalid".into());
-                }
+            } if entry.seq != 1
+                || workspace_id != &agent.workspace_id
+                || worktree_id != agent.creation_worktree_id() =>
+            {
+                return Err("Agent creation lineage is invalid".into());
             }
             AgentLogKind::ConversationOpened {
                 conversation_id,

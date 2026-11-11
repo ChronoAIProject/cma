@@ -101,3 +101,22 @@ fn batches_bound_encoded_bytes_rows_and_replacement_growth() {
         .push(&doc! {"_id":"oversize","value":"x".repeat(256*1024)})
         .is_err());
 }
+
+#[test]
+fn batch_acknowledgment_requires_every_effect_and_no_embedded_write_error() {
+    use super::persistence::require_complete_batch;
+    for reply in [doc! {"n":2_i32}, doc! {"n":2_i64,"writeErrors":[]}] {
+        require_complete_batch(&reply, 2).unwrap();
+    }
+    for reply in [
+        doc! {},
+        doc! {"n":1_i32},
+        doc! {"n":3_i64},
+        doc! {"n":2_f64},
+        doc! {"n":2_i32,"writeErrors":[{"code":121}]},
+        doc! {"n":2_i32,"writeErrors":true},
+        doc! {"n":2_i32,"writeConcernError":{"code":64}},
+    ] {
+        assert!(require_complete_batch(&reply, 2).is_err());
+    }
+}
