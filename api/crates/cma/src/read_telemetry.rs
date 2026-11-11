@@ -22,4 +22,5 @@ pub(crate) fn emit() {
     layer1_public::stream_telemetry::emit();
     crate::store::agent_log_telemetry::emit();
     crate::store::mongo_read_telemetry::emit();
+    crate::store::emit_response_reads();
 }
