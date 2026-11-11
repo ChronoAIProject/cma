@@ -118,6 +118,7 @@ fn policy_scope_is_explicit_and_invalid_settings_fail_closed() {
             lag_allowance: 0,
         }),
         default_policy: None,
+        request_models: Vec::new(),
         owners: vec![OwnerBudgetPolicy {
             owner: owner.clone(),
             policy: policy(),
