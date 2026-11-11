@@ -22,7 +22,7 @@ use tokio::sync::oneshot;
 pub(crate) use probe::run as probe;
 
 const QUEUE_LIMIT: usize = 8;
-const MAX_VALUE_BYTES: i32 = 2 * 1024 * 1024;
+pub(crate) const MAX_VALUE_BYTES: i32 = 2 * 1024 * 1024;
 
 type Work = Box<dyn FnOnce(&mut Connection) + Send>;
 enum Message {
