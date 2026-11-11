@@ -247,7 +247,13 @@ pub(crate) async fn require_open_with(
     }
 }
 
-pub(super) async fn require_open(
+/// Wall-clock seconds for zero-liability checks; an unreadable clock is far
+/// past any period end, which fails closed as metering unavailable.
+pub(in crate::store) fn now_seconds() -> u64 {
+    layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339()).unwrap_or(u64::MAX)
+}
+
+pub(in crate::store) async fn require_open(
     store: &MongoSandboxStore,
     now: u64,
     session: &mut ClientSession,

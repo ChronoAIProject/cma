@@ -19,7 +19,9 @@ pub use period::{
 mod platform;
 #[cfg(test)]
 mod request_tests;
+mod spend;
 pub use platform::{CloudSpendPolicy, PlatformBudgetPolicy, SpendLevels};
+pub use spend::{PlatformAdmissionState, PlatformSpendLedger, PlatformSpendState};
 #[cfg(test)]
 mod controls_tests;
 

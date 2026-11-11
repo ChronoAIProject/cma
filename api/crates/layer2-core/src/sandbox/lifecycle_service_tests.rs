@@ -166,3 +166,103 @@ fn stored_sandbox() -> Sandbox {
     value.revision = 1;
     value
 }
+
+struct FixedSpend(crate::budget::PlatformAdmissionState);
+
+#[async_trait::async_trait]
+impl crate::budget::PlatformSpendLedger for FixedSpend {
+    async fn admission_state(
+        &self,
+        _: u64,
+    ) -> Result<crate::budget::PlatformAdmissionState, crate::budget::BudgetError> {
+        Ok(self.0.clone())
+    }
+
+    async fn spend_state(
+        &self,
+        _: u64,
+    ) -> Result<crate::budget::PlatformSpendState, crate::budget::BudgetError> {
+        Err(crate::budget::BudgetError::Unavailable)
+    }
+}
+
+fn closed(reason: crate::budget::ClosureReason) -> Arc<FixedSpend> {
+    Arc::new(FixedSpend(crate::budget::PlatformAdmissionState {
+        configured: true,
+        closures: vec![crate::budget::Closure {
+            reason,
+            since: 1,
+            settings_revision: 1,
+            committed_at_entry: 0,
+        }],
+    }))
+}
+
+async fn paused_service(
+    spend: Arc<FixedSpend>,
+) -> (Arc<SandboxService>, Arc<InMemorySandboxStore>, Sandbox) {
+    let store = Arc::new(InMemorySandboxStore::default());
+    let service = SandboxService::new(
+        store.clone(),
+        Arc::new(InMemoryProfileStore::default()),
+        SandboxPolicy::default(),
+        Arc::new(crate::sandbox::FixedSandboxCredentialPrerequisite::Ready),
+    );
+    service.attach_platform_spend(spend);
+    let mut paused = stored_sandbox();
+    paused.id.0 = "sbx_platform_paused".into();
+    paused.name = "platform-paused".into();
+    paused.status = SandboxStatus::Paused;
+    paused.runtime = None;
+    paused.lifecycle.checkpoints.latest = Some(checkpoint(3, "2026-09-05T00:29:00Z"));
+    store.create_sandbox(paused.clone()).await.unwrap();
+    (service, store, paused)
+}
+
+#[tokio::test]
+async fn revive_is_refused_while_the_platform_is_closed_for_commitments() {
+    use crate::budget::{BudgetError, ClosureReason};
+    let owner = caller("owner", [Capability::UseOwnSandboxes]);
+    for (reason, refusal) in [
+        (ClosureReason::SpendStop, BudgetError::PlatformExhausted),
+        (ClosureReason::MeteringUnavailable, BudgetError::Unavailable),
+    ] {
+        let (service, store, paused) = paused_service(closed(reason)).await;
+        assert_eq!(
+            service.revive(&owner, &paused.id).await.unwrap_err(),
+            SandboxLifecycleCommandError::Budget(refusal)
+        );
+        assert_eq!(
+            store.get_sandbox(&paused.id).await.unwrap().unwrap().status,
+            SandboxStatus::Paused
+        );
+        assert_eq!(
+            SandboxLifecycleCommandError::Budget(refusal).code(),
+            refusal.code()
+        );
+    }
+    let (service, _, paused) = paused_service(closed(ClosureReason::SpendWarning)).await;
+    assert_eq!(
+        service
+            .revive(&owner, &paused.id)
+            .await
+            .unwrap()
+            .sandbox
+            .status,
+        SandboxStatus::Reviving
+    );
+}
+
+#[tokio::test]
+async fn cancel_pause_and_approval_decisions_stay_available_under_spend_stop() {
+    let (service, store, _) = paused_service(closed(crate::budget::ClosureReason::SpendStop)).await;
+    let owner = caller("owner", [Capability::UseOwnSandboxes]);
+    let active = stored_sandbox();
+    store.create_sandbox(active.clone()).await.unwrap();
+    let paused = service.pause(&owner, &active.id).await.unwrap();
+    assert_eq!(
+        paused.disposition,
+        SandboxLifecycleCommandDisposition::Scheduled
+    );
+    assert_eq!(paused.sandbox.status, SandboxStatus::Pausing);
+}

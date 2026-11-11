@@ -27,6 +27,7 @@ pub(crate) enum HierarchyProblem {
     InvalidPage,
     Unavailable,
     GlobalCapacityReached,
+    Budget(layer2_core::budget::BudgetError),
     SandboxLifecycleUnavailable(&'static str),
     SandboxLifecycleBusy(SandboxLifecycleBlocker),
 }
@@ -45,6 +46,7 @@ impl HierarchyProblem {
     pub(crate) fn sandbox(error: SandboxServiceError) -> Self {
         match error {
             SandboxServiceError::GlobalCapacityReached => Self::GlobalCapacityReached,
+            SandboxServiceError::Budget(reason) => Self::Budget(reason),
             SandboxServiceError::CredentialSetupRequired => Self::CredentialSetupRequired,
             SandboxServiceError::ConnectionsRequired { services } => {
                 Self::ConnectionsRequired(services)
@@ -100,6 +102,7 @@ impl HierarchyProblem {
                 Self::Conflict("workspace_prepare_recovery_conflict")
             }
             WorkspaceServiceError::InvalidOrigin => Self::Invalid("invalid_workspace_origin"),
+            WorkspaceServiceError::Budget(reason) => Self::Budget(reason),
             WorkspaceServiceError::Corrupt(_) | WorkspaceServiceError::Unavailable(_) => {
                 Self::Unavailable
             }
@@ -123,6 +126,7 @@ impl HierarchyProblem {
             SandboxLifecycleCommandError::SandboxBusy { reason, .. } => {
                 Self::SandboxLifecycleBusy(reason)
             }
+            SandboxLifecycleCommandError::Budget(reason) => Self::Budget(reason),
             SandboxLifecycleCommandError::Corrupt(_) => {
                 Self::SandboxLifecycleUnavailable("stored_sandbox_corrupt")
             }
@@ -162,6 +166,9 @@ impl IntoResponse for HierarchyProblem {
         let (status, slug, detail, code, fields) = match self {
             Self::ResourceAccess(error) => {
                 return super::resource_access_problem::ResourceProblem(error).into_response()
+            }
+            Self::Budget(reason) => {
+                return super::instance_problem::InstanceProblem::Budget(reason).into_response()
             }
             Self::ConnectionsRequired(services) => (
                 StatusCode::CONFLICT,
@@ -302,6 +309,43 @@ fn not_found(resource: &'static str) -> ProblemParts {
 #[cfg(test)]
 mod global_admission_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn platform_refusals_of_new_resources_share_the_budget_problem() {
+        use layer2_core::budget::BudgetError;
+        for (problem, status, code) in [
+            (
+                HierarchyProblem::sandbox(SandboxServiceError::Budget(
+                    BudgetError::PlatformExhausted,
+                )),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "platform_budget_exhausted",
+            ),
+            (
+                HierarchyProblem::workspace(WorkspaceServiceError::Budget(
+                    BudgetError::Unavailable,
+                )),
+                StatusCode::PAYMENT_REQUIRED,
+                "budget_unavailable",
+            ),
+            (
+                HierarchyProblem::sandbox_lifecycle(SandboxLifecycleCommandError::Budget(
+                    BudgetError::PlatformExhausted,
+                )),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "platform_budget_exhausted",
+            ),
+        ] {
+            let response = problem.into_response();
+            assert_eq!(response.status(), status);
+            assert!(response.headers().get("retry-after").is_none());
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["code"], code);
+        }
+    }
 
     #[tokio::test]
     async fn global_capacity_is_retryable_and_does_not_disclose_fleet_counts() {
