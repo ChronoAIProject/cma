@@ -82,18 +82,22 @@ filename components and symlink targets in base64; POSIX metadata, hardlink iden
 and extended attribute names/values are preserved. Regular files are chunked into
 4 MiB objects. Directory, symlink, socket and FIFO types are explicit; devices,
 changing metadata, unenumerable roots and unsupported attributes fail closed.
-The root inventory is bounded to 200,000 entries and depth 64; each extended
-attribute inventory is bounded to 128 names and 1 MiB. No budget truncates output.
+The complete file inventory is bounded to 200,000 entries, depth 64 and 1 TiB; each extended
+attribute inventory is bounded to 128 names and 1 MiB. No budget truncates output. Nested roots may overlap when separate roles share
+the same mount; each role is captured and checked explicitly.
 
 The service captures full BSON documents, not projections, in a single Mongo
 snapshot session. It discovers and validates the complete Sandbox/Workspace/
 Worktree/Agent hierarchy, including Failed and Deleted Agents, and captures the
 matching records in every declared service collection using authoritative lineage
-and retained references. Exact BSON length framing is preserved. Embedded Agent
+and retained references. The existing full-log scanner checks sequence continuity against each Agent's
+authoritative head and refuses quarantine or mismatched creation lineage. Exact
+BSON length framing is preserved. Embedded Agent
 artifact bodies are included. Document artifact revisions are read through the
 existing document store adapter and matched to their metadata hashes and sizes.
 A second independent snapshot/census must match before manifest publication.
-The command normalizes its own parent hold bookkeeping to the retained original
+The Mongo census is bounded to two million documents and 32 GiB; exceeding a
+budget refuses capture. The command normalizes its own parent hold bookkeeping to the retained original
 parent; the full archive requirement and receipt remain separately durable.
 
 Legacy external checkpoint objects/tombstones and channel media requiring retired
