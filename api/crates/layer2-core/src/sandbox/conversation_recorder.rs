@@ -31,7 +31,10 @@ use output::{is_identity_terminal_for_current, output_replayed, output_source_fo
 #[path = "conversation_live.rs"]
 pub(super) mod live;
 
+#[path = "conversation_live_budget.rs"]
+mod live_budget;
 pub use live::{AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription};
+pub use live_budget::AgentLiveDelivery;
 
 pub struct DurableAgentUpdateRecorder {
     store: Arc<dyn AgentConversationUpdateStore>,
