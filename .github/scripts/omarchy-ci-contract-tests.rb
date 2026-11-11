@@ -54,6 +54,12 @@ module OmarchyCIContractTests
         value["ci"]["jobs"]["omarchy"]["steps"].find { |step| step["id"] == "build" }["with"][key] = changed
       end
     end
+    %w[runtime runtime-desktop].each do |scope|
+      reject.call("Omarchy mixes remote #{scope} blobs into its complete archive") do |value|
+        build = value["ci"]["jobs"]["omarchy"]["steps"].find { |step| step["id"] == "build" }
+        build["with"]["cache-from"] += "type=gha,scope=#{scope}\n"
+      end
+    end
     [nil, "", "type=gha,mode=min,scope=${{ steps.cache.outputs.scope }}",
      "type=local,mode=max,dest=${{ runner.temp }}/omarchy-layer-cache"].each do |changed|
       reject.call("Omarchy omits archive retention or changes cache storage") do |value|
