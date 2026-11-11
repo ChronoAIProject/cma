@@ -110,12 +110,16 @@ overall. Production qualification must measure its actual history/fallback mix;
 CPU/decoded-byte improvements and checkout improvements are separate outcomes.
 These fixtures do not establish fleet savings or a production latency forecast.
 
-Validation: formatting, cma tests/all-features clippy, 26 existing title-domain
-tests, the strict switch parser test and the real-Mongo title contracts are required.
+Validation of the read-only correction: formatting, cma tests/all-features
+clippy, six focused integrity/configuration unit tests and 18 real-Mongo
+contracts passed. The earlier 26 title-domain tests remain unchanged.
 The Mongo contracts include bounded-consumer tests, existing claim and
 unknown-commit cases, and task-title authorization/setup recovery. Corrupt complete
 fallback tests cover missing/stale/unsupported metadata, both disabled gates,
 prefix/byte fallback, lineage, codec, capacity and shared-proof refusal. Both title
 input and candidate reads must leave the Agent document exactly unchanged and emit
-no write/transaction-control command. Executed results are recorded in the PR;
-hosted CI is separate.
+no write/transaction-control command. The 18 Mongo contracts include 13 title
+cases, two setup/authorization recovery cases and three explicit audit cases;
+the latter still persist quarantine. All checkout/row measurements above were
+reproduced. Disposable Mongo cleanup was verified. Configuration documentation,
+file-size, whitespace and secret checks passed; hosted CI is separate.
