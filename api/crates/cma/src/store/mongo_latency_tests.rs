@@ -15,7 +15,7 @@ fn unmatched_checkout_start_is_an_event_not_a_permanent_queue_entry() {
         callback(CmapEvent::ConnectionCheckoutStarted(event));
     });
     let text = handle.render();
-    assert!(text.contains("cma_mongo_checkout_started_total 1"));
+    assert!(text.contains("cma_mongo_checkout_started_total{pool=\"application\"} 1"));
     assert!(!text.contains("cma_mongo_checkouts_pending"));
     assert!(!text.contains("cma_mongo_pool_events_total"));
 }
@@ -25,19 +25,24 @@ fn scrape_observes_checkout_failures_and_occupancy_without_connection_identifier
     let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
     let handle = recorder.handle();
     metrics::with_local_recorder(&recorder, || {
-        let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
+        let observer = Observer(
+            Arc::new(Mutex::new(Window::new(Instant::now()))),
+            "application",
+        );
         observer.checked_out(424242, Duration::from_millis(12));
-        assert!(handle.render().contains("cma_mongo_connections_tracked 1"));
+        assert!(handle
+            .render()
+            .contains("cma_mongo_connections_tracked{pool=\"application\"} 1"));
         observer.returned(424242, false);
         observer.record(0, Duration::from_millis(30), true);
     });
     let text = handle.render();
-    assert!(text.contains("cma_mongo_connections_tracked 0"));
+    assert!(text.contains("cma_mongo_connections_tracked{pool=\"application\"} 0"));
     assert!(
-        text.contains("cma_mongo_pool_events_total{operation=\"checkout\",outcome=\"failed\"} 1")
+        text.contains("cma_mongo_pool_events_total{pool=\"application\",operation=\"checkout\",outcome=\"failed\"} 1")
     );
     assert!(text.contains(
-        "cma_mongo_pool_operation_seconds_count{operation=\"checkout\",outcome=\"ok\"} 1"
+        "cma_mongo_pool_operation_seconds_count{pool=\"application\",operation=\"checkout\",outcome=\"ok\"} 1"
     ));
     assert!(!text.contains("424242"));
 }
@@ -89,7 +94,10 @@ fn summary_is_bounded_and_excludes_parent_span_payloads() {
         .with_writer(output.clone())
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
-    let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
+    let observer = Observer(
+        Arc::new(Mutex::new(Window::new(Instant::now()))),
+        "application",
+    );
     let untrusted = "private query text must never enter logs";
     let span = tracing::info_span!("caller", private_context = untrusted);
     let _entered = span.enter();
@@ -137,7 +145,10 @@ fn diagnostic_counter_overflow_cannot_panic_or_change_database_behavior() {
 
 #[test]
 fn connection_holds_survive_windows_and_closed_connections_release_tracking() {
-    let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
+    let observer = Observer(
+        Arc::new(Mutex::new(Window::new(Instant::now()))),
+        "application",
+    );
     observer.checked_out(1, Duration::ZERO);
     observer.checked_out(2, Duration::ZERO);
     {
@@ -162,7 +173,10 @@ fn connection_holds_survive_windows_and_closed_connections_release_tracking() {
 
 #[test]
 fn connection_tracking_is_bounded_and_separates_server_local_ids() {
-    let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
+    let observer = Observer(
+        Arc::new(Mutex::new(Window::new(Instant::now()))),
+        "application",
+    );
     for key in 0..MAX_TRACKED_CONNECTIONS as u64 + 2 {
         observer.checked_out(key, Duration::ZERO);
     }
@@ -184,7 +198,10 @@ async fn real_driver_observations_preserve_operations_and_exclude_payloads() {
         Client,
     };
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
-    let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
+    let observer = Observer(
+        Arc::new(Mutex::new(Window::new(Instant::now()))),
+        "application",
+    );
     let mut options = ClientOptions::parse(uri).await.unwrap();
     attach(&mut options, observer.clone());
     // Installing a command callback would eagerly decode full BSON payloads
@@ -240,4 +257,30 @@ async fn real_driver_observations_preserve_operations_and_exclude_payloads() {
     for private in [sentinel, &name, "private_records", "127.0.0.1"] {
         assert!(!logs.contains(private));
     }
+}
+
+#[test]
+fn independently_configured_clients_do_not_share_occupancy_or_limits() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    metrics::with_local_recorder(&recorder, || {
+        let app = ClientOptions::builder().max_pool_size(10).build();
+        let reporting = ClientOptions::builder().max_pool_size(4).build();
+        let app_observer = observer(&app, "application");
+        let reporting_observer = observer(&reporting, "reporting");
+        for callback in [&app_observer as &dyn Fn(CmapEvent), &reporting_observer] {
+            let event = serde_json::from_value(serde_json::json!({ "address": "localhost:27017", "connectionId": 1, "durationMS": 10 })).unwrap();
+            callback(CmapEvent::ConnectionCheckedOut(event));
+        }
+        let returned = serde_json::from_value(
+            serde_json::json!({ "address": "localhost:27017", "connectionId": 1 }),
+        )
+        .unwrap();
+        app_observer(CmapEvent::ConnectionCheckedIn(returned));
+    });
+    let text = handle.render();
+    assert!(text.contains("cma_mongo_connections_tracked{pool=\"application\"} 0"));
+    assert!(text.contains("cma_mongo_connections_tracked{pool=\"reporting\"} 1"));
+    assert!(text.contains("cma_mongo_pool_max_connections{pool=\"reporting\"} 4"));
+    assert!(text.contains("cma_mongo_pool_max_connections{pool=\"application\"} 10"));
 }

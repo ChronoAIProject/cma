@@ -18,6 +18,7 @@ mod current;
 mod defaults;
 mod retirement;
 mod startup;
+mod telemetry;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PoolTarget {
@@ -201,7 +202,7 @@ impl NativeWarmPools {
                     _ = tick.tick() => {
                         for _ in 0..20 {
                             let result = self.reconcile_one().await;
-                            crate::telemetry::worker::completed("native_warm_pools", "execution", if result.is_ok() { "ok" } else { "error" });
+                            crate::telemetry::worker::completed("native_warm_pools", "execution", match &result { Ok(true) => "attempted", Ok(false) => "idle", Err(_) => "error" });
                             match result {
                                 Ok(true) => {},
                                 Ok(false) => break,
@@ -455,5 +456,6 @@ async fn reconcile_claimed(
         Ok(Ok(()))
     );
     store.finish(&target, success).await?;
+    telemetry::applied(&target, success);
     Ok(true)
 }
