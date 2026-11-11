@@ -56,6 +56,20 @@ snapshot begins. Command traces prohibit writes/transaction control; refusal
 compares the exact Agent document. Existing approval publication and dispatch
 security tests remain part of the local gate. Results are recorded before PR.
 
+Paired local Mongo 8.0.13 measurements, including all proof and cursor checkouts:
+
+| Retained events | Original checkouts | Bounded checkouts | Original log documents | Bounded log documents |
+| --- | --- | --- | --- | --- |
+| 1,000 | 6 | 4 | 1,001 | 201 |
+| 10,000 | 8 | 4 | 10,001 | 201 |
+
+These successful suffixes save two/four checkouts (33%/50%) and consume 80%/98%
+fewer log documents. At 1,000 events, the long/no-reset and oversized suffix
+fallbacks each use six checkouts, matching the original prepared reader;
+switch/cohort off uses five, missing/unsupported metadata three, and stale
+metadata four. The complete read also removes the original duplicate envelope
+query. These fixture results are not a fleet latency or savings forecast.
+
 This adds no stored format, index, projection, backfill or writer floor. Ship
 with the independent switch false, after a fully green develop batch artifact.
 Qualify admission and public windows first. Compare matched natural approval
@@ -64,6 +78,10 @@ latency and errors. A fallback still costs a window attempt before the complete
 scan; local fixture improvements do not establish fleet savings. Missing
 natural observations remain unverified. Never send a production approval or
 create a conversation solely to generate samples.
+
+Existing scan/read counters are fleet/process aggregates, not an approval-only
+denominator. Report that attribution limit; do not infer per-approval savings
+or a fallback rate without corresponding request-level coverage.
 
 Rollback by disabling only the approval-reader switch and restarting the API
 through the release owner. Keep cohort metadata, events, requests and quarantine
