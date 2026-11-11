@@ -222,7 +222,7 @@ async fn scenario(name: &str) -> Scenario {
         None,
         store,
         Some("https://identity.example.test".into()),
-    );
+    ).with_silent_sign_in(true);
     if matches!(
         name,
         "auth_visitor" | "auth_store_unavailable" | "auth_identity_unavailable"

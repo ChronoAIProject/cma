@@ -76,7 +76,10 @@ async fn session_verifies_once_per_request_and_observes_changed_permissions_and_
         *fixture.control.introspection.write().await = Reply::json(json!({"active": false}));
         let (status, body) = session(&app, &headers).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert_eq!(body, json!({"authenticated": false, "silent_sign_in": true}));
+        assert_eq!(
+            body,
+            json!({"authenticated": false, "silent_sign_in": false})
+        );
         assert_eq!(fixture.control.requests.load(Ordering::SeqCst), 6);
         fixture.assert_unchanged(&retained).await;
     }
@@ -145,7 +148,7 @@ async fn session_without_credentials_or_after_browser_logout_stays_unauthenticat
         session(&app, &HeaderMap::new()).await,
         (
             StatusCode::UNAUTHORIZED,
-            json!({"authenticated": false, "silent_sign_in": true})
+            json!({"authenticated": false, "silent_sign_in": false})
         )
     );
     assert_eq!(fixture.control.requests.load(Ordering::SeqCst), 0);
@@ -160,7 +163,7 @@ async fn session_without_credentials_or_after_browser_logout_stays_unauthenticat
         session(&app, &headers).await,
         (
             StatusCode::UNAUTHORIZED,
-            json!({"authenticated": false, "silent_sign_in": true})
+            json!({"authenticated": false, "silent_sign_in": false})
         )
     );
     assert_eq!(fixture.control.requests.load(Ordering::SeqCst), before);
