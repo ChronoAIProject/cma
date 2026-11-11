@@ -59,8 +59,9 @@ mod approval_tests {
             })
             .unwrap();
             assert_eq!(flags.bounded_approval_reads, expected);
+            assert!(!flags.bounded_title_reads);
         }
-        for value in ["", "1", "TRUE"] {
+        for value in ["", "1", "TRUE", " true "] {
             assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
                 == "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")
                 .then(|| value.to_owned())))

@@ -157,3 +157,62 @@ async fn small_and_completed_approval_histories_keep_empty_and_absent_semantics(
         f.cleanup().await;
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn fleet_selection_and_restart_keep_the_approval_switch_independent() {
+    let mut f = Fixture::new(1_000)
+        .await
+        .prepare()
+        .await
+        .approvals(false, false)
+        .await;
+    let expected = f.original_approvals().await;
+    // Reopening discards process-local activation state, preserving only the
+    // durable proof. Neither the fleet selector nor the title switch enables
+    // approval suffix reads; selected but unprepared Agents still read fully.
+    for (percent, enabled, title, trusted, rows) in [
+        (100, false, true, true, 1_001),
+        (100, true, false, true, 201),
+        (0, true, true, true, 1_001),
+        (100, true, true, false, 1_000),
+    ] {
+        f.store = MongoSandboxStore::open(&f.client, &f.name)
+            .await
+            .unwrap()
+            .with_fleet_log_percentage(percent)
+            .with_bounded_title_reads(title)
+            .with_bounded_approval_reads(enabled);
+        if !trusted {
+            f.change_proof(doc! { "$unset": { INTEGRITY_FIELD: "" }})
+                .await;
+        }
+        let before = f
+            .store
+            .agents
+            .find_one(doc! { "_id": f.id.as_str() })
+            .await
+            .unwrap()
+            .unwrap();
+        f.reset_commands();
+        telemetry::isolated_test(async {
+            assert_eq!(
+                f.store.pending_agent_approvals(&f.id).await.unwrap(),
+                expected
+            );
+            assert_eq!(telemetry::snapshot(AGENT_LOG)[2], rows);
+        })
+        .await;
+        f.assert_snapshot_reads();
+        assert_eq!(
+            f.store
+                .agents
+                .find_one(doc! { "_id": f.id.as_str() })
+                .await
+                .unwrap()
+                .unwrap(),
+            before
+        );
+    }
+    f.cleanup().await;
+}
