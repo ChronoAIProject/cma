@@ -1,9 +1,10 @@
-//! Compare all file contents, paths and modes without traversing symbolic links.
+//! Compare paths, entry types and bytes; remount policy and umask are not content identity.
 use super::{conflict, io, MARKER};
 use crate::{agent_filesystem::io as fd, config::RuntimeConfig, failure::Result};
 use layer3_adapter::{AgentSkillInstallReceipt, AgentSkillInstallRequest};
 use sha2::{Digest as _, Sha256};
 use std::{
+    collections::BTreeMap,
     ffi::CString,
     fs::{File, OpenOptions},
     io::Read as _,
@@ -14,7 +15,7 @@ use std::{
     path::Path,
 };
 
-fn directory(path: &Path) -> Result<File> {
+pub(super) fn directory(path: &Path) -> Result<File> {
     // Open every ancestor separately so even an intermediate symlink is refused.
     let mut current = OpenOptions::new()
         .read(true)
@@ -51,20 +52,58 @@ pub(super) fn receipt_matches(path: &Path, expected: &AgentSkillInstallReceipt) 
         Err(_) => Ok(false),
     }
 }
+pub(super) struct Tree {
+    entries: BTreeMap<String, Option<String>>,
+    pub(super) bytes: u64,
+}
+impl Tree {
+    pub(super) fn digest(&self) -> String {
+        format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&self.entries).expect("tree entries"))
+        )
+    }
+}
+pub(super) fn prove_previous(
+    expected: &Path,
+    target: &Path,
+    receipt: Option<&AgentSkillInstallReceipt>,
+) -> Result<Tree> {
+    let expected = snapshot(expected, None)?;
+    let actual = snapshot(target, receipt)?;
+    if expected
+        .entries
+        .iter()
+        .any(|(path, value)| actual.entries.get(path) != Some(value))
+    {
+        return Err(crate::failure::RuntimeError::rejected(
+            "agent_skill_upgrade_modified",
+            "Archive-owned files changed or are missing; save your edits outside the skill directory and restore the installed version before retrying.",
+        ));
+    }
+    // Additional regular content (including runtime caches) is retained in the
+    // exchanged old tree outside discovery, never deleted or copied into the new version.
+    Ok(actual)
+}
 pub(super) fn digest(path: &Path, receipt: Option<&AgentSkillInstallReceipt>) -> Result<String> {
+    Ok(snapshot(path, receipt)?.digest())
+}
+fn snapshot(path: &Path, receipt: Option<&AgentSkillInstallReceipt>) -> Result<Tree> {
     let directory = directory(path)?;
-    let mut hash = Sha256::new();
-    hash.update((directory.metadata().map_err(io)?.mode() & 0o177777).to_be_bytes());
+    let mut tree = BTreeMap::new();
     let mut entries = 0usize;
     let mut bytes = 0u64;
-    walk(&directory, "", receipt, &mut hash, &mut entries, &mut bytes)?;
-    Ok(format!("{:x}", hash.finalize()))
+    walk(&directory, "", receipt, &mut tree, &mut entries, &mut bytes)?;
+    Ok(Tree {
+        entries: tree,
+        bytes,
+    })
 }
 fn walk(
     directory: &File,
     prefix: &str,
     receipt: Option<&AgentSkillInstallReceipt>,
-    hash: &mut Sha256,
+    tree: &mut BTreeMap<String, Option<String>>,
     entries: &mut usize,
     bytes: &mut u64,
 ) -> Result<()> {
@@ -120,11 +159,9 @@ fn walk(
             return Err(conflict("skill entry changed during comparison"));
         }
         let relative = format!("{prefix}{name}");
-        hash.update((relative.len() as u64).to_be_bytes());
-        hash.update(relative.as_bytes());
-        hash.update((before.mode() & 0o177777).to_be_bytes());
         if kind == libc::S_IFDIR {
-            walk(&file, &(relative + "/"), None, hash, entries, bytes)?;
+            tree.insert(relative.clone(), None);
+            walk(&file, &(relative + "/"), None, tree, entries, bytes)?;
         } else {
             if before.nlink() != 1 {
                 return Err(conflict("skill contains a hard linked file"));
@@ -135,6 +172,7 @@ fn walk(
             if *bytes > 256 * 1024 * 1024 {
                 return Err(conflict("skill tree too large"));
             }
+            let mut hash = Sha256::new();
             hash.update(before.len().to_be_bytes());
             let mut remaining = before.len();
             let mut buffer = [0u8; 65536];
@@ -148,6 +186,7 @@ fn walk(
                 remaining -= count as u64;
                 hash.update(&buffer[..count]);
             }
+            tree.insert(relative, Some(format!("{:x}", hash.finalize())));
             let after = file.metadata().map_err(io)?;
             if before.len() != after.len()
                 || before.mtime() != after.mtime()

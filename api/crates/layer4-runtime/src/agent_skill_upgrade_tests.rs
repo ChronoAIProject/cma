@@ -17,6 +17,12 @@ fn skill(config: &RuntimeConfig, version: &str) -> layer3_adapter::AgentSkill {
     .unwrap();
     zip.write_all(format!("# Research {version}\n").as_bytes())
         .unwrap();
+    zip.start_file(
+        "scripts/helper.py",
+        zip::write::SimpleFileOptions::default().unix_permissions(0o600),
+    )
+    .unwrap();
+    zip.write_all(b"value = 42\n").unwrap();
     zip.finish().unwrap();
     let bytes = bytes.into_inner();
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
@@ -46,17 +52,30 @@ async fn fixture(profile: bool) -> (RuntimeConfig, AgentSkillInstallRequest) {
     let previous = skill(&config, "1.0");
     let next = skill(&config, "1.1");
     let home = config.agent_home(slot.as_str());
+    std::fs::create_dir_all(&config.home).unwrap();
+    crate::agent_home::materialize(
+        &config,
+        &reqwest::Client::new(),
+        &layer3_adapter::AgentHomePlan {
+            operation_id: "agent:agent-one:home:create:v1".into(),
+            request_sha256: "a".repeat(64),
+            agent_id: slot.clone(),
+            files: vec![layer3_adapter::HomeFile {
+                path: "AGENTS.md".into(),
+                bytes: b"unchanged".to_vec(),
+            }],
+            symlinks: vec![],
+            skills: if profile {
+                vec![previous.clone()]
+            } else {
+                vec![]
+            },
+        },
+    )
+    .await
+    .unwrap();
     std::fs::create_dir_all(home.join("skills")).unwrap();
-    std::fs::write(home.join("AGENTS.md"), b"unchanged").unwrap();
     let receipt = if profile {
-        crate::skills::install_prepared(
-            &config,
-            &reqwest::Client::new(),
-            &previous,
-            &home.join("skills/research"),
-        )
-        .await
-        .unwrap();
         None
     } else {
         Some(
@@ -91,9 +110,16 @@ async fn upgrades_recover_every_crash_boundary_for_profile_and_live_skills() {
             "proof_published",
             "exchanged",
             "exchange_synced",
-            "old_removed",
+            "previous_retained",
         ] {
             let (config, request) = fixture(profile).await;
+            std::fs::write(
+                config
+                    .agent_home(request.agent_id.as_str())
+                    .join("skills/research/owner-notes"),
+                b"retain through crash",
+            )
+            .unwrap();
             FAULTS
                 .lock()
                 .unwrap()
@@ -111,7 +137,7 @@ async fn upgrades_recover_every_crash_boundary_for_profile_and_live_skills() {
                 "proof_published",
                 "exchanged",
                 "exchange_synced",
-                "old_removed",
+                "previous_retained",
             ]
             .contains(&fault)
             {
@@ -125,7 +151,16 @@ async fn upgrades_recover_every_crash_boundary_for_profile_and_live_skills() {
                 std::fs::read_to_string(&target).unwrap(),
                 "# Research 1.1\n"
             );
-            assert!(!staging(target.parent().unwrap().parent().unwrap(), &request).exists());
+            let retained = staging(target.parent().unwrap().parent().unwrap(), &request);
+            assert_eq!(
+                std::fs::read_to_string(retained.join("new/SKILL.md")).unwrap(),
+                "# Research 1.0\n"
+            );
+            assert!(!retained.join("previous").exists());
+            assert_eq!(
+                std::fs::read(retained.join("new/owner-notes")).unwrap(),
+                b"retain through crash"
+            );
             assert_eq!(
                 install(&config, &reqwest::Client::new(), &request)
                     .await
@@ -147,7 +182,7 @@ async fn upgrades_recover_every_crash_boundary_for_profile_and_live_skills() {
 }
 #[tokio::test]
 async fn upgrade_refuses_unexpected_contents_marker_symlinks_and_checksum_without_changing_old() {
-    for case in 0..10 {
+    for case in [0, 1, 2, 3, 4, 7, 8, 9] {
         let (config, request) = fixture(case == 1).await;
         let parent = config.agent_home(request.agent_id.as_str()).join("skills");
         let target = parent.join("research");
@@ -170,11 +205,6 @@ async fn upgrade_refuses_unexpected_contents_marker_symlinks_and_checksum_withou
                 b"wrong checksum",
             )
             .unwrap(),
-            5 => std::fs::write(target.join("extra"), b"owner file").unwrap(),
-            6 => {
-                use std::os::unix::fs::PermissionsExt as _;
-                std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o700)).unwrap();
-            }
             7 => {
                 std::fs::rename(&target, parent.join("original")).unwrap();
                 std::os::unix::fs::symlink("original", &target).unwrap();
@@ -189,6 +219,7 @@ async fn upgrade_refuses_unexpected_contents_marker_symlinks_and_checksum_withou
             matches!(
                 error.code.as_str(),
                 "agent_skill_upgrade_conflict"
+                    | "agent_skill_upgrade_modified"
                     | "agent_skill_install_conflict"
                     | "skill_checksum_mismatch"
             ),
@@ -338,6 +369,25 @@ async fn upgrade_ledger_replay_is_fenced_and_home_removal_dominates_both_store_f
             .admit(6, std::slice::from_ref(&operation))
             .await
             .is_err());
+        for (sequence, fence, code) in [
+            (2, 6, "mutation_authority_conflict"),
+            (3, 6, "mutation_authority_conflict"),
+            (4, 4, "mutation_authority_stale"),
+            (4, 5, "mutation_authority_conflict"),
+        ] {
+            let different = AgentSkillInstallRequest::upgrade(
+                request.agent_id.clone(),
+                skill(&config, "different"),
+                next.skill.clone(),
+                Some(AgentSkillInstallReceipt::from_request(&next)),
+                sequence,
+            );
+            let different = Operation::install_agent_skill(&different);
+            assert_eq!(
+                store.admit(fence, &[different]).await.unwrap_err().code,
+                code
+            );
+        }
         assert_eq!(store.recovery_fence(&operation).await.unwrap(), None);
         let remove = Operation::remove_agent_home(&layer3_adapter::AgentHomeRemoveRequest::new(
             "agent:agent-one:home:remove:v1",
@@ -362,3 +412,6 @@ async fn upgrade_ledger_replay_is_fenced_and_home_removal_dominates_both_store_f
         cleanup(&config);
     }
 }
+
+#[path = "agent_skill_upgrade_compatibility_tests.rs"]
+mod compatibility;
