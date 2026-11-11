@@ -15,10 +15,12 @@ The latest boundary is used, so earlier unresolved requests cannot leak into a
 new turn. Missing boundaries never establish an empty set.
 
 `CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED` is a strict boolean, default `false`
-in code and the API manifest. It additionally requires membership in the
-existing `CHRONO_AGENT_LOG_ADMISSION_AGENTS` trusted cohort. An active admission
-or public-window cohort cannot silently enable this consumer. The title-reader
-switch is independent. The release owner controls all activation.
+in code and the API manifest. It additionally requires selection by the shared
+explicit `CHRONO_AGENT_LOG_ADMISSION_AGENTS` cohort or the stable
+`CHRONO_AGENT_LOG_FLEET_PERCENT` buckets, plus trusted prepared metadata. Reads
+never trigger lazy preparation. An active admission or public-window cohort
+cannot silently enable this consumer. The title-reader switch is independent.
+The release owner controls all activation.
 
 For a selected Agent with more than 200 entries, reuse the shared read-only
 proof and captured snapshot, then request the final 200 consecutive rows through

@@ -202,11 +202,9 @@ pub(super) async fn read_bounded(
             return Err(SandboxStoreError::SequenceConflict);
         }
         if byte_budget != usize::MAX {
-            let size = mongodb::bson::serialize_to_vec(&document)
-                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?
-                .len();
-            bytes = bytes.saturating_add(size);
+            bytes = bytes.saturating_add(cursor.current().as_bytes().len());
             if bytes > byte_budget {
+                read.complete();
                 return Ok(None);
             }
         }
