@@ -251,6 +251,27 @@ async fn full_archive_reconstructs_home_conversations_and_ledgers_before_gate_re
     assert!(!read_sandbox(&completed)
         .unwrap()
         .retirement_archive_pending());
+    let ordinary =
+        crate::store::sandbox_mongo::MongoSandboxStore::open(&store.client, store.database.name())
+            .await
+            .unwrap();
+    let parent = read_sandbox(&completed).unwrap();
+    let resumed = ordinary
+        .claim_sandbox_work(
+            &parent.id,
+            "fixture",
+            layer2_core::now_rfc3339(),
+            "2099-01-01T00:00:00Z".into(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resumed.status, SandboxStatus::Retiring);
+    assert_eq!(resumed.work.step, SandboxWorkStep::StopAgents);
+    assert_eq!(
+        resumed.lifecycle.retirement_archive,
+        parent.lifecycle.retirement_archive
+    );
     store.database.drop().await.unwrap();
     for root in &request.roots {
         std::fs::remove_dir_all(&root.path).unwrap();
