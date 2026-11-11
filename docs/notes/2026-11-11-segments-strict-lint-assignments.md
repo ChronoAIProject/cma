@@ -456,3 +456,18 @@ strict CMA Clippy with warnings denied; targeted units and real Mongo under the
 existing release-only lock, two jobs, one target, memory pause below10%.
 Source and actual gates are due to S2 by11:00 SGT for the16:00 segmentation merge.
 All admission remains default-off and native Unsupported remains honest.
+
+
+### 03:25 allocation — exact scheduler dependency
+
+S4 reuses S2 scheduler commits `0eba12933` and `541c3f7f2` through an isolated
+normal-merge dependency, without importing the mixed integration tip. Exact
+additional composition paths: `sandbox/capacity_scheduler.rs`,
+`sandbox/capacity_scheduler_tests.rs`, `sandbox/scheduler.rs`, `sandbox/mod.rs`,
+`store/agent_capacity_recovery_presence.rs`, and its registration in `store/mod.rs`
+(all under `api/crates/cma/src/`). The scheduler's migration-presence check is
+qualified in `store/migrations/tests/segments_runtime.rs`; this dependency's
+existing single assertion is reused unchanged. Shared schema/grants remain S2.
+The scheduler observes one32-row page, runs at most2 accepted operations per turn,
+and grants no admission or principal from discovery. All7 existing scheduler
+unit tests must actually execute. S5's published service merge is `1a6d8401d`.
