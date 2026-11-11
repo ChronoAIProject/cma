@@ -100,7 +100,7 @@ fn apply(
     result
 }
 
-fn opened() -> (Agent, AgentLogProjectionState) {
+pub(super) fn opened() -> (Agent, AgentLogProjectionState) {
     let mut agent = agent();
     let mut state = AgentLogProjectionState::default();
     let created = AgentLogKind::Created {
