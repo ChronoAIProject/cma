@@ -9,11 +9,23 @@ use super::super::agent_log::scan_complete_log_with_session;
 use super::super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::transaction::ApplyError;
 
+pub(super) mod scoped;
+
 pub(super) async fn live_activities(
     store: &MongoSandboxStore,
     agents: &[Agent],
     session: &mut ClientSession,
     observed_at: &str,
+) -> Result<Vec<SandboxAgentActivity>, ApplyError> {
+    live_activities_with_sources(store, agents, session, observed_at, None).await
+}
+
+pub(super) async fn live_activities_with_sources(
+    store: &MongoSandboxStore,
+    agents: &[Agent],
+    session: &mut ClientSession,
+    observed_at: &str,
+    sources: Option<&scoped::CapturedActivities>,
 ) -> Result<Vec<SandboxAgentActivity>, ApplyError> {
     let open_session = store
         .sandbox_sessions
@@ -27,12 +39,16 @@ pub(super) async fn live_activities(
         .is_some();
     let mut activities = Vec::new();
     for agent in agents.iter().filter(|agent| agent.status.is_live()) {
-        let captured = capture_segmented(store, agent, session).await?;
-        let mut newest = captured
-            .as_ref()
-            .and_then(|source| source.latest_entry())
-            .cloned();
-        if captured.is_none() {
+        let observed = sources
+            .map(|sources| sources.latest(agent))
+            .transpose()?
+            .flatten();
+        let scoped = observed.is_some();
+        let mut newest = observed.flatten();
+        if !scoped {
+            // This entry has no scoped proof. A v2 envelope refuses before the
+            // legacy scan; it cannot silently select a lifetime fallback.
+            capture_segmented(store, agent, session).await?;
             scan_complete_log_with_session(
                 ScanCaller::InactivityProof,
                 store,
