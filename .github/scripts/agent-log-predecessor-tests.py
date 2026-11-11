@@ -72,7 +72,7 @@ def fixture_runner(scratch):
         f"readonly repo_root={shlex.quote(str(scratch))}",
         "selection=ordinary", "partition=count:1/1",
         "nextest_contracts() {",
-        '  cargo nextest "$@" --locked -p cma --run-ignored only --no-tests fail \\\n    -E ' + shlex.quote(f"test(={TEST_PATH}::{TEST_NAME})"),
+        '  cargo nextest "$@" --locked -p cma --bin cma --run-ignored only --no-tests fail \\\n    -E ' + shlex.quote(f"test(={TEST_PATH}::{TEST_NAME})"),
         "}", fixture,
     ])
 
@@ -120,7 +120,7 @@ def main():
         # Build before allocating Mongo resources. The subsequent test run
         # reuses these artifacts in the same caller-owned target directory.
         subprocess.run(
-            ["cargo", "nextest", "list", "--locked", "-p", "cma",
+            ["cargo", "nextest", "list", "--locked", "-p", "cma", "--bin", "cma",
              "--run-ignored", "only", "-E", f"test(={TEST_PATH}::{TEST_NAME})"],
             cwd=scratch / "api", check=True,
         )
