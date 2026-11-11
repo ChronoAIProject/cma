@@ -26,6 +26,8 @@ impl MongoAuthStore {
                 .transpose()?,
             silent: attempt.silent,
             consent_requested: attempt.consent_requested,
+            custody_reserved: attempt.custody_reserved,
+            started_at: attempt.started_at.map(DateTime::from_system_time),
             expires_at: DateTime::from_system_time(attempt.expires_at),
         })
     }
@@ -35,6 +37,11 @@ impl MongoAuthStore {
             id: binary(*login.id.as_bytes()),
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
             subject: Some(login.subject.0),
+            linked_session: None,
+            binding_id: None,
+            revoked: false,
+            explicit_started_at: None,
+            preference_revoked: false,
             expires_at: DateTime::from_system_time(login.expires_at),
         }
     }
@@ -67,6 +74,8 @@ impl MongoAuthStore {
             actor_link_intent,
             silent: document.silent,
             consent_requested: document.consent_requested,
+            custody_reserved: document.custody_reserved,
+            started_at: document.started_at.map(|time| time.to_system_time()),
             expires_at: document.expires_at.to_system_time(),
         })
     }

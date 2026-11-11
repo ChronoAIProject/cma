@@ -5,7 +5,7 @@ use mongodb::bson::{Bson, Document};
 
 use super::*;
 
-async fn stores() -> (Client, String, Arc<MongoAuthStore>, Arc<MongoAuthStore>) {
+pub(super) async fn stores() -> (Client, String, Arc<MongoAuthStore>, Arc<MongoAuthStore>) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a disposable replica set");
     let client = Client::with_uri_str(&uri).await.unwrap();
@@ -401,34 +401,51 @@ async fn mongo_browser_login_reservation_fences_logout_across_replicas() {
             .unwrap();
         assert!(second.browser_login(&id).await.unwrap().is_none());
         let login = BrowserLogin {
-            id: id.clone(),
+            id: SecretDigest::identify("browser-login", &format!("session-{order}")),
             subject: SubjectId::new("owner-a"),
             expires_at: SystemTime::now() + Duration::from_secs(3600),
         };
         match order {
             "logout-first" => {
                 second.delete_browser_login(&id).await.unwrap();
-                assert!(!first.complete_browser_login(login.clone()).await.unwrap());
+                assert!(!first
+                    .complete_browser_login(&id, login.clone(), None)
+                    .await
+                    .unwrap());
             }
             "complete-first" => {
-                assert!(first.complete_browser_login(login.clone()).await.unwrap());
+                assert!(first
+                    .complete_browser_login(&id, login.clone(), None)
+                    .await
+                    .unwrap());
                 assert_eq!(
-                    second.browser_login(&id).await.unwrap().unwrap().subject,
+                    second
+                        .browser_login(&login.id)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .subject,
                     login.subject
                 );
                 let wrong = BrowserLogin {
                     subject: SubjectId::new("owner-b"),
                     ..login.clone()
                 };
-                assert!(!second.complete_browser_login(wrong).await.unwrap());
+                assert!(!second
+                    .complete_browser_login(&id, wrong, None)
+                    .await
+                    .unwrap());
                 second.delete_browser_login(&id).await.unwrap();
             }
             "expired" => {
-                assert!(!second.complete_browser_login(login.clone()).await.unwrap());
+                assert!(!second
+                    .complete_browser_login(&id, login.clone(), None)
+                    .await
+                    .unwrap());
             }
             "race" => {
                 let (issued, removed) = tokio::join!(
-                    first.complete_browser_login(login.clone()),
+                    first.complete_browser_login(&id, login.clone(), None),
                     second.delete_browser_login(&id)
                 );
                 issued.unwrap();
@@ -436,8 +453,11 @@ async fn mongo_browser_login_reservation_fences_logout_across_replicas() {
             }
             _ => unreachable!(),
         }
-        assert!(first.browser_login(&id).await.unwrap().is_none());
-        assert!(!second.complete_browser_login(login).await.unwrap());
+        assert!(first.browser_login(&login.id).await.unwrap().is_none());
+        assert!(!second
+            .complete_browser_login(&id, login, None)
+            .await
+            .unwrap());
     }
     client.database(&name).drop().await.unwrap();
 }

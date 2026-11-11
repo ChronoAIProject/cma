@@ -85,6 +85,10 @@ pub struct LoginAttempt {
     pub silent: bool,
     /// A silent-origin attempt has already escalated once to provider consent.
     pub consent_requested: bool,
+    /// Absent on predecessor attempts, which are adopted before callback IO.
+    pub custody_reserved: bool,
+    /// Start of the explicit attempt, retained independently of response delivery.
+    pub started_at: Option<SystemTime>,
     pub expires_at: SystemTime,
 }
 
@@ -244,16 +248,52 @@ pub trait AuthStore: Send + Sync {
         &self,
         _id: SecretDigest,
         _expires_at: SystemTime,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         Err(StoreError::Unavailable(
             "browser login reservation is not configured".into(),
         ))
     }
     /// Atomically promote an unexpired reservation; never recreate one removed by logout.
-    async fn complete_browser_login(&self, _login: BrowserLogin) -> Result<bool, StoreError> {
+    async fn complete_browser_login(
+        &self,
+        _binding: &SecretDigest,
+        _login: BrowserLogin,
+        _explicit_started_at: Option<SystemTime>,
+    ) -> Result<bool, StoreError> {
         Err(StoreError::Unavailable(
             "browser login fencing is not configured".into(),
         ))
+    }
+    async fn renew_browser_login(
+        &self,
+        _binding: &SecretDigest,
+        _expires_at: SystemTime,
+    ) -> Result<bool, StoreError> {
+        Err(StoreError::Unavailable(
+            "browser login renewal is not configured".into(),
+        ))
+    }
+    async fn revoke_browser_binding(&self, id: &SecretDigest) -> Result<(), StoreError> {
+        self.delete_browser_login(id).await
+    }
+    async fn browser_sign_in_preference(
+        &self,
+        _binding: &SecretDigest,
+        _started_at: SystemTime,
+    ) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+    async fn logout_browser_custody(
+        &self,
+        id: &SecretDigest,
+        binding_cookie: bool,
+        _suppress_preference: bool,
+    ) -> Result<(), StoreError> {
+        if binding_cookie {
+            self.revoke_browser_binding(id).await
+        } else {
+            self.delete_browser_login(id).await
+        }
     }
     #[cfg(test)]
     async fn put_browser_login(&self, login: BrowserLogin) -> Result<(), StoreError>;

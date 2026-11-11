@@ -15,6 +15,7 @@ pub mod bearer;
 mod bearer_authorization;
 mod binding;
 mod bots;
+mod browser_login;
 mod browser_origins;
 mod cookie_authorization;
 pub mod deferred_commands;
@@ -43,6 +44,7 @@ mod sandbox_prerequisite;
 pub(crate) mod service_portal;
 mod session_routes;
 mod signup_options;
+mod silent_preference;
 #[cfg(test)]
 pub(crate) mod test_resources;
 mod token;
@@ -64,8 +66,12 @@ use profile::Profile;
 pub const AUTH_COOKIE: &str = "cma_session";
 const AUTH_COOKIE_DOMAIN: &str = "browser-login";
 const AUTH_COOKIE_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
-/// Server-owned 30-day automatic-sign-in opt-out. Explicit login remains
-/// available but never clears it, so delayed callbacks cannot undo logout.
+pub(crate) const SIGN_IN_PREFERENCE_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const LOGIN_ATTEMPT_LIFETIME: Duration = Duration::from_secs(10 * 60);
+/// Keep a binding handle until every session its attempt could issue has expired.
+pub(crate) const BROWSER_BINDING_LIFETIME: Duration =
+    Duration::from_secs(AUTH_COOKIE_LIFETIME.as_secs() + LOGIN_ATTEMPT_LIFETIME.as_secs());
+/// Time of explicit logout; compared with the start of a successful interactive login.
 const SIGNED_OUT_COOKIE: &str = "cma_signed_out";
 
 /// How CMA establishes the caller attached to an HTTP request.
@@ -111,6 +117,8 @@ pub struct AuthState {
     agent_key_service_id: Option<String>,
     resource_request_enabled: bool,
     silent_sign_in_enabled: bool,
+    #[cfg(test)]
+    preference_clock: fn() -> SystemTime,
     identity_proxy: Option<nyxid_proxy::jwt::Verifier>,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     pub(super) mode: AuthMode,
@@ -184,6 +192,8 @@ impl AuthState {
             agent_key_service_id: None,
             resource_request_enabled: false,
             silent_sign_in_enabled: false,
+            #[cfg(test)]
+            preference_clock: SystemTime::now,
             identity_proxy: None,
             mode,
             nyxid_public_url,
@@ -355,31 +365,6 @@ impl AuthState {
                 identity::request_for_bearer(self, token).await
             }
         }
-    }
-
-    #[cfg(test)]
-    pub(super) async fn issue_browser_login(
-        &self,
-        subject: SubjectId,
-    ) -> Result<String, StoreError> {
-        let value = token::random_token();
-        self.store
-            .put_browser_login(persistence::BrowserLogin {
-                id: SecretDigest::identify(AUTH_COOKIE_DOMAIN, &value),
-                subject,
-                expires_at: SystemTime::now() + AUTH_COOKIE_LIFETIME,
-            })
-            .await?;
-        Ok(value)
-    }
-
-    pub(super) async fn revoke_browser_login(&self, value: &str) -> Result<(), StoreError> {
-        // Clear every local record and fence pending writes, including other
-        // tokens for this browser. No credential is needed to perform eviction.
-        self.identity_store.clear();
-        self.store
-            .delete_browser_login(&SecretDigest::identify(AUTH_COOKIE_DOMAIN, value))
-            .await
     }
 
     pub(super) async fn store_sign_in(

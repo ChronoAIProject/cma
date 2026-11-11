@@ -15,6 +15,7 @@ pub(super) async fn store() -> MongoAuthStore {
     let key =
         AuthEncryptionKey::from_base64("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap();
     MongoAuthStore {
+        client: client.clone(),
         browser_logins: client.database("test").collection(BROWSER_LOGINS),
         login_attempts: client.database("test").collection(LOGIN_ATTEMPTS),
         subjects: client.database("test").collection(SUBJECTS),
@@ -61,6 +62,8 @@ async fn login_verifier_is_encrypted_and_bound_to_its_attempt() {
         }),
         silent: true,
         consent_requested: true,
+        custody_reserved: false,
+        started_at: None,
         expires_at: SystemTime::UNIX_EPOCH + Duration::from_secs(20),
     };
 
