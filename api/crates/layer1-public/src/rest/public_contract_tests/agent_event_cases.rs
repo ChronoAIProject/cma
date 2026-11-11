@@ -181,3 +181,19 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         symbols: Default::default(),
     })
 }
+
+async fn replay_live_contract(id: &str) {
+    let corpus: super::Corpus = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/public-contract/agent-events-v2.json"
+    ))
+    .unwrap();
+    let mut case = corpus.cases.into_iter().find(|case| case.id == id).unwrap();
+    let scene = scenario(&case.scenario).await.unwrap();
+    super::replay::run(&scene, &mut super::Symbols::default(), &mut case, false).await;
+}
+
+#[tokio::test]
+async fn live_contract_examples_preserve_frame_order_and_explicit_lag() {
+    replay_live_contract("agent-events-v2-live").await;
+    replay_live_contract("agent-events-v2-lagged").await;
+}

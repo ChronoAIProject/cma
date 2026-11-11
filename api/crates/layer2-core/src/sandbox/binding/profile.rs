@@ -43,6 +43,11 @@ pub struct BindingEnvironmentPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BindingProfilePlan {
+    /// Caller configuration digest excluding the independent queue policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_lifetime_seconds: Option<u32>,
     #[serde(default, skip_serializing_if = "SessionAffinity::is_default")]
     pub session_affinity: SessionAffinity,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -79,8 +84,26 @@ pub fn map_profile(
     }) {
         return Err(invalid("environment exceeds 64 KiB"));
     }
+    let configuration_digest = if value.get("queue_lifetime_seconds").is_some() {
+        let mut configuration = value.clone();
+        configuration
+            .as_object_mut()
+            .expect("profile object")
+            .remove("queue_lifetime_seconds");
+        Some(format!(
+            "sha256:{}",
+            content_digest(&configuration).map_err(invalid)?
+        ))
+    } else {
+        None
+    };
     let input: ExternalProfile =
         serde_json::from_value(value).map_err(|_| invalid("invalid external profile schema"))?;
+    if !valid_queue_lifetime(input.queue_lifetime_seconds) {
+        return Err(invalid(
+            "queue_lifetime_seconds must be between 1 and 86400",
+        ));
+    }
     if input.schema_version != 1 {
         return Err(invalid("unsupported profile schema_version"));
     }
@@ -153,6 +176,8 @@ pub fn map_profile(
         }
     }
     let mut plan = BindingProfilePlan {
+        configuration_digest,
+        queue_lifetime_seconds: input.queue_lifetime_seconds,
         session_affinity,
         organization_owned: input.metadata.owner.kind == "organization",
         owner: SubjectId::new(input.metadata.owner.subject),
@@ -175,6 +200,10 @@ pub fn map_profile(
         .collect(),
         refused: Vec::new(),
     };
+
+    if input.queue_lifetime_seconds.is_some() {
+        plan.honoured.push("queue_lifetime_seconds".into());
+    }
     if plan.agent.isolated_agent {
         plan.honoured.push("environment.isolated_agents".into());
     }
@@ -304,12 +333,25 @@ fn map_environment(
 }
 
 impl BindingProfilePlan {
+    pub(super) fn configuration_digest(&self) -> &str {
+        self.configuration_digest
+            .as_deref()
+            .unwrap_or(&self.profile_digest)
+    }
+    /// Waiting policy for newly admitted messages; retained commands keep their deadline.
+    pub fn effective_queue_lifetime_seconds(&self) -> u32 {
+        self.queue_lifetime_seconds.unwrap_or(300)
+    }
+
     fn refuse(&mut self, field: &str, reason: impl Into<String>) {
         self.refused.push(BindingFieldRefusal {
             field: field.into(),
             reason: reason.into(),
         });
     }
+}
+pub(super) fn valid_queue_lifetime(seconds: Option<u32>) -> bool {
+    seconds.is_none_or(|seconds| (1..=86400).contains(&seconds))
 }
 fn units(value: f64, factor: f64, field: &str) -> Result<u32, CoreError> {
     let units = value * factor;

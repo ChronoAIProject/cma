@@ -35,7 +35,10 @@ pub(super) fn publication_capacity(
     }
 }
 
-fn capacity_failure_evidence_matches(current: &Agent, mutation: &AgentWorkMutation) -> bool {
+pub(super) fn capacity_failure_evidence_matches(
+    current: &Agent,
+    mutation: &AgentWorkMutation,
+) -> bool {
     let next = &mutation.agent;
     current.status.is_live()
         && current.requested_stop_reason.is_none()

@@ -49,7 +49,7 @@ pub(super) fn scan(state_root: &Path) -> Result<Vec<AuthorityFile>> {
             ));
         }
         if files.len() == MAX_AUTHORITY_RECORDS {
-            return Err(corrupt("mutation authority contains too many records"));
+            return Err(crate::mutation_capacity::exhausted());
         }
         files.push(AuthorityFile {
             path: path.clone(),
@@ -99,6 +99,16 @@ pub(super) fn persist_new(state_root: &Path, record: &Record) -> Result<()> {
     }
     crate::fs_durability::remove_file(&temporary)
         .map_err(|error| io_error("remove mutation authority temporary file", error))
+}
+
+pub(super) fn sync_record(path: &Path) -> Result<()> {
+    crate::fs_durability::sync_file(path)
+        .map_err(|error| io_error("sync retained mutation authority", error))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| corrupt("mutation authority has no parent"))?;
+    crate::fs_durability::sync_directory(parent)
+        .map_err(|error| io_error("sync retained mutation authority directory", error))
 }
 
 fn read_record(path: &Path) -> Result<Record> {

@@ -62,7 +62,9 @@ export function useDesktopConnection(
     if (!current) return;
     const viewOnly = !inputAllowed || phase !== 'ready';
     if (viewOnly && !current.viewOnly) input.current?.release();
+    const gainedControl = current.viewOnly && !viewOnly;
     current.viewOnly = viewOnly;
+    if (gainedControl) current.focus();
   }, [inputAllowed, phase]);
 
   useEffect(() => {
@@ -163,5 +165,5 @@ export function useDesktopConnection(
     };
   }, [agentId, attempt, context, owner, recovery, runtimeReady]);
 
-  return { screen, phase, error, focus: () => connection.current?.focus() };
+  return { screen, phase, error };
 }

@@ -169,10 +169,6 @@ export class AgentLifecycleCreateError extends Error {
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
   readonly usageViews?: import('../usage/client').UsageClient;
-  readonly operationReplay?: Pick<
-    import('@chronoai/cma-sdk').Cma['agentEventsV2'],
-    'snapshot' | 'head' | 'events'
-  >;
   readonly readSuggestedReplies?: (
     agentId: string,
     scope: { readonly turn_sequence: number; readonly answer_sequence: number },
@@ -223,10 +219,6 @@ export interface CmaWebClient {
   readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly taskExperience?: import('@chronoai/cma-sdk').TaskExperienceClient;
   readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
-  readonly readDesktopCapability?: (
-    scope: { readonly workspace_id?: string; readonly sandbox_id?: string },
-    options?: ReadOptions,
-  ) => Promise<import('@chronoai/cma-sdk').DesktopCapability>;
   readonly createAgentLifecycle?: (
     input: AgentLifecycleCreateInput,
     options: CommandOptions,

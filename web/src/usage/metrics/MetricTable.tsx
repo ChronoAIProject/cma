@@ -37,13 +37,22 @@ export function MetricTable({
   readonly onFailure: (failure: MetricsFailure) => void;
   readonly actions?: (row: UsageMetricRow) => ReactNode;
 }) {
-  const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined]);
+  const pageKey = `${sort}:${order}`;
+  const [paging, setPaging] = useState<{ key: string; cursors: readonly (string | undefined)[] }>({
+    key: pageKey,
+    cursors: [undefined],
+  });
+  if (paging.key !== pageKey) setPaging({ key: pageKey, cursors: [undefined] });
+  const cursors = paging.key === pageKey ? paging.cursors : [undefined];
+  const setCursors = (
+    update: (previous: readonly (string | undefined)[]) => readonly (string | undefined)[],
+  ) => setPaging({ key: pageKey, cursors: update(cursors) });
   const cursor = cursors[cursors.length - 1];
   const load = useCallback(
     (signal: AbortSignal) => api.sandboxes(reportId, { signal, limit: 50, cursor, sort, order }),
     [api, reportId, cursor, sort, order],
   );
-  const records = useUsageRead(load, active);
+  const records = useUsageRead(load, active, api);
   useEffect(() => {
     if (records.error?.denied || records.error?.expired) onFailure(records.error);
   }, [records.error, onFailure]);
@@ -85,7 +94,14 @@ export function MetricTable({
   ];
   return (
     <section className="usage-inventory" aria-label="Usage inventory">
-      {records.data && <AllocationChart page={records.data} admin={admin} />}
+      <AllocationChart
+        page={records.data}
+        admin={admin}
+        api={api}
+        reportId={reportId}
+        active={active}
+        onFailure={onFailure}
+      />
       <div className="usage-section-heading">
         <div>
           <h3>Sandboxes</h3>

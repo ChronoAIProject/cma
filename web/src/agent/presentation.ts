@@ -28,12 +28,12 @@ export function agentDisplayTitle(
   const configured = boundedTitle(agent.title);
   return (
     agent.ownerTitle?.trim() ||
+    (configured !== agent.id && configured !== `Agent ${agent.id}` && configured) ||
     (!setupPreview &&
       boundedTitle(
         metadata?.description,
         metadata?.descriptionSource === 'prompt_preview' ? 48 : 64,
       )) ||
-    (configured !== agent.id && configured !== `Agent ${agent.id}` && configured) ||
     'Untitled task'
   );
 }
@@ -52,12 +52,14 @@ function boundedTitle(value: string | undefined, limit = 64): string | undefined
 export function presentAgent(state: AgentResourceState, status?: AgentStatus): AgentResourceState {
   if (state.status !== 'ready') return state;
   const ownerTitle = state.conversation.ownerTitle ?? state.detail.ownerTitle;
+  const title = state.conversation.title ?? state.detail.title;
   const saved = state.detail.runtimeMetadata;
   const runtimeMetadata = mergeRuntimeMetadata(saved, state.conversation.runtimeMetadata);
   if (
     (status === undefined || status === state.detail.status) &&
     runtimeMetadata === saved &&
-    ownerTitle === state.detail.ownerTitle
+    ownerTitle === state.detail.ownerTitle &&
+    title === state.detail.title
   )
     return state;
   return {
@@ -67,6 +69,7 @@ export function presentAgent(state: AgentResourceState, status?: AgentStatus): A
       status: status ?? state.detail.status,
       runtimeMetadata,
       ownerTitle,
+      title,
     },
   };
 }

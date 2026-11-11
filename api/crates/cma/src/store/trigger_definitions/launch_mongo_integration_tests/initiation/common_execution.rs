@@ -246,6 +246,11 @@ async fn trigger_common_lost_binding_sidecars_and_launch_pointer_fail_before_wri
 #[ignore = "requires an owned disposable Mongo replica set"]
 async fn trigger_common_expiry_closes_first_reservation_without_a_synthetic_turn() {
     let accepted = Accepted::new().await;
+    assert_eq!(
+        layer2_core::seconds_from_rfc3339(&accepted.command.queue_deadline).unwrap()
+            - layer2_core::seconds_from_rfc3339(&accepted.command.receipt.admitted_at).unwrap(),
+        300
+    );
     accepted
         .f
         .resources

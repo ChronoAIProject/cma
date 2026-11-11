@@ -180,6 +180,7 @@ export interface AgentRuntimeMetadata {
   readonly descriptionIsSetupPreview?: boolean;
 }
 export interface AgentSummary {
+  readonly taskStartedAt?: string;
   readonly taskStatus?: import('@chronoai/cma-sdk').AgentTaskStatus;
   readonly ownerTitle?: string;
   readonly runtimeMetadata?: AgentRuntimeMetadata;

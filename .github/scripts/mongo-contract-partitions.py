@@ -11,6 +11,12 @@ import time
 
 TESTS_PER_FIXTURE = 40
 CONCURRENT_FIXTURES = 2
+SCALE_TEST = ("store::usage_reports::tests::scale::"
+              "metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages")
+OWNER_ALLOCATION_TEST = ("store::usage_reports::tests::owner_allocation::"
+                         "metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound")
+ISOLATED_TESTS = (("--scale", SCALE_TEST), ("--owner-allocation", OWNER_ALLOCATION_TEST))
+CLEANUP_FAILURE = 125
 
 
 def partition_count(script):
@@ -20,17 +26,24 @@ def partition_count(script):
     )
     metadata = json.loads(listing.stdout)
     selected = [
-        test
+        (name, test)
         for suite in metadata["rust-suites"].values()
-        for test in suite["testcases"].values()
+        for name, test in suite["testcases"].items()
         if test["filter-match"]["status"] == "matches"
     ]
-    if not selected or not all(test["ignored"] for test in selected):
+    if not selected or not all(test["ignored"] for _, test in selected):
         raise ValueError("Mongo contracts must select a nonempty ignored-test set")
-    count = math.ceil(len(selected) / TESTS_PER_FIXTURE)
+    for option, expected in ISOLATED_TESTS:
+        if sum(name == expected for name, _ in selected) != 1:
+            raise ValueError(f"Exactly one ignored {option} contract is required")
+    ordinary = len(selected) - len(ISOLATED_TESTS)
+    if ordinary == 0:
+        raise ValueError("Ordinary Mongo contract selection must not be empty")
+    count = math.ceil(ordinary / TESTS_PER_FIXTURE)
     print(f"Mongo contracts: {len(selected)} tests, {count} partitions, "
           f"at most {TESTS_PER_FIXTURE} tests per fixture, "
-          f"{CONCURRENT_FIXTURES} concurrent fixtures", flush=True)
+          f"{CONCURRENT_FIXTURES} concurrent ordinary fixtures; "
+          "report scale and owner allocation run alone first", flush=True)
     return count
 
 
@@ -42,6 +55,7 @@ def run(script):
         return 1
     children = []
     interrupted = 0
+    cleanup_failed = False
 
     def interrupt(number, _frame):
         nonlocal interrupted
@@ -50,10 +64,28 @@ def run(script):
     signal.signal(signal.SIGINT, interrupt)
     signal.signal(signal.SIGTERM, interrupt)
     try:
+        # A fresh fixture gets the entire resource window. Its exit includes
+        # owned-container/volume cleanup before any ordinary fixture starts.
+        for option, _ in ISOLATED_TESTS:
+            if interrupted:
+                break
+            isolated = subprocess.Popen(["bash", str(script), option], start_new_session=True)
+            children.append(isolated)
+            while not interrupted and isolated.poll() is None:
+                time.sleep(0.1)
+            if isolated.returncode == CLEANUP_FAILURE:
+                # A surviving fixture could invalidate the next exclusive phase.
+                return 1
         next_partition = 1
-        # Failures remain failures, while every remaining partition still runs.
+        # Test failures retain full coverage. Uncertain cleanup stops allocation.
         while not interrupted:
-            active = sum(child.poll() is None for child in children)
+            statuses = [child.poll() for child in children]
+            if CLEANUP_FAILURE in statuses:
+                cleanup_failed = True
+                break
+            # Use one snapshot: a child finishing after this poll still owns its
+            # slot until its cleanup outcome is checked on the next iteration.
+            active = sum(status is None for status in statuses)
             while not interrupted and active < CONCURRENT_FIXTURES and next_partition <= count:
                 partition = f"count:{next_partition}/{count}"
                 children.append(subprocess.Popen(
@@ -66,7 +98,7 @@ def run(script):
             time.sleep(0.1)
     except OSError:
         interrupted = signal.SIGTERM
-    if interrupted:
+    if interrupted or cleanup_failed:
         for child in children:
             if child.poll() is None:
                 try:
@@ -85,8 +117,8 @@ def run(script):
                 except ProcessLookupError:
                     pass
                 child.wait()
-        return 128 + interrupted
-    return 0 if len(children) == count and all(child.returncode == 0 for child in children) else 1
+        return 128 + interrupted if interrupted else 1
+    return 0 if len(children) == count + len(ISOLATED_TESTS) and all(child.returncode == 0 for child in children) else 1
 
 
 if __name__ == "__main__":

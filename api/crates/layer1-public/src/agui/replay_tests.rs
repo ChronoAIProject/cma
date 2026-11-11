@@ -1,3 +1,6 @@
+#[path = "replay_telemetry_tests.rs"]
+mod telemetry_tests;
+
 use super::*;
 use crate::rest::agents_tests::{conversation_fixture, insert_agent, seeded_agent};
 use layer2_core::sandbox::{AgentStatus, AgentUpdateRecorder, DurableAgentUpdateRecorder};

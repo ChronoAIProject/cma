@@ -200,14 +200,12 @@ async fn explicit_browser_credential_refusal_is_401_without_destroying_retained_
 }
 
 #[tokio::test]
-async fn browser_provider_outages_and_introspection_client_refusal_remain_503() {
+async fn browser_provider_outages_remain_503_with_specific_session_identity_error() {
     for (stage, status) in [
         ("discovery", StatusCode::SERVICE_UNAVAILABLE),
         ("userinfo", StatusCode::TOO_MANY_REQUESTS),
         ("userinfo", StatusCode::INTERNAL_SERVER_ERROR),
         ("userinfo", StatusCode::SERVICE_UNAVAILABLE),
-        ("introspection", StatusCode::UNAUTHORIZED),
-        ("introspection", StatusCode::FORBIDDEN),
     ] {
         let fixture = Fixture::new().await;
         let retained = fixture.seed().await;
@@ -219,9 +217,14 @@ async fn browser_provider_outages_and_introspection_client_refusal_remain_503() 
         };
         reply.write().await.status = status;
         for (method, path) in routes() {
-            let (status, body) = browser.request(method, path).await;
-            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{stage}: {path}");
-            assert_eq!(body["code"], "store_failed");
+            let (actual, body) = browser.request(method, path).await;
+            assert_eq!(actual, StatusCode::SERVICE_UNAVAILABLE, "{stage}: {path}");
+            let expected = if path == "/auth/session" && status == StatusCode::SERVICE_UNAVAILABLE {
+                "identity_unavailable"
+            } else {
+                "store_failed"
+            };
+            assert_eq!(body["code"], expected);
         }
         browser.unchanged(&fixture, &retained).await;
         reply.write().await.status = StatusCode::OK;

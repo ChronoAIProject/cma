@@ -4,6 +4,10 @@ use layer2_core::sandbox::{AgentLogEntry, RecordedToolOutput};
 use mongodb::bson::{doc, serialize_to_bson, Document};
 use mongodb::Client;
 
+mod cpu_profile;
+mod direct_retry_tests;
+mod ledger_hold_tests;
+mod removal_retry_tests;
 mod settlement_tests;
 
 #[tokio::test]
@@ -99,6 +103,10 @@ async fn full_history_worker_closes_and_deletes_with_original_runtime_effects() 
 async fn fixture() -> (Client, String, Harness<MongoSandboxStore>) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let client = Client::with_uri_str(&uri).await.unwrap();
+    fixture_with_client(client).await
+}
+
+async fn fixture_with_client(client: Client) -> (Client, String, Harness<MongoSandboxStore>) {
     let database = format!("cma_worker_capacity_{}", uuid::Uuid::new_v4().simple());
     let store = Arc::new(MongoSandboxStore::open(&client, &database).await.unwrap());
     let mut harness =

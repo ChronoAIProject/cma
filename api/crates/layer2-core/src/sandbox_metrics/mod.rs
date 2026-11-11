@@ -3,11 +3,15 @@ pub mod aggregate;
 pub mod allocation;
 pub mod cursor;
 pub mod model;
+pub mod options;
+pub mod owner_allocation;
 pub mod query;
 pub mod series;
 pub mod service;
 
 pub use model::*;
+pub use options::*;
+pub use owner_allocation::*;
 pub use query::*;
 pub use service::*;
 
@@ -38,6 +42,12 @@ pub type Result<T> = std::result::Result<T, MetricsError>;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod options_tests;
+
+#[cfg(test)]
+mod options_regression_tests;
 
 #[cfg(test)]
 mod series_tests;

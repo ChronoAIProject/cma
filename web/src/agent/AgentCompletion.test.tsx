@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, agentClient } from '../test/agent';
@@ -39,8 +39,8 @@ it('shows confirmed elapsed time in the header from recorded start and successfu
     }),
   });
   render(<Agent client={client} />);
-  const completed = await screen.findByText('Done in 4m');
-  expect(within(completed.closest('header')!).getByRole('status')).toHaveTextContent('Done in 4m');
+  await screen.findByText('The repository is ready.');
+  expect(screen.queryByText(/Done in/)).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled();
 });
 
@@ -51,7 +51,8 @@ it('shows completion only after the durable successful Responses turn and clears
   await act(async () => transport.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding));
   expect(screen.queryByText(/Done in/)).not.toBeInTheDocument();
   await act(async () => transport.durable(2, { type: 'turn_completed', turn_sequence: 1 }));
-  expect(await screen.findByText('Done in <1s')).toBeVisible();
+  expect(screen.queryByText(/Done in/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'View activity' })).not.toBeInTheDocument();
   await act(async () => transport.durable(3, { type: 'turn_started', turn_sequence: 3 }));
   expect(screen.queryByText(/Done in/)).not.toBeInTheDocument();
   await act(async () => transport.durable(4, { type: 'turn_cancelled', turn_sequence: 3 }));
@@ -86,7 +87,8 @@ it('keeps a recorded output gap failed in completion and plan displays without f
     transport.durable(7, { type: 'message', role: 'assistant', content: 'Complete next answer' });
     transport.durable(8, { type: 'turn_completed', turn_sequence: 6 });
   });
-  expect(await screen.findByText('Done in <1s')).toBeVisible();
+  expect(screen.queryByText(/Done in/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'View activity' })).not.toBeInTheDocument();
   expect(screen.getByText('Response failed')).toBeVisible();
   expect(transport.client.runAgent).not.toHaveBeenCalled();
 });
@@ -111,7 +113,7 @@ it('replaces the previous completion with a newly confirmed AG-UI duration witho
     },
   });
   render(<Agent client={client} />);
-  await screen.findByText('Done in 4m');
+  await screen.findByText('The repository is ready.');
   await waitFor(() => expect(receive).toBeDefined());
   const field = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(field, { target: { value: 'Keep typing while the header changes' } });
@@ -135,7 +137,8 @@ it('replaces the previous completion with a newly confirmed AG-UI duration witho
       cursor: 6,
     }),
   );
-  expect(await screen.findByText('Done in <1s')).toBeVisible();
+  expect(screen.queryByText(/Done in/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'View activity' })).not.toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(field);
   expect(field).toHaveValue('Keep typing while the header changes');
 });

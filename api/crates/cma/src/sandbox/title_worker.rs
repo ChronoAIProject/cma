@@ -1,9 +1,10 @@
 //! Bind durable title claims to the current Sandbox runtime and scoped credential.
 
+use super::title_budget::TitleBudget;
+
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use layer2_core::profiles::ModelAccess;
 use layer2_core::sandbox::store::{AgentLifecycleStore, Page, PageRequest};
 use layer2_core::sandbox::{
     Agent, AgentStatus, AgentTitleGenerationContext, AgentTitleGenerationError,
@@ -12,12 +13,9 @@ use layer2_core::sandbox::{
     AGENT_TITLE_CALL_TIMEOUT_SECONDS,
 };
 use layer2_core::{seconds_from_rfc3339, AgentId};
-use layer3_adapter::hosted::MODEL_PROXY_BASE_URL;
-use layer3_adapter::provider::{ProviderEndpoint, SandboxClient};
-use layer3_adapter::SandboxAdapter;
+use layer3_adapter::provider::ProviderEndpoint;
 
 use super::credential::{CredentialMaterial, SandboxCredentialController};
-use super::runtime_attachment::adopt_bound_runtime;
 use super::titles::HttpAgentTitleGenerator;
 use crate::auth::persistence::SecretValue;
 
@@ -33,36 +31,38 @@ pub(crate) struct TitleProxy {
     pub authorization: Option<SecretValue>,
 }
 
-pub(crate) struct ProviderTitleEndpoint {
-    pub adapter: Arc<dyn SandboxAdapter>,
-    pub client: SandboxClient,
-    pub deployment_id: String,
+/// Resolve the scoped model service independently of the Sandbox hosting provider.
+/// Native homes have no legacy provider port endpoint; title generation only
+/// needs the same scoped upstream and exact credential used by model discovery.
+pub(crate) struct PlatformTitleEndpoint {
+    pub platform_base_url: String,
 }
 
 #[async_trait::async_trait]
-impl TitleRuntimeEndpoint for ProviderTitleEndpoint {
+impl TitleRuntimeEndpoint for PlatformTitleEndpoint {
     async fn endpoint(&self, sandbox: &Sandbox) -> Option<TitleProxy> {
-        let handle = adopt_bound_runtime(self.adapter.as_ref(), sandbox, &self.deployment_id)
-            .await
-            .ok()?;
-        let port = reqwest::Url::parse(MODEL_PROXY_BASE_URL).ok()?.port()?;
-        let mut endpoint = self.client.endpoint(handle.as_str(), port).await.ok()?;
-        let configured = reqwest::Url::parse(self.client.base_url()).ok()?;
-        if !matches!(configured.scheme(), "http" | "https") {
+        let reaches = sandbox.credential.effective_reaches();
+        let service = ["chrono-llm-public", "chrono-llm"]
+            .into_iter()
+            .find(|name| reaches.iter().any(|scope| scope.as_str() == *name))?;
+        let mut endpoint = reqwest::Url::parse(&self.platform_base_url).ok()?;
+        if !matches!(endpoint.scheme(), "http" | "https")
+            || !endpoint.username().is_empty()
+            || endpoint.password().is_some()
+            || endpoint.query().is_some()
+            || endpoint.fragment().is_some()
+        {
             return None;
         }
-        if !endpoint.endpoint.contains("://") {
-            endpoint.endpoint = format!("{}://{}", configured.scheme(), endpoint.endpoint);
-        }
-        let mut normalized = reqwest::Url::parse(&endpoint.endpoint).ok()?;
-        if !matches!(normalized.scheme(), "http" | "https") {
-            return None;
-        }
-        normalized.set_scheme(configured.scheme()).ok()?;
-        endpoint.endpoint = normalized.into();
+        endpoint
+            .path_segments_mut()
+            .ok()?
+            .extend(["api", "v1", "proxy", "s", service]);
         Some(TitleProxy {
-            endpoint,
-            authorization: Some(SecretValue::new(self.client.auth_header().1.into())),
+            endpoint: ProviderEndpoint {
+                endpoint: endpoint.into(),
+            },
+            authorization: None,
         })
     }
 }
@@ -73,6 +73,8 @@ pub(crate) struct AgentTitleWorker {
     credentials: Arc<dyn SandboxCredentialController>,
     runtime: Arc<dyn TitleRuntimeEndpoint>,
     deployment_model: String,
+    budget: Arc<dyn TitleBudget>,
+    request_budget: Option<Arc<dyn layer2_core::budget::RequestBudget>>,
 }
 
 impl AgentTitleWorker {
@@ -82,6 +84,7 @@ impl AgentTitleWorker {
         credentials: Arc<dyn SandboxCredentialController>,
         runtime: Arc<dyn TitleRuntimeEndpoint>,
         deployment_model: String,
+        budget: Arc<dyn TitleBudget>,
     ) -> Arc<Self> {
         Arc::new(Self {
             service,
@@ -89,6 +92,23 @@ impl AgentTitleWorker {
             credentials,
             runtime,
             deployment_model,
+            budget,
+            request_budget: None,
+        })
+    }
+
+    pub(super) fn with_request_budget(
+        self: Arc<Self>,
+        request_budget: Arc<dyn layer2_core::budget::RequestBudget>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            service: self.service.clone(),
+            store: self.store.clone(),
+            credentials: self.credentials.clone(),
+            runtime: self.runtime.clone(),
+            deployment_model: self.deployment_model.clone(),
+            budget: self.budget.clone(),
+            request_budget: Some(request_budget),
         })
     }
 
@@ -110,10 +130,6 @@ impl AgentTitleWorker {
         else {
             return Ok(AgentTitleOutcome::Skipped);
         };
-        if authority.sandbox.profile.content.model_access == ModelAccess::OwnCredentials {
-            // Own-account runtimes intentionally have no deployment model proxy.
-            return self.service.generate_agent_title(id, None, None).await;
-        }
         let Some(material) = tokio::time::timeout(PREPARE_TIMEOUT, self.material(&authority))
             .await
             .ok()
@@ -126,6 +142,9 @@ impl AgentTitleWorker {
         else {
             return Ok(AgentTitleOutcome::Skipped);
         };
+        if !self.budget.admit().await? {
+            return Ok(AgentTitleOutcome::Skipped);
+        }
         let generator = FencedTitleGenerator {
             worker: Arc::clone(self),
             authority,
@@ -141,7 +160,6 @@ impl AgentTitleWorker {
         if agent.id != *id
             || agent.sandbox_id != sandbox.id
             || agent.owner != sandbox.owner
-            || agent.title.is_some()
             || agent.status == AgentStatus::Deleted
             || sandbox.status != SandboxStatus::Active
             || sandbox.lifecycle.operation.is_some()
@@ -151,6 +169,15 @@ impl AgentTitleWorker {
             })
             || !sandbox.credential.validate()
             || !sandbox.credential.delivered
+        {
+            return None;
+        }
+        if self
+            .service
+            .title(id)
+            .await
+            .ok()?
+            .is_some_and(|title| title.source != layer2_core::sandbox::AgentTitleSource::Fallback)
         {
             return None;
         }
@@ -246,7 +273,7 @@ impl AgentTitleGenerator for FencedTitleGenerator {
             .runtime
             .endpoint(&self.authority.sandbox)
             .await
-            .ok_or_else(refused)?;
+            .ok_or_else(AgentTitleGenerationError::permanent)?;
         if !self
             .worker
             .is_current(&self.authority, request.bearer())
@@ -256,11 +283,22 @@ impl AgentTitleGenerator for FencedTitleGenerator {
         }
         let mut generator =
             HttpAgentTitleGenerator::new(&endpoint.endpoint, &self.worker.deployment_model)
-                .ok_or_else(refused)?;
+                .ok_or_else(AgentTitleGenerationError::permanent)?;
         if let Some(authorization) = endpoint.authorization {
             generator = generator
                 .with_proxy_authorization(authorization.expose())
                 .ok_or_else(refused)?;
+        }
+        if let Some(budget) = &self.worker.request_budget {
+            generator =
+                generator.with_request_budget(super::model_request_budget::RequestBudgetContext {
+                    budget: budget.clone(),
+                    scope: layer2_core::budget::RequestScope {
+                        agent_id: self.authority.agent.id.clone(),
+                        turn_sequence: request.turn_sequence(),
+                        request_id: format!("title:{}", uuid::Uuid::new_v4()),
+                    },
+                });
         }
         let response = generator.generate(request.clone()).await?;
         if !self

@@ -19,7 +19,9 @@ impl AgentWorker {
     ) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
         if let Err(failure) = self.ensure_dispatch_connection(&agent).await {
-            return self.handle_failure(agent, failure, now).await;
+            return self
+                .handle_failure(agent, failure, now + started.elapsed())
+                .await;
         }
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let authority =

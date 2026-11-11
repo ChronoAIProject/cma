@@ -47,6 +47,7 @@ mod runtime_source;
 pub mod selection;
 mod source_discovery;
 mod source_worker;
+pub(crate) mod status;
 pub(crate) mod thread_authority;
 mod thread_context;
 pub(crate) mod voice;
@@ -128,3 +129,6 @@ pub(crate) mod reaction_tests;
 
 #[cfg(test)]
 mod reaction_execution_tests;
+
+#[cfg(test)]
+mod status_journal_tests;
