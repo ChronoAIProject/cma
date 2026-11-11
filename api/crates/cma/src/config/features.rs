@@ -1,6 +1,7 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub bounded_live_fragments: bool,
     pub model_budget_writes_enabled: bool,
     pub model_request_budget_writes_enabled: bool,
     pub bounded_title_reads: bool,
@@ -27,6 +28,7 @@ impl FeatureFlags {
             }
         }
         Ok(Self {
+            bounded_live_fragments: flag(lookup, "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
@@ -119,6 +121,30 @@ mod close_retry_tests {
         for value in ["", "1", "TRUE", " true "] {
             assert!(FeatureFlags::from_lookup(&mut |key| {
                 Ok((key == "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED").then(|| value.into()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod live_buffer_tests {
+    use super::*;
+
+    #[test]
+    fn live_buffer_budget_requires_its_own_strict_boolean() {
+        const KEY: &str = "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED";
+        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_live_fragments, enabled);
+            assert!(!flags.bounded_close_retries);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.to_owned()))
             })
             .is_err());
         }
