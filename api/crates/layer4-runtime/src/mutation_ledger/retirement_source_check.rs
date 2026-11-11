@@ -27,7 +27,9 @@ impl Ledger {
         let config = self.config.clone();
         self.storage
             .call(move |db| {
-                let tx = db.transaction().map_err(|_| super::storage_error())?;
+                // Inspection failures must not enter Storage::call's mutating
+                // emergency-reserve release path.
+                let tx = db.transaction().map_err(|_| invalid())?;
                 if Context::read(&tx, &config)? != expected {
                     return Err(invalid());
                 }
@@ -42,7 +44,7 @@ impl Ledger {
                     }
                     previous = Some(ordering);
                 }
-                tx.commit().map_err(|_| super::storage_error())
+                tx.commit().map_err(|_| invalid())
             })
             .await
     }
@@ -70,7 +72,7 @@ fn matches(db: &Connection, row: &SourceRow) -> Result<bool> {
             "SELECT EXISTS(SELECT 1 FROM logical_processes WHERE scope=? AND agent=? AND cwd=? AND home=?)",
             params![scope, agent, cwd, home], |r| r.get(0)),
     };
-    result.map_err(|_| super::storage_error())
+    result.map_err(|_| invalid())
 }
 
 #[cfg(test)]

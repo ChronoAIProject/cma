@@ -116,10 +116,15 @@ impl Archive {
         let receipt = self
             .storage
             .call(move |db| {
-                let tx = db.transaction().map_err(|_| storage_error())?;
-                let receipt = existing(&tx, &proof)?.ok_or_else(invalid)?;
-                verification::visit(&tx, &config, &proof, &receipt, &mut inspect)?;
-                tx.commit().map_err(|_| storage_error())?;
+                // Normalize every inspection/callback refusal before crossing
+                // Storage::call: a read must never spend the archive reserve.
+                let tx = db.transaction().map_err(|_| invalid())?;
+                let receipt = existing(&tx, &proof)
+                    .map_err(|_| invalid())?
+                    .ok_or_else(invalid)?;
+                verification::visit(&tx, &config, &proof, &receipt, &mut inspect)
+                    .map_err(|_| invalid())?;
+                tx.commit().map_err(|_| invalid())?;
                 Ok(receipt)
             })
             .await?;
