@@ -37,7 +37,8 @@ Recovery initialize and retained-history load have a five-minute idle deadline
 that advances only on successful cumulative ACK progress, plus a sixteen-minute
 absolute per-call bound. Fresh initialize keeps its thirty-second idle window;
 new-conversation and ordinary control RPCs keep thirty seconds. Producer activity
-alone does not extend these windows. Lifecycle draining remains bounded
+alone does not extend these windows. Settings/context delivery follows the longer
+window only while its retained load is active. Lifecycle draining remains bounded
 by the current lease expiry, shared across sequential Agent opens. The runtime
 keeps bridge processes and unacknowledged output across socket loss, allowing
 retry to rejoin completed loads and drain retained replay. The pinned bridge

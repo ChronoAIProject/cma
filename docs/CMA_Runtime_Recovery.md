@@ -8,12 +8,21 @@ and the latter can discard an unflushed conversation tail.
 
 ## Retained-history deadlines and retry continuity
 
-Recovery `initialize` (with a retained conversation ID) and handshake `session/load`
+Recovery `initialize` (with a retained conversation ID) and retained `session/load`
 allow five minutes idle, renewed only by durable output ACK progress, with the
 existing sixteen-minute absolute RPC bound. Legacy sockets without ACKs get a
-fixed five minutes. This covers cold reopen and prepared tool rebinding.
+fixed five minutes. This covers cold reopen, prepared tool rebinding, managed
+context reload after close, and instructions recovery after native unsubscribe.
 Fresh `initialize` keeps thirty seconds idle; `session/new` and ordinary control
 RPCs keep thirty seconds. Existing shorter optional-probe bounds are unchanged.
+
+Settings/context delivery normally has a fifteen-second idle budget, including
+progress-subscription setup before enqueueing. Context delivery with durable
+progress also has a 120-second absolute bound. Only an admitted retained load
+switches delivery to its five-minute idle and sixteen-minute absolute bounds;
+ordinary budgets restart after loading. Another operation's load/output cannot
+extend a pending authority guard. This prevents an outer waiter from repeatedly
+abandoning a closed session while its history loads.
 
 The fifteen-minute lifecycle lease still bounds the whole sequential reopen
 step. Socket loss stops its relay, while Layer 4 retains the process, in-flight
