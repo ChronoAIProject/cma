@@ -177,7 +177,7 @@ impl Bridge {
             "sessionId": session,
             "prompt": content,
         });
-        let recoverable = prompt_id.is_some();
+        let recoverable = prompt_id.is_some() || self.bounded_raw_output;
         let terminal_identity = prompt_id.clone();
         match self.begin_prompt(params, prompt_id).await {
             Ok(waiting) => {

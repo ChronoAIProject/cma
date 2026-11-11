@@ -10,7 +10,7 @@ use crate::{
     ToolCallUpdateFields, TurnStopReason,
 };
 
-type ServerSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+pub(super) type ServerSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
 
 #[path = "acp_access_tool_tests.rs"]
 mod access_tool_tests;
@@ -43,7 +43,7 @@ mod steering_tests;
 #[path = "acp_transport_refresh_tests.rs"]
 mod transport_refresh_tests;
 
-async fn socket_pair() -> (Socket, ServerSocket) {
+pub(super) async fn socket_pair() -> (Socket, ServerSocket) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("WebSocket fixture binds");
@@ -77,7 +77,7 @@ async fn send_ready(server: &mut ServerSocket, agent_id: &str) {
         .expect("Ready sends");
 }
 
-async fn receive_json(server: &mut ServerSocket) -> serde_json::Value {
+pub(super) async fn receive_json(server: &mut ServerSocket) -> serde_json::Value {
     let frame = tokio::time::timeout(Duration::from_secs(2), server.next())
         .await
         .expect("client frame arrives")
@@ -130,8 +130,12 @@ async fn reject(server: &mut ServerSocket, request: &serde_json::Value) {
     .await;
 }
 
-fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentOpenSettings {
+pub(super) fn settings(
+    permission_mode: Option<&str>,
+    own_credential: bool,
+) -> HostedAgentOpenSettings {
     HostedAgentOpenSettings {
+        bounded_raw_output: false,
         already_initialized_error: Some(serde_json::json!({
             "code": -32603, "message": "Internal error",
             "data": { "details": "Already initialized" },
@@ -148,7 +152,7 @@ fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentO
     }
 }
 
-async fn stop(opened: OpenedBridge) {
+pub(super) async fn stop(opened: OpenedBridge) {
     opened.bridge.retire().await;
     opened.reader.abort();
     opened.relay.abort();

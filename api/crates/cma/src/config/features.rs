@@ -1,6 +1,7 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub bounded_raw_output: bool,
     pub retained_reopen_enabled: bool,
     pub model_budget_writes_enabled: bool,
     pub model_request_budget_writes_enabled: bool,
@@ -29,6 +30,7 @@ impl FeatureFlags {
             }
         }
         Ok(Self {
+            bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
@@ -149,6 +151,30 @@ mod response_tests {
             assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
                 == "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")
                 .then(|| value.into())))
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod raw_output_tests {
+    use super::*;
+
+    #[test]
+    fn raw_output_bounds_require_their_own_strict_opt_in() {
+        let key = "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED";
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |name| {
+                Ok((name == key).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_raw_output, expected);
+            assert!(!flags.retained_reopen_enabled && !flags.bounded_approval_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |name| {
+                Ok((name == key).then(|| value.to_owned()))
+            })
             .is_err());
         }
     }
