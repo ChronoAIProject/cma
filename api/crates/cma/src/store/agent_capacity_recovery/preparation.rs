@@ -103,7 +103,11 @@ pub(super) async fn prepare(
             &layer2_core::now_rfc3339(),
             &mut session,
         )
-        .await?;
+        .await
+        .inspect_err(|_error| {
+            #[cfg(test)]
+            eprintln!("capacity recovery gate admission refused: {_error:?}");
+        })?;
         let permit = if legacy {
             slots::claim(
                 &database,
@@ -113,7 +117,11 @@ pub(super) async fn prepare(
                 DateTime::now(),
                 &mut session,
             )
-            .await?
+            .await
+            .inspect_err(|_error| {
+                #[cfg(test)]
+                eprintln!("capacity recovery bootstrap slot refused: {_error:?}");
+            })?
         } else {
             None
         };
