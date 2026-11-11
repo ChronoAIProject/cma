@@ -24,6 +24,10 @@ pub(in crate::store) enum Outcome {
     Unknown,
 }
 
+#[path = "writer_keyed_replay.rs"]
+mod keyed;
+pub(in crate::store) use keyed::replay;
+
 /// `expected` and `logs` are the original attempted result, not a reconstructed
 /// result against the latest lease. Related domain receipts are also checked by
 /// the caller before acknowledging its external effect/checkpoint.
@@ -77,8 +81,45 @@ pub(in crate::store) async fn reconcile(
     }
     let current = read_agent(&row)?;
     let head = read_head(store, &row, session, true).await.map_err(error)?;
-    if head.incarnation != incarnation
-        || current.revision < expected.revision
+    verify_head(store, &receipt, &current, &head, session).await?;
+    if !logs.is_empty() {
+        let mut offset = 0;
+        visit_range(
+            store,
+            &head,
+            LogRange {
+                after: receipt.expected_seq as u64,
+                through: receipt.last_seq as u64,
+                limit: logs.len() as u16,
+            },
+            session,
+            true,
+            |entry| {
+                if logs.get(offset) != Some(&entry) {
+                    return Err(corrupt());
+                }
+                offset += 1;
+                Ok(())
+            },
+        )
+        .await
+        .map_err(error)?;
+        if offset != logs.len() {
+            return Err(corrupt());
+        }
+    }
+    Ok(Outcome::Recorded(Box::new(receipt)))
+}
+
+async fn verify_head(
+    store: &MongoSandboxStore,
+    receipt: &Publication,
+    current: &Agent,
+    head: &super::Head,
+    session: &mut ClientSession,
+) -> Result<(), SandboxStoreError> {
+    if head.incarnation != receipt.incarnation
+        || current.revision < receipt.result_revision as u64
         || head.last_seq < receipt.last_seq
         || head.revision < receipt.head_revision
         || head.active_ordinal < receipt.active_ordinal
@@ -108,33 +149,7 @@ pub(in crate::store) async fn reconcile(
             return Err(corrupt());
         }
     }
-    if !logs.is_empty() {
-        let mut offset = 0;
-        visit_range(
-            store,
-            &head,
-            LogRange {
-                after: receipt.expected_seq as u64,
-                through: receipt.last_seq as u64,
-                limit: logs.len() as u16,
-            },
-            session,
-            true,
-            |entry| {
-                if logs.get(offset) != Some(&entry) {
-                    return Err(corrupt());
-                }
-                offset += 1;
-                Ok(())
-            },
-        )
-        .await
-        .map_err(error)?;
-        if offset != logs.len() {
-            return Err(corrupt());
-        }
-    }
-    Ok(Outcome::Recorded(Box::new(receipt)))
+    Ok(())
 }
 
 fn error(error: TransactionLogError) -> SandboxStoreError {
