@@ -16,7 +16,10 @@ pub(in crate::store) struct ReadHead {
 }
 
 impl ReadHead {
-    pub(super) fn validate_lineage(&self, entry: &AgentLogEntry) -> Result<(), SandboxStoreError> {
+    pub(in crate::store) fn validate_lineage(
+        &self,
+        entry: &AgentLogEntry,
+    ) -> Result<(), SandboxStoreError> {
         if let AgentLogKind::Created {
             workspace_id,
             worktree_id,
