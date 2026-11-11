@@ -126,6 +126,13 @@ pub(super) fn validator(name: &str) -> Document {
         properties.insert("stage", doc! {"bsonType":["null","object"]});
     }
     let required: Vec<_> = properties.keys().cloned().collect();
+    if name == PUBLICATIONS {
+        properties.insert(
+            "format_version",
+            doc! {"bsonType":"long","enum":[1_i64,2_i64]},
+        );
+        properties.insert("agent_digest", doc! {"bsonType":"binData"});
+    }
     if name == EVIDENCE {
         properties.insert(
             "turn_sequence",
@@ -137,6 +144,15 @@ pub(super) fn validator(name: &str) -> Document {
         );
     }
     let mut result = doc! {"$jsonSchema":{"bsonType":"object","required":required,"additionalProperties":false,"properties":properties}};
+    if name == PUBLICATIONS {
+        result.insert(
+            "$or",
+            vec![
+                doc! {"format_version":1_i64,"agent_digest":{"$exists":false}},
+                doc! {"format_version":2_i64,"agent_digest":{"$exists":true}},
+            ],
+        );
+    }
     if name == EVIDENCE {
         result.insert(
             "$or",
