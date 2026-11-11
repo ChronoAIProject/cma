@@ -67,9 +67,7 @@ impl MongoSandboxStore {
         operation: Operation<'_>,
     ) -> Result<Option<RequestHold>, BudgetError> {
         for attempt in 0..TRANSACTION_ATTEMPTS {
-            if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(5 * attempt as u64)).await;
-            }
+            crate::store::contention::backoff(attempt).await;
             let mut session = self
                 .client
                 .start_session()
