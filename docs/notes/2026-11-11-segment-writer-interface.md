@@ -318,3 +318,14 @@ crash/unknown-commit/retry, same-Agent rollover race, different-Agent isolation,
 all capacity boundaries, gate closure, old/new compatibility and every owned
 caller family. Shared S3/S5 wiring is integration acceptance, not a second
 writer implementation. Review-ready never includes unregistered drafts.
+
+## Concrete source checkpoint
+
+The first owned implementation source is described in
+`2026-11-11-segments-writer-checkpoint.md`. It supplies required policy/slot,
+receipt and projection fields for other slice authors. It remains unregistered
+pending the shared contract base and does not certify an executable writer.
+Turn facts preserve the original nullable model, native conversation/generation,
+and usage/usage-sequence references. A bounded `latest_completed` state supports
+late usage without consulting mutable current settings or scanning history.
+The `Turn` evidence variant boxes its facts; durable BSON remains an object.
