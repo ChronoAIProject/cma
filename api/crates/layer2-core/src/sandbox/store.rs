@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
+use async_trait::async_trait;
 
 use super::{
     Agent, AgentLogEntry, AgentLogKind, Sandbox, SandboxEvent, SandboxEventKind, SandboxStatus,
