@@ -1,5 +1,6 @@
 //! Versioned immutable log readers. This module never admits segmented writes.
 pub(in crate::store) mod audit;
+pub(in crate::store) mod audit_command;
 pub(in crate::store) mod capture;
 mod codec;
 #[cfg(test)]
@@ -36,8 +37,16 @@ pub(in crate::store) const PUBLICATIONS: &str = "agent_log_publications";
 pub(in crate::store) const PROJECTIONS: &str = "agent_log_projections";
 pub(in crate::store) const EVIDENCE: &str = "agent_log_evidence";
 pub(in crate::store) const AUDITS: &str = "agent_log_audits";
-pub(in crate::store) const COLLECTIONS: &[&str] =
-    &[HEADS, SEGMENTS, PUBLICATIONS, PROJECTIONS, EVIDENCE, AUDITS];
+pub(in crate::store) const COLLECTIONS: &[&str] = &[
+    HEADS,
+    SEGMENTS,
+    PUBLICATIONS,
+    PROJECTIONS,
+    EVIDENCE,
+    AUDITS,
+    writer_gate::COLLECTION,
+    writer_admission::COLLECTION,
+];
 pub(in crate::store) const FORMAT: &str = "segmented_v1";
 pub(in crate::store) const READER: &str = "agent_log_segments_v1";
 pub(in crate::store) const MIGRATION: &str = "2026-11-05-am-log-segment-readers-v1";

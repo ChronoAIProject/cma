@@ -13,6 +13,7 @@ use crate::store::{
 };
 
 mod collect;
+mod output;
 mod persistence;
 mod progress;
 mod rebuild;
