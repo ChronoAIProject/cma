@@ -1,5 +1,31 @@
 # CMA Event Gateway operations
 
+## Secret-first CMAEG deployment
+
+The owner-key identifiers come from `cma-event-gateway-owner-keys`, not ConfigMap
+values or empty placeholders. With owner keys enabled, the Secret must exist and
+its two keys must be verified **before any CMAEG deployment from this revision**.
+Missing required identifiers fail startup. Merge and image publication do not
+authorize a rollout or a full application of the checked-in manifests.
+
+Use the [owner-key Secret cutover runbook](CMAEG_Owner_Key_Secret_Cutover.md)
+and `.github/scripts/cmaeg-owner-key-cutover.py` under the current release GO,
+exclusive bridge lock and unchanged STOP marker. The required order is:
+
+1. Capture current resource fences and the existing owner-key authorization baseline.
+2. Seed the dedicated Secret from the existing live values in memory and verify
+   the two keys without printing or retaining values. A mismatch is a hold.
+3. Apply the fenced env-only change, preserving the image and unrelated settings.
+4. Verify readiness, owner-key authority and existing channels; complete observation.
+5. Only then remove the two legacy ConfigMap fields and verify the final state.
+
+Do not apply an empty Secret declaration, remove the legacy fields first or copy
+values into a file. The obsolete empty-placeholder apply wrapper is removed;
+its former ConfigMap-before-Deployment order is not the Secret migration path.
+After cutover, retain the Secret references and use separately approved fenced
+image patches. Preserve the current forward-fix boundary, stored data and all
+unrelated live configuration, including the separately decided typing flag.
+
 ## Native GitHub startup initialization
 
 `CMAEG_GITHUB_ENABLED` is the deployment-wide feature flag, default `false` when unset.
@@ -909,7 +935,9 @@ is never used as a provider credential.
 The deployment permits a rolling replacement with one surge pod and zero
 unavailable pods. Its 615-second termination grace covers the five-second
 load-balancer propagation delay, the 600-second application drain, and teardown.
-Apply ConfigMap and populated Secrets before starting the Deployment. Confirm
+Apply populated Secrets through the separately approved secret procedure;
+use the [guarded ConfigMap and Deployment path](#guarded-configmap-and-deployment-apply)
+before starting the Deployment. Confirm
 `/healthz`, `/readyz`, accepted HTTPRoute/health policy status, authenticated CMA
 record access, and the public HTTPS route after rollout. A ready gateway alone
 does not prove a deployed Telegram round trip.
@@ -1767,8 +1795,9 @@ Linux/amd64 Pod in the authorized cluster, with no secrets or service-account
 token and the gateway's restricted security context. Require a successful
 `--media-sandbox-check` and compare `--print-openapi` with the committed JSON.
 These probes establish executable/ABI compatibility, not the full Linux or
-transformer suite. Then dry-run and apply the locally committed ConfigMap and
-Deployment together, verify live digest/readiness, console sign-in and media
+transformer suite. Then use the
+[guarded ConfigMap and Deployment path](#guarded-configmap-and-deployment-apply)
+for the dry-run and approved apply, verify live digest/readiness, console sign-in and media
 attachment behavior, and record any unperformed acceptance probes explicitly.
 
 ### FFmpeg in the gateway image
