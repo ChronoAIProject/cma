@@ -35,5 +35,6 @@ url = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+tracking-allocator = "=0.4.0"
 flate2 = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
