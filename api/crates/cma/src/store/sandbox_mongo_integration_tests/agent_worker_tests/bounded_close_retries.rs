@@ -71,11 +71,18 @@ async fn close_retry_untrusted_or_disabled_fallbacks_keep_complete_validation() 
             "semantic_untrusted" => f.change(doc! { "$set": { "agent_log_integrity_v1.semantic_checkpoint_v1.valid": false }}).await,
             _ => unreachable!(),
         }
-        scans::isolated_test(async {
+        let start = f.checkouts.load(Ordering::SeqCst);
+        let consumed = scans::isolated_test(reads::isolated_test(async {
             f.store.commit_agent_work(retry(&f.agent)).await.unwrap();
             assert_eq!(scans::snapshot(CALLER, true)[0], 1, "{mode}");
-        })
+            reads::snapshot(AGENT_LOG)
+        }))
         .await;
+        let checkouts = f.checkouts.load(Ordering::SeqCst) - start;
+        eprintln!(
+            "close_retry fallback={mode} checkouts={checkouts} log_documents={} bytes={}",
+            consumed[2], consumed[3]
+        );
         assert_eq!(
             f.store.get_agent(&f.agent.id).await.unwrap(),
             Some(retry(&f.agent).agent)
