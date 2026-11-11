@@ -151,7 +151,7 @@ function ChoicePage({
     },
     [api, reportId, kind, search, cursor],
   );
-  const page = useUsageRead(load, active);
+  const page = useUsageRead(load, active, api);
   return (
     <>
       <MetricsNotice failure={page.error} onRetry={page.retry} />

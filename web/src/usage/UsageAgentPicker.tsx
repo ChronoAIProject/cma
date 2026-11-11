@@ -39,7 +39,7 @@ function AgentChoices({
     (signal: AbortSignal) => client.agents.list({ sandbox, cursor, limit: 50, signal }),
     [client, sandbox, cursor],
   );
-  const page = useUsageRead(load, visible);
+  const page = useUsageRead(load, visible, client.agents);
   return (
     <div className="usage-metric-selector">
       <Button size="sm" aria-expanded={open} onClick={() => setOpen((previous) => !previous)}>

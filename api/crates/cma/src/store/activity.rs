@@ -7,7 +7,7 @@ use layer2_core::{ActivityAction, ActivityQuery, ActivityRecord, ActivityStore, 
 use mongodb::{
     bson::{doc, Bson, DateTime, Document},
     options::IndexOptions,
-    Client, Collection, Database, IndexModel,
+    Client, Collection, IndexModel,
 };
 use serde::{Deserialize, Serialize};
 
@@ -46,7 +46,6 @@ impl ActivityDoc {
 /// Durable activity adapter with bounded, cursor-based reads.
 pub struct MongoActivityStore {
     entries: Collection<ActivityDoc>,
-    database: Database,
 }
 
 impl MongoActivityStore {
@@ -59,7 +58,6 @@ impl MongoActivityStore {
         schema::initialize_collections(&database, &[ACTIVITY]).await?;
         let store = Self {
             entries: majority_collection(&database, ACTIVITY),
-            database,
         };
         store.ensure_indexes(retention).await?;
         Ok(store)
@@ -84,23 +82,13 @@ impl MongoActivityStore {
                     .build(),
             )
             .build();
-        if let Err(create_error) = self.entries.create_index(expiry).await {
-            self.database
-                .run_command(doc! {
-                    "collMod": ACTIVITY,
-                    "index": {
-                        "name": EXPIRY_INDEX,
-                        "expireAfterSeconds": i64::try_from(retention.as_secs())
-                            .unwrap_or(i64::MAX),
-                    },
-                })
-                .await
-                .map_err(|update_error| {
-                    StoreError::Unavailable(format!(
-                        "activity expiry index could not be created ({create_error}) or updated ({update_error})"
-                    ))
-                })?;
-        }
+        // A retention mismatch requires a reviewed migration. An index error
+        // must never authorize changing TTL policy during ordinary startup.
+        self.entries.create_index(expiry).await.map_err(|error| {
+            StoreError::Unavailable(format!(
+                "activity expiry index is incompatible or unavailable; explicit migration required: {error}"
+            ))
+        })?;
         Ok(())
     }
 }
