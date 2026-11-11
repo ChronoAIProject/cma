@@ -184,7 +184,7 @@ async fn execute(fixture: &Arc<Fixture>) -> Result<CommitOutcome<RecoveryWork>, 
         + Duration::from_secs(layer2_core::seconds_from_rfc3339(test_support::NOW).unwrap());
     run(
         fixture,
-        fixture,
+        &Runtime(fixture.clone()),
         &test_support::work().request,
         "worker",
         at,
