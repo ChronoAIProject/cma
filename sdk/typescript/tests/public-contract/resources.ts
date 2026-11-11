@@ -286,6 +286,8 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.sandboxes.updateRuntime(param('id'), body, command),
   'GET /api/v1/sandboxes/{id}/runtime-recovery': ({ client, param }) =>
     client.sandboxes.inspectRuntimeRecovery(param('id')),
+  'POST /api/v1/sandboxes/{id}/runtime-recovery': ({ client, param, body, command }) =>
+    client.sandboxes.recoverRetained(param('id'), body, command),
   'POST /api/v1/sandboxes/{id}/always-on': ({ client, param, body, command }) =>
     client.sandboxes.setAlwaysOn(param('id'), body, command),
   'POST /api/v1/sandboxes/{id}/service-access': ({ client, param, body, command }) =>

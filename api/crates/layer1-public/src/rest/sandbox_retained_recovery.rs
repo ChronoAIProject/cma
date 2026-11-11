@@ -79,6 +79,7 @@ pub struct RetainedReopenView {
     params(("id" = String, Path), ("Idempotency-Key" = String, Header)),
     request_body = RecoverRetainedRequest,
     responses((status = 202, body = RetainedReopenView),
+        (status = 400, body = crate::rest::ProblemDocument),
         (status = 403, body = crate::rest::ProblemDocument),
         (status = 404, body = crate::rest::ProblemDocument),
         (status = 409, body = crate::rest::ProblemDocument),
