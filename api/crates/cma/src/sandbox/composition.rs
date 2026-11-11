@@ -109,18 +109,21 @@ impl SandboxLifecycleComposition {
             dependencies.title_runtime.clone(),
             config.title_model.clone(),
         );
-        let titles = AgentTitleScheduler::new(AgentTitleWorker::new(
-            AgentTitleService::new(
+        let titles = AgentTitleScheduler::new(
+            AgentTitleWorker::new(
+                AgentTitleService::new(
+                    dependencies.store.clone(),
+                    format!("{}:title", config.holder),
+                )
+                .expect("the deployment worker holder is bounded and nonempty"),
                 dependencies.store.clone(),
-                format!("{}:title", config.holder),
+                Arc::clone(&dependencies.credentials),
+                dependencies.title_runtime,
+                config.title_model,
+                dependencies.title_budget,
             )
-            .expect("the deployment worker holder is bounded and nonempty"),
-            dependencies.store.clone(),
-            Arc::clone(&dependencies.credentials),
-            dependencies.title_runtime,
-            config.title_model,
-            dependencies.title_budget,
-        ));
+            .with_request_budget(dependencies.store.clone()),
+        );
         let workspace_worker = WorkspaceWorker::new(
             WorkspaceWorkerDependencies {
                 store: dependencies.store.clone(),
