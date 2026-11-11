@@ -10,6 +10,7 @@ pub(crate) struct FeatureFlags {
     pub nyxid_proxy: bool,
     pub document_revocation_reserve: bool,
     pub bounded_approval_reads: bool,
+    pub bounded_close_retries: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -26,6 +27,7 @@ impl FeatureFlags {
             }
         }
         Ok(Self {
+            bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
             model_request_budget_writes_enabled: flag(
@@ -90,6 +92,33 @@ mod tests {
         for value in ["", "1", "TRUE", " true "] {
             assert!(FeatureFlags::from_lookup(&mut |key| {
                 Ok((key == "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED").then(|| value.into()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod close_retry_tests {
+    use super::*;
+
+    #[test]
+    fn close_retry_optimization_requires_its_own_strict_boolean() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok(if key == "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED" {
+                    value.map(str::to_owned)
+                } else {
+                    None
+                })
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_close_retries, expected);
+            assert!(!flags.bounded_title_reads && !flags.bounded_approval_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED").then(|| value.into()))
             })
             .is_err());
         }
