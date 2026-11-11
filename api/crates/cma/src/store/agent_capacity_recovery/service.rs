@@ -77,10 +77,17 @@ impl RecoveryService {
                 super::receipts::read(&self.store, context.agent, &completed.request, &mut scope)
                     .await?
                     .ok_or(layer2_core::sandbox::store::SandboxStoreError::Conflict)?;
-            if stored.work != *completed || stored.result.agent_revision != context.agent.revision {
+            if stored.work != *completed {
                 return Err(layer2_core::sandbox::store::SandboxStoreError::Conflict.into());
             }
-            let activation = RecoveryActivation::capture(&context, completed)
+            super::receipts::require_current_result(
+                &self.store,
+                context.agent,
+                &stored,
+                &mut scope,
+            )
+            .await?;
+            let activation = RecoveryActivation::capture_current(&context, completed)
                 .map_err(|_| layer2_core::sandbox::store::SandboxStoreError::Conflict)?;
             super::authority::require(authorized)?;
             Ok(activation)
