@@ -1,10 +1,15 @@
 //! The CMA workflow paths a sign-in may return to.
 
+// Public budget authority: layer1-public/tests/fixtures/browser-auth-limits.json.
+// Independent SDKs replay the same boundary; the web imports the TS SDK constant.
+pub(super) const MAX_LOGIN_URL_BYTES: usize = 4096;
+
 pub(super) fn app_return_target(value: &str) -> Result<String, ()> {
     let (path, query) = value
         .split_once('?')
         .map_or((value, None), |(path, query)| (path, Some(query)));
-    if value.len() > 25064
+    if value.len() > MAX_LOGIN_URL_BYTES
+        || !value.is_ascii()
         || value.contains(['#', '\\'])
         || value.bytes().any(|b| b.is_ascii_control() || b == b' ')
     {

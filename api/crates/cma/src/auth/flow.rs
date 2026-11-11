@@ -31,13 +31,13 @@ use callback::callback;
 mod return_target;
 mod silent;
 
-use return_target::{app_return_target, opaque_path_segment};
+use return_target::{app_return_target, opaque_path_segment, MAX_LOGIN_URL_BYTES};
 use silent::LoginPrompt;
 
 const ATTEMPT_DOMAIN: &str = "oidc-login-attempt";
 const BINDING_DOMAIN: &str = "oidc-browser-binding";
 pub(super) const BINDING_COOKIE_PREFIX: &str = "cma_login_";
-const ATTEMPT_LIFETIME: Duration = Duration::from_secs(10 * 60);
+const ATTEMPT_LIFETIME: Duration = super::LOGIN_ATTEMPT_LIFETIME;
 const DEFAULT_ACCESS_TOKEN_LIFETIME: Duration = Duration::from_secs(15 * 60);
 const MAX_ACCESS_TOKEN_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -128,6 +128,15 @@ async fn login(
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> Response {
+    let origin_length = match &auth.mode {
+        AuthMode::Provider { public_url, .. } => public_url.trim_end_matches('/').len(),
+        _ => 0,
+    };
+    if origin_length + uri.path_and_query().map_or(0, |value| value.as_str().len())
+        > MAX_LOGIN_URL_BYTES
+    {
+        return login_failure(StatusCode::BAD_REQUEST, "login_url_too_long", None);
+    }
     if let Some(redirect) = auth.canonical_login_redirect(&headers, &uri) {
         return redirect;
     }
@@ -149,8 +158,13 @@ async fn login(
     };
     let silent = matches!(params.prompt, Some(LoginPrompt::Silent));
     if silent {
-        if let Some(refusal) =
-            silent::refuse_entry(params.screen.is_some(), &headers, return_to.as_deref())
+        if let Some(refusal) = silent::refuse_entry(
+            &auth,
+            params.screen.is_some(),
+            &headers,
+            return_to.as_deref(),
+        )
+        .await
         {
             return refusal;
         }
@@ -212,15 +226,26 @@ async fn begin_login_with_intent(
         .map(str::to_owned)
         .unwrap_or_else(random_token);
     let expires_at = SystemTime::now() + ATTEMPT_LIFETIME;
-    if continuation_binding.is_none() {
-        if let Err(error) = auth
-            .store
-            .reserve_browser_login(
-                SecretDigest::identify(AUTH_COOKIE_DOMAIN, &browser_binding),
-                expires_at,
-            )
+    let binding_id = SecretDigest::identify(AUTH_COOKIE_DOMAIN, &browser_binding);
+    let reserved = if continuation_binding.is_none() {
+        auth.store
+            .reserve_browser_login(binding_id, expires_at)
             .await
-        {
+    } else {
+        auth.store
+            .renew_browser_login(&binding_id, expires_at)
+            .await
+    };
+    match reserved {
+        Ok(true) => {}
+        Ok(false) => {
+            return silent::fallback(
+                silent,
+                return_to.as_deref(),
+                login_failure(StatusCode::UNAUTHORIZED, "login_superseded", None),
+            )
+        }
+        Err(error) => {
             tracing::error!(error = %error, "could not reserve browser login");
             return silent::fallback(silent, return_to.as_deref(), store_failure());
         }
@@ -234,6 +259,8 @@ async fn begin_login_with_intent(
         actor_link_intent,
         silent,
         consent_requested: continuation_binding.is_some(),
+        custody_reserved: true,
+        started_at: Some(expires_at - ATTEMPT_LIFETIME),
         expires_at,
     };
     if let Err(error) = auth.store.put_login_attempt(attempt).await {
@@ -283,7 +310,7 @@ async fn begin_login_with_intent(
             &cookie_name,
             &browser_binding,
             auth.secure_cookies(),
-            ATTEMPT_LIFETIME.as_secs(),
+            super::BROWSER_BINDING_LIFETIME.as_secs(),
         ),
     );
     response

@@ -53,33 +53,9 @@ mod login_documents;
 #[path = "auth_proxy_grants.rs"]
 mod proxy_grants;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct BrowserLoginDoc {
-    #[serde(rename = "_id")]
-    id: Binary,
-    document_schema_version: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    subject: Option<String>,
-    expires_at: DateTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LoginAttemptDoc {
-    #[serde(rename = "_id")]
-    id: Binary,
-    document_schema_version: i64,
-    browser_binding: Binary,
-    verifier: CipherEnvelope,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    return_to: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    actor_link_intent: Option<CipherEnvelope>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    silent: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    consent_requested: bool,
-    expires_at: DateTime,
-}
+#[path = "auth_browser_documents.rs"]
+mod browser_documents;
+use browser_documents::{BrowserLoginDoc, LoginAttemptDoc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SubjectDoc {
@@ -113,6 +89,7 @@ fn required_refresh_lease<'de, D: serde::Deserializer<'de>>(
 /// Durable authentication store. Resource credential custody is intentionally
 /// a separate concern owned by the replacement resource service.
 pub struct MongoAuthStore {
+    client: Client,
     browser_logins: Collection<BrowserLoginDoc>,
     login_attempts: Collection<LoginAttemptDoc>,
     subjects: Collection<SubjectDoc>,
@@ -132,6 +109,7 @@ impl MongoAuthStore {
         let database = client.database(database);
         schema::initialize_collections(&database, AUTH_COLLECTIONS).await?;
         let store = Self {
+            client: client.clone(),
             browser_logins: majority_collection(&database, BROWSER_LOGINS),
             login_attempts: majority_collection(&database, LOGIN_ATTEMPTS),
             subjects: majority_collection(&database, SUBJECTS),
@@ -361,11 +339,43 @@ impl AuthStore for MongoAuthStore {
         &self,
         id: SecretDigest,
         expires_at: SystemTime,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         self.reserve_browser_login_record(id, expires_at).await
     }
-    async fn complete_browser_login(&self, login: BrowserLogin) -> Result<bool, StoreError> {
-        self.complete_browser_login_record(login).await
+    async fn renew_browser_login(
+        &self,
+        binding: &SecretDigest,
+        expires_at: SystemTime,
+    ) -> Result<bool, StoreError> {
+        self.renew_browser_login_record(binding, expires_at).await
+    }
+    async fn complete_browser_login(
+        &self,
+        binding: &SecretDigest,
+        login: BrowserLogin,
+        explicit_started_at: Option<SystemTime>,
+    ) -> Result<bool, StoreError> {
+        self.complete_browser_login_record(binding, login, explicit_started_at)
+            .await
+    }
+    async fn revoke_browser_binding(&self, id: &SecretDigest) -> Result<(), StoreError> {
+        self.revoke_browser_custody(id, true, true).await
+    }
+    async fn browser_sign_in_preference(
+        &self,
+        binding: &SecretDigest,
+        started_at: SystemTime,
+    ) -> Result<bool, StoreError> {
+        self.read_browser_preference(binding, started_at).await
+    }
+    async fn logout_browser_custody(
+        &self,
+        id: &SecretDigest,
+        binding_cookie: bool,
+        suppress: bool,
+    ) -> Result<(), StoreError> {
+        self.revoke_browser_custody(id, binding_cookie, suppress)
+            .await
     }
     #[cfg(test)]
     async fn put_browser_login(&self, login: BrowserLogin) -> Result<(), StoreError> {
@@ -481,3 +491,7 @@ mod refresh_tests;
 #[cfg(test)]
 #[path = "auth_api_bearer_tests.rs"]
 mod api_bearer_tests;
+
+#[cfg(test)]
+#[path = "auth_browser_review_tests.rs"]
+mod browser_review_tests;

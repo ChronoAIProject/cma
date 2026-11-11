@@ -25,6 +25,8 @@ async fn login_attempts_are_binding_checked_and_single_use() {
             actor_link_intent: None,
             silent: false,
             consent_requested: false,
+            custody_reserved: false,
+            started_at: None,
             expires_at: SystemTime::now() + Duration::from_secs(60),
         })
         .await
@@ -44,4 +46,85 @@ async fn login_attempts_are_binding_checked_and_single_use() {
         .await
         .unwrap()
         .is_none());
+}
+
+#[tokio::test]
+async fn fresh_sessions_remain_distinct_and_either_handle_revokes_them_in_memory() {
+    for step in [
+        "before-reserve",
+        "before-complete",
+        "after-binding",
+        "after-session",
+        "race",
+    ] {
+        let store = std::sync::Arc::new(MemoryAuthStore::default());
+        let replica = std::sync::Arc::new(store.as_ref().clone());
+        assert!(!std::sync::Arc::ptr_eq(&store, &replica));
+        let binding = SecretDigest::identify("browser-login", step);
+        let login = BrowserLogin {
+            id: SecretDigest::identify("browser-login", &format!("fresh-{step}")),
+            subject: SubjectId::new("owner"),
+            expires_at: SystemTime::now() + Duration::from_secs(3600),
+        };
+        if step == "before-reserve" {
+            replica.revoke_browser_binding(&binding).await.unwrap();
+            assert!(!store
+                .reserve_browser_login(binding.clone(), SystemTime::now() + Duration::from_secs(60))
+                .await
+                .unwrap());
+        } else {
+            assert!(store
+                .reserve_browser_login(binding.clone(), SystemTime::now() + Duration::from_secs(60))
+                .await
+                .unwrap());
+            match step {
+                "before-complete" => {
+                    replica.revoke_browser_binding(&binding).await.unwrap();
+                    assert!(!store
+                        .complete_browser_login(&binding, login.clone(), None)
+                        .await
+                        .unwrap());
+                }
+                "race" => {
+                    let (done, out) = tokio::join!(
+                        store.complete_browser_login(&binding, login.clone(), None),
+                        replica.revoke_browser_binding(&binding)
+                    );
+                    done.unwrap();
+                    out.unwrap();
+                }
+                _ => {
+                    assert!(store
+                        .complete_browser_login(&binding, login.clone(), None)
+                        .await
+                        .unwrap());
+                    assert!(replica.browser_login(&binding).await.unwrap().is_none());
+                    assert_eq!(
+                        replica
+                            .browser_login(&login.id)
+                            .await
+                            .unwrap()
+                            .unwrap()
+                            .subject
+                            .as_str(),
+                        "owner"
+                    );
+                    if step == "after-session" {
+                        replica.delete_browser_login(&login.id).await.unwrap();
+                    } else {
+                        replica.revoke_browser_binding(&binding).await.unwrap();
+                    }
+                }
+            }
+        }
+        assert!(store.browser_login(&login.id).await.unwrap().is_none());
+        assert!(!store
+            .complete_browser_login(&binding, login, None)
+            .await
+            .unwrap());
+        assert!(!store
+            .renew_browser_login(&binding, SystemTime::now() + Duration::from_secs(600))
+            .await
+            .unwrap());
+    }
 }
