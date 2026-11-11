@@ -179,3 +179,76 @@ async fn exact_admission_retains_legacy_lineage_but_global_policy_does_not() {
     assert!(store.get_agent(&current.id).await.unwrap().is_some());
     db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable replica set"]
+async fn recovery_carrier_retains_legacy_lineage_even_when_the_carrier_is_damaged() {
+    let (client, name) = database("recovery_hold").await;
+    let db = client.database(&name);
+    schema::migrate(&db).await.unwrap();
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let current = agent();
+    let sandbox = retired(current.sandbox_id.as_str());
+    store.create_sandbox(sandbox.clone()).await.unwrap();
+    store.create_agent(current.clone()).await.unwrap();
+    let mut session = client.start_session().await.unwrap();
+    assert!(
+        !segments::retention::required(&store, sandbox.id.as_str(), &mut session)
+            .await
+            .unwrap()
+    );
+    // Deliberately simulate damaged persisted evidence. A validator/codec
+    // failure must never turn an accepted-work lineage into purge permission.
+    let damaged = doc! {"_id":"damaged-recovery-fixture","agent_id":current.id.as_str(),
+    "format_version":2_i64};
+    collection(&store, RECOVERY_WORK)
+        .insert_one(damaged.clone())
+        .bypass_document_validation(true)
+        .await
+        .unwrap();
+    assert!(
+        segments::retention::required(&store, sandbox.id.as_str(), &mut session)
+            .await
+            .unwrap()
+    );
+    let before = contents(&client, &name).await;
+    assert_eq!(
+        store
+            .purge_sandbox(&sandbox.id, sandbox.revision, NOW)
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(contents(&client, &name).await, before);
+    assert_eq!(
+        collection(&store, RECOVERY_WORK)
+            .find_one(doc! {})
+            .await
+            .unwrap()
+            .unwrap(),
+        damaged
+    );
+    assert!(store.get_agent(&current.id).await.unwrap().is_some());
+    // The exact Agent join does not hold an unrelated legacy hierarchy.
+    let unrelated = retired("sbx_recovery_unrelated_fixture");
+    store.create_sandbox(unrelated.clone()).await.unwrap();
+    let mut other = current.clone();
+    other.id = layer2_core::ids::AgentId("agt_recovery_unrelated_fixture".into());
+    other.sandbox_id = unrelated.id.clone();
+    other.creation_key = "unrelated-recovery-retention-fixture".into();
+    other.worktree_id = layer2_core::ids::WorktreeId("wkt_recovery_unrelated_fixture".into());
+    store.create_agent(other.clone()).await.unwrap();
+    store
+        .purge_sandbox(&unrelated.id, unrelated.revision, NOW)
+        .await
+        .unwrap();
+    assert!(store.get_agent(&other.id).await.unwrap().is_none());
+    assert_eq!(
+        collection(&store, RECOVERY_WORK)
+            .find_one(doc! {})
+            .await
+            .unwrap()
+            .unwrap(),
+        damaged
+    );
+    db.drop().await.unwrap();
+}
