@@ -105,7 +105,14 @@ export function NodeFields({
                         unavailable: nativeDiscordUnavailable(discovery) ?? providerUnavailable,
                       },
                       { value: 'custom', label: 'Custom event' },
-                    ]}
+                    ].filter((option) => {
+                      // Hide new setup until the gateway confirms activation. Existing
+                      // sources below remain inspectable when rollout gates are paused.
+                      if (option.value === 'native_lark') return !nativeLarkUnavailable(discovery);
+                      if (option.value === 'whatsapp') return !nativeWhatsappUnavailable(discovery);
+                      if (option.value === 'discord') return !nativeDiscordUnavailable(discovery);
+                      return true;
+                    })}
                     onChange={(type) =>
                       set(
                         'sources',

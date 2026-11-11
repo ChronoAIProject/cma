@@ -30,7 +30,11 @@ labwc --version
 # Without it, nested Hyprland commits a buffer before the host permits one.
 curl -fsSL https://github.com/hyprwm/aquamarine/archive/refs/tags/v0.15.1.tar.gz -o "$build_dir/aquamarine.tar.gz"
 echo "2f9de98c0bd1b7b1b09c576e390a2fef436449762fb334163c414f0c300296f2  $build_dir/aquamarine.tar.gz" | sha256sum -c -
-curl -fsSL https://github.com/hyprwm/aquamarine/commit/7bb8bdf4e8fedaf4dfae58512bc4c728671727df.patch -o "$build_dir/aquamarine.patch"
+# The web commit-patch route throttles CI; the API returns the identical pinned bytes.
+curl -fsSL --connect-timeout 15 --max-time 120 --retry 3 --retry-max-time 180 \
+  -H 'Accept: application/vnd.github.patch' -H 'X-GitHub-Api-Version: 2022-11-28' \
+  https://api.github.com/repos/hyprwm/aquamarine/commits/7bb8bdf4e8fedaf4dfae58512bc4c728671727df \
+  -o "$build_dir/aquamarine.patch"
 echo "542a3075643971d69862e7481446b9ec8f368338d1dcbc13ce26438a0e7e23cf  $build_dir/aquamarine.patch" | sha256sum -c -
 mkdir "$build_dir/aquamarine"
 tar xzf "$build_dir/aquamarine.tar.gz" -C "$build_dir/aquamarine" --strip-components=1

@@ -25,12 +25,14 @@ pub use agent_settings_authority::{AgentSettingsAuthorization, AgentSettingsFenc
 mod agent_settings_recovery;
 mod agent_settings_validation;
 pub use agent_settings::AgentSettings;
+mod admission_checkpoint;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
 mod agent_operation_service;
 mod agent_operation_settlement;
 mod agent_read_types;
 mod agent_reads;
+pub use admission_checkpoint::AgentLogCheckpoint;
 mod agent_reads_fold;
 mod agent_reads_usage;
 mod agent_runtime;
@@ -64,6 +66,7 @@ pub use conversation_observation::{
 mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;
+mod ledger_retirement;
 mod lifecycle_bootstrap;
 mod provenance;
 mod provenance_inventory;
@@ -192,9 +195,9 @@ pub use agent_read_types::{
 };
 pub use agent_reads::{
     AgentConfigurationRead, AgentDetailReading, AgentEventStreamAuthorization,
-    AgentEventStreamHeader, AgentEventStreamSnapshot, AgentReadService, AgentReplayEntry,
-    AgentReplayWindow, AgentResponseBinding, AgentSourceReadError, AgentSourceReading,
-    AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
+    AgentEventStreamHeader, AgentEventStreamSnapshot, AgentHistoryReading, AgentReadService,
+    AgentReplayEntry, AgentReplayWindow, AgentResponseBinding, AgentSourceReadError,
+    AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,

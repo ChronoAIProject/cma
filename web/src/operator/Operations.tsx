@@ -80,7 +80,12 @@ export function Operations({
         {selectedView.id === 'sandboxes' ? (
           <Sandboxes client={client} canControl={canControl} />
         ) : null}
-        {selectedView.id === 'settings' ? <PlatformSettings client={client} /> : null}
+        {selectedView.id === 'settings' ? (
+          <PlatformSettings
+            client={client}
+            canReadAudit={capabilities.includes('read_activity_log')}
+          />
+        ) : null}
         {selectedView.id === 'warm_pools' ? <WarmPools client={client} /> : null}
         {selectedView.id === 'activity' ? <Activity client={client} /> : null}
       </div>
