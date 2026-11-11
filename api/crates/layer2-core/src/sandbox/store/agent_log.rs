@@ -181,6 +181,54 @@ pub trait AgentLogStore: Send + Sync {
     /// the existing transcript fold remains the semantic authority.
     async fn agent_log_transcript(
         &self,
+        agent: &Agent,
+    ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+        // The in-memory compatibility store is used by the unit parity suite.
+        // Keep its projection selector honest without making the production
+        // default claim a durable proof it cannot provide; Mongo supplies the
+        // trusted implementation above this trait boundary.
+        #[cfg(test)]
+        {
+            let entries = self
+                .agent_log_prefix(&agent.id, agent.conversation.last_seq)
+                .await?;
+            return Ok(Some(
+                entries
+                    .into_iter()
+                    .filter(|entry| {
+                        matches!(
+                            entry.kind,
+                            AgentLogKind::Created { .. }
+                                | AgentLogKind::ConversationOpened { .. }
+                                | AgentLogKind::RuntimeGenerationRetired { .. }
+                                | AgentLogKind::TurnStarted { .. }
+                                | AgentLogKind::TurnMetadataSet { .. }
+                                | AgentLogKind::OwnerMessage { .. }
+                                | AgentLogKind::AgentMessage { .. }
+                                | AgentLogKind::TurnCompleted { .. }
+                                | AgentLogKind::TurnFailed { .. }
+                                | AgentLogKind::TurnInterrupted { .. }
+                                | AgentLogKind::ConversationGap { .. }
+                                | AgentLogKind::OperationDeliveryChanged {
+                                    operation: AgentOperationKind::Steer,
+                                    state: AgentOperationDelivery::DispatchFenced,
+                                    ..
+                                }
+                        )
+                    })
+                    .collect(),
+            ));
+        }
+        #[cfg(not(test))]
+        let _ = agent;
+        Ok(None)
+    }
+
+    /// Read only rows that can change usage through a captured Agent head.
+    /// `None` means the store cannot prove a bounded usage projection for the
+    /// requested format, so callers must use the complete compatibility read.
+    async fn agent_log_usage(
+        &self,
         _agent: &Agent,
     ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
         Ok(None)
