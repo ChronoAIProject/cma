@@ -1,16 +1,32 @@
-import { readFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 import { cursor, LocalAgentV2 } from './agent-v2.fixture';
 
-const identity = JSON.parse(readFileSync('dist/build-info.json', 'utf8')) as {
-  version: string;
-  revision: string;
-  local: boolean;
-};
-const expected = `CMA ${identity.version} (${identity.revision || 'local'})${identity.local && identity.revision ? ' (local)' : ''}`;
-
 for (const clipboard of ['available', 'denied', 'absent'] as const) {
-  test(`LOCAL compiled build identity with clipboard ${clipboard}`, async ({ page, baseURL }) => {
+  test(`Compiled build identity with clipboard ${clipboard}`, async ({
+    page,
+    baseURL,
+    request,
+  }) => {
+    // Read the actual serving artifact, so an unrelated local dist cannot supply evidence.
+    const response = await request.get('/build-info.json');
+    expect(response.ok()).toBe(true);
+    const identity = (await response.json()) as {
+      version: string;
+      revision: string;
+      local: boolean;
+    };
+    expect(identity).toEqual({
+      version: expect.any(String),
+      revision: expect.any(String),
+      local: expect.any(Boolean),
+    });
+    if (process.env.CMA_WEB_IMAGE_URL) {
+      expect(identity.local).toBe(false);
+      expect(process.env.CMA_EXPECTED_WEB_REVISION).toMatch(/^[0-9a-f]{40}$/);
+      expect(identity.revision).toBe(process.env.CMA_EXPECTED_WEB_REVISION);
+      expect(identity.version).toBe(process.env.CMA_EXPECTED_WEB_VERSION);
+    }
+    const expected = `CMA ${identity.version} (${identity.revision || 'local'})${identity.local && identity.revision ? ' (local)' : ''}`;
     const fixture = new LocalAgentV2();
     try {
       await fixture.route(page, baseURL!);
