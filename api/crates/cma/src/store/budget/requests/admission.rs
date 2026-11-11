@@ -132,11 +132,9 @@ pub(super) async fn reserve(
     owner
         .reserve_liability(&policy, liability, timestamp)
         .map_err(domain)?;
-    let units = [policy.input_token_units, policy.output_token_units];
-    let period_start = super::super::period::admit_liability(
-        store, &snapshot, units, liability, timestamp, session,
-    )
-    .await?;
+    let period_start =
+        super::super::period::admit_liability(store, &snapshot, liability, timestamp, session)
+            .await?;
     ledger.reserved = next_reserved;
     // Every granted permit counts, including uncertain dispatch and settlement.
     ledger.calls = next_calls;

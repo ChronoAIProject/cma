@@ -179,12 +179,12 @@ pub(super) async fn save_period(
     Ok(())
 }
 
-/// Mirror an owner reservation inside its transaction. `None` when no enabled
-/// platform policy exists; otherwise the period the liability was charged to.
+/// Mirror an owner reservation, already valued in the shared accounting units,
+/// inside its transaction. `None` when no enabled platform policy exists;
+/// otherwise the period the liability was charged to.
 pub(super) async fn admit_liability(
     store: &MongoSandboxStore,
     snapshot: &PolicySnapshot,
-    token_units: [u64; 2],
     liability: u64,
     now: u64,
     session: &mut ClientSession,
@@ -193,7 +193,7 @@ pub(super) async fn admit_liability(
         return Ok(None);
     };
     let (mut ledger, inserted) = load_or_open(store, platform, snapshot.revision, session).await?;
-    match ledger.admit(platform, snapshot.revision, token_units, liability, now) {
+    match ledger.admit(platform, snapshot.revision, liability, now) {
         Ok(entered) => {
             save_period(store, &ledger, session).await?;
             entered.iter().for_each(alert);
@@ -240,8 +240,7 @@ pub(crate) async fn require_open_with(
         None => PlatformPeriodLedger::open(&platform, revision)
             .map_err(|_| domain(BudgetError::Unavailable))?,
     };
-    let units = ledger.token_units.unwrap_or_default();
-    match ledger.admit(&platform, revision, units, 0, now) {
+    match ledger.admit(&platform, revision, 0, now) {
         Ok(_) => Ok(()),
         Err(refusal) => Err(refuse(rows, &platform, revision, start, refusal).await),
     }

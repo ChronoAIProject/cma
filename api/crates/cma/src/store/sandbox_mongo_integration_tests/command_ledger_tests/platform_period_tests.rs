@@ -534,6 +534,56 @@ async fn disabled_or_absent_platform_policy_changes_nothing() {
     client.database(&name).drop().await.unwrap();
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn owners_priced_differently_share_one_period_total() {
+    let (client, name) = database("platform_valuations").await;
+    let (store, agent, parent) = fixture(&name, &client).await;
+    configure(&store, &agent.owner).await;
+    let mut other_parent = active_sandbox("sbx_platform_priced");
+    other_parent.owner = layer2_core::SubjectId("platform-priced-owner".into());
+    store.create_sandbox(other_parent.clone()).await.unwrap();
+    let mut other = ready_agent(&other_parent, "agt_platform_priced");
+    other.capabilities = budget_capabilities();
+    insert_agent(&store, &other, NOW).await;
+    // The second owner prices tokens three times higher; both allowances are
+    // already valued amounts in the shared accounting units.
+    let entry = layer2_core::budget::OwnerBudgetPolicy {
+        owner: other.owner.clone(),
+        policy: layer2_core::budget::BudgetPolicy {
+            owner_day_limit: 1_000,
+            turn_limit: 600,
+            max_calls_per_turn: 255,
+            day_timezone: "UTC".into(),
+            input_token_units: 3,
+            output_token_units: 3,
+            max_unobserved_units: 1,
+            usage_timeout_seconds: 60,
+        },
+    };
+    store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {"$push": {"settings.model_budget.owners":
+            mongodb::bson::serialize_to_bson(&entry).unwrap()}},
+        )
+        .await
+        .unwrap();
+    assert!(store
+        .reserve_command(request(&agent, &parent, "unit-priced"))
+        .await
+        .is_ok());
+    assert!(store
+        .reserve_command(request(&other, &other_parent, "triple-priced"))
+        .await
+        .is_ok());
+    let row = period_row(&store, &open_platform()).await.unwrap();
+    assert_eq!(row.reserved, u64::from(u8::MAX) + 600);
+    assert!(row.closures.is_empty());
+    client.database(&name).drop().await.unwrap();
+}
+
 mod evaluation {
     use super::*;
     use layer2_core::budget::{Closure, CloudSpendPolicy};

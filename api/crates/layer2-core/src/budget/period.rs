@@ -47,8 +47,6 @@ pub struct PlatformPeriodLedger {
     pub period_end: u64,
     /// Revision the levels were last computed under.
     pub settings_revision: u64,
-    /// Valuation pinned on first liability; it cannot change under liability.
-    pub token_units: Option<[u64; 2]>,
     pub spent: u64,
     pub reserved: u64,
     pub adjustments: u64,
@@ -90,7 +88,6 @@ impl PlatformPeriodLedger {
             period_start,
             period_end,
             settings_revision,
-            token_units: None,
             spent: 0,
             reserved: 0,
             adjustments: 0,
@@ -132,14 +129,14 @@ impl PlatformPeriodLedger {
             .ok_or(BudgetError::Unavailable)
     }
 
-    /// Admit `liability` (zero for commitments without a model component).
+    /// Admit `liability`, an amount each owner already valued in the shared
+    /// accounting units (zero for commitments without a model component).
     /// Success mirrors the liability and enters `SpendWarning` in place;
     /// a refusal leaves `self` untouched.
     pub fn admit(
         &mut self,
         policy: &PlatformBudgetPolicy,
         settings_revision: u64,
-        token_units: [u64; 2],
         liability: u64,
         now: u64,
     ) -> Result<Vec<Closure>, Refusal> {
@@ -149,16 +146,8 @@ impl PlatformPeriodLedger {
                 closures: Vec::new(),
             });
         }
-        if liability > 0 && self.has_liability() && self.token_units != Some(token_units) {
-            // One owner's valuation differs from the period's pinned one: that
-            // is not a platform metering fact, so refuse this admission only.
-            return Err(Refusal {
-                reason: BudgetError::Unavailable,
-                closures: Vec::new(),
-            });
-        }
         let mut next = self.clone();
-        let committed = match next.admissible(policy, token_units, liability, now) {
+        let committed = match next.admissible(policy, now) {
             Ok(committed) => committed,
             Err(_) => return Err(self.unavailable(settings_revision, now, 0)),
         };
@@ -203,19 +192,10 @@ impl PlatformPeriodLedger {
 
     /// Apply the fail-closed conditions to `self` (a scratch copy) and return
     /// `committed(now)`.
-    fn admissible(
-        &mut self,
-        policy: &PlatformBudgetPolicy,
-        token_units: [u64; 2],
-        liability: u64,
-        now: u64,
-    ) -> Result<u64, BudgetError> {
+    fn admissible(&mut self, policy: &PlatformBudgetPolicy, now: u64) -> Result<u64, BudgetError> {
         self.adopt_period(policy)?;
         if now >= self.period_end {
             return Err(BudgetError::Unavailable);
-        }
-        if liability > 0 {
-            self.token_units = Some(token_units);
         }
         self.committed(policy, now)
     }
