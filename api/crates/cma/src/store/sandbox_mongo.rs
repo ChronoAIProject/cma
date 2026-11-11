@@ -93,6 +93,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) bounded_approval_reads: bool,
     pub(super) fleet_log_activation: std::sync::Arc<super::agent_log_integrity::fleet::Activation>,
     pub(super) bounded_admission_agents: std::collections::BTreeSet<layer2_core::AgentId>,
     pub(super) bounded_title_reads: bool,
@@ -182,6 +183,7 @@ impl MongoSandboxStore {
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
             bounded_admission_agents: Default::default(),
+            bounded_approval_reads: false,
             fleet_log_activation: Default::default(),
             bounded_title_reads: false,
             writer_policy: Default::default(),

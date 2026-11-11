@@ -9,6 +9,7 @@ pub(crate) struct FeatureFlags {
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
     pub document_revocation_reserve: bool,
+    pub bounded_approval_reads: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -25,6 +26,7 @@ impl FeatureFlags {
             }
         }
         Ok(Self {
+            bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
             model_request_budget_writes_enabled: flag(
                 lookup,
@@ -40,6 +42,31 @@ impl FeatureFlags {
                 "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
             )?,
         })
+    }
+}
+
+#[cfg(test)]
+mod approval_tests {
+    use super::*;
+
+    #[test]
+    fn approval_reader_rollout_requires_an_explicit_boolean() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_approval_reads, expected);
+            assert!(!flags.bounded_title_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
+                == "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")
+                .then(|| value.to_owned())))
+            .is_err());
+        }
     }
 }
 

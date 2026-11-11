@@ -1042,6 +1042,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_UPSTREAM_WIRE_API` | Exactly `responses` |
 | `CHRONO_PLATFORM_BASE_URL` | Required canonical HTTPS platform proxy origin; also the upstream for the runtime's explicitly granted GitHub API proxy |
 | `CHRONO_DOCUMENT_BUCKET` | Existing S3-backed bucket used for durable Markdown artifacts. Empty disables document source storage and runtime publication tools; writes fail explicitly instead of storing ephemeral documents. Production uses `chrono-platform-bot`. |
+| `CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED` | Strict boolean, default `false`. Enables a proven 200-row/4-MiB suffix for pending-approval reads only for the shared trusted cohort. A missing reset boundary, oversized suffix or untrusted metadata retains complete validation. Independent of admission/public-window and title activation. Disable and restart the API for rollback; keep all original history and metadata. See [Bounded pending-approval recovery](CMA_Bounded_Approval_Reads.md). |
 | `CHRONO_AGENT_LOG_FLEET_PERCENT` | Canonical integer 0–100, default `0`; positive percentages require the explicit admission ID list to be empty. Stable Agent-hash buckets stage 10/50/100. Preparation is lazy and bounded before eligible writes; public reads never prepare. Stage changes/kill switch require a same-image API rollout; preserve quarantine and compatible-image floor. See [Fleet log activation](CMA_Fleet_Log_Activation.md). |
 | `CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED` | Strict boolean, default `false` in code and manifests. All writes retain 1,024 receipts / 12 MiB while off; compatible readers always accept bounded expanded aggregates. Enable only in a later train after the compatible reader is deployed, older workers have drained and that image is the pinned rollback target. Only owner grant/link revocations may spend the reserve; ordinary writes retain the old limits. Disabling it preserves expanded reads and exact retries. See [Document artifacts](Document_Artifacts.md) for activation and rollback. |
 | `CHRONO_STORAGE_CLIENT_ID` | Deployment-owned machine identity for the existing `chrono-storage-service` proxy. Required when the document bucket is configured. Never passed to runtime Agents or browsers. |
@@ -1455,6 +1456,11 @@ The staging harness lives in `web/e2e/`. Run commands from `web/` after `npm ci`
 `npm run e2e` for the configured remote target. The default remote run is only
 three read-only smoke cases. Listing cases with `npm run e2e -- --list` executes
 no journey. No staging fixture or credential is supplied by the repository.
+
+The opt-in [J0–J2 Friday slice](CMA_New_User_Friday_Slice.md) selects only those
+three authenticated journeys while retaining the complete existing fixture and
+cleanup contract. Its separate partial report never substitutes for J0–J7 or
+the new-user sample targets; the guide lists the J3–J7 prerequisites explicitly.
 
 Read-only smoke requires `CMA_E2E_BASE_URL` (one exact HTTPS origin),
 `CMA_E2E_PUBLIC_ID` (an existing published Trigger), and `CMA_E2E_OUTPUT_DIR`
