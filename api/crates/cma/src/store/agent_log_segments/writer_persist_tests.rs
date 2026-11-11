@@ -1,14 +1,13 @@
 use super::*;
-use crate::store::sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome};
+use crate::store::sandbox_mongo::{commit_transaction, CommitOutcome};
+use mongodb::ClientSession;
 
 #[path = "writer_test_fixture.rs"]
 mod fixture;
 use fixture::*;
 
 async fn transaction(f: &Fixture) -> ClientSession {
-    let mut session = f.client.start_session().await.unwrap();
-    start_transaction(&mut session).await.unwrap();
-    session
+    f.client.start_session().await.unwrap()
 }
 
 fn update(plan: &PreparedPublication) -> AggregateUpdate {
@@ -51,14 +50,13 @@ async fn unchanged(f: &Fixture) {
 async fn writer_rollover_commits_original_batch_head_projection_and_receipt_together() {
     let f = fixture(10_000).await;
     let mut session = transaction(&f).await;
-    let plan = f.prepared(&session);
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
     let expected = plan.next.clone();
     let mutation = update(&plan);
-    let receipt = persist(&f.store, &mut session, plan, mutation)
-        .await
-        .unwrap();
+    let receipt = persist(&f.store, &mut scope, plan, mutation).await.unwrap();
     assert!(matches!(
-        commit_transaction(&mut session).await,
+        commit_transaction(scope.release()).await,
         CommitOutcome::Committed
     ));
     let row = f
@@ -116,12 +114,11 @@ async fn writer_rollover_commits_original_batch_head_projection_and_receipt_toge
 async fn writer_abort_after_rollover_and_late_receipt_conflict_leave_no_partial_effects() {
     let f = fixture(10_000).await;
     let mut session = transaction(&f).await;
-    let plan = f.prepared(&session);
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
     let mutation = update(&plan);
-    let receipt = persist(&f.store, &mut session, plan, mutation)
-        .await
-        .unwrap();
-    session.abort_transaction().await.unwrap();
+    let receipt = persist(&f.store, &mut scope, plan, mutation).await.unwrap();
+    scope.release().abort_transaction().await.unwrap();
     unchanged(&f).await;
     assert_eq!(
         collection(&f.store, PUBLICATIONS)
@@ -136,12 +133,11 @@ async fn writer_abort_after_rollover_and_late_receipt_conflict_leave_no_partial_
         .await
         .unwrap();
     let mut session = transaction(&f).await;
-    let plan = f.prepared(&session);
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
     let mutation = update(&plan);
-    assert!(persist(&f.store, &mut session, plan, mutation)
-        .await
-        .is_err());
-    let _ = session.abort_transaction().await;
+    assert!(persist(&f.store, &mut scope, plan, mutation).await.is_err());
+    let _ = scope.release().abort_transaction().await;
     unchanged(&f).await;
     f.destroy().await;
 }
@@ -151,30 +147,58 @@ async fn writer_abort_after_rollover_and_late_receipt_conflict_leave_no_partial_
 async fn writer_rejects_stale_domain_fence_mismatched_result_and_different_session() {
     let f = fixture(2).await;
     let mut session = transaction(&f).await;
-    let plan = f.prepared(&session);
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
     let mut mutation = update(&plan);
     mutation.filter.insert("work_lease_fence", 999_i64);
-    assert!(persist(&f.store, &mut session, plan, mutation)
-        .await
-        .is_err());
-    session.abort_transaction().await.unwrap();
+    assert!(persist(&f.store, &mut scope, plan, mutation).await.is_err());
+    scope.release().abort_transaction().await.unwrap();
     let mut session = transaction(&f).await;
-    let plan = f.prepared(&session);
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
     let mut mutation = update(&plan);
     mutation.fields.insert("last_seq", 999_i64);
-    assert!(persist(&f.store, &mut session, plan, mutation)
-        .await
-        .is_err());
-    session.abort_transaction().await.unwrap();
+    assert!(persist(&f.store, &mut scope, plan, mutation).await.is_err());
+    scope.release().abort_transaction().await.unwrap();
     let mut original = transaction(&f).await;
-    let plan = f.prepared(&original);
+    let original_scope = TransactionScope::start(&mut original).await.unwrap();
+    let plan = f.prepared(&original_scope);
     let mutation = update(&plan);
     let mut another = transaction(&f).await;
-    assert!(persist(&f.store, &mut another, plan, mutation)
+    let mut another_scope = TransactionScope::start(&mut another).await.unwrap();
+    assert!(persist(&f.store, &mut another_scope, plan, mutation)
         .await
         .is_err());
-    original.abort_transaction().await.unwrap();
-    another.abort_transaction().await.unwrap();
+    original_scope.release().abort_transaction().await.unwrap();
+    another_scope.release().abort_transaction().await.unwrap();
     unchanged(&f).await;
+    f.destroy().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn writer_rejects_previous_transaction_plan_on_same_session_and_other_database() {
+    let f = fixture(2).await;
+    let mut session = transaction(&f).await;
+    let scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
+    let mutation = update(&plan);
+    scope.release().abort_transaction().await.unwrap();
+    let mut later = TransactionScope::start(&mut session).await.unwrap();
+    assert!(persist(&f.store, &mut later, plan, mutation).await.is_err());
+    later.release().abort_transaction().await.unwrap();
+    unchanged(&f).await;
+
+    let other = fixture(2).await;
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
+    let plan = f.prepared(&scope);
+    let mutation = update(&plan);
+    assert!(persist(&other.store, &mut scope, plan, mutation)
+        .await
+        .is_err());
+    scope.release().abort_transaction().await.unwrap();
+    unchanged(&f).await;
+    unchanged(&other).await;
+    other.destroy().await;
     f.destroy().await;
 }
