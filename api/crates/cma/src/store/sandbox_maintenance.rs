@@ -12,11 +12,11 @@ use layer2_core::sandbox::{Sandbox, SandboxStatus};
 use mongodb::bson::doc;
 
 use super::sandbox_mongo::{
-    commit_transaction, is_transient, start_transaction, wait_for_reconciliation, CommitOutcome,
-    MongoSandboxStore, TRANSACTION_ATTEMPTS,
+    commit_transaction, is_transient, wait_for_reconciliation, CommitOutcome, MongoSandboxStore,
+    TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::read_sandbox;
-use transaction::{apply, reconcile, ApplyError, MaintenanceRequest};
+use transaction::{attempt as apply_attempt, reconcile, ApplyError, MaintenanceRequest};
 
 mod consented;
 mod evidence;
@@ -138,14 +138,7 @@ async fn schedule(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
-                last_transient = Some(error.to_string());
-                continue;
-            }
-            return Err(SandboxStoreError::Unavailable(error.to_string()));
-        }
-        let receipt = match apply(store, &request, &mut session).await {
+        let receipt = match apply_attempt(store, &request, &mut session).await {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
@@ -213,13 +206,10 @@ async fn preview(
         .start_session()
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    start_transaction(&mut session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let result = apply(store, &request, &mut session).await;
+    let result = apply_attempt(store, &request, &mut session).await;
     let abort = session.abort_transaction().await;
-    if let Err(error) = abort {
-        return Err(SandboxStoreError::Unavailable(error.to_string()));
+    if result.is_ok() {
+        abort.map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
     }
     match result {
         Ok(receipt) => Ok(receipt.outcome),

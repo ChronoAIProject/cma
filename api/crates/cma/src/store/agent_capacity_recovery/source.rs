@@ -114,7 +114,7 @@ pub(in crate::store) async fn fence_filter(
     session: &mut ClientSession,
 ) -> Result<Document, TransactionLogError> {
     let row = current_row(store, agent, session).await?;
-    envelope_filter(agent, &row)
+    Ok(envelope_filter(agent, &row)?)
 }
 
 pub(in crate::store) async fn fence_filter_scoped(
@@ -123,10 +123,16 @@ pub(in crate::store) async fn fence_filter_scoped(
     scope: &mut TransactionScope<'_>,
 ) -> Result<Document, TransactionLogError> {
     let row = current_row_scoped(store, agent, scope).await?;
-    envelope_filter(agent, &row)
+    Ok(envelope_filter(agent, &row)?)
 }
 
-fn envelope_filter(agent: &Agent, row: &Document) -> Result<Document, TransactionLogError> {
+pub(in crate::store) fn envelope_filter(
+    agent: &Agent,
+    row: &Document,
+) -> Result<Document, SandboxStoreError> {
+    if read_agent(row)? != *agent {
+        return Err(SandboxStoreError::Conflict);
+    }
     let number = |value, name| signed(value, name).map_err(SandboxStoreError::Corrupt);
     let mut filter = doc! {
         "_id": agent.id.as_str(), "owner": agent.owner.as_str(),
