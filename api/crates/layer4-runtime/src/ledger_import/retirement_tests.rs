@@ -5,7 +5,7 @@ use layer3_adapter::runtime_ledger_retirement::{
 };
 use sha2::{Digest, Sha256};
 
-fn snapshot(fixture: &Fixture) -> RuntimeLedgerRetirementSnapshot {
+pub(super) fn snapshot(fixture: &Fixture) -> RuntimeLedgerRetirementSnapshot {
     RuntimeLedgerRetirementSnapshot {
         format: LEDGER_RETIREMENT_SNAPSHOT_FORMAT.into(),
         sandbox_id: fixture.config.sandbox_id.clone(),
@@ -21,7 +21,7 @@ fn snapshot(fixture: &Fixture) -> RuntimeLedgerRetirementSnapshot {
     }
 }
 
-fn write_snapshot(
+pub(super) fn write_snapshot(
     fixture: &Fixture,
     snapshot: &RuntimeLedgerRetirementSnapshot,
 ) -> (PathBuf, String) {
@@ -31,7 +31,7 @@ fn write_snapshot(
     (path, format!("{:x}", Sha256::digest(bytes)))
 }
 
-fn completed_removal(fixture: &Fixture) -> Record {
+pub(super) fn completed_removal(fixture: &Fixture) -> Record {
     let operation = semantic::remove();
     Record::started(&fixture.config, &operation)
         .unwrap()
