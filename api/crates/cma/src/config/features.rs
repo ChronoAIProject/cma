@@ -1,6 +1,7 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub bounded_live_fragments: bool,
     pub retain_read_frames: bool,
     pub bounded_permission_state: bool,
     pub retained_reopen_enabled: bool,
@@ -34,6 +35,7 @@ impl FeatureFlags {
             }
         }
         Ok(Self {
+            bounded_live_fragments: flag(lookup, "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED")?,
             retain_read_frames: flag(lookup, "CHRONO_READ_FRAME_BUDGET_ENABLED")?,
             bounded_permission_state: flag(lookup, "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED")?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
@@ -256,6 +258,30 @@ mod read_frame_tests {
             .unwrap();
             assert_eq!(flags.retain_read_frames, enabled);
             assert!(!flags.bounded_response_reads && !flags.bounded_title_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.to_owned()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod live_buffer_tests {
+    use super::*;
+
+    #[test]
+    fn live_buffer_budget_requires_its_own_strict_boolean() {
+        const KEY: &str = "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED";
+        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.bounded_live_fragments, enabled);
+            assert!(!flags.bounded_close_retries);
         }
         for value in ["", "1", "TRUE", " true "] {
             assert!(FeatureFlags::from_lookup(&mut |key| {
