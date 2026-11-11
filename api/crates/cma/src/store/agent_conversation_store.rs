@@ -15,6 +15,7 @@ use super::agent_log_integrity::{
     ensure_append_batch_size, prepare_append, trusted_summary, AppendCapacity, TransactionLogError,
 };
 use super::agents::{agent_replacement_fields, read_agent};
+use super::contention;
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
     wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
@@ -28,7 +29,6 @@ mod checkpoint;
 #[cfg(test)]
 mod checkpoint_tests;
 mod cleanup_admission;
-mod contention;
 mod implementation;
 mod reopen;
 #[cfg(test)]
