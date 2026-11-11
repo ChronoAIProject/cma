@@ -5,9 +5,21 @@ This records actual local execution, not a review-ready or integration pass.
 
 ## Environment and lock
 
-All Cargo builds/checks/tests used `/usr/bin/lockf` on the assigned
-`/Users/chronoai/code/work/.tl-worktrees/.heavy-0.lock`, never an unlocked
-parallel build. Environment:
+All Cargo builds/checks/tests were launched through `/usr/bin/lockf` on the
+assigned `/Users/chronoai/code/work/.tl-worktrees/.heavy-0.lock`. The commands
+incorrectly omitted `-k`: on macOS the utility removes the lock path on exit.
+This could contribute to the shared lock removal reported by the lead and does
+not establish continuous shared serialization across the team's recreated paths.
+The test results below are actual results; lock-file lifecycle compliance was
+not met. No S4 build or lock waiter remains.
+
+Correction for every future gate: `/usr/bin/lockf -k -n ...`. `-k` preserves the
+existing file, and `-n` refuses to create a missing one. Never delete, recreate,
+truncate or replace either shared heavy lock, including during cleanup. If a
+lock is missing, report it to the lead. This correction was relayed immediately
+when the platform behavior was confirmed with the system manual.
+
+Build environment:
 
 ```text
 CARGO_BUILD_JOBS=2
