@@ -72,6 +72,30 @@ const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 #[tokio::main]
 async fn main() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments.len() == 3 && arguments[0] == "--ledger-collection-observation" {
+        if let Err(error) = store::ledger_collection::command(
+            std::path::Path::new(&arguments[1]),
+            std::path::Path::new(&arguments[2]),
+        )
+        .await
+        {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if arguments.len() == 3 && arguments[0] == "--ledger-census" {
+        if let Err(error) = store::ledger_census::command(
+            std::path::Path::new(&arguments[1]),
+            std::path::Path::new(&arguments[2]),
+        )
+        .await
+        {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
     if arguments.len() == 3 && arguments[0] == "--ledger-retirement-snapshot" {
         if let Err(error) =
             store::ledger_retirement::command(&arguments[1], std::path::Path::new(&arguments[2]))
@@ -123,7 +147,7 @@ async fn main() {
         return;
     }
     if !arguments.is_empty() {
-        eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE]");
+        eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {
