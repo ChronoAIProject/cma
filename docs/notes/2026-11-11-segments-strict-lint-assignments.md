@@ -1,7 +1,7 @@
 # Segmentation integration and PR plan
 
-Current source: `e47527cbf` after normal slice merges, last pushed `e7e4cdda0`, branch
-`tl/cma-log-segments/integration-20261111`; develop `42fbf75de` is included.
+Current source: `63fea5a86` after normal slice/develop merges, branch
+`tl/cma-log-segments/integration-20261111`; develop `1d425cffc` is included.
 No integration PR is ready. All four pre-review P1s remain activation blockers.
 The source remains default-off. Production was not touched.
 
@@ -20,7 +20,7 @@ closing an issue whose production acceptance is still missing.
 | S3 transcript consumers | `e300190a6` (`bc08dc4a0` fixes) | Fixture sequence corrected; title/usage facts use projections. Transcript still traverses lifetime data; golden parity, pagination and scale evidence remain open. |
 | S4 publication | `6b665b1a4` | Remaining command/discovery/claim roots; response-interval metadata; segmented capacity successor; combined root qualification. |
 | S5 capacity recovery | `4d7f6d680` | Strict BSON shape, discovery batch, completed restart/loss routing and enum boxing integrated; actual restart/authority tests and native producer qualification still pending. |
-| Develop | `42fbf75de` | Normally included; later develop merges require affected checks at the resulting candidate. |
+| Develop | `1d425cffc` | Normally included; later develop merges require affected checks at the resulting candidate. |
 
 S2's new scheduler retains at most 32 candidates, executes at most two original
 accepted operations per sweep, alternates due/expired streams and reuses S5's
@@ -345,3 +345,11 @@ Incremental folding removes the separate selected-log vector, but it does not
 bound lifetime query work or provide a caller continuation. S3 must qualify a
 requested page independently of unrelated lifetime history. This is why the
 new checkpoint does not change the Thursday wave-1 NO-GO.
+
+
+Latest develop sync is `63fea5a86`, incorporating `1d425cffc` normally. Conflicts
+retained both parent pacing and live-fragment budgets, every independent rollout
+flag and both configuration test modules. No develop merge or production mutation
+was performed. The target-source guard removed 1.7 GiB of this worktree's stale
+workspace artifacts before rebuilding the archive; external caches and active
+source exports remain for their continuing gates. Only one Cargo target is used.
