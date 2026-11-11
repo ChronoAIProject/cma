@@ -16,7 +16,11 @@ mod bots;
 pub use bot_setups::bot_setup_router;
 pub use bots::bot_router;
 mod agent_access_requests;
+mod agent_capacity_recovery;
 pub use agent_access_requests::agent_access_requests_router;
+pub use agent_capacity_recovery::{
+    agent_capacity_recovery_commands_router, agent_capacity_recovery_router,
+};
 #[cfg(test)]
 mod agent_access_requests_tests;
 mod agent_artifacts;
