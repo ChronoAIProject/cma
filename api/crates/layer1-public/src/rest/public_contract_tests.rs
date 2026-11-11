@@ -45,6 +45,7 @@ mod queued_cancellation_cases;
 mod queued_input_cases;
 mod replay;
 mod response_control_cases;
+mod response_headers;
 mod responses_v2_cases;
 mod retained_clients;
 mod runtime_update_cases;
@@ -124,6 +125,8 @@ pub(super) struct RequestFixture {
 #[serde(deny_unknown_fields)]
 pub(super) struct ResponseFixture {
     pub status: u16,
+    #[serde(default, rename = "setCookies", skip_serializing_if = "Vec::is_empty")]
+    pub set_cookies: Vec<String>,
     pub headers: BTreeMap<String, String>,
     pub body: Value,
     #[serde(rename = "bodyKind")]
