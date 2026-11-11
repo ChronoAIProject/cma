@@ -1,4 +1,6 @@
 use super::*;
+#[path = "indexed_tests.rs"]
+mod indexed_tests;
 #[path = "transfer_tests.rs"]
 mod transfer_tests;
 use crate::mutation_authority::Record as Authority;
