@@ -118,6 +118,8 @@ async fn open_with_permission_policy(enabled: bool) {
             fenced,
             None,
             HostedAgentOpenSettings {
+                shared_runtime_output: false,
+                output_json_budget: false,
                 bounded_permission_state: !enabled,
                 already_initialized_error: None,
                 open_completion: None,

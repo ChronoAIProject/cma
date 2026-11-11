@@ -19,12 +19,17 @@ struct Ready {
 pub(super) fn validate_ready(
     message: Message,
     expected_agent: &str,
+    json_budget: bool,
 ) -> crate::Result<Option<uuid::Uuid>> {
     let Message::Text(text) = message else {
         return Err(AdapterError::Rejected(
             "runtime sent a non-text Ready declaration".into(),
         ));
     };
+    if json_budget {
+        super::super::output_json_budget::validate(text.as_bytes())
+            .map_err(|error| error.adapter_error())?;
+    }
     let ready: Ready = serde_json::from_str(&text)
         .map_err(|_| AdapterError::Rejected("runtime Ready declaration is malformed".into()))?;
     if ready.t != "ready"
@@ -37,8 +42,14 @@ pub(super) fn validate_ready(
             "runtime Ready declaration does not match the requested agent".into(),
         ));
     }
-    ready
+    let output = ready
         .output_acknowledgement
         .map(|capability| capability.validate())
-        .transpose()
+        .transpose()?;
+    if json_budget && output.is_none() {
+        return Err(AdapterError::Rejected(
+            "bounded output JSON requires retained runtime output".into(),
+        ));
+    }
+    Ok(output)
 }
