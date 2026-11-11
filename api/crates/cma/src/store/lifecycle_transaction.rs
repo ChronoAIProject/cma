@@ -15,15 +15,15 @@ use mongodb::options::ReadConcern;
 
 use super::agent_log::{read_entry, scan_complete_log_with_session};
 use super::agent_log_integrity::{prepare_append, AppendCapacity, TransactionLogError};
+use super::agent_log_segments::transaction_scope::TransactionScope;
 use super::agents::{agent_replacement_fields, read_agent};
-use super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
+use super::lifecycle_execution::LifecycleLoadError;
 use super::sandbox_events::{
     append_in_transaction, reconcile_event_with_snapshot_session, TransactionEventError,
 };
 use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
-    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
-    TRANSACTION_ATTEMPTS,
+    commit_transaction, is_duplicate_key, is_transient, signed, wait_for_reconciliation,
+    CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 
@@ -86,14 +86,15 @@ pub(super) async fn commit_lifecycle(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
+        let scope = match TransactionScope::start(&mut session).await {
+            Ok(scope) => scope,
+            Err(error) if is_transient(&error) => {
                 last_transient = Some(error.to_string());
                 continue;
             }
-            return Err(SandboxStoreError::Unavailable(error.to_string()));
-        }
-        let applied = apply_lifecycle(store, &mutation, &mut session).await;
+            Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
+        };
+        let applied = apply_lifecycle(store, &mutation, scope).await;
         let receipt = match applied {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
@@ -158,18 +159,47 @@ pub(super) async fn commit_lifecycle(
 async fn apply_lifecycle(
     store: &MongoSandboxStore,
     mutation: &SandboxLifecycleMutation,
-    session: &mut mongodb::ClientSession,
+    mut scope: TransactionScope<'_>,
 ) -> Result<LifecycleReceipt, ApplyError> {
-    let current = load_sandbox(store, &mutation.guard.sandbox_id, session).await?;
-    let agents = load_sandbox_agents(store, &current.id, session).await?;
-    super::checkpoint_capture::validate_and_fence_begin(
-        store,
-        &current,
-        &mutation.sandbox,
-        &agents,
-        session,
-    )
-    .await?;
+    let current = load_sandbox(store, &mutation.guard.sandbox_id, &mut scope).await?;
+    let agents =
+        super::agent_capacity_recovery::lineage::agents(store, &current.id, &mut scope).await?;
+    let segmented = scope
+        .find_one(
+            &store.agents,
+            doc! {
+                "sandbox_id": current.id.as_str(),
+                "$or": [{"document_schema_version": {"$ne": DOCUMENT_SCHEMA_VERSION}},
+                    {"agent_log_format": {"$exists": true}}],
+            },
+        )
+        .await
+        .map_err(ApplyError::Driver)?
+        .is_some();
+    if segmented {
+        super::checkpoint_capture::validate_and_fence_begin_scoped(
+            store,
+            &current,
+            &mutation.sandbox,
+            &agents,
+            &mut scope,
+        )
+        .await?;
+    }
+    // Checkpoint proofs remain inside the exclusive scope. The completed
+    // checkpoint fence and all later domain writes still share this transaction;
+    // any later validation/write error is aborted by the root above.
+    let session = scope.release();
+    if !segmented {
+        super::checkpoint_capture::validate_and_fence_begin(
+            store,
+            &current,
+            &mutation.sandbox,
+            &agents,
+            session,
+        )
+        .await?;
+    }
     let by_id = agents
         .iter()
         .map(|agent| (agent.id.clone(), agent))
@@ -296,12 +326,10 @@ async fn apply_lifecycle(
 async fn load_sandbox(
     store: &MongoSandboxStore,
     id: &layer2_core::SandboxId,
-    session: &mut mongodb::ClientSession,
+    scope: &mut TransactionScope<'_>,
 ) -> Result<Sandbox, ApplyError> {
-    store
-        .sandboxes
-        .find_one(doc! { "_id": id.as_str() })
-        .session(session)
+    scope
+        .find_one(&store.sandboxes, doc! { "_id": id.as_str() })
         .await
         .map_err(ApplyError::Driver)?
         .as_ref()
