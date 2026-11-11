@@ -17,6 +17,34 @@ fn fixtures() -> Value {
     .unwrap()
 }
 
+#[test]
+fn verified_sender_policy_stays_opaque_and_activity_refusal_is_additive() {
+    for enabled in [true, false] {
+        let mut profile = fixtures()["EventWorkerProfile"][0].clone();
+        profile["environment"] = json!({"verified_sender_context":enabled});
+        let decoded: EventWorkerProfile = serde_json::from_value(profile.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), profile);
+    }
+    let mut page = fixtures()["ActivityPage"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|page| {
+            page["items"].as_array().is_some_and(|rows| {
+                rows.first().is_some_and(|row| {
+                    row["consumers"]
+                        .as_array()
+                        .is_some_and(|consumers| !consumers.is_empty())
+                })
+            })
+        })
+        .unwrap()
+        .clone();
+    page["items"][0]["consumers"][0]["refusal_code"] = "verified_sender_context_invalid".into();
+    let decoded: ActivityPage = serde_json::from_value(page.clone()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), page);
+}
+
 fn roundtrip<T: DeserializeOwned + Serialize>(name: &str, examples: &Value) {
     for example in examples[name].as_array().unwrap() {
         let decoded: T = serde_json::from_value(example.clone())

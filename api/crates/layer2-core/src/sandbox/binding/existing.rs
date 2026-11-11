@@ -23,8 +23,10 @@ impl BindingService {
                 "invalid binding or agent identifier".into(),
             ));
         }
+        let sender_context = super::profile::sender_context_request(&profile)
+            .map_err(|error| BindingError::InvalidRequest(error.to_string()))?;
         let mut plan = map_profile(
-            profile,
+            profile.clone(),
             digest,
             self.policy.provider,
             &self.policy.supported_model_api,
@@ -84,6 +86,10 @@ impl BindingService {
         if plan.queue_lifetime_seconds.is_some() {
             plan.honoured.push("queue_lifetime_seconds".into());
         }
+        if sender_context == Some(true) {
+            plan.honoured
+                .push(super::profile::VERIFIED_SENDER_CONTEXT.into());
+        }
         plan.refused = vec![
             BindingFieldRefusal { field: "profile".into(), reason: "existing Agent configuration is retained".into() },
             BindingFieldRefusal { field: "tools.native_mcp_url".into(), reason: "existing Agent credentials are retained; this channel supports automatic final replies".into() },
@@ -108,15 +114,16 @@ impl BindingService {
                     return Err(BindingError::Conflict);
                 }
                 if value.profile_digest != digest {
-                    if value.profile.configuration_digest() != plan.configuration_digest()
+                    if !super::profile::same_configuration(&value.profile, &profile)
                         || value.key_sha256 != credential.sha256()
                     {
                         return Err(BindingError::Conflict);
                     }
-                    // A queue-policy update never refreshes or applies Agent settings.
+                    // Independent input policies never refresh or apply Agent settings.
                     let mut updated = value.profile.clone();
                     updated.queue_lifetime_seconds = plan.queue_lifetime_seconds;
-                    updated.configuration_digest = plan.configuration_digest.clone();
+                    updated.configuration_digest =
+                        Some(value.profile.configuration_digest().into());
                     updated.profile_digest = plan.profile_digest.clone();
                     updated.honoured = plan.honoured.clone();
                     let next = value
