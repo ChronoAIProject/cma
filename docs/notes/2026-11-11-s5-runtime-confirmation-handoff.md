@@ -50,3 +50,41 @@ Requested allocation: let S5 implement the minimal adapter/provider handshake th
 Required producer behavior: fence the old writer; require the exact original open receipt and retained conversation/runtime/home; attach only the existing native conversation; return confirmed current state and active prompt identity; expose no Message, Steer, settings/context replay, first-message dispatch, new conversation, replacement or implicit launch fallback. Unsupported proof must refuse. The caller must preserve durable output before acknowledgement and retry the same retained target after uncertainty or crash.
 
 S5 can continue storage-side work while this ownership is resolved. The new source checkpoint has scoped accepted-work claim/retry/completion helpers and exact work-carrier CAS tests. It still needs root transaction/outcome reconciliation, runtime assembly and real-Mongo qualification. Existing unit tests prove receipt idempotence after live completion; they do not prove post-crash production registry activation.
+
+## Allocated contract checkpoint
+
+The integration owner has allocated the focused Layer 3 implementation/test
+children to S5 and shared trait/export/dispatch wiring to S2. The neutral contract
+is now in `layer3-adapter/src/agent_capacity_recovery.rs`, with the restricted
+hosted path in `hosted/capacity_recovery.rs`. Seven authored contract/transport
+tests cover identity/fence/challenge changes, exact prompt state, output gaps,
+invalid or absent authority, typed unavailable/unsupported results and zero input
+sends. They await shared module registration before execution.
+
+The request carries no input or settings. It pins original open receipt digest,
+home, provider generation/boot, independent conversation generation, original
+active turn and writer fence, plus a fresh attachment challenge. Confirmation
+must bind that exact request and independently produced native state to a retained
+output interval with no acknowledgement gap. A native terminal result for a still
+admitted active turn is refused for separate durable output reconciliation.
+
+The concrete minimal shared-file patch is
+`docs/notes/2026-11-11-s5-adapter-shared.patch`, mirrored at the lead's absolute
+notes path `2026-11-11-1351-adapter-shared.patch`. `git apply --check` passes against
+this source. It is supplied for S2 integration and has not been applied to shared
+files here. It additionally identifies `hosted/backend.rs::HostedBackend`'s optional
+native-transport hook and `codex/adapter.rs`'s forwarding method; S2 must route
+those shared-file edits to their owner. Current shared roots are already 495,
+500 and 499 lines, so their owner must keep the final implementation below the
+500-line limit when integrating the patch.
+
+This checkpoint validates a producer result; it does not invent the producer.
+The backend hook defaults absent and the restricted call returns typed Unsupported
+without ordinary reconnect. `layer4-runtime/src/supervisor.rs::AgentProcess` holds
+its original launch and bridge, while `bridge.rs::Bridge` retains output but does
+not expose independently tracked prompt/approval state. `RuntimeStatus` reports
+process counts and readiness, not that native state. A native producer therefore
+needs the runtime owner's retained-process inspection/attachment path, including
+existing-process-only fencing and atomic state/output observation. S2 must route
+that exact Layer 4 protocol/dispatcher work; no Layer 4 file has been edited here.
+No successful production native handshake or activation is claimed.
