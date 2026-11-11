@@ -7,6 +7,7 @@ use mongodb::options::ReadConcern;
 
 use super::agent_log::read_entry;
 use super::agent_log_integrity::read::read_proven_agent;
+use super::agent_log_segment_reads;
 use super::sandbox_mongo::{signed, MongoSandboxStore};
 
 impl MongoSandboxStore {
@@ -28,6 +29,23 @@ impl MongoSandboxStore {
             .snapshot(true)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+
+        // Segment proofs make the selected-row fold safe for histories beyond
+        // the legacy physical scan budget. Keep creation and conversation
+        // boundaries because UsageFold uses them to validate generations.
+        if let Some(entries) =
+            agent_log_segment_reads::selected(self, expected, &mut session, is_usage_entry).await?
+        {
+            if entries.first().is_none_or(|entry| entry.seq != 1)
+                || entries
+                    .first()
+                    .is_none_or(|entry| !matches!(entry.kind, AgentLogKind::Created { .. }))
+            {
+                return Ok(None);
+            }
+            return Ok(Some(entries));
+        }
+
         let Some((agent, trusted)) = read_proven_agent(self, &expected.id, &mut session).await?
         else {
             return Err(SandboxStoreError::NotFound);

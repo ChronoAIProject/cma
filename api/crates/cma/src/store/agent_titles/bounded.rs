@@ -2,11 +2,52 @@
 use super::*;
 use crate::store::agent_log::read_entry;
 use crate::store::agent_log_integrity::read::read_proven_agent;
+use crate::store::agent_log_segment_reads;
 use layer2_core::sandbox::AgentLogKind;
 use mongodb::ClientSession;
 
 const PREFIX_ENTRIES: u32 = 200;
 const PREFIX_BYTES: usize = 4 * 1024 * 1024;
+
+/// Format-2 titles consume the same certified transcript rows as the public
+/// transcript reader. The exact title fold stops at the first completed turn;
+/// no legacy physical-prefix limit is applied to a segmented source.
+pub(super) async fn segmented_read(
+    store: &MongoSandboxStore,
+    expected: &Agent,
+    session: &mut ClientSession,
+) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
+    let entries = agent_log_segment_reads::selected_until(
+        store,
+        expected,
+        session,
+        |kind| {
+            matches!(
+                kind,
+                AgentLogKind::Created { .. }
+                    | AgentLogKind::ConversationOpened { .. }
+                    | AgentLogKind::RuntimeGenerationRetired { .. }
+                    | AgentLogKind::TurnStarted { .. }
+                    | AgentLogKind::TurnMetadataSet { .. }
+                    | AgentLogKind::OwnerMessage { .. }
+                    | AgentLogKind::AgentMessage { .. }
+                    | AgentLogKind::TurnCompleted { .. }
+                    | AgentLogKind::TurnFailed { .. }
+                    | AgentLogKind::TurnInterrupted { .. }
+                    | AgentLogKind::ConversationGap { .. }
+                    | AgentLogKind::OperationDeliveryChanged {
+                        operation: layer2_core::sandbox::AgentOperationKind::Steer,
+                        state: layer2_core::sandbox::AgentOperationDelivery::DispatchFenced,
+                        ..
+                    }
+            )
+        },
+        |entries| AgentTitleTranscript::from_agent_log(expected, entries).is_some(),
+    )
+    .await
+    .map_err(map_store_error)?;
+    Ok(entries.and_then(|entries| AgentTitleTranscript::from_agent_log(expected, &entries)))
+}
 
 /// None requests the existing complete fold; it never means that no title is
 /// eligible. In particular, setup and long first turns cannot be truncated or
