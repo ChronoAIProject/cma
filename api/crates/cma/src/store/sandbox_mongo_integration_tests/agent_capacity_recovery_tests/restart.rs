@@ -1,12 +1,9 @@
 //! Durable Mongo completion/restart evidence; the native port is a counted stub.
 //! Production native proof remains Unsupported and requires separate qualification.
 use super::*;
-use crate::sandbox::{
-    agent_worker::{CapacityRecoveryReconnect, ReconnectAction, RecoveryReconnect},
-    live_agents::{
-        DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
-        LiveAgentConnectionLossHandler,
-    },
+use crate::sandbox::binding_lifecycle_test_support::{
+    CapacityRecoveryReconnect, DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
+    LiveAgentConnectionLossHandler, ReconnectAction, RecoveryReconnect,
 };
 use crate::store::agent_capacity_recovery::{records, RecoveryService, RestartDecision};
 use layer2_core::sandbox::agent_capacity_recovery::{
