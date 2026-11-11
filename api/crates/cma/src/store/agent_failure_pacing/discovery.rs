@@ -15,7 +15,7 @@ pub(in crate::store) fn pipeline(
         .unwrap_or_else(|| now.to_owned());
     let hint = format!("${FIELD}");
     let candidate = doc! {"$and": [
-        {"$eq": [format!("{hint}.class"), CLASS]},
+        {"$in": [format!("{hint}.class"), [CLASS, PARENT_CLASS]]},
         {"$eq": ["$record.work.step", "publish_connection"]},
         {"$eq": [format!("{hint}.ready_at"), "$record.work.ready_at"]},
         {"$eq": [format!("{hint}.attempts"), "$record.work.attempts"]},
