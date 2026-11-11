@@ -100,7 +100,7 @@ fn apply(
     result
 }
 
-fn opened() -> (Agent, AgentLogProjectionState) {
+pub(super) fn opened() -> (Agent, AgentLogProjectionState) {
     let mut agent = agent();
     let mut state = AgentLogProjectionState::default();
     let created = AgentLogKind::Created {
@@ -314,4 +314,60 @@ fn generation_maxima_certify_each_boundary_kind_after_later_native_changes() {
     state.max_opened_generation = original;
     state.max_retired_generation = original;
     assert!(state.validate_aggregate(&agent).is_err());
+}
+
+#[test]
+fn queued_turns_require_exact_unconsumed_source_and_complete_queue_coverage() {
+    let (mut agent, mut state) = opened();
+    let queued_turn = |seq, source| AgentLogEntry {
+        agent_id: agent.id.clone(),
+        seq,
+        appended_at: NOW.into(),
+        kind: AgentLogKind::TurnStarted {
+            turn_sequence: seq,
+            origin_key: Some(format!("queued-message:{source}")),
+            model: None,
+        },
+    };
+    let invented = queued_turn(3, 1);
+    assert!(state.clone().observe(&agent, &invented, Some(1)).is_err());
+    let queued =
+        crate::sandbox::QueuedAgentMessage::new(3, "original input".into(), NOW.into()).unwrap();
+    agent.conversation.queued_messages.push(queued.clone());
+    assert!(state.validate_aggregate(&agent).is_err());
+    apply(
+        &mut state,
+        &mut agent,
+        AgentLogKind::OwnerMessage {
+            content: queued.content.clone(),
+        },
+    );
+    state.validate_aggregate(&agent).unwrap();
+    let original = AgentLogEntry {
+        agent_id: agent.id.clone(),
+        seq: 3,
+        appended_at: NOW.into(),
+        kind: AgentLogKind::OwnerMessage {
+            content: queued.content.clone(),
+        },
+    };
+    state.validate_queued_source(&original).unwrap();
+    let mut changed = original.clone();
+    changed.kind = AgentLogKind::OwnerMessage {
+        content: "changed input".into(),
+    };
+    assert!(state.validate_queued_source(&changed).is_err());
+    let start = AgentLogEntry {
+        agent_id: agent.id.clone(),
+        seq: 4,
+        appended_at: NOW.into(),
+        kind: AgentLogKind::TurnStarted {
+            turn_sequence: 4,
+            origin_key: Some("queued-message:3".into()),
+            model: None,
+        },
+    };
+    state.observe(&agent, &start, Some(3)).unwrap();
+    assert!(state.unconsumed_queue.is_empty());
+    assert!(state.validate_queued_source(&original).is_err());
 }
