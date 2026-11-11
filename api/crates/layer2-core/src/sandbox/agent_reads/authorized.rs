@@ -39,6 +39,21 @@ impl AgentReadService {
         self.read_transcript(&lineage.agent).await
     }
 
+    /// Public usage read with the same trusted bounded adapter used by the
+    /// transcript path. Stores return `None` when the Agent is legacy,
+    /// untrusted, corrupt, or the rollout flag is closed; those cases use the
+    /// exact complete fold below.
+    pub async fn usage_bounded(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+    ) -> Result<AgentUsageReading, AgentReadError> {
+        require(caller)?;
+        let lineage = self.owned_lineage(caller, id).await?;
+        require_granted(&lineage.agent, crate::RuntimeCapability::Usage)?;
+        self.read_usage(&lineage.agent).await
+    }
+
     pub async fn detail_authorized(
         &self,
         context: &CallerContext,
@@ -119,6 +134,32 @@ impl AgentReadService {
             }
             Err(error) => Err(AgentReadError::Corrupt(error)),
         }
+    }
+
+    pub(super) async fn read_usage(
+        &self,
+        agent: &Agent,
+    ) -> Result<AgentUsageReading, AgentReadError> {
+        if let Some(entries) = self
+            .store
+            .agent_log_usage(agent)
+            .await
+            .map_err(super::store_error)?
+        {
+            match fold_agent_usage(agent, &entries) {
+                Ok(reading) => return Ok(reading),
+                Err(_) => {
+                    // A selected-row projection is an optimization boundary,
+                    // not a second semantic authority. If its proof or fold
+                    // disagrees with the exact history, retry the established
+                    // complete compatibility read.
+                }
+            }
+        }
+        let entries = self.complete_log(agent).await?;
+        fold_agent_log(agent, &entries)
+            .map(|projection| projection.usage)
+            .map_err(AgentReadError::Corrupt)
     }
 
     pub async fn log_authorized(
@@ -222,10 +263,7 @@ impl AgentReadService {
             .as_ref()
             .ok_or_else(|| corrupt("authorized Agent snapshot has no Agent"))?;
         require_granted(agent, crate::RuntimeCapability::Usage)?;
-        let entries = self.complete_log(agent).await?;
-        let usage = fold_agent_log(agent, &entries)
-            .map_err(AgentReadError::Corrupt)?
-            .usage;
+        let usage = self.read_usage(agent).await?;
         self.finish_read(&authorized, id, ResourceCapability::ViewDetails)
             .await?;
         Ok(usage)

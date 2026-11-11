@@ -229,8 +229,31 @@ pub trait AgentLogStore: Send + Sync {
     /// requested format, so callers must use the complete compatibility read.
     async fn agent_log_usage(
         &self,
-        _agent: &Agent,
+        agent: &Agent,
     ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+        #[cfg(test)]
+        {
+            let entries = self
+                .agent_log_prefix(&agent.id, agent.conversation.last_seq)
+                .await?;
+            return Ok(Some(
+                entries
+                    .into_iter()
+                    .filter(|entry| {
+                        matches!(
+                            entry.kind,
+                            AgentLogKind::Created { .. }
+                                | AgentLogKind::ConversationOpened { .. }
+                                | AgentLogKind::RuntimeGenerationRetired { .. }
+                                | AgentLogKind::Usage { .. }
+                                | AgentLogKind::UsageUpdated { .. }
+                        )
+                    })
+                    .collect(),
+            ));
+        }
+        #[cfg(not(test))]
+        let _ = agent;
         Ok(None)
     }
 }
