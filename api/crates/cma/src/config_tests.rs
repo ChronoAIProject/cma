@@ -391,6 +391,7 @@ fn interface_feature_flags_are_strict_independent_booleans() {
     let config = configured(&[]).expect("existing configuration starts");
     assert!(!config.features.model_budget_writes_enabled);
     assert!(!config.features.model_request_budget_writes_enabled);
+    assert!(!config.features.platform_spend_writes_enabled);
     assert!(!config.features.v2_ui_transport);
     assert!(!config.features.trigger_command_admission);
     assert!(!config.features.nyxid_resource_request);
@@ -398,6 +399,7 @@ fn interface_feature_flags_are_strict_independent_booleans() {
     for key in [
         "CHRONO_MODEL_BUDGET_WRITES_ENABLED",
         "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED",
+        "CHRONO_PLATFORM_SPEND_WRITES_ENABLED",
         "CHRONO_V2_UI_TRANSPORT_ENABLED",
         "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
         "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED",
@@ -412,6 +414,14 @@ fn interface_feature_flags_are_strict_independent_booleans() {
             config.features.model_request_budget_writes_enabled,
             key == "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED"
         );
+        assert_eq!(
+            config.features.platform_spend_writes_enabled,
+            key == "CHRONO_PLATFORM_SPEND_WRITES_ENABLED"
+        );
+        assert!(!configured(&[(key, "false")])
+            .unwrap()
+            .features
+            .platform_spend_writes_enabled);
         assert!(!configured(&[(key, "false")])
             .unwrap()
             .features
