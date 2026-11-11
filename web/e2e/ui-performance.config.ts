@@ -9,7 +9,7 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname))
 
 export default defineConfig({
   testDir: '.',
-  testMatch: ['ui-performance.check.ts', 'agent-polling.check.ts'],
+  testMatch: ['ui-performance.check.ts', 'agent-polling.check.ts', 'agent-requests.check.ts'],
   workers: 1,
   retries: 0,
   forbidOnly: true,
