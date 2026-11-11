@@ -94,7 +94,11 @@ does not imply that a hosted handoff is available.
 
 Browser return URLs preserve one `setup` query on `/bots/new` or one `tab` query
 on `/sandboxes/{id}`. Paths remain canonical and relative (256 bytes); complete
-targets are bounded to 25,064 UTF-8 bytes. Unknown/duplicate query keys and
-fragments are refused. The startup-gated `silent_sign_in` hint defaults to false;
-the SDK still projects `{ authenticated: false }`. Server logout sets a 30-day
-automatic-sign-in opt-out; explicit sign-in remains available.
+encoded absolute login URLs are bounded to 4,096 ASCII bytes, including origin and options. Unknown/duplicate query keys and
+fragments and raw non-ASCII bytes are refused. The startup-gated `silent_sign_in` hint defaults to false;
+the SDK still projects `{ authenticated: false }`. Same-origin server logout records an opt-out time; successful explicit sign-in
+records its attempt start separately and re-enables silent entry only when later.
+
+Explicit preference recovery is backed by durable custody, with a separate
+non-authenticating reference cookie. Same-origin logout revokes that proof;
+cross-site logout revokes the session without changing the preference.

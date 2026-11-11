@@ -252,13 +252,25 @@ The composed identity/discovery/static routes also include:
 | `GET /.well-known/agent-card.json` | Public provider card for binding Responses; A2A JSON-RPC remains unavailable |
 | `/api/v1/a2a` | Typed 501 `interface_not_available` |
 
-Browser identity/flow responses use `Cache-Control: no-store`; anonymous signup-options retains its public five-minute cache. Logout emits separate
-`Set-Cookie` headers for the session expiry and 30-day HttpOnly automatic-sign-in
-opt-out; clients and contract fixtures must preserve every header separately.
-Explicit sign-in works while the opt-out remains present. Session issuance is
-fenced by the durable pending-custody record, including consent escalation and
-callbacks processing on another replica. See [authentication and rollout](API_Overview.md#authentication-and-visitors)
-for the exact return-target query allowlist, startup flag, activation and rollback.
+Browser identity/flow responses use `Cache-Control: no-store`; anonymous signup
+options retain their public five-minute cache. Every `Set-Cookie` header must be
+preserved separately. Same-origin logout records its time; successful interactive
+sign-in records the attempt's start time and a non-authenticating binding reference
+in a separate cookie. The durable proof must still be active to re-enable silent
+entry; same-origin logout revokes it, so stale responses and replica clock skew
+cannot overrule callback fencing. Suppressed anonymous
+sessions advertise `silent_sign_in: false`. Cross-site logout still revokes its
+session but cannot establish this new opt-out.
+
+Callbacks mint fresh session tokens and atomically link them to pending binding
+custody; either cookie revokes the session. Predecessor attempts remain readable,
+and new fields are additive. Legacy callbacks first establish the extended cookie
+through a same-origin handoff. Consent renews only live pending custody. The complete
+encoded absolute login URL is limited to 4,096 ASCII bytes, measured after query
+encoding. Server and SDKs reject oversized or non-ASCII inputs; the web retains
+large drafts and uses path-only explicit sign-in instead of navigating to an
+oversized URL. See [authentication and rollout](API_Overview.md#authentication-and-visitors)
+for hop evidence, the shared boundary contract, and deployment/rollback order.
 
 `GET /auth/signup-options` appears in the checked inventory. Its four-field
 response is exactly `{ email_signup, social_providers, invite_code_required,
