@@ -244,7 +244,7 @@ async fn answer_websocket(
     request: &serde_json::Value,
     result: serde_json::Value,
 ) {
-    let mut frame = vec![super::super::acp::LANE_CONVERSATION];
+    let mut frame = vec![crate::hosted::acp::LANE_CONVERSATION];
     frame.extend(
         serde_json::to_vec(&serde_json::json!({
             "jsonrpc": "2.0",
