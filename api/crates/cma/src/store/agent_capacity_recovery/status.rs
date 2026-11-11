@@ -6,11 +6,13 @@ use layer2_core::sandbox::agent_capacity_recovery::{
 };
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::AgentId;
-use mongodb::ClientSession;
 use serde::Serialize;
 
 use super::{authority, records};
-use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::MongoSandboxStore};
+use crate::store::{
+    agent_log_integrity::TransactionLogError,
+    agent_log_segments::transaction_scope::TransactionScope, sandbox_mongo::MongoSandboxStore,
+};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct RecoveryStatus {
@@ -32,9 +34,9 @@ pub(in crate::store) async fn read(
     id: &AgentId,
     request: Option<&RecoveryRequest>,
     now: &str,
-    session: &mut ClientSession,
+    scope: &mut TransactionScope<'_>,
 ) -> Result<RecoveryStatus, TransactionLogError> {
-    let current = authority::capture(store, authorized, id, session).await?;
+    let current = authority::capture(store, authorized, id, scope).await?;
     let context = current.context()?;
     let mut status = RecoveryStatus {
         agent_id: id.clone(),
@@ -55,7 +57,7 @@ pub(in crate::store) async fn read(
             return Err(SandboxStoreError::Conflict.into());
         }
         let key = request.key().map_err(|_| SandboxStoreError::Conflict)?;
-        if let Some(work) = records::read(store, &key, session).await? {
+        if let Some(work) = records::read(store, &key, scope).await? {
             if work.request != *request {
                 return Err(SandboxStoreError::Conflict.into());
             }

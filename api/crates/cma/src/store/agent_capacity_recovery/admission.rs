@@ -6,17 +6,15 @@ use layer2_core::sandbox::{
     store::SandboxStoreError,
     Agent,
 };
-use mongodb::{
-    bson::{spec::BinarySubtype, Binary},
-    ClientSession,
-};
+use mongodb::bson::{spec::BinarySubtype, Binary};
 
 use super::{authority, records, source};
 use crate::store::{
     agent_log_integrity::{AppendCapacity, TransactionLogError},
     agent_log_segments::{
-        capture::{self, CaptureMode, CapturedFormat},
+        capture::{self, CapturedFormat},
         publication::{self, Publication, PublicationIdentity},
+        transaction_scope::TransactionScope,
         writer_admission::{Admission, AdmissionKind},
         writer_bootstrap::BootstrapPlan,
         writer_commit::{self, AggregateUpdate, PublicationInput},
@@ -45,27 +43,20 @@ pub(in crate::store) struct AdmittedRecovery {
 pub(in crate::store) async fn persist_admission(
     store: &MongoSandboxStore,
     input: AdmissionRequest<'_>,
-    session: &mut ClientSession,
+    scope: &mut TransactionScope<'_>,
 ) -> Result<AdmittedRecovery, TransactionLogError> {
     let current =
-        authority::capture(store, input.authorized, &input.request.agent_id, session).await?;
+        authority::capture(store, input.authorized, &input.request.agent_id, scope).await?;
     let context = current.context()?;
-    let captured =
-        capture::capture(store, context.agent, session, CaptureMode::Transaction).await?;
+    let captured = capture::capture_transaction(store, context.agent, scope).await?;
     if captured.format() == CapturedFormat::Legacy && input.bootstrap.is_none() {
         return Err(SandboxStoreError::Unavailable(
             "capacity recovery requires a certified staged legacy generation".into(),
         )
         .into());
     }
-    let failures = capture::points(
-        store,
-        &captured,
-        &[input.request.failure_seq],
-        session,
-        CaptureMode::Transaction,
-    )
-    .await?;
+    let failures =
+        capture::points_transaction(store, &captured, &[input.request.failure_seq], scope).await?;
     let [failure] = failures.as_slice() else {
         return Err(SandboxStoreError::Conflict.into());
     };
@@ -93,7 +84,7 @@ pub(in crate::store) async fn persist_admission(
         .permits(context.agent, &operation, AdmissionKind::CapacityRecovery)?;
     let prepared = writer_commit::prepare(
         store,
-        session,
+        scope,
         &captured,
         PublicationInput {
             operation: &operation,
@@ -107,15 +98,15 @@ pub(in crate::store) async fn persist_admission(
         Some(input.admission),
     )
     .await?;
-    let filter = source::fence_filter(store, context.agent, session).await?;
+    let filter = source::fence_filter_scoped(store, context.agent, scope).await?;
     // No user input or synthetic event is materialized. A carrier/parent/CAS
     // failure aborts the same transaction as the seal, successor and Publication.
-    records::insert(store, &work, session).await?;
-    authority::fence_parents(store, &current, session).await?;
+    records::insert(store, &work, scope).await?;
+    authority::fence_parents(store, &current, scope).await?;
     authority::require(input.authorized)?;
     let publication = writer_commit::persist(
         store,
-        session,
+        scope,
         prepared,
         AggregateUpdate {
             filter,
