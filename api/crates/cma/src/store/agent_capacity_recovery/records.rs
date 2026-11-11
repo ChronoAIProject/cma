@@ -26,7 +26,7 @@ struct Row {
     work: RecoveryWork,
 }
 
-pub(super) async fn read(
+pub(in crate::store) async fn read(
     store: &MongoSandboxStore,
     key: &str,
     scope: &mut TransactionScope<'_>,
@@ -57,28 +57,19 @@ fn decode(document: Document) -> Result<RecoveryWork, SandboxStoreError> {
     Ok(row.work)
 }
 
-pub(super) fn collection(store: &MongoSandboxStore) -> Collection<Document> {
+pub(in crate::store) fn collection(store: &MongoSandboxStore) -> Collection<Document> {
     majority_collection(
         &store.client.database(&store.agents.namespace().db),
         COLLECTION,
     )
 }
 
-pub(super) async fn insert(
+pub(in crate::store) async fn insert(
     store: &MongoSandboxStore,
     work: &RecoveryWork,
     scope: &mut TransactionScope<'_>,
 ) -> Result<(), TransactionLogError> {
-    work.validate().map_err(|_| invalid())?;
-    let key = work.request.key().map_err(|_| invalid())?;
-    let row = doc! {
-        "_id": key, "format_version": 1_i64,
-        "agent_id": work.request.agent_id.as_str(),
-        "work": bson::serialize_to_bson(work).map_err(|_| invalid())?,
-    };
-    if bson::serialize_to_vec(&row).map_err(|_| invalid())?.len() > 32 * 1024 {
-        return Err(invalid().into());
-    }
+    let row = encode(work)?;
     scope
         .insert_one(&collection(store), row)
         .await
@@ -92,6 +83,47 @@ pub(super) async fn insert(
     Ok(())
 }
 
+fn encode(work: &RecoveryWork) -> Result<Document, SandboxStoreError> {
+    work.validate().map_err(|_| invalid())?;
+    let key = work.request.key().map_err(|_| invalid())?;
+    let row = doc! {
+        "_id": key, "format_version": 1_i64,
+        "agent_id": work.request.agent_id.as_str(),
+        "work": bson::serialize_to_bson(work).map_err(|_| invalid())?,
+    };
+    if bson::serialize_to_vec(&row).map_err(|_| invalid())?.len() > 32 * 1024 {
+        return Err(invalid());
+    }
+    Ok(row)
+}
+
 fn invalid() -> SandboxStoreError {
     SandboxStoreError::Corrupt("capacity recovery work is invalid".into())
+}
+
+/// Replace only the exact prior carrier, in the same transaction as S4's sole
+/// Agent CAS/publication. A successful carrier update alone grants no authority.
+pub(in crate::store) async fn replace(
+    store: &MongoSandboxStore,
+    current: &RecoveryWork,
+    next: &RecoveryWork,
+    scope: &mut TransactionScope<'_>,
+) -> Result<(), TransactionLogError> {
+    let filter = encode(current)?;
+    let mut encoded = encode(next)?;
+    if current.request != next.request
+        || current.target != next.target
+        || current.revision.checked_add(1) != Some(next.revision)
+    {
+        return Err(SandboxStoreError::Conflict.into());
+    }
+    let next = encoded.remove("work").ok_or_else(invalid)?;
+    let updated = scope
+        .update_one(&collection(store), filter, doc! {"$set": {"work": next}})
+        .await
+        .map_err(TransactionLogError::Driver)?;
+    if updated.matched_count != 1 {
+        return Err(SandboxStoreError::Conflict.into());
+    }
+    Ok(())
 }
