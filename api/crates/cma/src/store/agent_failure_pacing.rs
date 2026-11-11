@@ -11,6 +11,7 @@ use super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 pub(super) mod discovery;
 const FIELD: &str = "worker_failure_pacing_v1";
 const CLASS: &str = "agent_runtime_unavailable";
+const PARENT_CLASS: &str = "agent_parent_not_ready";
 const MAX_DELAY: u64 = 300;
 
 pub(super) fn command_generation(row: &Document) -> Option<u64> {
@@ -51,7 +52,7 @@ impl Pacing {
         let Some(at) = layer2_core::seconds_from_rfc3339(now) else {
             return false;
         };
-        self.class == CLASS
+        matches!(self.class.as_str(), CLASS | PARENT_CLASS)
             && agent.work.step == AgentWorkStep::PublishConnection
             && self.ready_at == agent.work.ready_at
             && self.attempts == agent.work.attempts
@@ -69,12 +70,14 @@ pub(super) async fn record(
     observed: &AgentRetryObservation,
 ) -> Result<(), SandboxStoreError> {
     let next = &mutation.agent;
-    if next.work.step != AgentWorkStep::PublishConnection
-        || next.work.lease.is_some()
-        || !matches!(mutation.agent_logs.as_slice(),
-            [AgentLogKind::WorkStepFailed { step: AgentWorkStep::PublishConnection, failure }]
-                if failure.class == CLASS)
-    {
+    let class = match mutation.agent_logs.as_slice() {
+        [AgentLogKind::WorkStepFailed {
+            step: AgentWorkStep::PublishConnection,
+            failure,
+        }] if matches!(failure.class.as_str(), CLASS | PARENT_CLASS) => failure.class.as_str(),
+        _ => return Ok(()),
+    };
+    if next.work.step != AgentWorkStep::PublishConnection || next.work.lease.is_some() {
         return Ok(());
     }
     let Some(at) = layer2_core::seconds_from_rfc3339(&mutation.appended_at) else {
@@ -104,7 +107,7 @@ pub(super) async fn record(
     };
     let repeats = Pacing::read(&row)
         .filter(|previous| {
-            previous.class == CLASS
+            previous.class == class
                 && previous.command_admission_generation == observed.command_admission_generation
                 && previous.unchanged_parents(observed)
                 && previous.agent_revision.checked_add(2) == Some(next.revision)
@@ -114,7 +117,7 @@ pub(super) async fn record(
         .map_or(0, |previous| (previous.repeats + 1).min(4));
     let delay = base.saturating_mul(1 << repeats).min(MAX_DELAY);
     let pacing = Pacing {
-        class: CLASS.into(),
+        class: class.into(),
         // Connection failure publication may adopt concurrent first-message or
         // log metadata. Preserve the inspected revision so that change wakes
         // work instead of becoming a fresh but unobserved hold.
