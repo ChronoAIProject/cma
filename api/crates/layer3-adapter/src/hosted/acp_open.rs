@@ -84,6 +84,18 @@ impl Bridge {
         recovered_prompt: Option<PromptIdentity>,
         updates_tx: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<OpenedBridge> {
+        if settings.coordinated_ingress
+            && !(settings.retained_json
+                && settings.bounded_raw_output
+                && settings.bounded_permission_state)
+        {
+            return Err(AdapterError::Rejected(
+                "ingress coordination requires JSON, raw-output and permission bounds".into(),
+            ));
+        }
+        let aggregate = settings
+            .coordinated_ingress
+            .then(crate::ingress_budget::IngressBudget::process);
         if settings.recovered_context_sequence.is_some()
             && (resume_conversation.is_none() || recovered_prompt.is_some())
         {
@@ -111,7 +123,8 @@ impl Bridge {
         let output_json_budget = settings.output_json_budget;
         let json_pools = settings
             .retained_json
-            .then(crate::hosted::retained_json::JsonPools::process);
+            .then(crate::hosted::retained_json::JsonPools::process)
+            .map(|pools| pools.with_aggregate(aggregate.clone()));
         let output_stream = validate_ready(
             declaration,
             expected_agent,
@@ -139,7 +152,8 @@ impl Bridge {
                     "permission bounds require retained runtime output".into(),
                 ));
             }
-            let mut state = crate::hosted::permission_state::PermissionState::new()?;
+            let mut state =
+                crate::hosted::permission_state::PermissionState::new(aggregate.clone())?;
             if let Some(prompt) = &recovered_prompt {
                 state.begin_prompt(prompt.as_str());
             }
@@ -168,6 +182,7 @@ impl Bridge {
                     acknowledgements,
                     settings.bounded_raw_output,
                     json_pools,
+                    aggregate,
                 ))
             }),
             blocked: Mutex::new(HashMap::new()),

@@ -124,6 +124,7 @@ async fn open_with_raw_output_policy(enabled: bool, json: bool) {
                 output_json_budget: false,
                 shared_runtime_output: false,
                 bounded_permission_state: false,
+                coordinated_ingress: false,
                 retained_json: !json,
                 bounded_raw_output: !enabled,
                 already_initialized_error: None,
