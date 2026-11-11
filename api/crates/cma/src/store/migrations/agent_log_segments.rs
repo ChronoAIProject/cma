@@ -14,6 +14,20 @@ pub(super) fn checksum() -> String {
     digest.update(include_bytes!("../agent_log_segments/schema.rs"));
     digest.update(include_bytes!("../agent_log_segments/schema/controls.rs"));
     digest.update(include_bytes!("../agent_log_segments/schema/validators.rs"));
+    for identity in [ID, READER].into_iter().chain(COLLECTIONS.iter().copied()) {
+        digest.update(identity.as_bytes());
+        digest.update([0]);
+    }
+    digest.update(include_bytes!("../agent_log_segments/schema/recovery.rs"));
+    digest.update(include_bytes!(
+        "../agent_log_segments/schema/index_contract.rs"
+    ));
+    digest.update(include_bytes!(
+        "../agent_capacity_recovery/format2.schema.json"
+    ));
+    digest.update(include_bytes!(
+        "../agent_capacity_recovery/format2.indexes.json"
+    ));
     format!("{:x}", digest.finalize())
 }
 
