@@ -14,9 +14,11 @@ mod cancellation;
 mod period;
 mod requests;
 mod source;
+mod spend_ledger;
 pub(super) use cancellation::release_unexecuted;
 #[cfg(test)]
-pub(super) use period::{period_key, require_open_with};
+pub(super) use period::period_key;
+pub(super) use period::{now_seconds, require_open, require_open_with};
 pub(super) use source::PlatformStopCache;
 
 pub(super) const COLLECTION: &str = "model_budget_reservations";

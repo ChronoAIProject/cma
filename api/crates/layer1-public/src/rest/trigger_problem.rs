@@ -215,6 +215,12 @@ fn launch_problem(error: LaunchServiceError) -> ProblemParts {
             "The Launch cursor is invalid for this query.",
             Vec::new(),
         ),
+        LaunchServiceError::Budget(reason) => (
+            super::instance_problem::budget_status(reason),
+            reason.code(),
+            reason.guidance(),
+            Vec::new(),
+        ),
         LaunchServiceError::Conflict => conflict(
             "launch_changed",
             "The Launch changed before this operation completed.",

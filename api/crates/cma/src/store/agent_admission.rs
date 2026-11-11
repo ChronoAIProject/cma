@@ -300,6 +300,7 @@ async fn apply_admission(
             live: u8::try_from(live).unwrap_or(u8::MAX),
         }));
     }
+    super::budget::require_open(store, super::budget::now_seconds(), session).await?;
 
     let mut creation =
         match super::native_prepared::adopt_agent(store, &sandbox, &workspace, admission, session)

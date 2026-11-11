@@ -6,6 +6,7 @@ mod claim_observation_tests;
 mod contextual_suggestions;
 mod discovery_tests;
 mod execution_tests;
+mod platform_commitment_tests;
 mod queued_cancellation_tests;
 mod queued_input_tests;
 mod refusal_compatibility_tests;
