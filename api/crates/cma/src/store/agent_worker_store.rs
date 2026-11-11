@@ -10,7 +10,7 @@ use layer2_core::sandbox::store::{
 use mongodb::bson::doc;
 
 use super::child_writer_claims::{persist, ChildWriterClaim};
-use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS};
+use super::sandbox_mongo::{MongoSandboxStore, TRANSACTION_ATTEMPTS};
 
 #[async_trait::async_trait]
 impl AgentWorkerStore for MongoSandboxStore {
@@ -20,14 +20,19 @@ impl AgentWorkerStore for MongoSandboxStore {
     ) -> Result<Option<u64>, SandboxStoreError> {
         let row = self
             .agents
-            .find_one(doc! {"_id": id.as_str(),
-            "document_schema_version": DOCUMENT_SCHEMA_VERSION})
-            .projection(doc! {"agent_command_admission_fence": 1})
+            .find_one(doc! {"_id": id.as_str()})
+            .projection(doc! {"agent_command_admission_fence": 1,
+            "document_schema_version": 1, "agent_log_format": 1,
+            "agent_log_incarnation": 1, "agent_log_head_revision": 1})
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-        Ok(row
-            .as_ref()
-            .and_then(super::agent_failure_pacing::command_generation))
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        // This is only a pacing hint. Validate the envelope discriminator;
+        // admission and publication still establish their own current authority.
+        super::agent_log_segments::read_format(&row)?;
+        Ok(super::agent_failure_pacing::command_generation(&row))
     }
 
     async fn commit_agent_work_retry(
@@ -83,7 +88,7 @@ impl AgentWorkerStore for MongoSandboxStore {
             return Err(SandboxStoreError::InvalidPage);
         }
         let mut filter = doc! {
-            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "document_schema_version": { "$in": [1_i64, 2_i64] },
             "status": { "$in": super::agents::LIVE_STATUSES },
             "record.conversation.conversation_id": { "$type": "string", "$ne": "" },
             "record.conversation.runtime_generation": { "$gt": 0_i64 },

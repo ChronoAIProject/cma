@@ -4,6 +4,7 @@ mod access;
 mod adapter;
 mod bindings;
 mod bots;
+mod capacity_recovery;
 mod credentials;
 mod desktop;
 mod documents;
@@ -381,6 +382,12 @@ impl ControlPlaneComposition {
                 sandbox_control_service,
             ))
             .merge(routes::agent_metadata(&stores, resource_access.clone()))
+            .merge(capacity_recovery::router(
+                &stores,
+                resource_access.clone(),
+                &sandbox_lifecycle,
+                config.features.capacity_recovery_enabled,
+            ))
             .merge(layer1_public::rest::resource_access_router(resource_access))
             .merge(rest::profile_authoring_router(profile_authoring))
             .merge(rest::hierarchy_router(hierarchy))
