@@ -90,7 +90,7 @@ The canonical Mongo owned-fixture script was copied locally with only its Cargo 
 - `s4-final-strict.log`: `2f351eed203581b59892bbb726d82e14adb4b4995cdd5029f76f1743f76454c7`.
 - `s4-final-unpublished-mongo.log`: `96186d93ef8265122a6f90ef749feecf962c506a178db4a0fbf9a462039c9e9a`.
 
-Raw temporary logs will be removed after evidence extraction and final rerun cleanup.
+Raw temporary logs are removed after evidence extraction and final rerun cleanup.
 
 ## Requalification after develop92d18a909
 
@@ -116,3 +116,30 @@ Log hashes before cleanup:
 - `s4-final-unpublished-mongo.log`: `41dac89a97813948fce9f23169f3a8a2b05148f09e0f6b64b4cdefa3c8e2ffc7`.
 - `s4-final-strict.log`: `c496e968b0ed2db8b621afe634f0ed18579879431a00034d07605228040c1413`.
 - `s4-final-feature-units.log`: `77dd134bfa256d88b43cf306a920091227686a1e9a91f662e44975ef6c443ded`.
+
+## Final qualification at bc075a36aa45ac8fc826d4999748a9bcc8071c6d
+
+Completed 2026-11-12T02:21:33.314782 SGT. Rust 1.96.1 and nextest 0.9.151; existing release-only lock, two jobs, one target. Available memory minimum 25%; 0 pauses. All four owned Mongo fixtures and volumes were cleaned before the next phase.
+
+| Gate | Exact result | Gate wall seconds |
+| --- | --- | --- |
+| units | Summary [   0.848s] 47 tests run: 47 passed, 2486 skipped | 477.647 |
+| writer-mongo | Summary [ 150.953s] 37 tests run: 37 passed, 2496 skipped | 162.543 |
+| legacy-mongo | Summary [  53.309s] 23 tests run: 23 passed, 2510 skipped | 60.344 |
+| retained-mongo | Summary [  34.233s] 9 tests run: 9 passed, 2524 skipped | 42.094 |
+| unpublished-mongo | Summary [  93.607s] 8 tests run: 8 passed (1 slow), 2525 skipped | 99.336 |
+| strict | Exit 101; 22 distinct shared reachability diagnostics, zero type errors | 159.865 |
+
+Total: **124 selected tests passed, zero failures** (47 units/configuration and 77 real Mongo). The new response-facts commit/abort regression passed, alongside all original caller, retry, absence, foreign receipt, rollover and lease cases. P2-5 has passing corrected Mongo evidence for closure review. P1-1 remains open; activation is closed.
+
+Formatting and whitespace passed. Source-size gate passed 6,084 files; every S4 changed file is below 500 lines. Source-pin secret history passed 3,792 commits with zero findings. The separate narrow response-facts dependency passed 15 projection tests and strict Layer2 Clippy. Its exact contract and gate evidence are in `2026-11-12-s4-response-facts.md`.
+
+Strict CMA remains blocked on the same 19 S5 recovery/scope and three S2 reconciliation locations inventoried above. No warning allowance was introduced. No missing interface blocks the implemented original receipt callers. The missing shared production wiring is `sandbox_reconciliation::transaction::apply_scoped`, `agent_capacity_recovery::{admission,authority,records,status}`, `capture_segmented_scoped` and `TransactionScope::insert_one`.
+
+Final source log hashes (raw temporary logs removed after extraction):
+- `s4-final-units.log`: `1e6aa370c3d22634c32c9f853515fb770930cf9ad3325141f7cb45bd76331acd`.
+- `s4-final-writer-mongo.log`: `fef3f1282f36a289f640bed6a5bacfb4d25812694a41659ba125fedc4cf445e1`.
+- `s4-final-legacy-mongo.log`: `de63e8d409559954ecedb0782d51b292cde5725bbb7ff58111ca2f851a999622`.
+- `s4-final-retained-mongo.log`: `b72bd3344910197690ef130ce6b068bade02ee59d890ffb9b1b56c8245e175e7`.
+- `s4-final-unpublished-mongo.log`: `b94abd79d263a4c1bacaed123285897c47c4e983b221788bda37044e80eb1d0e`.
+- `s4-final-strict.log`: `4bddba021449be3adfc0ce131e730bb0324828e3fbb3244507f06a45bf671a15`.
