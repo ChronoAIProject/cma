@@ -19,12 +19,10 @@ use crate::store::{
     agent_log_integrity::{AppendCapacity, TransactionLogError},
     agent_log_segments::{
         capture::{self, CapturedFormat},
-        collections::collection,
-        digest,
+        incarnation,
         publication::{self, Publication, PublicationIdentity},
         transaction_scope::TransactionScope,
         writer_commit::{self, AggregateUpdate, PublicationInput},
-        PUBLICATIONS,
     },
     agents::agent_replacement_fields,
     sandbox_mongo::MongoSandboxStore,
@@ -250,9 +248,9 @@ async fn read_publication(
     key: &str,
     scope: &mut TransactionScope<'_>,
 ) -> Result<Publication, TransactionLogError> {
-    let id = publication::identity(current.id.as_str(), &digest::incarnation(current), key);
+    let id = publication::identity(current.id.as_str(), &incarnation(current), key);
     let row = scope
-        .find_one(&collection(store, PUBLICATIONS), doc! {"_id": id})
+        .find_one(&store.segment_logs.publications, doc! {"_id": id})
         .await
         .map_err(TransactionLogError::Driver)?
         .ok_or(SandboxStoreError::Conflict)?;
