@@ -39,11 +39,19 @@ a regular 0600 file with one link; file symlinks are refused. Output is create-o
 0600, synced with its directory, never overwrites another artifact and is limited
 to 4 MiB. Retain input and output together. They contain private resource identity;
 never attach them to GitHub or operational logs. Standard output contains only
-counts and SHA-256 hashes. Failure messages do not include input/database details.
+classification labels, counts and SHA-256 hashes. Failure messages do not include
+input/database details. The summary groups assessed members jointly by failure
+cause, Agent state, parent state and recovery route. It also counts preservation
+requirements and observed evidence. `requested = assessed + unknown`; missing,
+unreadable and changed-lineage members remain in `outcomes` and the unknown count.
+Unknown members are counted as `unresolved_member_preserve_all`, not recovered or
+eligible for cleanup. State changes remain in the cohort and require reclassification.
 
 Each requested member has an explicit outcome. Valid records are classified by
 diagnostic cause, current Agent and parent status, revisions, scheduled cleanup,
 lease/debt, conversation/input presence, attempted work and retained-home metadata.
+`input_state_present` includes terminal input receipts and commands; it makes no
+claim that they are still active or queued. They remain preservation dependencies.
 Missing, quarantined, unsupported, malformed or changed lineage is recorded as an
 unknown preservation case. A string matching a historical limit error is only a
 diagnostic classification, never recovery authority.
