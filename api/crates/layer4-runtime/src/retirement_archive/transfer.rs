@@ -30,6 +30,9 @@ impl Archive {
         mut move_source: impl FnMut(&SourceRecord) -> Result<()> + Send + 'static,
     ) -> Result<Receipt> {
         self.verify()?;
+        if self.version == super::Version::Collection {
+            return Err(invalid());
+        }
         super::require_reserve(&self.path, self.anchor.as_deref())?;
         if !super::record::digest(&proof.key)
             || !super::record::digest(&proof.source_sha256)
