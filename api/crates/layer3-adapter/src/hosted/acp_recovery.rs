@@ -85,7 +85,7 @@ impl Bridge {
     pub(in super::super) async fn recover_prompt_result(
         &self,
         id: &str,
-        frame: serde_json::Value,
+        frame: &serde_json::Value,
         updates: &UpdateRelay,
     ) -> bool {
         let mut recovery = self.recovery.lock().await;
