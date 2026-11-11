@@ -109,7 +109,17 @@ pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
     };
     let entries = if head.trusted {
         let (after, through) = window.bounds(head.last_seq)?;
-        read_bounded(store, agent_id, after, through, &head, &mut session).await?
+        read_bounded(
+            store,
+            agent_id,
+            after,
+            through,
+            &head,
+            &mut session,
+            usize::MAX,
+        )
+        .await?
+        .ok_or(SandboxStoreError::AgentLogCapacityExceeded)?
     } else {
         let mut entries = Vec::new();
         scan_collection(
@@ -138,17 +148,18 @@ pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
     Ok(entries)
 }
 
-async fn read_bounded(
+pub(super) async fn read_bounded(
     store: &MongoSandboxStore,
     agent_id: &AgentId,
     after: u64,
     through: u64,
     head: &ReadHead,
     session: &mut ClientSession,
-) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+    byte_budget: usize,
+) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
     let count = through - after;
     if count == 0 {
-        return Ok(Vec::new());
+        return Ok(Some(Vec::new()));
     }
     let mut read = super::mongo_read_telemetry::Read::find(store.agent_log.name());
     let mut cursor = store
@@ -168,6 +179,7 @@ async fn read_bounded(
         .await
         .map_err(unavailable)?;
     let mut entries = Vec::new();
+    let mut bytes = 0_usize;
     while let Some(document) = read
         .next_in_session(&mut cursor, session)
         .await
@@ -178,13 +190,22 @@ async fn read_bounded(
         if entry.agent_id != *agent_id || entry.seq != after + entries.len() as u64 + 1 {
             return Err(SandboxStoreError::SequenceConflict);
         }
+        if byte_budget != usize::MAX {
+            let size = mongodb::bson::serialize_to_vec(&document)
+                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?
+                .len();
+            bytes = bytes.saturating_add(size);
+            if bytes > byte_budget {
+                return Ok(None);
+            }
+        }
         entries.push(entry);
     }
     if entries.len() as u64 != count {
         return Err(SandboxStoreError::SequenceConflict);
     }
     read.complete();
-    Ok(entries)
+    Ok(Some(entries))
 }
 
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
