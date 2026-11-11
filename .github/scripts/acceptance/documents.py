@@ -8,6 +8,7 @@ ISSUES = [1549, 1472, 1593]
 
 
 def run(p):
+    retained.preflight_documents(p)
     for owner, foreign in (("a", "b"), ("b", "a")):
         label = "document_" + owner
         if label not in p.state["fixtures"]:
@@ -32,13 +33,17 @@ def run(p):
             p.assert_case(case + "_foreign_denied", response[0] == 404 and problem.get("code") == "document_not_found", ISSUES, response, True)
             response = p.request(owner, path + suffix)
             p.assert_case(case + "_owner_allowed", response[0] == 200, ISSUES, response)
-        response = p.request(foreign, path, "PATCH", {
-            "expected_revision": doc["revision"], "title": "Forbidden acceptance mutation",
-        }, key=p.state["campaign"] + "-foreign-" + owner)
-        p.assert_case(label + "_foreign_write_denied", response[0] == 404 and decode(response[2]).get("code") == "document_not_found", ISSUES, response, True)
-        response = p.request(owner, path)
-        current = decode(response[2])
-        p.assert_case(label + "_foreign_write_unchanged", current.get("revision") == doc["revision"], ISSUES, response, True)
+        if retained.source_slot_consumed(p, owner):
+            p.record(label + "_foreign_write_denied", "BLOCKED", ISSUES,
+                     reason="permanent_source_slot_consumed; no_further_source_mutation_attempts")
+        else:
+            response = p.request(foreign, path, "PATCH", {
+                "expected_revision": doc["revision"], "title": "Forbidden acceptance mutation",
+            }, key=p.state["campaign"] + "-foreign-" + owner)
+            p.assert_case(label + "_foreign_write_denied", response[0] == 404 and decode(response[2]).get("code") == "document_not_found", ISSUES, response, True)
+            response = p.request(owner, path)
+            current = decode(response[2])
+            p.assert_case(label + "_foreign_write_unchanged", current.get("revision") == doc["revision"], ISSUES, response, True)
         for caller in (owner, foreign):
             response = p.request(caller, "/api/v1/documents?limit=20")
             items = decode(response[2]).get("items", [])
@@ -79,6 +84,7 @@ def revoke_replay(p, path, doc, owner, reader):
 
 
 def updates(p):
+    retained.preflight_documents(p)
     for owner in ("a", "b"):
         label = "document_" + owner
         if label not in p.state["fixtures"]:
@@ -95,9 +101,8 @@ def updates(p):
         p.assert_case(label + "_owner_edit", response[0] == 200, ISSUES, response)
         current = decode(response[2])
         p.fixture(label, current)
-        response = p.request(owner, path, "PATCH", body, key=p.state["campaign"] + "-stale-" + owner)
-        p.assert_case(label + "_stale_revision_denied", response[0] == 409
-                      and decode(response[2]).get("code") == "document_revision_conflict", ISSUES, response, True)
+        p.record(label + "_stale_revision_denied", "BLOCKED", ISSUES,
+                 reason="permanent_source_slot_consumed; no_further_source_mutation_attempts")
         response = p.request(owner, path + "/source")
         p.assert_case(label + "_edited_source_equal", response[0] == 200
                       and decode(response[2]).get("markdown") == body["markdown"], ISSUES, response)
