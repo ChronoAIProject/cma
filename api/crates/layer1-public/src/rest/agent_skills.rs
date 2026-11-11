@@ -24,6 +24,9 @@ use utoipa::ToSchema;
 pub trait AgentSkillRuntimeSupport: Send + Sync {
     /// Read-only, exact-runtime capability observation. Missing support fails closed.
     async fn supported(&self, sandbox: &layer2_core::sandbox::Sandbox) -> bool;
+    async fn upgrade_supported(&self, _sandbox: &layer2_core::sandbox::Sandbox) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
@@ -37,6 +40,7 @@ pub(crate) struct AgentSkillView {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Effective installed version. An upgrade keeps its previous version until confirmed.
     pub version: String,
     pub source: String,
     pub status: String,
@@ -78,27 +82,50 @@ impl From<Agent> for AgentSkillsView {
                 error: None,
             })
             .collect::<Vec<_>>();
-        items.extend(agent.work.live_skills.iter().map(|skill| {
-            AgentSkillView {
+        for skill in &agent.work.live_skills {
+            let effective = if skill.status == AgentSkillInstallStatus::Installed {
+                skill.material.as_ref()
+            } else {
+                skill.previous.as_ref().or(skill.material.as_ref())
+            };
+            let row = AgentSkillView {
                 id: skill.reference.id.as_str().into(),
-                name: skill.material.as_ref().and_then(|m| m.name.clone()),
-                version: skill
-                    .material
-                    .as_ref()
+                name: effective.and_then(|m| m.name.clone()),
+                version: effective
                     .map(|m| m.version.clone())
                     .or_else(|| skill.reference.version.clone())
                     .unwrap_or_default(),
                 source: "ornn".into(),
-                status: match skill.status {
-                    AgentSkillInstallStatus::Pending => "pending",
-                    AgentSkillInstallStatus::Installed => "installed",
-                    AgentSkillInstallStatus::Failed => "failed",
+                status: if skill.previous.is_some() {
+                    "installed"
+                } else {
+                    match skill.status {
+                        AgentSkillInstallStatus::Pending => "pending",
+                        AgentSkillInstallStatus::Installed => "installed",
+                        AgentSkillInstallStatus::Failed => "failed",
+                    }
                 }
                 .into(),
-                error: skill.error.clone(),
+                error: skill.error.as_ref().map(|error| match &skill.previous {
+                    Some(_) => format!(
+                        "Upgrade to version {} failed: {error}",
+                        skill.reference.version.as_deref().unwrap_or_default()
+                    ),
+                    None => error.clone(),
+                }),
+            };
+            if let Some(index) = items.iter().position(|item| item.id == row.id) {
+                items[index] = row;
+            } else {
+                items.push(row);
             }
-        }));
-        let pending = items.iter().any(|s| s.status == "pending");
+        }
+        let pending = agent
+            .work
+            .live_skills
+            .iter()
+            .any(|item| item.status == AgentSkillInstallStatus::Pending)
+            || items.iter().any(|item| item.status == "pending");
         Self {
             items,
             pending,
@@ -117,25 +144,60 @@ pub(crate) async fn read(
     Path(id): Path<String>,
 ) -> Result<Json<AgentSkillsView>, InstanceProblem> {
     let lineage = state.reads.lineage(&caller, &AgentId(id)).await?;
-    let idle = layer2_core::sandbox::agent_live_skills::idle(&lineage.agent);
-    let mut view = AgentSkillsView::from(lineage.agent);
+    Ok(Json(
+        view(
+            lineage.agent,
+            &lineage.sandbox,
+            state.skill_support.as_deref(),
+        )
+        .await,
+    ))
+}
+async fn view(
+    agent: Agent,
+    sandbox: &layer2_core::sandbox::Sandbox,
+    support: Option<&dyn AgentSkillRuntimeSupport>,
+) -> AgentSkillsView {
+    let idle = layer2_core::sandbox::agent_live_skills::idle(&agent);
+    let (can_add, can_upgrade) = layer2_core::sandbox::agent_live_skills::capacity(&agent);
+    let mut view = AgentSkillsView::from(agent);
     if idle
         && matches!(
-            lineage.sandbox.status,
+            sandbox.status,
             layer2_core::sandbox::SandboxStatus::Active
                 | layer2_core::sandbox::SandboxStatus::CredentialRotating
         )
-        && lineage.sandbox.lifecycle.checkpoint_capture.is_none()
+        && sandbox.lifecycle.checkpoint_capture.is_none()
     {
-        view.can_install = match &state.skill_support {
-            Some(support) => support.supported(&lineage.sandbox).await,
+        view.can_install = match support {
+            Some(support) => support.supported(sandbox).await,
             None => false,
         };
         view.unavailable_reason = (!view.can_install)
             .then(|| "This Agent runtime does not support installing skills yet.".into());
+        if !can_add && !can_upgrade {
+            view.can_install = false;
+            view.unavailable_reason =
+                Some("This Agent has reached its skill installation capacity.".into());
+        } else if !can_add
+            && !match support {
+                Some(support) => support.upgrade_supported(sandbox).await,
+                None => false,
+            }
+        {
+            view.can_install = false;
+            view.unavailable_reason = Some(
+                "This Agent has reached its skill limit and its runtime does not support upgrades."
+                    .into(),
+            );
+        }
     }
-    Ok(Json(view))
+    view
 }
+
+/// Install an exact skill version, or upgrade an existing skill on a capable idle runtime.
+/// Poll GET until pending is false. Refusals are recorded for their Idempotency-Key;
+/// after readiness or runtime support changes, submit a new attempt with a new key.
 #[utoipa::path(post, operation_id = "install_agent_skill", path = "/api/v1/agents/{id}/skills", tag = "agents",
     params(("id" = String, Path), ("Idempotency-Key" = String, Header)), request_body = InstallAgentSkillRequest,
     responses((status = 202, body = AgentSkillsView), (status = 409, body = crate::rest::ProblemDocument)))]
@@ -161,23 +223,50 @@ pub(crate) async fn install(
                 .lineage(&operation_caller, &AgentId(id.clone()))
                 .await?;
             if !layer2_core::sandbox::agent_live_skills::idle(&lineage.agent) {
-                return Err(InstanceProblem::AgentNotReady);
-            }
-            if !match support {
-                Some(support) => support.supported(&lineage.sandbox).await,
-                None => false,
-            } {
-                return Err(InstanceProblem::AgentNotReady);
+                return Err(InstanceProblem::SkillNotReady);
             }
             let reference = SkillRef {
                 source: SkillSource::Ornn,
                 id: SkillId(body.id),
                 version: Some(body.version),
             };
+            let previous = layer2_core::sandbox::agent_live_skills::effective(
+                &lineage.agent.work,
+                &reference.id,
+            );
+            if let Some(previous) = previous {
+                if Some(&previous.version) != reference.version.as_ref()
+                    && !match &support {
+                        Some(support) => support.upgrade_supported(&lineage.sandbox).await,
+                        None => false,
+                    }
+                {
+                    return Err(InstanceProblem::SkillVersionUpgradeUnsupported {
+                        id: reference.id.as_str().into(),
+                        installed: previous.version.clone(),
+                        requested: reference.version.clone().unwrap_or_default(),
+                    });
+                }
+            } else if !match &support {
+                Some(support) => support.supported(&lineage.sandbox).await,
+                None => false,
+            } {
+                return Err(InstanceProblem::SkillInstallUnsupported);
+            }
             let agent = service
                 .install_skill(&operation_caller, &AgentId(id), reference)
-                .await?;
-            Ok((StatusCode::ACCEPTED, Json(AgentSkillsView::from(agent))).into_response())
+                .await
+                .map_err(|error| match error {
+                    layer2_core::sandbox::AgentOperationError::StatusConflict { .. } => {
+                        InstanceProblem::SkillNotReady
+                    }
+                    other => InstanceProblem::from(other),
+                })?;
+            Ok((
+                StatusCode::ACCEPTED,
+                Json(view(agent, &lineage.sandbox, support.as_deref()).await),
+            )
+                .into_response())
         },
     )
     .await
