@@ -7,7 +7,10 @@ use mongodb::options::ReadConcern;
 
 use super::agent_log::read_entry;
 use super::agent_log_integrity::read::read_proven_agent;
+use super::agent_log_segment_reads;
 use super::sandbox_mongo::{signed, MongoSandboxStore};
+
+const ROLLOUT_FLAG: &str = "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED";
 
 impl MongoSandboxStore {
     pub(crate) fn with_bounded_transcript_reads(mut self, enabled: bool) -> Self {
@@ -19,7 +22,7 @@ impl MongoSandboxStore {
         &self,
         expected: &Agent,
     ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
-        if !self.bounded_transcript_reads {
+        if !self.bounded_transcript_reads && std::env::var(ROLLOUT_FLAG).as_deref() != Ok("true") {
             return Ok(None);
         }
         let mut session = self
@@ -28,6 +31,19 @@ impl MongoSandboxStore {
             .snapshot(true)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+
+        // Format-2 reads validate every source row and seal in this snapshot,
+        // retaining only transcript-affecting rows. This path has no lifetime
+        // 10,128-row or 4 MiB cap; the exact fold remains the semantic check in
+        // layer2-core. Legacy histories continue through the trusted proof and
+        // compatibility query below.
+        if let Some(entries) =
+            agent_log_segment_reads::selected(self, expected, &mut session, is_transcript_entry)
+                .await?
+        {
+            return Ok(validate_selected(expected, entries));
+        }
+
         let Some((agent, trusted)) = read_proven_agent(self, &expected.id, &mut session).await?
         else {
             return Err(SandboxStoreError::NotFound);
@@ -87,19 +103,23 @@ impl MongoSandboxStore {
             entries.push(entry);
         }
         read.complete();
-        if entries.first().is_none_or(|entry| entry.seq != 1)
-            || entries
-                .first()
-                .is_none_or(|entry| !matches!(entry.kind, AgentLogKind::Created { .. }))
-            || (agent.conversation.conversation_id.is_some()
-                && !entries
-                    .iter()
-                    .any(|entry| matches!(entry.kind, AgentLogKind::ConversationOpened { .. })))
-        {
-            return Ok(None);
-        }
-        Ok(Some(entries))
+        Ok(validate_selected(&agent, entries))
     }
+}
+
+fn validate_selected(agent: &Agent, entries: Vec<AgentLogEntry>) -> Option<Vec<AgentLogEntry>> {
+    if entries.first().is_none_or(|entry| entry.seq != 1)
+        || entries
+            .first()
+            .is_none_or(|entry| !matches!(entry.kind, AgentLogKind::Created { .. }))
+        || (agent.conversation.conversation_id.is_some()
+            && !entries
+                .iter()
+                .any(|entry| matches!(entry.kind, AgentLogKind::ConversationOpened { .. })))
+    {
+        return None;
+    }
+    Some(entries)
 }
 
 fn transcript_log_types() -> Vec<&'static str> {
