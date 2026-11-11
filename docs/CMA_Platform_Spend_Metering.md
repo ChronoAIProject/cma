@@ -322,9 +322,11 @@ present. Staleness alone refuses new commitments and leaves running work alone.
   under 60 seconds; the evidence for TC-125/126 is the `since` instant on the
   closure versus the last admitted receipt and the first pause event.
 
-Alerting on `SpendWarning` and `SpendStop`: a structured
-`platform_spend_closure` operations event with the reason and settings revision
-(no amounts). It is the alert record and fires once, from the writer whose
+Alerting on `SpendWarning`, `SpendStop` and `MeteringUnavailable`: a
+structured `platform_spend_closure` operations event with the reason and
+settings revision (no amounts). `MeteringUnavailable` alerts too, because it
+refuses every new commitment until an operator records an observation or
+rotates the policy. It is the alert record and fires once, from the writer whose
 guarded update actually inserted the closure (section 5.4). Routing it to
 on-call is EXT-MONITORING (#1570); a dashboard banner is later UI work.
 
