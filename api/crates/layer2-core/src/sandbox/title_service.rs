@@ -31,6 +31,8 @@ pub enum AgentTitleServiceError {
     #[error("agent title generation is temporarily unavailable")]
     GenerationUnavailable,
     #[error(transparent)]
+    Budget(crate::budget::BudgetError),
+    #[error(transparent)]
     Store(#[from] AgentTitleStoreError),
 }
 
@@ -120,6 +122,11 @@ impl AgentTitleService {
                 (Some(context), Some(generator)) => {
                     match generate_title(generator, context, &transcript).await {
                         Ok(title) => Some(title),
+                        Err(error) if error.budget_error().is_some() => {
+                            return Err(AgentTitleServiceError::Budget(
+                                error.budget_error().unwrap(),
+                            ));
+                        }
                         Err(error)
                             if error.is_permanent()
                                 || claim.attempts() >= AGENT_TITLE_MAX_ATTEMPTS =>
@@ -189,6 +196,7 @@ async fn generate_title(
                 }
             }
             Ok(Err(error)) if error.is_permanent() => return Err(error),
+            Ok(Err(error)) if error.budget_error().is_some() => return Err(error),
             _ => (),
         }
     }
