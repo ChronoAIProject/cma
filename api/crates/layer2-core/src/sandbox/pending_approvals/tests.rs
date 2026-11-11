@@ -2,7 +2,7 @@ use super::*;
 
 fn entry(seq: u64, kind: AgentLogKind) -> AgentLogEntry {
     AgentLogEntry {
-        agent_id: crate::ids::AgentId::new("agt_pending"),
+        agent_id: crate::ids::AgentId("agt_pending".into()),
         seq,
         appended_at: "2026-11-11T00:00:00Z".into(),
         kind,
