@@ -10,7 +10,7 @@ import { usageSettingsChanged } from '../usage/metrics/useMeasuredUsage';
 import { reviewSettingsDraft } from './settingsDraft';
 import { IdleThresholdFields, NumberField } from './SettingsFields';
 import { SpendControls } from './SpendControls';
-import { budgetChanged, spendBudget } from './spendBudget';
+import { budgetChanged, spendBudget, spendListConflict } from './spendBudget';
 import { validateSpendBudget, type SpendErrors } from './spendValidation';
 import { SettingsAudit } from './SettingsAudit';
 import { spendAvailability, type SpendAvailability } from './spendAvailability';
@@ -146,6 +146,9 @@ function SettingsEditor({
     }
   };
   const disabled = busy;
+  const listConflict =
+    !!current &&
+    spendListConflict(base.model_budget, draft.model_budget, current.settings.model_budget);
   const canReviewBudget = !current || !spendChanged || !!spendBudget(current.settings.model_budget);
   const fieldError = (path: string) =>
     failure?.field?.replace(/^settings\./, '') === path ? failure.message : undefined;
@@ -187,7 +190,7 @@ function SettingsEditor({
                 Load current values
               </Button>
               <Button
-                disabled={busy || current === undefined || !canReviewBudget}
+                disabled={busy || current === undefined || !canReviewBudget || listConflict}
                 onClick={() => {
                   if (current !== undefined) {
                     setDraft(reviewSettingsDraft(base, draft, current.settings));
@@ -213,6 +216,12 @@ function SettingsEditor({
                 </Button>
               ) : null}
             </div>
+            {listConflict ? (
+              <p>
+                Owner overrides or request models changed both here and on the server. Your draft
+                remains visible. Load current values and reapply those list edits before saving.
+              </p>
+            ) : null}
             {!canReviewBudget ? (
               <p>
                 The current server no longer exposes the spend-controls contract. Your draft is
@@ -226,13 +235,14 @@ function SettingsEditor({
         value={draft.model_budget}
         disabled={disabled || !writesAvailable}
         writesAvailable={writesAvailable}
+        requestWritesAvailable={availability.model_request_budget_writes_available === true}
         errors={spendErrors}
         onChange={(model_budget) => {
           update({ ...draft, model_budget });
           setSpendErrors({});
         }}
       />
-      {!writesAvailable ? (
+      {!writesAvailable || availability.model_request_budget_writes_available !== true ? (
         <div className="operator-actions">
           <Button
             disabled={busy}

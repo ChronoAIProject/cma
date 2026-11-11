@@ -1,5 +1,9 @@
 # CMA Operations
 
+For data changes in any store, follow [CMA Data Migrations](CMA_Data_Migrations.md):
+deploy compatible readers before admitting new writers, and record the release
+reader floor, recovery artifacts and migration evidence.
+
 This runbook covers deployment-owned operations for the Sandbox/Agent model.
 The current runtime contract is **3**, not the contract-2 image named in the
 original #832 plan. Product semantics are defined in [CMA Model](CMA_Model.md);
