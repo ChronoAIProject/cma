@@ -74,6 +74,7 @@ pub(crate) struct AgentTitleWorker {
     runtime: Arc<dyn TitleRuntimeEndpoint>,
     deployment_model: String,
     budget: Arc<dyn TitleBudget>,
+    request_budget: Option<Arc<dyn layer2_core::budget::RequestBudget>>,
 }
 
 impl AgentTitleWorker {
@@ -92,6 +93,22 @@ impl AgentTitleWorker {
             runtime,
             deployment_model,
             budget,
+            request_budget: None,
+        })
+    }
+
+    pub(super) fn with_request_budget(
+        self: Arc<Self>,
+        request_budget: Arc<dyn layer2_core::budget::RequestBudget>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            service: self.service.clone(),
+            store: self.store.clone(),
+            credentials: self.credentials.clone(),
+            runtime: self.runtime.clone(),
+            deployment_model: self.deployment_model.clone(),
+            budget: self.budget.clone(),
+            request_budget: Some(request_budget),
         })
     }
 
@@ -271,6 +288,17 @@ impl AgentTitleGenerator for FencedTitleGenerator {
             generator = generator
                 .with_proxy_authorization(authorization.expose())
                 .ok_or_else(refused)?;
+        }
+        if let Some(budget) = &self.worker.request_budget {
+            generator =
+                generator.with_request_budget(super::model_request_budget::RequestBudgetContext {
+                    budget: budget.clone(),
+                    scope: layer2_core::budget::RequestScope {
+                        agent_id: self.authority.agent.id.clone(),
+                        turn_sequence: request.turn_sequence(),
+                        request_id: format!("title:{}", uuid::Uuid::new_v4()),
+                    },
+                });
         }
         let response = generator.generate(request.clone()).await?;
         if !self
