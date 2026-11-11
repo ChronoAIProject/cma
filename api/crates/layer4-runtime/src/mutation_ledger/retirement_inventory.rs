@@ -9,6 +9,13 @@ use crate::failure::Result;
 use crate::mutation_authority::ResourceKey;
 use crate::mutation_journal::{Operation, Record, Status};
 
+#[path = "retirement_auxiliary.rs"]
+mod auxiliary;
+#[path = "retirement_context.rs"]
+mod context;
+use auxiliary::Auxiliary;
+use context::Context;
+
 const ROWS: usize = 64;
 const BYTES: usize = 2 * 1024 * 1024;
 const OPERATIONS: &str = "SELECT scope,operation_id,identity,status,normal,record,
@@ -18,22 +25,30 @@ const AUTHORITY: &str = "SELECT scope,resource,high_water,present,first_absent,l
     length(scope)+length(CAST(resource AS BLOB))+length(high_water)+coalesce(length(present),0)+coalesce(length(first_absent),0)+coalesce(length(last_absent),0)
     FROM authority WHERE (scope,resource)>(?,?) ORDER BY scope,resource LIMIT 65";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Stamp {
-    store: Vec<u8>,
-    generation: Vec<u8>,
-    revision: i64,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Operations,
     Authority,
+    Cleanup,
+    Scopes,
+    Processes,
+}
+
+impl Kind {
+    fn next(self) -> Option<Self> {
+        match self {
+            Self::Operations => Some(Self::Authority),
+            Self::Authority => Some(Self::Cleanup),
+            Self::Cleanup => Some(Self::Scopes),
+            Self::Scopes => Some(Self::Processes),
+            Self::Processes => None,
+        }
+    }
 }
 
 #[derive(Clone)]
 pub(super) struct Cursor {
-    stamp: Stamp,
+    context: Context,
     kind: Kind,
     after: (Vec<u8>, String),
 }
@@ -41,6 +56,7 @@ pub(super) struct Cursor {
 /// Preserve every original logical column, including raw identity bytes and
 /// reservation classification. Decoding a journal alone would lose this state.
 pub(super) enum SourceRow {
+    Auxiliary(Auxiliary),
     Operation {
         scope: Vec<u8>,
         id: String,
@@ -58,6 +74,7 @@ pub(super) enum SourceRow {
 }
 
 pub(super) struct Page {
+    pub(super) context: Context,
     pub(super) rows: Vec<SourceRow>,
     pub(super) next: Option<Cursor>,
 }
@@ -66,6 +83,7 @@ impl SourceRow {
     fn key(&self) -> (&[u8], &str) {
         match self {
             Self::Operation { scope, id, .. } => (scope, id),
+            Self::Auxiliary(row) => row.key(),
             Self::Authority {
                 scope, resource, ..
             } => (scope, resource),
@@ -73,10 +91,14 @@ impl SourceRow {
     }
 
     fn bytes(&self) -> usize {
+        if let Self::Auxiliary(row) = self {
+            return row.bytes();
+        }
         let (scope, key) = self.key();
         scope.len()
             + key.len()
             + match self {
+                Self::Auxiliary(_) => unreachable!(),
                 Self::Operation {
                     identity, record, ..
                 } => 9 + identity.len() + record.as_ref().map_or(0, Vec::len),
@@ -89,21 +111,20 @@ impl SourceRow {
     /// Domain-separated, length-prefixed encoding includes NULL distinctions.
     /// It is a source comparison digest, not an archive or deletion receipt.
     pub(super) fn hash_into(&self, digest: &mut Sha256) {
-        fn field(digest: &mut Sha256, bytes: Option<&[u8]>) {
-            digest.update([u8::from(bytes.is_some())]);
-            if let Some(bytes) = bytes {
-                digest.update((bytes.len() as u64).to_be_bytes());
-                digest.update(bytes);
-            }
+        if let Self::Auxiliary(row) = self {
+            row.hash_into(digest);
+            return;
         }
         let (scope, key) = self.key();
         digest.update([match self {
+            Self::Auxiliary(_) => unreachable!(),
             Self::Operation { .. } => 3,
             Self::Authority { .. } => 4,
         }]);
         field(digest, Some(scope));
         field(digest, Some(key.as_bytes()));
         match self {
+            Self::Auxiliary(_) => unreachable!(),
             Self::Operation {
                 identity,
                 status,
@@ -136,50 +157,49 @@ impl Ledger {
         self.storage
             .call(move |db| {
                 let tx = db.transaction().map_err(|_| storage_error())?;
-                let stamp = stamp(&tx, &config)?;
-                if cursor.as_ref().is_some_and(|cursor| cursor.stamp != stamp) {
+                let context = Context::read(&tx, &config)?;
+                if cursor
+                    .as_ref()
+                    .is_some_and(|cursor| cursor.context != context)
+                {
                     return Err(invalid());
                 }
                 let (kind, after) = cursor
-                    .map_or((Kind::Operations, (vec![0; 8], String::new())), |cursor| {
+                    .map_or((Kind::Operations, (Vec::new(), String::new())), |cursor| {
                         (cursor.kind, cursor.after)
                     });
-                let (rows, more) = page(&tx, &config, kind, &after)?;
+                let (rows, more) = page(&tx, &config, kind, &after, BYTES - context.bytes())?;
                 let next = if more {
                     let (scope, key) = rows.last().ok_or_else(invalid)?.key();
                     Some(Cursor {
-                        stamp,
+                        context: context.clone(),
                         kind,
                         after: (scope.to_vec(), key.into()),
                     })
-                } else if kind == Kind::Operations {
-                    Some(Cursor {
-                        stamp,
-                        kind: Kind::Authority,
-                        after: (vec![0; 8], String::new()),
-                    })
                 } else {
-                    None
+                    kind.next().map(|kind| Cursor {
+                        context: context.clone(),
+                        kind,
+                        after: (Vec::new(), String::new()),
+                    })
                 };
                 tx.commit().map_err(|_| storage_error())?;
-                Ok(Page { rows, next })
+                Ok(Page {
+                    context,
+                    rows,
+                    next,
+                })
             })
             .await
     }
 }
 
-fn stamp(db: &Connection, config: &RuntimeConfig) -> Result<Stamp> {
-    let stamp = db.query_row(
-        "SELECT store_id,generation,revision FROM metadata,accounting WHERE metadata.singleton=1 AND accounting.singleton=1",
-        [], |row| Ok(Stamp { store: row.get(0)?, generation: row.get(1)?, revision: row.get(2)? }),
-    ).map_err(|_| invalid())?;
-    if stamp.store.len() != 16
-        || fence::decode(&stamp.generation)? != config.generation
-        || stamp.revision < 0
-    {
-        return Err(invalid());
+fn field(digest: &mut Sha256, bytes: Option<&[u8]>) {
+    digest.update([u8::from(bytes.is_some())]);
+    if let Some(bytes) = bytes {
+        digest.update((bytes.len() as u64).to_be_bytes());
+        digest.update(bytes);
     }
-    Ok(stamp)
 }
 
 fn page(
@@ -187,16 +207,29 @@ fn page(
     config: &RuntimeConfig,
     kind: Kind,
     after: &(Vec<u8>, String),
+    limit: usize,
 ) -> Result<(Vec<SourceRow>, bool)> {
     let mut statement = db
         .prepare(match kind {
             Kind::Operations => OPERATIONS,
             Kind::Authority => AUTHORITY,
+            Kind::Cleanup => auxiliary::CLEANUP,
+            Kind::Scopes => auxiliary::SCOPES,
+            Kind::Processes => auxiliary::PROCESSES,
         })
         .map_err(|_| storage_error())?;
-    let mut query = statement
-        .query(params![after.0, after.1])
-        .map_err(|_| storage_error())?;
+    // An integer sorts before every BLOB. Starting below the BLOB domain
+    // includes even a damaged empty scope, which validation must refuse.
+    let lower = if after.0.is_empty() {
+        rusqlite::types::Value::Integer(-1)
+    } else {
+        rusqlite::types::Value::Blob(after.0.clone())
+    };
+    let mut query = match kind {
+        Kind::Scopes => statement.query(params![lower]),
+        _ => statement.query(params![lower, after.1]),
+    }
+    .map_err(|_| storage_error())?;
     let mut rows = Vec::new();
     let mut bytes = 0;
     while let Some(row) = query.next().map_err(|_| storage_error())? {
@@ -210,6 +243,9 @@ fn page(
             return Err(invalid());
         }
         let source = match kind {
+            Kind::Cleanup | Kind::Scopes | Kind::Processes => {
+                SourceRow::Auxiliary(Auxiliary::read(row, kind)?)
+            }
             Kind::Operations => SourceRow::Operation {
                 scope: row.get(0).map_err(|_| invalid())?,
                 id: row.get(1).map_err(|_| invalid())?,
@@ -233,10 +269,10 @@ fn page(
                 ],
             },
         };
-        if source.bytes() > BYTES {
+        if source.bytes() > limit {
             return Err(invalid());
         }
-        if bytes + source.bytes() > BYTES {
+        if bytes + source.bytes() > limit {
             return Ok((rows, true));
         }
         validate(db, config, &source)?;
@@ -257,6 +293,7 @@ fn validate(db: &Connection, config: &RuntimeConfig, row: &SourceRow) -> Result<
         scoped.generation = generation;
     }
     match row {
+        SourceRow::Auxiliary(row) => row.validate(&scoped, generation)?,
         SourceRow::Operation {
             id,
             identity,
@@ -302,6 +339,9 @@ fn validate(db: &Connection, config: &RuntimeConfig, row: &SourceRow) -> Result<
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "retirement_context_tests.rs"]
+mod context_tests;
 #[cfg(test)]
 #[path = "retirement_inventory_tests.rs"]
 mod tests;

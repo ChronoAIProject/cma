@@ -10,7 +10,7 @@ fn close(index: usize) -> Operation {
     ))
 }
 
-async fn finish(ledger: &Ledger, index: usize) {
+pub(super) async fn finish(ledger: &Ledger, index: usize) {
     let operation = close(index);
     ledger.admit(1, vec![operation.clone()]).await.unwrap();
     let entry = ledger.begin(operation.clone()).await.unwrap();
@@ -29,7 +29,7 @@ async fn finish(ledger: &Ledger, index: usize) {
         .unwrap();
 }
 
-async fn inventory(ledger: &Ledger) -> (Vec<SourceRow>, Vec<usize>, String) {
+pub(super) async fn inventory(ledger: &Ledger) -> (Vec<SourceRow>, Vec<usize>, String) {
     let mut cursor = None;
     let mut rows = Vec::new();
     let mut lengths = Vec::new();
@@ -37,7 +37,12 @@ async fn inventory(ledger: &Ledger) -> (Vec<SourceRow>, Vec<usize>, String) {
     loop {
         let page = ledger.retirement_inventory(cursor).await.unwrap();
         assert!(page.rows.len() <= ROWS);
-        assert!(page.rows.iter().map(SourceRow::bytes).sum::<usize>() <= BYTES);
+        assert!(
+            page.context.bytes() + page.rows.iter().map(SourceRow::bytes).sum::<usize>() <= BYTES
+        );
+        if lengths.is_empty() {
+            page.context.hash_into(&mut digest);
+        }
         lengths.push(page.rows.len());
         for row in &page.rows {
             row.hash_into(&mut digest);
@@ -61,8 +66,8 @@ async fn retirement_inventory_pages_every_row_without_changing_ledger_or_receipt
     }
     let before = ledger.snapshot().await.unwrap();
     let (rows, lengths, digest) = inventory(&ledger).await;
-    assert_eq!(lengths, [64, 64, 2, 64, 64, 2]);
-    assert_eq!(rows.len(), 260);
+    assert_eq!(lengths, [64, 64, 2, 64, 64, 2, 64, 64, 2, 1, 0]);
+    assert_eq!(rows.len(), 391);
     assert_eq!(ledger.snapshot().await.unwrap(), before);
     for (index, row) in rows[..130].iter().enumerate() {
         let SourceRow::Operation {
@@ -137,7 +142,7 @@ async fn retirement_inventory_refuses_stale_revision_other_store_and_generation(
     let (rows, _, _) = inventory(&ledger).await;
     assert_eq!(
         rows.len(),
-        4,
+        7,
         "historical generation sources must remain visible"
     );
     ledger.close().await.unwrap();
@@ -261,7 +266,7 @@ async fn retirement_inventory_byte_bound_preserves_noncanonical_raw_bytes() {
         .await
         .unwrap();
     let (rows, lengths, _) = inventory(&ledger).await;
-    assert_eq!(rows.len(), 80);
+    assert_eq!(rows.len(), 121);
     assert_eq!(&lengths[..3], [16, 16, 8]);
     for row in &rows[..40] {
         let SourceRow::Operation {
@@ -301,6 +306,7 @@ async fn retirement_inventory_preserves_covered_cleanup_and_all_authority_blobs(
     let mut authorities = 0;
     for row in &rows {
         match row {
+            SourceRow::Auxiliary(_) => {}
             SourceRow::Operation { normal, .. } => {
                 operations += 1;
                 covered += usize::from(!normal);
@@ -373,7 +379,12 @@ async fn retirement_inventory_queries_use_primary_key_ranges() {
     ledger
         .storage
         .call(|db| {
-            for sql in [OPERATIONS, AUTHORITY] {
+            for sql in [
+                OPERATIONS,
+                AUTHORITY,
+                auxiliary::CLEANUP,
+                auxiliary::PROCESSES,
+            ] {
                 let plan = db
                     .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
                     .unwrap()
