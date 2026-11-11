@@ -131,8 +131,8 @@ async fn positive_known_abort_releases_claim_and_retries_original_request() {
         .database("admin")
         .run_command(doc! {
             "configureFailPoint":"failCommand","mode":{"times":1_i32},
-            "data":{"failCommands":["commitTransaction"],"appName":app,
-            "errorCode":251_i32,"errorLabels":["TransientTransactionError"]}
+        "data":{"failCommands":["insert"],"appName":app,
+        "errorCode":112_i32,"errorLabels":["TransientTransactionError"]}
         })
         .await
         .unwrap();
