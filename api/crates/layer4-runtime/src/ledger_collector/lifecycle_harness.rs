@@ -75,7 +75,7 @@ pub async fn lifetime<D: LifecycleDriver>(driver: D, cycles: u64) -> Result<Metr
     qualification.require_legacy_bounds()?;
     let first = first.ok_or(Refusal::InvalidEvidence)?;
     let original = driver.original_ack(first.operation).await?;
-    if !original.matches(&first, Phase::Acknowledged) {
+    if !original.matches(&first) {
         return Err(Refusal::InvalidEvidence);
     }
     driver = driver.reopen().await?;
@@ -158,7 +158,6 @@ impl LifecycleDriver for model::Model {
             .unwrap()
             .cold
             .get(&operation)
-            .and_then(|r| r.last())
             .cloned()
             .ok_or(Refusal::UnknownOutcome)
     }

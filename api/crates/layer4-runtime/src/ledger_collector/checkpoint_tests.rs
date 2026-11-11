@@ -15,6 +15,7 @@ fn restart_refuses_pending_group_that_would_skip_earlier_work() {
             let pending = state.checkpoint.pending.as_mut().unwrap();
             pending.intent.group = digest(2);
             pending.intent.decision = Decision::RetainLive;
+            pending.reference = None;
             let intent = pending.intent.clone();
             state.evidence.insert(intent.operation, intent);
         }

@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 use tokio::sync::oneshot;
 
-use super::{advance, port::CollectorPort, types::*, Admission, Step};
+use super::{advance, discover, port::CollectorPort, types::*, Admission, Step};
 
 #[derive(Debug, Clone, Copy)]
 pub struct WindowBudget {
@@ -73,7 +73,8 @@ async fn drive<P: CollectorPort>(
     if !checkpoint.valid() {
         return Err(Refusal::InvalidEvidence);
     }
-    if checkpoint.pending.is_none() && !admission.new_work {
+    let mut retained = discover(port, &checkpoint).await?;
+    if !checkpoint.has_work() && retained.is_none() && !admission.new_work {
         return Ok(WindowOutcome::Stopped(Step::Disabled));
     }
     let fence = checkpoint.fence;
@@ -84,11 +85,12 @@ async fn drive<P: CollectorPort>(
         if checkpoint.fence != fence {
             return Err(Refusal::Conflict);
         }
-        let result = advance(port, &checkpoint, hold.clone()).await?;
+        let result = advance(port, &checkpoint, hold.clone(), retained).await?;
         if matches!(result, Step::GroupSettled | Step::InventoryComplete) {
             return Ok(WindowOutcome::Stopped(result));
         }
         checkpoint = port.load().await?;
+        retained = discover(port, &checkpoint).await?;
     }
     Ok(WindowOutcome::BudgetExhausted)
 }

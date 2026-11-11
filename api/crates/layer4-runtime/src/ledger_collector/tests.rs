@@ -9,8 +9,12 @@ mod lifecycle_harness;
 mod model;
 use lifecycle_harness::until_complete;
 use model::{digest, Call, Model};
+#[path = "archive_contract_tests.rs"]
+mod archive_contract_tests;
 #[path = "checkpoint_tests.rs"]
 mod checkpoint_tests;
+#[path = "pending_discovery_tests.rs"]
+mod pending_discovery_tests;
 #[path = "window_tests.rs"]
 mod window_tests;
 
@@ -27,6 +31,7 @@ fn enabled() -> Admission {
 }
 fn selected(model: &Model) {
     assert_eq!(run(step(enabled(), model)), Ok(Step::PagePinned));
+    assert_eq!(run(step(enabled(), model)), Ok(Step::ReferenceRecorded));
     assert_eq!(run(step(enabled(), model)), Ok(Step::EvidenceSelected));
 }
 
@@ -65,6 +70,10 @@ fn lost_replies_at_each_boundary_keep_one_operation_across_restart_and_takeover(
     for format in [SourceFormat::V1, SourceFormat::V2] {
         for fault in [
             Call::Evidence,
+            Call::Retain,
+            Call::Reference,
+            Call::Source,
+            Call::Cold,
             Call::Select,
             Call::Dispatch,
             Call::Record,
@@ -123,7 +132,7 @@ fn cancellation_after_source_commit_keeps_admitted_guard_and_original_retry() {
     {
         let mut s = m.state.lock().unwrap();
         assert_eq!(s.mutations, 1);
-        assert!(s.checkpoint.pending.as_ref().unwrap().receipts.is_empty());
+        assert!(s.checkpoint.pending.as_ref().unwrap().completion.is_none());
         s.in_flight.take();
         s.suspend_dispatch = false;
     }
@@ -206,15 +215,13 @@ fn durable_fair_position_passes_live_first_page_and_new_earlier_work() {
 fn competing_workers_cannot_select_two_operations_for_one_checkpoint() {
     let m = Model::new(SourceFormat::V1, &[(1, Decision::SettledDeleted)]);
     run(step(enabled(), &m)).unwrap();
+    assert_eq!(run(step(enabled(), &m)), Ok(Step::ReferenceRecorded));
     let checkpoint = run(m.load()).unwrap();
-    let hold = run(m.acquire(&checkpoint)).unwrap();
-    let intent = run(m.retain_evidence(hold, &checkpoint, digest(1))).unwrap();
     let a = m.clone();
     let b = m.clone();
     let checkpoint_b = checkpoint.clone();
-    let intent_b = intent.clone();
-    let first = std::thread::spawn(move || run(a.select(&checkpoint, intent)));
-    let second = std::thread::spawn(move || run(b.select(&checkpoint_b, intent_b)));
+    let first = std::thread::spawn(move || run(a.select(&checkpoint)));
+    let second = std::thread::spawn(move || run(b.select(&checkpoint_b)));
     let outcomes = [first.join().unwrap(), second.join().unwrap()];
     assert_eq!(outcomes.iter().filter(|r| r.is_ok()).count(), 1);
     assert_eq!(
@@ -299,7 +306,7 @@ fn empty_page_with_continuation_is_not_inventory_completion() {
 }
 
 #[test]
-fn malformed_progress_or_forged_ack_has_zero_source_effects() {
+fn malformed_progress_or_forged_reference_has_zero_source_effects() {
     for case in 0..6 {
         let m = Model::new(SourceFormat::V2, &[(1, Decision::SettledDeleted)]);
         selected(&m);
@@ -314,12 +321,7 @@ fn malformed_progress_or_forged_ack_has_zero_source_effects() {
                 4 => c.pending.as_mut().unwrap().intent.binding.sha256 = digest(42),
                 _ => {
                     let pending = c.pending.as_mut().unwrap();
-                    pending.receipts.push(Receipt {
-                        intent: pending.intent.clone(),
-                        phase: Phase::Acknowledged,
-                        after_revision: 2,
-                        sha256: digest(42),
-                    });
+                    pending.reference.as_mut().unwrap().artifacts_sha256 = hex(&digest(42));
                 }
             }
         }

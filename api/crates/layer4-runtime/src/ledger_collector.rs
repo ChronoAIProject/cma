@@ -9,7 +9,7 @@ pub mod port;
 #[path = "ledger_collector/types.rs"]
 pub mod types;
 
-use port::{CollectorPort, Held, Reconciled};
+use port::{CollectorPort, Held};
 use types::*;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -23,9 +23,11 @@ pub enum Step {
     Disabled,
     InventoryComplete,
     PagePinned,
+    ReferenceRecorded,
+    ReferenceRecovered,
     EvidenceSelected,
     OriginalSubmitted,
-    ReceiptRecorded(Phase),
+    ReceiptRecorded,
     GroupSettled,
     PageAdvanced,
     RevisionRefreshed,
@@ -39,11 +41,30 @@ pub async fn step<P: CollectorPort>(admission: Admission, port: &P) -> Result<St
     if !checkpoint.valid() {
         return Err(Refusal::InvalidEvidence);
     }
-    if checkpoint.pending.is_none() && !admission.new_work {
+    let retained = discover(port, &checkpoint).await?;
+    if !checkpoint.has_work() && retained.is_none() && !admission.new_work {
         return Ok(Step::Disabled);
     }
     let hold = port.acquire(&checkpoint).await?;
-    advance(port, &checkpoint, hold).await
+    advance(port, &checkpoint, hold, retained).await
+}
+
+async fn discover<P: CollectorPort>(
+    port: &P,
+    checkpoint: &Checkpoint,
+) -> Result<Option<CollectionReference>> {
+    if checkpoint.has_work() {
+        return Ok(None);
+    }
+    let retained = port.pending_collection(&checkpoint.binding).await?;
+    if retained.as_ref().is_some_and(|r| {
+        !r.validate()
+            || r.binding_sha256 != hex(&checkpoint.binding.sha256)
+            || r.archive_id != uuid::Uuid::from_bytes(checkpoint.binding.archive_id).to_string()
+    }) {
+        return Err(Refusal::InvalidEvidence);
+    }
+    Ok(retained)
 }
 
 /// One state transition under a caller-owned gate. The owned window keeps an
@@ -52,6 +73,7 @@ async fn advance<P: CollectorPort>(
     port: &P,
     checkpoint: &Checkpoint,
     hold: std::sync::Arc<P::Hold>,
+    retained: Option<CollectionReference>,
 ) -> Result<Step> {
     if !checkpoint.valid() {
         return Err(Refusal::InvalidEvidence);
@@ -59,34 +81,62 @@ async fn advance<P: CollectorPort>(
     if hold.binding() != checkpoint.binding {
         return Err(Refusal::StaleAuthority);
     }
+    if let Some(reference) = retained {
+        if checkpoint.has_work() {
+            return Err(Refusal::Conflict);
+        }
+        port.recover_reference(checkpoint, reference).await?;
+        return Ok(Step::ReferenceRecovered);
+    }
     if let Some(pending) = &checkpoint.pending {
-        port.verify_retained(&pending.intent).await?;
+        port.verify_prepared(&pending.intent).await?;
         if pending.intent.decision != Decision::SettledDeleted {
             port.settle(checkpoint).await?;
             return Ok(Step::GroupSettled);
         }
-        let Some(phase) = pending.next_phase() else {
-            port.settle(checkpoint).await?;
-            return Ok(Step::GroupSettled);
-        };
-        match port.reconcile(hold.clone(), &pending.intent, phase).await? {
-            Reconciled::OriginalReceipt(receipt) => {
-                if !receipt.matches(&pending.intent, phase)
-                    || (phase == Phase::Acknowledged
-                        && pending.receipts[1].after_revision != receipt.after_revision)
-                {
+        let reference = pending.reference.as_ref().ok_or(Refusal::InvalidEvidence)?;
+        port.read_collection(&pending.intent, reference).await?;
+        match port
+            .collection_completion(&pending.intent, reference)
+            .await?
+        {
+            Some(receipt) => {
+                if !receipt.matches(&pending.intent) {
                     return Err(Refusal::InvalidEvidence);
                 }
-                port.record_receipt(checkpoint, *receipt).await?;
-                Ok(Step::ReceiptRecorded(phase))
+                if let Some(recorded) = &pending.completion {
+                    if *recorded != receipt {
+                        return Err(Refusal::InvalidEvidence);
+                    }
+                    port.settle(checkpoint).await?;
+                    Ok(Step::GroupSettled)
+                } else {
+                    port.record_receipt(checkpoint, receipt).await?;
+                    Ok(Step::ReceiptRecorded)
+                }
             }
-            Reconciled::ResumeOriginal => {
-                // A verifies whether this is first execution, a partly completed
-                // transition or replay. B never infers success from changed counts.
-                port.collect_group(hold, &pending.intent).await?;
+            None => {
+                if pending.completion.is_some() {
+                    return Err(Refusal::UnknownOutcome);
+                }
+                let reply = port
+                    .complete_collection_held(hold, &pending.intent, reference)
+                    .await?;
+                if !reply.matches(&pending.intent) {
+                    return Err(Refusal::InvalidEvidence);
+                }
+                // The call's reply is not B's durable receipt: read the cold
+                // archive on the next step before recording or advancing.
                 Ok(Step::OriginalSubmitted)
             }
         }
+    } else if let Some(staged) = &checkpoint.staged {
+        port.verify_prepared(&staged.intent).await?;
+        if let Some(reference) = &staged.reference {
+            port.read_collection(&staged.intent, reference).await?;
+        }
+        port.select(checkpoint).await?;
+        Ok(Step::EvidenceSelected)
     } else {
         if hold.source_revision() != checkpoint.source_revision {
             if hold.source_revision() < checkpoint.source_revision {
@@ -120,19 +170,16 @@ async fn advance<P: CollectorPort>(
                     Ok(Step::PageAdvanced)
                 }
                 Some(group) => {
-                    let intent = port
-                        .retain_evidence(hold.clone(), checkpoint, *group)
-                        .await?;
-                    if !intent.valid()
-                        || intent.group != *group
-                        || intent.binding != checkpoint.binding
-                        || intent.before_revision != checkpoint.source_revision
+                    let staged = port.observe_and_retain(hold, checkpoint, *group).await?;
+                    if !staged.valid()
+                        || staged.intent.group != *group
+                        || staged.intent.binding != checkpoint.binding
+                        || staged.intent.before_revision != checkpoint.source_revision
                     {
                         return Err(Refusal::InvalidEvidence);
                     }
-                    port.verify_retained(&intent).await?;
-                    port.select(checkpoint, intent).await?;
-                    Ok(Step::EvidenceSelected)
+                    port.record_reference(checkpoint, staged).await?;
+                    Ok(Step::ReferenceRecorded)
                 }
             },
         }

@@ -1,5 +1,7 @@
 //! Test model only. This exercises coordinator ordering, not V1/V2 storage.
 use super::*;
+#[path = "model_archive.rs"]
+mod archive;
 use std::{
     collections::BTreeMap,
     sync::{
@@ -11,6 +13,10 @@ use std::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Call {
     Evidence,
+    Retain,
+    Reference,
+    Source,
+    Cold,
     Select,
     Dispatch,
     Record,
@@ -32,7 +38,13 @@ pub struct State {
     pub source_revision: u64,
     pub groups: BTreeMap<Digest, Decision>,
     pub evidence: BTreeMap<Operation, Intent>,
-    pub cold: BTreeMap<Operation, Vec<Receipt>>,
+    pub cold: BTreeMap<Operation, Receipt>,
+    pub references: BTreeMap<Operation, CollectionReference>,
+    pub retained_pages: BTreeMap<Operation, Page>,
+    pub retained_originals: BTreeMap<Operation, [Vec<u8>; 3]>,
+    pub archive_pending: Option<Operation>,
+    pub source_committed: Option<Receipt>,
+    pub retentions: usize,
     pub staged: Option<Intent>,
     pub next_operation: u128,
     pub mutations: usize,
@@ -77,6 +89,7 @@ impl Model {
     pub fn new(format: SourceFormat, groups: &[(u64, Decision)]) -> Self {
         let binding = Binding {
             sha256: digest(9000),
+            archive_id: 42u128.to_be_bytes(),
             epoch: 1,
             format,
         };
@@ -88,6 +101,7 @@ impl Model {
             after_group: None,
             cursor: None,
             page: None,
+            staged: None,
             pending: None,
             complete: false,
         };
@@ -103,6 +117,12 @@ impl Model {
                 groups: groups.iter().map(|(k, d)| (digest(*k), *d)).collect(),
                 evidence: BTreeMap::new(),
                 cold: BTreeMap::new(),
+                references: BTreeMap::new(),
+                retained_pages: BTreeMap::new(),
+                retained_originals: BTreeMap::new(),
+                archive_pending: None,
+                source_committed: None,
+                retentions: 0,
                 staged: None,
                 next_operation: 1,
                 mutations: 0,
@@ -126,7 +146,7 @@ impl Model {
 
     pub fn add_cycle(&self, key: u64) {
         let mut s = self.state.lock().unwrap();
-        assert!(s.checkpoint.pending.is_none() && s.checkpoint.page.is_none());
+        assert!(!s.checkpoint.has_work() && s.checkpoint.page.is_none());
         s.groups.insert(digest(key), Decision::SettledDeleted);
         s.source_revision += 1;
     }
@@ -160,6 +180,16 @@ impl CollectorPort for Model {
     async fn load(&self) -> Result<Checkpoint> {
         self.loads.fetch_add(1, Ordering::SeqCst);
         Ok(self.state.lock().unwrap().checkpoint.clone())
+    }
+    async fn pending_collection(&self, binding: &Binding) -> Result<Option<CollectionReference>> {
+        self.archive_pending(binding)
+    }
+    async fn recover_reference(
+        &self,
+        expected: &Checkpoint,
+        reference: CollectionReference,
+    ) -> Result<()> {
+        self.recover_retained(expected, reference)
     }
     async fn acquire(&self, expected: &Checkpoint) -> Result<Arc<ModelHold>> {
         let s = self.state.lock().unwrap();
@@ -213,131 +243,116 @@ impl CollectorPort for Model {
         s.checkpoint.revision += 1;
         Ok(())
     }
-    async fn retain_evidence(
+    async fn observe_and_retain(
         &self,
         _: Arc<ModelHold>,
         expected: &Checkpoint,
         group: Digest,
-    ) -> Result<Intent> {
-        let mut s = self.state.lock().unwrap();
-        cas(&s, expected)?;
-        if let Some(error) = s.unavailable {
-            return Err(error);
-        }
-        let intent = if let Some(intent) = &s.staged {
-            if intent.group != group
-                || intent.binding != expected.binding
-                || intent.before_revision != expected.source_revision
-            {
+    ) -> Result<Staged> {
+        let (intent, originals) = {
+            let mut s = self.state.lock().unwrap();
+            cas(&s, expected)?;
+            if expected.has_work() {
                 return Err(Refusal::Conflict);
             }
-            intent.clone()
-        } else {
             let operation = s.next_operation.to_be_bytes();
             s.next_operation += 1;
-            let intent = Intent {
-                operation,
-                binding: expected.binding,
+            archive::prepared(
+                expected,
                 group,
-                before_revision: expected.source_revision,
-                plan_sha256: digest(3),
-                source_sha256: digest(4),
-                observation_sha256: digest(5),
-                evidence_sha256: digest(6),
-                decision: *s.groups.get(&group).ok_or(Refusal::InvalidEvidence)?,
-            };
-            s.evidence.insert(operation, intent.clone());
-            s.staged = Some(intent.clone());
-            intent
+                operation,
+                *s.groups.get(&group).ok_or(Refusal::InvalidEvidence)?,
+            )
         };
-        fail_after(&mut s, Call::Evidence)?;
-        Ok(intent)
+        let reference = if intent.decision == Decision::SettledDeleted {
+            Some(self.archive_retain(
+                &intent,
+                originals,
+                expected.page.clone().ok_or(Refusal::InvalidEvidence)?,
+            )?)
+        } else {
+            None
+        };
+        fail_after(&mut self.state.lock().unwrap(), Call::Evidence)?;
+        Ok(Staged { intent, reference })
     }
-    async fn select(&self, expected: &Checkpoint, intent: Intent) -> Result<()> {
-        let mut s = self.state.lock().unwrap();
-        cas(&s, expected)?;
-        if s.evidence.get(&intent.operation) != Some(&intent) {
-            return Err(Refusal::InvalidEvidence);
-        }
-        s.selected.push(intent.operation);
-        s.checkpoint.pending = Some(Pending {
-            intent,
-            receipts: vec![],
-        });
-        s.checkpoint.revision += 1;
-        fail_after(&mut s, Call::Select)
-    }
-    async fn verify_retained(&self, intent: &Intent) -> Result<()> {
+    async fn verify_prepared(&self, intent: &Intent) -> Result<()> {
         let s = self.state.lock().unwrap();
-        if let Some(error) = s.unavailable {
-            return Err(error);
-        }
-        if s.evidence.get(&intent.operation) != Some(intent) {
+        if s.staged.as_ref() != Some(intent) {
             return Err(Refusal::InvalidEvidence);
+        }
+        if intent.decision == Decision::SettledDeleted {
+            archive::read(&s, intent, &intent.reference())?;
         }
         Ok(())
     }
-    async fn reconcile(
-        &self,
-        _: Arc<ModelHold>,
-        intent: &Intent,
-        phase: Phase,
-    ) -> Result<Reconciled> {
-        let s = self.state.lock().unwrap();
-        if let Some(error) = s.unavailable {
-            return Err(error);
+    async fn record_reference(&self, expected: &Checkpoint, staged: Staged) -> Result<()> {
+        let mut s = self.state.lock().unwrap();
+        cas(&s, expected)?;
+        if !staged.valid() || expected.has_work() {
+            return Err(Refusal::InvalidEvidence);
         }
-        if let Some(receipt) = s
-            .cold
-            .get(&intent.operation)
-            .and_then(|r| r.iter().find(|r| r.phase == phase))
-        {
-            let mut receipt = receipt.clone();
-            if s.corrupt_receipt {
-                receipt.intent.plan_sha256 = digest(9999);
-            }
-            return Ok(Reconciled::OriginalReceipt(Box::new(receipt)));
+        if let Some(reference) = &staged.reference {
+            archive::read(&s, &staged.intent, reference)?;
         }
-        if s.source_revision != intent.before_revision {
-            return Err(Refusal::UnknownOutcome);
-        }
-        Ok(Reconciled::ResumeOriginal)
+        s.staged = Some(staged.intent.clone());
+        s.checkpoint.staged = Some(staged);
+        s.checkpoint.revision += 1;
+        fail_after(&mut s, Call::Reference)
     }
-    async fn collect_group(&self, hold: Arc<ModelHold>, intent: &Intent) -> Result<()> {
+    async fn select(&self, expected: &Checkpoint) -> Result<()> {
+        let mut s = self.state.lock().unwrap();
+        cas(&s, expected)?;
+        let staged = s
+            .checkpoint
+            .staged
+            .as_ref()
+            .ok_or(Refusal::InvalidEvidence)?;
+        let pending = Pending {
+            intent: staged.intent.clone(),
+            reference: staged.reference.clone(),
+            completion: None,
+        };
+        if !pending.valid() {
+            return Err(Refusal::InvalidEvidence);
+        }
+        s.selected.push(pending.intent.operation);
+        s.checkpoint.staged = None;
+        s.checkpoint.pending = Some(pending);
+        s.checkpoint.revision += 1;
+        fail_after(&mut s, Call::Select)
+    }
+    async fn read_collection(
+        &self,
+        intent: &Intent,
+        reference: &CollectionReference,
+    ) -> Result<()> {
+        archive::read(&self.state.lock().unwrap(), intent, reference)
+    }
+    async fn collection_completion(
+        &self,
+        intent: &Intent,
+        reference: &CollectionReference,
+    ) -> Result<Option<Receipt>> {
+        let s = self.state.lock().unwrap();
+        archive::read(&s, intent, reference)?;
+        let mut receipt = s.cold.get(&intent.operation).cloned();
+        if s.corrupt_receipt {
+            if let Some(r) = &mut receipt {
+                r.plan_sha256 = digest(9999);
+            }
+        }
+        Ok(receipt)
+    }
+    async fn complete_collection_held(
+        &self,
+        hold: Arc<ModelHold>,
+        intent: &Intent,
+        reference: &CollectionReference,
+    ) -> Result<Receipt> {
+        let receipt = self.archive_complete(intent, reference)?;
         let suspend = {
             let mut s = self.state.lock().unwrap();
-            if let Some(error) = s.unavailable {
-                return Err(error);
-            }
-            if s.cold.contains_key(&intent.operation) {
-                return Err(Refusal::InvalidEvidence);
-            }
-            if s.source_revision != intent.before_revision {
-                return Err(Refusal::StaleCursor);
-            }
-            if s.groups.remove(&intent.group) != Some(Decision::SettledDeleted) {
-                return Err(Refusal::InvalidEvidence);
-            }
-            s.source_revision += 1;
-            s.mutations += 1;
-            // Model counts only; the real adapters must measure actual stores.
-            s.retired_operations += 6;
-            s.retired_authority += 3;
-            let receipts = [Phase::Prepared, Phase::SourceCommitted, Phase::Acknowledged]
-                .into_iter()
-                .enumerate()
-                .map(|(i, phase)| Receipt {
-                    intent: intent.clone(),
-                    phase,
-                    after_revision: if i == 0 {
-                        intent.before_revision
-                    } else {
-                        s.source_revision
-                    },
-                    sha256: digest(100 + i as u64),
-                })
-                .collect();
-            s.cold.insert(intent.operation, receipts);
             fail_after(&mut s, Call::Dispatch)?;
             if s.suspend_dispatch {
                 s.in_flight = Some(hold);
@@ -347,17 +362,16 @@ impl CollectorPort for Model {
         if suspend {
             self.resume.notified().await;
         }
-        Ok(())
+        Ok(receipt)
     }
     async fn record_receipt(&self, expected: &Checkpoint, receipt: Receipt) -> Result<()> {
         let mut s = self.state.lock().unwrap();
         cas(&s, expected)?;
-        s.checkpoint
-            .pending
-            .as_mut()
-            .unwrap()
-            .receipts
-            .push(receipt);
+        let pending = s.checkpoint.pending.as_mut().unwrap();
+        if !receipt.matches(&pending.intent) {
+            return Err(Refusal::InvalidEvidence);
+        }
+        pending.completion = Some(receipt);
         s.checkpoint.revision += 1;
         fail_after(&mut s, Call::Record)
     }
@@ -367,8 +381,9 @@ impl CollectorPort for Model {
         let pending = s.checkpoint.pending.take().unwrap();
         s.checkpoint.after_group = Some(pending.intent.group);
         if pending.intent.decision == Decision::SettledDeleted {
-            assert_eq!(pending.receipts.len(), 3);
-            s.checkpoint.source_revision = pending.receipts[2].after_revision;
+            let receipt = pending.completion.as_ref().unwrap();
+            assert_eq!(s.cold.get(&pending.intent.operation), Some(receipt));
+            s.checkpoint.source_revision = receipt.after_revision;
             s.checkpoint.page = None;
             s.checkpoint.cursor = None;
         } else {
@@ -396,7 +411,7 @@ impl CollectorPort for Model {
     async fn refresh_revision(&self, expected: &Checkpoint, revision: u64) -> Result<()> {
         let mut s = self.state.lock().unwrap();
         cas(&s, expected)?;
-        assert!(s.checkpoint.pending.is_none());
+        assert!(!s.checkpoint.has_work());
         if s.checkpoint.complete {
             s.checkpoint.after_group = None;
         }

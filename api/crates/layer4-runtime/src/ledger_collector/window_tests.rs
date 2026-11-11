@@ -121,8 +121,8 @@ async fn takeover_does_not_let_old_window_adopt_new_worker_fence() {
             .pending
             .as_ref()
             .unwrap()
-            .receipts
-            .is_empty());
+            .completion
+            .is_none());
         assert_eq!(state.mutations, 1);
     }
     assert_eq!(
@@ -138,7 +138,7 @@ async fn takeover_does_not_let_old_window_adopt_new_worker_fence() {
 async fn step_budget_yields_without_discarding_selected_work() {
     let model = held_model(SourceFormat::V2);
     let budget = WindowBudget {
-        max_steps: 2,
+        max_steps: 3,
         ..WindowBudget::default()
     };
     assert_eq!(
