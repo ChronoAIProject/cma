@@ -184,3 +184,45 @@ async fn current_provider_generation_keeps_source_user_submission_and_replay() {
     assert_eq!(replay.status(), StatusCode::OK);
     assert_eq!(replay.headers()["x-cma-response-id"], response_id);
 }
+
+#[tokio::test]
+async fn sender_context_errors_match_the_shared_public_contract() {
+    let cases: Vec<serde_json::Value> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../cmaeg/tests/fixtures/provider_sender_refusals.json"
+    )))
+    .unwrap();
+    assert_eq!(cases.len(), 3);
+    for case in cases {
+        let error = match case["body"]["error"]["code"].as_str().unwrap() {
+            "verified_sender_context_invalid" => BindingRouteError::SenderInvalid,
+            "verified_sender_context_unsupported" => BindingRouteError::SenderUnsupported,
+            "verified_sender_context_unavailable" => BindingRouteError::SenderUnavailable,
+            _ => panic!("unknown contract case"),
+        };
+        let response = super::routing::error(error);
+        assert_eq!(
+            u64::from(response.status().as_u16()),
+            case["status"].as_u64().unwrap()
+        );
+        assert_eq!(
+            response.headers()["content-type"].to_str().unwrap(),
+            case["content_type"].as_str().unwrap()
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("retry-after")
+                .map(|v| v.to_str().unwrap()),
+            case["retry_after"].as_str()
+        );
+        assert!(!response.headers().contains_key("x-cma-response-id"));
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            case["body"]
+        );
+    }
+}
