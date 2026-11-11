@@ -2,11 +2,11 @@ use super::*;
 use std::{io::Write, os::unix::fs::OpenOptionsExt};
 
 #[tokio::test]
-async fn file_completion_requires_the_latest_absent_authority_exact_completed_operation() {
+async fn file_completion_requires_completed_removal_before_retiring_absent_authority() {
     let files = Files::new();
     files.add("uncertain-remove", true);
     let newer = Operation::remove_agent_home(&AgentHomeRemoveRequest::new(
-        "agent:uncertain-remove:home:remove:v2",
+        "agent:uncertain-remove:home:remove:v1",
         AgentSlot::new("uncertain-remove"),
     ));
     let record = Authority::new(&files.fixture.config, 2, &newer);
@@ -18,6 +18,29 @@ async fn file_completion_requires_the_latest_absent_authority_exact_completed_op
         .unwrap();
     file.write_all(&serde_json::to_vec(&record).unwrap())
         .unwrap();
+    file.sync_all().unwrap();
+    // Authority is admitted before execution. A completed create does not prove
+    // the absent authority's removal completed when that journal is missing.
+    let journal_root = files.fixture.config.state_root.join("runtime-mutations");
+    for entry in std::fs::read_dir(&journal_root).unwrap() {
+        std::fs::remove_file(entry.unwrap().path()).unwrap();
+    }
+    let cycle = crate::mutation_ledger::lifecycle_tests::lifecycle(
+        &files.fixture.config,
+        "uncertain-remove",
+    );
+    let (create, receipt) = &cycle[1];
+    let journal = Journal::started(&files.fixture.config, create)
+        .unwrap()
+        .completed(receipt)
+        .unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(journal.inventory_name(&files.fixture.config))
+        .unwrap();
+    file.write_all(&journal.encode().unwrap()).unwrap();
     file.sync_all().unwrap();
     let archive = files.open(true).await;
     let revision = archive.observe_file_collection().await.unwrap();
