@@ -2,10 +2,10 @@ use super::*;
 
 fn request() -> CollectionRequest {
     serde_json::from_value(serde_json::json!({
-        "format":COLLECTION_FORMAT,"operation_id":uuid::Uuid::new_v4().to_string(),
+        "format":COLLECTION_FORMAT,"operation_id":uuid::Uuid::from_u128(2).to_string(),
         "binding":{"format":"runtime-ledger-binding-v1","sandbox_id":"fixture-sandbox",
-            "home_identity":"a".repeat(43),"generation":1,"boot_id":"fixture-boot",
-            "roots_sha256":"b".repeat(64),"source_format":"v1","archive_id":"fixture-archive",
+            "home_identity":"a".repeat(43),"generation":1,"boot_id":"b".repeat(32),
+            "roots_sha256":"b".repeat(64),"source_format":"v1","archive_id":uuid::Uuid::from_u128(1).to_string(),
             "maintenance_id":"fixture-maintenance","maintenance_epoch":1,"sandbox_revision":1,
             "candidate_sha256":"c".repeat(64),"recovery_sha256":"d".repeat(64),
             "exclusion_receipt_sha256":"e".repeat(64)},
@@ -87,7 +87,7 @@ fn observation(request: &CollectionRequest) -> CollectionObservation {
     let evidence = LedgerGroupEvidenceV1 {
         format: "runtime-ledger-group-evidence-v1".into(),
         request_sha256: request.fingerprint().unwrap(),
-        binding_sha256: binding_hash(&request.binding),
+        binding_sha256: request.binding.binding_sha256().unwrap(),
         group_key: request.groups[0].key(),
         sandbox_revision: request.binding.sandbox_revision,
         resource_revisions: vec![LedgerResourceRevisionV1 {
@@ -150,4 +150,66 @@ fn collection_authority_requires_original_bytes_complete_evidence_and_exact_bind
     empty.groups[0].observation_sha256 = hash.clone();
     empty.groups[0].evidence_reference = format!("sha256:{hash}");
     assert!(!empty.validate_for(&request));
+}
+
+#[test]
+fn collection_uses_the_shared_binding_identity_for_both_source_formats() {
+    use crate::runtime_ledger_maintenance::LedgerSourceFormatV1;
+    for format in [LedgerSourceFormatV1::V1, LedgerSourceFormatV1::V2] {
+        let mut request = request();
+        request.binding.source_format = format;
+        assert_eq!(request.binding.validate(), Ok(()));
+        let observation = observation(&request);
+        assert!(observation.validate_for(&request));
+        let evidence: LedgerGroupEvidenceV1 =
+            serde_json::from_slice(&observation.evidence[0]).unwrap();
+        assert_eq!(
+            evidence.binding_sha256,
+            request.binding.binding_sha256().unwrap()
+        );
+        let mut other = request.clone();
+        other.binding.source_format = match format {
+            LedgerSourceFormatV1::V1 => LedgerSourceFormatV1::V2,
+            LedgerSourceFormatV1::V2 => LedgerSourceFormatV1::V1,
+        };
+        assert_ne!(request.fingerprint(), other.fingerprint());
+        assert!(!observation.validate_for(&other));
+    }
+}
+
+#[test]
+fn collection_entry_points_reject_invalid_in_process_binding_mutations() {
+    let accepted = request();
+    let evidence = observation(&accepted);
+    for case in 0..9 {
+        let mut invalid = accepted.clone();
+        match case {
+            0 => invalid.binding.boot_id = "fixture-boot".into(),
+            1 => invalid.binding.boot_id = "B".repeat(32),
+            2 => invalid.binding.archive_id = "fixture-archive".into(),
+            3 => invalid.binding.archive_id = uuid::Uuid::nil().to_string(),
+            4 => invalid.binding.archive_id = uuid::Uuid::from_u128(1).simple().to_string(),
+            5 => invalid.binding.sandbox_id.push(' '),
+            6 => invalid.binding.maintenance_id.insert(0, ' '),
+            7 => invalid.binding.format = "runtime-ledger-binding-v2".into(),
+            _ => invalid.binding.roots_sha256 = "A".repeat(64),
+        }
+        assert!(invalid.binding.validate().is_err(), "case {case}");
+        assert!(!invalid.validate(), "case {case}");
+        assert!(invalid.fingerprint().is_none(), "case {case}");
+        assert!(!evidence.validate_for(&invalid), "case {case}");
+        let page = LedgerCandidatePageV1 {
+            format: "runtime-ledger-candidates-v1".into(),
+            binding: invalid.binding.clone(),
+            active_revision: 1,
+            cursor: None,
+            next_cursor: None,
+            groups: invalid.groups,
+            complete: true,
+        };
+        assert!(!page.validate(), "case {case}");
+        let mut invalid_authority = evidence.clone();
+        invalid_authority.groups[0].binding = invalid.binding;
+        assert!(!invalid_authority.validate_for(&accepted), "case {case}");
+    }
 }
