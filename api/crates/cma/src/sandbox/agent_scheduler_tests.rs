@@ -28,6 +28,7 @@ struct Probe {
     fail_poll: AtomicBool,
     block_poll: AtomicBool,
     block_reconcile: AtomicBool,
+    fail_reconcile: AtomicBool,
     poll_release: Mutex<Option<Arc<Notify>>>,
 }
 
@@ -55,6 +56,8 @@ impl Probe {
             concurrency,
             drain_timeout: Duration::from_secs(5),
             admitted: Arc::new(Notify::new()),
+            parent_ready: Arc::new(Notify::new()),
+            event_driven_reconciliation: false,
         }
     }
 }
@@ -98,6 +101,11 @@ impl AgentScheduleWork for Probe {
         self.reconciles.fetch_add(1, Ordering::SeqCst);
         if self.block_reconcile.load(Ordering::SeqCst) {
             std::future::pending::<()>().await;
+        }
+        if self.fail_reconcile.swap(false, Ordering::SeqCst) {
+            return Err(SandboxStoreError::Unavailable(
+                "probe reconciliation failed".into(),
+            ));
         }
         Ok(0)
     }
