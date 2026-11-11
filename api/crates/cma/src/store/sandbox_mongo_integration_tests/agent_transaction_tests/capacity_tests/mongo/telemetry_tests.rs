@@ -100,6 +100,15 @@ async fn complete_scan_callers_distinguish_worker_settlement_proof_and_public_pr
         assert_eq!(store.agent_log_prefix(&agent.id, 2).await.unwrap().len(), 2);
         assert_eq!(
             &snapshot(ScanCaller::PublicWindowPrefix, true)[..2],
+            &[0, 0],
+            "prepared bounded windows are not complete scans"
+        );
+        // Disable the local cohort while retaining metadata to exercise the
+        // complete public fallback and its failure attribution separately.
+        let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+        assert_eq!(store.agent_log_prefix(&agent.id, 2).await.unwrap().len(), 2);
+        assert_eq!(
+            &snapshot(ScanCaller::PublicWindowPrefix, true)[..2],
             &[1, 10_002]
         );
         store
