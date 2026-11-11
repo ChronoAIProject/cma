@@ -9,9 +9,10 @@ async fn requests(
     store: &MongoSandboxStore,
     source: &layer2_core::sandbox::ledger_maintenance_plan::LedgerMaintenanceSnapshotV1,
 ) -> (AgentAdmission, AgentAdmission) {
-    let Request::Agent(mut automatic) = request(source, true) else {
+    let Request::Agent(automatic) = request(source, true) else {
         unreachable!()
     };
+    let mut automatic = *automatic;
     automatic.profile.id = AgentProfileId::generate();
     let mut workspace = source.workspaces[0].clone();
     workspace.profile.content.agent_profiles = vec![AgentProfileRef::new(

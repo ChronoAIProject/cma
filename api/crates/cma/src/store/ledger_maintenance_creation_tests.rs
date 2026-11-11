@@ -41,9 +41,11 @@ async fn historical_unbound_agent_creation_replays_exactly_without_writes_under_
     let (client, name, store) = database().await;
     let (policy, mut input) = fixture(&store).await;
     let request = request(&input.accepted.plan().source, true);
-    let original = match create(&store, &request).await.unwrap() {
-        Outcome::Agent(AgentAdmissionResult::Created(creation)) => creation,
-        _ => panic!("fixture Agent was not newly admitted"),
+    let Outcome::Agent(original) = create(&store, &request).await.unwrap() else {
+        panic!("expected an Agent admission result")
+    };
+    let AgentAdmissionResult::Created(original) = *original else {
+        panic!("fixture Agent was not newly admitted")
     };
     refresh(&store, &mut input).await;
     store.admit_pre_exclusion(policy, input).await.unwrap();
@@ -51,7 +53,7 @@ async fn historical_unbound_agent_creation_replays_exactly_without_writes_under_
     let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
     assert_eq!(
         create(&reopened, &request).await.unwrap(),
-        Outcome::Agent(AgentAdmissionResult::Existing(original))
+        Outcome::Agent(Box::new(AgentAdmissionResult::Existing(original)))
     );
     assert_eq!(all_rows(&store).await, before);
     client.database(&name).drop().await.unwrap();

@@ -7,14 +7,14 @@ use layer2_core::sandbox::{AgentOrigin, WorkspaceStatus, WorkspaceWorkState, Wor
 
 #[derive(Clone)]
 pub(super) enum Request {
-    Agent(AgentAdmission),
-    Workspace(WorkspaceAdmission),
+    Agent(Box<AgentAdmission>),
+    Workspace(Box<WorkspaceAdmission>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Outcome {
-    Agent(AgentAdmissionResult),
-    Workspace(WorkspaceAdmissionResult),
+    Agent(Box<AgentAdmissionResult>),
+    Workspace(Box<WorkspaceAdmissionResult>),
 }
 
 pub(super) fn request(
@@ -23,7 +23,7 @@ pub(super) fn request(
 ) -> Request {
     if agent {
         let original = &source.agents[0];
-        Request::Agent(AgentAdmission {
+        Request::Agent(Box::new(AgentAdmission {
             binding: None,
             created_by: None,
             owner: original.owner.clone(),
@@ -37,7 +37,7 @@ pub(super) fn request(
             origin: AgentOrigin::Manual,
             creation_key: "maintenance-new-agent".into(),
             event_at: NOW.into(),
-        })
+        }))
     } else {
         let mut workspace = source.workspaces[0].clone();
         workspace.id = layer2_core::WorkspaceId::generate();
@@ -53,12 +53,12 @@ pub(super) fn request(
         workspace.ready_at = None;
         workspace.next_worktree_number = 1;
         workspace.revision = 1;
-        Request::Workspace(WorkspaceAdmission {
+        Request::Workspace(Box::new(WorkspaceAdmission {
             binding: None,
             workspace,
             kind: WorkspaceAdmissionKind::Manual,
             event_at: NOW.into(),
-        })
+        }))
     }
 }
 
@@ -67,18 +67,29 @@ pub(super) async fn create(
     request: &Request,
 ) -> Result<Outcome, SandboxStoreError> {
     match request {
-        Request::Agent(request) => store.admit_agent(request.clone()).await.map(Outcome::Agent),
-        Request::Workspace(request) => store
-            .admit_workspace(request.clone())
+        Request::Agent(request) => store
+            .admit_agent(request.as_ref().clone())
             .await
+            .map(Box::new)
+            .map(Outcome::Agent),
+        Request::Workspace(request) => store
+            .admit_workspace(request.as_ref().clone())
+            .await
+            .map(Box::new)
             .map(Outcome::Workspace),
     }
 }
 
 pub(super) fn assert_created(result: &Outcome) {
-    assert!(matches!(
-        result,
-        Outcome::Agent(AgentAdmissionResult::Created(_))
-            | Outcome::Workspace(WorkspaceAdmissionResult::Created(_))
-    ));
+    match result {
+        Outcome::Agent(value) => {
+            assert!(matches!(value.as_ref(), AgentAdmissionResult::Created(_)))
+        }
+        Outcome::Workspace(value) => {
+            assert!(matches!(
+                value.as_ref(),
+                WorkspaceAdmissionResult::Created(_)
+            ))
+        }
+    }
 }
