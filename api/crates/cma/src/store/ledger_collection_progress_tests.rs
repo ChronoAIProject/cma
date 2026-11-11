@@ -191,15 +191,21 @@ async fn collector_retention_and_unreleased_home_block_actual_purge() {
     let (client, name) = database("collector_purge_hold").await;
     for case in 0..4 {
         let db = format!("{name}_{case}");
-        let store = MongoSandboxStore::open(&client, &db).await.unwrap();
-        let mut parent = retired_sandbox("sbx_collector_retained");
+        let parent = if case == 0 {
+            hierarchy().0
+        } else {
+            retired_sandbox("sbx_collector_retained")
+        };
+        parent.validate().unwrap();
         if case == 0 {
-            parent.lifecycle.home = hierarchy().0.lifecycle.home;
+            assert!(!parent.lifecycle.home.as_ref().unwrap().released);
+            let mut impossible = parent.clone();
+            impossible.status = SandboxStatus::Retired;
+            assert!(impossible.validate().is_err());
+        } else {
+            assert_eq!(parent.status, SandboxStatus::Retired);
         }
-        // Bind the synthetic retained home to this exact parent too.
-        if let Some(home) = parent.lifecycle.home.as_mut() {
-            parent.id = SandboxId(home.request.sandbox_id.clone());
-        }
+        let store = MongoSandboxStore::open(&client, &db).await.unwrap();
         store.create_sandbox(parent.clone()).await.unwrap();
         if case == 1 {
             store
@@ -221,6 +227,16 @@ async fn collector_retention_and_unreleased_home_block_actual_purge() {
                 .await
                 .unwrap();
         }
+        let persisted = store
+            .sandboxes
+            .find_one(doc! {"_id":parent.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap();
+        if case == 0 {
+            assert!(!persisted.contains_key("ledger_collection_v1"));
+        }
+        assert!(crate::store::ledger_collection_progress::retention_required(&persisted).unwrap());
         assert!(matches!(
             store.purge_sandbox(&parent.id, parent.revision, NOW).await,
             Err(SandboxStoreError::Conflict)
