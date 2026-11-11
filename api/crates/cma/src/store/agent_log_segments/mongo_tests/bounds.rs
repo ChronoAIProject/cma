@@ -23,6 +23,7 @@ async fn fixed_sealed_page_has_fixed_source_bytes_and_bounded_queries_as_history
         let store = MongoSandboxStore::open(&client, &name).await.unwrap();
         let (agent, entries) = segmented(&store, closed).await;
         commands.lock().unwrap().clear();
+        let started = std::time::Instant::now();
         let consumed = isolated_test(async {
             let page = store.agent_log_range(&agent.id, 0, 2, 2).await.unwrap();
             assert_eq!(page, entries[..2]);
@@ -36,6 +37,10 @@ async fn fixed_sealed_page_has_fixed_source_bytes_and_bounded_queries_as_history
         );
         assert!(queries.len() <= 10, "{closed}: {queries:?}");
         assert_eq!(&consumed[..3], &[1, 0, 2]);
+        eprintln!(
+            "sealed_page_bounds segments={closed} source_rows={} source_bytes={} read_commands={} elapsed_us={}",
+            consumed[2], consumed[3], queries.len(), started.elapsed().as_micros(),
+        );
         if let Some(previous) = baseline {
             assert_eq!(consumed, previous);
         } else {
