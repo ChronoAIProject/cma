@@ -1,6 +1,16 @@
 //! Exact retained bytes and indexed permanent replay refusal. Active-ledger
 //! deactivation is a separate, ordered step after this archive has committed.
+mod collection;
+mod collection_artifacts;
 pub(crate) mod collection_probe;
+pub(crate) use layer3_adapter::LedgerCollectionArtifactReferenceV1 as CollectionReference;
+mod collection_completion;
+mod collection_receipt;
+mod collection_reference;
+pub(crate) use collection_receipt::CollectionCompletion;
+mod collection_transition;
+pub(crate) use collection_transition::complete_collection_held;
+mod collection_storage_probe;
 mod probe;
 mod probe_sources;
 mod transfer;
@@ -42,6 +52,7 @@ pub(crate) struct Archive {
 pub(crate) enum Version {
     Legacy = 1,
     Indexed = 2,
+    Collection = 3,
 }
 
 /// Only a complete source selection and authoritative settled-deletion proof
@@ -142,8 +153,9 @@ impl Archive {
     pub(crate) async fn require_ready(&self) -> Result<()> {
         self.verify()?;
         require_reserve(&self.path, self.anchor.as_deref())?;
+        let version = self.version;
         self.storage
-            .call(|db| {
+            .call(move |db| {
                 let pending: bool = db
                     .query_row(
                         "SELECT EXISTS(SELECT 1 FROM retired_groups WHERE complete=0)",
@@ -151,7 +163,7 @@ impl Archive {
                         |row| row.get(0),
                     )
                     .map_err(|_| storage_error())?;
-                if pending {
+                if pending || (version == Version::Collection && collection::pending(db)?) {
                     return Err(invalid());
                 }
                 Ok(())
@@ -204,6 +216,9 @@ impl Archive {
         mut read: impl FnMut(u32) -> Result<SourceRecord> + Send + 'static,
     ) -> Result<Receipt> {
         self.verify()?;
+        if self.version == Version::Collection {
+            return Err(invalid());
+        }
         if !record::digest(&proof.key)
             || !record::digest(&proof.source_sha256)
             || !record::digest(&proof.observation_sha256)

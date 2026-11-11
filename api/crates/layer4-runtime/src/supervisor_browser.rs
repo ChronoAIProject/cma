@@ -21,6 +21,7 @@ impl Supervisor {
         }
         self.require_credentialed().await?;
         let _operation = self.operation_gate.lock().await;
+        self.mutations.require_serving().await?;
         if self.held_checkpoint.lock().await.is_some() {
             return Err(RuntimeError::rejected(
                 "browser_control_conflict",
@@ -48,6 +49,7 @@ impl Supervisor {
         }
         self.require_credentialed().await?;
         let _operation = self.operation_gate.lock().await;
+        self.mutations.require_serving().await?;
         if self.held_checkpoint.lock().await.is_some() {
             return Ok(ResponseFrame::Browser(BrowserReceipt {
                 agent_id: request.agent_id,
