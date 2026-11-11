@@ -84,6 +84,7 @@ mod marketplace_query;
 mod marketplace_support;
 mod marketplace_visibility;
 mod message_feedback;
+pub(crate) mod migrations;
 pub mod mongo;
 mod mongo_latency;
 pub(crate) mod mongo_read_telemetry;
