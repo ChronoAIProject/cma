@@ -16,6 +16,8 @@ use super::super::{
     worktrees::read_worktree,
 };
 
+mod batched;
+
 pub(super) enum Target<'a> {
     Sandbox(&'a SandboxId),
     Workspace(&'a WorkspaceId),
@@ -40,6 +42,11 @@ impl From<mongodb::error::Error> for Error {
 }
 
 impl MongoSandboxStore {
+    pub(crate) fn with_sandbox_batched_reads(mut self, enabled: bool) -> Self {
+        self.sandbox_batched_reads = enabled;
+        self
+    }
+
     pub(crate) fn with_sandbox_snapshot_reads(mut self, enabled: bool) -> Self {
         self.sandbox_snapshot_reads = enabled;
         self
@@ -105,6 +112,18 @@ async fn read_in_snapshot(
                 return Ok(Reading::Sandbox(None));
             };
             let sandbox = read_sandbox(&document)?;
+            if snapshot && store.sandbox_batched_reads {
+                if let Some(children) = batched::read(store, id, session).await? {
+                    return Ok(Reading::Sandbox(Some(Box::new(SandboxHierarchyRecord {
+                        sandbox,
+                        workspaces: children.workspaces,
+                        worktrees: children.worktrees,
+                        agents: children.agents,
+                    }))));
+                }
+                // A near-limit BSON document cannot fit an added envelope.
+                // Re-read the unchanged collections at the SAME snapshot time.
+            }
             let workspaces = children(
                 &workspaces,
                 doc! {"sandbox_id":id.as_str()},
