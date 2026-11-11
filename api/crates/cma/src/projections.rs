@@ -97,6 +97,11 @@ impl AgentProjectionServices {
         self
     }
 
+    pub(crate) fn with_skill_upgrades(mut self, enabled: bool) -> Self {
+        self.operations = self.operations.with_skill_upgrades_enabled(enabled);
+        self
+    }
+
     pub(crate) fn with_connections(
         mut self,
         connections: Arc<dyn layer2_core::sandbox::SandboxCredentialPrerequisite>,

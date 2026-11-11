@@ -149,6 +149,7 @@ pub(crate) async fn read(
             lineage.agent,
             &lineage.sandbox,
             state.skill_support.as_deref(),
+            state.agent_operations.skill_upgrades_enabled(),
         )
         .await,
     ))
@@ -157,6 +158,7 @@ async fn view(
     agent: Agent,
     sandbox: &layer2_core::sandbox::Sandbox,
     support: Option<&dyn AgentSkillRuntimeSupport>,
+    upgrades_enabled: bool,
 ) -> AgentSkillsView {
     let idle = layer2_core::sandbox::agent_live_skills::idle(&agent);
     let (can_add, can_upgrade) = layer2_core::sandbox::agent_live_skills::capacity(&agent);
@@ -179,6 +181,11 @@ async fn view(
             view.can_install = false;
             view.unavailable_reason =
                 Some("This Agent has reached its skill installation capacity.".into());
+        } else if !can_add && !upgrades_enabled {
+            view.can_install = false;
+            view.unavailable_reason = Some(
+                "This Agent has reached its skill limit and new upgrades are not enabled.".into(),
+            );
         } else if !can_add
             && !match support {
                 Some(support) => support.upgrade_supported(sandbox).await,
@@ -222,9 +229,6 @@ pub(crate) async fn install(
             let lineage = reads
                 .lineage(&operation_caller, &AgentId(id.clone()))
                 .await?;
-            if !layer2_core::sandbox::agent_live_skills::idle(&lineage.agent) {
-                return Err(InstanceProblem::SkillNotReady);
-            }
             let reference = SkillRef {
                 source: SkillSource::Ornn,
                 id: SkillId(body.id),
@@ -234,6 +238,14 @@ pub(crate) async fn install(
                 &lineage.agent.work,
                 &reference.id,
             );
+            if previous.is_some_and(|old| Some(&old.version) != reference.version.as_ref())
+                && !service.skill_upgrades_enabled()
+            {
+                return Err(InstanceProblem::SkillUpgradeDisabled);
+            }
+            if !layer2_core::sandbox::agent_live_skills::idle(&lineage.agent) {
+                return Err(InstanceProblem::SkillNotReady);
+            }
             if let Some(previous) = previous {
                 if Some(&previous.version) != reference.version.as_ref()
                     && !match &support {
@@ -264,7 +276,15 @@ pub(crate) async fn install(
                 })?;
             Ok((
                 StatusCode::ACCEPTED,
-                Json(view(agent, &lineage.sandbox, support.as_deref()).await),
+                Json(
+                    view(
+                        agent,
+                        &lineage.sandbox,
+                        support.as_deref(),
+                        service.skill_upgrades_enabled(),
+                    )
+                    .await,
+                ),
             )
                 .into_response())
         },
