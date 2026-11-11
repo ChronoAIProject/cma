@@ -21,7 +21,8 @@ async fn configure(bridge: &Bridge, startup: bool) -> Arc<Semaphore> {
 
 #[tokio::test]
 async fn pressure_precedes_cursor_effect_and_acceptance_then_exact_retry_succeeds() {
-    let (opened, mut server, _received) = open_with_json(true, true, true).await;
+    // JSON retention also owns the effect when general shared-output is OFF.
+    let (opened, mut server, _received) = open_with_json(true, false, true).await;
     let pool = configure(&opened.bridge, false).await;
     let blocker = pool
         .clone()
@@ -65,6 +66,7 @@ async fn pressure_precedes_cursor_effect_and_acceptance_then_exact_retry_succeed
     };
     assert_eq!(receipt.source.cursor, 3);
     let update = update.unwrap();
+    assert!(update.is_shared());
     assert!(
         matches!(update.effect(), ConversationUpdate::SignInRequired { code, .. } if code.as_deref() == Some("first"))
     );
@@ -176,10 +178,7 @@ async fn disabled_policy_keeps_legacy_effect_and_malformed_notice_declines() {
         else {
             panic!("effect")
         };
-        assert_eq!(
-            matches!(&*update, ConversationUpdate::RetainedEffect(_)),
-            bounded
-        );
+        assert_eq!(update.is_shared(), bounded);
         let malformed =
             br#"{"id":"bad-sign-in","method":"elicitation/create","params":{"url":false}}"#;
         opened
