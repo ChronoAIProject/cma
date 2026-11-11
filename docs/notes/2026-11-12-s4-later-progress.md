@@ -1,127 +1,141 @@
 # P1-3 later-progress activation caller — 2026-11-12
 
-Part of #1351; shared publication proof supports #1350. S4 owns the service
-activation caller under the lead's latest allocation. S2 owns proof/schema;
-S5 owns original receipt/domain, restart/loss routing and native boundaries.
+Part of #1351; positive publication proof also supports #1350.
+Branch: `tl/cma-log-segments/writer-publication`.
+Qualified executable source: `2144909cede519ed286184a7fffe1af3e645a47b`.
+All required gates passed on that unchanged source. No missing interface or
+ownership decision remains. S2 owns the combined PR, review and merge relay.
 
-## Source and contract
+## Production behavior
 
-Caller code: `87c8e0d48d7cd9ec268942318bd11f317f581d10`.
-Qualification pin: `2dbb5d81c844f090cd3a9ee0e4d995545e59289f` on
-`tl/cma-log-segments/writer-publication`.
+The actual `RecoveryService::activation_authorized` caller verifies the immutable
+original recovery work/receipt, invokes `receipts::require_current_result`, and
+derives `RecoveryActivation::capture_current` in one fresh-authority
+TransactionScope. Later progress uses its current native target and already
+durable allocated fence. The worker captures and compares the complete activation
+again after native IO before acknowledgement. Activation preserves the original
+completion, performs no input replay, and does not allocate a new fence or repeat
+the original claim attachment.
 
-Normally merged S2 proof branch `c4e4b995a`, S5 current activation and actual
-worker/loss tests at `3aaa55395`, and develop `ce72ee311`. The develop raw-output
-flag conflict preserves both independent policies and tests; its imported test
-module was extracted to keep the configuration file below 500 lines. No mixed
-integration branch was imported and no history was rewritten.
+Keyed output advances sequence/head while preserving Agent revision. The consumed
+S5 correction recognizes an unchanged original result only when both revision
+and sequence match. Regression still refuses; every later Completed result needs
+positive current publication proof. Original identity/digest/log checks and native
+confirmation remain mandatory. Fresh accepted-work authorization uses the same
+receipt/proof boundary before issuing its in-process authority capability.
 
-S4 agrees to the positive-publication invariant: `Publication::new` computes a
-canonical full-Agent witness from the publisher's exact next aggregate, distinct
-from the caller's domain result digest. The shared publication transaction writes
-that immutable witness atomically with the aggregate and advancing head, including
-revision-only writes. `current_publication` binds its proof to the certified source,
-full current Agent, database and transaction. The hinted two-row lookup requires
-the newest matching format-2 witness; older or absent evidence grants no authority.
-Audit-only head changes can retain that exact witness without changing its meaning.
-The publication-head index identity is included in the canonical schema checksum.
+S4 explicitly confirmed the shared publication invariant: the publisher binds the
+complete next Agent independently of the domain result and atomically commits
+that witness with the aggregate and advancing head, including revision-only
+writes. Current proof requires the matching full-Agent witness, certified source,
+database and transaction. Its hinted two-row lookup requires the newest matching
+format-2 publication. An audit-only head change may retain that exact witness;
+absence or revision advancement alone grants no authority.
 
-`RecoveryService::activation_authorized` retains fresh authority capture and
-`receipts::read` in one TransactionScope. It requires unchanged original work,
-then calls `receipts::require_current_result` and
-`RecoveryActivation::capture_current`. Current native target/status/turn/fence
-are separate from immutable original work. Later revision alone is insufficient.
-The existing worker recaptures after native IO and compares the whole activation
-before acknowledgement. No input replay, ordinary reconnect fallback or new fence
-is introduced. No missing interface or ownership decision remains for this caller.
+Normally consumed S2 proof `c4e4b995a`, S5 activation/restart `3aaa55395`, S5 receipt
+correction `00426512f`, complete turn fixture `2144909ce`, and develop `3aee1ff68`.
+No mixed integration tip was imported. Develop merges preserve the independent
+retained-context, retained-JSON, raw-output and recovery policies. Imported
+configuration tests move unchanged to child modules; the parent stays 492 lines.
+S5 retains receipt/domain/restart ownership; its changes were consumed normally.
 
-## Actual caller scenarios
+## Executable scenarios
 
-Two new Mongo test functions in `composition/later_progress.rs` exercise:
+Three S4 service Mongo functions in `composition/later_progress.rs` cover:
 
-- Durable completion through the actual accepted worker followed by an injected
-  acknowledgement failure, later keyed publication, store reopen and activation
-  retry. Foreign original requests and stale native fences refuse. A second
-  acknowledgement failure leaves the same durable state; retry finishes activation.
-- Committed and uncommitted Unknown results on the terminal-claim transaction
-  after later progress. Neither outcome permits native IO. A fresh retry proves
-  the original completed work and current publication, then acknowledges once.
+- Actual accepted-worker durable completion followed by acknowledgement failure,
+  later keyed output, store reopen and activation retry. A foreign original
+  request and stale native fence refuse; another acknowledgement failure leaves
+  the same state, and a later retry succeeds.
+- Committed and uncommitted Unknown terminal claims after later output. Neither
+  outcome performs native IO. Reopening/retrying activates the original completion.
+- Exact sequence-only publication evidence: establish successful activation,
+  remove/downgrade/replace the later witness with a foreign digest, assert no
+  additional native IO, restore the witness and establish success again. Selection
+  includes Agent/revision/sequence and differs from the original completion receipt.
 
-Both assert unchanged original carrier/completion publication and no extra
-Agent/publication mutation during activation. The native test API has no input
-method and panics if the original claim attachment is repeated.
+The tests assert unchanged carrier, original completion receipt and publication
+count during activation. The native protocol stub has no input API and panics if
+completed work repeats the original claim attachment.
 
-S5's three normally merged Mongo functions execute the real worker and loss
-handler after keyed output or shared-publisher turn/input/fence progress, refuse
-missing/v1/foreign witnesses, and recapture publication/parent changes during native
-IO. Those tests and S2's current-publication proof tests run in the same gate batch.
-The counted no-input native protocol stub is not production native qualification;
-production Unsupported and default-off admission remain explicit.
+The three consumed S5 worker/loss-handler functions cover keyed output,
+turn/input/fence progress, missing/legacy/foreign witness refusal, and publication
+or parent changes during native IO. The turn fixture publishes its synthetic
+OwnerMessage atomically with TurnStarted and StatusChanged before recovery runs.
+Original-witness equality, stale-target refusal and no-replay assertions remain.
+All six later-progress functions pass in the final actual Mongo batch.
 
-## Gate protocol
+These are store/worker protocol qualifications. Production native confirmation
+remains typed Unsupported, and new admission remains default-off.
 
-Rust 1.96.1, two Cargo jobs, one `api/target`, incremental/debug data disabled.
-Shared slot 1 uses the existing inode 160080032 and a blocking acquisition wait
-of up to 3600 seconds. Available RAM below 10% pauses only this gate process group;
-12% resumes it. The train slot is not used. A preflight attempt found slot 0
-missing; it started no heavy work and did not recreate or modify any lock.
+## Actual gates
 
-Strict CMA uses all targets/features, `--no-deps -- -D warnings`, no allowances.
-Units select capacity recovery in CMA/core, current publication/original receipt,
-configuration and the bounded scheduler. Mongo selects all capacity recovery and
-writer persistence/publication cases, serially on an isolated pinned Mongo8.0.13
-replica set with failpoints and exact owned-container/volume cleanup.
+| Gate on `2144909ce` | Result |
+| --- | --- |
+| Strict CMA Clippy, all targets/features, `-D warnings`, no allowances | Passed; zero diagnostics |
+| Focused CMA/core units | 166 passed, zero failed: 117 CMA + 49 core; 4,027 outside selection |
+| Real Mongo 8.0.13 replica-set contracts | 71 passed, zero failed: 40 writer/publication + 31 capacity recovery; 2,596 outside selection |
+| Workspace formatting and whitespace | Passed |
+| Canonical file-size check | Passed; 6,204 files checked; touched caller/receipt/test files below 500 lines |
+| Configuration coverage | Passed: 143 / 185 / 12 keys for the three checked contracts |
+| Full-history secret scan | Passed on source: 3,908 commits; final documentation-head scan is recorded in the issue handoff |
 
-## First actual qualification and discovered boundary
+Unit execution took 1.463 seconds after compilation; Mongo execution took
+177.547 seconds. All six positive current-publication proof cases pass. Strict,
+units and Mongo each exited zero, and the API source diff remained empty before
+and after execution. Machine-readable results are in
+[the gate summary](2026-11-12-s4-later-progress-gates.json).
 
-At `2dbb5d81c844f090cd3a9ee0e4d995545e59289f`, strict CMA passed with zero
-diagnostics; selected units passed 164/164 (115 CMA, 49 core). Actual Mongo
-ran all 70 selected cases: 66 passed, 4 failed in 264.091 seconds. All six
-current-publication proof tests passed. The four failures are the two new
-service tests and S5's later-progress restart and recapture tests.
+The earlier actual runs remain recorded separately:
 
-Actual keyed output preserves Agent revision while advancing sequence/head.
-The original-result checks in S5-owned `receipts::{verify_binding,
-require_current_result}` treat equal revision as unchanged and refuse that valid
-progress. The original unchanged identity must compare both revision and sequence;
-a Completed result with monotonic revision/sequence and either advanced still
-requires the existing positive full-current-publication proof. No bound, witness,
-original-result or native check is removed by the proposed correction.
+| Source | Strict / units | Mongo | Diagnosis and correction |
+| --- | --- | --- | --- |
+| `2dbb5d81c` | Strict passed; 164 units passed | 66 passed / 4 failed of 70 | Equal revision did not imply unchanged sequence. Corrected the S4 expectation, consumed S5's receipt correction and fixed exact witness selection. |
+| `570cb1148` | Strict passed; 166 units passed | 70 passed / 1 failed of 71 | S5's turn fixture omitted required OwnerMessage evidence. The writer correctly refused it before recovery/native IO; consumed test-only `2144909ce`. |
 
-S4 corrected its own test's mistaken revision-increase assertion in `211fb2d85`,
-then normally merged develop `cece32bf4` at `265dac225`, retaining both independent
-retained-context and recovery flags. The reserved receipt-helper correction and
-S5 test expectation were requested through the lead and #1351. A concrete
-three-condition patch is retained at
-`notes/2026-11-12-p1-3-sequence-proof-proposal.patch`; it is not applied source.
-The failed run's owned Mongo container and volume are confirmed absent.
-Final corrected-source qualification remains pending.
+The 06:30 SGT checkpoint reported source and running/pending gates honestly.
+Shared-slot acquisition and the final fixture correction delayed completed
+qualification; all final results were confirmed by 06:54 SGT.
 
+## Reproduction and resource protocol
 
+Rust 1.96.1; nextest 0.9.151; two Cargo jobs; one `api/target`; incremental/debug
+data disabled. Strict command:
 
-### P1-3 actual result and sequence-only boundary — 06:15 checkpoint
+```sh
+cargo +1.96.1 clippy --locked --offline --manifest-path api/Cargo.toml   -p cma --all-targets --all-features --no-deps -- -D warnings
+```
 
-Caller/test source is pushed at `76dcfb4a16d3dfc6e143ffb409fcc325fe0393c2`.
-Develop `3aee1ff68` is normally merged; independent retained-JSON/raw-output/
-recovery policies survive. Imported config tests are extracted unchanged so
-`features.rs` stays492lines. The new exact-sequence service test establishes
-successful activation before faulting the later witness, then checks missing,
-legacy and foreign evidence refuse without native IO, and restoration succeeds.
-It never selects a receipt by Agent revision alone. Part of #1351/#1350.
+Units use `cargo nextest run --locked --offline -p cma -p layer2-core`, two test
+threads, `--no-tests fail --no-fail-fast`, and this selection:
 
-Actual heavy results at earlier `2dbb5d81c`: strict CMA0diagnostics,
-164/164units (115CMA+49core), Mongo66passed/4failed of70executed. All six
-current-publication proof tests passed. Keyed append advances sequence without
-Agent revision; current S5 `receipts::{verify_binding,require_current_result}`
-incorrectly treats equal revision as unchanged. S4's revision expectation is
-corrected; S5 needs both revision+sequence for the unchanged fast path, permits
-monotonic equal-revision/later-sequence progress only through positive proof,
-and corrects `restart/later.rs`'s assertion/ambiguous revision-only selector.
-Exact ownership delegation or a narrow S5 pin is requested in #1351; these
-reserved helper/test paths are not edited by S4. No signature is missing.
+```text
+test(agent_capacity_recovery::) | test(capacity_scheduler::) | test(config::) |
+test(current_publication::) | test(writer_receipt) | test(receipts::tests::)
+```
 
-The new head passes formatting, whitespace,6204-file size and configuration
-coverage. Final strict/units/Mongo on corrected source remain pending. Shared
-slot1 retains inode160080032; every owned lockf uses-k and3600second wait.
-First failed fixture and volume were removed; the one reusable target is kept
-only for immediate corrected-source qualification. Project9 remains In Progress.
+The canonical disposable Mongo runner is adapted only for package/filter and
+fixture-name recording, with serial execution, `--run-ignored only` and selection:
+
+```text
+test(store::sandbox_mongo_integration_tests::agent_capacity_recovery_tests::) |
+test(store::agent_log_segments::writer_commit::persistence::tests::)
+```
+
+Shared slot 1 retained inode 160080032. Every owned lockf used `-k -n -t 3600`;
+no lock was created, deleted or recreated. The train slot was not used. Available
+RAM below 10% pauses the owned gate group and 12% resumes it; the final run's
+minimum was 26%, with zero pauses. A separate monitor checked lock identity.
+The superseded compile-only waiter was cancelled before any Cargo/Mongo execution
+when the receipt correction arrived. The final batch completed and released its slot.
+
+All three disposable containers/volumes are independently confirmed absent.
+Cleanup removed 2.451 GB of owned allocated build/tool artifacts, including the
+single target, downloaded nextest archive/binary and superseded proposal. The
+worktree, shared lock files and dated evidence are retained.
+
+Local raw logs, both failed attempts, execution scripts, source pins, fixture
+checks and cleanup receipt are at
+`notes/2026-11-12-s4-later-progress-evidence/`.
+The requested local handoff and assignments are mirrored under `docs/notes/` on
+GitHub. Project 9 remains In Progress; S2 retains integration and release ownership.
