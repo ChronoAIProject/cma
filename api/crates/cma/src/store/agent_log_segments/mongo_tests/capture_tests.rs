@@ -198,16 +198,17 @@ async fn captured_points_reject_wrong_context_and_invalid_requests_before_source
     );
     // An explicit snapshot read populates the driver's timestamp even on an
     // ordinary session. That timestamp alone must not become capture authority.
+    let mut primed = client.start_session().await.unwrap();
     store
         .agents
         .find_one(doc! {"_id":agent.id.as_str()})
         .read_concern(mongodb::options::ReadConcern::snapshot())
-        .session(&mut ordinary)
+        .session(&mut primed)
         .await
         .unwrap();
-    assert!(ordinary.snapshot_time().is_some());
+    assert!(primed.snapshot_time().is_some());
     assert!(
-        capture(&store, &agent, &mut ordinary, CaptureMode::Snapshot)
+        capture(&store, &agent, &mut primed, CaptureMode::Snapshot)
             .await
             .is_err()
     );
