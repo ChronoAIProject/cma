@@ -5,6 +5,8 @@ use std::time::{Duration, SystemTime};
 const PARENT: &str = "agent_parent_not_ready";
 const FIELD: &str = "worker_failure_pacing_v1";
 
+mod segmented;
+
 fn stamp(seconds: u64) -> String {
     layer2_core::rfc3339_at(
         SystemTime::UNIX_EPOCH
