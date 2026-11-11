@@ -118,7 +118,7 @@ fn validator(name: &str) -> Document {
             &["leaf_digests", "seal_digest"],
         ),
         PUBLICATIONS => (
-            &["agent_id", "incarnation", "publication_key"],
+            &["agent_id", "incarnation", "publication_key", "appended_at"],
             &[
                 "expected_revision",
                 "expected_seq",
