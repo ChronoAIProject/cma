@@ -1,6 +1,6 @@
 use super::*;
 impl WorkspaceWorker {
-    async fn execute(
+    pub(super) async fn execute(
         &self,
         workspace: Workspace,
         now: SystemTime,
