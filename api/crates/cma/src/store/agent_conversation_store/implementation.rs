@@ -9,15 +9,27 @@ impl AgentConversationStore for MongoSandboxStore {
         &self,
         settlement: layer2_core::sandbox::store::AgentConversationCapacitySettlement,
     ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
-        checkpoint::commit(
-            self,
-            settlement.current().clone(),
-            settlement.previous().cloned(),
-            settlement.checkpoint().clone(),
-            Some(settlement.mutation().clone()),
-            checkpoint::Authority::Capacity(Box::new(settlement)),
-        )
-        .await
+        let mut proposal = settlement;
+        loop {
+            let result = checkpoint::commit(
+                self,
+                proposal.current().clone(),
+                proposal.previous().cloned(),
+                proposal.checkpoint().clone(),
+                Some(proposal.mutation().clone()),
+                checkpoint::Authority::Capacity(Box::new(proposal.clone())),
+            )
+            .await;
+            match result {
+                Err(SandboxStoreError::AgentLogCapacityExceeded) => {
+                    let Some(compact) = proposal.compact_failure()? else {
+                        return result;
+                    };
+                    proposal = compact;
+                }
+                _ => return result,
+            }
+        }
     }
 
     async fn commit_agent_conversation(
