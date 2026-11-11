@@ -174,7 +174,8 @@ impl Fixture {
                 "delete",
                 "findAndModify",
                 "abortTransaction",
-                "commitTransaction"
+                "commitTransaction",
+                "startTransaction"
             ]
             .iter()
             .any(|key| command.contains_key(key)));
