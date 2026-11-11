@@ -48,24 +48,53 @@ its physical row or replay byte budget fail explicitly. Full history remains a
 paged consumer obligation under #1349; this foundation does not claim complete
 transcript or response projection support.
 
-## Captured source checkpoint
+## Captured source and context
 
-The captured-source port currently implements read-only legacy snapshot capture.
-It requires exact equality with the supplied Agent, preserves the existing
-quarantine proof, folds one physically bounded prefix once, and retains only
-semantic state, the latest entry and original BSON leaf digests. Its independent
-opened/retired generation maxima come from that validated prefix. Requested
-points must be unique, ascending, inside the captured prefix and within the
-bounded source-byte budget. Point reads reuse the established snapshot and hashes;
-they cannot reuse a proof from another session, database or mode.
+The captured-source port requires exact equality with the supplied Agent and
+preserves the existing quarantine proof. Legacy capture folds one physically
+bounded prefix once and retains semantic state, the latest entry and original
+BSON leaf digests. Segmented capture validates the exact projection/head binding,
+its certified generation maxima and one bounded active interval. It reads a
+sealed latest entry separately when the active interval is empty.
 
-Transaction capture and segmented semantic capture remain typed Unavailable.
-Transaction publication requires a transaction-scope binding that rejects reuse
-in a later transaction on the same session. The driver session ID alone cannot
-prove that binding. Segmented capture additionally requires the writer-owned
-certified generation maxima and projection reader. These refusal paths do not
-start transactions, write quarantine, create sidecars or authorize recovery.
-This checkpoint is not an executable writer or a review-ready foundation claim.
+Requested points must be unique, ascending, inside the captured prefix and within
+the source-byte budget. They check only requested sealed membership and reuse the
+captured active hashes. Reads in a transaction also recheck the aggregate/head
+because a transaction can see its own writes.
+
+Snapshot proofs bind the established snapshot, session and database. Transaction
+proofs instead bind the private stamp from the exclusive `TransactionScope`;
+consuming that scope releases the session for caller commit or abort. A later
+transaction gets a fresh stamp, even on the same session. A raw transaction-mode
+argument cannot establish authority. Capture and points do not start, commit or
+abort the transaction or write source, sidecars or quarantine.
+
+## Bounded audit persistence
+
+Audit progress version two separates the completed prefix from the current unit.
+One read-only snapshot validates a physical unit. Its derived evidence is staged
+under a private generation in batches bounded by both encoded bytes and row count.
+Each short transaction writes the audit fence and batch together. Source payloads
+are never copied into evidence or retained as a lifetime vector.
+
+Only complete source, hash, semantic and queue checks authorize the promoting
+phase. Promotion copies bounded batches into the audit result generation and
+commits its cursor atomically. A crash during collection restarts only the current
+unit under a fresh generation. A crash or ambiguous commit during promotion resumes
+from durable progress without refolding source. A replaced holder or cancellation
+fails the fence before any evidence batch can commit.
+
+The result generation stays invisible to readers until exact captured Agent/head
+CAS installs its projection and pointer. Completed audits cannot overwrite a newer
+aggregate. Corruption records an audit quarantine; this work does not clear prior
+quarantines or delete abandoned evidence. The additive schema includes an index
+for bounded generation traversal. The historical single-transaction audit progress
+shape is refused explicitly rather than treated as resumable version-two progress.
+
+Qualification includes both original near-capacity fixtures, the existing query
+and time bounds, and measured per-transaction write limits under the canonical
+Mongo cache. Exact passing results belong in the review evidence; source and tests
+alone are not an executable or activation claim.
 
 ## Additive migration and retention
 
@@ -100,8 +129,8 @@ history beyond one physical segment, bounded source consumption as sealed
 history grows, and migration restart/drift. Actual test results belong in the
 exact-head PR evidence; this document is not a passing-gate claim.
 
-Fenced audit/rebuild, near-capacity audit resource proof, retention regressions,
-executable predecessor/rollback tests and the full integrated foreground caller
-inventory remain required before #1348 closes. Release-owner production
+Passing fenced audit/rebuild and near-capacity resource tests, retention regressions,
+executable predecessor/rollback qualification and the full integrated foreground
+caller inventory remain required before #1348 closes. Release-owner production
 verification must observe real boundary replay and natural rollover without
 synthetic user input; elapsed time alone cannot satisfy that evidence.
