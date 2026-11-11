@@ -182,7 +182,7 @@ impl Directory {
             .map(|file| file.map(Self))
     }
 
-    fn open_at(&self, name: &str, flags: i32) -> Result<Option<File>> {
+    pub(super) fn open_at(&self, name: &str, flags: i32) -> Result<Option<File>> {
         if name.is_empty() || name == "." || name == ".." || name.contains('/') {
             return Err(invalid());
         }
