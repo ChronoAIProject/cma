@@ -7,6 +7,7 @@ pub struct DocumentService {
     pub(super) store: Arc<dyn DocumentStore>,
     pub(super) blobs: Arc<dyn DocumentBlobStore>,
     pub(super) revocation_reserve_enabled: bool,
+    pub(super) quota: Option<Arc<dyn DocumentQuotaStore>>,
 }
 impl DocumentService {
     pub fn new(store: Arc<dyn DocumentStore>, blobs: Arc<dyn DocumentBlobStore>) -> Arc<Self> {
@@ -18,10 +19,19 @@ impl DocumentService {
         blobs: Arc<dyn DocumentBlobStore>,
         enabled: bool,
     ) -> Arc<Self> {
+        Self::with_storage_quota(store, blobs, enabled, None)
+    }
+    pub fn with_storage_quota(
+        store: Arc<dyn DocumentStore>,
+        blobs: Arc<dyn DocumentBlobStore>,
+        revocation_reserve_enabled: bool,
+        quota: Option<Arc<dyn DocumentQuotaStore>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             store,
             blobs,
-            revocation_reserve_enabled: enabled,
+            revocation_reserve_enabled,
+            quota,
         })
     }
     pub async fn create(
@@ -61,7 +71,10 @@ impl DocumentService {
         let now = crate::now_rfc3339();
         let sha256 = digest(body.markdown.as_bytes());
         let object_key = object_key(caller.subject.as_str(), &id, &sha256);
-        self.upload(&object_key, body.markdown.as_bytes().to_vec())
+        if let Some(guard) = guard {
+            guard.validate(None).await?;
+        }
+        self.upload(caller.subject.as_str(), &id, body.markdown.as_bytes())
             .await?;
         let metadata = DocumentView {
             id,
@@ -291,10 +304,23 @@ impl DocumentService {
         }
         Ok(record)
     }
-    pub(super) async fn upload(&self, key: &str, bytes: Vec<u8>) -> Result<(), DocumentError> {
-        tokio::time::timeout(Duration::from_secs(15), self.blobs.put(key, bytes))
-            .await
-            .map_err(|_| DocumentError::Unavailable)?
+    pub(super) async fn upload(
+        &self,
+        owner: &str,
+        id: &str,
+        bytes: &[u8],
+    ) -> Result<(), DocumentError> {
+        let source = DocumentSourceReservation::new(owner, id, bytes);
+        source.validate()?;
+        if let Some(quota) = &self.quota {
+            quota.reserve(&source).await?;
+        }
+        tokio::time::timeout(
+            Duration::from_secs(15),
+            self.blobs.put(&source.object_key(), bytes.to_vec()),
+        )
+        .await
+        .map_err(|_| DocumentError::Unavailable)?
     }
 }
 pub(super) fn access(
