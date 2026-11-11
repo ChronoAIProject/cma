@@ -154,6 +154,23 @@ pub struct RecoveryClaim {
     pub agent: Agent,
 }
 
+impl RecoveryClaim {
+    /// Recheck the retained native/home/input identity and current parent intent
+    /// before settling an accepted attempt. Lease checks remain operation-specific.
+    pub fn require_current(
+        &self,
+        context: &CapacityRecoveryContext<'_>,
+        now: &str,
+    ) -> Result<(), Error> {
+        self.work.validate()?;
+        self.work.target.require_current(context, now)?;
+        if context.agent != &self.agent {
+            return Err(Error::Conflict);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfirmedNativeState {
@@ -371,11 +388,8 @@ impl RecoveryWork {
             return Err(Error::Conflict);
         }
         self.require_lease(&lease.holder, lease.fence, now)?;
-        self.target.require_current(context, now)?;
+        claim.require_current(context, now)?;
         confirmation.validate_for(claim)?;
-        if context.agent != &claim.agent {
-            return Err(Error::Conflict);
-        }
         let mut next = context.agent.clone();
         let status = match confirmation.native_state {
             ConfirmedNativeState::Idle => AgentStatus::Ready,
