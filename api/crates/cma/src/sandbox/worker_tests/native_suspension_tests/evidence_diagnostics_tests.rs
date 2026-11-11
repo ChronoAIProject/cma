@@ -6,6 +6,9 @@ use layer2_core::sandbox::{
 #[path = "evidence_refusal_cases.rs"]
 mod refusal_cases;
 
+#[path = "retained_recovery_tests.rs"]
+mod retained;
+
 #[derive(Clone, Default)]
 struct Output(Arc<Mutex<Vec<u8>>>);
 impl std::io::Write for Output {
