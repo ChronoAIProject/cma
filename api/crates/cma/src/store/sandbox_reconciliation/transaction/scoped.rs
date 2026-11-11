@@ -52,16 +52,18 @@ pub(in crate::store::sandbox_reconciliation) async fn apply_scoped(
     };
     let mut published = Vec::new();
     let mut logs = Vec::new();
+    let mut receipts = Vec::new();
     for (current, source) in segmented {
         let change = mutation
             .agents
             .iter()
             .find(|change| change.agent.id == current.id);
-        let (agent, batch) =
+        let result =
             agents::scoped::publish_agent(store, &current, &source, change, request, &mut scope)
                 .await?;
-        published.push(agent);
-        logs.extend(batch);
+        published.push(result.agent);
+        logs.extend(result.logs);
+        receipts.extend(result.recorded);
     }
     let session = scope.release();
     // Legacy rows never receive adoption permission from the presence of a v2
@@ -73,8 +75,12 @@ pub(in crate::store::sandbox_reconciliation) async fn apply_scoped(
     logs.extend(legacy_logs);
     published.sort_by(|left, right| left.id.cmp(&right.id));
     logs.sort_by(|left, right| (&left.agent_id, left.seq).cmp(&(&right.agent_id, right.seq)));
-    persist_sandbox(
+    let mut result = persist_sandbox(
         store, request, &current, last_seq, *mutation, published, logs, session,
     )
-    .await
+    .await?;
+    if let RecoveryApplication::Persist(receipt) = &mut result {
+        receipt.segmented = receipts;
+    }
+    Ok(result)
 }

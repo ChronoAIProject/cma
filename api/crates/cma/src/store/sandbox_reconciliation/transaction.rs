@@ -53,7 +53,9 @@ impl From<TransactionLogError> for ApplyError {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct RecoveryReceipt {
+    pub(super) segmented: Vec<crate::store::agent_log_segments::writer_commit::Recorded>,
     pub(super) sandbox: Sandbox,
     pub(super) agents: Vec<Agent>,
     pub(super) logs: Vec<AgentLogEntry>,
@@ -154,6 +156,7 @@ async fn persist_sandbox(
         );
     }
     Ok(RecoveryApplication::Persist(Box::new(RecoveryReceipt {
+        segmented: Vec::new(),
         sandbox: mutation.sandbox,
         agents,
         logs,
