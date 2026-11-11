@@ -18,6 +18,15 @@ impl Bridge {
             return Ok(());
         };
 
+        self.receive_frame(super::retained_json::JsonFrame::legacy(frame), updates)
+            .await
+    }
+
+    pub(super) async fn receive_frame(
+        &self,
+        frame: super::retained_json::JsonFrame,
+        updates: &UpdateRelay,
+    ) -> crate::Result<()> {
         if let Some(id) = frame.get("id") {
             if frame.get("method").is_none() {
                 let waiting = match id.as_str() {
@@ -32,7 +41,7 @@ impl Bridge {
                         }
                         updates
                             .send(super::acp_turn::scoped_turn_outcome(
-                                super::acp_turn::turn_outcome(frame.clone()),
+                                super::acp_turn::turn_outcome(&*frame),
                                 true,
                                 prompt_id,
                             ))
@@ -42,7 +51,7 @@ impl Bridge {
                     return Ok(());
                 }
                 if let Some(id) = id.as_str() {
-                    if self.recover_prompt_result(id, frame.clone(), updates).await {
+                    if self.recover_prompt_result(id, &frame, updates).await {
                         self.orphaned_prompt_response
                             .store(false, std::sync::atomic::Ordering::SeqCst);
                         self.answered.lock().await.clear();
@@ -89,7 +98,7 @@ impl Bridge {
         match frame.get("method").and_then(serde_json::Value::as_str) {
             Some("cma/codex/credentials") => self.subscription_credential(&frame).await,
             Some("session/update") => self.session_update(&frame, updates).await,
-            Some("session/request_permission") => self.blocked_on(frame, updates).await?,
+            Some("session/request_permission") => self.blocked_on(&frame, updates).await?,
             Some("elicitation/create") => self.sign_in(&frame, updates).await,
             Some(method) => {
                 if let Some(id) = frame.get("id") {
@@ -146,7 +155,7 @@ impl Bridge {
             self.route_update(session, update, updates).await;
             return;
         }
-        match serde_json::from_value::<SessionUpdate>(value.clone()) {
+        match SessionUpdate::deserialize(value) {
             Ok(update) => {
                 self.route_update(session, ConversationUpdate::Said(update), updates)
                     .await;
@@ -375,7 +384,7 @@ fn prompt_outcome(frame: &serde_json::Value) -> Option<super::acp::Outcome> {
             .get("result")
             .and_then(serde_json::Value::as_object)
             .is_some_and(|result| result.contains_key("stopReason"));
-    terminal.then(|| super::acp_turn::turn_outcome(frame.clone()))
+    terminal.then(|| super::acp_turn::turn_outcome(frame))
 }
 
 pub(super) fn valid_call(call: &serde_json::Value) -> bool {
