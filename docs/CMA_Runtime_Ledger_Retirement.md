@@ -177,6 +177,21 @@ Before restoring even one record, the archive commits a pending state. A failed 
 
 This is the source-transition core, not the production cleanup command. It requires the caller to own a proved exclusive writer hold and a complete eligible group selection. A file lock on the archive cannot exclude an old raw writer; descriptor checks cannot replace that exclusion. The qualification fixture does not exercise the actual retained-home storage class, physical fencing, operator activation, V2 accounting or automatic authoritative collection. Those remain required before cleanup of a real home.
 
+## Settled V2 accounting
+
+Finishing a V2 mutation removes its generation's derived scope-budget row when
+both pending-work and logical-process counts equal zero. The removal commits
+together with the receipt and counters. A storage failure rolls back that whole
+transaction, preserving recovery from the started receipt.
+
+Admission and recovery already interpret a missing budget row as zero, and an
+admission recreates the row when needed. The persistent format is unchanged.
+Journal receipts, authority, cleanup reservations and nonzero budgets remain
+retained. Historical empty rows are still valid input; untouched historical rows
+are not swept by this change. This prevents new settled accounting rows from
+accumulating across generation turnover. It does not retire resource history,
+bound either full history store, or repair an exhausted home.
+
 ## Held indexed-store archives
 
 The V2 source inventory uses bounded primary-key pages and reconciles global and
