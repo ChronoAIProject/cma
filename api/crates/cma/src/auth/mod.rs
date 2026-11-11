@@ -68,9 +68,10 @@ const AUTH_COOKIE_DOMAIN: &str = "browser-login";
 const AUTH_COOKIE_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 pub(crate) const SIGN_IN_PREFERENCE_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 const LOGIN_ATTEMPT_LIFETIME: Duration = Duration::from_secs(10 * 60);
-/// Keep a binding handle until every session its attempt could issue has expired.
+/// One minute beyond the ten-minute attempt for callback I/O and response processing.
+/// This margin extends browser custody only, never the attempt's authority.
 pub(crate) const BROWSER_BINDING_LIFETIME: Duration =
-    Duration::from_secs(AUTH_COOKIE_LIFETIME.as_secs() + LOGIN_ATTEMPT_LIFETIME.as_secs());
+    Duration::from_secs(LOGIN_ATTEMPT_LIFETIME.as_secs() + 60);
 /// Time of explicit logout; compared with the start of a successful interactive login.
 const SIGNED_OUT_COOKIE: &str = "cma_signed_out";
 

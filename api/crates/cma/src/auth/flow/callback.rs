@@ -45,16 +45,6 @@ pub(super) async fn callback(
             return silent::fallback(state.starts_with("s."), None, store_failure());
         }
     };
-    if !attempt.custody_reserved
-        && attempt.expires_at > SystemTime::now()
-        && params.error.is_none()
-        && params
-            .code
-            .as_deref()
-            .is_some_and(|code| !code.trim().is_empty())
-    {
-        return adopt_legacy_callback(&auth, attempt, &params, binding, &cookie_name).await;
-    }
     let mut response = complete_callback(&auth, &params, &headers, &attempt, binding).await;
     if !response.headers().contains_key(header::SET_COOKIE) {
         if let Err(error) = auth.revoke_browser_binding(binding).await {
@@ -248,81 +238,5 @@ async fn complete_callback(
             auth.secure_cookies(),
         );
     }
-    response
-}
-
-// A predecessor only gave its binding cookie ten minutes. Establish a fresh,
-// longer-lived handle through a same-origin handoff before any session issuance.
-async fn adopt_legacy_callback(
-    auth: &Arc<AuthState>,
-    mut attempt: LoginAttempt,
-    params: &CallbackParams,
-    binding: &str,
-    old_cookie: &str,
-) -> Response {
-    match auth
-        .store
-        .reserve_browser_login(
-            SecretDigest::identify(AUTH_COOKIE_DOMAIN, binding),
-            attempt.expires_at,
-        )
-        .await
-    {
-        Ok(true) => {}
-        Ok(false) => {
-            return silent::fallback(
-                attempt.silent,
-                attempt.return_to.as_deref(),
-                login_failure(StatusCode::UNAUTHORIZED, "login_superseded", None),
-            )
-        }
-        Err(_) => {
-            return silent::fallback(
-                attempt.silent,
-                attempt.return_to.as_deref(),
-                store_failure(),
-            )
-        }
-    }
-    let state = if attempt.silent {
-        format!("s.{}", random_token())
-    } else {
-        random_token()
-    };
-    let name = binding_cookie_name(&state);
-    attempt.id = SecretDigest::identify(ATTEMPT_DOMAIN, &state);
-    attempt.custody_reserved = true;
-    attempt.started_at = Some(attempt.started_at.unwrap_or_else(|| {
-        attempt
-            .expires_at
-            .checked_sub(ATTEMPT_LIFETIME)
-            .unwrap_or(SystemTime::UNIX_EPOCH)
-    }));
-    if let Err(error) = auth.store.put_login_attempt(attempt.clone()).await {
-        tracing::error!(error=%error,"could not adopt predecessor callback");
-        return silent::fallback(
-            attempt.silent,
-            attempt.return_to.as_deref(),
-            store_failure(),
-        );
-    }
-    let destination = format!(
-        "/auth/callback?state={state}&code={}",
-        urlencode(params.code.as_deref().unwrap_or_default())
-    );
-    let mut response = Redirect::to(&destination).into_response();
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        issued_cookie(
-            &name,
-            binding,
-            auth.secure_cookies(),
-            crate::auth::BROWSER_BINDING_LIFETIME.as_secs(),
-        ),
-    );
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        issued_cookie(old_cookie, "", auth.secure_cookies(), 0),
-    );
     response
 }

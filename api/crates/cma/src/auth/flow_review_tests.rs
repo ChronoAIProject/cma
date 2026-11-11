@@ -34,31 +34,13 @@ async fn legacy_attempt(f: &Fixture) -> (String, String) {
     )
 }
 
-async fn handoff(f: &Fixture, path: &str, binding: &str) -> (String, String) {
-    let response = call(&f.app, path, binding).await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    let destination = response.headers()[header::LOCATION]
-        .to_str()
-        .unwrap()
-        .to_owned();
-    assert!(destination.starts_with("/auth/callback?"));
-    assert!(cookies(&response)[0].contains(&format!(
-        "Max-Age={}",
-        crate::auth::BROWSER_BINDING_LIFETIME.as_secs()
-    )));
-    (
-        destination,
-        cookies(&response)[0].split(';').next().unwrap().to_owned(),
-    )
-}
-
 #[tokio::test]
 async fn predecessor_start_completes_with_fresh_session_and_logout_still_fences_it() {
     let f = Fixture::new(StatusCode::OK, false).await;
     let (path, binding) = legacy_attempt(&f).await;
-    let (path, binding) = handoff(&f, &path, &binding).await;
     let response = call(&f.second, &path, &binding).await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(response.headers()[header::LOCATION], "/agent-manager");
     let session = cookie_value(&response, AUTH_COOKIE);
     assert_ne!(session.split_once('=').unwrap().1, "predecessor-binding");
     assert!(f
@@ -83,7 +65,6 @@ async fn predecessor_start_completes_with_fresh_session_and_logout_still_fences_
 
     let f = Fixture::new(StatusCode::OK, true).await;
     let (path, binding) = legacy_attempt(&f).await;
-    let (path, binding) = handoff(&f, &path, &binding).await;
     let task = {
         let app = f.app.clone();
         let binding = binding.clone();
@@ -234,7 +215,10 @@ async fn consent_renews_only_live_pending_custody() {
         "Max-Age={}",
         crate::auth::BROWSER_BINDING_LIFETIME.as_secs()
     )));
-    assert!(crate::auth::BROWSER_BINDING_LIFETIME >= AUTH_COOKIE_LIFETIME + ATTEMPT_LIFETIME);
+    assert_eq!(
+        crate::auth::BROWSER_BINDING_LIFETIME,
+        ATTEMPT_LIFETIME + Duration::from_secs(60)
+    );
 }
 
 #[tokio::test]
@@ -429,45 +413,54 @@ async fn cross_site_logout_does_not_reactivate_an_older_preference() {
 }
 
 #[tokio::test]
-async fn predecessor_handoff_keeps_logout_handle_past_original_cookie_expiry() {
-    let f = Fixture::new(StatusCode::OK, false).await;
-    let (path, binding) = legacy_attempt(&f).await;
-    let mut old = f
-        .store
-        .take_login_attempt(
-            &SecretDigest::identify(ATTEMPT_DOMAIN, "predecessor-state"),
-            &SecretDigest::identify(BINDING_DOMAIN, "predecessor-binding"),
+async fn binding_only_logout_revokes_an_issued_session_before_callback_response_delivery() {
+    for legacy in [false, true] {
+        let f = Fixture::new(StatusCode::OK, false).await;
+        let (path, binding) = if legacy {
+            legacy_attempt(&f).await
+        } else {
+            f.start(false, "/agent-manager").await
+        };
+        // The server finished the callback, but the browser has not received
+        // its response and therefore still sends only its original binding.
+        let in_flight_response = call(&f.app, &path, &binding).await;
+        assert_eq!(
+            in_flight_response.headers()[header::LOCATION],
+            "/agent-manager"
+        );
+        let session = cookie_value(&in_flight_response, AUTH_COOKIE);
+        let proof = cookie_value(&in_flight_response, "cma_signed_in");
+        let id = SecretDigest::identify(AUTH_COOKIE_DOMAIN, session.split_once('=').unwrap().1);
+        assert!(f.store.browser_login(&id).await.unwrap().is_some());
+        assert!(!binding.contains("cma_session="));
+        let logout = call(&f.second, "/auth/logout", &binding).await;
+        assert_eq!(logout.status(), StatusCode::SEE_OTHER);
+        assert!(f.store.browser_login(&id).await.unwrap().is_none());
+        let signed_out = cookie_value(&logout, "cma_signed_out");
+        let late = call(
+            &f.app,
+            "/auth/login?prompt=none",
+            &format!("{signed_out}; {proof}; {session}"),
         )
-        .await
-        .unwrap()
-        .unwrap();
-    old.expires_at = SystemTime::now() + Duration::from_secs(2);
-    f.store.put_login_attempt(old).await.unwrap();
-    let (next, new_binding) = handoff(&f, &path, &binding).await;
-    assert_ne!(new_binding, binding);
-    let response = call(&f.app, &next, &new_binding).await;
-    let session = cookie_value(&response, AUTH_COOKIE);
-    let proof = cookie_value(&response, "cma_signed_in");
-    tokio::time::sleep(Duration::from_millis(2100)).await;
-    // Browser lost the predecessor cookie, but has the handoff's extended one.
-    let logout = call(&f.second, "/auth/logout", &new_binding).await;
-    let signed_out = cookie_value(&logout, "cma_signed_out");
-    assert!(f
-        .store
-        .browser_login(&SecretDigest::identify(
-            AUTH_COOKIE_DOMAIN,
-            session.split_once('=').unwrap().1
-        ))
-        .await
-        .unwrap()
-        .is_none());
-    let late = call(
-        &f.app,
-        "/auth/login?prompt=none",
-        &format!("{signed_out}; {proof}; {session}"),
-    )
-    .await;
-    assert_eq!(late.headers()[header::LOCATION], "/");
+        .await;
+        assert_eq!(late.headers()[header::LOCATION], "/");
+        assert!(cookies(&late).is_empty());
+    }
+}
+
+#[tokio::test]
+async fn binding_cookie_has_only_the_attempt_window_and_in_flight_margin() {
+    let f = Fixture::new(StatusCode::OK, false).await;
+    for prompt in ["", "?prompt=none"] {
+        let response = call(&f.app, &format!("/auth/login{prompt}"), "").await;
+        let values = cookies(&response);
+        assert_eq!(values.len(), 1);
+        assert!(values[0].ends_with("Max-Age=660"));
+        assert_eq!(
+            crate::auth::BROWSER_BINDING_LIFETIME,
+            ATTEMPT_LIFETIME + Duration::from_secs(60)
+        );
+    }
 }
 
 #[tokio::test]
