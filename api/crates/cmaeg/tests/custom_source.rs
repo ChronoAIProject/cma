@@ -20,3 +20,6 @@ pub mod signer;
 mod sinks;
 #[path = "custom/support.rs"]
 mod support;
+
+#[path = "custom/context_retry.rs"]
+mod context_retry;
