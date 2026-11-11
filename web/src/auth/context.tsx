@@ -186,9 +186,9 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   const signOut = useCallback(async () => {
     const version = ++currentRead.current;
     try {
+      retainTaskViewer();
       await provider.signOut();
       if (version !== currentRead.current) return;
-      retainTaskViewer();
       setOutage(undefined);
       setState({ status: 'anonymous' });
     } catch (error: unknown) {
