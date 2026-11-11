@@ -1905,31 +1905,33 @@ closed rather than publish a synthetic Ready state.
 
 ### Skill upgrade reader floor
 
-The complete Agent Manager reader/worker/projection floor is `afe28c28c`; the
-runtime replacement implementation floor is `7b0df83c9` (or compatible successors).
-Idle skill replacement adds `AgentSkillInstallation.previous`, omitted when
-absent. The first admitted upgrade raises the Agent Manager reader floor to the
-reader/validator/worker implementing this field, including after failure or
-completion. Original profile material and prior installation entries remain
-immutable. Ordinary records without an upgrade keep their predecessor shape.
-The first runtime upgrade authority/journal write likewise requires the runtime
-replacement reader and its recovery proofs; retaining only the new API is not
-permission to downgrade that runtime state.
+Deploy the compatible #1209 Agent Manager readers, validators and workers and
+drain predecessor processes **before** promoting a runtime advertising
+`agent_skill_upgrade`. **Runtime promotion establishes an Agent Manager rollback
+floor at this release, even when `CHRONO_AGENT_SKILL_UPGRADE_ENABLED=false`.**
+Older Managers use strict status decoders and reject an unknown advertised
+capability, which would break live Sandbox interaction. Negotiated legacy status
+responses support rolling coexistence; they are not certification of a pre-release
+Manager as an allowed rollback image after promotion.
 
-Deploy the compatible Agent Manager and drain predecessor workers before
-selecting the new runtime. Runtime status advertises `agent_skill_upgrade` only
-for explicit `application/vnd.chrono.agent-skill-upgrade-status.v1+json` requests;
-false is omitted and embedded status remains unchanged. An older Manager never
-requests this media type, so a newer runtime remains status-readable during API
-rollback before the first upgrade admission. Negotiation tests compare the
-legacy response before and after an opted-in read and exercise embedded frames.
+The first admitted upgrade writes `AgentSkillInstallation.previous` and imposes
+the additional retained-Mongo reader/worker floor. The first runtime mutation
+writes `AgentSkillInstallRequest.upgrade` inside JSON/indexed journals and
+authority records; older runtime `deny_unknown_fields` decoders cannot recover
+it. Runtime import and retirement archives must preserve and understand those
+records too. These floors remain after failure, completion or admission closure.
 
-After an upgrade intent exists, approved API rollback/recovery images must keep
-the new readers and worker. Restore the prior web or use a compatible forward
-repair while keeping those readers, the latest runtime default, and each live
-Sandbox's recorded runtime, home and conversation. Pre-feature API rollback is
-unsupported after admission; do not erase completed/failed upgrade evidence or
-interrupt Sandboxes to accommodate it. See [Agent skills](CMA_Agent_Skills_Runtime.md)
-for the durable operation, proof and compatibility table. Production qualification
-must bind tests to actual candidate and approved recovery artifacts; local decoder
-and filesystem tests alone are not a historical-image rollout matrix.
+The default-closed flag blocks new version replacements only. GET, global exact
+accepted-key replay and finite already-admitted worker/recovery settlement remain
+available. Safe rollback closes admission in a compatible Manager, preserves all
+history/proofs/retained trees and the latest runtime default, and uses a compatible
+forward repair. Never downgrade a retained home, erase evidence or interrupt a
+live Sandbox to accommodate an older executable. Existing Sandboxes adopt new
+runtimes only through the recorded owner/idle managed-runtime update policy.
+
+The [release migration record](CMA_Agent_Skills_Runtime.md#reader-floor-and-rollback-record-2026-11-11-am-agent-skill-upgrade)
+identifies all stores, triggers and prerequisites. Exact candidate and approved
+recovery artifact digests, drain receipts, cross-image recovery/continuity drills
+and production activation observations must be supplied by the release operator
+before enabling writers. Local fixtures and pinned-provider proof do not certify
+a historical-image rollback matrix or production migration completion.
