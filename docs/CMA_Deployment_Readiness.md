@@ -1489,6 +1489,10 @@ field preserve the original false default. Existing Sandbox capacities, availabi
 policies and seeded deployment-owned profiles remain authoritative. Validate new
 allocation requests/limits and recorded availability in production; do not infer
 warm-pool readiness merely from the changed configuration.
+When platform automatic pause is enabled, this legacy `always_keep_alive` value
+does not exempt a Sandbox. Only an explicit per-Sandbox `always_on=true` exception
+remains exempt; new approvals require an administrator. Review retained exceptions
+through the audited process in [CMA automatic pause](CMA_Auto_Pause.md).
 
 ### Native runtime interruption recovery
 

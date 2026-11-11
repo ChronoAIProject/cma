@@ -1108,6 +1108,10 @@ Always on default retain their original inactivity behavior. Creating Agents or
 Workspaces inside an existing Sandbox never changes that Sandbox's reservation
 or availability. The deployment-owned system Profile defaults remain independent
 so a new inline default cannot rewrite old Profiles or fail their startup checks.
+When platform automatic pause is enabled, this legacy `always_keep_alive` value
+does not exempt a Sandbox. Only an explicit per-Sandbox `always_on=true` exception
+remains exempt; new approvals require an administrator. Review retained exceptions
+through the audited process in [CMA automatic pause](CMA_Auto_Pause.md).
 
 New Agent admissions, including Agents added to existing Sandboxes, capture the
 versioned GitHub workflow and memory-management guidance together. Prepared
