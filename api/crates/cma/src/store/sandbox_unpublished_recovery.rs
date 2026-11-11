@@ -13,8 +13,8 @@ use super::sandbox_mongo::{
 use transaction::ApplyError;
 
 #[cfg(test)]
-mod mongo_integration_tests;
-mod transaction;
+pub(in crate::store) mod mongo_integration_tests;
+pub(in crate::store) mod transaction;
 
 pub(super) async fn retained_snapshot(
     store: &MongoSandboxStore,

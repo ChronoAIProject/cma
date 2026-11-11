@@ -2,6 +2,27 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxStore for MongoSandboxStore {
+    async fn retained_reopen_snapshot(
+        &self,
+        id: &SandboxId,
+    ) -> Result<layer2_core::sandbox::RetainedReopenSnapshot, SandboxStoreError> {
+        super::super::retained_reopen::snapshot(self, id).await
+    }
+
+    async fn retained_reopen_receipt(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Option<layer2_core::sandbox::RetainedReopenReceipt>, SandboxStoreError> {
+        super::super::retained_reopen::receipt(self, id).await
+    }
+
+    async fn admit_retained_reopen(
+        &self,
+        request: layer2_core::sandbox::RetainedReopenRequest,
+    ) -> Result<layer2_core::sandbox::RetainedReopenAccepted, SandboxStoreError> {
+        super::super::retained_reopen::admit(self, request).await
+    }
+
     async fn retained_runtime_recovery_snapshot(
         &self,
         id: &SandboxId,
