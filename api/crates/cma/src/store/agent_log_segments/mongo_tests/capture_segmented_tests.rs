@@ -20,6 +20,7 @@ async fn segmented_capture_scans_active_once_and_points_scale_with_requested_sou
         let (agent, entries) = segmented(&store, closed).await;
         certify(&store, &agent, &entries).await;
         let mut session = client.start_session().snapshot(true).await.unwrap();
+        let started = std::time::Instant::now();
         let consumed = crate::store::mongo_read_telemetry::isolated_test(async {
             let proof = capture(&store, &agent, &mut session, CaptureMode::Snapshot)
                 .await
@@ -49,6 +50,10 @@ async fn segmented_capture_scans_active_once_and_points_scale_with_requested_sou
         })
         .await;
         assert_eq!(&consumed[..3], &[2, 0, 5]);
+        eprintln!(
+            "captured_points_bounds segments={closed} source_reads={} source_rows={} source_bytes={} elapsed_us={}",
+            consumed[0], consumed[2], consumed[3], started.elapsed().as_micros(),
+        );
         if let Some(expected) = baseline {
             assert_eq!(consumed, expected);
         } else {

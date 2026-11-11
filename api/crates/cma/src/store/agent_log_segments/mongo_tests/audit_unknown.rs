@@ -73,8 +73,25 @@ async fn committed_unknown_promotion_resumes_its_durable_cursor_without_rescanni
             )
             .await
             .unwrap(),
-        182
+        363 // original semantic evidence plus immutable output changes and turn totals
     );
+    for (kind, expected) in [
+        ("message", 181),
+        ("turn", 1),
+        ("output_change", 180),
+        ("turn_output", 1),
+    ] {
+        assert_eq!(
+            db.collection::<Document>(EVIDENCE)
+                .count_documents(doc! {
+                    "evidence_generation":durable.get_str("result_generation").unwrap(),"kind":kind
+                })
+                .await
+                .unwrap(),
+            expected,
+            "{kind}"
+        );
+    }
     assert_eq!(
         audit::install(&client, &db, agent.id.as_str(), "unknown")
             .await
