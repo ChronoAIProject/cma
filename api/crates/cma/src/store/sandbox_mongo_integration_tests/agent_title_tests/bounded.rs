@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicU64;
 
 mod fallback;
 mod fixture;
+mod fleet;
 mod refusals;
 use fixture::Fixture;
 
