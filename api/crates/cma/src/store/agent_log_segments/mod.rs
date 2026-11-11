@@ -7,6 +7,7 @@ mod collections;
 pub(in crate::store) use collections::SegmentCollections;
 pub(in crate::store) mod command;
 mod digest;
+pub(in crate::store) use digest::incarnation;
 mod envelope;
 pub(in crate::store) mod projection;
 pub(in crate::store) mod publication;
