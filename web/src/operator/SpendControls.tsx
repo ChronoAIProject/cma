@@ -1,14 +1,14 @@
 import { useId } from 'react';
 import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
+import { SpendField } from './SpendField';
+import { OwnerPolicyFields } from './OwnerPolicyFields';
+import { SpendPolicyLists } from './SpendPolicyLists';
 import {
   blankOwner,
   blankPlatform,
   exactAmount,
-  ownerAmounts,
   platformAmounts,
   spendBudget,
-  type Amount,
   type SpendBudget,
 } from './spendBudget';
 import type { SpendErrors } from './spendValidation';
@@ -17,12 +17,14 @@ export function SpendControls({
   value,
   disabled,
   writesAvailable,
+  requestWritesAvailable,
   errors,
   onChange,
 }: {
   readonly value: unknown;
   readonly disabled: boolean;
   readonly writesAvailable: boolean;
+  readonly requestWritesAvailable: boolean;
   readonly errors: SpendErrors;
   readonly onChange: (budget: SpendBudget) => void;
 }) {
@@ -117,43 +119,25 @@ export function SpendControls({
           <h4>Default owner policy</h4>
           <p className="operator-notice">
             Applies to owners without an explicit override. {budget.owners.length} explicit owner
-            overrides are retained unchanged. Owners without either policy remain outside the
-            enabled scope.
+            overrides are configured below. Owners without either policy remain outside the enabled
+            scope. Remove the default policy to limit enforcement to listed owners.
           </p>
           {budget.default_policy ? (
-            <div className="operator-settings-grid">
-              {Object.entries(ownerAmounts).map(([field, label]) => {
-                const key = field as keyof typeof ownerAmounts;
-                return (
-                  <SpendField
-                    key={key}
-                    label={label}
-                    value={budget.default_policy![key]}
-                    disabled={disabled}
-                    error={errors[`default_policy.${key}`]}
-                    numeric
-                    onChange={(value) =>
-                      onChange({
-                        ...budget,
-                        default_policy: { ...budget.default_policy!, [key]: exactAmount(value) },
-                      })
-                    }
-                  />
-                );
-              })}
-              <SpendField
-                label="Day-boundary timezone (IANA)"
-                value={budget.default_policy.day_timezone}
+            <>
+              <OwnerPolicyFields
+                value={budget.default_policy}
+                path="default_policy"
                 disabled={disabled}
-                error={errors['default_policy.day_timezone']}
-                onChange={(value) =>
-                  onChange({
-                    ...budget,
-                    default_policy: { ...budget.default_policy!, day_timezone: value },
-                  })
-                }
+                errors={errors}
+                onChange={(default_policy) => onChange({ ...budget, default_policy })}
               />
-            </div>
+              <Button
+                disabled={disabled}
+                onClick={() => onChange({ ...budget, default_policy: undefined })}
+              >
+                Remove default owner policy
+              </Button>
+            </>
           ) : (
             <Button
               disabled={disabled}
@@ -162,6 +146,13 @@ export function SpendControls({
               Configure default owner policy
             </Button>
           )}
+          <SpendPolicyLists
+            budget={budget}
+            disabled={disabled}
+            requestWritesAvailable={requestWritesAvailable}
+            errors={errors}
+            onChange={onChange}
+          />
           <p className="operator-notice">
             Daily caps use the configured timezone. Changing timezone or token valuation may require
             reconciliation of outstanding usage before the server accepts the change.
@@ -169,44 +160,5 @@ export function SpendControls({
         </>
       )}
     </section>
-  );
-}
-
-function SpendField({
-  label,
-  value,
-  disabled,
-  error,
-  numeric = false,
-  onChange,
-}: {
-  readonly label: string;
-  readonly value: Amount;
-  readonly disabled: boolean;
-  readonly error?: string;
-  readonly numeric?: boolean;
-  readonly onChange: (value: string) => void;
-}) {
-  const id = useId();
-  return (
-    <label className="operator-field">
-      <span>{label}</span>
-      <Input
-        aria-label={label}
-        type="text"
-        inputMode={numeric ? 'numeric' : undefined}
-        value={value}
-        disabled={disabled}
-        required
-        aria-invalid={!!error}
-        aria-describedby={error ? id : undefined}
-        onChange={(event) => onChange(event.target.value)}
-      />
-      {error ? (
-        <span id={id} className="operator-failure">
-          {error}
-        </span>
-      ) : null}
-    </label>
   );
 }
