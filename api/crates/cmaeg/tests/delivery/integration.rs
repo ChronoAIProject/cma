@@ -3,6 +3,43 @@ use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
 #[tokio::test]
+async fn unknown_provider_refusal_keeps_callback_502_and_configured_failure_delivery() {
+    for missing in [false, true] {
+        let config = cmaeg::DeliveryConfig {
+            failure_text: "Configured failure reply".into(),
+            ..Default::default()
+        };
+        let mut app = App::new(
+            vec![],
+            0,
+            config.clone(),
+            FakeProviderConfig {
+                missing_turn_once: missing,
+                response_refusal: Some((403, "guest_denied".into())),
+                ..Default::default()
+            },
+        )
+        .await;
+        let response = app.fixture.send(&Envelope::new()).await;
+        assert_eq!(response.status(), 502);
+        let problem: Value = response.json().await.unwrap();
+        assert_eq!(problem["status"], 502);
+        assert_eq!(problem["code"], "provider_rejected");
+        assert_eq!(problem["detail"], "provider_rejected");
+        assert!(!problem.to_string().contains("guest_denied"));
+        assert!(!problem.to_string().contains("private provider diagnostic"));
+        assert!(
+            app.tracker
+                .drain(Instant::now() + Duration::from_secs(5))
+                .await
+        );
+        app.drain().await;
+        assert_eq!(app.fake.texts(), [config.failure_text]);
+        assert_eq!(app.provider.requests().len(), if missing { 3 } else { 1 });
+    }
+}
+
+#[tokio::test]
 async fn signed_callback_with_five_second_provider_sends_ack_then_final_and_drains() {
     let mut app = App::new(
         vec![],
