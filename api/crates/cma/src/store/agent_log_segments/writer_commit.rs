@@ -34,7 +34,10 @@ pub(in crate::store) struct PublicationInput<'a> {
 }
 
 pub(in crate::store) struct AggregateUpdate {
+    /// Existing validated domain/lease predicate; publication adds source guards.
     pub filter: Document,
+    /// `agent_replacement_fields(next)` plus caller-owned checkpoint/domain fields.
+    /// Omit segment/schema/integrity fields; publication owns those and last_seq.
     pub fields: Document,
 }
 
