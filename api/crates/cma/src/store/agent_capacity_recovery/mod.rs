@@ -18,5 +18,5 @@ mod worker_store;
 pub(crate) use discovery::{
     Cursor as RecoveryCursor, Page as RecoveryPage, Stream as RecoveryStream,
 };
+pub(crate) use layer2_core::sandbox::agent_capacity_recovery::commands::RecoveryStatus;
 pub(crate) use service::RecoveryService;
-pub(crate) use status::RecoveryStatus;
