@@ -331,17 +331,6 @@ export function expectedRequestUrl(fixture: ContractCase): URL {
 }
 
 export function expectedProjection(fixture: ContractCase): unknown {
-  if (
-    fixture.response.status === 200 &&
-    (fixture.operation.endsWith('/api/v1/admin/settings') ||
-      fixture.operation === 'POST /api/v1/admin/settings/reset' ||
-      fixture.operation === 'POST /api/v1/admin/triggers/pause' ||
-      fixture.operation === 'POST /api/v1/admin/triggers/resume')
-  ) {
-    // Existing SDK readers accept and ignore additive save-availability metadata.
-    const { revision, settings } = fixture.response.body as Record<string, unknown>;
-    return { revision, settings };
-  }
   if (fixture.operation === 'GET /api/v1/triggers/public/{public_id}/badge.svg') {
     return {
       status: fixture.response.status,
