@@ -14,7 +14,7 @@ pub(crate) struct Context {
     // revision, reserved, operations, authority, terminal, in schema order.
     pub(super) accounting: [i64; 5],
     // page_size, page_count, freelist_count, max_page_count.
-    geometry: [i64; 4],
+    pub(super) geometry: [i64; 4],
 }
 
 impl Context {

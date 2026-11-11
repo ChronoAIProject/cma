@@ -64,7 +64,7 @@ pub(super) async fn run(path: &Path) -> Result<()> {
     let proof = GroupProof {
         key: group_key(&operation),
         source_sha256: format!("{:x}", digest.finalize()),
-        observation_sha256: "b".repeat(64),
+        observation_sha256: format!("{:x}", Sha256::digest(observation(&config, &operation)?)),
         records: rows.len() as u32,
     };
     let id = uuid::Uuid::new_v4().to_string();
@@ -95,8 +95,15 @@ pub(super) async fn run(path: &Path) -> Result<()> {
         old.close().await?;
         return Err(invalid());
     }
-    let archive =
-        Archive::open_version(path.to_owned(), config, id, false, 256, Version::Indexed).await?;
+    let archive = Archive::open_version(
+        path.to_owned(),
+        config.clone(),
+        id.clone(),
+        false,
+        256,
+        Version::Indexed,
+    )
+    .await?;
     let selected = Arc::new(std::sync::Mutex::new(Vec::new()));
     let captured = selected.clone();
     let expected = context.clone();
@@ -117,13 +124,60 @@ pub(super) async fn run(path: &Path) -> Result<()> {
         .await?;
     if archive.verify_indexed(proof.clone()).await? != receipt
         || archive
-            .prepare_indexed(proof, context, |_| Err(invalid()))
+            .prepare_indexed(proof.clone(), context, |_| Err(invalid()))
             .await?
             != receipt
     {
         return Err(invalid());
     }
     expect_refused(&archive, &operation).await?;
-    archive.close().await?;
-    ledger.close().await
+    let observation = observation(&config, &operation)?;
+    let first =
+        super::super::deactivate_held(archive, ledger, proof.clone(), observation.clone(), ())
+            .await?;
+    let archive = Archive::open_version(
+        path.to_owned(),
+        config.clone(),
+        id.clone(),
+        false,
+        256,
+        Version::Indexed,
+    )
+    .await?;
+    let ledger = Ledger::open(path.with_extension("source"), config.clone(), false, 16_384).await?;
+    let after = ledger.snapshot().await?;
+    if after.operations != 0
+        || after.authority != 0
+        || after.terminal != 0
+        || after.reserved_bytes != 0
+        || archive.require_ready().await.is_ok()
+    {
+        return Err(invalid());
+    }
+    expect_refused(&archive, &operation).await?;
+    let retry = super::super::deactivate_held(archive, ledger, proof, observation, ()).await?;
+    if retry != first {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn observation(config: &RuntimeConfig, operation: &Operation) -> Result<Vec<u8>> {
+    use layer3_adapter::runtime_ledger_retirement::{
+        RuntimeLedgerRetirementSnapshot, LEDGER_RETIREMENT_SNAPSHOT_FORMAT,
+    };
+    serde_json::to_vec(&RuntimeLedgerRetirementSnapshot {
+        format: LEDGER_RETIREMENT_SNAPSHOT_FORMAT.into(),
+        sandbox_id: config.sandbox_id.clone(),
+        home_identity: config.home_identity.clone().ok_or_else(invalid)?,
+        generation: config.generation,
+        sandbox_revision: 1,
+        observed_at: "2026-11-11T00:00:00Z".into(),
+        source_sha256: "b".repeat(64),
+        agents_observed: 1,
+        worktrees_observed: 0,
+        deleted_agents: vec![group_key(operation)],
+        removed_worktrees: vec![],
+    })
+    .map_err(|_| invalid())
 }
