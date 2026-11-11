@@ -181,6 +181,25 @@ pub(super) fn plan(
     Ok(PublicationPlan { head, seal })
 }
 
+/// Read-only admission hint. Final publication recaptures and validates source.
+pub(in crate::store) fn needs_normal_rollover(
+    head: &Head,
+    entries: &[AgentLogEntry],
+) -> Result<bool, SandboxStoreError> {
+    head.validate()?;
+    let batch = EncodedBatch::new(head, entries)?;
+    if !fits(0, 0, &batch, AppendCapacity::Normal) {
+        return Err(capacity());
+    }
+    Ok(!entries.is_empty()
+        && !fits(
+            head.active_count,
+            head.active_bytes,
+            &batch,
+            AppendCapacity::Normal,
+        ))
+}
+
 fn fits(count: i64, bytes: i64, batch: &EncodedBatch, class: AppendCapacity) -> bool {
     let (max_count, max_bytes) = match class {
         AppendCapacity::Normal => (NORMAL_COUNT, NORMAL_BYTES),
