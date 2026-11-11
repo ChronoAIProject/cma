@@ -35,6 +35,10 @@ fn indexes(name: &str) -> Vec<IndexModel> {
         )],
         EVIDENCE => vec![
             (
+                "agent_log_evidence_generation",
+                doc! {"agent_id":1,"incarnation":1,"evidence_generation":1,"_id":1},
+            ),
+            (
                 "agent_log_evidence_key",
                 doc! {"agent_id":1,"incarnation":1,"evidence_generation":1,"kind":1,"entity_key":1},
             ),
@@ -147,15 +151,20 @@ fn validator(name: &str) -> Document {
             &[],
         ),
         AUDITS => (
-            &["agent_id", "incarnation", "audit_id", "holder", "status"],
+            &[
+                "agent_id",
+                "incarnation",
+                "audit_id",
+                "holder",
+                "status",
+                "result_generation",
+            ],
             &[
                 "fence",
                 "expires_at_ms",
                 "through_seq",
                 "head_revision",
-                "next_ordinal",
-                "checked_entries",
-                "checked_bytes",
+                "step",
             ],
             &[],
         ),
@@ -179,8 +188,9 @@ fn validator(name: &str) -> Document {
     if name == AUDITS {
         properties.insert("captured_head", doc! {"bsonType":"object"});
         properties.insert("captured_agent", doc! {"bsonType":"object"});
-        properties.insert("semantic", doc! {"bsonType":"object"});
-        properties.insert("previous_seal", doc! {"bsonType":["null","binData"]});
+        properties.insert("format_version", doc! {"bsonType":"long","enum":[2_i64]});
+        properties.insert("completed", doc! {"bsonType":"object"});
+        properties.insert("stage", doc! {"bsonType":["null","object"]});
     }
     let required: Vec<_> = properties.keys().cloned().collect();
     doc! {"$jsonSchema":{"bsonType":"object","required":required,"additionalProperties":false,"properties":properties}}
