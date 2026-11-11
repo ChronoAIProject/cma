@@ -26,7 +26,12 @@ import {
   type SandboxStatus,
 } from './instances/types.js';
 import { sandboxEvent } from './instances/events.js';
-import { retainedRecoveryAssessment } from './instances/retained-recovery.js';
+import {
+  retainedRecoveryAssessment,
+  recoverRetainedRequest,
+  retainedReopenReceipt,
+  type RecoverRetainedRequest,
+} from './instances/retained-recovery.js';
 import {
   updateSandboxRuntimeRequest,
   type UpdateSandboxRuntimeRequest,
@@ -184,6 +189,21 @@ export class Sandboxes {
       `/api/v1/sandboxes/${segment(id)}/runtime-recovery`,
       retainedRecoveryAssessment,
       options,
+    );
+  }
+
+  /** Explicit owner consent; server re-proves exact retained authority and idle history. */
+  recoverRetained(id: string, body: RecoverRetainedRequest, options: CommandOptions) {
+    return read(
+      this.config,
+      `/api/v1/sandboxes/${segment(id)}/runtime-recovery`,
+      retainedReopenReceipt,
+      {
+        ...command(options),
+        method: 'POST',
+        body: input(recoverRetainedRequest, body),
+        expectedStatus: 202,
+      },
     );
   }
 
