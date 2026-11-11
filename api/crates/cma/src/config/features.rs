@@ -4,6 +4,10 @@ mod segmentation_tests;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub output_json_budget: bool,
+    pub bounded_update_relay: bool,
+    pub bounded_live_fragments: bool,
+    pub retain_read_frames: bool,
     pub parent_not_ready_pacing_enabled: bool,
     pub bounded_permission_state: bool,
     pub retained_reopen_enabled: bool,
@@ -24,6 +28,8 @@ pub(crate) struct FeatureFlags {
     pub document_revocation_reserve: bool,
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
+    pub shared_runtime_output: bool,
+    pub document_quotas: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -40,6 +46,10 @@ impl FeatureFlags {
             }
         }
         Ok(Self {
+            output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
+            bounded_update_relay: flag(lookup, "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED")?,
+            bounded_live_fragments: flag(lookup, "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED")?,
+            retain_read_frames: flag(lookup, "CHRONO_READ_FRAME_BUDGET_ENABLED")?,
             parent_not_ready_pacing_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED",
@@ -72,6 +82,8 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
             )?,
+            shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
+            document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
         })
     }
 }

@@ -30,11 +30,13 @@ impl Bridge {
                         if let Some(id) = id.as_str() {
                             self.mark_prompt_completed(id).await;
                         }
-                        updates.send(super::acp_turn::scoped_turn_outcome(
-                            super::acp_turn::turn_outcome(frame.clone()),
-                            true,
-                            prompt_id,
-                        ));
+                        updates
+                            .send(super::acp_turn::scoped_turn_outcome(
+                                super::acp_turn::turn_outcome(frame.clone()),
+                                true,
+                                prompt_id,
+                            ))
+                            .await;
                     }
                     let _ = waiting.answer.send(frame);
                     return Ok(());
@@ -57,11 +59,13 @@ impl Bridge {
                                 self.mark_prompt_completed(id).await;
                                 self.orphaned_prompt_response
                                     .store(false, std::sync::atomic::Ordering::SeqCst);
-                                updates.send(super::acp_turn::scoped_turn_outcome(
-                                    outcome,
-                                    true,
-                                    Some(prompt_id),
-                                ));
+                                updates
+                                    .send(super::acp_turn::scoped_turn_outcome(
+                                        outcome,
+                                        true,
+                                        Some(prompt_id),
+                                    ))
+                                    .await;
                                 return Ok(());
                             }
                         }
@@ -167,7 +171,9 @@ impl Bridge {
             }
             return;
         };
-        updates.send(ConversationUpdate::SignInRequired { url, code, message });
+        updates
+            .send(ConversationUpdate::SignInRequired { url, code, message })
+            .await;
         if let Some(id) = frame.get("id") {
             let _ = self
                 .send(&serde_json::json!({
