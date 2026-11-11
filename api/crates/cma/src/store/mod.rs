@@ -14,6 +14,7 @@ mod agent_control_receipt;
 mod agent_control_store;
 mod agent_control_transaction;
 mod agent_conversation_store;
+mod agent_failure_pacing;
 mod agent_lifecycle_operations;
 mod agent_log;
 mod agent_log_integrity;
@@ -71,6 +72,7 @@ mod hierarchy;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
+pub(crate) mod ledger_retirement;
 mod legacy_history;
 mod lifecycle_execution;
 pub(crate) mod lifecycle_transaction;
