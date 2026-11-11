@@ -13,7 +13,7 @@ use crate::store::{
     agent_log_integrity::{AppendCapacity, TransactionLogError},
     agent_log_segments::{
         capture::{self, CapturedFormat},
-        publication::{self, Publication, PublicationIdentity},
+        publication::{Publication, PublicationIdentity},
         transaction_scope::TransactionScope,
         writer_admission::{Admission, AdmissionKind},
         writer_bootstrap::BootstrapPlan,
@@ -79,6 +79,7 @@ pub(in crate::store) async fn persist_admission(
         },
         appended_at: identity.appended_at,
     };
+    let stored = records::StoredRecovery::new(&next, work.clone(), &[], input.now)?;
     input
         .admission
         .permits(context.agent, &operation, AdmissionKind::CapacityRecovery)?;
@@ -92,7 +93,7 @@ pub(in crate::store) async fn persist_admission(
             next: &next,
             logs: &[],
             capacity: AppendCapacity::Normal,
-            result_digest: publication::result_digest(&(&next, &work))?,
+            result_digest: stored.result.digest(&work)?,
         },
         input.bootstrap,
         Some(input.admission),
@@ -101,7 +102,7 @@ pub(in crate::store) async fn persist_admission(
     let filter = source::fence_filter_scoped(store, context.agent, scope).await?;
     // No user input or synthetic event is materialized. A carrier/parent/CAS
     // failure aborts the same transaction as the seal, successor and Publication.
-    records::insert(store, &work, scope).await?;
+    records::insert(store, &stored, scope).await?;
     authority::fence_parents(store, &current, scope).await?;
     authority::require(input.authorized)?;
     let publication = writer_commit::persist(
