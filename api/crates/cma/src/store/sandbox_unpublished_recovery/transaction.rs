@@ -132,36 +132,47 @@ async fn load_for_inspection(
         let mut observation = Observation::new(Stage::PublicationLog);
         let mut published = false;
         let mut entries = Vec::new();
-        let result = scan_complete_log_with_session(
-            ScanCaller::RecoveryProof,
-            store,
-            &agent.id,
-            agent.conversation.last_seq,
-            session,
-            |entry| {
-                if require_unpublished
-                    && matches!(entry.kind,
+        let result = if require_unpublished {
+            scan_complete_log_with_session(
+                ScanCaller::RecoveryProof,
+                store,
+                &agent.id,
+                agent.conversation.last_seq,
+                session,
+                |entry| {
+                    if matches!(entry.kind,
                 AgentLogKind::ConversationOpened { runtime_generation, .. }
                 | AgentLogKind::RuntimeGenerationRetired { runtime_generation, .. }
                     if generation.is_some_and(|generation| runtime_generation >= generation))
-                {
-                    published = true;
-                    return Err(SandboxStoreError::InvalidTransaction(
-                        "runtime generation was already published",
-                    ));
-                }
-                if require_reopen {
-                    let bytes = serde_json::to_vec(&entry).map_err(|_| {
-                        SandboxStoreError::Corrupt("recovery history encoding failed".into())
-                    })?;
-                    history_digest.update((bytes.len() as u64).to_be_bytes());
-                    history_digest.update(bytes);
-                    entries.push(entry);
-                }
-                Ok(())
-            },
-        )
-        .await;
+                    {
+                        published = true;
+                        return Err(SandboxStoreError::InvalidTransaction(
+                            "runtime generation was already published",
+                        ));
+                    }
+                    if require_reopen {
+                        let bytes = serde_json::to_vec(&entry).map_err(|_| {
+                            SandboxStoreError::Corrupt("recovery history encoding failed".into())
+                        })?;
+                        history_digest.update((bytes.len() as u64).to_be_bytes());
+                        history_digest.update(bytes);
+                        entries.push(entry);
+                    }
+                    Ok(())
+                },
+            )
+            .await
+        } else {
+            // Assessment is available before consent and even with admission
+            // disabled. Existing quarantine is a refusal, never a reason to write.
+            super::super::agent_log_integrity::read::scan_complete_log_with_session(
+                ScanCaller::RecoveryProof,
+                store,
+                agent,
+                session,
+            )
+            .await
+        };
         observation.finish(match &result {
             Ok(_) => Reason::Success,
             Err(TransactionLogError::Driver(_)) => Reason::Unavailable,
