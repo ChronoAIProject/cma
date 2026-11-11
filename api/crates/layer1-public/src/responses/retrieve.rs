@@ -152,7 +152,12 @@ pub(super) async fn retrieve(
             if from > response.output.len() {
                 return field_refusal("output_after", "The output cursor is beyond the response.");
             }
-            let next = response.output.len().min(from.saturating_add(8));
+            let next = response.output.len().min(from.saturating_add(1));
+            if serde_json::to_vec(&response.output[from..next]).map_or(true, |b| {
+                b.len() + 2048 > layer2_core::sandbox::store::indexed::OUTPUT_PAGE_BYTES
+            }) {
+                return field_refusal("output_page", "One output item exceeds the page budget.");
+            }
             Json(json!({"object":"cma.response.output_page","response_id":response.id,"data":&response.output[from..next],"has_more":next<response.output.len(),"next_after":(next<response.output.len()).then_some(next)})).into_response()
         }
         Some(response) => Json(response).into_response(),

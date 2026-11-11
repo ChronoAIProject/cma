@@ -27,11 +27,7 @@ async fn deletion_while_points_wait_discards_the_private_result() {
             .await
     });
     f.source.counts.entered.notified().await;
-    let mut changed = f.agent.clone();
-    changed.status = AgentStatus::Deleted;
-    changed.deleted_at = Some(AT.into());
-    changed.revision += 1;
-    f.store.save_agent(f.agent.revision, changed).await.unwrap();
+    f.purge().await;
     f.source.counts.stall.store(false, Ordering::SeqCst);
     f.source.counts.release.notify_one();
     assert!(pending.await.unwrap().is_err());
@@ -185,4 +181,38 @@ async fn a_slow_indexed_read_cannot_extend_the_original_deadline() {
     f.source.counts.entered.notified().await;
     tokio::time::advance(Duration::from_secs(16)).await;
     assert!(task.await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn retired_agent_history_remains_available_until_purge() {
+    let mut kinds = beginning();
+    kinds.extend([
+        message("retained"),
+        AgentLogKind::TurnCompleted { turn_sequence: 3 },
+    ]);
+    let f = make(kinds).await;
+    let mut retired = f.agent.clone();
+    retired.status = AgentStatus::Deleted;
+    retired.deleted_at = Some(AT.into());
+    retired.revision += 1;
+    f.store.save_agent(f.agent.revision, retired).await.unwrap();
+    let reading = f.reading.clone();
+    let actual = f
+        .observe(move |source| {
+            Box::pin(async move {
+                projection::indexed::complete(
+                    source,
+                    &crate::agent_page::AgentPageOrigin::test(),
+                    reading,
+                )
+                .await
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(actual).unwrap(),
+        serde_json::to_value(f.golden()).unwrap()
+    );
 }
