@@ -1,6 +1,7 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub bounded_raw_output: bool,
     pub shared_runtime_output: bool,
     pub retain_read_frames: bool,
     pub bounded_live_fragments: bool,
@@ -42,6 +43,7 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             retain_read_frames: flag(lookup, "CHRONO_READ_FRAME_BUDGET_ENABLED")?,
@@ -482,25 +484,9 @@ mod output_json_tests {
 }
 
 #[cfg(test)]
-mod quota_tests {
-    use super::*;
+#[path = "features/quota_tests.rs"]
+mod quota_tests;
 
-    #[test]
-    fn document_quotas_require_an_independent_strict_opt_in() {
-        let key = "CHRONO_DOCUMENT_QUOTAS_ENABLED";
-        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |name| {
-                Ok((name == key).then(|| value.map(str::to_owned)).flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.document_quotas, enabled);
-            assert!(!flags.document_revocation_reserve);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |name| Ok(
-                (name == key).then(|| value.to_owned())
-            ))
-            .is_err());
-        }
-    }
-}
+#[cfg(test)]
+#[path = "features/raw_output_tests.rs"]
+mod raw_output_tests;
