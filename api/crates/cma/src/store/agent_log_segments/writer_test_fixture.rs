@@ -18,13 +18,24 @@ pub(super) struct Fixture {
 }
 
 pub(super) async fn fixture(count: i64) -> Fixture {
+    named_fixture(count, None, "agt_delta_fixture").await
+}
+
+pub(super) async fn named_fixture(count: i64, database: Option<&str>, id: &str) -> Fixture {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable replica set required");
     let client = Client::with_uri_str(uri).await.unwrap();
-    let name = format!("cma_writer_{}", uuid::Uuid::new_v4().simple());
+    let name = database
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("cma_writer_{}", uuid::Uuid::new_v4().simple()));
     let db = client.database(&name);
     schema::migrate(&db).await.unwrap();
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let (mut agent, mut head, mut state) = writer_projection::tests::opened();
+    agent.id = layer2_core::AgentId(id.into());
+    agent.creation_key = format!("manual:{id}");
+    agent.worktree_id = layer2_core::WorktreeId(format!("wt_{id}"));
+    head.agent_id = id.into();
+    head.incarnation = digest::incarnation(&agent);
     let mut raw = Vec::new();
     let mut leaves = Vec::new();
     let mut bytes = 0;
