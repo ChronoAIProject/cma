@@ -325,27 +325,63 @@ parents/commands, caps at 300 seconds, and filters held work before LIMIT.
 Adding a second durable pacing schema or raising `Agent.work.ready_at` alone
 would lose those wake semantics.
 
-The exact ownership manifest does not allocate these required files:
+The frozen S1/S4 handoff allocates these required files to S5:
 
 - `api/crates/cma/src/store/agent_failure_pacing.rs`
 - `api/crates/cma/src/store/agent_failure_pacing/discovery.rs`
 - `api/crates/cma/src/sandbox/agent_worker/support/context.rs`
 - `api/crates/cma/src/sandbox/agent_worker/connection.rs`
 
-Request a recorded S5 allocation or owner-authored edits. Extend only an
+Implement only an
 independently default-off `agent_parent_not_ready` read-only observation path;
 retain current `agent_runtime_unavailable` baseline and ledger behavior. Capture
 parent and command-admission revisions before the observation; persist only
 matching read-only failures. The config/worker/store composition registration
-belongs to S2. Decide the exact shared flag name and consumption point there.
+belongs to S2. The frozen flag is
+`CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED=false`.
 Current baseline runtime-unavailable hint behavior is already enabled; the new
 flag must not silently rewrite that baseline under the label of default-off.
 
 ## Next gates
 
-After the executable S1/S4 contracts land, normal merge
-from `integration-20261111`, implement store/worker/API and consumer wiring,
+Normally merge exact isolated S1/S4 dependency heads and shared registration
+commits; do not import the evolving integration tip. Finish store/worker/API
+and consumer wiring against the frozen ports,
 then exact-head fmt, warning-free clippy, domain/worker/real-Mongo tests,
 under-500-line checks and complete-history secret scan. No PR is review-ready
 while executable storage/runtime integration is absent; the domain handoff is
 not a recovery delivery.
+
+
+## State-machine source checkpoint
+
+The registered core module now includes `ports`, `state`, and `service`.
+The service is independently default-off. Its local storage seam carries an
+opaque captured proof and explicit Recorded/KnownAbort/Unknown outcomes.
+Its runtime seam exposes only original-target reconnect and acknowledgement;
+there is no input, settings/context replay, replacement or new-conversation
+method. These local ports do not replace S1 source proofs or S4 publications.
+
+Accepted work keeps the original creation/failure key and target across retries.
+Storage admission stays Failed with no ordinary work scheduled. Recovery claims
+advance the writer fence, runtime confirmation is checked against the exact
+native target and original receipts, and completion produces only its actual
+Failed-to-live status event. Parent stop/delete/retirement wins. Lease validation
+uses elapsed monotonic time across the reconnect await. Input hashes include the
+separately serialized common first-message binding; no input text is copied into
+the bounded recovery work carrier.
+
+The transactional model stub covers restart, gate closure, both kinds of unknown
+commit, lease takeover/expiry, a crash after native confirmation, known-aborted
+completion, parent intent changing during reconnect, wrong native identity,
+corrupt work, approval state and queued/terminal/uncertain first-message outcomes.
+The source contains 34 registered recovery tests (17 earlier preflight tests and
+17 new orchestration tests). This is test inventory, not a passing test claim.
+
+Consumed dependencies: S1 `5ed7eaae1`, S4 `453b41742`, projection root registration
+`5f20045a6` and reader root/schema registration `ec6002898`, all normal merges.
+The first integrated core test attempt reached S4 projection registration and
+failed because the S3 `UsageFold` derives and `validate_projection_identity`
+export are still absent. No recovery tests executed in that attempt. S5 reported
+the concrete compile dependency and continues source work; no review-ready PR
+or successful Mongo recovery is claimed by this checkpoint.
