@@ -10,6 +10,13 @@ use crate::sandbox::{
 };
 use layer3_adapter::{ConversationUpdate, PromptIdentity};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Settlement {
+    Native,
+    Failure,
+    Private,
+}
+
 /// Opaque recorder proof. Stores must recheck the exact snapshot and the rejected
 /// append's normal capacity before spending the stop/failure reserve.
 #[derive(Clone, Debug)]
@@ -21,7 +28,7 @@ pub struct AgentConversationCapacitySettlement {
     refused: Vec<AgentLogEntry>,
     original_mutation: AgentConversationMutation,
     original_checkpoint: AgentMessageCheckpoint,
-    compact: bool,
+    settlement: Settlement,
 }
 
 impl AgentConversationCapacitySettlement {
@@ -31,6 +38,26 @@ impl AgentConversationCapacitySettlement {
         attempted: AgentMessageCheckpoint,
         attempted_mutation: AgentConversationMutation,
         identified_terminal: bool,
+    ) -> Result<Self, SandboxStoreError> {
+        Self::build(
+            current,
+            previous,
+            attempted,
+            attempted_mutation,
+            if identified_terminal {
+                Settlement::Native
+            } else {
+                Settlement::Failure
+            },
+        )
+    }
+
+    fn build(
+        current: Agent,
+        previous: Option<AgentMessageCheckpoint>,
+        attempted: AgentMessageCheckpoint,
+        attempted_mutation: AgentConversationMutation,
+        settlement: Settlement,
     ) -> Result<Self, SandboxStoreError> {
         let turn = current
             .conversation
@@ -63,7 +90,7 @@ impl AgentConversationCapacitySettlement {
             detail: "Durable Agent history reached its lifetime budget. Retained output and runtime identity are preserved. This Agent cannot continue under the current limits; inspect capacity before explicit recovery or replacement.".into(),
         };
         let native_terminal = attempted.outcome.appended.len() <= super::MAX_AGENT_LOG_BATCH_SIZE
-            && identified_terminal
+            && settlement == Settlement::Native
             && attempted.outcome.turn_closed
             && attempted_mutation.agent.status == AgentStatus::Ready
             && attempted_mutation
@@ -78,16 +105,30 @@ impl AgentConversationCapacitySettlement {
                 })
                 .count()
                 == 1;
+        let settlement = if settlement == Settlement::Native && !native_terminal {
+            Settlement::Failure
+        } else {
+            settlement
+        };
         let mut mutation = if native_terminal {
             attempted_mutation
         } else {
-            let prefix = AgentMessageAssembly::default();
-            if previous
-                .as_ref()
-                .is_some_and(|value| !value.assembly.is_empty())
-            {
-                failure.detail.push_str(" The unflushed assistant prefix is retained in the private capacity checkpoint for operator export; it was not published as a completed answer.");
-            }
+            let prefix = if settlement == Settlement::Private {
+                if previous
+                    .as_ref()
+                    .is_some_and(|value| !value.assembly.is_empty())
+                {
+                    failure.detail = "This Agent cannot continue because its conversation history is full. Some partial output could not be saved in the conversation history. It is retained privately; contact support to recover it through an operator export.".into();
+                }
+                AgentMessageAssembly::default()
+            } else {
+                // These bytes were committed and may already have been shown
+                // live. Use the ordinary failure fold to keep them visible.
+                previous
+                    .as_ref()
+                    .map(|value| value.assembly.clone())
+                    .unwrap_or_default()
+            };
             // Capacity is not evidence that an ambiguous input reached native
             // execution. Preserve its delivery facts while settling this turn.
             let update = ConversationUpdate::WithoutPromptEvidence(Box::new(
@@ -200,22 +241,32 @@ impl AgentConversationCapacitySettlement {
             refused: attempted.outcome.appended,
             original_mutation,
             original_checkpoint,
-            compact: !native_terminal,
+            settlement,
         })
     }
 
-    /// Only a known-aborted native settlement may select this fallback; an
-    /// unknown commit must reconcile its original checkpoint unchanged.
+    /// Advance only after a known-aborted capacity refusal: native outcome,
+    /// failure with the visible prefix, then fixed failure/private retention.
+    /// An unknown commit must reconcile the exact original candidate instead.
     pub fn compact_failure(&self) -> Result<Option<Self>, SandboxStoreError> {
-        if self.compact {
-            return Ok(None);
-        }
-        Self::new(
+        let next = match self.settlement {
+            Settlement::Native => Settlement::Failure,
+            Settlement::Failure
+                if self
+                    .previous
+                    .as_ref()
+                    .is_some_and(|p| !p.assembly.is_empty()) =>
+            {
+                Settlement::Private
+            }
+            _ => return Ok(None),
+        };
+        Self::build(
             self.current.clone(),
             self.previous.clone(),
             self.original_checkpoint.clone(),
             self.original_mutation.clone(),
-            false,
+            next,
         )
         .map(Some)
     }
@@ -225,7 +276,7 @@ impl AgentConversationCapacitySettlement {
     pub fn retained_prefix(&self) -> Option<&AgentMessageCheckpoint> {
         self.previous
             .as_ref()
-            .filter(|value| self.compact && !value.assembly.is_empty())
+            .filter(|value| self.settlement == Settlement::Private && !value.assembly.is_empty())
     }
 
     pub fn current(&self) -> &Agent {
