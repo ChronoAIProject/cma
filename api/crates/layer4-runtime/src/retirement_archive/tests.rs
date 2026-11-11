@@ -5,6 +5,8 @@ mod completion_tests;
 mod indexed_tests;
 #[path = "transfer_tests.rs"]
 mod transfer_tests;
+#[path = "v1_lifetime_tests.rs"]
+mod v1_lifetime_tests;
 use crate::mutation_authority::Record as Authority;
 use crate::mutation_journal::Record as Journal;
 use layer3_adapter::{AgentHomeRemoveRequest, AgentSlot};
