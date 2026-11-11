@@ -99,7 +99,7 @@ pub(super) async fn apply(
     };
     let (agents, logs) = publish_agents(store, rows, &mutation.agents, request, session).await?;
     persist_sandbox(
-        store, request, &current, last_seq, mutation, agents, logs, session,
+        store, request, &current, last_seq, *mutation, agents, logs, session,
     )
     .await
 }
