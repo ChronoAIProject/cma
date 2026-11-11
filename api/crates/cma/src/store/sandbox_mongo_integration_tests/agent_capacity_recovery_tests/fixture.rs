@@ -56,7 +56,7 @@ pub(super) async fn capacity_fixture(store: &MongoSandboxStore) -> Agent {
         .unwrap()
         .unwrap();
     worktree.path = format!("{}/.worktrees/{}", workspace.path, worktree.name);
-    worktree.base_commit = workspace.resolved_commit.unwrap();
+    worktree.base_commit = workspace.resolved_commit.clone().unwrap();
     worktree.revision += 1;
     replace_worktree_fixture(store, &worktree).await;
     agent.status = AgentStatus::Failed;
@@ -67,24 +67,40 @@ pub(super) async fn capacity_fixture(store: &MongoSandboxStore) -> Agent {
         detail: "fixture".into(),
     });
     agent.revision += 1;
-    agent.conversation.last_seq += 1;
     replace_agent_fixture(store, &agent).await;
     store
-        .agent_log
-        .insert_one(
-            crate::store::agent_log::log_document(&AgentLogEntry {
-                agent_id: agent.id.clone(),
-                seq: agent.conversation.last_seq,
-                appended_at: NOW.into(),
-                kind: AgentLogKind::WorkStepFailed {
-                    step: AgentWorkStep::PublishConnection,
-                    failure: agent.failure.clone().unwrap(),
-                },
-            })
-            .unwrap(),
+        .append_agent_log(
+            &agent.id,
+            NOW.into(),
+            AgentLogKind::WorkStepFailed {
+                step: AgentWorkStep::PublishConnection,
+                failure: agent.failure.clone().unwrap(),
+            },
         )
         .await
         .unwrap();
+    agent = store.get_agent(&agent.id).await.unwrap().unwrap();
+    sandbox.validate().expect("valid recovery parent fixture");
+    agent
+        .validate_prerequisites(&worktree)
+        .expect("valid recovery Agent prerequisites");
+    worktree
+        .validate_prerequisites(&workspace)
+        .expect("valid recovery Worktree prerequisites");
+    workspace
+        .validate_prerequisites(&sandbox)
+        .expect("valid recovery Workspace prerequisites");
+    let context = layer2_core::sandbox::agent_capacity_recovery::CapacityRecoveryContext {
+        agent: &agent,
+        sandbox: &sandbox,
+        workspace: &workspace,
+        worktree: &worktree,
+    };
+    assert_eq!(
+        context.classify(&layer2_core::now_rfc3339()),
+        layer2_core::sandbox::agent_capacity_recovery::CapacityRecoveryDisposition::EvidenceRequired,
+        "fixture must reach evidence admission"
+    );
     let db = store.client.database(&store.agents.namespace().db);
     schema::migrate(&db).await.unwrap();
     let mut session = store.client.start_session().await.unwrap();
@@ -128,7 +144,10 @@ async fn ready_with_created(store: &MongoSandboxStore) -> Agent {
         .unwrap();
     let current = store.get_agent(&claimed.id).await.unwrap().unwrap();
     let conversation_id = "conversation-activation";
-    let claimed = ready_publication_claim(current, conversation_id);
+    let mut claimed = ready_publication_claim(current, conversation_id);
+    // Simulated preceding work steps change state and must advance revision;
+    // the Created checkpoint cannot remain bound to this changed aggregate.
+    claimed.revision += 1;
     replace_agent_fixture(store, &claimed).await;
     let fence = claimed.work.lease.as_ref().unwrap().fence;
     let mut ready = claimed.clone();

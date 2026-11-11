@@ -75,7 +75,12 @@ pub(super) async fn prepare(
     }
     .await;
     let _ = scope.release().abort_transaction().await;
-    let (agent, operation, legacy) = source.map_err(transactions::error)?;
+    let (agent, operation, legacy) = source
+        .inspect_err(|_error| {
+            #[cfg(test)]
+            eprintln!("capacity recovery source preparation refused: {_error:?}");
+        })
+        .map_err(transactions::error)?;
 
     // This separate transaction admits both durable gates and claims the exact
     // preparation slot. It contains no source proof and no native operation.
@@ -129,6 +134,10 @@ pub(super) async fn prepare(
         Some(
             writer_bootstrap::stage(store, &agent, &operation, &admission, permit)
                 .await
+                .inspect_err(|_error| {
+                    #[cfg(test)]
+                    eprintln!("capacity recovery bootstrap refused: {_error:?}");
+                })
                 .map_err(transactions::error)?,
         )
     } else {
