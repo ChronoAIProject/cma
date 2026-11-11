@@ -1,4 +1,5 @@
 //! Positive current-state evidence; never an admission or runtime permission.
+//! An audit-only head revision may reuse an otherwise identical full-Agent witness.
 use std::time::Duration;
 
 use layer2_core::sandbox::{store::SandboxStoreError, Agent};
@@ -63,8 +64,9 @@ pub(in crate::store) async fn capture(
     let mut rows = publications
         .find(doc! {
             "agent_id":current.id.as_str(),"incarnation":&head.incarnation,
-            "head_revision":head.revision,
+            "head_revision":{"$lte":head.revision},
         })
+        .sort(doc! {"head_revision":-1})
         .hint(Hint::Name(INDEX.into()))
         .limit(-2)
         .batch_size(2)
@@ -72,16 +74,28 @@ pub(in crate::store) async fn capture(
         .session(scope.session())
         .await
         .map_err(TransactionLogError::Driver)?;
-    let mut receipt = None;
+    let mut receipt: Option<Publication> = None;
+    let mut seen = 0;
     while let Some(row) = rows.next(scope.session()).await {
         let row = row.map_err(TransactionLogError::Driver)?;
-        if receipt.is_some()
+        seen += 1;
+        if seen > 2
             || bson::serialize_to_vec(&row).map_err(|_| corrupt())?.len() > MAX_RECEIPT_BYTES
         {
             return Err(corrupt().into());
         }
-        receipt = Some(Publication::read(row)?);
+        let candidate = Publication::read(row)?;
+        if let Some(latest) = &receipt {
+            // The second row witnesses strict ordering, even if a drifted
+            // nonunique index admits two receipts for the newest head.
+            if candidate.head_revision >= latest.head_revision {
+                return Err(corrupt().into());
+            }
+        } else {
+            receipt = Some(candidate);
+        }
     }
+
     let publication = receipt.ok_or_else(|| {
         SandboxStoreError::Unavailable("current Agent publication witness is unavailable".into())
     })?;
@@ -106,7 +120,7 @@ fn require_binding(
         || receipt.incarnation != super::incarnation(current)
         || receipt.agent_id != head.agent_id
         || receipt.incarnation != head.incarnation
-        || receipt.head_revision != head.revision
+        || receipt.head_revision > head.revision
         || receipt.last_seq != head.last_seq
         || receipt.active_ordinal != head.active_ordinal
         || receipt.previous_seal != head.previous_seal

@@ -71,7 +71,7 @@ fn current_publication_refuses_receipt_and_head_mismatch() {
         assert!(require_binding(&agent, &head, &changed).is_err());
     }
     let mut changed = head.clone();
-    changed.revision += 1;
+    changed.revision = receipt.head_revision - 1;
     assert!(require_binding(&agent, &changed, &receipt).is_err());
 }
 
@@ -110,4 +110,15 @@ fn current_publication_format_two_requires_witness_and_rejects_unknown_shape() {
     let mut changed = original;
     changed.insert("format_version", 3_i64);
     assert!(Publication::read(changed).is_err());
+}
+
+#[test]
+fn current_publication_accepts_audit_generation_changes_with_identical_agent_and_source() {
+    let (agent, mut head, receipt) = fixture();
+    head.revision += 2;
+    head.evidence_generation = "rebuilt-fixture-generation".into();
+    require_binding(&agent, &head, &receipt).unwrap();
+    let mut changed = agent;
+    changed.revision += 1;
+    assert!(require_binding(&changed, &head, &receipt).is_err());
 }
