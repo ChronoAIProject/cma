@@ -54,7 +54,7 @@ pub(super) struct Evidence {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub(super) enum EvidenceRecord {
+pub(in crate::store) enum EvidenceRecord {
     TurnOutput {
         index: AgentTurnOutputIndex,
     },
@@ -142,7 +142,7 @@ pub(in crate::store) async fn read(
     Ok(projection.record)
 }
 
-pub(super) async fn evidence(
+pub(in crate::store) async fn evidence(
     store: &MongoSandboxStore,
     head: &Head,
     kind: &str,
@@ -168,7 +168,7 @@ pub(super) async fn evidence(
         .map_err(Into::into)
 }
 
-pub(super) fn read_evidence(
+pub(in crate::store) fn read_evidence(
     head: &Head,
     kind: &str,
     key: &str,
