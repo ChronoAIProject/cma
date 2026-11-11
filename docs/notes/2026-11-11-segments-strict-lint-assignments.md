@@ -307,100 +307,116 @@ At unchanged `4d7f6d680`, all19 S5 Mongo tests executed on pinned disposable8.0.
 `892aadc89` adds test-only diagnostics distinguishing writer_admission::admit from writer_gate::slots::claim. Normally merged develop1d425cffc and pushed `69eda007a`, retaining both independent feature sets and tests. The bounded600-second CMA+Mongo rerun is queued on clean fixed source, with two jobs and one target. The runner also captures a read-only host/Mongo clock bracket to diagnose server-time slot refusal; no clock change or validation relaxation is performed.
 
 
-## Pre-review follow-up evidence — Thu 03:27 SGT
+## Prior checkpoint evidence archive
 
-Current `d76c2171b`: pagination/maintenance/reconciliation selection **37 passed,
-0 failed, 1,469 skipped**, 0.282s execution. This qualifies the extracted helper's
-existing success/failure coverage for P2-N2; strict combined lint and reviewer
-delta remain pending. The source/head is frozen during the current in-place batch.
+The 03:27–04:29 integration/gate history is preserved verbatim in
+[coordination history 6](2026-11-12-segments-coordination-history-6.md).
+It records the valid37/0 pagination test result, historical Mongo110/5 (not
+current-source evidence), normally consumed S1/S4/S5 pins, and S5 exact-source
+67CMA/19Mongo/46core/8HTTP/7adapter passes. The published integration baseline
+is efc1fd426; its focused Mongo run later failed compilation as recorded below.
+No strict or actual-Mongo pass is inferred for that combined head.
 
-Historical archive `afc60d98a`: Mongo partitions 1–2 executed 77 tests:
-**74 passed, 3 failed** (38/1 and 36/2); 2,530 and 2,531 skipped respectively.
-These are not current-candidate results. Two retained-assessment cases fail at
-fixture `retained_assessment.rs:123`, before the assessment read, with corrupt
-integrity metadata. That fixture is unchanged in the current tree. S2 owns the
-fixture correction and rerun; S4 owns any actual worker-publication defect found.
-Source investigation shows the fixture appends Created, then overwrites the
-conversation at the same revision, invalidating the trusted semantic checkpoint.
-Qualify a consistent original publication fixture; do not weaken proof validation.
-Target correction after the in-place batch, focused Mongo evidence before 07:30.
+## P1-3 positive current-publication proof — Thu 04:42 SGT
 
-The third historical failure is the S5 discovery fixture's Mongo code-121 refusal:
-Completed work used a different `completed_at` from the original result witness.
-Current source already sets `result.published_at` consistently; S5 reports the
-actual-consumer profiler passing at `4d7f6d680`. Keep current combined execution
-required; do not reopen the source-closed format/index finding from this old run.
+S2 owns the narrow API/schema/publisher pin; target 06:30, latest 07:00 SGT.
+S4 agreement on the publication invariant has been requested through the lead;
+not yet received. S5 owns fresh authority, current activation/native confirmation
+and the executable later-progress restart/loss cases. The original format-2
+recovery carrier/result witness must remain unchanged. Proposed bounded contract:
+unique (agent_id, incarnation, head_revision) publication lookup plus a separate
+canonical current-Agent digest; domain result_digest keeps its existing meaning.
+Historical receipts remain readable; absent/old current evidence refuses proof.
+The opaque proof belongs to one TransactionScope/database and does not itself
+provide permission to attach, acknowledge, replay input or perform ordinary reconnect.
+Final signatures and consumable pin follow in a linked handoff before 07:00.
 
-New S1 response pin available: `fbce2aa875d515000e128c6b4f82216dbc8d4b4b`.
-Its exact-source public response result is 104 passed, 0 failed, 1 ignored,
-504 filtered; final Clippy/Mongo remain pending. The earlier four Mongo passes
-and fixed-scale measurements belong to `b5344ef9a`, not this new pin. Normal
-integration follows completion of the fixed current batch. P1-4 stays open:
-S3 lifetime work and legacy sparse long-turn streaming still need their stated
-bounded-work/compatibility evidence. See `2026-11-12-response-consumer-handoff.md`.
-
-
-S1 integration boundary at Thu 03:27: a non-mutating merge preview of
-`d76c2171b` + `fbce2aa87` retains the current unlimited compatibility vector in
-`agent_log_reads.rs`. The response pin itself has the old cap, but no new change
-at that boundary; a normal merge does not restore it. S1 must provide an explicit
-bounded-compatibility correction against the combined source by 07:30, with
-empty ranges and all adopted-record callers qualified. S3 supplies the compatible
-paged transcript when admission/optimization flags close. Do not resolve this
-by silently selecting the older file or sacrificing large-history availability.
+Combined efc1fd426 focused Mongo gate exited101 during compilation: title_through
+is private (projection.rs145 -> agent_log_segment_reads.rs145), and the segmented
+Head has no validate_lineage method (agent_log_segment_reads.rs114). No selected
+Mongo test executed. S2 will supply mechanical shared-boundary fixes, preserving
+Created lineage checks; S3 retains consumer semantics. Subsequent combined heavy
+gates did not run. Detailed log:2026-11-12-segments-combined-retained-fixture-mongo-efc1fd426.log.
 
 
-### S5 restart/profiler actual pass — 69eda007acc8b8e3ed2a391894aab6c9da19b073
+### S5 real worker-sweep checkpoint — 024de51689c662d0688370c6e9de2ea44bbdcd98
 
-The clean source guard passed at `69eda007acc8b8e3ed2a391894aab6c9da19b073`. CMA capacity:67passed/0failed/64ignored/2462filtered. Actual pinned disposable Mongo8.0.13:19passed/0failed/0ignored/2574filtered in34.12s. The previously failing restart and adopted due-work cases both passed; the actual-consumer profiler passed with wire limit32/batchSize32/singleBatch:true. The completed restart test exercises real live discovery, a failed acknowledgement followed by real loss-handler activation, unchanged Agent/carrier/publication state, and refusal before native IO on changed original request, later revision, organization policy and Retiring parent. The native port is still a counted no-input stub; production proof remains Unsupported. Both owned Mongo resources were removed.
+Normally merged published S4 fbe13913292cbf8230ab403685cd5d76d43bed64 at8e0a29802, including accepted-work composition, seven bounded scheduler tests, and scoped lifecycle/reconciliation consumers. Added an owned test-only router installer and strengthened the existing completed-restart Mongo test through actual AgentWorker::reconcile_connections: failed acknowledgement defers without ordinary work, the next sweep activates, and later revisions/Retiring parents preserve durable state without more native IO. Existing loss-handler and unchanged publication/carrier assertions remain. Production native proof stays Unsupported. No transferred composition paths were edited.
 
-The earlier preparation Conflicts did not recur. This pass does not establish a root cause for those earlier refusals; no gate or lease predicate was weakened and no retry was added to mask them. The diagnostic runner recorded Mongo time inside its host-call bracket. Current-source core/HTTP/adapter tests are queued next, then strict lint. No PR-ready or activation claim before those gates and combined review.
+Pushed024de51689c662d0688370c6e9de2ea44bbdcd98 after fetch/normal develop merge (already current). Formatting and source-size6186files pass; changed files92/344lines. Strict four-package Clippy is running on this fixed clean source under one existing shared heavy lock, two jobs and one cold Cargo target. Current-head unit/Mongo execution remains pending. The earlier69eda007a results are not relabelled. The frozen format-2 discovery/index pin remains daf605ab410fc4737633aa3997e67192d4c4112b.
 
-S2/S4 handoff: consume this exact pin and preserve the new shared ownership. S5 retains restart/P2/P3/native boundary. Shared service/worker/TransactionScope composition proceeds under the lead's03:25 allocation. The earlier Friday-first source forecast is superseded by S5 evidence due10:00 for the Thursday16:00 combined merge; native activation remains deferred.
-
-
-Archive `afc60d98a` partition 3: 36 passed, 2 failed, 2,531 skipped (125.224s).
-Cumulative first three partitions: 110 passed / 5 failed / 115 executed. The new
-worker-discovery failure uses the same retained-assessment fixture assigned to
-S2. The transcript-preparation failure is the historical missing top-level
-`last_seq` fixture already corrected by S3; keep the current combined rerun.
-These results do not reverse any source-closed pre-review disposition.
+The lead has assigned the later-progress positive publication/activation proof API/pin to S2/S4, ETA07:00; the ownership question is answered. Continue qualifying exact completion while that proof is delivered. Missing proof or revision growth still defers. S5 evidence target remains10:00 for the16:00 combined merge; no PR-ready or activation claim.
 
 
-### Consumed S4 composition handoff — 03:25 allocation
+### S5 disk-guard stop at fixed024de5168
 
-S4's published `08b947f93` records the lead's transfer of accepted-work
-service/worker composition and the existing bounded scheduler to S4. Exact file
-boundaries, isolated scheduler pins and S5's retained authority/native ownership:
-[composition handoff](2026-11-12-s4-composition-handoff.md). S2 retains canonical
-migration/grants and combined qualification. S4 source and actual gates are due
-11:00; this is additional to P1-1/P1-N1's earlier dependency deadlines.
+Strict four-package/all-target/all-feature Clippy acquired one existing heavy slot and began its cold dependency build at clean024de51689c662d0688370c6e9de2ea44bbdcd98. The runner stopped it at the31GiB disk guard before project diagnostics; exit2. This is neither a compiler failure nor a pass. Exact log:2026-11-12-s5-strict-024de5168.log. Free disk subsequently measured28.844GiB, below the team30GiB floor. Removed the entire newly created target,0.236GiB allocated; no owned target or Mongo manifest/container/volume remains. Shared lock inodes remain160171589/160080032. Last free-space observation29.844GiB, still below the32GiB preflight. The lead has been asked to coordinate cleanup by the other owners; no cross-worktree cleanup was attempted.
+
+Current-source light gates pass: cargo fmt --all -- --check; canonical file-size6186files; secret history3876commits/zero findings. The schema, index JSON and contract document are unchanged fromdaf605ab4. Remote readback confirms024de51689c662d0688370c6e9de2ea44bbdcd98; own tree is clean. All7scheduler test definitions are included in the capacity filter, but none is claimed executed on this source. Project9 remains In Progress. Latest current-head issue handoff:https://github.com/ChronoAIProject/cma/issues/1351#issuecomment-6806559557 (superseded gate-running status by this disk result).
+
+Resume after shared disk recovery: strict gate8, CMA capacity/actual-Mongo gate10 (separate gate5+6 if needed for bounded slices), and affected-layer gate9. Use existing heavy locks/two jobs/one target and preserve exact-source attribution. The S2/S4 later-progress proof pin remains due07:00; adapt only after published interface delivery, then qualify its affected paths. No activation/PR-ready claim and no develop merge. Native Unsupported stays typed. Evidence target10:00 is now conditional on disk recovery and that pin.
 
 
-## Normal integration and gate replacement — pre-review 2 follow-up
+### S1 explicit compatibility correction — b9d390634
 
-Normally merged S5 `69eda007a` at `a442934d9`, S4 `08b947f93` at `399ab1b05`,
-and S1 `fbce2aa87` at `8876a618a`. Conflicts retain every independent strict flag
-and configuration test, captured transaction scope, S3 title facts, S1 evidence
-visibility, and the broader reconciliation Mongo selector. No consumer semantics
-were rewritten. `5ce631649` repairs the retained fixture through a real revision
-boundary (`save_agent`); the focused actual-Mongo rerun remains required.
+Published response branch `tl/cma-log-segments/response-consumers` at
+`4df2fb3d0`, code correction `b9d390634745c0d78e287ea238934187ebe18a94`;
+normal develop sync `8167d01d8` at `f389f41c8`. Non-mutating merge preview
+against `efc1fd426` conflicts at `agent_log_reads.rs` and `config/features.rs`.
+Resolve the segmented arm to `segmented::read_compatibility_window`, retaining
+its module registration; it replaces the unlimited compatibility collector,
+including empty-range proof checks. Preserve every independent config flag,
+parser and test, including quota and batching's snapshot prerequisite. See
+`2026-11-12-response-consumer-handoff.md` for precise boundaries.
 
-The `d76c2171b` pagination result remains valid: 37/0 with 1,469 skipped. Its
-unacquired strict/scheduler/adapter/authenticated batch is superseded by this
-combined source. The old `afc60d98a` archive ends at 110/5 across 115 tests;
-partitions 4–6 were canceled before lock acquisition. No executing Cargo/Mongo
-child was interrupted. Preserve all exact-source logs; neither canceled batch
-is a complete pass. Unused immutable exports were removed; shared locks and the
-one reusable Cargo target were retained. Gates now qualify the new combined
-snapshot, with the same source-byte guard and two Cargo jobs under heavy-1.
+Two new Mongo cases cover independent row/byte refusal, successful small
+prefix/tail reads above the lifetime limits, and empty/future/max-cursor refusal
+after an uncommitted append. They are selected by the existing reader prefix.
+S3 must retain compatible adopted transcript routing when flags close; this
+correction is not transcript qualification or a whole P1-4 closure.
 
-S1 still owes an explicit compatibility-vector correction against the combined
-tree; S3 owes the bounded transcript/parity half. S4's actual-scoped-root evidence
-is recorded in `2026-11-12-s4-scoped-reconciliation.md`; it does not close its
-ordinary claim/admission or segmented CapacityRecovery findings. S5's 19/19 Mongo
-pass closes the earlier exact-result test failure, not later-progress P1-3 or
-native activation. All remaining deadlines and the 09:00 disposition hold.
+The f389 configuration build was stopped by the shared disk-floor guard before
+any test executed; strict CMA refused before Cargo. After another 1.480 GiB
+owned-output cleanup and shared capacity recovery, the corrective immutable
+b9d390634 config/Mongo/lint run acquired heavy-1. Results pending. Existing
+response104/core-public-lint and Mongo5 evidence remain at their recorded heads.
 
-Current exact ownership manifest includes the consumed S1/S4 additions and the
-03:25 accepted-work composition transfer; shared registration remains S2.
+
+### S5 gate resume — lead answer214
+
+At04:41 free disk was37.541GiB. Resumed strict gate8 on unchanged pushed024de51689c662d0688370c6e9de2ea44bbdcd98; blocking for either existing heavy slot, up to60minutes. Lead's explicit thresholds now govern: start at>=32GiB, pause below30GiB and retry after10minutes. The runner's old31GiB in-run guard was adjusted to30GiB; the32GiB preflight and single-target/two-job limits remain. No fixed38GiB requirement. Shared lock files are neither deleted nor recreated.
+
+Read S4's published final composition evidence984d881e (code gates atfbe139132 already consumed):107focusedunits/56actualMongo and strict CMA pass. Those remain S4 source evidence, not execution of S5's added actual-worker sweep at024de5168. S2 has recorded ownership of the positive current-publication proof pin, target06:30/latest07:00. No duplicate proof API is introduced while its signatures are being finalized.
+
+
+### P1-3 API signature checkpoint
+
+S2 source7444c0a80 on tl/cma-log-segments/current-publication-proof defines
+current_publication::{capture,CurrentPublication::require_current}. Exact Rust
+signatures, schema/index, compatibility and S5 consumption are recorded in
+2026-11-12-current-publication-proof.md (also committed under docs/notes).
+The new immutable publication format2 carries a separate full-Agent digest;
+historical publication format1 remains readable, without activation authority.
+The original recovery carrier format2 and its result witness are unchanged.
+S2 awaits S4 boundary agreement through the lead. Source qualification is queued
+under heavy-1 against immutable7444c0a80; no pass or published-pin claim yet.
+S5 may code against these signatures now. Final pin remains due06:30/07:00 SGT.
+
+
+Published P1-3 source pin: `7444c0a80c8305dc3006d794aef57b3a2ddc356d`.
+S5/S4 merge `origin/tl/cma-log-segments/current-publication-proof` normally.
+It starts at shared08b947f93, normally merges develop8167d01d8, then adds only
+this API/schema/publisher/test contract. Fmt, size6187files and diff checks pass;
+unit/Mongo gates are queued, not passed. S4 invariant agreement remains pending.
+No PR or activation claim; original completed recovery witness stays immutable.
+
+
+### S4 accepted-work composition consumed
+
+Normally integrating984d881ee (executable gates atfbe139132): strict CMA passed
+with zero diagnostics;107units and56actual-Mongo tests passed on that slice.
+Exact source evidence is in2026-11-12-s5-composition-wiring.md. This includes the
+service-local test facade,6composition Mongo cases and its faults.rs child,
+the7existing scheduler tests, and the default-off configuration documentation.
+It does not close P1-1/P1-N1 or later-progress P1-3. Combined gates remain required.
+S4 retains composition ownership; S5 retains restart/native correctness.
