@@ -90,6 +90,7 @@ pub(super) enum CredentialReply {
     Missing,
     Failed(String),
     Refused(String),
+    Pending,
 }
 
 pub(super) struct TestCredentials {
@@ -128,6 +129,7 @@ impl SandboxCredentialController for TestCredentials {
             CredentialReply::Missing => Ok(None),
             CredentialReply::Failed(error) => Err(CredentialError::Unavailable(error.clone())),
             CredentialReply::Refused(error) => Err(CredentialError::Security(error.clone())),
+            CredentialReply::Pending => std::future::pending().await,
         }
     }
     async fn issue(

@@ -11,6 +11,7 @@ use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 
 mod baseline;
 mod cancellation;
+mod requests;
 mod source;
 pub(super) use cancellation::release_unexecuted;
 
