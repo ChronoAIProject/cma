@@ -69,13 +69,21 @@ impl<S: CapacityRecoveryStore, R: CapacityRecoveryRuntime> CapacityRecoveryServi
         completed: &RecoveryWork,
     ) -> Result<(), RecoveryError> {
         let activation = self.store.activation(caller, completed).await?;
-        let (attachment, confirmation) = self.runtime.reattach_completed(&activation).await?;
-        activation.require_confirmation(&confirmation)?;
+        let attached = self.runtime.reattach_completed(&activation).await?;
         // Re-read authority, parents and the immutable result after native IO.
         if self.store.activation(caller, completed).await? != activation {
             return Err(RecoveryError::Conflict);
         }
-        self.runtime.acknowledge(attachment, completed).await
+        match attached {
+            CompletedAttachment::AlreadyActivated => Ok(()),
+            CompletedAttachment::Reattached {
+                attachment,
+                confirmation,
+            } => {
+                activation.require_confirmation(&confirmation)?;
+                self.runtime.acknowledge(attachment, completed).await
+            }
+        }
     }
 
     pub async fn resume(
