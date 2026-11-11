@@ -25,6 +25,19 @@ pub struct SharedAgentDetail {
 }
 
 impl AgentReadService {
+    /// Public transcript read with a format-aware bounded fast path. Stores
+    /// return `None` when the Agent is legacy, untrusted, corrupt, or the
+    /// rollout flag is closed; those cases use the exact complete fold below.
+    pub async fn transcript_bounded(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+    ) -> Result<AgentTranscript, AgentReadError> {
+        let lineage = self.owned_lineage(caller, id).await?;
+        require_granted(&lineage.agent, crate::RuntimeCapability::Conversation)?;
+        self.read_transcript(&lineage.agent).await
+    }
+
     pub async fn detail_authorized(
         &self,
         context: &CallerContext,
@@ -78,10 +91,7 @@ impl AgentReadService {
             .as_ref()
             .ok_or_else(|| corrupt("authorized Agent snapshot has no Agent"))?;
         require_granted(agent, crate::RuntimeCapability::Conversation)?;
-        let entries = self.complete_log(agent).await?;
-        let mut transcript = fold_agent_log(agent, &entries)
-            .map_err(AgentReadError::Corrupt)?
-            .transcript;
+        let mut transcript = self.read_transcript(agent).await?;
         // Attribution/correlation metadata is not a history access grant. The
         // transcript projection includes conversation messages and outcomes only.
         if !is_personal(&authorized, context) {
@@ -90,6 +100,24 @@ impl AgentReadService {
         self.finish_read(&authorized, id, ResourceCapability::ViewHistory)
             .await?;
         Ok(transcript)
+    }
+
+    async fn read_transcript(&self, agent: &Agent) -> Result<AgentTranscript, AgentReadError> {
+        let (entries, bounded) = match self.store.agent_log_transcript(agent).await {
+            Ok(Some(entries)) => (entries, true),
+            Ok(None) => (self.complete_log(agent).await?, false),
+            Err(error) => return Err(super::store_error(error)),
+        };
+        match fold_agent_log(agent, &entries) {
+            Ok(projection) => Ok(projection.transcript),
+            Err(_error) if bounded => {
+                let complete = self.complete_log(agent).await?;
+                fold_agent_log(agent, &complete)
+                    .map(|projection| projection.transcript)
+                    .map_err(AgentReadError::Corrupt)
+            }
+            Err(error) => Err(AgentReadError::Corrupt(error)),
+        }
     }
 
     pub async fn log_authorized(
