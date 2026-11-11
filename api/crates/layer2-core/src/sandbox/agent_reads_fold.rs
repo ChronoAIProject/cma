@@ -19,6 +19,14 @@ pub(super) struct AgentLogProjection {
     pub(super) usage: AgentUsageReading,
 }
 
+/// Reuse the native identity validator for the bounded unpublished-open proof.
+pub(super) fn validate_projection_identity(
+    agent: &Agent,
+    entries: &[AgentLogEntry],
+) -> Result<(), String> {
+    identity::validate(agent, None, entries)
+}
+
 pub(super) fn fold_agent_log(
     agent: &Agent,
     entries: &[AgentLogEntry],
