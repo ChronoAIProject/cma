@@ -37,11 +37,13 @@ mod agent_reads;
 pub use admission_checkpoint::AgentLogCheckpoint;
 mod agent_log_projection;
 mod agent_reads_fold;
+mod agent_reads_transcript;
 mod agent_reads_usage;
 pub use agent_log_projection::{
     AgentLogAnswerEvidence, AgentLogAnswerLookup, AgentLogEvidenceChange, AgentLogProjectionState,
     AgentLogQueuedReference, AgentLogTurnFacts, AgentLogTurnLookup, BoundedAgentLogFold,
 };
+pub use agent_reads_transcript::AgentTranscriptFold;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;

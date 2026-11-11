@@ -149,7 +149,7 @@ pub enum CompletedAttachment<A> {
     AlreadyActivated,
     Reattached {
         attachment: A,
-        confirmation: RecoveryConfirmation,
+        confirmation: Box<RecoveryConfirmation>,
     },
 }
 

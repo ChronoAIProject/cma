@@ -403,11 +403,60 @@ impl AgentLogStore for MongoSandboxStore {
         self.read_transcript_log(expected).await
     }
 
+    async fn agent_log_transcript_projection(
+        &self,
+        expected: &layer2_core::sandbox::Agent,
+    ) -> Result<Option<layer2_core::sandbox::AgentTranscript>, SandboxStoreError> {
+        if !self.bounded_transcript_reads
+            && std::env::var("CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED").as_deref()
+                != Ok("true")
+        {
+            return Ok(None);
+        }
+        let mut session = self
+            .client
+            .start_session()
+            .snapshot(true)
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        match super::agent_log_segment_reads::projected_transcript(self, expected, &mut session)
+            .await
+        {
+            Ok(result) => Ok(result),
+            Err(SandboxStoreError::Corrupt(_))
+            | Err(SandboxStoreError::SequenceConflict)
+            | Err(SandboxStoreError::AgentLogCapacityExceeded) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     async fn agent_log_usage(
         &self,
         expected: &layer2_core::sandbox::Agent,
     ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
         self.read_usage_log(expected).await
+    }
+
+    async fn agent_log_usage_projection(
+        &self,
+        expected: &layer2_core::sandbox::Agent,
+    ) -> Result<Option<layer2_core::sandbox::AgentUsageReading>, SandboxStoreError> {
+        if !self.bounded_usage_reads {
+            return Ok(None);
+        }
+        let mut session = self
+            .client
+            .start_session()
+            .snapshot(true)
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        match super::agent_log_segment_reads::projected_usage(self, expected, &mut session).await {
+            Ok(result) => Ok(result),
+            Err(SandboxStoreError::Corrupt(_))
+            | Err(SandboxStoreError::SequenceConflict)
+            | Err(SandboxStoreError::AgentLogCapacityExceeded) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 }
 
