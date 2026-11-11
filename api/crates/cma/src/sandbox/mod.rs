@@ -20,6 +20,7 @@ pub(crate) mod native_prepared;
 mod policy;
 mod provenance_backfill;
 pub(crate) use provenance_backfill::AgentProvenanceBackfill;
+mod model_request_budget;
 mod reconciliation;
 pub(crate) mod runtime_attachment;
 mod runtime_mapping;
