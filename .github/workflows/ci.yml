@@ -123,8 +123,8 @@ jobs:
       - name: Identify pinned Omarchy dependency cache
         id: cache
         run: python3 .github/scripts/omarchy-cache-key.py "$RUNNER_TEMP/omarchy-evidence/cache-inputs.json" >> "$GITHUB_OUTPUT"
-      # Download one complete archive before the solve. Remote BuildKit indexes
-      # can outlive individual GHA blobs and force a late dependency rebuild.
+      # Import only complete local archives. Remote GHA indexes can lose blobs
+      # during the build and leave invalid references in the later cache export.
       - name: Restore complete Omarchy layer cache
         id: omarchy-cache-restore
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -158,8 +158,6 @@ jobs:
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: |
             ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
-            type=gha,scope=runtime-desktop
-            type=gha,scope=runtime
           # Export final-image layers in this solve, only for a missing archive.
           # A complete restored archive stays local throughout the build.
           cache-to: ${{ (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true') && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}
