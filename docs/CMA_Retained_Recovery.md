@@ -180,3 +180,19 @@ Production execution belongs to the release owner. Deployment, owner consent and
 verification are separate from merging this default-off implementation. Do not
 close #1575 without relayed production evidence and explicit disposition of its
 remaining recovery shapes.
+
+## Agent log capacity admission
+
+`CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED` independently controls new Agent log
+capacity-recovery admission (part of #1351). It is a strict boolean: absent or
+`false` closes admission; `true` enables the service's admission check; any other
+value fails startup. Durable segmentation and capacity gates, current personal
+ownership, original failure evidence and native proof are still required.
+
+Closing this switch preserves status reads, exact accepted-request lookup and
+bounded background settlement of already published work. The scheduler reads at
+most 32 candidates per page and attempts at most two per turn; discovery grants
+no execution authority. Before the optional recovery schema is installed it
+performs only a collection-presence read and creates no schema. Production native
+recovery proof remains unsupported pending its separate qualification, so this
+composition is not authorization to enable writer or capacity recovery in production.
