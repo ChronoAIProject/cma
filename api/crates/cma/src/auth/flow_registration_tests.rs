@@ -389,12 +389,13 @@ async fn unseen_identity_callback_records_sign_in_without_aggregate_bootstrap() 
             .iter()
             .map(|value| value.to_str().unwrap())
             .collect();
-        assert_eq!(cookies.len(), 2);
+        assert_eq!(cookies.len(), 3);
         assert!(cookies
             .iter()
             .all(|value| !value.starts_with("cma_signed_out=")));
-        assert!(cookies[1].starts_with(&format!("{}=;", binding_cookie_name(&query["state"]))));
-        assert!(cookies[1].contains("Max-Age=0"));
+        assert!(cookies[1].starts_with("cma_signed_in="));
+        assert!(cookies[2].starts_with(&format!("{}=;", binding_cookie_name(&query["state"]))));
+        assert!(cookies[2].contains("Max-Age=0"));
         let browser_cookie = cookies[0].split(';').next().unwrap();
         let (name, value) = browser_cookie.split_once('=').unwrap();
         assert_eq!(name, AUTH_COOKIE);

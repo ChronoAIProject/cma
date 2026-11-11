@@ -2,21 +2,36 @@
 use super::*;
 use std::{
     collections::HashMap,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use tokio::sync::Mutex;
 
 /// In-memory implementation used by focused auth tests and trusted bring-up.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MemoryAuthStore {
-    unavailable: AtomicBool,
-    attempts: Mutex<HashMap<SecretDigest, LoginAttempt>>,
-    browsers: Mutex<HashMap<SecretDigest, BrowserLogin>>,
-    pending_browsers: Mutex<HashMap<SecretDigest, SystemTime>>,
-    subjects: Mutex<HashMap<SubjectId, SubjectAuthState>>,
-    api_bearers: Mutex<HashMap<SecretDigest, ApiBearerCustody>>,
-    actor_links: Mutex<HashMap<String, crate::auth::actor_links::ActorLinkRecord>>,
-    proxy_grants: Mutex<HashMap<[u8; 32], crate::auth::nyxid_proxy::ProxyGrant>>,
+    unavailable: Arc<AtomicBool>,
+    attempts: Arc<Mutex<HashMap<SecretDigest, LoginAttempt>>>,
+    browsers: Arc<Mutex<BrowserCustody>>,
+    subjects: Arc<Mutex<HashMap<SubjectId, SubjectAuthState>>>,
+    api_bearers: Arc<Mutex<HashMap<SecretDigest, ApiBearerCustody>>>,
+    actor_links: Arc<Mutex<HashMap<String, crate::auth::actor_links::ActorLinkRecord>>>,
+    proxy_grants: Arc<Mutex<HashMap<[u8; 32], crate::auth::nyxid_proxy::ProxyGrant>>>,
+}
+
+#[derive(Default)]
+struct BrowserCustody {
+    sessions: HashMap<SecretDigest, (BrowserLogin, Option<SecretDigest>)>,
+    bindings: HashMap<SecretDigest, Reservation>,
+}
+struct Reservation {
+    expires_at: SystemTime,
+    linked_session: Option<SecretDigest>,
+    revoked: bool,
+    explicit_started_at: Option<SystemTime>,
+    preference_revoked: bool,
 }
 
 impl MemoryAuthStore {
@@ -31,6 +46,43 @@ impl MemoryAuthStore {
             .lock()
             .await
             .insert(state.subject.clone(), state);
+        Ok(())
+    }
+
+    async fn revoke_custody(
+        &self,
+        id: &SecretDigest,
+        binding_cookie: bool,
+        suppress: bool,
+    ) -> Result<(), StoreError> {
+        self.available()?;
+        let mut rows = self.browsers.lock().await;
+        let binding = if let Some((_, binding)) = rows.sessions.remove(id) {
+            binding
+        } else {
+            (binding_cookie || rows.bindings.contains_key(id)).then(|| id.clone())
+        };
+        if let Some(binding) = binding {
+            let previous = rows.bindings.remove(&binding);
+            if let Some(linked) = previous.as_ref().and_then(|row| row.linked_session.clone()) {
+                rows.sessions.remove(&linked);
+            }
+            rows.bindings.insert(
+                binding,
+                Reservation {
+                    expires_at: (SystemTime::now() + crate::auth::BROWSER_BINDING_LIFETIME).max(
+                        previous
+                            .as_ref()
+                            .map_or(SystemTime::UNIX_EPOCH, |row| row.expires_at),
+                    ),
+                    linked_session: None,
+                    revoked: true,
+                    explicit_started_at: previous.as_ref().and_then(|row| row.explicit_started_at),
+                    preference_revoked: suppress
+                        || previous.as_ref().is_some_and(|row| row.preference_revoked),
+                },
+            );
+        }
         Ok(())
     }
 
@@ -186,42 +238,128 @@ impl AuthStore for MemoryAuthStore {
         &self,
         id: SecretDigest,
         expires_at: SystemTime,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         self.available()?;
-        self.pending_browsers.lock().await.insert(id, expires_at);
-        Ok(())
-    }
-
-    async fn complete_browser_login(&self, login: BrowserLogin) -> Result<bool, StoreError> {
-        self.available()?;
-        let mut pending = self.pending_browsers.lock().await;
-        if pending
-            .remove(&login.id)
-            .is_none_or(|expiry| expiry <= SystemTime::now())
-        {
+        let mut rows = self.browsers.lock().await;
+        if rows.bindings.contains_key(&id) || rows.sessions.contains_key(&id) {
             return Ok(false);
         }
-        self.browsers.lock().await.insert(login.id.clone(), login);
+        rows.bindings.insert(
+            id,
+            Reservation {
+                expires_at,
+                linked_session: None,
+                revoked: false,
+                explicit_started_at: None,
+                preference_revoked: false,
+            },
+        );
         Ok(true)
     }
-
+    async fn renew_browser_login(
+        &self,
+        binding: &SecretDigest,
+        expires_at: SystemTime,
+    ) -> Result<bool, StoreError> {
+        self.available()?;
+        let mut rows = self.browsers.lock().await;
+        let Some(row) = rows.bindings.get_mut(binding) else {
+            return Ok(false);
+        };
+        if row.revoked || row.linked_session.is_some() || row.expires_at <= SystemTime::now() {
+            return Ok(false);
+        }
+        row.expires_at = row.expires_at.max(expires_at);
+        Ok(true)
+    }
+    async fn complete_browser_login(
+        &self,
+        binding: &SecretDigest,
+        login: BrowserLogin,
+        explicit_started_at: Option<SystemTime>,
+    ) -> Result<bool, StoreError> {
+        self.available()?;
+        if binding == &login.id {
+            return Err(StoreError::Malformed(
+                "session must differ from browser binding".into(),
+            ));
+        }
+        let mut rows = self.browsers.lock().await;
+        if rows.sessions.contains_key(&login.id) {
+            return Ok(false);
+        }
+        let Some(row) = rows.bindings.get_mut(binding) else {
+            return Ok(false);
+        };
+        if row.revoked || row.linked_session.is_some() || row.expires_at <= SystemTime::now() {
+            return Ok(false);
+        }
+        row.linked_session = Some(login.id.clone());
+        row.expires_at = if explicit_started_at.is_some() {
+            login
+                .expires_at
+                .max(SystemTime::now() + crate::auth::SIGN_IN_PREFERENCE_LIFETIME)
+        } else {
+            login.expires_at
+        };
+        row.explicit_started_at = explicit_started_at;
+        rows.sessions
+            .insert(login.id.clone(), (login, Some(binding.clone())));
+        Ok(true)
+    }
+    async fn browser_sign_in_preference(
+        &self,
+        binding: &SecretDigest,
+        started_at: SystemTime,
+    ) -> Result<bool, StoreError> {
+        self.available()?;
+        Ok(self
+            .browsers
+            .lock()
+            .await
+            .bindings
+            .get(binding)
+            .is_some_and(|row| {
+                !row.preference_revoked
+                    && row.expires_at > SystemTime::now()
+                    && row.explicit_started_at.is_some_and(|started| {
+                        crate::auth::silent_preference::timestamp(started)
+                            == crate::auth::silent_preference::timestamp(started_at)
+                    })
+            }))
+    }
+    async fn logout_browser_custody(
+        &self,
+        id: &SecretDigest,
+        binding_cookie: bool,
+        suppress: bool,
+    ) -> Result<(), StoreError> {
+        self.revoke_custody(id, binding_cookie, suppress).await
+    }
     async fn put_browser_login(&self, login: BrowserLogin) -> Result<(), StoreError> {
         self.available()?;
-        self.browsers.lock().await.insert(login.id.clone(), login);
+        self.browsers
+            .lock()
+            .await
+            .sessions
+            .insert(login.id.clone(), (login, None));
         Ok(())
     }
-
     async fn browser_login(&self, id: &SecretDigest) -> Result<Option<BrowserLogin>, StoreError> {
         self.available()?;
-        Ok(self.browsers.lock().await.get(id).cloned())
+        Ok(self
+            .browsers
+            .lock()
+            .await
+            .sessions
+            .get(id)
+            .map(|(login, _)| login.clone()))
     }
-
     async fn delete_browser_login(&self, id: &SecretDigest) -> Result<(), StoreError> {
-        self.available()?;
-        let mut pending = self.pending_browsers.lock().await;
-        pending.remove(id);
-        self.browsers.lock().await.remove(id);
-        Ok(())
+        self.revoke_custody(id, false, true).await
+    }
+    async fn revoke_browser_binding(&self, id: &SecretDigest) -> Result<(), StoreError> {
+        self.revoke_custody(id, true, true).await
     }
 
     async fn insert_subject(&self, state: SubjectAuthState) -> Result<bool, StoreError> {

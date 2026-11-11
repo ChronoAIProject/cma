@@ -134,6 +134,7 @@ async fn call(app: &Router, path: &str, cookie: &str) -> Response {
     app.clone()
         .oneshot(
             Request::get(path)
+                .header("sec-fetch-site", "same-origin")
                 .header(header::COOKIE, cookie)
                 .body(Body::empty())
                 .unwrap(),
@@ -166,14 +167,26 @@ async fn successful_silent_callback_uses_bound_custody_once_and_restores_query()
         "/sandboxes/sbx_test?tab=access"
     );
     let values = cookies(&response);
-    assert!(values[0].starts_with(&format!("cma_session={binding};")));
+    let session = values[0]
+        .split(';')
+        .next()
+        .unwrap()
+        .split_once('=')
+        .unwrap()
+        .1;
+    assert_ne!(
+        session, binding,
+        "a planted binding must never become a session token"
+    );
+    let session_id = SecretDigest::identify(AUTH_COOKIE_DOMAIN, session);
+    assert!(f.store.browser_login(&id).await.unwrap().is_none());
     assert!(values[1].contains("Max-Age=0"));
     assert!(values
         .iter()
         .all(|value| value.contains("HttpOnly; Secure; SameSite=Lax")));
     assert_eq!(
         f.store
-            .browser_login(&id)
+            .browser_login(&session_id)
             .await
             .unwrap()
             .unwrap()
@@ -217,7 +230,7 @@ async fn logout_fences_processing_callbacks_on_another_replica_even_after_replay
         assert_eq!(logout.status(), StatusCode::SEE_OTHER);
         assert!(cookies(&logout)
             .iter()
-            .any(|value| value.starts_with("cma_signed_out=1;") && value.contains("HttpOnly")));
+            .any(|value| value.starts_with("cma_signed_out=") && value.contains("HttpOnly")));
         f.release.notify_one();
         let response = pending.await.unwrap();
         assert!(cookies(&response)
@@ -264,7 +277,7 @@ async fn logout_suppresses_bare_navigation_and_keeps_marker_on_store_failure() {
     let logout = call(&f.app, "/auth/logout", "").await;
     assert!(cookies(&logout)
         .iter()
-        .any(|value| value.starts_with("cma_signed_out=1;")));
+        .any(|value| value.starts_with("cma_signed_out=")));
     let stopped = call(
         &f.app,
         "/auth/login?prompt=none&return_to=%2Fagents%2Fagt_test",
@@ -278,7 +291,7 @@ async fn logout_suppresses_bare_navigation_and_keeps_marker_on_store_failure() {
     assert_eq!(failed.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert!(cookies(&failed)
         .iter()
-        .any(|value| value.starts_with("cma_signed_out=1;")));
+        .any(|value| value.starts_with("cma_signed_out=")));
     assert!(!failed.headers().contains_key(header::LOCATION));
 }
 
@@ -363,9 +376,10 @@ async fn failed_logout_preserves_handles_for_recovery_and_retry() {
     )
     .await;
     assert_eq!(failed.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(
-        cookies(&failed),
-        ["cma_signed_out=1; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000"]
+    assert_eq!(cookies(&failed).len(), 1);
+    assert!(cookies(&failed)[0].starts_with("cma_signed_out="));
+    assert!(
+        cookies(&failed)[0].ends_with("; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000")
     );
     f.store.set_unavailable(false);
     let retried = call(&f.second, "/auth/logout", &cookie).await;
@@ -449,3 +463,6 @@ async fn consent_cancellation_and_repeated_consent_are_bounded_silent_refusals()
             .all(|value| value.contains("Max-Age=0")));
     }
 }
+
+#[path = "flow_review_tests.rs"]
+mod review_tests;
