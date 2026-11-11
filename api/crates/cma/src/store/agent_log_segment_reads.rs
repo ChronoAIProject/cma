@@ -25,7 +25,7 @@ pub(super) async fn selected<F>(
     store: &MongoSandboxStore,
     expected: &Agent,
     session: &mut ClientSession,
-    mut keep: F,
+    keep: F,
 ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError>
 where
     F: FnMut(&AgentLogKind) -> bool + Send,
