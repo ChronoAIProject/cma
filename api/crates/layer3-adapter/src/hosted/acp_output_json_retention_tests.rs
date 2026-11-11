@@ -237,7 +237,15 @@ async fn two_attachments_share_capacity_and_teardown_allows_same_cursor_replay()
         Some(2)
     );
     assert!(effects.try_recv().is_err());
+    let lifetime = Arc::downgrade(&first.bridge);
     stop(first).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lifetime.strong_count() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("retired attachment releases its writer and startup owners");
     assert_eq!(shared.available(), (weight, 1024 * 1024));
     second
         .bridge
