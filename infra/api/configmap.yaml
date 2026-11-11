@@ -304,3 +304,5 @@ data:
   RUST_LOG: "info"
   # Shared retained live-fragment budget; deployment qualification is separate.
   CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED: "false"
+  # Validate runtime output structure before allocating owned JSON trees.
+  CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED: "false"

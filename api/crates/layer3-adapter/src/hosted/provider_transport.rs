@@ -33,6 +33,7 @@ pub enum NativeRuntimeTransport {
 
 /// Concrete authenticated control and ACP transport for provider-hosted runtimes.
 pub struct ProviderHostedControlTransport {
+    output_json_budget: bool,
     client: RuntimeDiscovery,
     http: reqwest::Client,
     archive_factory: Option<Arc<dyn CheckpointArchiveStoreFactory>>,
@@ -91,6 +92,11 @@ impl ProviderHostedControlTransport {
 
     pub fn with_bounded_update_relay(mut self, enabled: bool) -> Self {
         self.bounded_update_relay = enabled;
+        self
+    }
+
+    pub fn with_output_json_budget(mut self, enabled: bool) -> Self {
+        self.output_json_budget = enabled;
         self
     }
 
