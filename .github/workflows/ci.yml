@@ -234,6 +234,8 @@ jobs:
         run: .github/scripts/check-file-size-tests.sh
       - name: Acceptance harness safety regressions (offline)
         run: python3 -B -m unittest discover -s .github/scripts/acceptance -p 'test_*.py' -q
+      - name: Read-only browser harness safety regressions (offline)
+        run: python3 -B -m unittest discover -s .github/scripts/acceptance_browser -p 'test_*.py' -q
       - name: API secret scanner build contract
         run: bash .github/secret-scanner-build-tests.sh
       - name: Web artifact identity contract
