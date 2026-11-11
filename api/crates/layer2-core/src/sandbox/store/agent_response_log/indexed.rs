@@ -21,6 +21,8 @@ pub struct AgentOutputMetadata {
     pub agent_id: AgentId,
     pub through: u64,
     pub created_at: String,
+    pub runtime_generation: Option<u64>,
+    pub active_turn: Option<u64>,
     pub initial_model: Option<String>,
     pub turn: Option<AgentOutputTurn>,
     pub index: Option<agent_output_index::AgentTurnOutputIndex>,
