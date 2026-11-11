@@ -133,7 +133,9 @@ pub(super) async fn reserve_command(
 ) -> Result<(), ApplyError> {
     let snapshot = period::fenced_snapshot(store, &agent.owner, session).await?;
     let Some(policy) = snapshot.owner.clone() else {
-        return Ok(());
+        // An owner without a budget policy reserves nothing, but a new
+        // commitment still meets the platform state (decision 24).
+        return period::require_open(store, now, session).await;
     };
     reserve(
         store,
@@ -325,7 +327,9 @@ async fn start_turn(
         Some(record) => record,
         None => {
             let Some(policy) = live_policy.clone() else {
-                return Ok(());
+                // Queued or not, an unbudgeted owner's turn reserved nothing;
+                // a stop entered since its command still refuses starting it.
+                return period::require_open(store, now, session).await;
             };
             reserve(store, agent, key.clone(), policy, &snapshot, now, session).await?;
             let document = store
