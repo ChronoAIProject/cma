@@ -29,6 +29,7 @@ pub(crate) struct FeatureFlags {
     pub document_quotas: bool,
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
+    pub retained_context_lookup: bool,
     pub event_driven_reconciliation: bool,
 }
 impl FeatureFlags {
@@ -61,6 +62,7 @@ impl FeatureFlags {
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
+            retained_context_lookup: flag(lookup, "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED")?,
             event_driven_reconciliation: flag(
                 lookup,
                 "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
