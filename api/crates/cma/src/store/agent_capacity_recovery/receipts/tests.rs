@@ -91,6 +91,24 @@ fn capacity_recovery_receipt_survives_later_head_and_stop_without_replacing_resu
 }
 
 #[test]
+fn capacity_recovery_original_receipt_survives_output_at_the_same_agent_revision() {
+    let (mut current, stored, admitted, latest, _) = completed();
+    let original = stored.clone();
+    assert!(same_result_position(&current, &stored));
+    current.conversation.last_seq += 1;
+    assert_eq!(current.revision, stored.result.agent_revision);
+    assert!(!same_result_position(&current, &stored));
+    verify_binding(&current, &stored, &admitted, &latest).unwrap();
+    assert_eq!(stored, original);
+    // This only preserves the original receipt. Activation still requires the
+    // separate scoped current-publication proof and fresh authority.
+    assert_ne!(
+        stored.result.agent_digest,
+        publication::result_digest(&current).unwrap()
+    );
+}
+
+#[test]
 fn capacity_recovery_receipt_rejects_foreign_incarnation_and_changed_current_result() {
     let (current, stored, admitted, latest, _) = completed();
     for variant in 0..5 {
