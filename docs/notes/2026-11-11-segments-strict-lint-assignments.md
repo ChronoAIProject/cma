@@ -478,3 +478,12 @@ agent_capacity_recovery_tests/composition/faults.rs`. Both this child and its
 `composition.rs` parent belong to S4; the existing S5 restart/native tests remain
 unchanged. Scheduler source pins are isolated as `82ecad179` and `6a0399f3a` and
 normally merged; their production code and seven unit tests are unchanged.
+
+The S4 composition handoff also owns the missing canonical configuration entry
+in `docs/CMA_Retained_Recovery.md` for `CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED`.
+This documents the imported default-off admission switch, accepted settlement
+and unchanged native-proof boundary; it does not change deployment configuration.
+
+Strict qualification also needs S2's published `c13eff3b5` caller delta in
+`store/sandbox_unpublished_recovery.rs` (under the same crate). Consume only that
+unchanged delta through a narrow normal merge; S2 retains this root's ownership.
