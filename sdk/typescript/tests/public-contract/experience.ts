@@ -77,8 +77,8 @@ export const experienceDispatch: Record<string, Dispatch> = {
     client.responsesV2.listConversationItems(param('conversation_id'), options),
   'GET /api/v2/responses/{response_id}': ({ client, param }) =>
     client.responsesV2.read(param('response_id')),
-  'GET /api/v2/responses/{response_id}/output': ({ client, param, options }) =>
-    client.responsesV2.readOutputPage(param('response_id'), options),
+  'GET /api/v2/responses/{response_id}/output': ({ client, param, query }) =>
+    client.responsesV2.readOutputPage(param('response_id'), { after: query.get('after') ?? undefined }),
   'GET /api/v2/responses/{response_id}/events': async ({ client, param, query }) => {
     const events: unknown[] = [];
     await client.responsesV2.replay(param('response_id'), {
