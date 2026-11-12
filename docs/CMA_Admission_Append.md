@@ -82,13 +82,46 @@ expiry and authorization CAS predicates still serialize competing writers.
 | Answer-context reservation | Same trusted checkpoint or existing complete fold; original prior-message check retained |
 | Immediate ordinary-message command settlement | At most 16 suffix rows from its exact dispatch fence after prefix proof; all final command/evidence checks retained |
 | Controls, trigger settlement, and longer recovery suffixes | Existing complete evidence fold |
-| Worker publication | Full validation, then atomic summary maintenance |
-| Capacity settlement and zero-entry cleanup retries | Mandatory complete validation and exact retained-marker proof, even with trusted metadata |
+| Worker publication | Full validation, then atomic summary maintenance; ordinary bounded CloseProcess retries retain their separate gate |
+| Capacity settlement and zero-entry retries | First markers and capacity state changes retain complete validation. Gated repeated failures use a fresh trusted summary and exact same-snapshot marker, with a complete first and hourly audit as specified below |
 | Lifecycle, title, trigger terminal projection, runtime reconciliation, reuse | Existing complete validation, then atomic summary maintenance |
 | Work claims, `save_agent`, controls, successor-worktree recovery | Carry only an already matching old revision/head/history with unchanged conversation; otherwise leave stale for counted fallback |
 | Envelope fences and receipts without revision/log changes | Preserve summary; existing real writes still serialize authority |
 | Flag-off new writers | Maintain metadata; continue complete validation |
 | Old writers | Preserve additive fields; head/revision lag forces a new writer to validate before repair |
+
+For #1788, `CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED=false` preserves ordinary
+failure appends. When enabled, the worker may propose a zero-entry retry only if
+the exact tail is `WorkStepFailed` for the same step and failure class. The
+observed marker travels as transient publication evidence, never as a persisted
+field or new event. The transaction rechecks that marker and reconstructs the
+entire permitted mutation before its existing domain validation and CAS.
+Capacity and ledger markers keep their prior selection priority and contracts.
+
+Zero-entry retries (including capacity and ledger repeats) may use bounded
+verification only with `CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED` and the existing
+Agent cohort. A full scan proves contiguous sequence/count, total encoded bytes,
+tail hash and the retained semantic fold. A fresh `agent_log_integrity_v1` carries
+those prefix facts; same-snapshot indexed reads recheck incarnation, revision,
+head, semantic checkpoint, exact tail/hash, and absence of rows beyond the head.
+This relies on immutable middle history: point reads cannot rediscover arbitrary
+middle-row damage. Consequently the first repeated retry in each store process,
+and each first retry after one hour since its last confirmed complete audit,
+fully scans again. Audit age uses a monotonic process clock, is shared by store
+clones, and is never persisted; restart and bounded-cache eviction force an audit.
+An aborted or ambiguous publication does not postpone the next required audit.
+Missing, stale or semantically untrusted proof falls back to full verification;
+corruption and quarantine retain the existing refusal policy. Successful effects,
+step advances and first markers retain their full proof requirements.
+
+During one publication invocation, the Agent writer lock remains held. After a
+known-aborted transaction, its scanned history may be reused only when the new
+snapshot has the exact same Agent (including revision, head, lease and identity)
+and byte-identical integrity and quarantine BSON. Every attempt still validates
+current domain/parent authority and performs the original CAS writes. The parent
+Sandbox fence stays after history validation; no earlier fence holds a Sandbox
+write lock throughout a scan. The cache ends with the invocation, and unknown
+commits never use it as a receipt.
 
 Conversation, worker, lifecycle and recovery ambiguous commits keep their complete
 receipt, aggregate, command-dispatch, related-record and pinned-snapshot checks.

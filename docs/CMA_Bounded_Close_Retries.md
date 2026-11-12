@@ -33,10 +33,22 @@ Corruption or quarantine retains the shared refusal/durable quarantine policy.
 Like admission, the bounded path relies on immutable middle history and explicit
 audits to revoke a disproved checkpoint; it does not rescan every middle row.
 
-Capacity markers, metadata-only settlement, at/over-entry-capacity retries,
-successful effects and other worker steps keep their complete audit. Unknown
-commits continue to use the exact full snapshot receipt proof and never infer
-success from the summary or reappend to resolve uncertainty. Byte and document
+#1788 extends this same switch and cohort to zero-entry retries of any step,
+including existing capacity/ledger markers and ordinary repeated failures selected
+by `CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED`. With single-marker selection
+enabled, all failure appends (including first and class-changed CloseProcess
+failures) fully verify their prefix; the older ordinary CloseProcess shortcut
+remains available when that switch is off. The first repeated retry in each
+store process and the first retry after one hour since its last confirmed audit
+fully scan. Between audits, fresh trusted prefix proof plus an exact tail point
+read replaces the scan. Missing/stale/untrusted proof falls back; first markers,
+capacity state changes, successful effects and step advances retain full audits.
+The invocation-local conflict cache requires byte-identical integrity/quarantine
+BSON and an identical Agent; it never moves the parent Sandbox fence earlier.
+See [the integrity contract](CMA_Admission_Append.md) for the facts proved and the
+remaining immutable-prefix assumption. Unknown commits continue to use the exact
+full snapshot receipt proof and never infer success from the summary or reappend
+to resolve uncertainty. Byte and document
 capacity checks use the same trusted byte totals and encoded append buffers.
 
 ## Verification and rollout
@@ -77,10 +89,11 @@ After separately authorized activation on a fixed shared fleet/pool/worker
 configuration, compare matched natural failed CloseProcess publications:
 caller/step scans/s and bytes, completed retry/work counts, publication timing,
 checkout counts/waits, route latency/errors, CPU and healthy recovery. Preserve
-capacity_settlement/close_process separately; its scans are intentionally not
-eliminated. Global avoided-write counters include all trusted writers, so use
-caller/step attribution and actual sample coverage; do not claim a per-retry or
-CPU saving from fleet totals. No synthetic failure or production fault injection.
+capacity_settlement/close_process separately; #1788 bounds eligible repeated
+marker scans to the complete-audit frequency. Global avoided-write counters
+include all trusted writers, so use caller/step attribution and actual sample
+coverage; do not claim a per-retry or CPU saving from fleet totals. No synthetic
+failure or production fault injection.
 Publication timing logs only emit at 100 ms or above, or after multiple attempts;
 their count is not the total publication denominator. Missing complete exposure
 must be reported as partial evidence.

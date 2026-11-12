@@ -32,6 +32,7 @@ mod prepared_replay_tests;
 mod publication_history;
 mod publication_log;
 mod publication_transaction;
+pub(in crate::store) mod retry_audit;
 mod segmented;
 mod sign_in;
 use super::agent_log_segments::transaction_scope::TransactionScope;
@@ -97,7 +98,15 @@ async fn apply_publication(
     mutation: &AgentWorkMutation,
     scope: TransactionScope<'_>,
 ) -> Result<PublicationReceipt, ApplyError> {
-    apply_publication_observed(store, mutation, None, None, scope).await
+    apply_publication_observed(
+        store,
+        mutation,
+        None,
+        None,
+        &mut publication_history::AttemptHistory::default(),
+        scope,
+    )
+    .await
 }
 
 pub(super) async fn commit_repeated_failure(
@@ -114,6 +123,7 @@ async fn apply_publication_observed(
     mutation: &AgentWorkMutation,
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
     repeated_marker: Option<&AgentLogEntry>,
+    history_cache: &mut publication_history::AttemptHistory,
     mut scope: TransactionScope<'_>,
 ) -> Result<PublicationReceipt, ApplyError> {
     let current_row = scope
@@ -158,7 +168,11 @@ async fn apply_publication_observed(
                 &current,
                 &current_row,
                 mutation,
-                observed.is_none(),
+                publication_history::Selection {
+                    ordinary: observed.is_none(),
+                    repeated: repeated_marker.is_some(),
+                },
+                history_cache,
                 session,
             )
             .await?,

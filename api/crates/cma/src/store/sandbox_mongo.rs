@@ -103,6 +103,8 @@ pub struct MongoSandboxStore {
     pub(super) bounded_approval_reads: bool,
     pub(super) bounded_close_retries: bool,
     pub(super) retry_single_marker_enabled: bool,
+    pub(super) retry_audits:
+        std::sync::Arc<super::agent_worker_transaction::retry_audit::RetryAudits>,
     pub(super) fleet_log_activation: std::sync::Arc<super::agent_log_integrity::fleet::Activation>,
     pub(super) bounded_admission_agents: std::collections::BTreeSet<layer2_core::AgentId>,
     pub(super) bounded_title_reads: bool,
@@ -205,6 +207,7 @@ impl MongoSandboxStore {
             bounded_approval_reads: false,
             bounded_close_retries: false,
             retry_single_marker_enabled: false,
+            retry_audits: Default::default(),
             fleet_log_activation: Default::default(),
             bounded_title_reads: false,
             bounded_transcript_reads: false,
