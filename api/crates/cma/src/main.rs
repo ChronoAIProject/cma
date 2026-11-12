@@ -29,6 +29,7 @@ mod provider_tool_relay;
 mod public_streams;
 mod rate_limit;
 mod read_telemetry;
+mod readiness_diagnostics;
 mod retirement_archive;
 mod sandbox;
 mod sandbox_metrics;
