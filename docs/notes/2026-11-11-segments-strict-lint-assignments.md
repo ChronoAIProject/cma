@@ -53,11 +53,11 @@ No remaining compiler diagnostic is assigned from historical slice-only counts.
 
 | Finding | State at92ed005a9 and required closure |
 | --- | --- |
-| P1-1 ordinary v2 roots | **OPEN S4.** Agent CAS remains v1 at `store/child_writer_claims.rs:205`; reservation uses the same v1 filter for Agent and parent at `store/agent_commands/reserve.rs:154`; targeted control uses the legacy scanner. Require actual adoption→discovery→worker claim→ordinary/contextual/targeted admission→output, with refusal and abort cases. |
+| P1-1 ordinary v2 roots | **OPEN.** S4 pin `1b722a42e` fixes the named Agent claim/reservation predicates and targeted scanner; qualified at source-equivalent `6a64f7c3d` with four actual adoption/admission Mongo regressions. Ordinary conversation output, message checkpoint and command settlement remain unwired; exact paths and relay are below. Full adoption→admission→output closure is not claimed. |
 | P1-2 runtime roles/carrier/index | Source and executable gates pass; reviewer confirmation remains. Canonical authenticated migration1/1; actual nonunique discovery/index drift and unregistered format-1 carrier refusal pass. |
 | P1-3 later progress | Source/executable closure ready for review: all 31 recovery Mongo cases pass, including all four historical later-service/restart failures. Production native confirmation remains typed Unsupported; that separately prohibits activation. |
 | P1-4/D6-2 large-history consumers | **OPEN S3**, with response disposition S1. Response compatibility refuses bounded-vector overflow and indexed pages succeed beyond both old limits. Transcript traversal still starts at zero and title reconstruction retains/refolds a growing first-turn prefix. No unlimited compatibility-vector closure is claimed. |
-| P1-N1 segmented capacity admission | **OPEN S4+S5.** `writer_prepare.rs:123` rejects supplied segmented admission unless Rollover. Existing 31 recovery tests do not cover successful already-segmented CapacityRecovery admission. |
+| P1-N1 segmented capacity admission | **OPEN S5 service qualification.** S4 writer permission is implemented at `ea8d89ef7`, included in `1b722a42e`/`6a64f7c3d`; both new storage-only successor planner regressions pass. Actual segmented CapacityRecovery service success/refusal/abort/unknown tests remain with S5 and are not claimed by this pin. |
 | P2/D6-5 parity/failure matrix | **OPEN S3**, response portion S1. Need segmented transcript/title/usage serialized parity, long turns, page bounds, invalid proof, snapshot/final-authority and no-write coverage. |
 | P2-N2 under500lines | Composition reaches 500 after develop sync; removing one empty import/impl separator makes 499, with every nonblank line unchanged. All 379 changed source files pass the strict under-500 check. Earlier store split retained. |
 | P2-5 unresolved keyed attempt; P2-6 total child budget; strict BSON/discovery; D6auth/enum/config | Source fixes retained; relevant combined units/Mongo pass. Reviewer final readback remains. |
@@ -261,3 +261,36 @@ on the duplicate declaration; that failure is retained as evidence. Corrected
 units/Mongo/strict gates are queued under shared slot 1. The previous light
 gates and P1-1 output/settlement gap above remain accurately scoped. The writer
 CapacityRecovery permission is available for S5 service qualification. No PR.
+
+### S4 corrected-source qualification
+
+Executed source: `6a64f7c3d984277b1759bc97f894ca45f3bc5a28`, with no API/source
+difference from the requested executable pin `1b722a42ebb58d3568078084269b8f03f30ff18b`.
+Both are pushed on `tl/cma-log-segments/ordinary-v2-admission`. The former adds
+only the handoff ledger. Integrator is cma-cost; no PR was opened.
+
+- Focused units: 16 selected / 16 passed (9 writer planner, 7 codec/envelope).
+- Real Mongo: 16 selected / 16 passed, including all four new ordinary/contextual/
+  targeted admission regressions, malformed-source refusal, abort rollback,
+  worker/control publication and gate contracts. The fixture's cleanup verified
+  its owned container and volume were absent before returning success.
+- Strict CMA Clippy, all targets/all features, `--no-deps -- -D warnings`: pass,
+  zero diagnostics (3m37s). No allowances were introduced.
+- Fmt/whitespace pass; canonical size: 6,375 files pass; secret history at this
+  source: 4,165 commits scanned, zero findings.
+- Shared slot 1 used `lockf -k -n -t 3600`, two jobs and one target. The monitored
+  batch exited 0, minimum available RAM 29%, no pauses, lock inode unchanged.
+
+Source-bound names/counts and logs are in the dedicated worktree's
+`notes/2026-11-12-ordinary-v2-evidence/{test-inventory.json,units.log,mongo.log,
+clippy-final.log,supervisor.json}`. The four new Mongo cases prove the named
+admission/worker-publication changes; they do not prove ordinary conversation
+output or command settlement after adoption. The exact remaining paths were
+relayed to the lead for allocation/dependency under the 13:05 critical-track
+decision: `agent_conversation_store::{apply_mutation,checkpoint::apply,
+checkpoint::write}` and `agent_commands::reconcile::apply`. Keep P1-1 open,
+both issues In Progress, and writer/recovery activation closed.
+
+The additional strict `layer2-core` check for the merge-declaration correction is
+queued on a shared slot; it is not a claimed pass. The owned target is retained
+only for that reuse, then removed before standby.
