@@ -1,5 +1,5 @@
 import { ApiError, ProtocolError, TransportError } from '@chronoai/cma-sdk';
-import { readableError } from './errors';
+import { readableError, refusalSentence } from './errors';
 
 describe('readableError', () => {
   it('keeps a service sentence written for people', () => {
@@ -43,4 +43,26 @@ describe('readableError', () => {
     );
     expect(readableError('nope', 'fallback')).toBe('fallback');
   });
+});
+
+it.each([
+  [
+    'account_deletion_in_progress',
+    'Your CMA account deletion is already in progress. Check cleanup progress below.',
+  ],
+  ['account_deletion_unavailable', 'Account deletion is temporarily unavailable. Try again later.'],
+  [
+    'account_deletion_acknowledgement_required',
+    'Acknowledge the irreversible CMA data deletion before continuing.',
+  ],
+  [
+    'account_deletion_requires_owner_session',
+    'Sign in as the CMA account owner to request account deletion.',
+  ],
+  [
+    'share_recipient_unavailable',
+    'This share recipient is unavailable while their account is being deleted.',
+  ],
+] as const)('renders the %s problem sentence', (code, sentence) => {
+  expect(refusalSentence(new ApiError(409, 'server detail', code))).toBe(sentence);
 });
