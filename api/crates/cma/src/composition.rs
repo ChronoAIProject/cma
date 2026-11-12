@@ -415,10 +415,7 @@ impl ControlPlaneComposition {
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes = resource_routes.merge(bindings.router(config.gateway.as_ref())?);
         // Apply before cloning for delegated dispatch: all entry points share slots.
-        let resource_routes = resource_routes.layer(axum::middleware::from_fn_with_state(
-            crate::public_streams::StreamBudget::new(config.public_stream_limit),
-            crate::public_streams::enforce,
-        ));
+        let resource_routes = routes::stream_budget(resource_routes, config.public_stream_limit);
         let (bot_routes, bots) = bots::BotComposition::build(bots::BotCompositionDependencies {
             config,
             stores: &stores,
