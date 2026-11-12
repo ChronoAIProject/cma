@@ -201,8 +201,18 @@ impl StatusRegistry {
             "native Discord connection state changed");
     }
     pub(crate) fn diagnostic(&self, cleanup: bool) {
-        let Ok(mut registry) = self.0.lock() else {
+        if !self.allow_diagnostic() {
             return;
+        }
+        if cleanup {
+            tracing::warn!(parent: None, reason = "cleanup_failed", "native Discord connection cleanup failed");
+        } else {
+            tracing::warn!(parent: None, reason = "scan_unavailable", "native Discord inbox scan failed");
+        }
+    }
+    pub(super) fn allow_diagnostic(&self) -> bool {
+        let Ok(mut registry) = self.0.lock() else {
+            return false;
         };
         let now = Instant::now();
         if registry
@@ -213,15 +223,10 @@ impl StatusRegistry {
             registry.log_count = 0;
         }
         if registry.log_count >= 64 {
-            return;
+            return false;
         }
         registry.log_count += 1;
-        drop(registry);
-        if cleanup {
-            tracing::warn!(parent: None, reason = "cleanup_failed", "native Discord connection cleanup failed");
-        } else {
-            tracing::warn!(parent: None, reason = "scan_unavailable", "native Discord inbox scan failed");
-        }
+        true
     }
     pub(crate) fn dispatch(&self, record: &str, revision: &str, outcome: &'static str) {
         if !matches!(
