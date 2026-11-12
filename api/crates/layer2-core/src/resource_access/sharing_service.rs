@@ -153,6 +153,20 @@ impl ResourceAccessService {
                 return Err(MembershipError::InvalidEvidence.into());
             }
         }
+        match &request.change {
+            ShareChange::Create { target_org_id, .. } => {
+                self.require_recipient_available(target_org_id).await?
+            }
+            ShareChange::CreateLink {
+                audience: AgentShareAudience::Users { subjects },
+                ..
+            } => {
+                for subject in subjects {
+                    self.require_recipient_available(subject).await?;
+                }
+            }
+            _ => {}
+        }
         Ok(self.store.mutate_share(request).await?)
     }
 }

@@ -33,7 +33,7 @@ async fn database(prefix: &str) -> (Client, String) {
     (client, name)
 }
 
-pub(super) fn sandbox(id: &str, launch_id: &str) -> Sandbox {
+pub(crate) fn sandbox(id: &str, launch_id: &str) -> Sandbox {
     let content = SandboxProfileContent {
         runtime_image: None,
         cpu_millis: 1_000,

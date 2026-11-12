@@ -1,0 +1,701 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "account-deletion-status-before-request",
+      "operation": "GET /api/v1/account/deletion",
+      "scenario": "account_deletion_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/deletion",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/account-deletion-not-found",
+          "title": "account deletion not found",
+          "status": 404,
+          "detail": "No account deletion request exists.",
+          "code": "account_deletion_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-accepted",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "erase-own-data"
+        },
+        "body": {
+          "acknowledge": "irreversible"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "location": "/api/v1/account/deletion"
+        },
+        "body": {
+          "id": "acd_0123456789abcdef0123456789abcdef",
+          "status": "running",
+          "step": "inventory",
+          "requested_at": "2026-11-14T00:00:00Z",
+          "deadline_at": "2026-11-21T00:00:00Z",
+          "completed_at": null,
+          "steps": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "deadline_at": "/deadline_at",
+        "deletion_id": "/id",
+        "requested_at": "/requested_at"
+      }
+    },
+    {
+      "id": "account-deletion-replay",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "erase-own-data"
+        },
+        "body": {
+          "acknowledge": "irreversible"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "location": "/api/v1/account/deletion"
+        },
+        "body": {
+          "id": "acd_0123456789abcdef0123456789abcdef",
+          "status": "running",
+          "step": "inventory",
+          "requested_at": "2026-11-14T00:00:00Z",
+          "deadline_at": "2026-11-21T00:00:00Z",
+          "completed_at": null,
+          "steps": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "deadline_at": "/deadline_at",
+        "deletion_id": "/id",
+        "requested_at": "/requested_at"
+      }
+    },
+    {
+      "id": "account-deletion-status",
+      "operation": "GET /api/v1/account/deletion",
+      "scenario": "account_deletion_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/deletion",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "acd_0123456789abcdef0123456789abcdef",
+          "status": "running",
+          "step": "inventory",
+          "requested_at": "2026-11-14T00:00:00Z",
+          "deadline_at": "2026-11-21T00:00:00Z",
+          "completed_at": null,
+          "steps": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "deadline_at": "/deadline_at",
+        "deletion_id": "/id",
+        "requested_at": "/requested_at"
+      }
+    },
+    {
+      "id": "account-deletion-post-anonymous",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "erase-own-data"
+        },
+        "body": {
+          "acknowledge": "irreversible"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-post-nonhuman",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_nonhuman",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "erase-own-data"
+        },
+        "body": {
+          "acknowledge": "irreversible"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/account-deletion-requires-owner-session",
+          "title": "account deletion requires owner session",
+          "status": 403,
+          "detail": "Account deletion requires a verified human owner session.",
+          "code": "account_deletion_requires_owner_session"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-post-store-failed",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_store_error",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "erase-own-data"
+        },
+        "body": {
+          "acknowledge": "irreversible"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "Account deletion state is temporarily unavailable. Retry with the original Idempotency-Key.",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-get-anonymous",
+      "operation": "GET /api/v1/account/deletion",
+      "scenario": "account_deletion_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/deletion",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-get-nonhuman",
+      "operation": "GET /api/v1/account/deletion",
+      "scenario": "account_deletion_nonhuman",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/deletion",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/account-deletion-requires-owner-session",
+          "title": "account deletion requires owner session",
+          "status": 403,
+          "detail": "Account deletion requires a verified human owner session.",
+          "code": "account_deletion_requires_owner_session"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-get-store-failed",
+      "operation": "GET /api/v1/account/deletion",
+      "scenario": "account_deletion_store_error",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/account/deletion",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "Account deletion state is temporarily unavailable. Retry with the original Idempotency-Key.",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-disabled",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_disabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "erase-own-data"
+        },
+        "body": {
+          "acknowledge": "irreversible"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/account-deletion-unavailable",
+          "title": "account deletion unavailable",
+          "status": 503,
+          "detail": "Account deletion is not enabled.",
+          "code": "account_deletion_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-acknowledgement-required",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "erase-own-data"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/account-deletion-acknowledgement-required",
+          "title": "account deletion acknowledgement required",
+          "status": 422,
+          "detail": "Acknowledge irreversible deletion before requesting it.",
+          "code": "account_deletion_acknowledgement_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-missing-key",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "acknowledge": "irreversible"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-invalid-key",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "invalid key"
+        },
+        "body": {
+          "acknowledge": "irreversible"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-reused-key",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "erase-own-data"
+        },
+        "body": {
+          "acknowledge": "irreversible"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-recovery-required",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "erase-own-data"
+        },
+        "body": {
+          "acknowledge": "irreversible"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-invalid-json",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "erase-own-data"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-unknown-field",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "erase-own-data"
+        },
+        "body": {
+          "acknowledge": "irreversible",
+          "unexpected": true
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: unexpected: unknown field `unexpected`, expected `acknowledge` at line 1 column 42",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-missing-media-type",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "idempotency-key": "erase-own-data"
+        },
+        "body": {
+          "acknowledge": "irreversible"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-grant-erasing-recipient",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_recipient_erasing__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/share_recipient_unavailable",
+          "title": "share_recipient_unavailable",
+          "status": 409,
+          "detail": "share recipient is unavailable",
+          "code": "share_recipient_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "typed-link-erasing-recipient",
+      "operation": "POST /api/v1/agents/{id}/share-links",
+      "scenario": "typed_link_selected_erasing_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_share/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "typed-link-create"
+        },
+        "body": {
+          "audience": {
+            "kind": "users",
+            "subjects": ["recipient"]
+          },
+          "mode": "view_write",
+          "token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/share_recipient_unavailable",
+          "title": "share_recipient_unavailable",
+          "status": 409,
+          "detail": "The share recipient is unavailable.",
+          "code": "share_recipient_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "account-deletion-active-new-key",
+      "operation": "POST /api/v1/account/deletion",
+      "scenario": "account_deletion_in_progress",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/account/deletion",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "different-request"
+        },
+        "body": {
+          "acknowledge": "irreversible"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/account-deletion-in-progress",
+          "title": "account deletion in progress",
+          "status": 403,
+          "detail": "Account deletion is in progress.",
+          "code": "account_deletion_in_progress"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

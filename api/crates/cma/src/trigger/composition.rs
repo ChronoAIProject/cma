@@ -35,6 +35,7 @@ use crate::{rate_limit::CmaLaunchQuota, rate_limit::RateLimiters, store::MongoSt
 
 pub(crate) struct TriggerCompositionDependencies {
     pub common_first_messages: bool,
+    pub standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
     pub credentials: Arc<dyn SandboxCredentialPrerequisite>,
     pub stores: Arc<MongoStores>,
     pub directory: Arc<UserDirectory>,
@@ -77,7 +78,8 @@ impl TriggerComposition {
             definitions.clone(),
             dependencies.directory,
             inline_materializer,
-        );
+        )
+        .with_account_standing(dependencies.standing.clone());
         let launches = LaunchService::new(
             definitions.clone(),
             profiles.clone(),
@@ -87,7 +89,8 @@ impl TriggerComposition {
             launch_policy,
             dependencies.credentials,
         )
-        .with_common_first_messages(dependencies.common_first_messages);
+        .with_common_first_messages(dependencies.common_first_messages)
+        .with_account_standing(dependencies.standing.clone());
         let connections =
             ServiceConnectionService::new(definitions.clone(), dependencies.broker.clone());
         let launch_quota: Arc<dyn LaunchQuota> = Arc::new(CmaLaunchQuota::new(
@@ -102,7 +105,8 @@ impl TriggerComposition {
             launch_quota,
         );
         let assets = TriggerAssetsState::new(definitions.clone(), &dependencies.public_origin)
-            .map_err(|error| format!("Trigger public origin is not usable: {error}"))?;
+            .map_err(|error| format!("Trigger public origin is not usable: {error}"))?
+            .with_account_standing(dependencies.standing);
         let companion = LaunchCompanionState::new(definitions.clone());
         let routes = trigger_router(route_state)
             .merge(layer1_public::rest::agent_source_router(

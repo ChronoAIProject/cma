@@ -10,8 +10,12 @@ use axum::{
 };
 use layer2_core::StoreError;
 
+mod account_deletion;
 pub mod admin;
 pub(crate) mod admission_problem;
+pub use account_deletion::{account_deletion_problem, account_deletion_router};
+#[cfg(test)]
+mod account_deletion_tests;
 mod bot_setups;
 mod bots;
 pub use bot_setups::bot_setup_router;
@@ -344,6 +348,7 @@ impl InterfaceProfile for RestInterface {
 #[derive(Clone)]
 pub struct TriggerAssetsState {
     pub triggers: Arc<dyn layer2_core::trigger_domain::TriggerStore>,
+    pub(super) standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
     public_origin: url::Url,
 }
 
@@ -369,6 +374,7 @@ impl TriggerAssetsState {
             url::Url::parse(&canonical).expect("an HTTP(S) origin is itself an absolute URL");
         Ok(Self {
             triggers,
+            standing: Arc::new(layer2_core::account_deletion::AvailableAccounts),
             public_origin,
         })
     }

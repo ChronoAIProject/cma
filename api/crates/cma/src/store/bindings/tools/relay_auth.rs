@@ -41,6 +41,14 @@ impl MongoProviderToolSource {
         let lineage = &snapshot.resource.lineage;
         let agent = lineage.agent.as_ref().ok_or_else(refused)?;
         let sandbox = &lineage.sandbox;
+        if self
+            .standing
+            .erasing(&sandbox.owner)
+            .await
+            .map_err(unavailable)?
+        {
+            return Err(AdapterError::Rejected("account_deletion_in_progress".into()).into());
+        }
         if record.confirmed {
             let published = matches!(
                 agent.status,

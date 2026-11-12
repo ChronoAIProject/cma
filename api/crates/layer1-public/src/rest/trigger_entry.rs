@@ -41,6 +41,10 @@ pub(super) async fn open(
         Ok(_) => return StatusCode::NOT_FOUND.into_response(),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
+    match state.standing.erasing(&trigger.owner).await {
+        Ok(false) => {}
+        _ => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
     match state
         .triggers
         .placement(
@@ -86,6 +90,19 @@ pub(super) async fn consume(
             .is_some_and(|value| value != "same-origin")
     {
         return StatusCode::FORBIDDEN.into_response();
+    }
+    let trigger = match state
+        .triggers
+        .trigger_by_public_id(&PublicTriggerId(public_id.clone()))
+        .await
+    {
+        Ok(Some(trigger)) if trigger.availability == TriggerAvailability::Published => trigger,
+        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    match state.standing.erasing(&trigger.owner).await {
+        Ok(false) => {}
+        _ => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
     let name = cookie_name(&state, &public_id);
     let placement_id = headers

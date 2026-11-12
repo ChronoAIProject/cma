@@ -40,6 +40,7 @@ pub(super) const COLLECTION: &str = "agent_access_tools";
 pub(crate) use layer2_core::sandbox::agent_access_tool::AgentAccessRequester as AuthenticatedAgentAccess;
 
 pub(crate) struct MongoAgentAccessToolSource {
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
     store: Arc<MongoSandboxStore>,
     origin: String,
     signing_key: ring::hmac::Key,
@@ -47,6 +48,26 @@ pub(crate) struct MongoAgentAccessToolSource {
 }
 
 impl MongoAgentAccessToolSource {
+    pub(crate) fn with_account_standing(
+        mut self: Arc<Self>,
+        standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("tool standing configured before sharing")
+            .standing = standing;
+        self
+    }
+    async fn require_owner_available(&self, owner: &layer2_core::SubjectId) -> Result<()> {
+        if self
+            .standing
+            .erasing(owner)
+            .await
+            .map_err(|_| Error::Unavailable)?
+        {
+            return Err(Error::Erasing);
+        }
+        Ok(())
+    }
     #[cfg(test)]
     pub(crate) fn new(
         store: Arc<MongoSandboxStore>,
@@ -147,6 +168,11 @@ impl MongoAgentAccessToolSource {
                                 continue;
                             }
                             return Err(unavailable(()));
+                        }
+                        Error::Erasing => {
+                            return Err(AdapterError::Rejected(
+                                "account_deletion_in_progress".into(),
+                            ))
                         }
                         Error::Refused => {
                             operation.diagnostic("read_write", "authority_rejected", attempt);
@@ -303,6 +329,7 @@ enum Outcome {
     Authenticated(Box<AuthenticatedAgentAccess>),
 }
 enum Error {
+    Erasing,
     Refused,
     Unavailable,
     Driver(mongodb::error::Error),

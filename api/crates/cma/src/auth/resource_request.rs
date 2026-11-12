@@ -101,6 +101,18 @@ pub(super) async fn attach(auth: &AuthState, request: Request, next: Next) -> Re
             "resource_request_invalid",
         ));
     };
+    if let Some(response) = auth
+        .account_gate(
+            parts.method.as_str(),
+            parts.uri.path(),
+            &parts.headers,
+            &verified.subject,
+            false,
+        )
+        .await
+    {
+        return observation.rejected(response);
+    }
     let context = CallerContext {
         credential_source: CredentialSource::RequestBoundRead {
             expires_at: verified.expires_at,
