@@ -4,7 +4,9 @@ use super::super::{
     persistence::{SecretDigest, SubjectAuthState},
     refresh, AuthState, AUTH_COOKIE, AUTH_COOKIE_DOMAIN,
 };
+use super::PortalError;
 use axum::http::{header, HeaderMap, StatusCode};
+use layer2_core::SubjectId;
 use std::time::SystemTime;
 
 pub(super) struct Custody {
@@ -20,7 +22,7 @@ impl Custody {
             .access_token
             .expose()
     }
-    pub(super) async fn current(&self, auth: &AuthState) -> Result<(), StatusCode> {
+    pub(super) async fn current(&self, auth: &AuthState) -> Result<(), PortalError> {
         let login = auth
             .store
             .browser_login(&self.login)
@@ -28,19 +30,21 @@ impl Custody {
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
             .ok_or(StatusCode::UNAUTHORIZED)?;
         if login.subject != self.state.subject || login.expires_at <= SystemTime::now() {
-            return Err(StatusCode::UNAUTHORIZED);
+            return Err(StatusCode::UNAUTHORIZED.into());
         }
+        require_available(auth, &login.subject).await?;
         cookie_authorization::require_current_custody(auth, &self.state)
             .await
-            .map_err(|_| StatusCode::UNAUTHORIZED)
+            .map_err(|_| StatusCode::UNAUTHORIZED)?;
+        Ok(())
     }
 }
 
-pub(super) async fn resolve(auth: &AuthState, headers: &HeaderMap) -> Result<Custody, StatusCode> {
+pub(super) async fn resolve(auth: &AuthState, headers: &HeaderMap) -> Result<Custody, PortalError> {
     // The portal is deliberately cookie-only. API bearers use the Gateway's
     // public API directly; combining browser and bearer identities is ambiguous.
     if headers.contains_key(header::AUTHORIZATION) {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(StatusCode::UNAUTHORIZED.into());
     }
     let mut values = Vec::new();
     for header in headers.get_all(header::COOKIE) {
@@ -54,7 +58,7 @@ pub(super) async fn resolve(auth: &AuthState, headers: &HeaderMap) -> Result<Cus
         );
     }
     if values.len() != 1 || values[0].is_empty() || values[0].len() > 512 {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(StatusCode::UNAUTHORIZED.into());
     }
     let login_id = SecretDigest::identify(AUTH_COOKIE_DOMAIN, values[0]);
     let login = auth
@@ -64,8 +68,9 @@ pub(super) async fn resolve(auth: &AuthState, headers: &HeaderMap) -> Result<Cus
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
         .ok_or(StatusCode::UNAUTHORIZED)?;
     if login.expires_at <= SystemTime::now() {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(StatusCode::UNAUTHORIZED.into());
     }
+    require_available(auth, &login.subject).await?;
     let mut state = auth
         .store
         .subject(&login.subject)
@@ -80,8 +85,9 @@ pub(super) async fn resolve(auth: &AuthState, headers: &HeaderMap) -> Result<Cus
             .await
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
             .ok_or(StatusCode::UNAUTHORIZED)?;
-    if resolved.delegated_credential.is_none() {
-        return Err(StatusCode::UNAUTHORIZED);
+    if resolved.delegated_credential.is_none() || auth.owner_session_authority(&resolved).is_none()
+    {
+        return Err(StatusCode::UNAUTHORIZED.into());
     }
     let custody = Custody {
         login: login_id,
@@ -89,4 +95,16 @@ pub(super) async fn resolve(auth: &AuthState, headers: &HeaderMap) -> Result<Cus
     };
     custody.current(auth).await?;
     Ok(custody)
+}
+
+async fn require_available(auth: &AuthState, subject: &SubjectId) -> Result<(), PortalError> {
+    if auth
+        .standing
+        .erasing(subject)
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+    {
+        return Err(PortalError::AccountDeletionInProgress);
+    }
+    Ok(())
 }

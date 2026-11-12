@@ -51,6 +51,7 @@ impl ResourceAccessService {
             AuthorizedResource {
                 snapshot,
                 decision: crate::resource_access::AccessDecision::binding(binding, true),
+                caller: context.caller.clone(),
                 binding: Some(binding.clone()),
             }
         } else {

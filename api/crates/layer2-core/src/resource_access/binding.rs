@@ -63,6 +63,7 @@ impl ResourceAccessService {
         Ok(AuthorizedResource {
             snapshot,
             decision,
+            caller: context.caller.clone(),
             binding: Some(proof),
         })
     }
