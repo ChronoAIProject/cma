@@ -28,8 +28,24 @@ tree or shared pool cannot admit a new frame.
 
 Qualification covers enabled/disabled safety equivalence, unrelated and foreign
 observations, replacement/final release, local/shared pressure, a large unused
-sibling and startup transfer. It measures requested allocation, not RSS; final
-results are recorded after the repository gates pass.
+sibling and startup transfer. All 661 focused tests pass, together with
+workspace formatting, strict all-target/all-feature CMA/core/adapter clippy,
+source-size, configuration/documentation, whitespace and secret-history checks.
+
+The qualified source is Git commit `1b2fa485880b35408726d24a93108d7e945958c5`;
+its API tree is `8f738e6808c92a1be97c6902b70f2227528c11f8`. On aarch64-apple-darwin with
+Rust 1.96.1, a 3,001,134-byte frame with a large unused sibling reserves
+6,018,652 bytes and retains/peaks at 3,002,652 requested bytes.
+Observing its identity and checking readiness 100 times adds zero allocation.
+Dropping the caller's frame keeps the complete tree charged; final observation
+drop returns measured live bytes and both reservations to zero/full capacity.
+These are requested allocations, excluding allocator/OS overhead and RSS.
+
+The first run exposed JSON Pointer scratch allocations and checked teardown
+before the asynchronous writer released its final Bridge owner. Borrowed key
+lookups remove that scratch; integration tests wait at most two seconds for
+actual final-owner teardown before requiring exact pool restoration. Original
+zero-allocation and full-recovery assertions remain. First failures are retained.
 
 Only context-goal observation storage is covered. The active session snapshot,
 pre-activation queue identifiers, typed effects/schema containers, other
