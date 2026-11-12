@@ -15,6 +15,9 @@ mod credit_failure_tests;
 #[path = "budget_recovery_tests.rs"]
 mod budget_recovery_tests;
 
+#[path = "certified_evidence_tests.rs"]
+mod certified_evidence_tests;
+
 async fn claimed(store: &InMemorySandboxStore, agent: &Agent) -> AdmittedAgentCommand {
     store
         .claim_next_command(request(agent, "worker", &crate::now_rfc3339()))
