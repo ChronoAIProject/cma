@@ -15,6 +15,7 @@ ChronoAIProject/chrono-probe#18.
 | `sandboxes` | Drive Sandbox lifecycle sweeps | Required | Four owned sweeps; existing per-resource durable authority |
 | `workspaces` | Drive Workspace lifecycle sweeps | Required | One owned sweep; existing per-resource durable authority |
 | `sandbox_reconciliation` | Adopt runtime bindings, detect runtime loss, admit recovery and reconcile orphan resources / maintenance | Required loop | One owned resumable batch; retained cursors, binding holds, recovery schedule, durable revision/identity fences and existing background budget/deadlines |
+| `agent_capacity_recovery` | Retry already-admitted Agent log capacity recovery, including when new admission is disabled | Required loop | One owned sweep, two durable claims per batch; original publication identity, lease and authority; one-second scheduling activity with retained five-second sweep cadence |
 | `native_warm_pools` | Maintain spare native runtime capacity | Optional | One batch child, at most twenty targets; durable pool target lease/revision, planned identity and original provider UIDs |
 
 Agent connection reconciliation remains single-flight under the shared background

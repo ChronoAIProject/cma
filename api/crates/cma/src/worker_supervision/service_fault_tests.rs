@@ -134,6 +134,7 @@ async fn whole_service_worker_failures_recover_over_http() {
         "sandboxes",
         "workspaces",
         "sandbox_reconciliation",
+        "agent_capacity_recovery",
         "native_warm_pools",
     ] {
         results.push(exercise(&probe, worker, Fault::Panic).await);
@@ -226,6 +227,7 @@ async fn exercise(probe: &Probe, worker: &'static str, fault: Fault) -> serde_js
         "sandboxes",
         "workspaces",
         "sandbox_reconciliation",
+        "agent_capacity_recovery",
         "native_warm_pools",
     ]
     .into_iter()
