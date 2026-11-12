@@ -10,7 +10,8 @@ use layer2_core::{
         WorkspaceStatus, WorktreeStatus,
     },
 };
-use layer3_adapter::{AgentSkillInstallRequest, AgentSlot};
+#[path = "skill_request.rs"]
+mod skill_request;
 use std::time::SystemTime;
 
 impl AgentWorker {
@@ -108,10 +109,30 @@ impl AgentWorker {
                 .commit_skill(previous, agent, Vec::new(), now + started.elapsed())
                 .await?;
         }
-        let request = AgentSkillInstallRequest::new(
-            AgentSlot::new(agent.id.as_str()),
-            runtime_skills[0].clone(),
-        );
+        let previous = match &installation.previous {
+            Some(material) => match self
+                .dependencies
+                .skills
+                .runtime_skills(std::slice::from_ref(material))
+            {
+                Ok(skills)
+                    if validate_runtime_skills(std::slice::from_ref(material), &skills).is_ok() =>
+                {
+                    Some(skills[0].clone())
+                }
+                _ => {
+                    return self
+                        .finish_skill(
+                            agent,
+                            Some("skill_material_invalid"),
+                            now + started.elapsed(),
+                        )
+                        .await
+                }
+            },
+            None => None,
+        };
+        let request = skill_request::request(&agent, runtime_skills[0].clone(), previous);
         let fence = claimed_fence(&agent, &self.config.holder)?;
         match self
             .dependencies
@@ -126,7 +147,19 @@ impl AgentWorker {
             Err(layer3_adapter::AdapterError::Unsupported(_)) => {
                 self.finish_skill(
                     agent,
-                    Some("runtime_skill_install_unsupported"),
+                    Some(if request.upgrade.is_some() {
+                        "runtime_skill_version_upgrade_unsupported"
+                    } else {
+                        "runtime_skill_install_unsupported"
+                    }),
+                    now + started.elapsed(),
+                )
+                .await
+            }
+            Err(layer3_adapter::AdapterError::SkillUpgradeRefused(reason)) => {
+                self.finish_skill(
+                    agent,
+                    Some(&format!("{}: {reason}", reason.code())),
                     now + started.elapsed(),
                 )
                 .await
@@ -134,7 +167,21 @@ impl AgentWorker {
             Err(layer3_adapter::AdapterError::Rejected(_)) => {
                 self.finish_skill(
                     agent,
-                    Some("runtime_skill_install_rejected"),
+                    Some(if request.upgrade.is_some() {
+                        "runtime_skill_upgrade_rejected"
+                    } else {
+                        "runtime_skill_install_rejected"
+                    }),
+                    now + started.elapsed(),
+                )
+                .await
+            }
+            Err(layer3_adapter::AdapterError::OperationIdentityConflict(_))
+                if request.upgrade.is_some() =>
+            {
+                self.finish_skill(
+                    agent,
+                    Some("runtime_skill_upgrade_conflict"),
                     now + started.elapsed(),
                 )
                 .await
@@ -151,7 +198,30 @@ impl AgentWorker {
         }
     }
     async fn retry_skill(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
+        // Lifecycle reconnection can reset work-step attempts; the admitted skill
+        // owns its preparation budget. Pinned material requires runtime evidence.
+        let preparing = agent
+            .work
+            .live_skills
+            .last()
+            .filter(|item| item.previous.is_some() && item.material.is_none());
+        if preparing.is_some_and(|item| {
+            item.preparation_retries
+                >= layer3_adapter::MAX_AGENT_SKILL_UPGRADE_PREPARATION_ATTEMPTS - 1
+        }) {
+            let reason = layer3_adapter::AgentSkillUpgradeRefusal::PreparationExhausted;
+            return self
+                .finish_skill(agent, Some(&format!("{}: {reason}", reason.code())), now)
+                .await;
+        }
         let mut next = agent.clone();
+        if preparing.is_some() {
+            next.work
+                .live_skills
+                .last_mut()
+                .expect("present")
+                .preparation_retries += 1;
+        }
         let fence = claimed_fence(&agent, &self.config.holder)?;
         next.work
             .retry(

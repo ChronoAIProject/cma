@@ -10,7 +10,7 @@ pub(crate) struct DocumentStorageConfig {
     pub client_secret: zeroize::Zeroizing<String>,
 }
 impl DocumentStorageConfig {
-    pub(super) fn from_lookup(
+    pub(crate) fn from_lookup(
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Option<Self>, String> {
         let bucket = value_or(lookup, "CHRONO_DOCUMENT_BUCKET", "")?;
