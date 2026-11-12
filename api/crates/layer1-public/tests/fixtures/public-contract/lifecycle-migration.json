@@ -117,6 +117,37 @@
       "captures": {}
     },
     {
+      "id": "lifecycle-create-permission-denied",
+      "operation": "POST /api/v1/agents",
+      "scenario": "lifecycle_contract_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "lifecycle-key"
+        },
+        "body": {
+          "name": "Research"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-manager-forbidden",
+          "title": "agent manager forbidden",
+          "status": 403,
+          "detail": "the authenticated caller cannot create an Agent",
+          "code": "permission_denied"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "lifecycle-create-unavailable",
       "operation": "POST /api/v1/agents",
       "scenario": "lifecycle_contract_unavailable",
