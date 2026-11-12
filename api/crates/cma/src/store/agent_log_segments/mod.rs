@@ -6,6 +6,7 @@ mod codec;
 #[cfg(test)]
 mod codec_tests;
 mod collections;
+pub(in crate::store) mod conversation;
 pub(in crate::store) mod current_publication;
 pub(in crate::store) use collections::SegmentCollections;
 pub(in crate::store) mod command;

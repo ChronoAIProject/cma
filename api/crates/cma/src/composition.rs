@@ -24,7 +24,7 @@ use crate::{
     rate_limit::RateLimiters,
     sandbox::{
         runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, PlatformTitleEndpoint,
-        SandboxLifecycleComposition, SandboxLifecycleConfig, SandboxLifecycleDependencies,
+        SandboxLifecycleComposition, SandboxLifecycleDependencies,
     },
     store::{DefaultProfileSpec, MongoStores},
     trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
@@ -249,24 +249,7 @@ impl ControlPlaneComposition {
                 skills: agent_skills,
                 funding: runtime::funding(config, &stores, adapter.clone())?,
             },
-            SandboxLifecycleConfig {
-                parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
-                bounded_live_fragments: config.features.bounded_live_fragments,
-                coordinated_ingress: config.features.coordinated_ingress,
-                access_transport_migration: config.agent_access_transport_migration.clone(),
-                managed_documents_enabled: config.document_storage.is_some(),
-                event_driven_reconciliation: config.features.event_driven_reconciliation,
-                home_policy: config
-                    .runtime
-                    .home_policy
-                    .clone()
-                    .or_else(|| config.runtime.agent_sandbox_home_policy.clone()),
-                execution: config.execution,
-                holder: worker_holder.clone(),
-                deployment_id: config.deployment_id.clone(),
-                runtime_version: config.runtime.sandbox_image.clone(),
-                title_model: config.default_profiles.agent_model.clone(),
-            },
+            runtime::lifecycle_config(config, worker_holder.clone()),
         );
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
             common_first_messages: config.features.trigger_command_admission,

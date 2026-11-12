@@ -9,3 +9,5 @@ mod writer_gate_tests;
 mod ordinary_roots;
 
 mod admission_contexts;
+
+mod ordinary_publication;
