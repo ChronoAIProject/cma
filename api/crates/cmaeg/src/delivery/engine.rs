@@ -18,10 +18,7 @@ use std::{
     time::Instant,
 };
 use tokio::{
-    sync::{
-        mpsc::{self, error::SendError},
-        oneshot,
-    },
+    sync::{mpsc::error::SendError, oneshot},
     task::{JoinHandle, JoinSet},
 };
 pub const WORKERS: usize = 8;
@@ -37,7 +34,7 @@ impl Drop for DeliveryEngine {
 }
 impl DeliveryEngine {
     pub fn start(
-        receiver: mpsc::Receiver<DeliveryCommand>,
+        receiver: impl Into<queue::Input<DeliveryCommand>>,
         keys: Arc<MasterKeyRing>,
         relay: RelayClient,
         config: DeliveryConfig,
@@ -57,7 +54,7 @@ impl DeliveryEngine {
 
     /// Start the engine reporting every delivery step's outcome to `observer`.
     pub fn start_observed(
-        receiver: mpsc::Receiver<DeliveryCommand>,
+        receiver: impl Into<queue::Input<DeliveryCommand>>,
         keys: Arc<MasterKeyRing>,
         relay: RelayClient,
         config: DeliveryConfig,
@@ -74,7 +71,7 @@ impl DeliveryEngine {
             observer,
         });
         let (stop, stopping) = oneshot::channel();
-        let task = tokio::spawn(run(receiver, stopping, sender, config, tracker));
+        let task = tokio::spawn(run(receiver.into(), stopping, sender, config, tracker));
         Self {
             stop: Some(stop),
             task,
@@ -95,7 +92,7 @@ impl DeliveryEngine {
     }
 }
 async fn run(
-    receiver: mpsc::Receiver<DeliveryCommand>,
+    receiver: queue::Input<DeliveryCommand>,
     stop: oneshot::Receiver<()>,
     sender: Arc<Sender>,
     config: DeliveryConfig,
@@ -141,7 +138,7 @@ async fn run(
 /// that stopped, for example by panicking, is replaced so one fault never halts
 /// delivery for every channel; only `stop` or a closed inbound queue ends it.
 async fn dispatch<C, S, F>(
-    mut receiver: mpsc::Receiver<C>,
+    receiver: impl Into<queue::Input<C>>,
     mut stop: oneshot::Receiver<()>,
     workers: usize,
     route: impl Fn(&C) -> usize,
@@ -151,6 +148,7 @@ async fn dispatch<C, S, F>(
     S: Fn(queue::Receiver<C>) -> F,
     F: Future<Output = ()> + Send + 'static,
 {
+    let mut receiver = receiver.into();
     let inventory = Arc::new(queue::Inventory::default());
     let _monitor = inventory.monitor();
     metrics::gauge!("cmaeg_delivery_queue_capacity", "stage" => "worker")
