@@ -390,8 +390,9 @@ The user ruled "pause both under `SpendStop`"; the parent session relayed it.
   a registration closure exists, read per request through the advisory
   `registration_open()` outside the five-minute provider cache; an unreadable
   state keeps NyxID's value. The response keeps `Cache-Control: public,
-  max-age=300`, so a browser may show a stale value for up to five minutes;
-  the callback stays the authority.
+  max-age=300`, so browsers and shared caches may show a stale button state
+  for up to five minutes; the callback stays the authority (accepted in
+  review).
 - R13 (user decision): `platform_budget_exhausted` is HTTP 402 like the other
   budget refusals, because the TypeScript SDK retries every status of 500 or
   above; code, guidance and the absent `Retry-After` are unchanged and
@@ -402,6 +403,28 @@ The user ruled "pause both under `SpendStop`"; the parent session relayed it.
   subject is persisted or a browser login minted, and returns
   `registration_closed(None)` because the caller clears the binding cookie
   and cancels the login.
+
+### Release preparation
+
+- `develop` merged again (a9598c38a, 28 commits, no conflict). The Mongo run
+  after it exposed a race in `two_stores_crossing_the_stop_level_record_one_closure`
+  (decision 29 rewrite): its second round could pick the owner whose day
+  limit is not raised, which the owner check refuses before the platform
+  check. Both second-round admissions now come from the raised-limit owner.
+- R14: contract section 13 is the data migration record
+  `2026-11-12-am-platform-spend-period-ledger` required by CLAUDE.md section 2
+  and the PR template. Each claim was checked in code: the snapshot filter,
+  the two gate checks, the writers that need the period row, the strict
+  readers on develop (`PlatformBudgetPolicy`, `TurnRecord`, `RequestRecord`,
+  `BudgetError`, the first-message code list) and the command sidecar that
+  keeps the legacy code in the strict record.
+- Found while writing R14, not changed: develop's retirement-archive census
+  (`store/retirement_archive/census_budget.rs`) refuses capture when
+  `model_budget_reservations` holds any key outside `owner:`, `command:`,
+  `turn:`, `request:` and `request-turn:`. Once metering is enabled the
+  `platform:` and `observation:cloud:` rows refuse every capture; #1621's
+  `stop:` rows already do. The census document requires a reviewed closure
+  extension, so this is recorded as a prerequisite before enabling metering.
 
 ## Blocked
 
