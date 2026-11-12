@@ -135,6 +135,16 @@ through `docker exec`, and the Omarchy contract reruns the default probe. A
 missing command, another implementation, or wrong exit status fails the
 evidence.
 
+New runtime image records use `cma-runtime-image-v2`, which requires both
+`psVersion` and `jqVersion`. The reader and `runtime-image-evidence.mjs verify`
+explicitly accept retained `cma-runtime-image-v1` records under their original
+artifact rules, without those two fields, and reject unknown schemas. Both
+versions still require the complete probe checks, original commit/image binding,
+pinned artifacts and exact cleanup. Verification uses the supplied original
+commit and image reference plus the verifier checkout's artifact pins; schema
+compatibility does not waive those pins. Retained v1 evidence proves its original
+contract and does not certify that the older image contains `ps` or `jq`.
+
 This guarantee covers images built from this revision onward. A Sandbox keeps
 its recorded runtime image, so an existing Sandbox gains these commands only when
 it adopts a newer released runtime through the managed update or revival path.
