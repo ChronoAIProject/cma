@@ -1,15 +1,14 @@
 //! Metadata-only Mongo diagnostics. Never format a command, reply, error or address.
 use super::mongo_latency::connection_key;
 use layer2_core::diagnostic_context::DiagnosticContext;
-use mongodb::{
-    bson::Document,
-    event::{cmap::CmapEvent, command::CommandEvent},
-};
+use mongodb::event::cmap::CmapEvent;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+mod metadata_hook;
+pub(super) mod output;
 mod periodic;
 mod summary;
 use sha2::{Digest, Sha256};
@@ -19,7 +18,7 @@ const SLOW: Duration = Duration::from_millis(100);
 const SAMPLE_EVERY: u64 = 100;
 
 #[derive(Clone)]
-struct Command {
+pub(super) struct Command {
     context: DiagnosticContext,
     pool: &'static str,
     hold_hash: Arc<str>,
@@ -27,6 +26,8 @@ struct Command {
     collection: &'static str,
     session: bool,
     transaction: bool,
+    transaction_known: bool,
+    outcome_known: bool,
     sampled: bool,
 }
 struct Hold {
@@ -39,7 +40,7 @@ struct Hold {
 }
 struct State {
     salt: [u8; 16],
-    commands: HashMap<(u64, i32), Command>,
+    commands: HashMap<(u64, u64), Command>,
     holds: HashMap<u64, Hold>,
     command_sequence: u64,
     checkout_sequence: u64,
@@ -49,6 +50,7 @@ struct State {
 pub(super) struct Diagnostics(Arc<Mutex<State>>, &'static str);
 impl Default for Diagnostics {
     fn default() -> Self {
+        output::initialize();
         Self(
             Arc::new(Mutex::new(State {
                 salt: *uuid::Uuid::new_v4().as_bytes(),
@@ -69,77 +71,60 @@ pub(super) fn install(
     let value = std::env::var(crate::config::MONGO_DIAGNOSTICS_ENABLED);
     install_configured(options, pool, value.as_deref().ok())
 }
-fn install_configured(
+pub(super) fn install_configured(
     options: &mut mongodb::options::ClientOptions,
     pool: &'static str,
     value: Option<&str>,
 ) -> Option<Diagnostics> {
-    if value != Some("true") {
+    // Override driver environment defaults, including query-text collection.
+    options.tracing = Some(metadata_hook::disabled());
+    if value != Some("true") || !output::initialize() {
         return None;
     }
     let diagnostics = Diagnostics(Diagnostics::default().0, pool);
-    let commands = diagnostics.clone();
-    options.command_event_handler = Some(mongodb::event::EventHandler::callback(move |event| {
-        commands.command(event)
-    }));
+    metadata_hook::install(options, diagnostics.clone());
     // Dropping the handle detaches; the task only keeps a Weak client state.
     drop(periodic::start(&diagnostics));
     Some(diagnostics)
 }
 impl Diagnostics {
-    pub(super) fn command(&self, event: CommandEvent) {
-        match event {
-            CommandEvent::Started(event) => {
-                let key = connection_key(&event.connection.address, event.connection.id);
-                let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-                state.command_sequence = state.command_sequence.wrapping_add(1);
-                let mut command = metadata(
-                    &event.command_name,
-                    &event.command,
-                    state.command_sequence.is_multiple_of(SAMPLE_EVERY),
-                );
-                command.pool = self.1;
-                if let Some(hold) = state.holds.get_mut(&key) {
-                    command.hold_hash = hold.hash.clone();
-                    hold.commands = hold.commands.saturating_add(1);
-                    hold.last = Some(command.clone());
-                }
-                if state.commands.len() < MAX_PENDING {
-                    state
-                        .commands
-                        .insert((key, event.request_id), command.clone());
-                } else {
-                    state.summary.untracked = state.summary.untracked.saturating_add(1);
-                }
-                drop(state);
-                if command.sampled {
-                    command.emit("started", Duration::ZERO, None, 0, false);
-                }
-            }
-            CommandEvent::Succeeded(event) => self.finished(
-                connection_key(&event.connection.address, event.connection.id),
-                event.request_id,
-                event.duration,
-                docs_returned(&event.reply),
-                false,
-            ),
-            CommandEvent::Failed(event) => self.finished(
-                connection_key(&event.connection.address, event.connection.id),
-                event.request_id,
-                event.duration,
-                None,
-                true,
-            ),
-            _ => {}
-        }
-    }
-    fn finished(&self, key: u64, id: i32, duration: Duration, docs: Option<u64>, failed: bool) {
+    fn started(&self, key: u64, mut command: Command) -> Option<u64> {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let mut command = state
-            .commands
-            .remove(&(key, id))
-            .unwrap_or_else(|| metadata("other", &Document::new(), false));
+        state.command_sequence = state.command_sequence.wrapping_add(1);
+        let id = state.command_sequence;
+        command.sampled = id.is_multiple_of(SAMPLE_EVERY);
         command.pool = self.1;
+        if let Some(hold) = state.holds.get_mut(&key) {
+            command.hold_hash = hold.hash.clone();
+            hold.commands = hold.commands.saturating_add(1);
+            hold.last = Some(command.clone());
+        }
+        if state.commands.len() >= MAX_PENDING {
+            state.summary.untracked = state.summary.untracked.saturating_add(1);
+            return None;
+        }
+        state.commands.insert((key, id), command.clone());
+        drop(state);
+        if command.sampled {
+            command.emit("started", Duration::ZERO, None, 0, false);
+        }
+        Some(id)
+    }
+    fn finished(
+        &self,
+        key: u64,
+        id: u64,
+        duration: Duration,
+        docs: Option<u64>,
+        failed: bool,
+        outcome_known: bool,
+    ) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(mut command) = state.commands.remove(&(key, id)) else {
+            return;
+        };
+        command.pool = self.1;
+        command.outcome_known = outcome_known;
         let hold_us = state
             .holds
             .get(&key)
@@ -156,7 +141,13 @@ impl Diagnostics {
                 command.emit("started", Duration::ZERO, None, 0, true);
             }
             command.emit(
-                if failed { "failed" } else { "succeeded" },
+                if failed {
+                    "failed"
+                } else if outcome_known {
+                    "succeeded"
+                } else {
+                    "completed"
+                },
                 duration,
                 docs,
                 hold_us,
@@ -274,10 +265,12 @@ fn context_command(context: DiagnosticContext) -> Command {
         collection: "none",
         session: false,
         transaction: false,
+        transaction_known: false,
+        outcome_known: false,
         sampled: false,
     }
 }
-fn metadata(name: &str, body: &Document, sampled: bool) -> Command {
+fn metadata(name: &str, collection: &str, session: bool, sampled: bool) -> Command {
     let command = match name {
         "find" => "find",
         "getMore" => "getMore",
@@ -302,19 +295,10 @@ fn metadata(name: &str, body: &Document, sampled: bool) -> Command {
         "dropDatabase" => "dropDatabase",
         _ => "other",
     };
-    let collection = body
-        .get_str(if command == "getMore" {
-            "collection"
-        } else {
-            command
-        })
-        .ok()
-        .and_then(|value| {
-            super::isolation::COLLECTIONS
-                .iter()
-                .copied()
-                .find(|known| *known == value)
-        })
+    let collection = super::isolation::COLLECTIONS
+        .iter()
+        .copied()
+        .find(|known| *known == collection)
         .unwrap_or("other");
     Command {
         context: DiagnosticContext::current(),
@@ -322,18 +306,12 @@ fn metadata(name: &str, body: &Document, sampled: bool) -> Command {
         hold_hash: "none".into(),
         command,
         collection,
-        session: body.contains_key("lsid"),
-        transaction: matches!(body.get_bool("autocommit"), Ok(false)),
+        session,
+        transaction: false,
+        transaction_known: false,
+        outcome_known: false,
         sampled,
     }
-}
-fn docs_returned(reply: &Document) -> Option<u64> {
-    let cursor = reply.get_document("cursor").ok()?;
-    cursor
-        .get_array("firstBatch")
-        .or_else(|_| cursor.get_array("nextBatch"))
-        .ok()
-        .map(|batch| batch.len() as u64)
 }
 fn micros(duration: Duration) -> u64 {
     duration.as_micros().min(u128::from(u64::MAX)) as u64
@@ -347,12 +325,30 @@ impl Command {
         hold_us: u64,
         deferred: bool,
     ) {
+        output::send(output::Record::Detail {
+            command: self.clone(),
+            event,
+            duration,
+            docs,
+            hold_us,
+            deferred,
+        });
+    }
+    fn write(
+        &self,
+        event: &'static str,
+        duration: Duration,
+        docs: Option<u64>,
+        hold_us: u64,
+        deferred: bool,
+        queue_delay_us: u64,
+    ) {
         tracing::info!(target: "mongo_diagnostic", parent: None,
-            event, pool = self.pool, hold_hash = %self.hold_hash, route = self.context.route.as_ref(), request_hash = %self.context.request_hash,
+            event, outcome_known = self.outcome_known, queue_delay_us, pool = self.pool, hold_hash = %self.hold_hash, route = self.context.route.as_ref(), request_hash = %self.context.request_hash,
             worker = self.context.worker, phase = self.context.phase,
             command = self.command, collection = self.collection,
             duration_us = micros(duration), docs_returned = docs.unwrap_or(0), docs_returned_known = docs.is_some(), session = self.session,
-            transaction = self.transaction, connection_hold_elapsed_us = hold_us,
+            transaction = self.transaction, transaction_known = self.transaction_known, command_duration_scope = "driver_command_span", connection_hold_elapsed_us = hold_us,
             sample_every = SAMPLE_EVERY, slow = duration >= SLOW, deferred,
             "MongoDB diagnostic event");
     }
