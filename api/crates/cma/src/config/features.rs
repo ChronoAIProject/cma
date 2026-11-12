@@ -27,7 +27,6 @@ pub(crate) struct FeatureFlags {
     pub nyxid_proxy: bool,
     pub silent_sign_in: bool,
     pub document_revocation_reserve: bool,
-    pub document_quotas: bool,
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
     pub retained_context_lookup: bool,
@@ -60,7 +59,6 @@ impl FeatureFlags {
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
             sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
             sandbox_detail_timings: flag(lookup, "CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")?,
-            document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             retained_context_lookup: flag(lookup, "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED")?,
@@ -129,25 +127,6 @@ mod approval_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn document_quotas_require_an_independent_strict_opt_in() {
-        let key = "CHRONO_DOCUMENT_QUOTAS_ENABLED";
-        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |name| {
-                Ok((name == key).then(|| value.map(str::to_owned)).flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.document_quotas, enabled);
-            assert!(!flags.document_revocation_reserve);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |name| Ok(
-                (name == key).then(|| value.to_owned())
-            ))
-            .is_err());
-        }
-    }
 
     #[test]
     fn bounded_title_reads_require_an_explicit_boolean_opt_in() {
@@ -342,7 +321,6 @@ mod permission_bound_tests {
         }
     }
 }
-
 
 #[cfg(test)]
 mod live_buffer_tests {
