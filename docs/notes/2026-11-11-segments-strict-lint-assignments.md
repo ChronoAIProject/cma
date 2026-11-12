@@ -79,6 +79,7 @@ feature-gate suppression or fake call is an acceptable closure.
 | `e28cb6beb` | Strict CMA all targets/features, -D warnings | PASS, zero diagnostics, 2m36s. Final S1/S4/S5 assembled source. |
 | `e28cb6beb` | Strict core/public/adapter all targets/features, -D warnings | PASS, zero diagnostics, 1m04s. Behavioral gates continue. |
 | `e28cb6beb` | Shared caller/configuration | 26passed/0failed,2674skipped; both required factory tests and strict default-off flag tests selected. |
+| `e28cb6beb` | Scheduler/configuration | 57passed/0failed,2642skipped; all7accepted-recovery scheduler tests verified in the inventory. |
 
 Original failed recovery cases: S4
 `capacity_later_service_retries_crash_and_refuses_foreign_or_stale_activation`,
@@ -160,9 +161,9 @@ selection covers remaining segment/operator/proof units, recovery HTTP cases and
 the partitioned real-Mongo inventory after the ten-step batch succeeds.
 All changed Rust/TypeScript files are independently confirmed below500lines.
 
-Current qualification status: the scheduler step is queued on heavy-1 after
-three successful steps (strict CMA, strict affected layers,26caller/configuration
-tests). The queue uses the required3600-second blocking wait; no pending test is
+Current qualification status: strict CMA, strict affected layers,26caller/configuration
+tests and57scheduler/configuration tests pass. Response/core/adapter tests and
+actual Mongo contracts remain in the serial queue. The queue uses the required3600-second blocking wait; no pending test is
 reported as passed. The immutable e28source equals the pushed candidate under
 api/,infra/and.github/; subsequent commits so far are documentation only.
 The combined behavioral/Mongo runner and dependent supplemental runner continue
