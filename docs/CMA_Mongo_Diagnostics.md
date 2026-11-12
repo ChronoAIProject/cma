@@ -48,8 +48,8 @@ An unsampled command's started metadata is emitted at completion if it is slow
 or failed (`deferred=true`). Deferred starts are not live in-flight observations.
 No event writes command/reply bodies, including the failure path.
 
-`mongo_diagnostic_summary` reports **unsampled** totals roughly every ten seconds
-when activity arrives. Group by `pool, route, worker, phase, command, collection,
+`mongo_diagnostic_summary` reports **unsampled** totals every ten seconds
+while the client exists, with an activity-triggered fallback. Group by `pool, route, worker, phase, command, collection,
 metric`. `metric` is `command`, `checkout`, or `hold`; `count`, `total_us`, `max_us`,
 `docs_returned`, `failures` and `window_us` are numeric. Sum `total_us / 1e6` for
 `metric=hold` to rank physical hold-seconds. Do not add command time, checkout
@@ -69,7 +69,9 @@ client. Summary cardinality is limited to 1024 groups plus overflow buckets;
 `untracked` reports tracking overflow. Any overflow makes detailed attribution
 incomplete and must be reported with the comparison. In-flight holds carry across
 summary windows; completed-hold occupancy is not instantaneous utilization.
-Final idle-window totals need a subsequent operation to flush.
+A periodic `mongo_diagnostic_pool` heartbeat also reports `tracked_commands`,
+`tracked_holds`, `oldest_tracked_hold_us` and overflow, even if no command
+completes. Its task keeps only a weak reference and exits after client disposal.
 
 ## Detail phases
 
@@ -96,7 +98,11 @@ the SAME diagnostic image with only response projection enabled. Hold workload,
 post-ready age and route sampling as comparable as practical; retain the exact
 configuration for both windows. Use the labelled command, hold and phase events
 to confirm or refute the response-projection treatment as the source of the
-slowdown. A clean first window alone does not identify a command-level cause.
+slowdown. A clean first window alone does not identify a command-level cause. Restored
+images have also shown intermittent reporting holds and readiness deadlines;
+compare collection/command totals across the same time buckets to distinguish
+broad client-side stalls from query-specific work. Broad stalls still need
+server/transport/scheduling evidence before assigning a server root cause.
 
 The release owner runs the diagnostic build and retains image SHA, Pod hash,
 Ready/old-gone timestamps, pool configuration, diagnostic controls and behavioral
