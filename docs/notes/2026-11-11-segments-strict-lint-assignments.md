@@ -1,9 +1,9 @@
 # Segmentation combined PR: current assignments and gate ledger
 
-Updated Thu 2026-11-12 11:20 SGT. Integration owner: S2 cma-db-contention.
+Updated Thu 2026-11-12 13:00 SGT. Integration ownership transferred to cma-cost.
 Branch: `tl/cma-log-segments/integration-20261111`.
-One default-off combined PR to develop; target PR 14:00, review 15:30, merge 16:00,
-evening train 19:00–22:00. Writer and recovery activation remain closed.
+One default-off combined PR to develop; target PR 15:30, review 16:30, merge 17:00,
+then the owner-mandated deployment and verification tonight. Writer and recovery activation remain closed.
 No issue closes without its required production evidence.
 
 **Current outcome:** strict CMA/core/public/adapter is green at `92ed005a9`.
@@ -316,3 +316,21 @@ on the duplicate declaration; that failure is retained as evidence. Corrected
 units/Mongo/strict gates are queued under shared slot 1. The previous light
 gates and P1-1 output/settlement gap above remain accurately scoped. The writer
 CapacityRecovery permission is available for S5 service qualification. No PR.
+
+## Integration transfer and exact combined qualification
+
+Lead transfer at13:00: the reader owner now integrates all slices on this branch.
+Published checkpoints included normally: S1 b72e86b7f, S3 9c2db4a46,
+S4 6a64f7c3d and provisional S5 5ac8ce4d2. Source checkpoint5582969d4
+includes current develop d08742c70. Final S4 output publication and S5 full
+capacity/abort/Unknown service matrix remain required; no provisional checkpoint
+closes those findings. Writer and recovery activation stay closed.
+
+Shared output-page route integration now has executable owner/authentication/
+foreign/cursor-refusal contracts and typed Rust/TypeScript dispatch. TypeScript
+shared contracts3245 pass, along with typecheck/lint/build/docs/format. Both
+canonical Mongo selector lists now include the new transcript and suggestion
+proof tests in identical order; runner regression tests31/31 pass. Combined
+API fmt, whitespace and source-size6393 pass, with all changed source under500.
+The immutable combined Rust/Mongo run is queued; its final counts and failures
+will be recorded separately. Earlier slice successes do not certify this head.
