@@ -199,23 +199,25 @@ async fn platform_closures(
     let settings_store = crate::store::MongoPlatformSettingsStore::open(client, database)
         .await
         .unwrap();
-    let mut settings = layer2_core::PlatformSettings::default();
-    settings.model_budget = BudgetSettings {
-        enabled: true,
-        platform: Some(platform.clone()),
-        // Enabled budgets need a policy; Agent reuse reserves no liability.
-        default_policy: Some(layer2_core::budget::BudgetPolicy {
-            owner_day_limit: 255,
-            turn_limit: 255,
-            max_calls_per_turn: 255,
-            day_timezone: "UTC".into(),
-            input_token_units: 1,
-            output_token_units: 1,
-            max_unobserved_units: 1,
-            usage_timeout_seconds: 60,
-        }),
-        owners: vec![],
-        request_models: vec![],
+    let settings = layer2_core::PlatformSettings {
+        model_budget: BudgetSettings {
+            enabled: true,
+            platform: Some(platform.clone()),
+            // Enabled budgets need a policy; Agent reuse reserves no liability.
+            default_policy: Some(layer2_core::budget::BudgetPolicy {
+                owner_day_limit: 255,
+                turn_limit: 255,
+                max_calls_per_turn: 255,
+                day_timezone: "UTC".into(),
+                input_token_units: 1,
+                output_token_units: 1,
+                max_unobserved_units: 1,
+                usage_timeout_seconds: 60,
+            }),
+            owners: vec![],
+            request_models: vec![],
+        },
+        ..Default::default()
     };
     let revision = settings_store
         .read()
