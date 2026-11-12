@@ -33,6 +33,9 @@ use crate::auth::AuthenticatedSubject;
 #[path = "admin/admission_tests.rs"]
 pub(crate) mod admission_control_tests;
 
+#[path = "admin/ceilings/tests.rs"]
+mod admission_ceilings_tests;
+
 const NOW: &str = "2026-09-05T00:00:00Z";
 
 #[derive(Default)]

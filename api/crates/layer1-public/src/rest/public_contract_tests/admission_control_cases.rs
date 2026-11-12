@@ -4,6 +4,19 @@ use layer2_core::{Authorization, Capability, SubjectId};
 use super::Scenario;
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    if let Some(kind) = name.strip_prefix("admission_ceilings_") {
+        let (router, _) =
+            crate::rest::admin::tests::admission_control_tests::admission_fixture_with_ceilings(
+                false,
+                kind != "closed",
+            );
+        return Some(Scenario {
+            router,
+            subject: Some("operator-a"),
+            authorization: Authorization::new([Capability::ConfigurePlatform]),
+            symbols: Default::default(),
+        });
+    }
     let kind = name.strip_prefix("admission_control_")?;
     let writes = match kind {
         "read" | "closed" | "history" => false,

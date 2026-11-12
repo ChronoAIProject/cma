@@ -6,7 +6,17 @@ use layer2_core::{resource_access::CallerContext, sandbox::binding::*, Authoriza
 use serde_json::json;
 use tower::ServiceExt;
 
+mod capacity;
+
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
+    if name == "binding_management_capacity" {
+        return Some(Scenario {
+            router: capacity::fixture(),
+            subject: Some("manager"),
+            authorization: management::authority(),
+            symbols: Default::default(),
+        });
+    }
     if let Some(mode) = name.strip_prefix("worker_classifier_") {
         return Some(Scenario {
             router: crate::rest::worker_credentials::tests::fixture(mode).await,

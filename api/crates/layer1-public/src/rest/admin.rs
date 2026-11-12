@@ -24,6 +24,7 @@ use super::{problem_document, problem_response};
 
 pub(super) mod admission;
 pub(super) mod auto_pause;
+pub(super) mod ceilings;
 pub(super) mod profiles;
 pub(super) mod runtime_update;
 pub(super) mod sandboxes;
@@ -44,6 +45,7 @@ pub struct AdminState {
     pub(super) runtime_updates: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
     pub(super) maintenance: Option<Arc<dyn SandboxMaintenanceStore>>,
     pub(super) spend: Option<Arc<layer2_core::budget::PlatformSpendService>>,
+    pub(super) admission_ceilings: Option<Arc<layer2_core::admission::AdmissionCeilingsService>>,
     pub(super) admission_control: Option<Arc<layer2_core::admission::AdmissionControlService>>,
 }
 
@@ -64,6 +66,7 @@ impl AdminState {
             maintenance: None,
             spend: None,
             admission_control: None,
+            admission_ceilings: None,
         }
     }
 
