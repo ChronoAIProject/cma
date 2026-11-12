@@ -19,7 +19,7 @@ controls when setting *behavioral* feature flags off for the experiment.
 | Field | Meaning |
 | --- | --- |
 | `event` | `started`, `succeeded`, `failed`, `checked_out`, `checked_in`, `connection_closed`, or `checkout_failed` |
-| `pool` | `general` or `reporting`; never combine reporting-pool demand with general-pool contention |
+| `pool` | `general` or `reporting`; never combine reporting-pool demand with general-pool contention; existing Prometheus pool label `application` corresponds to diagnostic `general` |
 | `route` | HTTP method plus matched route **template**; `unmatched` is used without a template, never the raw URI |
 | `request_hash` | SHA-256 of a process-random salt and the normalized request ID; correlation is confined to a process lifetime |
 | `hold_hash` | Hash of a client-random salt and checkout sequence; joins commands to their eventual physical hold without exposing driver/server identities |
