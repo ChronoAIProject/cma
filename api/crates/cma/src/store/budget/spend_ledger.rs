@@ -11,8 +11,8 @@ use mongodb::bson::doc;
 use mongodb::ClientSession;
 
 use super::period::{
-    ensure_period_row, enter_closures, load_or_open, period_key, read_snapshot, save_period,
-    snapshot, PolicySnapshot,
+    ensure_period_row, load_or_open, period_key, read_snapshot, save_period, snapshot,
+    PolicySnapshot,
 };
 use super::{decode, ApplyError, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use crate::store::sandbox_mongo::{
@@ -48,11 +48,10 @@ impl MongoSandboxStore {
             .map_err(|_| BudgetError::Unavailable)
     }
 
-    /// Time-driven transitions with plain reads and no settings fence. Writes
-    /// only on change or after `REFRESH_SECONDS`: lifts and the evaluated
-    /// revision by one revision-CAS update (a miss waits for the next sweep),
-    /// entries by the guarded closure write. `entered` is narrowed to what this
-    /// caller inserted. `None` without an enabled platform policy.
+    /// Time-driven decisions use plain reads, then commit entries, lifts and
+    /// refreshes together under both policy and accounting revision guards.
+    /// A stale decision waits for the next sweep. Unchanged evidence within
+    /// the refresh interval remains read-only; disabled metering returns `None`.
     pub(crate) async fn evaluate_period(
         &self,
         now: u64,

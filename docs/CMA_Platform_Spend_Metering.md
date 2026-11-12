@@ -381,28 +381,26 @@ on-call is EXT-MONITORING (#1570); a dashboard banner is later UI work.
 
 ### 5.4 Writing closures
 
-Closures are entered in two ways, both monotonic:
+Closures are entered in two ways:
 
 - **Inside a successful admission:** `SpendWarning`, when the admitted liability
   crosses the warning level. It commits with the admission.
-- **Outside any transaction:** every closure entered on a refusal (an admission,
-  a zero-liability check) and every closure the evaluator enters. A refusal
-  enters `SpendStop` only when `committed` without its own `L` has reached
-  `disposable`, a missing `SpendWarning` when `committed ≥ warning_level`, and
-  `MeteringUnavailable` on a fail-closed condition (section 4.2); an allowance
-  that merely does not fit enters no `SpendStop`. The
-  foundation's transaction loops abort on any domain error, so a closure pushed
-  inside a refusing transaction would roll back with it. Instead the refusing
-  call, after the abort, issues one guarded single-document update:
+- **In a separate guarded transaction:** every closure derived by a refusing
+  admission or by the evaluator. A refusal enters `SpendStop` only when
+  `committed` without its own liability has reached `disposable`, a missing
+  `SpendWarning` when `committed ≥ warning_level`, and `MeteringUnavailable`
+  on a fail-closed condition. An allowance that merely does not fit enters no
+  `SpendStop`.
 
-  ```
-  update_one({_id: "platform:<period>", "record.closures.reason": {$ne: <reason>}},
-             {$push: {"record.closures": <closure>}, $inc: {"record.revision": 1}})
-  ```
-
-  First writer wins and repeats are no-ops. The caller whose update modified the
-  row is the only one that emits the alert. This is the pattern the foundation
-  already uses for `stop:` rows.
+A refusal first aborts the admission transaction, releasing all settings and
+period locks. Its closure transaction then conditionally writes the exact
+settings revision and the exact period revision that produced the decision.
+The evaluator uses the same guard for entries, lifts and periodic refreshes.
+A missing period uses an insert, so a concurrent creator also invalidates the
+decision. If either revision changed, the whole decision is discarded and a
+later evaluation derives a fresh one. Refusals never lift existing closures.
+Only a confirmed closure commit emits its entry alerts; an uncertain result is
+reported as unavailable and cannot authorize an action.
 
 Closures are removed only by the evaluator (section 6).
 
@@ -412,9 +410,9 @@ Closures are removed only by the evaluator (section 6).
   writer read, whose revision is recorded on the row and on each closure. A
   settings PATCH that changes the platform policy increments the revision as
   today (CAS, `ConfigurePlatform`, confidential audit).
-- **Lifting a closure** is a revision-CAS update of the period row (`$pull` of
-  the closure, `$set` of `settings_revision` and `evaluated_at`) made by the
-  evaluator after it re-evaluates under a settings revision strictly greater
+- **Lifting a closure** uses the guarded transaction in section 5.4, checking
+  both policy and accounting revisions. The evaluator re-evaluates under a
+  settings revision strictly greater
   than the closure's `settings_revision` and finds `committed < level`. A
   process that has not seen a newer settings revision cannot lift anything.
   `MeteringUnavailable` lifts when its cause clears (fresh observation, valid
@@ -617,8 +615,8 @@ Marked so they can be overturned without re-reading:
 11. Revival checks the admission state at the service entry, not in-transaction.
 12. Section 2.3 is deferred: `source` accepts `cloud` only, `adjustments` stays
     `0`, the row has no drift field.
-13. Closures entered on a refusal or by the evaluator are written outside any
-    transaction with a guarded update; first writer wins; precedent `stop:` rows.
+13. Closures derived by a refusal or evaluator commit in a separate transaction
+    guarded by both settings and period revisions; stale decisions are discarded.
 14. Zero-liability admissions read settings and the period row without the
     settings fence.
 15. Stop polling reads the period row without a transaction behind a 5-second
@@ -648,9 +646,10 @@ Recorded during implementation:
     update inserted the closure (refusals and the evaluator) and from a
     successful admission that enters `SpendWarning` in its transaction; a
     retried admission transaction can emit that warning event twice.
-23. A refusal that follows the same transaction's insert of a missing period
-    row aborts that transaction before the guarded closure write, and every
-    refusal pre-creates the row outside it, so the closure is not lost.
+23. Every refusal aborts its admission transaction before trying to persist
+    closures, releasing its settings and period locks. A missing period is
+    inserted only under the same policy guard; a concurrent insert invalidates
+    the decision. The evaluator can retry closure derivation later.
 24. An enabled platform meter requires an owner budget policy for every new
     model commitment, including queued turn starts and auxiliary requests.
     Missing valuation refuses with `budget_unavailable` before dispatch;

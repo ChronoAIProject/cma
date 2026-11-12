@@ -15,6 +15,7 @@ mod period;
 mod requests;
 mod source;
 mod spend_ledger;
+mod transitions;
 pub(super) use cancellation::release_unexecuted;
 #[cfg(test)]
 pub(super) use period::period_key;
