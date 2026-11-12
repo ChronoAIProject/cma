@@ -13,6 +13,15 @@ from local fixtures.
 
 ## Client boundaries
 
+`CHRONO_DOCUMENT_STORAGE_RESILIENCE_ENABLED` is strict and defaults to `false`.
+The token and download retry behavior in the table below requires explicit
+activation. While off, the predecessor serialized token refresh/cache, 60-second
+expiry margin, one 401 replay and no GET transport retry remain in effect. Both
+policies retain the 30-second total operation budget, bounded bodies, unchanged
+scopes and receipt rejection. Disable the switch on every API process to roll
+back the policy; there is no persistent data migration. Receipt mismatch
+counters and field-only warnings activate with the resilience policy.
+
 | Candidate operation | Pinned request/response contract | Bounds and failure |
 | --- | --- | --- |
 | Ornn skill resolution | GET `/api/v1/proxy/s/ornn-api/api/v1/skills/{id}?version={version}` through the configured NyxID origin. Uses the admitted Sandbox credential. Envelope `data` supplies matching `guid`, canonical literal `version`, safe `name`, and lowercase 64-hex `skillHash`; non-null `error` is refused. Mutable tags resolve once into persisted literal version/digest material. | At most 32 distinct references, four lookups in flight; 15 seconds per request including body, 30 seconds for the whole resolution including credential lookup. Maximum 1 MiB metadata. No client retry. 403/404 become `NotFound`; 401/408/429/5xx become `Unavailable`; malformed/pin-changing material becomes `Invalid`. No partial collection on error. |
@@ -51,9 +60,10 @@ work continuing after cancellation. No external services or credentials are used
 ## Storage deadline behavior
 
 Both `put` and `get` have one 30-second budget covering token-state lock wait,
-shared refresh, object attempts, retry delay and response validation. Token
-refresh is single-flight and runs in a spawned task with its own 12-second
-HTTP deadline. Cancelling a waiter never cancels that shared refresh, and its
+token acquisition, object attempts, retry delay and response validation. With
+`CHRONO_DOCUMENT_STORAGE_RESILIENCE_ENABLED=true`, token refresh is single-flight
+and runs in a spawned task with its own 12-second HTTP deadline. Cancelling a
+waiter never cancels that shared refresh, and its
 completion cannot issue an object request for an expired or cancelled caller.
 Failures are negatively cached for a nominal 2-second window, doubling after
 each consecutive failure up to 30 seconds, with 75–100% jitter. Success resets
@@ -68,7 +78,9 @@ remain. This allowance is shared across the complete download, including body
 reads. Uploads never retry transport failures or 5xx. Receipt mismatches return
 `Corrupt`, increment `cma_document_storage_receipt_mismatch_total` by field
 (`key`, `length`, `generation`, `digest`, `fence`), and log only the field name.
-This adds no configuration key, Secret, permission or deployment prerequisite.
+The default-off process switch is the only new deployment key; existing machine
+credentials and online scopes are unchanged. The policy requires separate
+dependency qualification before activation.
 
 A timed-out upload may already have reached the service. It remains an uncertain
 write and cannot be acknowledged as saved. The existing content-addressed key,
