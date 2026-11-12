@@ -114,14 +114,14 @@ impl SandboxScheduler {
                         // A slow transfer must not prevent another resource (or a
                         // newly fenced cancellation) from claiming its due work.
                         sweeps.spawn(async move {
-                            worker.run_due(SystemTime::now()).await
+                            layer2_core::diagnostic_context::DiagnosticContext::background("sandbox_scheduler").scope(worker.run_due(SystemTime::now())).await
                         });
                     }
                     // Do not consume the retained hint while capacity is full.
                     _ = self.admitted.notified(), if sweeps.len() < self.concurrent_sweeps => {
                         let worker = Arc::clone(&self.worker);
                         sweeps.spawn(async move {
-                            worker.run_due(SystemTime::now()).await
+                            layer2_core::diagnostic_context::DiagnosticContext::background("sandbox_scheduler").scope(worker.run_due(SystemTime::now())).await
                         });
                     }
                 }
