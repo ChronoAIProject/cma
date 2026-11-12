@@ -76,7 +76,7 @@ impl SandboxDetailTimer {
                 target: "sandbox_read_phase",
                 parent: None,
                 phase = self.phase.label(),
-                route = %self.context.route,
+                route = self.context.route.as_ref(),
                 request_hash = %self.context.request_hash,
                 worker = self.context.worker,
                 outcome,
