@@ -16,3 +16,59 @@ Production measurement plan (lead/operator executes after deployment):
 4. Pass criterion for #1795 mechanism: complete successful steady-state Cookie cohorts show identity commands/request 3 to 2 and session 4 to 3, no unexpected getMore or full scan, and every independent request continues online verification (overlapping requests may share it). Existing logout, generation, malformed-record and fallback contracts remain green. Report latency deltas with checkout changes; lower command count alone does not prove that background stalls are fixed or promise the estimated 0.2-second saving. Nonzero drops/overflow, missing correlation or mixed workload makes the affected conclusion unverified and requires a new clean window.
 5. Rollback: set CHRONO_AUTH_BROWSER_SESSION_JOIN_ENABLED=false and restart through the authorized release process. Verify the baseline command sequences return. No record format or durable state migration is involved. Keep the same image for comparison. Post the operator results to #1795 and #1543; raise the separate, still-pending reuse decision in #1542 using the measured identity data.
 6. For #1806, in the same stable post-background-fix window, report request_rate_limits command and checkout distributions, commands/second, and its fraction of all general-pool commands, with auth_subjects point-read command durations as the comparator. The difference is only an approximation to majority cost; operation shape, queueing, and scheduling also differ. Report bucket bounds and whether at least 95% of observations meet 25 ms. Do not add command and checkout percentiles to invent the percentile of their sum. Require correlated complete observations for the per-request added-latency decision if separate distributions do not establish it. Only the lead's production evidence can authorize the <=25 ms no-implementation versus >25 ms prepaid-lease branch. No rate-limit behavior change is included in the measurement-only work.
+
+## Local shared-machine failure disposition
+
+The full workspace run encountered
+`layer4-runtime::ledger_import::tests::staging::imported_terminal_bytes_and_unsigned_authority_survive_with_a_durable_hold`
+at `api/crates/layer4-runtime/src/ledger_import/stage_tests.rs:10`. The failure was
+`mutation_ledger_migration_capacity`, with
+`elapsed_nanoseconds_at_least=450517502041` against the 450-second migration budget;
+the test's wall time was 592.717 seconds. The local run log is
+`api/target/request-chain/nextest.log` while the verification worktree is retained.
+
+The lead classified this as a local contention failure in an untouched crate:
+the shared 18-core machine was running three to four other full suites. No bound,
+assertion, test selection, or runtime code was changed to hide it, and the test was
+not retried to erase the failure. The baseline develop run
+[43260948284](https://github.com/ChronoAIProject/cma/actions/runs/43260948284)
+at `287fee1ffb476c239563315e0a1b05c4236378af` completed successfully. This local
+failure is retained as evidence rather than reported as a green workspace run.
+The integration PR's dedicated-runner CI must pass; a repeat there is a blocker
+owned by the runtime ledger team (#1772/#1775).
+
+The completed run reported **8,745 passed, 2 failed, 1,288 skipped** in
+1,051.999 seconds. Its second failure was
+`layer4-runtime::ledger_import::tests::retirement_archives::real_input_archive_crosses_both_legacy_limits_without_deactivating_sources`
+at `api/crates/layer4-runtime/src/ledger_import/retirement_stage_tests.rs:19`, also
+`mutation_ledger_migration_capacity`, with
+`elapsed_nanoseconds_at_least=538102869166` and test wall time 692.794 seconds.
+The same untouched-crate, local-contention disposition applies; dedicated-runner
+PR CI remains required for both tests.
+
+
+## Focused local verification
+
+Rust 1.96.1 / cargo-nextest 0.9.151 on a local arm64 Mac, with the runner's pinned
+MongoDB `8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c`:
+402 focused authentication tests passed; workspace all-target/all-feature clippy
+passed with warnings denied; workspace doctests passed; configuration keys,
+configuration documentation, source-file limits and changed-content gitleaks passed.
+The Mongo runner's 40 infrastructure tests passed. The full contract run is
+recorded separately when finished.
+
+LLVM 22.1.2 coverage instrumentation ran all 1,739 `cma` unit tests successfully
+and 15 selected real-Mongo auth contracts successfully after correcting one new
+fixture: a replacement string is valid for `incarnation`, so the malformed-type
+fixture now uses BSON boolean false. The refusal assertion was retained.
+The new rollout selector and strict config parser have 100% line coverage; the
+joined Mongo reader has 52/58 lines covered (89.66%). Modified auth middleware,
+Cookie verification and resolver files have 96.68%, 97.60% and 95.96% respectively.
+This is scoped coverage evidence, not a claim of 80% coverage for the entire
+workspace, whose other crates were not exercised in this instrumentation run.
+
+Both readers examined two indexed source records, with two primary-key lookups
+and zero collection scans. The aggregate uses the `_id_` index on the joined
+collection. Every sequential successful Cookie request still initiated both
+NyxID userinfo and introspection. The source validators, malformed-record refusals,
+logout recheck and token-generation recheck remained active.

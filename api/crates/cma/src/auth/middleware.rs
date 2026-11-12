@@ -40,9 +40,13 @@ pub async fn attach_subject(
         .fallback_policy
         .permits(request.method(), request.uri().path());
     let mut observation = crate::telemetry::request::Resolution::start(&request, "ambient");
-    let (resolved, failure) =
-        diagnostics::capture(auth.resolve_request_with_policy(request.headers(), allow_fallback))
-            .await;
+    let (resolved, failure) = layer2_core::diagnostic_context::DiagnosticContext::current()
+        .with_phase("identity")
+        .scope(diagnostics::capture(auth.resolve_request_with_policy(
+            request.headers(),
+            allow_fallback,
+        )))
+        .await;
     let outcome = match &resolved {
         Ok(Some(_)) => "resolved",
         Ok(None) => "anonymous",

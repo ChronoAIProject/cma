@@ -2309,3 +2309,22 @@ Optional enrichment retains its existing fallback behavior. See
 See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
 boundaries, local comparison, security/concurrency tests and the next batching
 proposal. Production flag changes remain part of the approved release process.
+
+## Browser identity reads
+
+`CHRONO_AUTH_BROWSER_SESSION_JOIN_ENABLED` defaults to `false` and accepts only
+exact `true` or `false`. With `true`, Cookie authentication joins the browser
+handle and its subject by their indexed keys in one Mongo aggregate. Both
+records retain their existing schema, revocation and token validation. Expired
+logins are rejected before interpreting subject authority. The post-verification
+custody check and the additional `/auth/session` logout check still run.
+
+Ordinary authenticated Cookie requests use two identity commands instead of
+three; `/auth/session` uses three instead of four, plus its settings read.
+No completed NyxID verification is reused on the normal path. The existing
+60-second outage fallback remains limited to `GET /auth/session`.
+
+Rollback by setting the switch to `false` and restarting the API. No persisted
+format changes or data repair are required. Compare both paths using the
+`identity` diagnostic phase described in [Mongo diagnostics](CMA_Mongo_Diagnostics.md);
+handler reads remain outside this phase.
