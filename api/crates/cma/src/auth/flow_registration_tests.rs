@@ -46,6 +46,7 @@ async fn registration_wraps_and_persists_the_complete_authorize_attempt() {
         auth,
         Some("/t/pub_123/plc_456".into()),
         Some(LoginScreen::Register),
+        false,
     )
     .await;
 
@@ -184,6 +185,7 @@ async fn trusted_login_restores_a_valid_relative_target() {
         Query(LoginParams {
             return_to: Some("/marketplace".into()),
             screen: None,
+            prompt: None,
         }),
         OriginalUri("/auth/login".parse().unwrap()),
         HeaderMap::new(),
@@ -333,9 +335,17 @@ async fn unseen_identity_callback_records_sign_in_without_aggregate_bootstrap() 
             "/auth/callback?code=contract-code&state={}",
             urlencode(&query["state"])
         );
+        // One browser returns having signed out of CMA earlier; choosing to
+        // sign in again keeps the automatic-sign-in opt-out.
+        let signed_out = return_to == Some("/");
+        let callback_cookie = if signed_out {
+            format!("{binding}; cma_signed_out=1")
+        } else {
+            binding.to_owned()
+        };
         let callback_request = || {
             Request::get(&callback_path)
-                .header(header::COOKIE, binding)
+                .header(header::COOKIE, &callback_cookie)
                 .body(Body::empty())
                 .unwrap()
         };
@@ -379,10 +389,14 @@ async fn unseen_identity_callback_records_sign_in_without_aggregate_bootstrap() 
             .iter()
             .map(|value| value.to_str().unwrap())
             .collect();
-        assert_eq!(cookies.len(), 2);
-        assert!(cookies[0].starts_with(&format!("{}=;", binding_cookie_name(&query["state"]))));
-        assert!(cookies[0].contains("Max-Age=0"));
-        let browser_cookie = cookies[1].split(';').next().unwrap();
+        assert_eq!(cookies.len(), 3);
+        assert!(cookies
+            .iter()
+            .all(|value| !value.starts_with("cma_signed_out=")));
+        assert!(cookies[1].starts_with("cma_signed_in="));
+        assert!(cookies[2].starts_with(&format!("{}=;", binding_cookie_name(&query["state"]))));
+        assert!(cookies[2].contains("Max-Age=0"));
+        let browser_cookie = cookies[0].split(';').next().unwrap();
         let (name, value) = browser_cookie.split_once('=').unwrap();
         assert_eq!(name, AUTH_COOKIE);
         let browser = store
@@ -677,7 +691,7 @@ mod platform_closure {
     #[tokio::test]
     async fn register_screen_is_refused_while_a_closure_exists_and_plain_login_is_not() {
         let auth = registration_auth(closed(ClosureReason::SpendWarning)).await;
-        let refused = begin_login(auth.clone(), None, Some(LoginScreen::Register)).await;
+        let refused = begin_login(auth.clone(), None, Some(LoginScreen::Register), false).await;
         assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert!(
             refused.headers().get(header::SET_COOKIE).is_none(),
@@ -686,7 +700,7 @@ mod platform_closure {
         let body = json_body(refused).await;
         assert_eq!(body["code"], "registration_closed");
         assert!(body.get("login_url").is_none());
-        let plain = begin_login(auth, None, None).await;
+        let plain = begin_login(auth, None, None, false).await;
         assert_eq!(plain.status(), StatusCode::SEE_OTHER);
         assert!(plain.headers()[header::LOCATION]
             .to_str()
@@ -697,7 +711,7 @@ mod platform_closure {
     #[tokio::test]
     async fn register_screen_proceeds_when_the_admission_state_is_unreadable() {
         let auth = registration_auth(Arc::new(FixedSpend(Err(BudgetError::Unavailable)))).await;
-        let response = begin_login(auth, None, Some(LoginScreen::Register)).await;
+        let response = begin_login(auth, None, Some(LoginScreen::Register), false).await;
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         assert!(response.headers()[header::LOCATION]
             .to_str()

@@ -165,7 +165,10 @@ fn routes() -> [(Method, &'static str); 3] {
 fn assert_rejected(path: &str, result: (StatusCode, Value)) {
     assert_eq!(result.0, StatusCode::UNAUTHORIZED, "{path}: {}", result.1);
     if path == "/auth/session" {
-        assert_eq!(result.1, json!({"authenticated": false}));
+        assert_eq!(
+            result.1,
+            json!({"authenticated": false, "silent_sign_in": false})
+        );
     } else {
         assert_eq!(result.1["code"], "not_authenticated");
     }
