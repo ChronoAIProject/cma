@@ -13,7 +13,15 @@ impl ArchiveStore {
         start_transaction(&mut session).await.map_err(|_| REFUSED)?;
         let result = self
             .complete_in(&mut session, request, bytes, &receipt)
-            .await;
+            .await
+            .and_then(|fresh| {
+                // A delayed final write acknowledgement can outlive its proof.
+                // Abort before sending commit if admission is no longer current.
+                if fresh {
+                    crate::retirement_archive::export::exclusion(request)?;
+                }
+                Ok(())
+            });
         if result.is_err() {
             let _ = session.abort_transaction().await;
             return result;
@@ -27,7 +35,7 @@ impl ArchiveStore {
         request: &Request,
         bytes: &[u8],
         receipt: &RetirementArchiveReceipt,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let current = self
             .parents()
             .find_one(doc! {"_id":&request.sandbox_id})
@@ -43,7 +51,7 @@ impl ArchiveStore {
             .ok_or(REFUSED)?;
         if let Some(existing) = &gate.verified {
             return if existing == receipt {
-                Ok(())
+                Ok(false)
             } else {
                 Err(REFUSED)
             };
@@ -70,7 +78,8 @@ impl ArchiveStore {
         // Last transactional write: server time, not the CLI clock, admits the
         // release. A delayed command or expired lease aborts the whole transition,
         // including its usage event. No source/custody I/O follows this write.
-        require_exclusion_at_release(self, session, request, &authority).await
+        require_exclusion_at_release(self, session, request, &authority).await?;
+        Ok(true)
     }
 }
 
