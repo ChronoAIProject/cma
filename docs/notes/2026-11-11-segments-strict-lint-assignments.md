@@ -304,3 +304,30 @@ Both shared lock files retain their recorded inodes. The worktree remains for
 the lead; prior untracked notes are preserved. Gate logs, test inventory and
 `cleanup.json` remain as local evidence. No deploy, activation, PR or develop
 merge was performed. Stand by after this checkpoint per the 13:05 direction.
+
+## S4-B1 confirmed allocation: ordinary v2 publication
+
+Lead answer #229 assigns S4 all remaining paths; no allocation remains pending.
+Branch `tl/cma-log-segments/ordinary-v2-publication` starts at qualified `5875b8ddf`.
+S4 owns `store/agent_conversation_store.rs`, its `publication.rs`, `checkpoint.rs`
+and new scoped publication/checkpoint helper modules;
+`store/agent_commands/reconcile.rs`; the necessary single registrations in
+`store/agent_log_segments/mod.rs`; and regressions under
+`store/sandbox_mongo_integration_tests/agent_segment_tests/`. Existing v1 roots
+and all parent, ownership, command, budget and checkpoint fences remain enforced.
+
+Requested narrow S1 dependency through the lead: read-only bounded
+`agent_log_segments::command_evidence::read_transaction(store, agent, agent_row,
+command, session) -> Result<Option<CommandEvidence>, TransactionLogError>`.
+None means legacy only; Some must prove exact original dispatch/turn/delivery/
+approval/terminal/deferred-failure facts through the current head, without writes
+or transaction control. S1 supplies that module and any required core evidence
+constructor; S4 wires the caller and its single module registration. No lifetime
+scan fallback is acceptable for segmented command settlement.
+
+Target pin 15:00. Required evidence is actual adopted Agent ordinary output and
+command settlement, checkpoint/private assembly, refusal, abort and unknown-commit
+reconciliation against original publication/domain receipts. Gates remain strict
+CMA/affected-core lint, selected units and real Mongo, fmt, canonical size and
+secret scan; shared slots use `lockf -k -n -t 3600`, two jobs, one target and RAM
+pause below 10%. Activation stays closed until integrated review/qualification.
