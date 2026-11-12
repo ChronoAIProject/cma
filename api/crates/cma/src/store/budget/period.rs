@@ -2,8 +2,7 @@
 //! collection, moved in the same transactions as the owner rows (contract §4).
 
 use layer2_core::budget::{
-    BudgetError, BudgetPolicy, Closure, ClosureReason, PlatformBudgetPolicy, PlatformPeriodLedger,
-    Refusal,
+    BudgetError, BudgetPolicy, Closure, PlatformBudgetPolicy, PlatformPeriodLedger, Refusal,
 };
 use layer2_core::SubjectId;
 use mongodb::bson::{doc, Bson, Document};
@@ -106,7 +105,7 @@ pub(in crate::store) fn period_key(period_start: u64) -> String {
     format!("platform:{}", layer2_core::rfc3339_at(start))
 }
 
-fn period_document(ledger: &PlatformPeriodLedger) -> Result<Document, BudgetError> {
+pub(super) fn period_document(ledger: &PlatformPeriodLedger) -> Result<Document, BudgetError> {
     let record = mongodb::bson::serialize_to_bson(ledger).map_err(|_| BudgetError::Unavailable)?;
     Ok(doc! {
         "_id": period_key(ledger.period_start),
@@ -115,7 +114,7 @@ fn period_document(ledger: &PlatformPeriodLedger) -> Result<Document, BudgetErro
     })
 }
 
-async fn read_period(
+pub(super) async fn read_period(
     rows: &Collection<Document>,
     period_start: u64,
     session: &mut ClientSession,
@@ -204,20 +203,16 @@ pub(super) async fn admit_liability(
             entered.iter().for_each(alert);
             Ok(Some(ledger.period_start))
         }
-        Err(refusal) => {
-            if inserted {
-                // Our uncommitted insert would block the guarded write below.
-                let _ = session.abort_transaction().await;
-            }
-            Err(refuse(
-                &store.model_budget,
-                platform,
-                snapshot.revision,
-                ledger.period_start,
-                refusal,
-            )
-            .await)
-        }
+        Err(refusal) => Err(refuse(
+            &store.budget_settings,
+            &store.model_budget,
+            snapshot.revision,
+            (!inserted).then_some(ledger.revision),
+            ledger,
+            refusal,
+            session,
+        )
+        .await),
     }
 }
 
@@ -240,14 +235,18 @@ pub(crate) async fn require_open_with(
     let (start, _) = platform
         .period_bounds()
         .map_err(|_| domain(BudgetError::Unavailable))?;
-    let mut ledger = match read_period(rows, start, session).await? {
+    let read = read_period(rows, start, session).await?;
+    let expected = read.as_ref().map(|ledger| ledger.revision);
+    let mut ledger = match read {
         Some(ledger) => ledger,
         None => PlatformPeriodLedger::open(&platform, revision)
             .map_err(|_| domain(BudgetError::Unavailable))?,
     };
     match ledger.admit(&platform, revision, 0, now) {
         Ok(_) => Ok(()),
-        Err(refusal) => Err(refuse(rows, &platform, revision, start, refusal).await),
+        Err(refusal) => {
+            Err(refuse(settings, rows, revision, expected, ledger, refusal, session).await)
+        }
     }
 }
 
@@ -281,59 +280,37 @@ pub(super) async fn require_unbudgeted(
     Ok(())
 }
 
-/// Enter a refusal's closures after (or regardless of) the abort, then return
-/// the refusal reason for the caller's loop to abort on (rule 1). Entering is
-/// best effort: the refusal stands and the evaluator re-derives the closure.
+/// Release admission locks before independently recording a refusal. The
+/// original refusal stands even when changed evidence defers its closure.
 async fn refuse(
+    settings: &Collection<Document>,
     rows: &Collection<Document>,
-    platform: &PlatformBudgetPolicy,
     revision: u64,
-    period_start: u64,
+    expected: Option<u64>,
+    mut ledger: PlatformPeriodLedger,
     refusal: Refusal,
+    session: &mut ClientSession,
 ) -> ApplyError {
+    if let Err(error) = session.abort_transaction().await {
+        tracing::warn!(event = "platform_spend_refusal_abort", error = %error,
+            "could not confirm admission abort; closure persistence deferred");
+        return domain(refusal.reason);
+    }
     if !refusal.closures.is_empty() {
-        let entered = match ensure_period_row(rows, platform, revision).await {
-            Ok(()) => enter_closures(rows, period_start, &refusal.closures).await,
-            Err(error) => Err(error),
-        };
-        if entered.is_err() {
-            tracing::warn!(
+        ledger.closures.extend(refusal.closures.iter().cloned());
+        match super::transitions::persist(settings, rows, revision, expected, &ledger).await {
+            Ok(true) => refusal.closures.iter().for_each(alert),
+            Ok(false) => tracing::debug!(
+                event = "platform_spend_closure_stale",
+                "changed evidence deferred refusal closure persistence"
+            ),
+            Err(_) => tracing::warn!(
                 event = "platform_spend_closure_deferred",
                 "platform spend closure could not be recorded with its refusal"
-            );
+            ),
         }
     }
     domain(refusal.reason)
-}
-
-/// Guarded single-document writes outside any transaction: first writer wins
-/// and repeats are no-ops. Returns the reasons this caller actually inserted;
-/// only that caller emits the alert record.
-pub(super) async fn enter_closures(
-    rows: &Collection<Document>,
-    period_start: u64,
-    closures: &[Closure],
-) -> Result<Vec<ClosureReason>, BudgetError> {
-    let key = period_key(period_start);
-    let mut inserted = Vec::new();
-    for closure in closures {
-        let reason = mongodb::bson::serialize_to_bson(&closure.reason)
-            .map_err(|_| BudgetError::Unavailable)?;
-        let value =
-            mongodb::bson::serialize_to_bson(closure).map_err(|_| BudgetError::Unavailable)?;
-        let result = rows
-            .update_one(
-                doc! {"_id": &key, "record.closures.reason": {"$ne": reason}},
-                doc! {"$push": {"record.closures": value}, "$inc": {"record.revision": 1_i64}},
-            )
-            .await
-            .map_err(|_| BudgetError::Unavailable)?;
-        if result.modified_count == 1 {
-            alert(closure);
-            inserted.push(closure.reason);
-        }
-    }
-    Ok(inserted)
 }
 
 /// Pre-create the row outside any admission transaction (rule 6).
