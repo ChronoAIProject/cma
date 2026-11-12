@@ -1,6 +1,6 @@
 # Segmentation combined PR: current assignments and gate ledger
 
-Updated Thu 2026-11-12 09:53 SGT. S2 owns
+Updated Thu 2026-11-12 10:18 SGT. S2 owns
 `tl/cma-log-segments/integration-20261111`. One default-off combined PR to develop;
 strict-green and PR by14:00, reviewer3 by15:30, explicit relay/merge by16:00,
 evening train19:00–22:00. Writer and recovery activation remain closed.
@@ -9,16 +9,16 @@ Unsupported; source qualification does not claim supported production activation
 
 ## Final handoffs normally integrated
 
-Current qualification source is `b13d84b5a`: develop archive safeguards merged
-at `be4f4ff0c`, followed by the ordinary/authenticated Mongo runner boundary fix
-`1902b7242` and selector-proof correction. Strict CMA/core/public/adapter all-target/all-feature lint now passes with
-zero diagnostics (3m13s). The prior `c620ebbf2` strict/unit/Mongo results
-remain historical evidence for their exact source. Its first five Mongo
-partitions passed 192 cases; the remaining partitions were superseded before
-execution. Combined units are running; authenticated Mongo and all required Mongo
-partitions follow on the same immutable b13d84b5a export. Pushed checkpoint
-84e5352e6 differs only in this ledger, proved by the local source-equivalence
-artifact. No behavioral pass is inferred from the lint result.
+Current executable qualification source is `a3b935269`:
+all final handoffs, develop archive safeguards and the missing sidecar census
+registration are included. Strict CMA/core/public/adapter all-target/all-feature
+lint passes with zero diagnostics (3m09s). Combined units pass 581/581
+(5046 outside selection/ignored): CMA192, public121, core211, adapter57.
+Authenticated Mongo passes 1/1 (2722 skipped); ordinary Mongo partitions remain. The earlier b13d84b5a unit run stopped at the archive census mismatch;
+its 188 passes are not a full behavioral qualification. The first a3 unit attempt
+stopped before tests on a local nextest inventory argument error; that harness is
+corrected and the full selection passed without fail-fast. No source gate
+was weakened, and the already successful exact-source lint was not repeated.
 All currently published handoffs are included:
 
 | Owner | Pin / branch | Included work |
@@ -117,6 +117,12 @@ feature-gate suppression or fake call is an acceptable closure.
 | `1902b7242` | Ordinary/authenticated mocked runner boundary | 48 passed / 1 failed: parser test still expected the old selector prefix. Corrected at b13d84b5a; focused rerun 1/1 passes. Final full rerun at b13d84b5a passes 49/49, zero skipped, 173.341s. |
 | `b13d84b5a` | Corrected ordinary/authenticated mocked runners | 49 passed / 0 failed / 0 skipped, 173.341s. Formatting and shell syntax also pass; combined Rust qualification is in progress. |
 | `b13d84b5a` | Consolidated strict CMA/core/public/adapter | PASS, all targets/features, zero diagnostics, 3m13s. |
+| `a3b935269` | Consolidated strict CMA/core/public/adapter | PASS, all targets/features, zero diagnostics, 3m09s. |
+| `a3b935269` | Combined unit first attempt | Harness rejected run-only `--no-fail-fast` during inventory listing; no tests executed. Listing adapter corrected; retry passes 581/581. |
+| `a3b935269` | Light gates | Format, whitespace, six canonical structure checks, 6291-file size check and deployment/config documentation pass; all 378 changed Rust files <500 lines. Config-doc regressions 4/4. |
+| `a3b935269` | Secret history | 4059 commits scanned, zero findings; exact-source redacted evidence retained locally. |
+| `a3b935269` | Combined units | 581 passed / 0 failed, 5046 outside selection/ignored, 8.742s; both required caller factories, 7 recovery scheduler cases and archive catalogue regression executed. |
+| `a3b935269` | Canonical authenticated Mongo | 1 passed / 0 failed, 2722 skipped, 1.888s; runtime grants and format-2 carrier use the actual canonical migration. |
 
 Original failed recovery cases: S4
 `capacity_later_service_retries_crash_and_refuses_foreign_or_stale_activation`,
@@ -132,7 +138,7 @@ execution must actually select the cases.
 | Finding | Current disposition |
 | --- | --- |
 | P1-1 ordinary v2 roots | OPEN, S4; must qualify actual worker claim through ordinary/control admission and output. |
-| P1-2 canonical runtime roles/carrier/index | Source-closed, S2; canonical authenticated Mongo passed on final S3-inclusive ff0f161b8 and corrected c620ebbf2. Reviewer readback remains. |
+| P1-2 canonical runtime roles/carrier/index | Source-closed, S2; canonical authenticated Mongo also passes on current a3b935269. Exact-index drift remains in the ordinary partition selection; reviewer readback remains. |
 | P1-3 later-progress activation | Source qualified2144909ce; actual combined recovery selection31/31passed at ff0f161b8, including all four historical failures. Reviewer confirmation remains. Native Unsupported remains a separate activation prohibition. |
 | P1-4 / D6-2 large-history response/transcript | S1 source/author response gates handed off; S3 bounded transcript and final shared parity pending. |
 | P1-N1 segmented capacity admission | OPEN, S4writer + S5service tests; not covered by legacy bootstrap success. |
@@ -424,5 +430,12 @@ also includes rollout gate rows: closing a gate does not make it empty. S1 owns
 source/history closure design with the archive owner; S2 owns catalogue integration
 and qualification. This restriction does not authorize deletion or bypass, and is
 explicit in `docs/CMA_Retirement_Archive_Census.md` and the draft PR. Writer and
-recovery activation remain closed. Source correction is ready for rerun; no pass
-is inferred before execution.
+recovery activation remain closed. Corrected strict and all 581 combined unit cases pass, including the catalogue
+regression. Actual-Mongo nonempty-refusal/empty-success coverage is still pending.
+
+The first refreshed database phase passed after approximately nine minutes of
+shared-slot waiting. Its fixture completed cleanup. The ordinary Mongo inventory
+is queued separately, with no fixture allocated while waiting. Source follow-up
+refs remain at the integrated final pins; no S3/S4 follow-up, S5 segmented-admission
+pin or S1 final qualification handoff was published by the 10:20 check. The14:00
+PR target still requires those deliverables and the remaining actual gates.
