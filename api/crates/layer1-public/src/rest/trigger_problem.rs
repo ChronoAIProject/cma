@@ -216,7 +216,7 @@ fn launch_problem(error: LaunchServiceError) -> ProblemParts {
             Vec::new(),
         ),
         LaunchServiceError::Budget(reason) => (
-            super::instance_problem::budget_status(reason),
+            StatusCode::PAYMENT_REQUIRED,
             reason.code(),
             reason.guidance(),
             Vec::new(),
