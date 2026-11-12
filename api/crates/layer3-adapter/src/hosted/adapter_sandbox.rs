@@ -116,24 +116,11 @@ impl SandboxAdapter for HostedAdapter {
         original: &crate::RuntimeProvisionReceipt,
         operation_id: &str,
     ) -> crate::Result<crate::RuntimeFinalityReceipt> {
-        let receipt = self
-            .backend
-            .finalize_runtime(original, operation_id)
-            .await?;
-        receipt.validate()?;
-        if receipt.original() != original || receipt.delete_operation_id() != operation_id {
-            return Err(AdapterError::Rejected(
-                "provider returned another runtime finality receipt".into(),
-            ));
-        }
-        self.states.lock().await.remove(original.handle());
-        Ok(receipt)
+        self.finalize_runtime_exact(original, operation_id).await
     }
 
     async fn teardown_retained_runtime(&self, handle: &RuntimeHandle) -> crate::Result<()> {
-        self.backend.teardown_retained(handle).await?;
-        self.states.lock().await.remove(handle);
-        Ok(())
+        self.teardown_retained_exact(handle).await
     }
     async fn suspend_runtime(&self, request: &RuntimeAdoptionRequest) -> crate::Result<()> {
         self.suspend_exact(request, false).await
@@ -365,6 +352,21 @@ impl SandboxAdapter for HostedAdapter {
         agent::reconnect_agent(self, handle, authority_fence, request, recovery, updates).await
     }
 
+    async fn reconnect_agent_for_capacity_recovery(
+        &self,
+        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::agent_capacity_recovery::CapacityRecoveryResult<
+        crate::agent_capacity_recovery::CapacityRecoveryConnection,
+    > {
+        crate::hosted::capacity_recovery::reattach(
+            self.backend.capacity_recovery_transport(),
+            request,
+            updates,
+        )
+        .await
+    }
+
     async fn reconnect_agent_with_prompt(
         &self,
         handle: &RuntimeHandle,
@@ -419,29 +421,7 @@ impl SandboxAdapter for HostedAdapter {
         handle: &RuntimeHandle,
         agent: &AgentSlot,
     ) -> crate::Result<ConversationSnapshot> {
-        self.known_state(handle).await?;
-        match self
-            .exchange(
-                handle,
-                RequestFrame::CaptureAgent(AgentRef {
-                    agent_id: agent.clone(),
-                }),
-            )
-            .await?
-        {
-            ResponseFrame::CaptureAgent(snapshot)
-                if !snapshot.conversation_id.is_empty()
-                    && valid_sha256(&snapshot.archive_sha256)
-                    && format!("{:x}", Sha256::digest(&snapshot.archive))
-                        == snapshot.archive_sha256 =>
-            {
-                Ok(snapshot)
-            }
-            ResponseFrame::CaptureAgent(_) => Err(AdapterError::Rejected(
-                "runtime returned an invalid conversation snapshot".into(),
-            )),
-            _ => unreachable!("exchange verifies response operation"),
-        }
+        self.capture_agent_exact(handle, agent).await
     }
 
     async fn export_agent_history(
