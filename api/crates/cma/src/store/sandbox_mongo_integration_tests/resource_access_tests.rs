@@ -4,6 +4,8 @@ mod access_snapshot_session;
 mod artifacts;
 #[path = "resource_access_tests/hierarchy.rs"]
 mod hierarchy;
+#[path = "resource_access_tests/history_measurement.rs"]
+mod history_measurement;
 #[path = "resource_access_tests/inventory.rs"]
 mod inventory;
 #[path = "resource_access_tests/provenance.rs"]
