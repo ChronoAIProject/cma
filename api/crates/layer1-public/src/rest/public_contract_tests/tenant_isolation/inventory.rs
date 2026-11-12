@@ -95,7 +95,10 @@ fn every_scoped_operation_has_an_explicit_executable_isolation_contract() {
                 .unwrap()
                 .cases
         })
-        .map(|c| (c.id.clone(), c))
+        .map(|c| {
+            c.response.expected_headers();
+            (c.id.clone(), c)
+        })
         .collect();
     let openapi = serde_json::to_value(super::super::super::openapi::document()).unwrap();
     let documented: BTreeSet<_> = openapi["paths"]
