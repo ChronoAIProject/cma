@@ -20,6 +20,12 @@ mod resource_execution;
 
 #[path = "capacity_execution_tests.rs"]
 mod capacity_execution;
+#[path = "capacity_public_tests.rs"]
+mod capacity_public;
+#[path = "capacity_timing_tests.rs"]
+mod capacity_timing;
+#[path = "capacity_usage_tests.rs"]
+mod capacity_usage;
 
 #[path = "request_budget_tests.rs"]
 pub(in crate::store) mod request_budget;
