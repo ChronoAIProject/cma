@@ -132,3 +132,54 @@ async fn launch_admission_is_refused_under_spend_stop_after_visitor_quota() {
         Ok(LaunchAdmissionResult::Created(_))
     ));
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI replica set"]
+async fn operator_stop_refuses_fresh_launches_with_metering_off_but_replays_an_admitted_launch() {
+    use layer2_core::admission::AdmissionControlStore;
+    let seed = seeded("operator_launch").await;
+    let trigger = published(&seed, "operator_launch").await;
+    let control = crate::store::admission_control::MongoAdmissionControlStore::open(
+        &seed.client,
+        &seed.database,
+    )
+    .await
+    .unwrap();
+    let actor = SubjectId::new("operator");
+    control
+        .change(0, &actor, "contain new work", true, 100)
+        .await
+        .unwrap();
+    assert!(matches!(
+        seed.store.admit_launch(visitor(&trigger)).await,
+        Err(LaunchStoreError::AdmissionPaused)
+    ));
+    let database = seed.client.database(&seed.database);
+    for collection in [LAUNCHES, "visitor_launch_days"] {
+        assert_eq!(
+            database
+                .collection::<Document>(collection)
+                .count_documents(doc! {})
+                .await
+                .unwrap(),
+            0
+        );
+    }
+    control
+        .change(1, &actor, "reopen", false, 101)
+        .await
+        .unwrap();
+    let admitted = seed.store.admit_launch(visitor(&trigger)).await.unwrap();
+    let LaunchAdmissionResult::Created(original) = admitted else {
+        panic!("new launch expected")
+    };
+    control
+        .change(2, &actor, "second incident", true, 102)
+        .await
+        .unwrap();
+    let replay = seed.store.admit_launch(visitor(&trigger)).await.unwrap();
+    assert!(
+        matches!(replay, LaunchAdmissionResult::Existing(ref saved) if saved.id == original.id)
+    );
+    database.drop().await.unwrap();
+}
