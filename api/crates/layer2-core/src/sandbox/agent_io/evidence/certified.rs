@@ -50,7 +50,7 @@ impl CommandEvidence {
                     .then_some(facts.prewrite_failure_sequence)
                     .flatten()
             || source.last_approval.map(|row| row.seq) != facts.approval_change_sequence
-            || (evidence.message && source.fence.seq >= source.start.seq)
+            || (evidence.message && source.fence.seq.checked_add(1) != Some(source.start.seq))
             || (!evidence.message
                 && (source.fence.seq <= source.start.seq
                     || facts
@@ -85,6 +85,28 @@ impl CommandEvidence {
                 || !matches!(row.kind, AgentLogKind::ApprovalRequested { .. })
         }) {
             return Err(CommandLedgerError::Corrupt);
+        }
+
+        if let Some(AgentLogEntry {
+            kind: AgentLogKind::ApprovalRequested { approval_id, .. },
+            seq,
+            ..
+        }) = source.pending_approval
+        {
+            let contradicts = source.last_approval.is_some_and(|last| match &last.kind {
+                AgentLogKind::ApprovalResolved {
+                    approval_id: resolved,
+                    ..
+                } => resolved == approval_id,
+                AgentLogKind::ApprovalRequested {
+                    approval_id: latest,
+                    ..
+                } => latest == approval_id && last.seq != *seq,
+                _ => false,
+            });
+            if contradicts {
+                return Err(CommandLedgerError::Corrupt);
+            }
         }
 
         let mut rows = vec![source.start, source.fence, source.delivery];
