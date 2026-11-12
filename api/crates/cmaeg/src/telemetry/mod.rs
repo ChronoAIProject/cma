@@ -1,4 +1,5 @@
 //! Process metrics registration; the HTTP listener lives on a separate address.
+pub(crate) mod delivery;
 pub mod http;
 pub mod names;
 pub mod operations;
@@ -16,6 +17,23 @@ pub fn install() -> Result<PrometheusHandle, String> {
         .get_or_init(|| {
             let recorder = PrometheusBuilder::new()
                 .set_buckets(&names::BUCKETS)
+                .map_err(|error| error.to_string())?
+                .set_buckets_for_metric(
+                    Matcher::Full(names::TURN_DURATION.into()),
+                    &[0.1, 0.5, 1., 2., 5., 10., 30., 120., 600., 1800., 3600.],
+                )
+                .map_err(|error| error.to_string())?
+                .set_buckets_for_metric(
+                    Matcher::Prefix("cmaeg_delivery_queue_".into()),
+                    &[0.005, 0.025, 0.1, 0.5, 1., 5., 10., 30., 120., 600.],
+                )
+                .map_err(|error| error.to_string())?
+                .set_buckets_for_metric(
+                    Matcher::Full("cmaeg_provider_permit_held_seconds".into()),
+                    &[
+                        0.005, 0.025, 0.1, 0.5, 1., 5., 30., 120., 600., 1800., 3600.,
+                    ],
+                )
                 .map_err(|error| error.to_string())?
                 .set_buckets_for_metric(
                     Matcher::Prefix("cmaeg_media_".into()),
@@ -42,6 +60,21 @@ pub fn install() -> Result<PrometheusHandle, String> {
                 metrics::describe_gauge!(name, "CMAEG current local object count");
                 metrics::gauge!(name).set(0);
             }
+            metrics::describe_counter!(
+                "cmaeg_delivery_outcomes_total",
+                "Logical delivery step results; local buffering is not external confirmation"
+            );
+            for stage in ["inbound", "worker"] {
+                for name in [
+                    "cmaeg_delivery_queue_depth",
+                    "cmaeg_delivery_queue_capacity",
+                    "cmaeg_delivery_queue_waiters",
+                    "cmaeg_delivery_queue_sample_timestamp_seconds",
+                ] {
+                    metrics::gauge!(name, "stage" => stage).set(0.);
+                }
+            }
+            metrics::gauge!("cmaeg_delivery_queue_oldest_seconds", "stage" => "worker").set(0.);
             describe_media();
             Ok(handle)
         })

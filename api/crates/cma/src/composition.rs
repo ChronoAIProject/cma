@@ -463,6 +463,7 @@ impl ControlPlaneComposition {
         let usage_metrics = crate::sandbox_metrics::MetricsWorkers::new(config).await?;
         let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
+        let worker_observations = stores.worker_observations();
         let router = routes::compose(
             resource_routes,
             browser_connections,
@@ -479,6 +480,7 @@ impl ControlPlaneComposition {
             )?),
         );
         Ok(Self {
+            worker_observations,
             router,
             auth,
             bindings,
