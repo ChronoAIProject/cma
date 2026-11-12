@@ -55,11 +55,12 @@ Each entry: what the plan said, what was done instead, and why.
 ### Task 2
 
 - The existing `budget_tests::configure` fixture saved `enabled: true` with a
-  platform policy and no `cloud`. Under Review Focus 1 that refuses every
-  commitment, so the fixture now configures an observed open period
-  (2026-01-01 to 2100, cloud configured, zero observation at its start), and
-  the three whole-collection counts exclude `platform:` rows. The aborted
-  transaction test also asserts that the period row rolled back.
+  platform policy and no `cloud`. Under Review Focus 1 that refused every
+  commitment, so the fixture was changed to a metered period. Review round 4
+  (R11) showed that was the defect, not the fixture: `configure` and the
+  #1621 assertions are develop's again, and platform tests use
+  `configure_metered`; the period-row rollback check moved to
+  `an_aborted_reservation_transaction_leaves_the_period_row_untouched`.
 - `policy()` was removed; callers use `fenced_snapshot` directly.
 - One generic `period::mirror(…, change)` replaces `mirror_settle`,
   `mirror_release` and `mirror_retain`; a turn settlement applies the retained
@@ -367,6 +368,40 @@ The user ruled "pause both under `SpendStop`"; the parent session relayed it.
   (`unpublished_recovery_attempted`). The sweep would then pause it again if
   `SpendStop` still holds. Follow-up, not fixed in this round; not exercised
   by a test.
+
+### Review round 4 (R11 to R13)
+
+- R11: platform spend metering is enabled only by `model_budget.enabled`
+  together with `platform.cloud` (decision 31). #1621 requires a platform
+  policy whenever budgets are enabled and the cloud fields cannot be saved
+  before the third gate opens, so the earlier reading (missing cloud is
+  `MeteringUnavailable`) closed every commitment as soon as owner budgets
+  were enabled, which the #1489 production check would have hit. The filter
+  is in the settings snapshot, so admission, zero-liability checks, the stop
+  read, the `PlatformWrites` hint, the evaluator, the admission state and the
+  spend state all see no platform policy without `cloud`. With `cloud`, every
+  fail-closed rule is unchanged. `GET /api/v1/admin/spend` adds
+  `metering_enabled`. `budget_tests::configure` and its assertions are back
+  to develop's and the #1621 budget, execution and request-budget tests pass
+  unchanged (they failed against the old reading first);
+  `missing_cloud_policy_…` became
+  `without_a_cloud_source_platform_metering_is_off_and_refuses_nothing`.
+- R12: `GET /auth/signup-options` reports `register_available: false` while
+  a registration closure exists, read per request through the advisory
+  `registration_open()` outside the five-minute provider cache; an unreadable
+  state keeps NyxID's value. The response keeps `Cache-Control: public,
+  max-age=300`, so a browser may show a stale value for up to five minutes;
+  the callback stays the authority.
+- R13 (user decision): `platform_budget_exhausted` is HTTP 402 like the other
+  budget refusals, because the TypeScript SDK retries every status of 500 or
+  above; code, guidance and the absent `Retry-After` are unchanged and
+  `budget_status` is removed. `registration_closed` stays 503.
+  IMPLEMENTATION.md still describes the original 503 plan.
+- The develop merge before this round moved the sign-in callback to
+  `auth/flow/callback.rs`; the registration check sits there before the
+  subject is persisted or a browser login minted, and returns
+  `registration_closed(None)` because the caller clears the binding cookie
+  and cancels the login.
 
 ## Blocked
 
