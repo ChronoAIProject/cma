@@ -25,7 +25,7 @@ A merge, command success or synthetic test does not authorize production executi
 The entry point is `cma --retirement-archive ACTION PRIVATE_INVOCATION_JSON`.
 It exits before starting any server or initializing any Mongo schema. All private
 input files must be regular files, owned by the operator, with no group/other
-permissions. Symlinked path components are rejected. Credentials never appear in
+permissions. Symlinked path components are rejected. Operator custody tokens never appear in
 arguments, output summaries, manifests or archives. Results are written create-only
 with mode 0600. Standard output contains only a result digest and byte count.
 

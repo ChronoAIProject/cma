@@ -54,7 +54,8 @@ hierarchy IDs at `record.target.id`. `Command` includes the command key, retaine
 `Budget` includes `record.agent_id` command/turn reservations,
 `record.hold.scope.agent_id` request reservations, and the exact
 `request-turn:<Agent ID>:<turn>` key grammar for request-turn accounting.
-The `owner:<subject>` baseline belongs to independent account accounting and is
+Unknown budget key families, malformed request-turn keys and missing nested
+request ownership refuse capture before selection. The `owner:<subject>` baseline belongs to independent account accounting and is
 not copied. Whole BSON records preserve request, consent, receipt and accounting
 bytes; document revision objects are separately read back and verified.
 

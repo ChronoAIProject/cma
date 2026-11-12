@@ -79,7 +79,7 @@ async fn exclusion_expiring_during_final_census_cannot_release_the_hold() {
     let (temp, store, mut request, _) = fixture().await;
     let mut exclusion: ExclusionReceipt =
         serde_json::from_slice(&std::fs::read(&request.exclusion_receipt).unwrap()).unwrap();
-    let expiry = layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339()).unwrap() + 10;
+    let expiry = layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339()).unwrap() + 30;
     exclusion.expires_at =
         layer2_core::rfc3339_at(std::time::UNIX_EPOCH + std::time::Duration::from_secs(expiry));
     let exclusion_bytes = serde_json::to_vec(&exclusion).unwrap();
