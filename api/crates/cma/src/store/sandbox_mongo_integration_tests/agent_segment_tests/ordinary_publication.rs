@@ -37,7 +37,10 @@ async fn adopted_agent_publishes_runtime_output_after_restart_and_settles_comman
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(private.assembly.content, "prefix ");
+    assert_eq!(
+        serde_json::to_value(&private.assembly).unwrap()["content"],
+        "prefix "
+    );
     drop(recorder);
     let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
     let recorder = DurableAgentUpdateRecorder::new(Arc::new(reopened.clone()));
