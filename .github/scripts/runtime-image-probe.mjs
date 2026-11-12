@@ -72,10 +72,10 @@ export function runtimeToolVersions(run) {
   // Harnesses act on exit status, so prove both the positive and negative answer.
   const live = run('ps', ['-o', 'pid=', '-p', '1']);
   assert.ok(live.status === 0 && live.stdout.trim() === '1', 'ps did not report a live process');
-  assert.notEqual(run('ps', ['-o', 'pid=', '-p', absentPid]).status, 0, 'ps reported an absent process');
+  assert.equal(run('ps', ['-o', 'pid=', '-p', absentPid]).status, 1, 'ps did not return the absent-process status');
   const filtered = run('jq', ['-ce', '.items | map(.n) | add'], '{"items":[{"n":1},{"n":2}]}');
   assert.ok(filtered.status === 0 && filtered.stdout.trim() === '3', 'jq did not filter JSON');
-  assert.notEqual(run('jq', ['-e', '.missing'], '{}').status, 0, 'jq -e accepted a null result');
+  assert.equal(run('jq', ['-e', '.missing'], '{}').status, 1, 'jq -e did not return the null-result status');
   return versions;
 }
 
