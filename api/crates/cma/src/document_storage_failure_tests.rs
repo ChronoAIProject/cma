@@ -2,7 +2,7 @@ use super::*;
 use crate::dependency_test_support::{assert_deadline, finish, Peer};
 use serde_json::json;
 
-fn client(peer: &Peer) -> Arc<StorageDocuments> {
+pub(super) fn client(peer: &Peer) -> Arc<StorageDocuments> {
     StorageDocuments::new(DocumentStorageConfig {
         platform_origin: peer.origin.clone(),
         bucket: "fixture".into(),
@@ -12,7 +12,7 @@ fn client(peer: &Peer) -> Arc<StorageDocuments> {
     .unwrap()
 }
 
-fn key() -> String {
+pub(super) fn key() -> String {
     format!(
         "documents/{}/doc_{}/{}.md",
         "a".repeat(64),
@@ -21,7 +21,7 @@ fn key() -> String {
     )
 }
 
-fn operation(
+pub(super) fn operation(
     client: &Arc<StorageDocuments>,
     write: bool,
 ) -> tokio::task::JoinHandle<Result<Vec<u8>, DocumentError>> {
@@ -38,7 +38,7 @@ fn operation(
     })
 }
 
-async fn authorize(peer: &mut Peer) {
+pub(super) async fn authorize(peer: &mut Peer) {
     let request = peer.next().await;
     assert_eq!(request.method, Method::POST);
     assert_eq!(request.uri.path(), "/oauth/token");
@@ -108,7 +108,7 @@ async fn pins_storage_proxy_fence_receipt_and_cached_read_contract() {
 }
 
 #[tokio::test]
-async fn unavailable_storage_is_typed_without_retry_for_reads_and_writes() {
+async fn unavailable_storage_is_typed_with_only_retryable_reads_replayed() {
     for write in [false, true] {
         for status in [403, 404, 429, 500, 503] {
             let mut peer = Peer::start().await;
@@ -118,8 +118,11 @@ async fn unavailable_storage_is_typed_without_retry_for_reads_and_writes() {
             peer.next()
                 .await
                 .respond(status, "upstream diagnostic must not escape");
+            if !write && status == 503 {
+                peer.next().await.respond(status, "still unavailable");
+            }
             assert_eq!(finish(result).await, Err(DocumentError::Unavailable));
-            assert_eq!(peer.count(), 2);
+            assert_eq!(peer.count(), if !write && status == 503 { 3 } else { 2 });
         }
     }
 }
@@ -166,7 +169,7 @@ async fn invalid_token_envelopes_never_authorize_object_requests() {
         peer.next().await.json(envelope);
         assert_eq!(finish(result).await, Err(DocumentError::Unavailable));
         assert_eq!(peer.count(), 1);
-        assert!(client.token.lock().await.is_none());
+        assert!(client.token.state.lock().await.cached.is_none());
     }
     let mut peer = Peer::start().await;
     let client = client(&peer);
@@ -174,7 +177,7 @@ async fn invalid_token_envelopes_never_authorize_object_requests() {
     peer.next().await.respond(200, "x".repeat(16 * 1024 + 1));
     assert_eq!(finish(result).await, Err(DocumentError::Corrupt));
     assert_eq!(peer.count(), 1);
-    assert!(client.token.lock().await.is_none());
+    assert!(client.token.state.lock().await.cached.is_none());
 }
 
 #[tokio::test]
@@ -188,9 +191,11 @@ async fn stalled_token_request_expires_and_releases_refresh_lock_for_recovery() 
     tokio::time::advance(Duration::from_secs(12)).await;
     assert_eq!(finish(result).await, Err(DocumentError::Unavailable));
     assert_deadline(deadline);
-    assert!(client.token.try_lock().is_ok());
+    assert!(client.token.state.try_lock().is_ok());
     assert_eq!(peer.count(), 1);
     drop(held);
+    // Recovery starts after the bounded negative-cache window.
+    tokio::time::advance(Duration::from_secs(2)).await;
     tokio::time::resume();
     let recovered = operation(&client, false);
     authorize(&mut peer).await;
@@ -200,7 +205,7 @@ async fn stalled_token_request_expires_and_releases_refresh_lock_for_recovery() 
 }
 
 #[tokio::test]
-async fn stalled_storage_headers_and_bodies_are_bounded_without_replay() {
+async fn stalled_storage_headers_and_bodies_are_bounded_with_only_one_read_retry() {
     for write in [false, true] {
         for body in [false, true] {
             let mut peer = Peer::start().await;
@@ -215,13 +220,30 @@ async fn stalled_storage_headers_and_bodies_are_bounded_without_replay() {
                 Some(request)
             };
             tokio::time::pause();
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+            let mut deadline = tokio::time::Instant::now() + Duration::from_secs(12);
             tokio::time::advance(Duration::from_secs(12)).await;
+            let mut retry_held = None;
+            if !write {
+                assert!(!result.is_finished());
+                assert_deadline(deadline);
+                tokio::time::resume();
+                let retry = peer.next().await;
+                assert_eq!(retry.method, Method::GET);
+                if body {
+                    retry.stall_body();
+                } else {
+                    retry_held = Some(retry);
+                }
+                tokio::time::pause();
+                deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+                tokio::time::advance(Duration::from_secs(12)).await;
+            }
             assert_eq!(finish(result).await, Err(DocumentError::Unavailable));
             assert_deadline(deadline);
             tokio::time::advance(Duration::from_secs(120)).await;
-            assert_eq!(peer.count(), 2);
+            assert_eq!(peer.count(), if write { 2 } else { 3 });
             drop(held);
+            drop(retry_held);
             tokio::time::resume();
         }
     }
@@ -231,7 +253,7 @@ async fn stalled_storage_headers_and_bodies_are_bounded_without_replay() {
 async fn queued_token_waiters_expire_without_late_provider_calls() {
     let peer = Peer::start().await;
     let client = client(&peer);
-    let guard = client.token.lock().await;
+    let guard = client.token.state.lock().await;
     tokio::time::pause();
     let mut pending = Vec::new();
     for index in 0..32 {
@@ -253,7 +275,7 @@ async fn queued_token_waiters_expire_without_late_provider_calls() {
 async fn token_wait_and_http_share_one_operation_budget() {
     let mut peer = Peer::start().await;
     let client = client(&peer);
-    let guard = client.token.lock().await;
+    let guard = client.token.state.lock().await;
     tokio::time::pause();
     let result = operation(&client, false);
     tokio::task::yield_now().await;
@@ -266,7 +288,7 @@ async fn token_wait_and_http_share_one_operation_budget() {
     tokio::time::advance(Duration::from_secs(5)).await;
     assert_eq!(finish(result).await, Err(DocumentError::Unavailable));
     assert_deadline(deadline);
-    assert!(client.token.try_lock().is_ok());
+    assert!(client.token.state.try_lock().is_ok());
     assert_eq!(peer.count(), 1);
     drop(held);
 }
