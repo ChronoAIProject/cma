@@ -33,7 +33,7 @@ async fn segmented_capacity_admission_publishes_successor_and_preserves_witness(
     assert_eq!(work.request, request);
     assert_eq!(work.attempts, 0);
     assert!(work.lease.is_none());
-    let admission = admission(&store, &request).await;
+    let admission = read_admission(&store, &request).await;
     assert_eq!(
         admission.kind,
         writer_admission::AdmissionKind::CapacityRecovery
