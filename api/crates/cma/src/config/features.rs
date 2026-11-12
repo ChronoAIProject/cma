@@ -23,6 +23,7 @@ pub(crate) struct FeatureFlags {
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
     pub concurrent_sandbox_detail_enrichment: bool,
+    pub sandbox_agent_projection: bool,
     pub sandbox_snapshot_reads: bool,
     pub sandbox_batched_reads: bool,
     pub sandbox_detail_timings: bool,
@@ -79,6 +80,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED",
             )?,
+            sandbox_agent_projection: flag(lookup, "CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED")?,
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
             sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
             sandbox_detail_timings: match lookup("CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")? {
@@ -488,3 +490,7 @@ mod sandbox_enrichment_tests;
 
 #[cfg(test)]
 mod document_maintenance_tests;
+
+#[cfg(test)]
+#[path = "sandbox_projection_tests.rs"]
+mod sandbox_projection_tests;

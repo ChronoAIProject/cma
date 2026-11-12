@@ -22,10 +22,12 @@ mod sandbox;
 
 pub(super) enum Target<'a> {
     Sandbox(&'a SandboxId),
+    Detail(&'a SandboxId),
     Workspace(&'a WorkspaceId),
 }
 pub(super) enum Reading {
     Sandbox(Option<Box<SandboxHierarchyRecord>>),
+    Detail(Option<Box<layer2_core::sandbox::SandboxDetailRecord>>),
     Workspace(Option<Box<WorkspaceHierarchyRecord>>),
 }
 enum Error {
@@ -44,6 +46,11 @@ impl From<mongodb::error::Error> for Error {
 }
 
 impl MongoSandboxStore {
+    pub(crate) fn with_sandbox_agent_projection(mut self, enabled: bool) -> Self {
+        self.sandbox_agent_projection = enabled;
+        self
+    }
+
     pub(crate) fn with_sandbox_batched_reads(mut self, enabled: bool) -> Self {
         self.sandbox_batched_reads = enabled;
         self
@@ -59,7 +66,8 @@ pub(super) async fn read(
     store: &MongoSandboxStore,
     target: Target<'_>,
 ) -> Result<Reading, SandboxStoreError> {
-    let snapshot_session = store.sandbox_snapshot_reads && matches!(target, Target::Sandbox(_));
+    let snapshot_session =
+        store.sandbox_snapshot_reads && matches!(target, Target::Sandbox(_) | Target::Detail(_));
     for _ in 0..TRANSACTION_ATTEMPTS {
         let mut session = store
             .client
@@ -101,6 +109,13 @@ async fn read_in_snapshot(
             sandbox::read::<agent_projection::Complete>(store, id, session)
                 .await?
                 .map(Box::new),
+        )),
+        Target::Detail(id) => Ok(Reading::Detail(
+            sandbox::read::<agent_projection::Projected>(store, id, session)
+                .await?
+                .map(|record| {
+                    Box::new(layer2_core::sandbox::SandboxDetailRecord::Projected(record))
+                }),
         )),
         Target::Workspace(id) => {
             let Some(document) = store

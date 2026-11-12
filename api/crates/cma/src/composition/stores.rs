@@ -33,6 +33,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_segment_adoption_enabled(config.features.segment_adoption_enabled)
             .with_bounded_title_reads(config.features.bounded_title_reads)
             .with_access_snapshot_session(config.features.access_snapshot_session)
+            .with_sandbox_agent_projection(config.features.sandbox_agent_projection)
             .with_sandbox_snapshot_reads(config.features.sandbox_snapshot_reads)
             .with_sandbox_batched_reads(config.features.sandbox_batched_reads)
             .with_bounded_response_reads(config.features.bounded_response_reads)

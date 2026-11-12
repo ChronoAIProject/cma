@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::resource_access::{ResourceAccessError, ResourceAccessService};
 use crate::{AgentId, Caller, Capability, SandboxId, SubjectId, WorkspaceId, WorktreeId};
 
+mod agent_lineage;
+pub use agent_lineage::{SandboxAgentLineage, SandboxDetailRecord};
 mod authorized;
 mod timing;
 pub use timing::{SandboxDetailPhase, SandboxDetailTimer};
@@ -88,6 +90,15 @@ pub trait HierarchyReadStore: Send + Sync {
         &self,
         id: &SandboxId,
     ) -> Result<Option<SandboxHierarchyRecord>, SandboxStoreError>;
+
+    async fn read_sandbox_detail(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Option<SandboxDetailRecord>, SandboxStoreError> {
+        self.read_sandbox_hierarchy(id)
+            .await
+            .map(|record| record.map(SandboxDetailRecord::Complete))
+    }
 
     async fn read_workspace_hierarchy(
         &self,
@@ -375,10 +386,10 @@ impl HierarchyReadService {
         }
         let record = self
             .store
-            .read_sandbox_hierarchy(id)
+            .read_sandbox_detail(id)
             .await
             .map_err(store_error)?
-            .filter(|record| record.sandbox.owner == caller.subject)
+            .filter(|record| record.sandbox().owner == caller.subject)
             .ok_or(HierarchyReadError::NotFound)?;
         sandbox_view(record)
     }
