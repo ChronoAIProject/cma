@@ -16,6 +16,8 @@ pub enum Capability {
     UseOwnSandboxes,
     /// Delete a Sandbox owned by the caller.
     DeleteOwnSandbox,
+    /// Request irreversible erasure of the caller's personal account.
+    DeleteOwnAccount,
     /// Author and revise Profiles owned by the caller.
     ManageOwnProfiles,
     /// Create and manage external Bots owned by the caller.
