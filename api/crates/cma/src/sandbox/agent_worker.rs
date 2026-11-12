@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{AgentLifecycleStore, SandboxStoreError};
@@ -10,6 +10,9 @@ use super::agent_skills::AgentSkillResolver;
 use super::live_agents::{DurableAgentConnectionLossHandler, LiveAgentRegistry};
 
 mod capacity;
+#[cfg(test)]
+pub(crate) use capacity::reconnect::RecoveryReconnect;
+pub(crate) use capacity::reconnect::{CapacityRecoveryReconnect, ReconnectAction};
 mod cleanup;
 mod cleanup_publication;
 mod connection;
@@ -49,6 +52,7 @@ pub(crate) struct AgentWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct AgentWorkerConfig {
+    pub parent_not_ready_pacing_enabled: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub holder: String,
@@ -63,6 +67,7 @@ pub(crate) struct AgentWorkerConfig {
 impl AgentWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
+            parent_not_ready_pacing_enabled: false,
             managed_documents_enabled: false,
             access_transport_migration: None,
             holder: holder.into(),
@@ -98,17 +103,23 @@ pub(crate) struct AgentWorker {
     dependencies: AgentWorkerDependencies,
     config: AgentWorkerConfig,
     maintenance: reconcile::MaintenanceChecks,
+    capacity_restart: Arc<OnceLock<Arc<dyn CapacityRecoveryReconnect>>>,
 }
 
 impl AgentWorker {
     pub fn new(dependencies: AgentWorkerDependencies, config: AgentWorkerConfig) -> Arc<Self> {
+        let capacity_restart = Arc::new(OnceLock::new());
         dependencies.registry.install_connection_loss_handler(
-            DurableAgentConnectionLossHandler::new(dependencies.store.clone()),
+            DurableAgentConnectionLossHandler::with_capacity_recovery(
+                dependencies.store.clone(),
+                capacity_restart.clone(),
+            ),
         );
         Arc::new(Self {
             dependencies,
             config,
             maintenance: reconcile::MaintenanceChecks::default(),
+            capacity_restart,
         })
     }
 
