@@ -116,7 +116,11 @@ This is separate from the #1805 bound of `2 * min(workers, 64) + 195`.
 Together #1805 and #1787 add `2 * min(workers, 64) + 676` series: **692 at eight
 workers**, at most **804 per process**. This bound covers those two issues'
 metric families only; existing metrics and the separate retry-audit and command
-reconciliation outcome families are not included.
+reconciliation outcome families are not included. The combined rendered-exposition
+regression uses the production histogram configuration, every closed scan caller
+on success and failure, all checkout classes, and 0, 8, 63, 64 and 100 workers.
+It enforces the total, the 481 scan-series contribution and absence of private
+identity labels, including the overflow case.
 
 ### Local cooperation comparison (2026-11-13)
 
