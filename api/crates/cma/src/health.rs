@@ -8,7 +8,7 @@ use layer2_core::StoreError;
 use tokio::{sync::watch, time::Instant};
 
 use crate::{
-    readiness_diagnostics::{self, Attempt, Recorder, Timer},
+    readiness_diagnostics::{self, Attempt, Recorder},
     store::MongoStores,
 };
 
@@ -87,7 +87,6 @@ async fn monitor(
     result: watch::Sender<Option<CompletedCheck>>,
     diagnostics: Option<Arc<Recorder>>,
 ) {
-    let _timer = Timer::start(diagnostics.as_ref());
     let mut scheduled = Instant::now();
     tokio::select! {
         biased;

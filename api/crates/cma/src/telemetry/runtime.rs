@@ -3,6 +3,7 @@ use metrics_exporter_prometheus::{Matcher, PrometheusBuilder};
 use std::time::Duration;
 use tokio::{runtime::RuntimeMetrics, task::JoinHandle, time::Instant};
 
+#[cfg(test)]
 const INTERVAL: Duration = Duration::from_secs(1);
 const INDEXED_WORKERS: usize = 63;
 // Two counters per worker label, five scalar series, and ten histograms
@@ -115,19 +116,21 @@ impl<P: RuntimeProbe> Sampler<P> {
         }
     }
 
-    async fn run(mut self) {
-        let now = Instant::now();
-        self.sample(now);
-        let mut scheduled = now + INTERVAL;
-        loop {
-            tokio::time::sleep_until(scheduled).await;
-            let now = Instant::now();
-            let lag = now.saturating_duration_since(scheduled);
+    async fn run(self) {
+        self.run_with_diagnostics(crate::readiness_diagnostics::configured())
+            .await;
+    }
+
+    async fn run_with_diagnostics(
+        mut self,
+        recorder: Option<std::sync::Arc<crate::readiness_diagnostics::Recorder>>,
+    ) {
+        self.sample(Instant::now());
+        crate::readiness_diagnostics::timer::run(recorder, |now, lag| {
             metrics::histogram!("cma_runtime_wake_lag_seconds").record(lag.as_secs_f64());
             self.sample(now);
-            // Retain the planned cadence without replaying missed samples.
-            scheduled = now + (INTERVAL - Duration::from_nanos(lag.subsec_nanos().into()));
-        }
+        })
+        .await;
     }
 
     fn sample(&mut self, now: Instant) {
