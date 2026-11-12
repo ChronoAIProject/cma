@@ -12,7 +12,10 @@ pub(in crate::store) async fn pending_approvals_snapshot(
         .read_head(store, id, session)
         .await?
         .ok_or(SandboxStoreError::NotFound)?;
-    if store.bounded_approval_reads && head.trusted && head.last_seq > 200 {
+    if store.bounded_approval_reads
+        && (head.trusted || head.segmented.is_some())
+        && head.last_seq > 200
+    {
         if let Some(entries) = crate::store::agent_log_reads::read_bounded(
             store,
             id,

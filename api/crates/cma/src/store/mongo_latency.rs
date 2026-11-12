@@ -41,6 +41,7 @@ struct Window {
 
 impl Window {
     fn new(started: Instant) -> Self {
+        super::mongo_diagnostics::output::initialize();
         Self {
             started,
             samples: [Sample::default(); LABELS.len()],
@@ -119,20 +120,20 @@ impl Observer {
                 if sample.count == 0 {
                     continue;
                 }
-                tracing::info!(
-                    parent: None,
-                    pool = self.1,
-                    operation,
-                    window_ms = now.duration_since(window.started).as_millis(),
-                    count = sample.count,
-                    failures = sample.failures,
-                    total_us = sample.total_us,
-                    max_us = sample.max_us,
-                    buckets = ?sample.buckets,
-                    in_use,
-                    in_use_peak = window.in_use_peak,
-                    untracked = window.untracked,
-                    "MongoDB client latency summary"
+                super::mongo_diagnostics::output::send(
+                    super::mongo_diagnostics::output::Record::Latency {
+                        pool: self.1,
+                        operation,
+                        window_ms: now.duration_since(window.started).as_millis() as u64,
+                        count: sample.count,
+                        failures: sample.failures,
+                        total_us: sample.total_us,
+                        max_us: sample.max_us,
+                        buckets: sample.buckets,
+                        in_use,
+                        in_use_peak: window.in_use_peak,
+                        untracked: window.untracked,
+                    },
                 );
             }
         }
@@ -140,7 +141,14 @@ impl Observer {
 }
 
 pub(super) fn observe(options: &mut ClientOptions) {
-    options.cmap_event_handler = Some(EventHandler::callback(observer(options, "application")));
+    let pool_observer = observer(options, "application");
+    let diagnostics = super::mongo_diagnostics::install(options, "general");
+    options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        if let Some(diagnostics) = &diagnostics {
+            diagnostics.cmap(&event);
+        }
+        pool_observer(event);
+    }));
 }
 
 /// Each independently configured client keeps its own bounded occupancy state.
@@ -158,13 +166,19 @@ pub(crate) fn observer(
 
 #[cfg(test)]
 fn attach(options: &mut ClientOptions, observer: Observer) {
+    // This fixture exercises monitoring explicitly, independent of process flags.
+    let diagnostics =
+        super::mongo_diagnostics::install_configured(options, "general", Some("true"));
     options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        if let Some(diagnostics) = &diagnostics {
+            diagnostics.cmap(&event);
+        }
         record_event(&observer, event)
     }));
 }
 
 fn record_event(observer: &Observer, event: CmapEvent) {
-    // Command monitoring remains disabled: it decodes complete BSON commands/replies.
+    // Diagnostic command monitoring is composed separately from pool metrics.
     match event {
         CmapEvent::ConnectionCheckoutStarted(_) => {
             // Cancellation can omit the end event; starts minus ends is not queue depth.

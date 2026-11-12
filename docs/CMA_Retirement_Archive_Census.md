@@ -2,7 +2,7 @@
 
 This is the namespace audit for #1726 / #1716. It replaces the generic identity
 prefix scan. The catalogue in `store/retirement_archive/census_catalog.rs` names
-all 142 collections in `store/isolation.rs` exactly once. Capture refuses a missing
+all 151 collections in `store/isolation.rs` exactly once. Capture refuses a missing
 or duplicate policy. Its schema hash binds both the namespace set and these
 policies; old manifests cannot be certified under a changed census.
 
@@ -31,6 +31,16 @@ Trigger/provider graphs, retired external checkpoint/media transports, and legac
 Bridge/Channel cleanup namespaces whose writer/decoder was removed. The retained
 legacy-history/cleanup readers do not establish complete ownership for all those
 names. Global emptiness is the only currently admitted proof of no omitted data.
+
+Segmented logs and their publication, audit, admission and recovery sidecars also
+remain unqualified for this legacy archive closure. All nine sidecars use `Empty`:
+any retained row, including a writer gate, refuses capture rather than omitting
+history or authority. An additive schema installation with empty collections is
+compatible. Creating rollout controls, auditing or adopting an Agent requires a
+separate reviewed segmented archive/restore closure before archive availability
+can be claimed. A schema-v2 Agent is also refused by the existing hierarchy/log
+validation. Closing writer/recovery admission does not erase retained sidecars or
+make a populated database eligible for this archive command.
 
 ## Supported closure
 
@@ -129,6 +139,15 @@ a nonempty collection; its source entry identifies the missing closure or decode
 | `agent_access_tools` | `Agent(&["agent_id"])` | agent_access_tools/records.rs |
 | `agent_access_requests` | `Sandbox(&["record.requester.sandbox_id"])` | agent_access_requests/records.rs |
 | `agent_log` | `Agent(&["agent_id"])` | agent_log.rs |
+| `agent_log_heads` | `Empty` | agent_log_segments/codec.rs; segmented archive closure unqualified |
+| `agent_log_segments` | `Empty` | agent_log_segments/codec.rs; immutable segment/source closure unqualified |
+| `agent_log_publications` | `Empty` | agent_log_segments/publication.rs; retained result/receipt closure unqualified |
+| `agent_log_projections` | `Empty` | agent_log_segments/projection.rs; certified projection closure unqualified |
+| `agent_log_evidence` | `Empty` | agent_log_segments/audit.rs; retained certification closure unqualified |
+| `agent_log_audits` | `Empty` | agent_log_segments/audit.rs; incomplete audit/source closure unqualified |
+| `agent_log_gates` | `Empty` | agent_log_segments/writer_gate.rs; retained rollout authority closure unqualified |
+| `agent_log_admissions` | `Empty` | agent_log_segments/writer_admission.rs; uncertain accepted admission closure unqualified |
+| `agent_capacity_recovery_work` | `Empty` | agent_capacity_recovery/records.rs; original request/result and runtime authority closure unqualified |
 | `agent_message_feedback` | `Agent(&["agent_id"])` | message_feedback.rs |
 | `agent_lifecycle_operations` | `Sandbox(&["sandbox_id"])` | agent_lifecycle_operations.rs |
 | `agent_profile_revisions` | `Independent` | profile_documents.rs; layer2-core/profiles snapshots |

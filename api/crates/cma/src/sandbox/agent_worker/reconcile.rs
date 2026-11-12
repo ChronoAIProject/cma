@@ -5,7 +5,7 @@ use layer2_core::sandbox::store::{
     AgentConnectionRecoveryOutcome, PageRequest, SandboxStoreError, MAX_PAGE_SIZE,
 };
 
-use super::AgentWorker;
+use super::{AgentWorker, ReconnectAction};
 use crate::sandbox::live_agents::LiveAgentTarget;
 
 mod maintenance;
@@ -133,6 +133,19 @@ impl AgentWorker {
                 if !candidate.recovery_eligible {
                     recovery_deferred += 1;
                     continue;
+                }
+                if let Some(recovery) = self.capacity_restart.get() {
+                    match recovery.route(&candidate.agent_id).await {
+                        Ok(ReconnectAction::Ordinary) => {}
+                        Ok(ReconnectAction::Recovered) => {
+                            scheduled += 1;
+                            continue;
+                        }
+                        Ok(ReconnectAction::Deferred) | Err(_) => {
+                            recovery_deferred += 1;
+                            continue;
+                        }
+                    }
                 }
                 if self
                     .dependencies
