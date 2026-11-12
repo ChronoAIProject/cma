@@ -95,8 +95,8 @@ decisions. These are wall-time observations, not CPU profiles or proof that
 a particular task occupied a Tokio LIFO slot.
 
 The legacy capture reader also observes its existing find/cursor awaits because
-it shares scan accounting. This measurement preserves its existing
-64-document batches and scheduling behavior.
+it shares scan accounting. It retains its existing 64-document batches; the
+cooperative switch targets the complete integrity scanner (`scan_rows`).
 
 The histograms aggregate all scan sizes for a caller. For case A's at-least-1,000-
 row subset, the once-per-attempt debug event includes numeric `documents` and
@@ -106,3 +106,46 @@ select the subset; an average documents-per-scan ratio cannot prove it.
 These #1787 families add at most 444 series: 12 closed caller names times
 (two histograms with 15 finite buckets, +Inf, sum and count, plus one counter).
 This is separate from the #1805 bound of `2 * min(workers, 64) + 195`.
+
+### Local cooperation comparison (2026-11-13)
+
+The disposable-Mongo `--scan-cooperation` contract runs an eight-worker Tokio
+runtime with six concurrent scanning tasks, eight scans per task, and 200 pairs
+of sequential point reads. Each scan traverses the same indexed 10,001-row
+fixture with 256-byte message content. After warming both strategies, the
+measured order is off/on/on/off. The native macOS ARM64 debug build uses the
+pinned toolchain and Mongo 8.0.13 on a shared development host. Reproduce with
+`bash .github/scripts/mongo-contract-tests.sh --scan-cooperation`.
+
+Every measured round completed exactly 48 scans, 480,048 rows and 262,586,256
+raw BSON bytes, plus 200 point-read pairs. Each made 448 find and 48 getMore
+commands, for 496 command round trips. Both strategies had zero failed scans.
+No query batch limit was set. The comparison retains each round's percentiles;
+only means are combined using observation counts.
+
+| Observation | Off (rounds 0, 3) | On (rounds 1, 2) |
+| --- | --- | --- |
+| Longest execution section p99, ms | 430.68; 435.01 | 4.04; 4.04 |
+| Longest driver poll p95, ms | 3.81; 3.73 | 3.81; 3.74 |
+| Maximum task poll across both rounds, ms | 435.03 | 4.04 |
+| Mean scan latency across both rounds, ms | 864.40 | 485.26 |
+| Point-read pair latency p95, ms | 428.02; 427.00 | 4.48; 17.03 |
+| Checkout wait p99, ms | 426.85; 427.32 | 1.51; 2.42 |
+| Mean checkout wait across both rounds, ms | 16.94 | 0.072 |
+| Maximum checkout/check-in event gap, ms | 432.34 | 296.06 |
+| Maximum connections in use / configured limit | 7 / 30 | 7 / 30 |
+| Explicit yields across both rounds | 0 | 19,010 |
+
+Mean scan latency decreased by 43.86% in this local run. Metadata-only command
+tracing counts round trips; CMAP events supply checkout durations and event
+spacing without installing a command-event handler that decodes reply bodies.
+The raw benchmark log SHA-256 is
+`6b877092165870dd4058b0751e9f327777910605e953e5871986bf8726ca38b9`.
+
+This reproduces long uninterrupted scans and improved scheduling with unchanged
+work on this fixture. It does not identify production CPU costs, prove Tokio
+LIFO-slot residency, or satisfy the production A/B/C decision. Driver-poll p95
+remained below 5 ms here, so no optional batch-size setting was added. The switch
+stays off until the release owner collects the required production baseline,
+checks scan failures and publication retries, and verifies activation/rollback
+under the procedure in [Operations](CMA_Operations.md#cooperative-full-scan-activation-and-rollback).
