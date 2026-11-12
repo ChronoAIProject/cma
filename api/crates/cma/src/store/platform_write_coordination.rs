@@ -12,6 +12,14 @@ use super::sandbox_mongo::MongoSandboxStore;
 #[derive(Default)]
 pub(super) struct PlatformWrites(Mutex<()>);
 
+/// Process-local platform spend coordination shared by every clone of a
+/// store: the period-row writer queue and the stop-read cache.
+#[derive(Default)]
+pub(super) struct PlatformState {
+    pub(super) writes: PlatformWrites,
+    pub(super) stop_cache: std::sync::Mutex<super::budget::PlatformStopCache>,
+}
+
 impl PlatformWrites {
     pub(super) async fn lock(&self) -> MutexGuard<'_, ()> {
         self.0.lock().await
@@ -25,7 +33,7 @@ impl MongoSandboxStore {
         if !self.platform_enabled_hint() {
             return None;
         }
-        Some(self.platform_writes.lock().await)
+        Some(self.platform.writes.lock().await)
     }
 
     /// Turn entry and terminal turn mutations reserve or settle liability; a
