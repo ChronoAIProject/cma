@@ -98,3 +98,43 @@ No interface remains missing. Complete-source CMA/core units, strict Clippy and
 all 52 selected Mongo contracts are queued for qualification; prior partial
 results above do not qualify this new source. The 15:00 checkpoint is source-ready,
 with full qualification continuing and activation still closed.
+
+### S4-B1 qualified handoff, 15:33
+
+Executable pin `6b3c025dbc6af5abc22ea663d8dafc75c8cb9c0e`, API tree
+`9dd6a4a1d97182d140dd05ac79ea64078bef1ec8`, is fully qualified. This final handoff
+adds documentation only; develop `fa292b834` is included by normal merge.
+No interface remains missing. Ordinary v2 conversation/checkpoint publication
+uses exact original receipts; command settlement uses S1's bounded original
+facts in the same transaction, retaining continuation authority and lane custody.
+
+- Focused units: 50 selected / 50 passed (17 CMA, 33 core).
+- Real Mongo: 52 selected / 52 passed, including all seven new adopted-Agent
+  publication/checkpoint/settlement tests and all 45 parity/admission/gate cases.
+  Actual adoption, discovery, worker claim, contextual/targeted/ordinary admission,
+  output after recorder restart and command completion are covered. Settlement
+  asserts zero lifetime scans. Abort, foreign/missing receipt, source refusal,
+  committed/uncommitted uncertainty and restart without input replay all pass.
+- Strict CMA/core Clippy: all targets/all features, `--no-deps -- -D warnings`,
+  zero diagnostics. No allowances. Fmt/whitespace pass; canonical size 6,410 files
+  passes; all 37 touched/imported source files are below 500 lines.
+- Secret history at the executable handoff: 4,199 commits, zero findings.
+- The complete corrected batch exited 0 under `lockf -k -n -t 3600` on the
+  authorized third slot, two jobs, one target; minimum available RAM 22%, no pauses.
+
+The restart fixture captures only the injected transaction session and models
+server cleanup after process loss; it proves cleanup changes no durable records
+before retry settles the original output. This follows existing Mongo restart
+contracts and changes no production behavior. Historical failed runs remain in
+the evidence directory; the final successful run supersedes them.
+
+Evidence and exact selected test names: local
+`notes/2026-11-12-ordinary-v2-publication-evidence/final-results.json`,
+`units-restart.log`, `clippy-restart.log`, `mongo-restart.log` and
+`restart-supervisor.json`. Cleanup removed 2.426 GB of owned build outputs and
+temporary runners/drafts, plus the owned local dependency branch. The Mongo
+container/volume were verified absent; all shared lock inodes and the worktree
+are retained. No PR or develop merge was performed. The slice is ready for
+combined integration/review; Project 9 stays In Progress and activation stays
+closed until the combined release approval. Older incomplete segmented projection
+shapes still require S1's rebuild before activation.

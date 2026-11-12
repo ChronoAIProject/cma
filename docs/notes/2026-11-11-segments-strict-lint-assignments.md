@@ -492,3 +492,7 @@ once per settlement, with fixed evidence-memory bounds and real-Mongo corruption
 refusal tests. S4 test-only pin `6b3c025db` is merged at `ae2bad370`; abandoned
 transaction cleanup preserves durable receipts and no-replay assertions. Combined
 qualification is running; final-source readiness is not yet claimed.
+
+Qualified S4 pin `72ad199417f7d9114a85d65165921101631069da` is integrated;
+its 52/52 Mongo and 50/50 unit results and activation prerequisites are in the
+[publication handoff](2026-11-12-segments-publication-checkpoints.md).
