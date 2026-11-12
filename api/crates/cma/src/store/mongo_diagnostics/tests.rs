@@ -1,5 +1,4 @@
 use super::*;
-use mongodb::bson::doc;
 use std::io::Write;
 
 #[test]
@@ -8,10 +7,14 @@ fn command_monitoring_requires_explicit_opt_in() {
         let mut options = mongodb::options::ClientOptions::default();
         assert!(install_configured(&mut options, "general", value).is_none());
         assert!(options.command_event_handler.is_none());
+        assert_eq!(options.tracing.unwrap().enabled, Some(false));
     }
     let mut options = mongodb::options::ClientOptions::default();
     assert!(install_configured(&mut options, "general", Some("true")).is_some());
-    assert!(options.command_event_handler.is_some());
+    assert!(options.command_event_handler.is_none());
+    let tracing = options.tracing.unwrap();
+    assert_eq!(tracing.enabled, Some(true));
+    assert_eq!(tracing.query_text_max_length, Some(0));
 }
 
 #[derive(Clone, Default)]
@@ -52,27 +55,21 @@ async fn slow_success_failure_and_hold_emit_safe_fields_without_parent_values() 
         worker: "request",
         phase: "hierarchy",
     };
-    let body = doc! { "find": "sandboxes", "filter": {"owner": "never-log-this-owner"}, "lsid": {"id": "never-log-session"}, "autocommit": false };
     let command = context
         .clone()
-        .scope(async { metadata("find", &body, false) })
+        .scope(async { metadata("find", "sandboxes", true, false) })
         .await;
-    assert!(command.session && command.transaction);
+    assert!(command.session);
+    assert!(!command.transaction_known);
     assert_eq!(command.collection, "sandboxes");
     assert_eq!(
-        metadata("private-command", &doc! {}, false).command,
+        metadata("private-command", "", false, false).command,
         "other"
     );
     assert_eq!(
-        metadata("find", &doc! {"find":"private-collection"}, false).collection,
+        metadata("find", "private-collection", false, false).collection,
         "other"
     );
-    assert_eq!(
-        docs_returned(&doc! {"cursor":{"firstBatch":[{"private":"value"},{}]}}),
-        Some(2)
-    );
-    assert_eq!(docs_returned(&doc! {"cursor":{"nextBatch":[]}}), Some(0));
-    assert_eq!(docs_returned(&doc! {"private":1}), None);
     for id in 1..=2 {
         diagnostics
             .0
@@ -80,7 +77,7 @@ async fn slow_success_failure_and_hold_emit_safe_fields_without_parent_values() 
             .unwrap()
             .commands
             .insert((1, id), command.clone());
-        diagnostics.finished(1, id, Duration::from_millis(101), Some(2), id == 2);
+        diagnostics.finished(1, id, Duration::from_millis(101), None, id == 2, true);
     }
     // Check-in runs outside the originating task; it must retain its labels.
     diagnostics.0.lock().unwrap().holds.insert(
@@ -137,7 +134,8 @@ async fn slow_success_failure_and_hold_emit_safe_fields_without_parent_values() 
         assert!(!logs.contains(value), "{logs}");
     }
     assert_eq!(events[1]["fields"]["event"], "succeeded");
-    assert_eq!(events[1]["fields"]["docs_returned"], 2);
+    assert_eq!(events[1]["fields"]["docs_returned_known"], false);
+    assert_eq!(events[1]["fields"]["transaction_known"], false);
     assert_eq!(events[3]["fields"]["event"], "failed");
     assert_eq!(events[4]["fields"]["event"], "checked_in");
 }
@@ -153,11 +151,7 @@ fn production_text_format_excludes_caller_fields_from_events_and_summaries() {
     let span = tracing::info_span!("private_parent", owner = "private-owner-sentinel");
     let _entered = span.enter();
     super::output::initialize();
-    let command = metadata(
-        "find",
-        &doc! {"find":"agents", "filter":{"owner":"private-filter"}},
-        false,
-    );
+    let command = metadata("find", "agents", false, false);
     command.emit("failed", SLOW, None, 0, false);
     let mut totals = Summary::default();
     totals.record(&command, "command", SLOW, None, true);
@@ -178,8 +172,8 @@ fn fast_events_are_sampled_but_totals_and_closed_connection_cleanup_are_complete
             .lock()
             .unwrap()
             .commands
-            .insert((1, id), metadata("find", &doc! {"find":"agents"}, false));
-        diagnostics.finished(1, id, Duration::from_micros(10), Some(1), false);
+            .insert((1, id), metadata("find", "agents", false, false));
+        diagnostics.finished(1, id, Duration::from_micros(10), Some(1), false, true);
     }
     assert!(diagnostics.0.lock().unwrap().commands.is_empty());
     diagnostics
@@ -187,7 +181,7 @@ fn fast_events_are_sampled_but_totals_and_closed_connection_cleanup_are_complete
         .lock()
         .unwrap()
         .commands
-        .insert((2, 1), metadata("find", &doc! {}, false));
+        .insert((2, 1), metadata("find", "", false, false));
     diagnostics.0.lock().unwrap().holds.insert(
         2,
         Hold {
@@ -207,7 +201,7 @@ fn fast_events_are_sampled_but_totals_and_closed_connection_cleanup_are_complete
 #[test]
 fn callback_overhead_is_bounded_without_log_output() {
     let diagnostics = Diagnostics::default();
-    let command = metadata("find", &doc! {"find":"agents"}, false);
+    let command = metadata("find", "agents", false, false);
     let start = Instant::now();
     for id in 0..100_000 {
         diagnostics
@@ -216,11 +210,11 @@ fn callback_overhead_is_bounded_without_log_output() {
             .unwrap()
             .commands
             .insert((1, id), command.clone());
-        diagnostics.finished(1, id, Duration::ZERO, Some(1), false);
+        diagnostics.finished(1, id, Duration::ZERO, Some(1), false, true);
     }
     let per_command_ns = start.elapsed().as_nanos() / 100_000;
     eprintln!("diagnostic_callback_ns={per_command_ns}");
-    // Debug-build ceiling; the real-Mongo gate separately measures eager BSON
-    // decoding and I/O with the complete monitor installed.
+    // Debug-build ceiling; the real-Mongo gate separately measures the supported
+    // metadata hook and I/O with the complete monitor installed.
     assert!(per_command_ns < 100_000, "callback ns={per_command_ns}");
 }

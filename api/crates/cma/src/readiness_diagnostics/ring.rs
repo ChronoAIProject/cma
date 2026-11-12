@@ -63,7 +63,7 @@ impl Ring {
                     metrics::counter!("cma_readiness_diagnostic_loss_total", "reason" => "active_capacity").increment(1);
                 }
             }
-            "command_succeeded" | "command_failed" => {
+            "command_succeeded" | "command_failed" | "command_completed" => {
                 self.commands.remove(&m.operation);
             }
             _ => {}

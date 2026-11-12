@@ -27,7 +27,7 @@ attempt owns that event; a zero operation sequence means no command was assigned
 | Target | Evidence |
 | --- | --- |
 | `readiness_diagnostic` | Every check start and completion, including repeated failures and cancellation; last observed phase, elapsed time, two-second budget/deadline, wake lag, phase age and deadline overshoot. Every non-ready response includes its cached check sequence, reason, cache age and check duration. |
-| `readiness_diagnostic_ring` | Actual command start/success/failure, checkout start/success/failure, physical return/close and pool lifecycle metadata. Includes original event time, route template, fixed worker/phase, pool, command/collection and hold correlation. |
+| `readiness_diagnostic_ring` | Command span start/known success/known failure/unknown completion, checkout start/success/failure, physical return/close and pool lifecycle metadata. Includes original event time, route template, fixed worker/phase, pool, command/collection and hold correlation. |
 | `readiness_diagnostic_snapshot` | Frozen preceding 30 seconds at every deadline, outstanding tracked commands/holds (including older holds), source interval, row counts and loss totals. |
 | `readiness_diagnostic_output` | Writer heartbeat, cumulative output loss and fixed queue capacities. |
 
@@ -41,7 +41,13 @@ active rows are references to outstanding work, not additional completed holds.
 The phases are `pre_checkout_selection_unknown`, `checkout`, `checked_out`,
 `command`, `command_completed`, `checkout_failed` and `command_failed`. The
 operation scope is retained until asynchronous connection return. Cancellation
-records the last observed phase even when the driver emits no terminal event.
+records the last confirmed phase. The metadata hook emits `command_completed`
+with `outcome_known=false` when a span ends without a positive driver result
+marker, including cancelled commands and successful pings. It removes that
+command from outstanding tracking but does not advance the attempt phase. Known
+success/failure advances the phase; the readiness attempt result separately
+records the actual ping result. Never count an unknown completion as success.
+`transaction_known=false` means transaction membership is unknown, not false.
 Pre-checkout time is not asserted to be server-selection time. Command elapsed
 time includes driver/transport work and does not identify server execution time.
 
@@ -79,8 +85,12 @@ without sampling. No per-check/request/resource labels enter metrics.
 Metadata contains no BSON, filter, command reply, raw error, server address,
 database, owner/Agent identity or inherited span. Registered route templates and
 fixed workers are retained; request correlation remains a process-salted hash.
-The existing driver still decodes command BSON for its callbacks. This change
-does not remove that accepted diagnostic overhead or provide a profiler.
+The metadata-only OpenTelemetry hook inherited from #1813 avoids public command
+callbacks and their eager reply BSON decoding. Query-text collection is disabled;
+no payload enters the observer. Command timing uses `driver_command_span`, while
+physical hold timing keeps the CMAP boundary. Returned-document counts and exact
+transaction state are unavailable. Driver feature metadata construction when the
+control is off remains the accepted residual tracked separately in #1815.
 
 Rank physical holds once, by route/worker and pool. Do not add command time,
 checkout wait, phase time and hold time: they overlap. Report loss, active-tracking
