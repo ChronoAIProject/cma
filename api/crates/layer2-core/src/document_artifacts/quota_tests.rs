@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 #[derive(Default)]
 struct Quota {
     denied: AtomicBool,
+    unavailable: AtomicBool,
     reservations: Mutex<Vec<DocumentSourceReservation>>,
 }
 #[async_trait::async_trait]
@@ -19,6 +20,9 @@ impl DocumentQuotaStore for Quota {
         source: &DocumentSourceReservation,
     ) -> Result<SourceTicket, DocumentError> {
         source.validate()?;
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(DocumentError::Unavailable);
+        }
         if self.denied.load(Ordering::SeqCst) {
             return Err(DocumentError::Capacity);
         }
@@ -233,6 +237,17 @@ async fn denied_principal_foreign_edit_invalid_input_and_stale_revision_never_re
         Err(DocumentError::Conflict)
     );
     assert_eq!(quota.reservations.lock().await.len(), 1);
+}
+
+#[tokio::test]
+async fn unavailable_quota_rejects_before_blob_upload() {
+    let (service, quota, blobs) = fixture();
+    quota.unavailable.store(true, Ordering::SeqCst);
+    assert_eq!(
+        service.create(&owner(), "unavailable", body()).await,
+        Err(DocumentError::Unavailable)
+    );
+    assert_eq!(blobs.puts.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]

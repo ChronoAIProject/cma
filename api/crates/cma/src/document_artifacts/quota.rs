@@ -116,6 +116,17 @@ impl MongoDocumentQuotaStore {
             .await?
         {
             return if object_identity_matches(&existing, &object) {
+                if existing.get_str("state").ok() == Some("condemned") {
+                    return Err(DocumentError::Unavailable.into());
+                }
+                if existing.contains_key("state")
+                    && !matches!(
+                        existing.get_str("state").ok(),
+                        Some("reserved" | "committed")
+                    )
+                {
+                    return Err(DocumentError::Corrupt.into());
+                }
                 Ok(())
             } else {
                 Err(DocumentError::Corrupt.into())
