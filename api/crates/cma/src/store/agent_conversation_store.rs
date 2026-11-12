@@ -16,24 +16,28 @@ use super::agent_log_integrity::{
 };
 use super::agents::{agent_replacement_fields, read_agent};
 use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
-    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
-    TRANSACTION_ATTEMPTS,
+    commit_transaction, is_duplicate_key, is_transient, signed, wait_for_reconciliation,
+    CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
+
+#[cfg(test)]
+use super::sandbox_mongo::start_transaction;
 
 mod admission;
 #[cfg(test)]
 mod admission_tests;
-mod capacity_prefix;
-mod checkpoint;
+pub(in crate::store) mod capacity_prefix;
+pub(in crate::store) mod checkpoint;
 #[cfg(test)]
 mod checkpoint_tests;
 mod cleanup_admission;
 mod contention;
 mod implementation;
-mod publication;
-use publication::{apply_mutation, apply_mutation_with_capacity};
-mod reopen;
+pub(in crate::store) mod publication;
+use super::agent_log_segments::{conversation as scoped, transaction_scope::TransactionScope};
+#[cfg(test)]
+use publication::apply_mutation;
+pub(in crate::store) mod reopen;
 #[cfg(test)]
 mod reopen_tests;
 
@@ -41,11 +45,13 @@ pub(super) use checkpoint::carry_fields as carry_checkpoint_fields;
 
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct ConversationReceipt {
+    pub(super) segmented: Option<super::agent_log_segments::writer_commit::Recorded>,
     pub(super) command_dispatch: Option<layer2_core::sandbox::agent_io::CommandDispatch>,
     pub(super) agent: Agent,
     pub(super) logs: Vec<AgentLogEntry>,
 }
 
+#[derive(Debug)]
 pub(super) enum ApplyError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
@@ -78,21 +84,25 @@ async fn commit_conversation(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
+        let mut scope = match TransactionScope::start(&mut session).await {
+            Ok(scope) => scope,
+            Err(error) if is_transient(&error) => {
                 last_transient = Some(error.to_string());
                 continue;
             }
-            return Err(SandboxStoreError::Unavailable(error.to_string()));
-        }
-        let receipt = match apply_mutation(
+            Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
+        };
+        let applied = scoped::apply(
             ScanCaller::ConversationPublication,
             store,
             &mutation,
-            &mut session,
+            None,
+            None,
+            &mut scope,
         )
-        .await
-        {
+        .await;
+        scope.release();
+        let receipt = match applied {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
@@ -205,7 +215,7 @@ fn immutable_fields_changed(current: &Agent, next: &Agent) -> bool {
         || current.origin != next.origin
 }
 
-fn conversation_logs(
+pub(super) fn conversation_logs(
     mutation: &AgentConversationMutation,
 ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
     let mut seq = mutation.expected_last_seq;
@@ -331,13 +341,19 @@ pub(super) async fn reconcile_conversation_snapshot(
         .as_ref()
         .map(read_agent)
         .transpose()?;
-    if agent.as_ref() != Some(&receipt.agent) {
+    if receipt.segmented.is_none() && agent.as_ref() != Some(&receipt.agent) {
         return Ok(false);
     }
     if let Some(dispatch) = &receipt.command_dispatch {
         if !super::agent_commands::binding::matches_snapshot(store, dispatch, session).await? {
             return Ok(false);
         }
+    }
+    if let Some(recorded) = &receipt.segmented {
+        if recorded.next != receipt.agent || recorded.logs != receipt.logs {
+            return Ok(false);
+        }
+        return recorded.matches(store, session).await;
     }
     let Some(first_receipt_seq) = receipt.logs.first().map(|entry| entry.seq) else {
         return Ok(false);
