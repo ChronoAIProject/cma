@@ -8,6 +8,8 @@ mod adapter;
 mod agent;
 mod agent_attachment;
 mod agent_filesystem;
+#[cfg(test)]
+mod allocation_probe;
 pub mod archive_source;
 pub mod binding_diagnostics;
 mod browser;
@@ -44,6 +46,7 @@ mod home_volume;
 mod home_volume_router;
 mod inventory_cursor;
 pub use inventory_cursor::InventoryCursor;
+pub mod ingress_budget;
 mod prompt_identity;
 mod provider_finality;
 pub mod recovery_diagnostics;

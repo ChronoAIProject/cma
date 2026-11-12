@@ -3,6 +3,41 @@ use crate::sandbox::conversation_recorder::live::{AgentLiveFragmentKind, AgentLi
 use crate::AgentId;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
+#[test]
+fn live_fragments_compete_with_adapter_storage_and_keep_the_last_owner_charged() {
+    let source = fragment("one", "retained");
+    let bytes = retained_bytes(&source).unwrap() as usize;
+    let aggregate = IngressBudget::new(bytes);
+    let local = Arc::new(Semaphore::new(bytes));
+    let budget = LiveBudget(local, Some(aggregate.clone()));
+    let external = Arc::new(Semaphore::new(bytes));
+    let held = IngressReservation::try_acquire(&external, Some(&aggregate), bytes).unwrap();
+    assert!(budget.retain(source.clone()).is_none());
+    assert_eq!(budget.available(), bytes);
+    drop(held);
+    let first = budget.retain(source).unwrap();
+    let last = first.clone();
+    drop(first);
+    assert_eq!(aggregate.available_bytes(), 0);
+    assert!(IngressReservation::try_acquire(&external, Some(&aggregate), 1).is_none());
+    drop(last);
+    assert_eq!(aggregate.available_bytes(), bytes);
+    assert_eq!(budget.available(), bytes);
+}
+
+#[test]
+fn production_live_pool_uses_the_same_process_coordinator_as_the_adapter() {
+    let root = IngressBudget::process();
+    let before = root.available_bytes();
+    let live = LiveBudget::process_coordinated();
+    let source = fragment("one", "source");
+    let weight = retained_bytes(&source).unwrap() as usize;
+    let held = live.retain(source).unwrap();
+    assert_eq!(root.available_bytes(), before - weight);
+    drop(held);
+    assert_eq!(root.available_bytes(), before);
+}
+
 fn fragment(id: &str, text: &str) -> AgentLiveFragment {
     AgentLiveFragment {
         agent_id: AgentId(id.into()),
