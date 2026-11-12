@@ -114,10 +114,9 @@ fn private(mut response: Response) -> Response {
 }
 fn problem(error: SandboxControlServiceError) -> Response {
     use SandboxControlServiceError::*;
-    // A platform refusal lifts only by an operator revision: no Retry-After.
-    let retryable = !matches!(error, Budget(_));
     let (status, code, detail) = match error {
-        Budget(reason) => (super::instance_problem::budget_status(reason), reason.code(), reason.guidance()),
+        // A final 402 like every budget refusal, so no Retry-After below.
+        Budget(reason) => (StatusCode::PAYMENT_REQUIRED, reason.code(), reason.guidance()),
         Access(error) => return private(ResourceProblem(error).into_response()),
         Authority(CommandAuthorizationError::Revoked) => (StatusCode::FORBIDDEN, "command_authority_required", "Current credential custody does not authorize durable command execution."),
         Store(SandboxControlError::Invalid) => (StatusCode::BAD_REQUEST, "invalid_sandbox_command", "A Sandbox command and a positive expected revision are required."),
@@ -131,7 +130,7 @@ fn problem(error: SandboxControlServiceError) -> Response {
         status,
         super::problem_document(status, code, detail, code),
     ));
-    if retryable && (status == StatusCode::SERVICE_UNAVAILABLE || code == "sandbox_command_busy") {
+    if status == StatusCode::SERVICE_UNAVAILABLE || code == "sandbox_command_busy" {
         response
             .headers_mut()
             .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));

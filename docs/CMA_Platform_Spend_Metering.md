@@ -435,7 +435,7 @@ Additive to the existing `BudgetError` set:
 
 | Code | Transport | Meaning | Guidance |
 | --- | --- | --- | --- |
-| `platform_budget_exhausted` | HTTP 503, no `Retry-After` | `SpendStop` closure present, or the commitment does not fit below `disposable` (section 3) | "The platform's spend limit for this period does not allow new work right now. Completed work is preserved. After the limit is raised, send a new message to continue; this turn will not replay automatically." |
+| `platform_budget_exhausted` | HTTP 402, no `Retry-After` | `SpendStop` closure present, or the commitment does not fit below `disposable` (section 3) | "The platform's spend limit for this period does not allow new work right now. Completed work is preserved. After the limit is raised, send a new message to continue; this turn will not replay automatically." |
 | `registration_closed` | HTTP 503 | `SpendWarning` or any stop closure, subject never seen | "New sign-ups are temporarily closed. Existing accounts are unaffected." |
 | `budget_unavailable` (existing) | unchanged | metering source stale or never observed, or period ended; ledger inconsistent | existing text |
 
@@ -446,10 +446,13 @@ Shared transcripts show the same static guidance.
 
 `platform_budget_exhausted` is a `BudgetError` variant so it travels the same
 guarded-stop, terminal-receipt, AG-UI and Responses paths as the owner and turn
-reasons. 503 rather than 402 is deliberate: the owner has not exhausted anything
-of theirs. No `Retry-After` is sent because lifting needs an operator revision,
-so no honest retry time exists. **Decision pending review**: keep 503, or stay
-with the foundation's uniform 402 for all budget refusals.
+reasons. It is HTTP 402, consistent with the owner and turn budget refusals, so
+existing clients treat it as a final outcome: the TypeScript SDK treats every
+response of 500 or above as retryable and would otherwise retry at 100%. No
+`Retry-After` is sent because lifting needs an operator revision, so no honest
+retry time exists. (User decision, 2026-11-12.) `registration_closed` stays
+HTTP 503: it appears only on the browser redirect path of sign-in, and the
+landing page learns of the closure from `GET /auth/signup-options` first.
 
 `registration_closed` has its own response body; it does not reuse the sign-in
 failure body, whose text asks the user to start a new sign-in attempt.
@@ -586,7 +589,9 @@ Marked so they can be overturned without re-reading:
 4. The platform check runs inside every liability-bearing reservation
    transaction; their serialization on one row is accepted, with local
    scheduling (decision 16).
-5. `platform_budget_exhausted` is HTTP 503; `registration_closed` is HTTP 503;
+5. `platform_budget_exhausted` is HTTP 402, consistent with the owner and turn
+   budget refusals, so clients that retry every response of 500 or above treat
+   it as final (user decision, 2026-11-12); `registration_closed` is HTTP 503;
    neither carries `Retry-After`.
 6. Staleness closes admission only; exhaustion interrupts and pauses.
 7. Lifting a spend closure requires a newer settings revision or a new period;

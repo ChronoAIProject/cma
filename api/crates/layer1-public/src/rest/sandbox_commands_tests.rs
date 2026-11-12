@@ -402,7 +402,7 @@ impl layer2_core::budget::PlatformSpendLedger for Stopped {
 }
 
 #[tokio::test]
-async fn sandbox_command_http_refuses_revive_under_a_platform_stop_with_503_and_no_retry() {
+async fn sandbox_command_http_refuses_revive_under_a_platform_stop_with_402_and_no_retry() {
     let f = Fixture::new().await;
     f.service.attach_platform_spend(Arc::new(Stopped));
     let response = f
@@ -411,7 +411,7 @@ async fn sandbox_command_http_refuses_revive_under_a_platform_stop_with_503_and_
         .oneshot(submit("owner-a", Some("revive"), "revive", 1))
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
     assert!(response.headers().get("retry-after").is_none());
     assert_eq!(response.headers()["cache-control"], "private, no-store");
     let body: Value =
