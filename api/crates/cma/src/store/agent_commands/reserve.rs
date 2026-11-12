@@ -143,18 +143,39 @@ pub(in crate::store) async fn apply(
 
     // Real writes serialize resource retirement and policy changes against the observation. These
     // additive top-level fences do not change the old aggregate wire records.
-    let agent_revision =
-        signed(agent.revision, "Agent revision").map_err(|_| CommandLedgerError::Corrupt)?;
+    super::super::agent_log_segments::ordinary::source(store, &agent, &agent_row, session)
+        .await
+        .map_err(map_integrity_error)?;
     let parent_revision =
         signed(parent.revision, "Sandbox revision").map_err(|_| CommandLedgerError::Corrupt)?;
-    for (collection, id, revision) in [
-        (&store.agents, agent.id.as_str(), agent_revision),
-        (&store.sandboxes, parent.id.as_str(), parent_revision),
-    ] {
-        let result = collection.update_one(doc! { "_id": id, "document_schema_version": DOCUMENT_SCHEMA_VERSION, "revision": revision }, doc! { "$inc": { "agent_command_admission_fence": 1_i64 } }).session(&mut *session).await?;
-        if result.matched_count != 1 {
-            return Err(CommandLedgerError::Conflict.into());
-        }
+    let agent_fence =
+        super::super::agent_capacity_recovery::source::envelope_filter(&agent, &agent_row)
+            .map_err(|_| CommandLedgerError::Corrupt)?;
+    let result = store
+        .agents
+        .update_one(
+            agent_fence,
+            doc! { "$inc": { "agent_command_admission_fence": 1_i64 } },
+        )
+        .session(&mut *session)
+        .await?;
+    if result.matched_count != 1 {
+        return Err(CommandLedgerError::Conflict.into());
+    }
+    let result = store
+        .sandboxes
+        .update_one(
+            doc! {
+                "_id": parent.id.as_str(),
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "revision": parent_revision,
+            },
+            doc! { "$inc": { "agent_command_admission_fence": 1_i64 } },
+        )
+        .session(&mut *session)
+        .await?;
+    if result.matched_count != 1 {
+        return Err(CommandLedgerError::Conflict.into());
     }
 
     let waiting = store
@@ -185,68 +206,76 @@ pub(in crate::store) async fn apply(
         {
             return Err(CommandLedgerError::NotAdmissible.into());
         }
-        let answer = match trusted_summary(
-            store,
-            &agent,
-            &agent_row,
-            ScanCaller::CommandAdmission,
-            session,
-            false,
+        let answer = match super::super::agent_log_segments::ordinary::answer(
+            store, &agent, &agent_row, session,
         )
         .await
         .map_err(map_integrity_error)?
         {
-            Some(summary) => summary
-                .semantic()
-                .and_then(SemanticCheckpoint::answer_context),
-            None => {
-                let mut entries = Vec::new();
-                let summary = super::super::agent_log::scan_complete_log_with_session(
-                    ScanCaller::CommandAdmission,
-                    store,
-                    &agent.id,
-                    agent.conversation.last_seq,
-                    session,
-                    |entry| {
-                        entries.push(entry);
-                        Ok(())
-                    },
-                )
-                .await
-                .map_err(map_integrity_error)?;
-                let semantic = crate::store::agent_log_integrity::audit_checkpoint(
-                    store, &agent, &entries, session,
-                )
-                .await
-                .map_err(map_integrity_error)?;
-                if !semantic.valid {
-                    return Err(ApplyError::Domain(CommandLedgerError::Corrupt));
-                }
-                let integrity =
-                    integrity_document(&agent, &summary, agent.revision, semantic.clone())
-                        .map_err(|_| ApplyError::Domain(CommandLedgerError::Corrupt))?;
-                let revision = signed(agent.revision, "Agent revision")
-                    .map_err(|_| CommandLedgerError::Corrupt)?;
-                let head = signed(agent.conversation.last_seq, "Agent log sequence")
-                    .map_err(|_| CommandLedgerError::Corrupt)?;
-                let repaired = store
-                    .agents
-                    .update_one(
-                        doc! {
-                            "_id": agent.id.as_str(),
-                            "revision": revision,
-                            "last_seq": head,
-                            "record.conversation.last_seq": head,
+            Some(answer) => answer,
+            None => match trusted_summary(
+                store,
+                &agent,
+                &agent_row,
+                ScanCaller::CommandAdmission,
+                session,
+                false,
+            )
+            .await
+            .map_err(map_integrity_error)?
+            {
+                Some(summary) => summary
+                    .semantic()
+                    .and_then(SemanticCheckpoint::answer_context),
+                None => {
+                    let mut entries = Vec::new();
+                    let summary = super::super::agent_log::scan_complete_log_with_session(
+                        ScanCaller::CommandAdmission,
+                        store,
+                        &agent.id,
+                        agent.conversation.last_seq,
+                        session,
+                        |entry| {
+                            entries.push(entry);
+                            Ok(())
                         },
-                        doc! { "$set": { "agent_log_integrity_v1": integrity } },
                     )
-                    .session(&mut *session)
-                    .await?;
-                if repaired.matched_count != 1 {
-                    return Err(CommandLedgerError::Conflict.into());
+                    .await
+                    .map_err(map_integrity_error)?;
+                    let semantic = crate::store::agent_log_integrity::audit_checkpoint(
+                        store, &agent, &entries, session,
+                    )
+                    .await
+                    .map_err(map_integrity_error)?;
+                    if !semantic.valid {
+                        return Err(ApplyError::Domain(CommandLedgerError::Corrupt));
+                    }
+                    let integrity =
+                        integrity_document(&agent, &summary, agent.revision, semantic.clone())
+                            .map_err(|_| ApplyError::Domain(CommandLedgerError::Corrupt))?;
+                    let revision = signed(agent.revision, "Agent revision")
+                        .map_err(|_| CommandLedgerError::Corrupt)?;
+                    let head = signed(agent.conversation.last_seq, "Agent log sequence")
+                        .map_err(|_| CommandLedgerError::Corrupt)?;
+                    let repaired = store
+                        .agents
+                        .update_one(
+                            doc! {
+                                "_id": agent.id.as_str(),
+                                "revision": revision,
+                                "last_seq": head,
+                                "record.conversation.last_seq": head,
+                            },
+                            doc! { "$set": { "agent_log_integrity_v1": integrity } },
+                        )
+                        .session(&mut *session)
+                        .await?;
+                    if repaired.matched_count != 1 {
+                        return Err(CommandLedgerError::Conflict.into());
+                    }
+                    semantic.answer_context()
                 }
-                semantic.answer_context()
-            }
+            },
         };
         layer2_core::sandbox::agent_io::require_answer_context(request, &agent, waiting, answer)?;
     }
