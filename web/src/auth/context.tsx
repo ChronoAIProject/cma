@@ -30,6 +30,8 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+const SILENT_SIGN_IN_TIMEOUT_MS = 10000;
+
 interface AuthProviderProps {
   readonly provider: AuthProvider;
   readonly children: ReactNode;
@@ -49,9 +51,12 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     let inFlight = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let failures = 0;
+    let last: AuthState = { status: 'checking' };
+    let pendingNavigation = false;
+    let leaving: ReturnType<typeof setTimeout> | undefined;
 
-    const refresh = () => {
-      if (!live || inFlight) return;
+    const refresh = (mayNavigate = false) => {
+      if (!live || inFlight || leaving !== undefined) return;
       clearTimeout(timer);
       inFlight = true;
       const version = ++currentRead.current;
@@ -59,15 +64,36 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         .current()
         .then((next) => {
           if (live && version === currentRead.current) {
+            if (next.status !== 'error') last = next;
+            let leavingSilently = false;
+            if (mayNavigate && next.status === 'anonymous') {
+              try {
+                leavingSilently = provider.signInSilently?.() === true;
+              } catch {
+                /* Show the signed-out page. */
+              }
+            }
+            if (leavingSilently && next.status === 'anonymous') {
+              setOutage(undefined);
+              setState({ status: 'checking' });
+              leaving = setTimeout(() => {
+                leaving = undefined;
+                if (!live || version !== currentRead.current) return;
+                setState(next);
+              }, SILENT_SIGN_IN_TIMEOUT_MS);
+              return;
+            }
             if (next.status === 'authenticated') retainTaskViewer(next.user.id);
-            if (next.status === 'anonymous') retainTaskViewer();
             if (next.status === 'error' && next.reason !== undefined) {
               setOutage(next);
               // Retain mounted views and drafts. This is presentation only;
               // every protected operation still requires server authorization.
               setState((previous) => (previous.status === 'authenticated' ? previous : next));
               const delay = Math.min(3000 * 2 ** Math.min(failures++, 4), 30000);
-              timer = setTimeout(refresh, delay + Math.floor(Math.random() * 501));
+              timer = setTimeout(
+                () => refresh(mayNavigate),
+                delay + Math.floor(Math.random() * 501),
+              );
             } else {
               failures = 0;
               setOutage(undefined);
@@ -88,23 +114,41 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         })
         .finally(() => {
           inFlight = false;
+          if (live && pendingNavigation) {
+            pendingNavigation = false;
+            refresh(true);
+          }
         });
     };
-    refreshRef.current = refresh;
+    const backgroundRefresh = () => refresh();
+    refreshRef.current = backgroundRefresh;
+    const navigation = () => {
+      if (last.status !== 'anonymous') return;
+      if (inFlight) {
+        pendingNavigation = true;
+        return;
+      }
+      refresh(true);
+    };
     const visible = () => {
       if (document.visibilityState !== 'hidden') refresh();
     };
-    refresh();
-    window.addEventListener('focus', refresh);
-    window.addEventListener('online', refresh);
+    refresh(true);
+    window.addEventListener('popstate', navigation);
+    window.addEventListener('cma:navigate', navigation);
+    window.addEventListener('focus', backgroundRefresh);
+    window.addEventListener('online', backgroundRefresh);
     document.addEventListener('visibilitychange', visible);
 
     return () => {
       live = false;
       clearTimeout(timer);
+      clearTimeout(leaving);
       refreshRef.current = () => {};
-      window.removeEventListener('focus', refresh);
-      window.removeEventListener('online', refresh);
+      window.removeEventListener('popstate', navigation);
+      window.removeEventListener('cma:navigate', navigation);
+      window.removeEventListener('focus', backgroundRefresh);
+      window.removeEventListener('online', backgroundRefresh);
       document.removeEventListener('visibilitychange', visible);
     };
   }, [provider]);
@@ -126,7 +170,6 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         const next = await provider.current();
         if (version !== currentRead.current) return;
         if (next.status === 'authenticated') retainTaskViewer(next.user.id);
-        if (next.status === 'anonymous') retainTaskViewer();
         setOutage(undefined);
         setState(next);
       } catch (error: unknown) {
@@ -143,9 +186,9 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   const signOut = useCallback(async () => {
     const version = ++currentRead.current;
     try {
+      retainTaskViewer();
       await provider.signOut();
       if (version !== currentRead.current) return;
-      retainTaskViewer();
       setOutage(undefined);
       setState({ status: 'anonymous' });
     } catch (error: unknown) {
