@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 279,
+  "openapi_operations": 286,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3860,6 +3860,71 @@
         "retained_recovery_unavailable",
         "hierarchy_service_unavailable"
       ]
+    },
+    "GET /api/v2/responses/{response_id}/output": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/routes_output.rs# pub(in crate::responses::v2) async fn output_page(",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "invalid_output_cursor"
+      ]
+    },
+    "POST /api/v1/telemetry/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/browser_telemetry.rs# Anonymous fixed-category diagnostics have a 256-byte body limit and no durable effects; success and malformed/private fields are covered by real-handler tests.",
+      "required_problems": []
+    },
+    "GET /api/v1/agents/{id}/capacity-recovery/dry-run": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/capacity-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/capacity-recovery/status": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/capacity-recovery/admit": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_disabled",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ],
+      "non_problem_statuses": {
+        "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
+      }
+    },
+    "POST /api/v1/agents/{id}/capacity-recovery/resume": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ],
+      "non_problem_statuses": {
+        "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
+      }
     }
   }
 }

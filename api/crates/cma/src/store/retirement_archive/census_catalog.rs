@@ -41,6 +41,17 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
         Sandbox(&["record.requester.sandbox_id"]),
     ),
     ("agent_log", Agent(&["agent_id"])),
+    // The archive's legacy closure cannot certify segmented histories or their
+    // retained publication/recovery authority. Nonempty sidecars must refuse.
+    ("agent_log_heads", Empty),
+    ("agent_log_segments", Empty),
+    ("agent_log_publications", Empty),
+    ("agent_log_projections", Empty),
+    ("agent_log_evidence", Empty),
+    ("agent_log_audits", Empty),
+    ("agent_log_gates", Empty),
+    ("agent_log_admissions", Empty),
+    ("agent_capacity_recovery_work", Empty),
     ("agent_message_feedback", Agent(&["agent_id"])),
     ("agent_lifecycle_operations", Sandbox(&["sandbox_id"])),
     ("agent_profile_revisions", Independent),

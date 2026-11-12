@@ -8,6 +8,19 @@ use mongodb::ClientSession;
 const PREFIX_ENTRIES: u32 = 200;
 const PREFIX_BYTES: usize = 4 * 1024 * 1024;
 
+/// Format-2 titles consume the same certified transcript rows as the public
+/// transcript reader. The exact title fold stops at the first completed turn;
+/// no legacy physical-prefix limit is applied to a segmented source.
+pub(super) async fn segmented_read(
+    store: &MongoSandboxStore,
+    expected: &Agent,
+    session: &mut ClientSession,
+) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
+    indexed::read(store, expected, session).await
+}
+
+mod indexed;
+
 /// None requests the existing complete fold; it never means that no title is
 /// eligible. In particular, setup and long first turns cannot be truncated or
 /// replaced with a later turn. This reader does not prepare or repair metadata.

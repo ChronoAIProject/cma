@@ -121,7 +121,9 @@ async fn prepared_open_ready_ineligible_snapshot_leaves_all_publication_records_
 async fn prepared_open_ready_preparation_write_conflicts_with_the_consumed_snapshot() {
     let (client, name, store, agent, observed) = fixture().await;
     let mut session = client.start_session().await.unwrap();
-    start_transaction(&mut session).await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
     let revision = prepared_open_ready::proof_revision(&store, &agent, &observed, &mut session)
         .await
         .unwrap_or_else(|_| panic!("eligible preparation"));
