@@ -2,7 +2,7 @@ use super::*;
 use crate::store::agent_log_segments::{writer_admission, writer_bootstrap, writer_gate::slots};
 use mongodb::bson::DateTime;
 
-pub(super) async fn prepare(
+pub(in crate::store) async fn prepare(
     store: &MongoSandboxStore,
     current: &Agent,
     operation: &PublicationIdentity,
