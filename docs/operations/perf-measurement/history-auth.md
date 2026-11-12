@@ -57,6 +57,19 @@ Verify share revocation, Agent deletion, owner changes and nonrenewing expiry
 between reading and release. Dependency failure and timeout must still pass the
 final fence. Error bodies must not disclose private dependency details.
 
+Deletion disposition for #1793: the refusal case means a missing/purged resource
+at the authorization-store boundary. A retained `AgentStatus::Deleted` record
+remains readable to its authorized owner until purge, as required by the existing
+`validate_event_stream` contract and
+[the retained-history handoff](../../notes/2026-11-12-response-consumer-handoff.md).
+The performance switch preserves exact off/on bytes for that retained history.
+The purge race makes the final snapshot return NotFound after binding IO; the
+ownership race supplies a consistent replacement lineage because ordinary
+`save_agent` correctly refuses an owner mutation. Both races cover successful
+and failed private reads, return 404 without page content, and retain the final
+snapshot count. This interpretation was confirmed by the release lead; it does
+not introduce a new tombstone access policy.
+
 The page store contract must prove current lineage, consecutive sequences and
 absence beyond the committed head within one read snapshot. Cover untrusted
 legacy, prepared legacy and segmented formats, including malformed, quarantined,

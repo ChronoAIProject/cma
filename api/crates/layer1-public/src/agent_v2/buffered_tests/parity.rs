@@ -2,6 +2,33 @@ use super::*;
 use serde_json::{json, Value};
 
 #[tokio::test]
+async fn soft_deleted_retained_history_remains_identical_until_purge() {
+    for active in [false, true] {
+        let f = fixture(active, false).await;
+        let mut agent = f
+            .store
+            .get_agent(&AgentId("agt_fixture".into()))
+            .await
+            .unwrap()
+            .unwrap();
+        let revision = agent.revision;
+        agent.status = AgentStatus::Deleted;
+        agent.deleted_at = Some(layer2_core::now_rfc3339());
+        agent.revision += 1;
+        f.store.save_agent(revision, agent).await.unwrap();
+        let on = router(f.state.clone().with_single_fence_pages(true));
+        for route in [SNAPSHOT, HEAD] {
+            let expected = raw(&f.router, route, "owner-a", "cma-message-bindings").await;
+            assert_eq!(expected.0, StatusCode::OK);
+            assert_eq!(
+                raw(&on, route, "owner-a", "cma-message-bindings").await,
+                expected
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn shared_pages_and_heads_preserve_projection_and_entry_refusals() {
     for active in [false, true] {
         let f = fixture(active, false).await;

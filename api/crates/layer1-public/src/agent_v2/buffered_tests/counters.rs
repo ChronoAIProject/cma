@@ -1,10 +1,12 @@
 use super::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 struct Counted {
     store: Arc<InMemorySandboxStore>,
     snapshots: AtomicUsize,
     deny_at: AtomicUsize,
+    purged: AtomicBool,
+    transferred: AtomicBool,
 }
 #[async_trait]
 impl ResourceAccessStore for Counted {
@@ -36,10 +38,22 @@ impl ResourceAccessStore for Counted {
         target: &ResourceTarget,
     ) -> Result<ResourceAccessSnapshot, ResourceAccessStoreError> {
         let call = self.snapshots.fetch_add(1, Ordering::SeqCst) + 1;
-        if call == self.deny_at.load(Ordering::SeqCst) {
+        if call == self.deny_at.load(Ordering::SeqCst) || self.purged.load(Ordering::SeqCst) {
             return Err(ResourceAccessStoreError::NotFound);
         }
-        self.store.resource_access_snapshot(target).await
+        let mut snapshot = self.store.resource_access_snapshot(target).await?;
+        if self.transferred.load(Ordering::SeqCst) {
+            // Ownership is immutable through save_agent. Model a consistent
+            // replacement at the authority port, not an invalid partial write.
+            assert!(snapshot.policy.is_none() && snapshot.shares.is_empty());
+            let owner = SubjectId::new("changed-owner");
+            snapshot.lineage.sandbox.owner = owner.clone();
+            snapshot.lineage.workspace.as_mut().unwrap().owner = owner.clone();
+            snapshot.lineage.worktree.as_mut().unwrap().owner = owner.clone();
+            snapshot.lineage.agent.as_mut().unwrap().owner = owner;
+            snapshot.scope(target).unwrap();
+        }
+        Ok(snapshot)
     }
 }
 #[async_trait]
@@ -103,6 +117,8 @@ async fn counted(
         store: f.store.clone(),
         snapshots: AtomicUsize::new(0),
         deny_at: AtomicUsize::new(usize::MAX),
+        purged: AtomicBool::new(false),
+        transferred: AtomicBool::new(false),
     });
     let access = Arc::new(ResourceAccessService::new(
         count.clone(),
@@ -236,5 +252,51 @@ async fn dependency_failure_and_timeout_each_run_one_final_snapshot() {
             Err(AgentReadError::Unavailable(_))
         ));
         assert_eq!(count.snapshots.load(Ordering::SeqCst), 3);
+    }
+}
+
+#[tokio::test]
+async fn purge_and_consistent_owner_transfer_after_binding_refuse_every_result() {
+    for route in [SNAPSHOT, HEAD] {
+        for purge in [false, true] {
+            for fail in [false, true] {
+                let f = fixture(true, false).await;
+                let (reads, _, count) = counted(&f).await;
+                count.snapshots.store(0, Ordering::SeqCst);
+                let (mut state, gate, resume) = gated(&f, fail);
+                state.reads = reads;
+                let app = router(state);
+                let pending = tokio::spawn(async move {
+                    raw(&app, route, "owner-a", "cma-message-bindings").await
+                });
+                entered(&gate).await;
+                assert_eq!(count.snapshots.load(Ordering::SeqCst), 2);
+                if purge {
+                    count.purged.store(true, Ordering::SeqCst);
+                } else {
+                    count.transferred.store(true, Ordering::SeqCst);
+                }
+                resume.notify_one();
+                let (status, bytes) = pending.await.unwrap();
+                assert_eq!(
+                    status,
+                    StatusCode::NOT_FOUND,
+                    "{route} purge={purge} fail={fail}"
+                );
+                assert_eq!(count.snapshots.load(Ordering::SeqCst), 3);
+                let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(body["code"], "agent_not_found");
+                assert!(body.get("items").is_none());
+                assert!(body.get("active_turn").is_none());
+                for private in [
+                    "Private source input",
+                    "private-source-reference",
+                    "changed-owner",
+                    "cmd_control_source",
+                ] {
+                    assert!(!String::from_utf8_lossy(&bytes).contains(private));
+                }
+            }
+        }
     }
 }
