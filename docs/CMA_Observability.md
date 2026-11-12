@@ -450,3 +450,33 @@ consume that same lag only when diagnostics are enabled. Dropping the server
 stops both, while a scrape-listener failure stops neither. The readiness check
 loop retains its independent check schedule and deadline; it is not a second
 lag probe. No new configuration is added.
+
+### Scan execution sections (#1787)
+
+Each full-scan attempt now emits `cma_agent_log_scan_longest_section_seconds{caller}`
+and `cma_agent_log_scan_driver_poll_seconds{caller}` once on drop, including
+validation failure and cancellation. `cma_agent_log_scan_yields_total{caller}`
+counts explicit cooperative yields. Labels use only the existing closed caller
+names; no Agent, Sandbox, request, user, query or document content is retained.
+The existing full-scan count, document/byte counts and success/failure accounting
+retain their meanings. Measurements accumulate in local variables, with no
+per-document atomics or logging; optional debug output is once per attempt.
+
+An execution section closes only when an observed future actually returns
+`Pending` or the scan explicitly yields. Time spent waiting to be polled again
+is excluded. Initial-find suspension is observed too, so Mongo/network wait
+does not become a CPU section. Driver-poll duration measures the final `Ready`
+poll of cursor advancement, including driver batch copying; it does not include
+I/O wait or the subsequent row decode, visitor and hash. Both histograms include
+submillisecond, 2 ms, 5 ms and 10 ms boundaries, supporting the issue's A/B/C
+decisions. These are wall-time observations, not CPU profiles or proof that
+a particular task occupied a Tokio LIFO slot.
+
+The histograms aggregate all scan sizes for a caller. For case A's at-least-1,000-
+row subset, the once-per-attempt debug event includes numeric `documents` and
+`bytes`, outcome, section count and both maxima. Use those observations to
+select the subset; an average documents-per-scan ratio cannot prove it.
+
+These #1787 families add at most 444 series: 12 closed caller names times
+(two histograms with 15 finite buckets, +Inf, sum and count, plus one counter).
+This is separate from the #1805 bound of `2 * min(workers, 64) + 195`.
