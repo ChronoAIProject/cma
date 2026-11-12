@@ -43,7 +43,9 @@ pub use agent_log_projection::{
     AgentLogAnswerEvidence, AgentLogAnswerLookup, AgentLogEvidenceChange, AgentLogProjectionState,
     AgentLogQueuedReference, AgentLogTurnFacts, AgentLogTurnLookup, BoundedAgentLogFold,
 };
-pub use agent_reads_transcript::AgentTranscriptFold;
+pub use agent_reads_transcript::{
+    AgentTranscriptFold, AgentTranscriptPage, AgentTranscriptPageRequest,
+};
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
