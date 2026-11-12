@@ -19,7 +19,7 @@ mod interrupting_message;
 pub(in crate::store) mod lane_records;
 mod queued_cancellation;
 mod queued_input;
-mod reconcile;
+pub(in crate::store) mod reconcile;
 pub(in crate::store) mod records;
 pub(in crate::store) mod reserve;
 mod retry;

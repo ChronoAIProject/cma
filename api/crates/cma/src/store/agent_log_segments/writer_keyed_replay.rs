@@ -44,7 +44,7 @@ pub(in crate::store) async fn replay(
     let head = read_head(store, &row, &mut snapshot, true)
         .await
         .map_err(error)?;
-    verify_head(store, &receipt, &current, &head, &mut snapshot).await?;
+    verify_head(store, &receipt, &current, &head, &mut snapshot, true).await?;
     let mut found = None;
     visit_range(
         store,

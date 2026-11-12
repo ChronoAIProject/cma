@@ -9,7 +9,7 @@ use layer3_adapter::{
     ToolCallUpdate, ToolCallUpdateFields,
 };
 use std::sync::Arc;
-mod support;
+pub(super) mod support;
 use support::*;
 
 #[tokio::test]
