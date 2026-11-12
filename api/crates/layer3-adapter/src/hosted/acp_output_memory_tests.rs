@@ -1,12 +1,13 @@
 use super::*;
 
 fn held(budget: &Arc<Semaphore>, bytes: usize) -> crate::Result<HeldOutput> {
-    let storage = reserve(Some(budget), bytes)?;
+    let storage = reserve(Some(budget), bytes, None)?;
     Ok(HeldOutput {
         cursor: 1,
         payload: vec![0; bytes],
         prepared: None,
         decoded: None,
+        sign_in: None,
         _storage: storage,
     })
 }
@@ -53,10 +54,10 @@ fn empty_payloads_still_charge_queue_nodes_and_drain_to_baseline() {
 #[test]
 fn disabled_policy_uses_no_reservation_and_arithmetic_overflow_refuses() {
     assert!(process_budget(false).is_none());
-    assert!(reserve(None, usize::MAX).unwrap().is_none());
+    assert!(reserve(None, usize::MAX, None).unwrap().is_none());
     let budget = Arc::new(Semaphore::new(1024));
     assert!(matches!(
-        reserve(Some(&budget), usize::MAX),
+        reserve(Some(&budget), usize::MAX, None),
         Err(AdapterError::AtCapacity(_))
     ));
     assert_eq!(budget.available_permits(), 1024);

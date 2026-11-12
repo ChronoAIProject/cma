@@ -64,13 +64,19 @@ pub(super) async fn carry(
     Ok(())
 }
 
+pub(super) enum Authority {
+    Live,
+    Reopen(Box<layer2_core::sandbox::store::AgentReopenGuard>),
+    Capacity(Box<layer2_core::sandbox::store::AgentConversationCapacitySettlement>),
+}
+
 pub(super) async fn commit(
     store: &MongoSandboxStore,
     current: Agent,
     previous: Option<AgentMessageCheckpoint>,
     next: AgentMessageCheckpoint,
     mutation: Option<AgentConversationMutation>,
-    guard: Option<layer2_core::sandbox::store::AgentReopenGuard>,
+    authority: Authority,
 ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
     next.validate()?;
     let _writer = store.agent_writes.lock(&current.id).await;
@@ -109,7 +115,7 @@ pub(super) async fn commit(
             previous.as_ref(),
             &next,
             mutation.as_ref(),
-            guard.as_ref(),
+            &authority,
             &mut session,
         )
         .await
@@ -146,14 +152,25 @@ pub(super) async fn commit(
                 let commit_error = error.to_string();
                 let unresolved = commit_error.clone();
                 let store = store.clone();
+                let capacity = match &authority {
+                    Authority::Capacity(proof) => Some(proof.clone()),
+                    _ => None,
+                };
                 return wait_for_reconciliation("agent message commit", async move {
-                    let confirmed = reconcile(&store, &current.id, &next, snapshot_time, reanchor)
-                        .await?
-                        .ok_or_else(|| {
-                            SandboxStoreError::Unavailable(format!(
-                                "agent message commit remained unknown: {unresolved}"
-                            ))
-                        })?;
+                    let confirmed = reconcile(
+                        &store,
+                        &current.id,
+                        &next,
+                        snapshot_time,
+                        reanchor,
+                        capacity.as_deref(),
+                    )
+                    .await?
+                    .ok_or_else(|| {
+                        SandboxStoreError::Unavailable(format!(
+                            "agent message commit remained unknown: {unresolved}"
+                        ))
+                    })?;
                     if published {
                         crate::telemetry::work::published(&confirmed.appended, "reconciled");
                     }
@@ -183,9 +200,17 @@ async fn apply(
     previous: Option<&AgentMessageCheckpoint>,
     next: &AgentMessageCheckpoint,
     mutation: Option<&AgentConversationMutation>,
-    guard: Option<&layer2_core::sandbox::store::AgentReopenGuard>,
+    authority: &Authority,
     session: &mut mongodb::ClientSession,
 ) -> Result<(AgentUpdateOutcome, bool), ApplyError> {
+    let guard = match authority {
+        Authority::Reopen(guard) => Some(guard.as_ref()),
+        _ => None,
+    };
+    let capacity = match authority {
+        Authority::Capacity(proof) => Some(proof.as_ref()),
+        _ => None,
+    };
     let row = store
         .agents
         .find_one(doc! { "_id": current.id.as_str() })
@@ -236,7 +261,19 @@ async fn apply(
         if mutation.agent.id != current.id || !next.matches(&project(&mutation.agent)?) {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
-        let receipt = apply_mutation(ScanCaller::Checkpoint, store, mutation, session).await?;
+        if let Some(proof) = capacity {
+            proof
+                .validate_snapshot(&actual_agent, actual.as_ref())
+                .map_err(ApplyError::Domain)?;
+        }
+        let receipt = apply_mutation_with_capacity(
+            ScanCaller::Checkpoint,
+            store,
+            mutation,
+            session,
+            capacity,
+        )
+        .await?;
         if receipt.logs != next.outcome.appended {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
@@ -251,6 +288,12 @@ async fn apply(
         current
     };
     write(store, updated, Some(next), session).await?;
+    if let Some(proof) = capacity {
+        // Replace the active checkpoint with the compact receipt before adding
+        // the retained prefix, avoiding two large checkpoints in one document.
+        // Both writes remain part of this same transaction.
+        capacity_prefix::preserve(store, &row, proof, session).await?;
+    }
     if let Some(mutation) = mutation {
         admission::require_current(mutation, session)
             .await
@@ -332,6 +375,7 @@ async fn reconcile(
     next: &AgentMessageCheckpoint,
     snapshot_time: Timestamp,
     require_anchor: bool,
+    capacity: Option<&layer2_core::sandbox::store::AgentConversationCapacitySettlement>,
 ) -> Result<Option<AgentUpdateOutcome>, SandboxStoreError> {
     let mut session = snapshot_session(store, Some(snapshot_time)).await?;
     let row = store
@@ -346,5 +390,18 @@ async fn reconcile(
     };
     read_agent(&row)?;
     let actual = read(&row)?;
+    if let Some(proof) = capacity {
+        let receipt = ConversationReceipt {
+            command_dispatch: None,
+            agent: proof.mutation().agent.clone(),
+            logs: proof.checkpoint().outcome.appended.clone(),
+        };
+        if actual.as_ref() != Some(proof.checkpoint())
+            || !capacity_prefix::matches(&row, proof)?
+            || !reconcile_conversation_snapshot(store, &receipt, &mut session).await?
+        {
+            return Ok(None);
+        }
+    }
     replay_at_anchor(actual.as_ref(), next, require_anchor)
 }
