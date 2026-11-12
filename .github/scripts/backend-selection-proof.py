@@ -87,12 +87,12 @@ def mongo_filters(source):
     template = shlex.split(next(line.strip() for line in source.splitlines()
                                 if line.strip().startswith("-E ")))[1]
     names = dict(shlex.split(line)[1].split("=", 1) for line in source.splitlines()
-                 if line.startswith(("readonly scale_test=", "readonly owner_allocation_test=")))
+                 if line.startswith(("readonly scale_test=", "readonly owner_allocation_test=", "readonly diagnostics_test=")))
     predicates = {"all": "all()"}
-    for mode in ("scale", "owner-allocation", "ordinary", "cpu-profile"):
+    for mode in ("scale", "owner-allocation", "diagnostics", "ordinary", "cpu-profile"):
         line = next((line.strip() for line in source.splitlines()
                      if line.strip().startswith(f"{mode})")), None)
-        if mode in ("owner-allocation", "cpu-profile") and line is None:
+        if mode in ("owner-allocation", "diagnostics", "cpu-profile") and line is None:
             continue
         predicate = re.search(r'''selection_filter=(["'])(.*?)\1''', line).group(2)
         # The pre-split source selected cma during compilation; reuse must
@@ -156,7 +156,10 @@ def main():
     owner = list_tests(["-E", after_filters["owner-allocation"], "--run-ignored", "only"])[0]
     if len(owner) != 1:
         raise AssertionError("Exactly one Mongo owner-allocation contract is required")
-    mongo_sets = {"owner-allocation": owner}
+    diagnostics = list_tests(["-E", after_filters["diagnostics"], "--run-ignored", "only"])[0]
+    if len(diagnostics) != 1:
+        raise AssertionError("Exactly one Mongo diagnostics overhead contract is required")
+    mongo_sets = {"owner-allocation": owner, "diagnostics": diagnostics}
     for mode in ("all", "scale", "ordinary"):
         old = list_tests(["-E", before_filters[mode], "--run-ignored", "only"])[0]
         new = list_tests(["-E", after_filters[mode], "--run-ignored", "only"])[0]
@@ -164,9 +167,13 @@ def main():
             if not owner <= old:
                 raise AssertionError("Isolated owner contract was absent from the old ordinary corpus")
             old -= owner
+        if mode == "ordinary" and "diagnostics" not in before_filters:
+            if not diagnostics <= old:
+                raise AssertionError("Diagnostics contract was absent from the old ordinary corpus")
+            old -= diagnostics
         compare(f"mongo-{mode}", old, new)
         mongo_sets[mode] = new
-    counts = Counter(test for mode in ("scale", "owner-allocation", "ordinary")
+    counts = Counter(test for mode in ("scale", "owner-allocation", "diagnostics", "ordinary")
                      for test in mongo_sets[mode])
     if len(mongo_sets["scale"]) != 1 or any(count != 1 for count in counts.values()):
         raise AssertionError("Mongo exclusive phases and ordinary partitions must not overlap")
@@ -174,6 +181,9 @@ def main():
     if "owner-allocation" in before_filters:
         compare("mongo-owner-allocation", list_tests([
             "-E", before_filters["owner-allocation"], "--run-ignored", "only"])[0], owner)
+    if "diagnostics" in before_filters:
+        compare("mongo-diagnostics", list_tests([
+            "-E", before_filters["diagnostics"], "--run-ignored", "only"])[0], diagnostics)
     if "cpu-profile" in after_filters:
         profiles = list_tests(["-E", after_filters["cpu-profile"], "--run-ignored", "only"])[0]
         expected = {(binary, name) for binary, name in mongo_sets["ordinary"]
