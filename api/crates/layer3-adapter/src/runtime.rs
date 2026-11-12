@@ -71,8 +71,8 @@ impl Default for SandboxCapacity {
 pub struct SandboxSpec {
     pub sandbox_id: String,
     pub capacity: SandboxCapacity,
-    /// An optional immutable image selected by Image Manager for this
-    /// Sandbox.  `None` means the deployment-owned system default.
+    /// The immutable custom image already recorded for this Sandbox.
+    /// `None` uses the deployment's system default image.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_image: Option<String>,
     #[serde(default)]

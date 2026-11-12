@@ -82,6 +82,7 @@ impl BotService {
         key: &str,
         mut request: CreateBot,
     ) -> Result<Bot, BotError> {
+        request.reject_custom_image_selection()?;
         request.validate()?;
         if key.is_empty() || key.len() > 256 || key.chars().any(char::is_control) {
             return Err(BotError::Invalid("an idempotency key is required".into()));

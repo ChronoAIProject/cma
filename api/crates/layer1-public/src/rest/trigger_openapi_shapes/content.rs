@@ -221,6 +221,8 @@ pub struct TriggerSkillBody {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TriggerInlineTargetBody {
+    /// Retained for compatibility; new image selections are rejected with
+    /// `trigger_image_selection_unsupported`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<TriggerImageBody>,
     pub agent: TriggerInlineAgentBody,

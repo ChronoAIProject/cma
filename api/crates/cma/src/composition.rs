@@ -142,10 +142,8 @@ impl ControlPlaneComposition {
         .with_resource_access(resource_access.clone())
         .with_response_logs(stores.sandbox_model.response_log_reader())
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
-        let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
-            config.image_manager_base_url.clone(),
-        )
-        .map_err(|error| format!("Image Manager resolver is not usable: {error}"))?;
+        let image_resolver: Arc<dyn crate::agent_lifecycle::ImageResolver> =
+            Arc::new(crate::agent_lifecycle::UnsupportedImageResolver);
         let inline_lifecycle = crate::agent_lifecycle::InlineAgentLifecycle::new(
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),

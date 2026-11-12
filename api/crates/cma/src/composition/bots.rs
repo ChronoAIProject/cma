@@ -223,11 +223,10 @@ impl BotInlineProfileResolver for InlineBotProfileResolver {
 
 fn image_error(error: AgentLifecycleProvisioningError) -> BotError {
     match error {
-        AgentLifecycleProvisioningError::Forbidden
-        | AgentLifecycleProvisioningError::ImageAccessDenied => BotError::Forbidden,
-        AgentLifecycleProvisioningError::SignInRequired => {
-            BotError::Invalid("sign in again to authorize the selected image".into())
-        }
+        AgentLifecycleProvisioningError::Forbidden => BotError::Forbidden,
+        AgentLifecycleProvisioningError::ImageSelectionUnsupported => BotError::Invalid(
+            "image_selection_unsupported: custom image selection is not supported".into(),
+        ),
         AgentLifecycleProvisioningError::Invalid(error)
         | AgentLifecycleProvisioningError::DesktopUnsupported(error)
         | AgentLifecycleProvisioningError::Conflict(error) => BotError::Invalid(error),

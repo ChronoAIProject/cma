@@ -173,12 +173,8 @@ fn image_reference_error(
 ) -> TriggerReferenceError {
     const FIELD: &str = "target.inline.image";
     match error {
-        layer1_public::rest::AgentLifecycleProvisioningError::Forbidden
-        | layer1_public::rest::AgentLifecycleProvisioningError::ImageAccessDenied => {
-            TriggerReferenceError::ImageAccessDenied { field: FIELD }
-        }
-        layer1_public::rest::AgentLifecycleProvisioningError::SignInRequired => {
-            TriggerReferenceError::ImageSignInRequired { field: FIELD }
+        layer1_public::rest::AgentLifecycleProvisioningError::ImageSelectionUnsupported => {
+            TriggerReferenceError::ImageSelectionUnsupported { field: FIELD }
         }
         _ => unavailable(FIELD),
     }

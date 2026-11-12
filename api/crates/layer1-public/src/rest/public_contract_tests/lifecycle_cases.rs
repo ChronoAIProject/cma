@@ -56,8 +56,7 @@ impl AgentLifecycleProvisioner for Lifecycle {
                 "This deployment has no verified desktop runtime.".into(),
             )),
             "unavailable" => Err(AgentLifecycleProvisioningError::Unavailable),
-            "image_auth" => Err(AgentLifecycleProvisioningError::SignInRequired),
-            "image_forbidden" => Err(AgentLifecycleProvisioningError::ImageAccessDenied),
+            "image_unsupported" => Err(AgentLifecycleProvisioningError::ImageSelectionUnsupported),
             "connection" => Err(AgentLifecycleProvisioningError::ConnectionRequired {
                 services: vec!["api-github".into()],
                 connection_target: serde_json::json!({"type":"workspace","id":"workspace-contract"}),
