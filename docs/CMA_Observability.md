@@ -111,9 +111,9 @@ pool states may be absent until observed. This replaces the issue's original
 `2 * workers + 12` estimate, which did not account for histogram expansion.
 
 `cma_runtime_wake_lag_seconds` records actual minus scheduled wake time for this
-sampler. It also includes delays in scheduling the sampler itself. Readiness
-diagnostics (#1770 / PR #1773) must consume the same tick when integrated; they
-must not retain a second independently scheduled lag probe. Runtime sampling is
+sampler. It also includes delays in scheduling the sampler itself. Optional
+readiness diagnostics (#1770 / PR #1773) consume the same tick: one wake loop
+supplies both consumers with the same measured lag. Runtime sampling is
 owned by the metrics server guard and survives a running listener's failure.
 No configuration key, network request, Mongo command, or readiness-policy change
 is introduced. Rollback is the previous API image; no data migration is needed.
