@@ -7,9 +7,18 @@ metadata:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 data:
+  # Private pod scrape listener; never routed by the public Service/Gateway.
+  CHRONO_METRICS_BIND: "0.0.0.0:9091"
+  CHRONO_INGRESS_COORDINATOR_ENABLED: "false"
+  # Enable only after this compatible API image serves every replica.
+  CHRONO_SILENT_SIGN_IN_ENABLED: "false"
+  CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED: "false"
+  CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED: "false"
   # Measured reporting is independent of allocated billing. Enable only after
   # monitoring service-account GET reachability and reader/schema readiness.
   CHRONO_USAGE_METRICS_ENABLED: "false"
+  # Per-server reporting pool, 1..16. Independent of the general Mongo pool.
+  CHRONO_USAGE_REPORTING_MONGO_MAX_POOL_SIZE: "4"
   CHRONO_USAGE_METRICS_CLUSTER: "chronoai-prod-asia-southeast1-gke"
   # Empty selects the fixed monitoring/tenant-0 Kubernetes API proxy GET route.
   # An internal read gateway may instead provide /select/0/prometheus/.
@@ -78,10 +87,52 @@ data:
   # Additional gates still require their own canary verification.
   # New file admissions only; supporting readers/workers must precede enablement.
   CHRONO_V2_UI_TRANSPORT_ENABLED: "true"
+  CHRONO_AGENT_LOG_ADMISSION_AGENTS: ""
+  # Owner-consented same-image reopening only; admission remains off until qualified.
+  CHRONO_RETAINED_REOPEN_ENABLED: "false"
+  # Independent pending-approval reader; also requires trusted cohort membership.
+  CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED: "false"
+  CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
+  # Qualify ordinary CloseProcess retry publication separately from fleet admission.
+  CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
+  CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED: "false"
+  # Expand-only skill upgrade readers; enable new writers only after migration qualification.
+  CHRONO_AGENT_SKILL_UPGRADE_ENABLED: "false"
+  # Reconciliation remains on the existing cadence until a measured rollout.
+  CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED: "false"
+  # Keep expensive-read admission charged through final returned frame drop.
+  CHRONO_READ_FRAME_BUDGET_ENABLED: "false"
+  # Independent fleet mode: 0 disables; stable percentage stages require rollout.
+  CHRONO_AGENT_LOG_FLEET_PERCENT: "0"
+  # Qualify title reads separately after the admission/public-window cohort.
+  CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED: "false"
+  CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED: "false"
+  CHRONO_SANDBOX_BATCHED_READS_ENABLED: "false"
+  CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "true"
+  # The release controller opts in with the planned diagnostic deployment.
+  CHRONO_MONGO_DIAGNOSTICS_ENABLED: "false"
+  # Response projection uses a proven target-turn window; independent rollout.
+  CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
+  CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED: "false"
+  # New recovery admission also requires both durable gates; accepted work survives closure.
+  CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED: "false"
+  # Avoid any adoption discovery on the default publication path.
+  CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED: "false"
+  CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED: "false"
+  CHRONO_RESPONSE_PAGED_EVENTS_ENABLED: "false"
+  # Retained-context lookup remains opt-in until the compatible API path is
+  # deployed and its latency and authorization evidence is reviewed.
+  CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED: "false"
+  CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED: "false"
   CHRONO_TASK_EXPERIENCE_POLICY: '{"mode":"disabled","accounts":[],"capabilities":[]}'
   # Independent placement rollout selections; these do not attest continuity.
   # Admission-only protocol selector. Requires a compatible worker/rollback floor.
   CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED: "false"
+  # Saving any nonempty budget policy requires compatible serving/rollback readers.
+  # Release operators enable writes only after establishing that reader baseline.
+  CHRONO_MODEL_BUDGET_WRITES_ENABLED: "false"
+  # Request model policies need a later reader baseline even if foundation writes are on.
+  CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
   CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS: "600"
   CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS: "1800"
@@ -173,6 +224,15 @@ data:
   CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE: "600"
   CHRONO_SERVER_RATE_CREATE_PER_MINUTE: "10"
   CHRONO_SERVER_RATE_INPUT_PER_MINUTE: "120"
+  # Independent allowance for recovery and controls of admitted work.
+  CHRONO_SERVER_RATE_CONTROL_PER_MINUTE: "120"
+  # Activate only after the separate recovery/control policy review.
+  CHRONO_SERVER_RATE_CONTROL_ENABLED: "false"
+  # Separate policy activation after exact-route classification review.
+  CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED: "false"
+  # Per-process public stream lifetimes; zero keeps admission disabled.
+  CHRONO_PUBLIC_STREAM_LIMIT: "0"
+  CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED: "false"
   # GFE appends upstream then forwarding-rule addresses. Trust the chain only
   # from an official GFE TCP peer and skip its rightmost load-balancer token.
   CHRONO_SERVER_TRUSTED_PROXY_CIDRS: "35.191.0.0/16,130.211.0.0/22,2600:2d00:1:1::/64"
@@ -201,12 +261,30 @@ data:
   CHRONO_MONGODB_DATABASE: "chrono-bot"
   # Shared database deployment; each service retains its own schema and collections.
   CHRONO_MONGODB_AUTHORITY_MODE: "shared-schema"
+  # Agent Manager also owns model_budget_reservations. Isolated deployments must
+  # include it in scoped schema/runtime grants before this image is activated.
+  # Private model_budget settings have no manifest defaults; keep general rollout
+  # disabled pending request-level enforcement. See CMA_Model_Budget_Controls.md.
+  # CMA auxiliary requests also require privately approved request_models bounds;
+  # no model/rate is enabled by default. See CMA_Model_Request_Reservations.md.
+  # Admin Operations settings supply all platform/owner/turn controls, including
+  # explicit period, thresholds, reserve, lag, call limit and IANA day timezone.
   # TTL applies to existing Activity records; lowering it can remove history.
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
   # Canonical platform origin for scoped runtime service proxying.
   CHRONO_PLATFORM_BASE_URL: "https://nyx-api.chrono-ai.fun"
   # Durable personal documents use the existing S3-backed storage service.
   # Objects live only under documents/<owner-hash>/<document-id>/<source-hash>.md.
+  # Activate in a later train only after compatible readers are the rollback floor.
+  CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED: "false"
+  # Requires a complete, fenced storage inventory; never enable on unknown usage.
+  CHRONO_DOCUMENT_QUOTAS_ENABLED: "false"
+  # Unverified delete/list contract: requires storage-owner confirmation and scopes.
+  CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED: "false"
+  # Off until capacity-owner headroom and all admission writers are verified.
+  CHRONO_SANDBOX_GLOBAL_LIMIT: "0"
+  # Separately activate only after dependency qualification; preserve the online policy while off.
+  CHRONO_DOCUMENT_STORAGE_RESILIENCE_ENABLED: "false"
   CHRONO_DOCUMENT_BUCKET: "chrono-platform-bot"
   CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
   # Agent model calls use the scoped AgentKey through this platform proxy.
@@ -258,3 +336,7 @@ data:
   # AgentKey service floor. Public skill material is served by ornn-api.
   CHRONO_BASELINE_SERVICES: "chrono-llm-public,ornn-api"
   RUST_LOG: "info"
+  # Shared retained live-fragment budget; deployment qualification is separate.
+  CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED: "false"
+  # Validate runtime output structure before allocating owned JSON trees.
+  CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED: "false"

@@ -120,6 +120,13 @@
               "null"
             ]
           },
+          "last_non_admission_code": {
+            "description": "Last precise retryable provider refusal, retained even after event expiry.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "media_responses": {
             "description": "Independent appended responses. URLs still require Agent Manager's\nnormal response authorization; this feed grants no conversation access.",
             "items": {
@@ -134,6 +141,13 @@
             ]
           },
           "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refusal_code": {
+            "description": "Named terminal refusal before a provider admitted a turn.",
             "type": [
               "string",
               "null"
@@ -283,7 +297,30 @@
           {
             "allOf": [
               {
-                "$ref": "#/components/schemas/InteractionResult"
+                "additionalProperties": false,
+                "properties": {
+                  "action_id": {
+                    "type": "string"
+                  },
+                  "block_id": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "values": {
+                    "additionalProperties": {},
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "block_id",
+                  "action_id"
+                ],
+                "type": "object"
               },
               {
                 "properties": {
@@ -5396,6 +5433,7 @@
       },
       "NativeLarkSource": {
         "additionalProperties": false,
+        "description": "Requires a separate single-tenant native app; never replace a NyxID webhook.",
         "properties": {
           "admission": {
             "$ref": "#/components/schemas/AdmissionPolicy"
@@ -7748,7 +7786,33 @@
           {
             "allOf": [
               {
-                "$ref": "#/components/schemas/NativeLarkSource"
+                "additionalProperties": false,
+                "description": "Requires a separate single-tenant native app; never replace a NyxID webhook.",
+                "properties": {
+                  "admission": {
+                    "$ref": "#/components/schemas/AdmissionPolicy"
+                  },
+                  "conversation_history": {
+                    "description": "Owner consent to earlier visible messages in the exact original chat/thread.",
+                    "type": "boolean"
+                  },
+                  "identity": {
+                    "$ref": "#/components/schemas/NativeLarkIdentity"
+                  },
+                  "separate_app": {
+                    "description": "Must be true: this source requires a separate native app and webhook.",
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "separate_app",
+                  "identity",
+                  "admission"
+                ],
+                "type": "object"
               },
               {
                 "properties": {
@@ -8151,7 +8215,32 @@
           {
             "allOf": [
               {
-                "$ref": "#/components/schemas/NativeLarkIdentity"
+                "additionalProperties": false,
+                "properties": {
+                  "app_id": {
+                    "type": "string"
+                  },
+                  "bot_open_id": {
+                    "description": "Independently checked using the app's bot-info endpoint.",
+                    "type": "string"
+                  },
+                  "region": {
+                    "$ref": "#/components/schemas/LarkRegion"
+                  },
+                  "tenant_key": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "region",
+                  "app_id",
+                  "tenant_key",
+                  "bot_open_id"
+                ],
+                "type": "object"
               },
               {
                 "properties": {
@@ -8308,8 +8397,33 @@
           {
             "allOf": [
               {
-                "$ref": "#/components/schemas/NativeLarkSource",
-                "description": "Requires a separate single-tenant native app; never replace a NyxID webhook."
+                "additionalProperties": false,
+                "description": "Requires a separate single-tenant native app; never replace a NyxID webhook.",
+                "properties": {
+                  "admission": {
+                    "$ref": "#/components/schemas/AdmissionPolicy"
+                  },
+                  "conversation_history": {
+                    "description": "Owner consent to earlier visible messages in the exact original chat/thread.",
+                    "type": "boolean"
+                  },
+                  "identity": {
+                    "$ref": "#/components/schemas/NativeLarkIdentity"
+                  },
+                  "separate_app": {
+                    "description": "Must be true: this source requires a separate native app and webhook.",
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "separate_app",
+                  "identity",
+                  "admission"
+                ],
+                "type": "object"
               },
               {
                 "properties": {
@@ -8325,8 +8439,7 @@
                 ],
                 "type": "object"
               }
-            ],
-            "description": "Requires a separate single-tenant native app; never replace a NyxID webhook."
+            ]
           },
           {
             "description": "Native Meta WhatsApp Cloud API; independent of NyxID relay sources.",

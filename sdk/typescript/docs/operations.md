@@ -49,6 +49,14 @@ without failing it. `triggers.enabled` separately controls new public admission.
 These commands do not invent an idempotency key or
 automatically retry an uncertain result.
 
+Settings reads and successful settings mutations preserve the optional
+`model_budget_writes_available` and `model_request_budget_writes_available`
+booleans. These describe deployment compatibility, separately from policy
+enablement and operator permissions. False or missing means the corresponding
+save capability is unavailable; saving nonempty request-model bounds requires
+both flags to be true. Keep this read-only metadata outside writable settings.
+The server remains authoritative and can refuse a save if availability changes.
+
 Sandbox persistence is owned by Agent Sandbox and its attached PV. CMA exposes
 no public setting for snapshot scheduling or checkpoint archive retention.
 
@@ -112,3 +120,30 @@ authority. Closing new admission preserves exact accepted operations and request
 keys. Browser status/receipt recovery and explicit return remain available while
 new acquire/input/renew is disabled; do not hide a held browser or assume release.
 Replay eligibility affects presentation, not retained authorized history reads.
+
+## Agent capacity recovery
+
+Recovery remains disabled until the service operator completes its activation
+prerequisites. Metadata observation grants no permission to admit work. These
+methods use the existing personal authenticated HTTP boundary and perform no
+automatic retries. They never send or replay Agent input.
+
+Use `client.agents.capacityRecovery(agentId)` to obtain the resource. Its
+`dryRun()` reads current authorized metadata; `status()` reads current recovery
+status; `requestStatus(original)` inspects the unchanged original request.
+`admit(original)` explicitly requests new admission and `resume(original)`
+reconciles one bounded accepted-work attempt. Normal operation timeout and
+cancellation options apply to each method.
+
+The original request contains `agent_id`, `creation_key`,
+`creation_fingerprint`, `failure_seq` and `requested_at`. Obtain them through
+the supported recovery workflow and preserve every field on retry. Never create
+a replacement request to escape uncertainty. An operation key identifies work;
+it grants no authority. Foreign/missing resources remain concealed.
+
+A recorded outcome contains only operation identity, phase, attempt count and
+retry/completion timestamps. An HTTP 202 `unknown` outcome means the commit
+still needs reconciliation. An HTTP 409 `known_abort` is a typed outcome.
+Other conflict problem documents remain typed API errors. Neither outcome proves input was not executed.
+Named admission, authority and service refusals use the SDK's normal API error.
+Native conversation, runtime and home identities are never response fields.

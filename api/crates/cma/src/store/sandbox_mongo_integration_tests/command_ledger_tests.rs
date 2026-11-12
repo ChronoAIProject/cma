@@ -1,10 +1,12 @@
 use futures_util::TryStreamExt;
 mod admission_tests;
 mod audit_tests;
+mod budget_tests;
 mod claim_observation_tests;
 mod contextual_suggestions;
 mod discovery_tests;
-mod execution_tests;
+pub(in crate::store) mod execution_tests;
+mod observability_tests;
 mod queued_cancellation_tests;
 mod queued_input_tests;
 mod refusal_compatibility_tests;
@@ -22,7 +24,7 @@ use crate::store::sandbox_maintenance::mongo_integration_tests::{
     active_sandbox, insert_agent, ready_agent,
 };
 
-fn request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
+pub(super) fn request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
     let command = AgentCommand::message("Inspect this.");
     CommandReservation {
         binding: None,

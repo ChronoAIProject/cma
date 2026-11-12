@@ -10,6 +10,7 @@ use layer2_core::RuntimeCapability;
 use super::{problem_document, problem_response};
 
 pub(crate) enum InstanceProblem {
+    Budget(layer2_core::budget::BudgetError),
     ResourceAccess(layer2_core::resource_access::ResourceAccessError),
     Connection(layer2_core::sandbox::SandboxCredentialPrerequisiteError),
     Forbidden,
@@ -17,6 +18,7 @@ pub(crate) enum InstanceProblem {
     WorkspaceNotFound,
     AgentProfileNotFound,
     InvalidQuery,
+    TranscriptPaginationRequired,
     InvalidRequest,
     WorkspaceNotReady,
     AgentNotReady,
@@ -41,6 +43,10 @@ pub(crate) enum InstanceProblem {
         installed: String,
         requested: String,
     },
+    SkillInstallUnsupported,
+    SkillUpgradeDisabled,
+    SkillHistoryFull,
+    SkillNotReady,
     OperationInFlight,
     CheckpointInProgress,
     DeliveryAmbiguous,
@@ -111,6 +117,7 @@ impl From<AgentReadError> for InstanceProblem {
             AgentReadError::Forbidden => Self::Forbidden,
             AgentReadError::NotFound => Self::AgentNotFound,
             AgentReadError::InvalidPage => Self::InvalidQuery,
+            AgentReadError::TranscriptPaginationRequired => Self::TranscriptPaginationRequired,
             AgentReadError::CapabilityUnsupported { capability } => {
                 Self::CapabilityUnsupported { capability }
             }
@@ -124,6 +131,7 @@ impl From<AgentOperationError> for InstanceProblem {
     fn from(error: AgentOperationError) -> Self {
         match error {
             AgentOperationError::Connection(error) => Self::Connection(error),
+            AgentOperationError::Budget(reason) => Self::Budget(reason),
             AgentOperationError::Forbidden => Self::Forbidden,
             AgentOperationError::NotFound => Self::AgentNotFound,
             AgentOperationError::StatusConflict { .. }
@@ -137,6 +145,8 @@ impl From<AgentOperationError> for InstanceProblem {
                 Self::CapabilityUnsupported { capability }
             }
             AgentOperationError::ContentUnsupported => Self::ContentUnsupported,
+            AgentOperationError::SkillUpgradeDisabled => Self::SkillUpgradeDisabled,
+            AgentOperationError::SkillHistoryFull => Self::SkillHistoryFull,
             AgentOperationError::SkillVersionUpgradeUnsupported {
                 id,
                 installed,
@@ -168,6 +178,7 @@ impl From<AgentOperationError> for InstanceProblem {
 impl IntoResponse for InstanceProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code): (_, _, &str, _) = match &self {
+            Self::Budget(reason) => (StatusCode::PAYMENT_REQUIRED, "model-budget-refused", reason.guidance(), reason.code()),
             Self::ResourceAccess(error) => return super::resource_access_problem::ResourceProblem(error.clone()).into_response(),
             Self::Connection(error) => return super::instances_problem::HierarchyProblem::connection(error.clone()).into_response(),
             Self::Forbidden => (
@@ -193,6 +204,12 @@ impl IntoResponse for InstanceProblem {
                 "agent-profile-not-found",
                 "No usable Agent Profile revision matches this request.",
                 "agent_profile_not_found",
+            ),
+            Self::TranscriptPaginationRequired => (
+                StatusCode::BAD_REQUEST,
+                "transcript-pagination-required",
+                "Read this transcript with limit=32, then follow the returned next cursor. No history was truncated.",
+                "transcript_pagination_required",
             ),
             Self::InvalidQuery => (
                 StatusCode::BAD_REQUEST,
@@ -220,9 +237,29 @@ impl IntoResponse for InstanceProblem {
                 StatusCode::CONFLICT,
                 "agent-skill-version-upgrade-unsupported",
                 &format!(
-                    "Skill {id:?} is already installed at version {installed:?}; changing it to version {requested:?} is unsupported on an existing Agent. Create a replacement Agent with the requested profile."
+                    "Skill {id:?} is already installed at version {installed:?}; this runtime does not support upgrading it to version {requested:?}. No upgrade was admitted. After runtime support becomes available, make a new attempt with a new Idempotency-Key."
                 ),
                 "agent_skill_version_upgrade_unsupported",
+            ),
+            Self::SkillHistoryFull => (
+                StatusCode::CONFLICT, "agent-skill-history-full",
+                "This Agent has reached its retained skill installation history limit (128 attempts). Existing skills and conversation remain available; use a new Agent for further installations.",
+                "agent_skill_history_full",
+            ),
+            Self::SkillUpgradeDisabled => (
+                StatusCode::CONFLICT, "agent-skill-upgrade-disabled",
+                "New skill upgrades are not enabled. No upgrade was admitted. After upgrades are enabled, make a new attempt with a new Idempotency-Key.",
+                "agent_skill_upgrade_disabled",
+            ),
+            Self::SkillInstallUnsupported => (
+                StatusCode::CONFLICT, "agent-skill-install-unsupported",
+                "This Agent runtime does not support installing skills. No installation was admitted. After runtime support becomes available, make a new attempt with a new Idempotency-Key.",
+                "agent_skill_install_unsupported",
+            ),
+            Self::SkillNotReady => (
+                StatusCode::CONFLICT, "agent-not-ready",
+                "The Agent or its Sandbox is not ready and idle. No skill operation was admitted. After it becomes ready and idle, make a new attempt with a new Idempotency-Key.",
+                "agent_not_ready",
             ),
             Self::WorkspaceNotReady => (
                 StatusCode::CONFLICT,
@@ -342,6 +379,33 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn transcript_budget_returns_a_typed_pagination_instruction() {
+        let response =
+            InstanceProblem::from(AgentReadError::TranscriptPaginationRequired).into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "transcript_pagination_required");
+        assert!(body["detail"].as_str().unwrap().contains("limit=32"));
+    }
+
+    #[tokio::test]
+    async fn exhausted_skill_admission_is_service_unavailable_without_a_busy_claim() {
+        let response = InstanceProblem::from(AgentOperationError::Unavailable(
+            "skill admission contention".into(),
+        ))
+        .into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "instance_service_unavailable");
+    }
+
+    #[tokio::test]
     async fn skill_version_upgrade_refusal_has_a_named_conflict_code() {
         let response = InstanceProblem::from(AgentOperationError::SkillVersionUpgradeUnsupported {
             id: "research".into(),
@@ -358,6 +422,6 @@ mod tests {
         assert!(body["detail"]
             .as_str()
             .unwrap()
-            .contains("replacement Agent"));
+            .contains("new Idempotency-Key"));
     }
 }

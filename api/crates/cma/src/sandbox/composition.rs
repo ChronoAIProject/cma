@@ -44,8 +44,12 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub parent_not_ready_pacing_enabled: bool,
+    pub bounded_live_fragments: bool,
+    pub coordinated_ingress: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
+    pub event_driven_reconciliation: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -60,6 +64,8 @@ pub(crate) struct SandboxLifecycleComposition {
     sandbox: SandboxScheduler,
     workspace: SandboxScheduler,
     agent: AgentScheduler,
+    capacity_worker: Arc<AgentWorker>,
+    capacity_recovery: Option<SandboxScheduler>,
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
     updates: Arc<dyn AgentUpdateRecorder>,
@@ -97,9 +103,12 @@ impl SandboxLifecycleComposition {
                 ),
             )),
         ));
-        let updates = DurableAgentUpdateRecorder::with_writer_policy(
+        let updates = DurableAgentUpdateRecorder::with_ingress_budget(
             dependencies.store.clone(),
             dependencies.store.writer_policy.clone(),
+            Some(dependencies.store.clone()),
+            config.bounded_live_fragments,
+            config.coordinated_ingress,
         );
         let registry = Arc::clone(&dependencies.registry);
         let suggestions = super::suggestion_worker::SuggestionWorker::new(
@@ -108,18 +117,21 @@ impl SandboxLifecycleComposition {
             dependencies.title_runtime.clone(),
             config.title_model.clone(),
         );
-        let titles = AgentTitleScheduler::new(AgentTitleWorker::new(
-            AgentTitleService::new(
+        let titles = AgentTitleScheduler::new(
+            AgentTitleWorker::new(
+                AgentTitleService::new(
+                    dependencies.store.clone(),
+                    format!("{}:title", config.holder),
+                )
+                .expect("the deployment worker holder is bounded and nonempty"),
                 dependencies.store.clone(),
-                format!("{}:title", config.holder),
+                Arc::clone(&dependencies.credentials),
+                dependencies.title_runtime,
+                config.title_model,
+                dependencies.title_budget,
             )
-            .expect("the deployment worker holder is bounded and nonempty"),
-            dependencies.store.clone(),
-            Arc::clone(&dependencies.credentials),
-            dependencies.title_runtime,
-            config.title_model,
-            dependencies.title_budget,
-        ));
+            .with_request_budget(dependencies.store.clone()),
+        );
         let workspace_worker = WorkspaceWorker::new(
             WorkspaceWorkerDependencies {
                 store: dependencies.store.clone(),
@@ -145,6 +157,7 @@ impl SandboxLifecycleComposition {
                 config.deployment_id.clone(),
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
+            .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
             .with_managed_documents(config.managed_documents_enabled)
             .with_access_transport_migration(config.access_transport_migration),
         );
@@ -159,7 +172,7 @@ impl SandboxLifecycleComposition {
                     Arc::clone(&workspace_worker),
                 )),
                 agents: Arc::new(DurableLiveAgentStopper::new(
-                    dependencies.store,
+                    dependencies.store.clone(),
                     Arc::clone(&registry),
                 )),
                 registry,
@@ -183,7 +196,13 @@ impl SandboxLifecycleComposition {
             reconciliation,
             sandbox: SandboxScheduler::new(sandbox_worker).with_admission_wake(sandbox_admitted),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
-            agent: AgentScheduler::new(agent_worker, agent_admitted),
+            capacity_worker: agent_worker.clone(),
+            capacity_recovery: None,
+            agent: AgentScheduler::new(agent_worker, agent_admitted)
+                .with_event_driven_reconciliation(
+                    Arc::clone(&dependencies.store.agent_parent_ready),
+                    config.event_driven_reconciliation,
+                ),
             titles,
             funding_renewal,
             suggestions,
@@ -194,6 +213,28 @@ impl SandboxLifecycleComposition {
         Arc::clone(&self.updates)
     }
 
+    pub(crate) fn capacity_recovery_commands(
+        &mut self,
+        store: Arc<MongoSandboxStore>,
+        service: Arc<crate::store::agent_capacity_recovery::RecoveryService>,
+    ) -> Arc<dyn layer2_core::sandbox::agent_capacity_recovery::commands::CapacityRecoveryCommands>
+    {
+        assert!(
+            self.capacity_recovery.is_none(),
+            "capacity recovery is assembled once"
+        );
+        self.capacity_recovery = Some(SandboxScheduler::for_capacity_recovery(
+            super::capacity_scheduler::CapacityRecoverySweep::new(
+                store,
+                service.clone(),
+                self.capacity_worker.clone(),
+            ),
+        ));
+        self.capacity_worker
+            .clone()
+            .capacity_recovery_commands(service)
+    }
+
     pub(crate) async fn initialize(&self) -> Result<(), String> {
         self.reconciliation
             .initialize(std::time::SystemTime::now())
@@ -202,6 +243,9 @@ impl SandboxLifecycleComposition {
     }
 
     pub(crate) fn spawn(self, shutdown: &mut ShutdownCoordinator) {
+        if let Some(scheduler) = self.capacity_recovery {
+            shutdown.push(scheduler.spawn(shutdown.subscribe()));
+        }
         shutdown.push(self.warmup.spawn(shutdown.subscribe()));
         let signal = shutdown.subscribe();
         shutdown.push(self.reconciliation.spawn(signal));

@@ -1,30 +1,49 @@
 //! Validated snapshot reads for conversation projections.
 use super::*;
 
-pub(super) async fn pending_approvals_snapshot(
+pub(in crate::store) async fn pending_approvals_snapshot(
     store: &MongoSandboxStore,
     id: &AgentId,
     session: &mut mongodb::ClientSession,
 ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
-    let agent = store
-        .agents
-        .find_one(doc! { "_id": id.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut *session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_agent)
-        .transpose()?
+    use crate::store::agent_log_integrity::scan_collection;
+    use crate::store::agent_log_reads::integrity::{LogReadIntegrity, PreparedIntegrity};
+    let head = PreparedIntegrity
+        .read_head(store, id, session)
+        .await?
         .ok_or(SandboxStoreError::NotFound)?;
+    if store.bounded_approval_reads
+        && (head.trusted || head.segmented.is_some())
+        && head.last_seq > 200
+    {
+        if let Some(entries) = crate::store::agent_log_reads::read_bounded(
+            store,
+            id,
+            head.last_seq - 200,
+            head.last_seq,
+            &head,
+            session,
+            4 * 1024 * 1024,
+        )
+        .await?
+        {
+            if let Some(pending) = PendingAgentApprovals::from_reset_suffix(&entries) {
+                return Ok(pending);
+            }
+        }
+    }
+    // A read cannot audit, quarantine or repair. Retain complete validation
+    // when the trusted suffix cannot prove a reset of the outstanding set.
     let mut pending = PendingAgentApprovals::default();
-    scan_complete_log_with_snapshot_session(
+    scan_collection(
         ScanCaller::PublicWindowPrefix,
-        store,
+        &store.agent_log,
         id,
-        agent.conversation.last_seq,
+        head.last_seq,
         session,
+        true,
         |entry| {
+            head.validate_lineage(&entry)?;
             pending.observe(&entry);
             Ok(())
         },
@@ -32,6 +51,13 @@ pub(super) async fn pending_approvals_snapshot(
     .await
     .map_err(|error| snapshot_error(error.into()))?;
     Ok(pending.into_entries())
+}
+
+impl MongoSandboxStore {
+    pub(crate) fn with_bounded_approval_reads(mut self, enabled: bool) -> Self {
+        self.bounded_approval_reads = enabled;
+        self
+    }
 }
 
 pub(super) async fn snapshot_session(

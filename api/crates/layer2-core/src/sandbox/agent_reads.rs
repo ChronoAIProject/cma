@@ -19,12 +19,17 @@ pub struct AgentReadService {
     sessions: Option<Arc<dyn super::store::SandboxSessionStore>>,
     resources: Arc<dyn SandboxResourceReader>,
     access: Option<Arc<ResourceAccessService>>,
+    response_logs: Option<Arc<dyn super::store::AgentResponseLogStore>>,
 }
 
 #[path = "agent_reads/authorized.rs"]
 mod authorized;
+#[path = "agent_reads/composition.rs"]
+mod composition;
 #[path = "agent_reads/recovery.rs"]
 mod recovery;
+#[path = "agent_reads/transcript_pages.rs"]
+mod transcript_pages;
 pub use authorized::{AgentDetailReading, SharedAgentDetail};
 #[path = "agent_reads/history.rs"]
 mod history;
@@ -43,6 +48,9 @@ mod sessions;
 #[path = "agent_reads/stream.rs"]
 mod stream;
 pub use stream::{AgentEventStreamAuthorization, AgentEventStreamSnapshot};
+#[path = "agent_reads/response.rs"]
+mod response;
+pub use response::indexed::AgentOutputObservation;
 #[path = "agent_reads/window.rs"]
 mod window;
 pub use window::{
@@ -52,42 +60,11 @@ pub use window::{
 #[path = "agent_reads/answer.rs"]
 mod answer;
 pub use answer::AgentFinalAnswer;
+#[path = "agent_reads/usage.rs"]
+mod usage;
+use usage::fold_agent_usage;
 
 impl AgentReadService {
-    pub fn new<S, R>(store: Arc<S>, resources: Arc<R>) -> Arc<Self>
-    where
-        S: AgentReadStore + 'static,
-        R: SandboxResourceReader + 'static,
-    {
-        Arc::new(Self {
-            store,
-            sessions: None,
-            resources,
-            access: None,
-        })
-    }
-
-    pub fn with_resource_access(self: &Arc<Self>, access: Arc<ResourceAccessService>) -> Arc<Self> {
-        Arc::new(Self {
-            store: self.store.clone(),
-            sessions: self.sessions.clone(),
-            resources: self.resources.clone(),
-            access: Some(access),
-        })
-    }
-
-    pub fn with_sessions(
-        self: &Arc<Self>,
-        sessions: Arc<dyn super::store::SandboxSessionStore>,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            store: self.store.clone(),
-            sessions: Some(sessions),
-            resources: self.resources.clone(),
-            access: self.access.clone(),
-        })
-    }
-
     pub async fn list(
         &self,
         caller: &Caller,
@@ -183,10 +160,7 @@ impl AgentReadService {
         caller: &Caller,
         id: &AgentId,
     ) -> Result<AgentUsageReading, AgentReadError> {
-        let projection = self
-            .projection(caller, id, crate::RuntimeCapability::Usage)
-            .await?;
-        Ok(projection.usage)
+        self.usage_bounded(caller, id).await
     }
 
     pub async fn resources(

@@ -389,15 +389,45 @@ fn nyxid_browser_origin_is_canonical_https() {
 #[test]
 fn interface_feature_flags_are_strict_independent_booleans() {
     let config = configured(&[]).expect("existing configuration starts");
+    assert!(!config.features.retained_reopen_enabled);
+    assert!(!config.features.model_budget_writes_enabled);
+    assert!(!config.features.model_request_budget_writes_enabled);
     assert!(!config.features.v2_ui_transport);
     assert!(!config.features.trigger_command_admission);
     assert!(!config.features.nyxid_resource_request);
+    assert!(!config.features.document_revocation_reserve);
+    assert!(!config.features.retained_context_lookup);
+    assert!(!config.features.event_driven_reconciliation);
     for key in [
+        "CHRONO_RETAINED_REOPEN_ENABLED",
+        "CHRONO_MODEL_BUDGET_WRITES_ENABLED",
+        "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED",
         "CHRONO_V2_UI_TRANSPORT_ENABLED",
         "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
         "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED",
+        "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
+        "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED",
+        "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
     ] {
         let config = configured(&[(key, "true")]).unwrap();
+        assert_eq!(config.features.retained_reopen_enabled, key == "CHRONO_RETAINED_REOPEN_ENABLED");
+        assert!(!configured(&[(key, "false")]).unwrap().features.retained_reopen_enabled);
+        assert_eq!(
+            config.features.model_budget_writes_enabled,
+            key == "CHRONO_MODEL_BUDGET_WRITES_ENABLED"
+        );
+        assert_eq!(
+            config.features.model_request_budget_writes_enabled,
+            key == "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED"
+        );
+        assert!(!configured(&[(key, "false")])
+            .unwrap()
+            .features
+            .model_request_budget_writes_enabled);
+        assert!(!configured(&[(key, "false")])
+            .unwrap()
+            .features
+            .model_budget_writes_enabled);
         assert_eq!(
             config.features.v2_ui_transport,
             key == "CHRONO_V2_UI_TRANSPORT_ENABLED"
@@ -411,8 +441,30 @@ fn interface_feature_flags_are_strict_independent_booleans() {
             key == "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED"
         );
         assert_eq!(
+            config.features.document_revocation_reserve,
+            key == "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED"
+        );
+        assert_eq!(
+            config.features.retained_context_lookup,
+            key == "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED"
+        );
+        assert_eq!(
+            config.features.event_driven_reconciliation,
+            key == "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED"
+        );
+        assert!(!configured(&[(key, "false")]).unwrap().features.document_revocation_reserve);
+        assert_eq!(
             configured(&[(key, "enabled")]).unwrap_err(),
             format!("{key} must be true or false")
         );
     }
+}
+
+#[test]
+fn metrics_listener_is_private_and_has_a_distinct_valid_address() {
+    let config = configured(&[]).unwrap();
+    assert_eq!(config.metrics_bind.to_string(), "0.0.0.0:9091");
+    assert!(configured(&[("CHRONO_METRICS_BIND", "invalid")]).unwrap_err().contains("CHRONO_METRICS_BIND"));
+    assert!(configured(&[("CHRONO_METRICS_BIND", "0.0.0.0:8080")]).unwrap_err().contains("must differ"));
+    assert_eq!(configured(&[("CHRONO_METRICS_BIND", "127.0.0.1:9191")]).unwrap().metrics_bind.to_string(), "127.0.0.1:9191");
 }

@@ -456,8 +456,17 @@ The release that adds network admission limits also changes two Gateway
 contracts. App-origin API, auth, and discovery traffic must reach `cma-agent-manager`
 directly so the trusted GFE forwarding chain, rather than the web pod, supplies
 the client address used for anonymous and admission budgets. The load balancer
-must probe `/ready`, not `/livez`, so a process that has lost its session store
-is not externally routable merely because it is alive.
+must probe `/ready` so a process that has lost its session store becomes
+externally unhealthy. GKE L7 NEGs can retain Kubernetes-unready endpoints; the
+load balancer independently probes each Pod, so EndpointSlice readiness alone
+does not prove external exclusion. `/ready` reads a cached observation without
+waiting on Mongo or creating a checkout per HTTP request. Its single background
+check includes checkout and ping within a two-second deadline; stale success
+fails closed after five seconds. A slow check can use the recent successful
+observation while pending, but a failed check must make the edge probe fail.
+Kubelet liveness uses process-only `/livez` with a two-second timeout and three
+failures before restart. Verify the effective GCP health path and backend state
+on rollout and rollback; an image rollback alone does not restore the policy.
 
 The legacy web image still proxies `/api/` and `/auth/` through
 `Service/cma-agent-manager`, so the Service selector fence below covers both the legacy
@@ -957,6 +966,17 @@ unexpected objects, and zero objects after session-stop reconciliation. The
 retained allowlisted Kubernetes metadata and reservation SHA-256 must bind that
 `0 before / 1 live / 0 after stop` result to the reviewed deployment before
 rollout advances.
+
+### Lifecycle reopen, skill upgrade and Always on adoption
+
+The release carrying #1164, #1209 and #1330 is deployed API-first with
+`CHRONO_AGENT_SKILL_UPGRADE_ENABLED=false`; the runtime is promoted afterwards
+through the normal `CHRONO_SANDBOX_IMAGE` adoption. It raises the API
+authorization rollback floor (administrator-only Always on) and, once the
+runtime is promoted, the Agent Manager rollback floor. Follow the
+[lifecycle acceptance runbook](CMA_Lifecycle_Acceptance_Runbook.md) for the
+order, the pre-enable Always on review and the TC-047, TC-048, TC-057 and
+TC-130 evidence.
 
 ---
 

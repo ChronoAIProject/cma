@@ -1062,14 +1062,18 @@ measurements enter these summaries: no query, reply, database/collection name,
 owner, server address, credential or driver error is recorded. The observer sends
 no diagnostic queries and changes no connection-pool, durability or retry policy.
 
-The singleton Agent Manager requests two CPU cores, permits a four-core burst and
-uses four Tokio workers. Production observations on the prior two-core limit
+The singleton Agent Manager requests four CPU cores and permits an eight-core
+burst. Its Tokio worker count is supplied from container `api`'s `limits.cpu`
+through the downward API with divisor `"1"`, giving eight workers at the current
+limit. Production observations on the prior two-core limit
 averaged approximately 1.56 cores without command monitoring and 1.84 cores with
 it over separate 49/48-second windows. These overlapping application workloads
 are not a controlled benchmark. The additional scheduler capacity must still be
 validated against actual creation timings; it does not establish a five-second
-startup guarantee. Keep one Recreate replica while rate/quota counters remain
-process-local, and verify retained conversations and homes across the API rollout.
+startup guarantee. The Deployment retains one desired replica with maxSurge 1
+and maxUnavailable 0; shared request budgets and transactional visitor quotas
+permit the rolling overlap. Verify retained conversations and homes across the
+API rollout, and assess the settled worker measurement before the next train.
 
 Connection reconciliation carries the applied managed-guidance revision from the
 Agent record that its discovery scan already validated. For an attached Agent at
@@ -1485,6 +1489,10 @@ field preserve the original false default. Existing Sandbox capacities, availabi
 policies and seeded deployment-owned profiles remain authoritative. Validate new
 allocation requests/limits and recorded availability in production; do not infer
 warm-pool readiness merely from the changed configuration.
+When platform automatic pause is enabled, this legacy `always_keep_alive` value
+does not exempt a Sandbox. Only an explicit per-Sandbox `always_on=true` exception
+remains exempt; new approvals require an administrator. Review retained exceptions
+through the audited process in [CMA automatic pause](CMA_Auto_Pause.md).
 
 ### Native runtime interruption recovery
 
@@ -1894,3 +1902,36 @@ after preparation and setup have returned validated receipts; check the same
 Workspace path and PV, preserved original archive/journal, and the real resolved
 Git commit. An ineligible or uncertain outcome must retain the data and fail
 closed rather than publish a synthetic Ready state.
+
+### Skill upgrade reader floor
+
+Deploy the compatible #1209 Agent Manager readers, validators and workers and
+drain predecessor processes **before** promoting a runtime advertising
+`agent_skill_upgrade`. **Runtime promotion establishes an Agent Manager rollback
+floor at this release, even when `CHRONO_AGENT_SKILL_UPGRADE_ENABLED=false`.**
+Older Managers use strict status decoders and reject an unknown advertised
+capability, which would break live Sandbox interaction. Negotiated legacy status
+responses support rolling coexistence; they are not certification of a pre-release
+Manager as an allowed rollback image after promotion.
+
+The first admitted upgrade writes `AgentSkillInstallation.previous` and imposes
+the additional retained-Mongo reader/worker floor. The first runtime mutation
+writes `AgentSkillInstallRequest.upgrade` inside JSON/indexed journals and
+authority records; older runtime `deny_unknown_fields` decoders cannot recover
+it. Runtime import and retirement archives must preserve and understand those
+records too. These floors remain after failure, completion or admission closure.
+
+The default-closed flag blocks new version replacements only. GET, global exact
+accepted-key replay and finite already-admitted worker/recovery settlement remain
+available. Safe rollback closes admission in a compatible Manager, preserves all
+history/proofs/retained trees and the latest runtime default, and uses a compatible
+forward repair. Never downgrade a retained home, erase evidence or interrupt a
+live Sandbox to accommodate an older executable. Existing Sandboxes adopt new
+runtimes only through the recorded owner/idle managed-runtime update policy.
+
+The [release migration record](CMA_Agent_Skills_Runtime.md#reader-floor-and-rollback-record-2026-11-11-am-agent-skill-upgrade)
+identifies all stores, triggers and prerequisites. Exact candidate and approved
+recovery artifact digests, drain receipts, cross-image recovery/continuity drills
+and production activation observations must be supplied by the release operator
+before enabling writers. Local fixtures and pinned-provider proof do not certify
+a historical-image rollback matrix or production migration completion.

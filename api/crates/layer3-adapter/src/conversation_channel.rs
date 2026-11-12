@@ -10,6 +10,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use crate::{AdapterError, ConversationInput};
 
 const DELIVERY_DEADLINE: Duration = Duration::from_secs(2);
+pub(crate) const RETAINED_HISTORY_IDLE_DEADLINE: Duration = Duration::from_secs(5 * 60);
 const CONTEXT_DELIVERY_LIMIT: Duration = Duration::from_secs(120);
 
 struct PendingInput {
@@ -36,9 +37,22 @@ pub trait ConversationInputGuard: Send + Sync {
 #[async_trait::async_trait]
 pub trait ConversationSettingsSupport: Send + Sync {
     async fn system_prompt_supported(&self) -> bool;
+    /// A local, negative-only maintenance hint. Implementations must not perform
+    /// runtime IO here. True still requires fresh admission and an exact receipt;
+    /// unknown implementations retain the ordinary admission path.
+    async fn managed_context_may_be_ready(&self) -> bool {
+        true
+    }
     /// Cursor advances only after the exact conversation output was durably
     /// recorded and acknowledged. Received bytes alone must never advance it.
     async fn managed_context_progress(&self) -> Option<watch::Receiver<u64>> {
+        None
+    }
+    /// Active retained-history load's absolute deadline. A phase change may
+    /// extend delivery only after the input has passed its authority guard.
+    async fn retained_history_deadline(
+        &self,
+    ) -> Option<watch::Receiver<Option<tokio::time::Instant>>> {
         None
     }
     async fn managed_context_receipt(&self, _sequence: u64) -> Option<String> {
@@ -193,6 +207,15 @@ impl ConversationInputSender {
             .await
     }
 
+    /// Defer impossible maintenance without reading or mutating the runtime.
+    /// This observation never authorizes a refresh and is not cached by callers.
+    pub async fn managed_context_may_be_ready(&self) -> bool {
+        match &self.settings_support {
+            Some(support) => support.managed_context_may_be_ready().await,
+            None => false,
+        }
+    }
+
     /// Wait for the local writer to confirm the operation was written.
     pub async fn send(&self, input: ConversationInput) -> crate::Result<()> {
         match self.send_classified(input).await {
@@ -241,14 +264,32 @@ impl ConversationInputSender {
         guard: Option<Arc<dyn ConversationInputGuard>>,
         deadline: Duration,
     ) -> ConversationSendOutcome {
-        let progress = if matches!(input, ConversationInput::RefreshContext { .. }) {
-            match &self.settings_support {
-                Some(support) => support.managed_context_progress().await,
-                None => None,
+        let started = tokio::time::Instant::now();
+        let refreshing = matches!(input, ConversationInput::RefreshContext { .. });
+        let observation = async {
+            if matches!(input, ConversationInput::Configure { .. }) || refreshing {
+                match &self.settings_support {
+                    Some(support) => (
+                        support.managed_context_progress().await,
+                        support.retained_history_deadline().await,
+                    ),
+                    None => (None, None),
+                }
+            } else {
+                (None, None)
             }
-        } else {
-            None
         };
+        // A reliable-output observer can wait behind an inbound runtime request
+        // doing socket or credential IO. Bound that wait before queue admission.
+        let (progress, history) =
+            match tokio::time::timeout_at(started + deadline, observation).await {
+                Ok(observation) => observation,
+                Err(_) => {
+                    return ConversationSendOutcome::PreWriteFailure(AdapterError::Unavailable(
+                        "conversation delivery observation timed out".into(),
+                    ));
+                }
+            };
         let (delivered, receipt) = oneshot::channel();
         let state = Arc::new(AtomicU8::new(PENDING));
         if let Err(error) = self.inner.try_send(PendingInput {
@@ -275,9 +316,11 @@ impl ConversationInputSender {
             state: state.clone(),
             armed: true,
         };
-        let outcome = receive_delivery(receipt, progress, &state, deadline)
-            .await
-            .unwrap_or_else(|detail| incomplete_delivery(&state, detail));
+        let outcome = receive_delivery(
+            receipt, progress, history, &state, deadline, refreshing, started,
+        )
+        .await
+        .unwrap_or_else(|detail| incomplete_delivery(&state, detail));
         if matches!(outcome, ConversationSendOutcome::Ambiguous(_)) {
             self.abort.abort();
         }
@@ -289,24 +332,53 @@ impl ConversationInputSender {
 async fn receive_delivery(
     mut receipt: oneshot::Receiver<ConversationSendOutcome>,
     mut progress: Option<watch::Receiver<u64>>,
+    mut history: Option<watch::Receiver<Option<tokio::time::Instant>>>,
     state: &AtomicU8,
     deadline: Duration,
+    refreshing: bool,
+    started: tokio::time::Instant,
 ) -> Result<ConversationSendOutcome, &'static str> {
     let mut cursor = progress.as_ref().map_or(0, |value| *value.borrow());
-    let limit = if progress.is_some() {
+    let limit = if refreshing && progress.is_some() {
         CONTEXT_DELIVERY_LIMIT
     } else {
         deadline
     };
-    let idle = tokio::time::sleep(deadline);
-    let absolute = tokio::time::sleep(limit);
+    let mut loading = false;
+    let idle = tokio::time::sleep_until(started + deadline);
+    let absolute = tokio::time::sleep_until(started + limit);
     tokio::pin!(idle, absolute);
     loop {
         tokio::select! {
             biased;
-            result = &mut receipt => return result.map_err(|_| "the conversation input task ended before delivery"),
-            _ = &mut absolute => return Err("the conversation input task exceeded its delivery limit"),
-            _ = &mut idle => return Err("the conversation input task did not deliver the operation"),
+            result = &mut receipt => {
+                return result.map_err(|_| "the conversation input task ended before delivery");
+            }
+            changed = async {
+                match history.as_mut() {
+                    Some(value) => value.changed().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if changed.is_err() {
+                    history = None;
+                    continue;
+                }
+                if state.load(Ordering::Acquire) == WRITING {
+                    let until = *history.as_mut()
+                        .expect("watched history load").borrow_and_update();
+                    loading = until.is_some();
+                    let now = tokio::time::Instant::now();
+                    idle.as_mut().reset(now + idle_window(loading, deadline));
+                    absolute.as_mut().reset(until.unwrap_or(now + limit));
+                }
+            }
+            _ = &mut absolute => {
+                return Err("the conversation input task exceeded its delivery limit");
+            }
+            _ = &mut idle => {
+                return Err("the conversation input task did not deliver the operation");
+            }
             changed = async {
                 match progress.as_mut() {
                     Some(value) => value.changed().await,
@@ -322,12 +394,22 @@ async fn receive_delivery(
                     cursor = next;
                     // Output from another queued operation must not extend a
                     // request that has not passed its authority guard yet.
-                    if state.load(Ordering::Acquire) == WRITING {
-                        idle.as_mut().reset(tokio::time::Instant::now() + deadline);
+                    if state.load(Ordering::Acquire) == WRITING && (loading || refreshing) {
+                        idle.as_mut().reset(
+                            tokio::time::Instant::now() + idle_window(loading, deadline),
+                        );
                     }
                 }
             }
         }
+    }
+}
+
+fn idle_window(loading: bool, deadline: Duration) -> Duration {
+    if loading {
+        RETAINED_HISTORY_IDLE_DEADLINE
+    } else {
+        deadline
     }
 }
 
@@ -361,3 +443,7 @@ mod guard_tests;
 #[cfg(test)]
 #[path = "conversation_progress_tests.rs"]
 mod progress_tests;
+
+#[cfg(test)]
+#[path = "conversation_observation_tests.rs"]
+mod observation_tests;
