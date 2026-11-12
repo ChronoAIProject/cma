@@ -119,6 +119,8 @@ impl Counters {
                 ("cma_mongo_read_documents_total", &totals.documents),
                 ("cma_mongo_read_document_bytes_total", &totals.bytes),
             ] {
+                metrics::counter!(metric, "collection" => collection, "operation" => "find")
+                    .absolute(counter.load(Ordering::Relaxed));
                 tracing::info!(parent: None, metric, collection, operation = "find",
                     value = counter.load(Ordering::Relaxed), "Mongo consumed read counter");
             }

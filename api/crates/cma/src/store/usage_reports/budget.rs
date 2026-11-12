@@ -101,7 +101,19 @@ impl Pressure {
         duration: Duration,
         failed: bool,
     ) {
-        self.circuit.fetch_max(now() + 30, Ordering::Relaxed);
+        // Serialize publication so concurrent callbacks cannot regress the gauge.
+        let _publication = self
+            .slow_checkouts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let deadline = now() + 30;
+        let until = self
+            .circuit
+            .fetch_max(deadline, Ordering::Relaxed)
+            .max(deadline);
+        metrics::gauge!("cma_mongo_circuit_until_timestamp_seconds", "pool" => "reporting")
+            .set(until as f64);
+        metrics::counter!("cma_mongo_circuit_opened_total", "pool" => "reporting", "reason" => reason).increment(1);
         tracing::warn!(
             operation,
             reason,
@@ -112,6 +124,8 @@ impl Pressure {
     }
 }
 pub(super) fn observe(options: &mut ClientOptions, circuit: Arc<AtomicU64>) {
+    metrics::gauge!("cma_mongo_circuit_until_timestamp_seconds", "pool" => "reporting").set(0);
+    let pool_observer = super::super::mongo_latency::observer(options, "reporting");
     let pressure = Pressure {
         circuit,
         checked_out: Mutex::new(HashMap::new()),
@@ -119,10 +133,11 @@ pub(super) fn observe(options: &mut ClientOptions, circuit: Arc<AtomicU64>) {
     };
     use super::super::mongo_latency::connection_key;
     let diagnostics = super::super::mongo_diagnostics::install(options, "reporting");
-    options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+    options.cmap_event_handler = Some(EventHandler::callback(move |event: CmapEvent| {
         if let Some(diagnostics) = &diagnostics {
             diagnostics.cmap(&event);
         }
+        pool_observer(event.clone());
         match event {
             CmapEvent::ConnectionCheckedOut(e) => pressure.checkout(
                 connection_key(&e.address, e.connection_id),
@@ -145,6 +160,7 @@ pub(super) fn observe(options: &mut ClientOptions, circuit: Arc<AtomicU64>) {
 }
 pub(super) fn check(circuit: &AtomicU64, at: u64) -> Result<()> {
     if circuit.load(Ordering::Relaxed) > at {
+        metrics::counter!("cma_mongo_circuit_rejections_total", "pool" => "reporting").increment(1);
         Err(MetricsError::Busy)
     } else {
         Ok(())
@@ -184,6 +200,33 @@ impl ReportingStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reporting_callback_preserves_pool_metrics_and_circuit_with_expiry() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            let circuit = Arc::new(AtomicU64::new(0));
+            let mut options = ClientOptions::default();
+            options.max_pool_size = Some(4);
+            observe(&mut options, circuit.clone());
+            let Some(EventHandler::Callback(callback)) = options.cmap_event_handler else {
+                panic!("synchronous callback required");
+            };
+            let event = serde_json::from_value(serde_json::json!({ "reason": "timeout" })).unwrap();
+            callback(CmapEvent::ConnectionCheckoutFailed(event));
+            let until = circuit.load(Ordering::Relaxed);
+            assert!(until > now());
+            assert!(check(&circuit, until - 1).is_err());
+            assert!(check(&circuit, until).is_ok());
+            let text = handle.render();
+            assert!(text.contains("cma_mongo_pool_events_total{pool=\"reporting\",operation=\"checkout\",outcome=\"failed\"} 1"));
+            assert!(text.contains("cma_mongo_circuit_rejections_total{pool=\"reporting\"} 1"));
+            assert!(text.contains(&format!(
+                "cma_mongo_circuit_until_timestamp_seconds{{pool=\"reporting\"}} {until}"
+            )));
+        });
+    }
+
     fn pressure() -> Pressure {
         Pressure {
             circuit: Arc::default(),
