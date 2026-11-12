@@ -8,6 +8,7 @@ use axum::{
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::sync::Mutex;
 
 #[derive(Default)]
 struct Probe {
