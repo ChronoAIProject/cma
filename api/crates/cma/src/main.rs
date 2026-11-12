@@ -441,7 +441,7 @@ fn request_span(_request: &Request) -> tracing::Span {
         parent: None,
         "http.request",
         request_hash = %context.request_hash,
-        route = %context.route,
+        route = context.route.as_ref(),
         method,
         path,
     )
