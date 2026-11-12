@@ -204,6 +204,7 @@ impl ControlPlaneComposition {
             hierarchy,
             Arc::clone(&operations),
         )
+        .with_concurrent_detail_enrichment(config.features.concurrent_sandbox_detail_enrichment)
         .with_runtime_updates(runtime.updates)
         .with_retained_recovery(runtime.recovery)
         .with_retained_reopening(runtime.reopen)

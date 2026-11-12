@@ -106,8 +106,9 @@ data:
   CHRONO_AGENT_LOG_FLEET_PERCENT: "0"
   # Qualify title reads separately after the admission/public-window cohort.
   CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED: "false"
-  # Attribute authorization snapshot sessions independently.
+  # Attribute authorization sessions and optional enrichment independently.
   CHRONO_ACCESS_SNAPSHOT_SESSION_ENABLED: "false"
+  CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED: "false"
   CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED: "false"
   CHRONO_SANDBOX_BATCHED_READS_ENABLED: "false"
   CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "true"
