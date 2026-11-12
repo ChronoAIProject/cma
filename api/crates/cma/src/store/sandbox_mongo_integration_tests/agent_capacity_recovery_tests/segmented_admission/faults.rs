@@ -109,7 +109,7 @@ async fn segmented_capacity_admission_late_abort_rolls_back_carrier_and_successo
         1,
         "only gate admission commits"
     );
-    let original = admission(&store, &request).await;
+    let original = read_admission(&store, &request).await;
     assert_eq!(
         original.kind,
         writer_admission::AdmissionKind::CapacityRecovery
