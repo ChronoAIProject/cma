@@ -1,6 +1,6 @@
 # Segmentation combined PR: current assignments and gate ledger
 
-Updated Thu 2026-11-12 07:59 SGT. S2 owns
+Updated Thu 2026-11-12 08:11 SGT. S2 owns
 `tl/cma-log-segments/integration-20261111`. One default-off combined PR to develop;
 strict-green and PR by14:00, reviewer3 by15:30, explicit relay/merge by16:00,
 evening train19:00–22:00. Writer and recovery activation remain closed.
@@ -9,14 +9,16 @@ Unsupported; source qualification does not claim supported production activation
 
 ## Final handoffs normally integrated
 
-Combined source `e28cb6beb` contains all currently published final S1/S4/S5 pins:
+Combined source `ff0f161b8` now also merges final S3 `e58162249` normally;
+the prior qualified source is `e28cb6beb`. Current-head strict CMA passes with zero diagnostics (2m36s).
+All currently published handoffs are included:
 
 | Owner | Pin / branch | Included work |
 | --- | --- | --- |
 | S1 cma-cost | `f0d9746ef` response-consumers + `b24fb1c57` reader-foundation | Indexed response consumers, retained readers, legacy/v2 shared caller wiring, actual factory/public tests. |
 | S4 cma-seg-lead | `d8e10b63d` writer-publication | Scoped reconciliation, accepted-recovery composition, positive current activation caller, invariant agreement, final writer/recovery gate evidence. |
 | S5 cma-seg-3 | `2144909ce` capacity-recovery (ancestor of S4 final pin) | Sequence-only progress correction `00426512f`, original-witness recovery, later-turn fixture and qualified restart/loss cases. |
-| S3 cma-seg-2 | `c62ab928f` transcript-consumers | Prior checkpoint only; final bounded transcript/parity work still in progress. |
+| S3 cma-seg-2 | `e58162249` transcript-consumers | Final published checkpoint normally merged. Title-format and suggestion snapshot fixes retained; P1-4 bounded transcript/title work and selected parity/scale evidence remain open. |
 | S2 cma-db-contention | `c4e4b995a` proof; `3fc57ec55` config split | Positive transaction-bound current publication, canonical schema/checksum/runtime roles, scheduler and integration. |
 | Develop | `3aee1ff68` | Retained-context and decoded-JSON policies normally included. |
 
@@ -80,6 +82,12 @@ feature-gate suppression or fake call is an acceptable closure.
 | `e28cb6beb` | Strict core/public/adapter all targets/features, -D warnings | PASS, zero diagnostics, 1m04s. Behavioral gates continue. |
 | `e28cb6beb` | Shared caller/configuration | 26passed/0failed,2674skipped; both required factory tests and strict default-off flag tests selected. |
 | `e28cb6beb` | Scheduler/configuration | 57passed/0failed,2642skipped; all7accepted-recovery scheduler tests verified in the inventory. |
+| `e28cb6beb` | Public response tests | 108passed/0failed,513skipped. |
+| `e28cb6beb` | Consumer/core tests | 205passed/0failed,1305skipped. |
+| `e28cb6beb` | Adapter tests | 47passed/0failed,711skipped. |
+| `e28cb6beb` | Mongo/supplemental remainder | Intentionally canceled before authenticated Mongo when final S3 arrived; status143 is supersession, not an executed test failure. |
+| `ff0f161b8` | Strict CMA all targets/features, -D warnings | PASS, zero diagnostics,2m36s; formatting also passed. Remaining combined gates continue under heavy-1. |
+| `ff0f161b8` | Strict core/public/adapter | PASS, zero diagnostics,58.94s; canonical size6259files and config-document checks passed. |
 
 Original failed recovery cases: S4
 `capacity_later_service_retries_crash_and_refuses_foreign_or_stale_activation`,
@@ -161,10 +169,28 @@ selection covers remaining segment/operator/proof units, recovery HTTP cases and
 the partitioned real-Mongo inventory after the ten-step batch succeeds.
 All changed Rust/TypeScript files are independently confirmed below500lines.
 
-Current qualification status: strict CMA, strict affected layers,26caller/configuration
-tests and57scheduler/configuration tests pass. Response/core/adapter tests and
-actual Mongo contracts remain in the serial queue. The queue uses the required3600-second blocking wait; no pending test is
-reported as passed. The immutable e28source equals the pushed candidate under
-api/,infra/and.github/; subsequent commits so far are documentation only.
-The combined behavioral/Mongo runner and dependent supplemental runner continue
-serially, each releasing the shared slot between steps and stopping on failure.
+Current qualification status: new source ff0f161b8 is exported immutably and
+strict CMA passed with zero diagnostics in2m36s. The e28 runner completed both lint gates plus26caller,
+57scheduler,108response,205core and47adapter tests. Preserve their separate
+selection counts; overlapping suites are not summed as unique test coverage.
+The obsolete e28 Mongo/supplemental remainder was canceled before execution
+when S3 arrived. New-source gates include those Mongo requirements afresh.
+
+S3 merge resolution: retain the already-wired production caller/service roots,
+FeatureFlags argument boundary, one copy of each flag/parser/test, the existing
+row-and-byte-bounded compatibility helper and its empty-range proof. Do not
+import S3's isolated-branch dead_code/too_many_arguments suppressions. Its title
+format discriminator and suggestion fallback snapshot changes are included.
+The handoff adds no new transcript parity/scale tests; P1-4/P2 stay withS3.
+Current transcript traversal still starts at zero inagent_log_segment_reads.rs;
+selected fallback/title work still needs fixed-request bounds and the matrix.
+All idle owners retain the exact assignments above. New strict diagnostics,
+if any, are assigned from the actual combined compiler output, not inherited
+historical slice counts. Writer/recovery activation remains closed.
+
+S3 qualification must explicitly cover suggestion snapshot fallback after a
+segmented proof refusal. The new bounded_log branch catches Corrupt,
+SequenceConflict, capacity, invalid-page and missing-source outcomes before
+raw range lookup; prove that retained/current source validation is not bypassed
+and separate unpublished append handling from ordinary read validation.
+This is assigned toS3 with the existing refusal matrix, not an assumed pass.
