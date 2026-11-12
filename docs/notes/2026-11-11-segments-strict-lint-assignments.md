@@ -227,3 +227,26 @@ post-adoption output requirement. Exact additional ownership/dependency was
 requested through the lead. Keep writer/recovery activation closed and both
 issues In Progress. Final-source gate counts and the exact pin are appended below;
 no unexecuted test or previous-pin pass is a qualification of this pin.
+
+### Published 13:00 checkpoint (12:56 SGT)
+
+Pushed executable head `256f455b9` normally merges develop `d08742c70`.
+The narrow CapacityRecovery permission commit is `ea8d89ef7`; ordinary claim/
+admission code and four new Mongo roots are `a56e1e025`. All are reachable from
+`tl/cma-log-segments/ordinary-v2-admission`. No PR is opened.
+
+Exact-head light gates: fmt/whitespace pass; canonical size 6,375 files pass;
+secret history 4,162 commits / zero findings. Prior working-source strict CMA
+all-targets/all-features passed with zero diagnostics, and the earlier planner
+selection passed 8/8. These are interim evidence only: additional tests and the
+develop merge require final-source strict/units/Mongo, now queued on shared slot 1.
+The queue uses `lockf -k -t 3600`, two jobs and a RAM pause below 10%; locks remain
+intact. An accidentally selected root-default toolchain build was cancelled and
+requeued with the repository's explicit 1.96.1 toolchain before any test executed.
+No final-source unit or Mongo count is claimed. Evidence remains in
+`notes/2026-11-12-ordinary-v2-evidence/` in the dedicated worktree.
+
+Full P1-1 closure remains blocked on the additional conversation/checkpoint/
+settlement paths named above; current proof is admission/worker publication only.
+P1-N1 writer permission is published for S5's service qualification, not declared
+service-qualified. Project 9 for #1350 and #1351 was verified In Progress.
