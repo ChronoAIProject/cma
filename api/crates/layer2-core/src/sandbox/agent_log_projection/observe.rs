@@ -129,6 +129,7 @@ impl AgentLogProjectionState {
                     response_usage: None,
                     response_usage_sequence: None,
                     prewrite_failure_sequence: None,
+                    approval_change_sequence: None,
                     conversation_id: self
                         .latest_conversation
                         .as_ref()
