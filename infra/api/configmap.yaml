@@ -7,6 +7,7 @@ metadata:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 data:
+  CHRONO_COMMAND_RECONCILE_PACING_ENABLED: "false"
   # Private pod scrape listener; never routed by the public Service/Gateway.
   CHRONO_METRICS_BIND: "0.0.0.0:9091"
   CHRONO_INGRESS_COORDINATOR_ENABLED: "false"
