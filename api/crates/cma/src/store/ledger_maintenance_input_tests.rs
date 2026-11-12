@@ -14,6 +14,9 @@ use helpers::*;
 #[path = "ledger_maintenance_command_tests.rs"]
 mod command_mutations;
 
+#[path = "ledger_maintenance_unclaimed_tests.rs"]
+mod unclaimed;
+
 #[path = "ledger_maintenance_creation_tests.rs"]
 mod creations;
 
