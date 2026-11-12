@@ -70,6 +70,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     return profile.content;
   };
   return {
+    accountDeletion: sdk.account.deletion,
     usageViews: createUsageClient(sdk),
     deliverables: sdk.agents,
     documents: documentsClient(),
@@ -126,7 +127,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       return type === 'string' || (Array.isArray(type) && type.includes('string'));
     },
     createAgentLifecycle: async (input: AgentLifecycleCreateInput, options) => {
-      const response = await fetch('/api/agent-manager/v1/agents', {
+      const response = await sdk.config.fetch('/api/agent-manager/v1/agents', {
         method: 'POST',
         credentials: 'same-origin',
         cache: 'no-store',
@@ -182,7 +183,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       operationId: string,
       options,
     ): Promise<AgentLifecycleOperationView> => {
-      const response = await fetch(
+      const response = await sdk.config.fetch(
         `/api/agent-manager/v1/agent-lifecycle/${encodeURIComponent(operationId)}`,
         {
           credentials: 'same-origin',

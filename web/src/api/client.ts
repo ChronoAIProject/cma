@@ -46,6 +46,8 @@ export interface CommandOptions extends ReadOptions {
   readonly idempotencyKey: string;
 }
 
+export type AccountDeletionClient = Pick<Cma['account']['deletion'], 'request' | 'status'>;
+
 export interface AgentStreamOptions extends ReadOptions {
   readonly idempotencyKey?: string;
   readonly after?: number;
@@ -168,6 +170,7 @@ export class AgentLifecycleCreateError extends Error {
 
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
+  readonly accountDeletion?: AccountDeletionClient;
   readonly usageViews?: import('../usage/client').UsageClient;
   readonly readSuggestedReplies?: (
     agentId: string,
