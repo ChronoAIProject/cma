@@ -99,6 +99,7 @@ pub(super) fn authentication(
     )?
     .with_binding_store(stores.sandbox_model.clone())
     .with_platform_spend(stores.sandbox_model.clone())
+    .with_registration_capacity(stores.registration_capacity.clone())
     .with_bot_father_username(
         config
             .bot_father

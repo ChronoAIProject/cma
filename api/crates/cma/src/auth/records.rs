@@ -77,39 +77,108 @@ impl AuthState {
         self
     }
 
-    /// The authority, at the callback: reads fail closed. The directory is
-    /// consulted only while a closure exists.
+    /// The authority, before sign-in persistence: existing identity and owned
+    /// resource evidence survives a failed best-effort directory observation.
     pub(super) async fn admit_registration(
         &self,
         subject: &SubjectId,
     ) -> Result<RegistrationDecision, StoreError> {
-        let Some(spend) = self.spend.as_ref() else {
+        if self.spend.is_none() && self.registration_capacity.is_none() {
             return Ok(RegistrationDecision::Admitted);
+        }
+        // Keep the inherited directory read first. A known owner does not need
+        // a readable platform state to sign in.
+        let directory_error = if let Some(records) = self.records.as_ref() {
+            match records.users.user(subject).await {
+                Ok(Some(_)) => return Ok(RegistrationDecision::Existing),
+                Ok(None) => None,
+                Err(error) => Some(error),
+            }
+        } else {
+            None
         };
-        // An existing owner signs in without the platform state: closures
-        // close registration, and an unreadable state must not lock owners out.
-        if let Some(records) = self.records.as_ref() {
-            if records.users.user(subject).await?.is_some() {
+        let snapshot = match self.spend.as_ref() {
+            Some(spend) => Some(spend.admission_snapshot(now_seconds()).await),
+            None => None,
+        };
+        // Recheck an unknown/inactive marker for unseen subjects. Positive
+        // activation is immutable; known directory owners returned above.
+        let mut activation_error = None;
+        if directory_error.is_none()
+            && matches!(&snapshot, Some(Ok((state, Ok(ceilings))))
+                if !state.closed_for_registration() && ceilings.registrations.is_none())
+        {
+            if let Some(capacity) = self.registration_capacity.as_ref() {
+                match capacity.tracking_active().await {
+                    Ok(false) => return Ok(RegistrationDecision::Admitted),
+                    Ok(true) => {}
+                    Err(error) => activation_error = Some(error),
+                }
+            }
+        }
+        // Resolve retained evidence before honoring a closed or unreadable
+        // snapshot, including owners whose directory observation once failed.
+        if let Some(capacity) = self.registration_capacity.as_ref() {
+            if capacity.existing_subject(subject).await? {
                 return Ok(RegistrationDecision::Existing);
             }
         }
-        let state = spend
-            .admission_state(now_seconds())
-            .await
-            .map_err(|error| StoreError::Unavailable(error.to_string()))?;
-        Ok(registration_decision(&state, false))
+        if let Some(error) = directory_error.or(activation_error) {
+            return Err(error);
+        }
+        let limit = if let Some(snapshot) = snapshot {
+            let (state, ceilings) =
+                snapshot.map_err(|error| StoreError::Unavailable(error.to_string()))?;
+            if registration_decision(&state, false) == RegistrationDecision::Closed {
+                return Ok(RegistrationDecision::Closed);
+            }
+            match ceilings {
+                Ok(ceilings) => Some(Ok(ceilings.registrations)),
+                Err(()) => return Ok(RegistrationDecision::Closed),
+            }
+        } else {
+            None
+        };
+        if let Some(capacity) = self.registration_capacity.as_ref() {
+            let accepted = match limit {
+                Some(limit) => capacity.admit_with_limit(subject, limit).await?,
+                None => capacity.admit(subject).await?,
+            };
+            if !accepted {
+                return Ok(RegistrationDecision::Closed);
+            }
+        }
+        Ok(RegistrationDecision::Admitted)
     }
 
     /// Advisory, at the sign-up entry: an unreadable state proceeds and the
     /// callback decides, because an identity can also be created upstream.
     pub(super) async fn registration_open(&self) -> bool {
-        let Some(spend) = self.spend.as_ref() else {
-            return true;
+        let limit = if let Some(spend) = self.spend.as_ref() {
+            match spend.admission_snapshot(now_seconds()).await {
+                Ok((state, ceilings)) => {
+                    if state.closed_for_registration() {
+                        return false;
+                    }
+                    match ceilings {
+                        Ok(ceilings) => Some(Ok(ceilings.registrations)),
+                        Err(()) => return false,
+                    }
+                }
+                // Preserve the existing advisory behavior for a spend read
+                // failure; capacity still performs its own fail-closed check.
+                Err(_) => None,
+            }
+        } else {
+            None
         };
-        spend
-            .admission_state(now_seconds())
-            .await
-            .map_or(true, |state| !state.closed_for_registration())
+        match self.registration_capacity.as_ref() {
+            Some(capacity) => match limit {
+                Some(limit) => capacity.available_with_limit(limit).await.unwrap_or(false),
+                None => capacity.available().await.unwrap_or(false),
+            },
+            None => true,
+        }
     }
 }
 

@@ -144,6 +144,7 @@ impl MongoAuthStore {
             .create_index(expiry())
             .await
             .map_err(|_| StoreError::Unavailable("API bearer custody expiry index".into()))?;
+        store.ensure_bearer_subject_index().await?;
         store
             .actor_links
             .create_index(

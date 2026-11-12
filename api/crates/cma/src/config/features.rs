@@ -22,6 +22,7 @@ pub(crate) struct FeatureFlags {
     pub model_request_budget_writes_enabled: bool,
     pub platform_spend_writes_enabled: bool,
     pub admission_control_writes_enabled: bool,
+    pub admission_ceilings_writes_enabled: bool,
     pub bounded_title_reads: bool,
     pub sandbox_snapshot_reads: bool,
     pub sandbox_batched_reads: bool,
@@ -99,6 +100,10 @@ impl FeatureFlags {
             admission_control_writes_enabled: flag(
                 lookup,
                 "CHRONO_ADMISSION_CONTROL_WRITES_ENABLED",
+            )?,
+            admission_ceilings_writes_enabled: flag(
+                lookup,
+                "CHRONO_ADMISSION_CEILINGS_WRITES_ENABLED",
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
