@@ -312,7 +312,10 @@ liability and would strand admitted work.
 3. Homes, receipts and history are retained. Retained disk continues to accrue
    in the cloud run rate; that is expected and already inside `disposable`.
 4. Nothing resumes automatically. When a closure lifts (section 6) the owner
-   sends a new message; revival then goes through ordinary admission.
+   sends a new message; revival then goes through ordinary admission. While
+   `SpendStop` is present the sweep also defers managed runtime updates,
+   because their rotation starts a runtime even on a paused Sandbox; they run
+   again after the lift.
 
 `MeteringUnavailable` performs steps 1–2 **only if** `SpendStop` is also
 present. Staleness alone refuses new commitments and leaves running work alone.
