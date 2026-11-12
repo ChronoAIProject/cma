@@ -185,8 +185,8 @@ async fn reliable_output_replays_foreign_and_recovered_terminals_with_their_iden
         };
         assert_eq!(receipt.source.cursor, cursor);
         if let Some(update) = update {
-            if let ConversationUpdate::TurnEndedForPrompt { prompt_id, .. } = *update {
-                terminals.push(prompt_id);
+            if let ConversationUpdate::TurnEndedForPrompt { prompt_id, .. } = &*update {
+                terminals.push(prompt_id.clone());
             }
         }
         receipt.acknowledge().await.unwrap();
