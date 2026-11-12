@@ -106,6 +106,7 @@ async fn fixture() -> (
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let client = StorageDocuments::new(DocumentStorageConfig {
+        resilience_enabled: true,
         platform_origin: origin,
         bucket: "fixture".into(),
         client_id: "fixture-machine".into(),
