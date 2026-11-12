@@ -111,7 +111,10 @@ async fn commit_conversation(
         };
         admission::require_current(&mutation, &mut session).await?;
         match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => return Ok(receipt.logs),
+            CommitOutcome::Committed => {
+                crate::telemetry::work::published(&receipt.logs, "committed");
+                return Ok(receipt.logs);
+            }
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
             CommitOutcome::Unknown(error) => {
                 let snapshot_time = session.operation_time().ok_or_else(|| {
@@ -124,6 +127,7 @@ async fn commit_conversation(
                 let store = store.clone();
                 return wait_for_reconciliation("agent conversation commit", async move {
                     if reconcile_conversation_after_commit(&store, &receipt, snapshot_time).await? {
+                        crate::telemetry::work::published(&receipt.logs, "reconciled");
                         Ok(receipt.logs)
                     } else {
                         Err(SandboxStoreError::Unavailable(format!(
