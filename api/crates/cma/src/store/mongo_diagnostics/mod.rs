@@ -10,6 +10,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+pub(super) mod output;
 mod periodic;
 mod summary;
 use sha2::{Digest, Sha256};
@@ -19,7 +20,7 @@ const SLOW: Duration = Duration::from_millis(100);
 const SAMPLE_EVERY: u64 = 100;
 
 #[derive(Clone)]
-struct Command {
+pub(super) struct Command {
     context: DiagnosticContext,
     pool: &'static str,
     hold_hash: Arc<str>,
@@ -49,6 +50,7 @@ struct State {
 pub(super) struct Diagnostics(Arc<Mutex<State>>, &'static str);
 impl Default for Diagnostics {
     fn default() -> Self {
+        output::initialize();
         Self(
             Arc::new(Mutex::new(State {
                 salt: *uuid::Uuid::new_v4().as_bytes(),
@@ -69,12 +71,12 @@ pub(super) fn install(
     let value = std::env::var(crate::config::MONGO_DIAGNOSTICS_ENABLED);
     install_configured(options, pool, value.as_deref().ok())
 }
-fn install_configured(
+pub(super) fn install_configured(
     options: &mut mongodb::options::ClientOptions,
     pool: &'static str,
     value: Option<&str>,
 ) -> Option<Diagnostics> {
-    if value != Some("true") {
+    if value != Some("true") || !output::initialize() {
         return None;
     }
     let diagnostics = Diagnostics(Diagnostics::default().0, pool);
@@ -347,8 +349,26 @@ impl Command {
         hold_us: u64,
         deferred: bool,
     ) {
+        output::send(output::Record::Detail {
+            command: self.clone(),
+            event,
+            duration,
+            docs,
+            hold_us,
+            deferred,
+        });
+    }
+    fn write(
+        &self,
+        event: &'static str,
+        duration: Duration,
+        docs: Option<u64>,
+        hold_us: u64,
+        deferred: bool,
+        queue_delay_us: u64,
+    ) {
         tracing::info!(target: "mongo_diagnostic", parent: None,
-            event, pool = self.pool, hold_hash = %self.hold_hash, route = self.context.route.as_ref(), request_hash = %self.context.request_hash,
+            event, queue_delay_us, pool = self.pool, hold_hash = %self.hold_hash, route = self.context.route.as_ref(), request_hash = %self.context.request_hash,
             worker = self.context.worker, phase = self.context.phase,
             command = self.command, collection = self.collection,
             duration_us = micros(duration), docs_returned = docs.unwrap_or(0), docs_returned_known = docs.is_some(), session = self.session,

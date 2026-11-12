@@ -41,6 +41,7 @@ struct Window {
 
 impl Window {
     fn new(started: Instant) -> Self {
+        super::mongo_diagnostics::output::initialize();
         Self {
             started,
             samples: [Sample::default(); LABELS.len()],
@@ -119,20 +120,20 @@ impl Observer {
                 if sample.count == 0 {
                     continue;
                 }
-                tracing::info!(
-                    parent: None,
-                    pool = self.1,
-                    operation,
-                    window_ms = now.duration_since(window.started).as_millis(),
-                    count = sample.count,
-                    failures = sample.failures,
-                    total_us = sample.total_us,
-                    max_us = sample.max_us,
-                    buckets = ?sample.buckets,
-                    in_use,
-                    in_use_peak = window.in_use_peak,
-                    untracked = window.untracked,
-                    "MongoDB client latency summary"
+                super::mongo_diagnostics::output::send(
+                    super::mongo_diagnostics::output::Record::Latency {
+                        pool: self.1,
+                        operation,
+                        window_ms: now.duration_since(window.started).as_millis() as u64,
+                        count: sample.count,
+                        failures: sample.failures,
+                        total_us: sample.total_us,
+                        max_us: sample.max_us,
+                        buckets: sample.buckets,
+                        in_use,
+                        in_use_peak: window.in_use_peak,
+                        untracked: window.untracked,
+                    },
                 );
             }
         }
@@ -165,7 +166,9 @@ pub(crate) fn observer(
 
 #[cfg(test)]
 fn attach(options: &mut ClientOptions, observer: Observer) {
-    let diagnostics = super::mongo_diagnostics::install(options, "general");
+    // This fixture exercises monitoring explicitly, independent of process flags.
+    let diagnostics =
+        super::mongo_diagnostics::install_configured(options, "general", Some("true"));
     options.cmap_event_handler = Some(EventHandler::callback(move |event| {
         if let Some(diagnostics) = &diagnostics {
             diagnostics.cmap(&event);
