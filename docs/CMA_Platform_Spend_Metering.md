@@ -279,8 +279,11 @@ CMA subject only at the sign-in callback, and visitors pass the same callback
 and nowhere in the identity provider. CMA's own sign-up entry
 (`/auth/login?screen=register`, which redirects to the identity provider's
 registration page) is refused too, so the sign-up path does not lead people to
-create an identity CMA will then refuse. The entry check is advisory: when the
-admission state cannot be read it proceeds, and the callback — which fails
+create an identity CMA will then refuse. `GET /auth/signup-options` likewise
+reports `register_available: false` while registration is closed, read on
+every request rather than from its provider cache, so the landing page hides
+account creation. The entry check and the options are advisory: when the
+admission state cannot be read they proceed, and the callback — which fails
 closed — remains the authority, because an identity can also be created at the
 provider directly. Existing owners are never affected: the callback finds them
 in the user directory before it reads the admission state (decision 25).
