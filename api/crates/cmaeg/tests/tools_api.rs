@@ -37,6 +37,8 @@ mod media_authority;
 mod media_downloads;
 #[path = "tools/media_links.rs"]
 mod media_links;
+#[path = "tools/media_redemption.rs"]
+mod media_redemption;
 #[path = "tools/media_support.rs"]
 pub mod media_support;
 #[path = "tools/native_discord_edits.rs"]
