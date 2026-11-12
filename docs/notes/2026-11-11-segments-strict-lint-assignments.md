@@ -88,6 +88,12 @@ feature-gate suppression or fake call is an acceptable closure.
 | `e28cb6beb` | Mongo/supplemental remainder | Intentionally canceled before authenticated Mongo when final S3 arrived; status143 is supersession, not an executed test failure. |
 | `ff0f161b8` | Strict CMA all targets/features, -D warnings | PASS, zero diagnostics,2m36s; formatting also passed. Remaining combined gates continue under heavy-1. |
 | `ff0f161b8` | Strict core/public/adapter | PASS, zero diagnostics,58.94s; canonical size6259files and config-document checks passed. |
+| `ff0f161b8` | Shared caller/configuration | 26passed/0failed,2674skipped; both required production factory tests selected. |
+| `ff0f161b8` | Scheduler/configuration | 57passed/0failed,2642skipped; all7accepted-recovery scheduler tests selected. |
+| `ff0f161b8` | Public/core/adapter | 108/205/47passed, zero failures;513/1305/711skipped respectively. |
+| `ff0f161b8` | Canonical authenticated Mongo | 1passed/0failed,2698skipped. |
+| `ff0f161b8` | Recovery Mongo | 31passed/0failed,2668skipped,74.194s; all four prior later-progress failures now pass. |
+| `ff0f161b8` | Retained/discovery Mongo | **3passed/1failed**,2695skipped,7.550s. Discovery fixture incorrectly expects recovery eligibility while PublishConnection remains pending. Supplemental gates stopped. |
 
 Original failed recovery cases: S4
 `capacity_later_service_retries_crash_and_refuses_foreign_or_stale_activation`,
@@ -194,3 +200,15 @@ SequenceConflict, capacity, invalid-page and missing-source outcomes before
 raw range lookup; prove that retained/current source validation is not bypassed
 and separate unpublished append handling from ordinary read validation.
 This is assigned toS3 with the existing refusal matrix, not an assumed pass.
+
+## Combined discovery fixture correction — S2
+
+S2 owns only `store/sandbox_mongo_integration_tests/agent_segment_tests/worker_discovery.rs`
+for the new executed failure at line54. S4 retains ordinary production roots.
+`ready_source` returns Ready status with PublishConnection still pending; the
+candidate contract correctly requires work None and no lease before recovery.
+The correction finishes the legacy connection through claim/commit, then checks
+both positive completed eligibility and refusal for pending adopted work. Both
+stored documents must remain unchanged by discovery. No production predicate,
+fence, recovery admission or writer boundary changes. Targeted rerun is required;
+do not count this correction as passed before execution.
