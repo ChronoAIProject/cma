@@ -42,14 +42,18 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
     ))
 }
 
-/// The operator's platform spend service over the Sandbox store's period row.
+/// The operator's platform spend service over the Sandbox store's period row,
+/// writable only behind the platform settings' third write gate.
 pub(super) fn platform_spend(
     stores: &MongoStores,
-    activity: Arc<layer2_core::ActivityService>,
-    writes_enabled: bool,
+    activity: &Arc<layer2_core::ActivityService>,
+    settings: &layer2_core::PlatformSettingsService,
 ) -> Arc<layer2_core::budget::PlatformSpendService> {
     Arc::new(
-        layer2_core::budget::PlatformSpendService::new(stores.sandbox_model.clone(), activity)
-            .with_writes_enabled(writes_enabled),
+        layer2_core::budget::PlatformSpendService::new(
+            stores.sandbox_model.clone(),
+            Arc::clone(activity),
+        )
+        .with_writes_enabled(settings.platform_spend_writes_enabled()),
     )
 }
