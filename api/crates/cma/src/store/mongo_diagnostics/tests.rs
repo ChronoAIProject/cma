@@ -23,6 +23,9 @@ async fn slow_success_failure_and_hold_emit_safe_fields_without_parent_values() 
     let output = Output::default();
     let subscriber = tracing_subscriber::fmt()
         .json()
+        // JSON 0.3.23 otherwise falls back to the current span for root events.
+        .with_current_span(false)
+        .with_span_list(false)
         .without_time()
         .with_writer(output.clone())
         .finish();
@@ -122,6 +125,32 @@ async fn slow_success_failure_and_hold_emit_safe_fields_without_parent_values() 
     assert_eq!(events[1]["fields"]["docs_returned"], 2);
     assert_eq!(events[3]["fields"]["event"], "failed");
     assert_eq!(events[4]["fields"]["event"], "checked_in");
+}
+#[test]
+fn production_text_format_excludes_caller_fields_from_events_and_summaries() {
+    let output = Output::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .without_time()
+        .with_writer(output.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let span = tracing::info_span!("private_parent", owner = "private-owner-sentinel");
+    let _entered = span.enter();
+    let command = metadata(
+        "find",
+        &doc! {"find":"agents", "filter":{"owner":"private-filter"}},
+        false,
+    );
+    command.emit("failed", SLOW, None, 0, false);
+    let mut totals = Summary::default();
+    totals.record(&command, "command", SLOW, None, true);
+    summary::emit(Some(totals.drain()));
+    let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+    assert_eq!(logs.lines().count(), 2);
+    assert!(logs.contains("MongoDB diagnostic event"));
+    assert!(logs.contains("MongoDB attributed totals"));
+    assert!(!logs.contains("private"), "{logs}");
 }
 #[test]
 fn fast_events_are_sampled_but_totals_and_closed_connection_cleanup_are_complete() {

@@ -99,7 +99,7 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogOutput {
 async fn request_log_uses_the_same_hash_and_never_raw_path_query_or_header() {
     let output = LogOutput::default();
     let subscriber = tracing_subscriber::fmt()
-        .json()
+        .with_ansi(false)
         .without_time()
         .with_writer(output.clone())
         .finish();
@@ -107,17 +107,18 @@ async fn request_log_uses_the_same_hash_and_never_raw_path_query_or_header() {
     let outer = tracing::info_span!("private", owner = "private-owner");
     let _entered = outer.enter();
     let app = crate::with_request_context(Router::new().route("/agents/{id}", get(streaming)));
+    let request_id = uuid::Uuid::new_v4().to_string();
     let response = app
         .oneshot(
             Request::builder()
                 .uri("/agents/private-resource?payload=private-query")
-                .header("x-request-id", "private-header")
+                .header("x-request-id", &request_id)
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(response.headers()["x-request-id"], "private-header");
+    assert_eq!(response.headers()["x-request-id"], request_id.as_str());
     let body = String::from_utf8(
         response
             .into_body()
@@ -135,4 +136,5 @@ async fn request_log_uses_the_same_hash_and_never_raw_path_query_or_header() {
     );
     assert!(logs.contains("GET /agents/{id}"));
     assert!(!logs.contains("private"), "{logs}");
+    assert!(!logs.contains(&request_id), "{logs}");
 }
