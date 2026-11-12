@@ -28,6 +28,8 @@ mod identity_retry;
 #[allow(dead_code, reason = "the aggregate-neutral issuer is consumed by #809")]
 pub mod keys;
 mod middleware;
+#[cfg(test)]
+pub(super) mod nyxid_contract_tests;
 pub(crate) mod nyxid_proxy;
 pub mod organizations;
 mod permissions;
