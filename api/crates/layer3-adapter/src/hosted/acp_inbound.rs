@@ -18,6 +18,30 @@ impl Bridge {
             return Ok(());
         };
 
+        self.receive_frame(super::retained_json::JsonFrame::legacy(frame), updates)
+            .await
+    }
+
+    pub(super) async fn receive_frame(
+        &self,
+        frame: super::retained_json::JsonFrame,
+        updates: &UpdateRelay,
+    ) -> crate::Result<()> {
+        let sign_in = self
+            .json_pools
+            .as_ref()
+            .map(|pools| pools.admit_sign_in(&frame))
+            .transpose()?
+            .flatten();
+        self.receive_admitted_frame(frame, updates, sign_in).await
+    }
+
+    pub(super) async fn receive_admitted_frame(
+        &self,
+        frame: super::retained_json::JsonFrame,
+        updates: &UpdateRelay,
+        sign_in: Option<super::sign_in_retention::Admission>,
+    ) -> crate::Result<()> {
         if let Some(id) = frame.get("id") {
             if frame.get("method").is_none() {
                 let waiting = match id.as_str() {
@@ -32,7 +56,10 @@ impl Bridge {
                         }
                         updates
                             .send(super::acp_turn::scoped_turn_outcome(
-                                super::acp_turn::turn_outcome(frame.clone()),
+                                super::acp_turn::turn_outcome_with_policy(
+                                    &*frame,
+                                    self.json_pools.is_some(),
+                                ),
                                 true,
                                 prompt_id,
                             ))
@@ -42,7 +69,7 @@ impl Bridge {
                     return Ok(());
                 }
                 if let Some(id) = id.as_str() {
-                    if self.recover_prompt_result(id, frame.clone(), updates).await {
+                    if self.recover_prompt_result(id, &frame, updates).await {
                         self.orphaned_prompt_response
                             .store(false, std::sync::atomic::Ordering::SeqCst);
                         self.answered.lock().await.clear();
@@ -55,7 +82,8 @@ impl Bridge {
                         // still carry a valid terminal identity to the durable
                         // recorder before it can ACK the retained frame.
                         if let Some(prompt_id) = crate::PromptIdentity::parse(id) {
-                            if let Some(outcome) = prompt_outcome(&frame) {
+                            if let Some(outcome) = prompt_outcome(&frame, self.json_pools.is_some())
+                            {
                                 self.mark_prompt_completed(id).await;
                                 self.orphaned_prompt_response
                                     .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -89,8 +117,8 @@ impl Bridge {
         match frame.get("method").and_then(serde_json::Value::as_str) {
             Some("cma/codex/credentials") => self.subscription_credential(&frame).await,
             Some("session/update") => self.session_update(&frame, updates).await,
-            Some("session/request_permission") => self.blocked_on(frame, updates).await?,
-            Some("elicitation/create") => self.sign_in(&frame, updates).await,
+            Some("session/request_permission") => self.blocked_on(&frame, updates).await?,
+            Some("elicitation/create") => self.sign_in(&frame, updates, sign_in).await,
             Some(method) => {
                 if let Some(id) = frame.get("id") {
                     tracing::info!(%method, "refusing ACP request not offered by this client");
@@ -146,7 +174,7 @@ impl Bridge {
             self.route_update(session, update, updates).await;
             return;
         }
-        match serde_json::from_value::<SessionUpdate>(value.clone()) {
+        match super::runtime_decode::decode::<SessionUpdate>(value, self.json_pools.is_some()) {
             Ok(update) => {
                 self.route_update(session, ConversationUpdate::Said(update), updates)
                     .await;
@@ -157,8 +185,13 @@ impl Bridge {
         }
     }
 
-    async fn sign_in(&self, frame: &serde_json::Value, updates: &UpdateRelay) {
-        let Some((url, code, message)) = sign_in_from(frame.get("params")) else {
+    async fn sign_in(
+        &self,
+        frame: &serde_json::Value,
+        updates: &UpdateRelay,
+        admission: Option<super::sign_in_retention::Admission>,
+    ) {
+        let Some(fields) = super::sign_in_retention::Fields::read(frame.get("params")) else {
             tracing::warn!("ACP sign-in request contained no URL");
             if let Some(id) = frame.get("id") {
                 let _ = self
@@ -171,9 +204,12 @@ impl Bridge {
             }
             return;
         };
-        updates
-            .send(ConversationUpdate::SignInRequired { url, code, message })
-            .await;
+        let update = fields.owned();
+        let update = match admission {
+            Some(admission) => admission.wrap(update),
+            None => update,
+        };
+        updates.send(update).await;
         if let Some(id) = frame.get("id") {
             let _ = self
                 .send(&serde_json::json!({
@@ -326,6 +362,7 @@ pub(super) fn blocked_from_locator(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn sign_in_from(
     params: Option<&serde_json::Value>,
 ) -> Option<(String, Option<String>, Option<String>)> {
@@ -369,13 +406,13 @@ pub(crate) fn outcome_for(
     serde_json::json!({ "outcome": "cancelled" })
 }
 
-fn prompt_outcome(frame: &serde_json::Value) -> Option<super::acp::Outcome> {
+fn prompt_outcome(frame: &serde_json::Value, bounded_json: bool) -> Option<super::acp::Outcome> {
     let terminal = frame.get("error").is_some()
         || frame
             .get("result")
             .and_then(serde_json::Value::as_object)
             .is_some_and(|result| result.contains_key("stopReason"));
-    terminal.then(|| super::acp_turn::turn_outcome(frame.clone()))
+    terminal.then(|| super::acp_turn::turn_outcome_with_policy(frame, bounded_json))
 }
 
 pub(super) fn valid_call(call: &serde_json::Value) -> bool {

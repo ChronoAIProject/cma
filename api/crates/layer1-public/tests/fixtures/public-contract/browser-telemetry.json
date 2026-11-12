@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "browser-diagnostics-category-accepted",
+      "operation": "POST /api/v1/telemetry/browser",
+      "scenario": "diagnostic_report",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/telemetry/browser",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "react_error"
+        }
+      },
+      "response": {
+        "status": 204,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      }
+    }
+  ]
+}

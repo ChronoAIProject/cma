@@ -17,6 +17,7 @@ mod channel_tools;
 mod checkpoint_store;
 mod checkpoint_transport;
 mod control_correlation;
+mod credit_error_json;
 mod deployment;
 mod home;
 #[cfg(test)]
@@ -37,6 +38,9 @@ mod provider_http;
 mod provider_tools;
 mod provider_transport;
 mod reply;
+mod retained_json;
+mod runtime_decode;
+mod sign_in_retention;
 mod startup_timing;
 mod subscriptions;
 mod tool_confirmation;

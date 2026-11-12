@@ -1,6 +1,11 @@
 //! Independent rollout policy for the current CMA interfaces.
+#[cfg(test)]
+#[path = "ingress_coordinator_tests.rs"]
+mod ingress_coordinator_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub coordinated_ingress: bool,
+    pub retained_json: bool,
     pub bounded_raw_output: bool,
     pub output_json_budget: bool,
     pub bounded_update_relay: bool,
@@ -8,6 +13,7 @@ pub(crate) struct FeatureFlags {
     pub retain_read_frames: bool,
     pub bounded_permission_state: bool,
     pub retained_reopen_enabled: bool,
+    pub agent_skill_upgrade_enabled: bool,
     pub shared_runtime_output: bool,
     pub model_budget_writes_enabled: bool,
     pub model_request_budget_writes_enabled: bool,
@@ -20,10 +26,12 @@ pub(crate) struct FeatureFlags {
     pub trigger_command_admission: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
+    pub silent_sign_in: bool,
     pub document_revocation_reserve: bool,
     pub document_quotas: bool,
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
+    pub retained_context_lookup: bool,
     pub event_driven_reconciliation: bool,
 }
 impl FeatureFlags {
@@ -41,6 +49,8 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            coordinated_ingress: flag(lookup, "CHRONO_INGRESS_COORDINATOR_ENABLED")?,
+            retained_json: flag(lookup, "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED")?,
             bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
             output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
             bounded_update_relay: flag(lookup, "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED")?,
@@ -48,12 +58,14 @@ impl FeatureFlags {
             retain_read_frames: flag(lookup, "CHRONO_READ_FRAME_BUDGET_ENABLED")?,
             bounded_permission_state: flag(lookup, "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED")?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
+            agent_skill_upgrade_enabled: flag(lookup, "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")?,
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
             sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
             sandbox_detail_timings: flag(lookup, "CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")?,
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
+            retained_context_lookup: flag(lookup, "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED")?,
             event_driven_reconciliation: flag(
                 lookup,
                 "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
@@ -70,6 +82,7 @@ impl FeatureFlags {
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
             nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
+            silent_sign_in: flag(lookup, "CHRONO_SILENT_SIGN_IN_ENABLED")?,
             document_revocation_reserve: flag(
                 lookup,
                 "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
@@ -78,32 +91,15 @@ impl FeatureFlags {
         if flags.sandbox_batched_reads && !flags.sandbox_snapshot_reads {
             return Err("CHRONO_SANDBOX_BATCHED_READS_ENABLED requires CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED".into());
         }
+        if flags.coordinated_ingress
+            && !(flags.retained_json
+                && flags.bounded_raw_output
+                && flags.bounded_permission_state
+                && flags.bounded_live_fragments)
+        {
+            return Err("CHRONO_INGRESS_COORDINATOR_ENABLED requires JSON retention, raw output, permission and live fragment bounds".into());
+        }
         Ok(flags)
-    }
-}
-
-#[cfg(test)]
-mod shared_output_tests {
-    use super::*;
-
-    #[test]
-    fn shared_runtime_output_requires_its_own_strict_opt_in() {
-        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")
-                    .then(|| value.map(str::to_owned))
-                    .flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.shared_runtime_output, expected);
-            assert!(!flags.bounded_response_reads);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED").then(|| value.into()))
-            })
-            .is_err());
-        }
     }
 }
 
@@ -459,6 +455,29 @@ mod raw_output_tests {
             .unwrap();
             assert_eq!(flags.bounded_raw_output, expected);
             assert!(!flags.retained_reopen_enabled && !flags.bounded_approval_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |name| {
+                Ok((name == key).then(|| value.to_owned()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod retained_json_tests {
+    use super::*;
+    #[test]
+    fn json_retention_requires_its_own_strict_opt_in() {
+        let key = "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED";
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |name| {
+                Ok((name == key).then(|| value.map(str::to_owned)).flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.retained_json, expected);
+            assert!(!flags.bounded_raw_output && !flags.output_json_budget);
         }
         for value in ["", "1", "TRUE", " true "] {
             assert!(FeatureFlags::from_lookup(&mut |name| {

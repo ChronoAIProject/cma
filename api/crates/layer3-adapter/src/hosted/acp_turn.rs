@@ -182,7 +182,8 @@ impl Bridge {
             "sessionId": session,
             "prompt": content,
         });
-        let recoverable = prompt_id.is_some() || self.bounded_raw_output;
+        let recoverable =
+            prompt_id.is_some() || self.bounded_raw_output || self.json_pools.is_some();
         let bounded_permissions = self.permission_state.is_some();
         let terminal_identity = prompt_id.clone();
         match self.begin_prompt(params, prompt_id).await {
@@ -289,14 +290,23 @@ pub(super) fn scoped_turn_outcome(
     }
 }
 
-pub(super) fn turn_outcome(frame: serde_json::Value) -> Outcome {
+#[cfg(test)]
+pub(super) fn turn_outcome(frame: impl std::borrow::Borrow<serde_json::Value>) -> Outcome {
+    turn_outcome_with_policy(frame, false)
+}
+
+pub(super) fn turn_outcome_with_policy(
+    frame: impl std::borrow::Borrow<serde_json::Value>,
+    bounded_error_json: bool,
+) -> Outcome {
+    let frame = frame.borrow();
     if let Some(error) = frame.get("error") {
         let message = error
             .get("message")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("agent refused the prompt without saying why")
             .to_string();
-        if let Some(failure) = super::acp_credit_failure::classify(&message) {
+        if let Some(failure) = super::acp_credit_failure::classify(&message, bounded_error_json) {
             return failure;
         }
         return Outcome::Failed {
@@ -321,7 +331,9 @@ pub(super) fn turn_outcome(frame: serde_json::Value) -> Outcome {
             if let Some(failure) = failure
                 .get("title")
                 .and_then(serde_json::Value::as_str)
-                .and_then(super::acp_credit_failure::classify)
+                .and_then(|message| {
+                    super::acp_credit_failure::classify(message, bounded_error_json)
+                })
             {
                 return failure;
             }
@@ -336,7 +348,7 @@ pub(super) fn turn_outcome(frame: serde_json::Value) -> Outcome {
             };
         }
     }
-    match serde_json::from_value::<PromptResponse>(result.clone()) {
+    match super::runtime_decode::decode::<PromptResponse>(result, bounded_error_json) {
         Ok(response) => Outcome::Ended(response),
         Err(error) => {
             tracing::warn!(%error, "turn ended in a newer ACP shape");

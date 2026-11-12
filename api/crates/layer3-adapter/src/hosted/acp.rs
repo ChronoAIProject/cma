@@ -16,6 +16,7 @@ use crate::{
 
 pub(super) const PROTOCOL_VERSION: u32 = 1;
 pub(super) const CALL_DEADLINE: Duration = Duration::from_secs(30);
+pub(super) use crate::conversation_channel::RETAINED_HISTORY_IDLE_DEADLINE;
 pub(super) const SIGN_IN_DEADLINE: Duration = Duration::from_secs(16 * 60);
 const DECLARATION_DEADLINE: Duration = Duration::from_secs(10);
 const INPUT_BUFFER: usize = 1;
@@ -65,7 +66,7 @@ mod output;
 mod reader;
 
 pub(super) struct PendingCall {
-    pub(super) answer: tokio::sync::oneshot::Sender<serde_json::Value>,
+    pub(super) answer: tokio::sync::oneshot::Sender<super::retained_json::JsonFrame>,
     pub(super) prompt: bool,
 }
 
@@ -83,6 +84,7 @@ struct ConversationState {
 }
 
 pub(super) struct Bridge {
+    pub(super) json_pools: Option<super::retained_json::JsonPools>,
     pub(super) bounded_raw_output: bool,
     pub(super) permission_state: Option<Mutex<super::permission_state::PermissionState>>,
     output_json_budget: bool,
@@ -104,6 +106,7 @@ pub(super) struct Bridge {
     pub(super) context_refresh: Option<super::managed_context::HostedContextRefresh>,
     pub(super) context_goal: Mutex<Option<(String, bool)>>,
     pub(super) recovering_context: AtomicU64,
+    pub(super) retained_history_deadline: tokio::sync::watch::Sender<Option<tokio::time::Instant>>,
 }
 
 pub(super) struct OpenedBridge {
@@ -209,7 +212,7 @@ impl Bridge {
         &self,
         method: &str,
         params: serde_json::Value,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
         self.begin_inner(method, params, false).await
     }
 
@@ -217,7 +220,7 @@ impl Bridge {
         &self,
         params: serde_json::Value,
         prompt_id: Option<PromptIdentity>,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
         self.begin_with_id("session/prompt", params, true, prompt_id)
             .await
     }
@@ -227,7 +230,7 @@ impl Bridge {
         method: &str,
         params: serde_json::Value,
         prompt: bool,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
         self.begin_with_id(method, params, prompt, None).await
     }
 
@@ -237,7 +240,7 @@ impl Bridge {
         params: serde_json::Value,
         prompt: bool,
         prompt_id: Option<PromptIdentity>,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
         if self.retired.load(Ordering::SeqCst) {
             return Err(write::retired_before_write(prompt));
         }
