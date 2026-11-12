@@ -23,17 +23,20 @@ pub(super) async fn commit(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
-                last_transient = Some(error);
-                continue;
+        let scope = match TransactionScope::start(&mut session).await {
+            Ok(scope) => scope,
+            Err(error) => {
+                if is_transient(&error) {
+                    last_transient = Some(error);
+                    continue;
+                }
+                return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
-            return Err(SandboxStoreError::Unavailable(error.to_string()));
-        }
+        };
         let publication = if observed.is_some() {
-            apply_publication_observed(store, &mutation, observed, &mut session).await
+            apply_publication_observed(store, &mutation, observed, scope).await
         } else {
-            apply_publication(store, &mutation, &mut session).await
+            apply_publication(store, &mutation, scope).await
         };
         let receipt = match publication {
             Ok(receipt) => receipt,
