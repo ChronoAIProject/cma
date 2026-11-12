@@ -188,15 +188,25 @@ async fn measure(count: u64, enabled: bool) -> (u64, u64) {
             "the measurement must include discovery cycles after the first fold"
         );
     }
+    // At normal capacity, native completion must identify the dispatched prompt
+    // before the recorder can preserve it through the existing stop reserve.
+    let dispatch = command.work.dispatch.as_ref().unwrap();
     let terminal_started = std::time::Instant::now();
     DurableAgentUpdateRecorder::new(store.clone())
         .record_update(
             &agent.id,
             1,
             &mut AgentMessageAssembly::default(),
-            layer3_adapter::ConversationUpdate::TurnEnded(layer3_adapter::PromptResponse::new(
-                layer3_adapter::TurnStopReason::EndTurn,
-            )),
+            layer3_adapter::ConversationUpdate::TurnEndedForPrompt {
+                prompt_id: layer3_adapter::PromptIdentity::new(
+                    agent.conversation.conversation_id.as_deref().unwrap(),
+                    dispatch.runtime_generation,
+                    dispatch.turn_sequence,
+                ),
+                response: layer3_adapter::PromptResponse::new(
+                    layer3_adapter::TurnStopReason::EndTurn,
+                ),
+            },
             layer2_core::now_rfc3339(),
         )
         .await
