@@ -409,3 +409,6 @@ pub mod ledger_maintenance_plan;
 pub mod ledger_maintenance_pre_exclusion;
 pub mod ledger_maintenance_pre_exclusion_progress;
 pub mod ledger_maintenance_progress;
+
+#[cfg(test)]
+mod always_on_tests;

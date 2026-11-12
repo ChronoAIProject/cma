@@ -497,3 +497,6 @@ async fn corrupt_archived_payload_cannot_qualify_a_retry_or_completion() {
     );
     archive.close().await.unwrap();
 }
+
+#[path = "skill_upgrade_tests.rs"]
+mod skill_upgrades;
