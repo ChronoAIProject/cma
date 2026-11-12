@@ -1,4 +1,4 @@
-//! Process liveness and a single bounded, cached application-store check.
+//! Process liveness and cached store/local execution capability readiness.
 
 use std::{sync::Arc, time::Duration};
 
@@ -40,15 +40,47 @@ struct CompletedCheck {
 
 type CheckState = watch::Receiver<Option<CompletedCheck>>;
 
+#[derive(Clone)]
+struct HealthState {
+    store: CheckState,
+    workers: Option<crate::worker_supervision::Workers>,
+}
+
+#[cfg(test)]
 pub fn router(probe: Arc<dyn ReadinessProbe>) -> Router {
+    monitored(probe, None)
+}
+
+pub(crate) fn router_with_workers(
+    probe: Arc<dyn ReadinessProbe>,
+    workers: crate::worker_supervision::Workers,
+) -> Router {
+    monitored(probe, Some(workers))
+}
+
+fn monitored(
+    probe: Arc<dyn ReadinessProbe>,
+    workers: Option<crate::worker_supervision::Workers>,
+) -> Router {
     let (result, state) = watch::channel(None);
     // The sender owns no receiver. Dropping the last router cancels the check
     // and stops the worker, including during checkout or an unanswered ping.
     tokio::spawn(monitor(probe, result));
-    routes(state)
+    health_routes(HealthState {
+        store: state,
+        workers,
+    })
 }
 
+#[cfg(test)]
 fn routes(state: CheckState) -> Router {
+    health_routes(HealthState {
+        store: state,
+        workers: None,
+    })
+}
+
+fn health_routes(state: HealthState) -> Router {
     Router::new()
         .route("/livez", get(liveness))
         .route("/ready", get(readiness))
@@ -106,15 +138,21 @@ async fn liveness() -> &'static str {
     "ok"
 }
 
-async fn readiness(State(state): State<CheckState>) -> impl IntoResponse {
-    let check = state.borrow().clone();
+async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
+    let check = state.store.borrow().clone();
     let age = check.as_ref().map(|check| check.completed.elapsed());
     let failure = match &check {
         None => Some("pending"),
         Some(_) if age.is_some_and(|age| age >= MAX_CHECK_AGE) => Some("stale"),
         Some(check) => check.failure,
     };
-    let ready = failure.is_none();
+    let workers = state
+        .workers
+        .as_ref()
+        .map(|workers| workers.snapshot())
+        .unwrap_or_default();
+    let execution_available = workers.iter().all(|worker| worker.available());
+    let ready = failure.is_none() && execution_available;
     (
         if ready {
             StatusCode::OK
@@ -123,7 +161,8 @@ async fn readiness(State(state): State<CheckState>) -> impl IntoResponse {
         },
         Json(serde_json::json!({
             "status": if ready { "ready" } else { "not-ready" },
-            "reason": if ready { None } else { Some("store") },
+            "reason": if failure.is_some() { Some("store") } else if !execution_available { Some("workers") } else { None },
+            "workers": workers,
             "dependency": {
                 "checked_at": check.as_ref().map(|check| &check.checked_at),
                 "age_ms": age.map(|age| age.as_millis()),

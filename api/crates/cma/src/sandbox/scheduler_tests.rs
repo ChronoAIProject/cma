@@ -170,3 +170,56 @@ async fn maintenance_sweeps_remain_serial() {
     scheduler.await.unwrap();
     assert_eq!(probe.active.load(Ordering::SeqCst), 0);
 }
+
+async fn settle_scheduler() {
+    for _ in 0..30 {
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn recovered_full_schedulers_become_ready_before_long_children_finish() {
+    for (name, capacity) in [("sandboxes", SANDBOX_CONCURRENT_SWEEPS), ("workspaces", 1)] {
+        let probe = blocking_probe(true);
+        let activity = crate::worker_supervision::Workers::new().get(name);
+        let (shutdown, receiver) = watch::channel(false);
+        let first = probe.called.notified();
+        let mut scheduler =
+            SandboxScheduler::with_interval(Arc::clone(&probe), DEFAULT_SWEEP_INTERVAL);
+        scheduler.concurrent_sweeps = capacity;
+        let scheduler = scheduler.spawn_supervised(receiver, activity.clone());
+        first.await;
+        for _ in 1..capacity {
+            let next = probe.called.notified();
+            tokio::time::advance(DEFAULT_SWEEP_INTERVAL).await;
+            next.await;
+        }
+        settle_scheduler().await;
+        assert_eq!(probe.active.load(Ordering::SeqCst), capacity);
+        assert_eq!(activity.snapshot().state, "running");
+
+        crate::worker_supervision::panic_next_poll(&activity);
+        tokio::time::advance(DEFAULT_SWEEP_INTERVAL).await;
+        settle_scheduler().await;
+        assert_eq!(activity.snapshot().state, "backoff");
+        assert!(!activity.snapshot().available());
+        assert_eq!(probe.active.load(Ordering::SeqCst), capacity);
+
+        tokio::time::advance(Duration::from_secs(1)).await;
+        settle_scheduler().await;
+        assert_eq!(activity.snapshot().state, "running");
+        assert!(activity.snapshot().available());
+        for _ in 0..40 {
+            tokio::time::advance(DEFAULT_SWEEP_INTERVAL).await;
+            settle_scheduler().await;
+            assert!(activity.snapshot().available());
+        }
+        assert_eq!(probe.calls.load(Ordering::SeqCst), capacity);
+        assert_eq!(probe.active.load(Ordering::SeqCst), capacity);
+        shutdown.send(true).unwrap();
+        probe.release.notify_waiters();
+        scheduler.await.unwrap();
+        assert_eq!(probe.active.load(Ordering::SeqCst), 0);
+        assert_eq!(probe.calls.load(Ordering::SeqCst), capacity);
+    }
+}

@@ -37,6 +37,7 @@ mod telemetry;
 mod trigger;
 mod usage_billing;
 mod warm_pools;
+mod worker_supervision;
 
 use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
@@ -226,13 +227,19 @@ async fn serve() -> Result<(), String> {
         shutdown.push(continuations.spawn(shutdown.subscribe()));
     }
     let worker_signal = shutdown.subscribe();
-    shutdown.push(composition.launch_scheduler.spawn(worker_signal));
-    shutdown.push(composition.command_scheduler.spawn(shutdown.subscribe()));
     shutdown.push(
         composition
-            .sandbox_control_scheduler
-            .spawn(shutdown.subscribe()),
+            .launch_scheduler
+            .spawn_supervised(worker_signal, composition.workers.get("launches")),
     );
+    shutdown.push(composition.command_scheduler.spawn_supervised(
+        shutdown.subscribe(),
+        composition.workers.get("agent_commands"),
+    ));
+    shutdown.push(composition.sandbox_control_scheduler.spawn_supervised(
+        shutdown.subscribe(),
+        composition.workers.get("sandbox_commands"),
+    ));
     shutdown.push(composition.worker_observations.spawn(shutdown.subscribe()));
     shutdown.push(
         composition
@@ -240,10 +247,15 @@ async fn serve() -> Result<(), String> {
             .clone()
             .spawn_observations(shutdown.subscribe()),
     );
-    shutdown.push(composition.native_warm_pools.spawn(shutdown.subscribe()));
+    shutdown.push(composition.native_warm_pools.spawn_supervised(
+        shutdown.subscribe(),
+        composition.workers.get("native_warm_pools"),
+    ));
     shutdown.push(composition.native_prepared.spawn(shutdown.subscribe()));
     shutdown.push(composition.agent_access_worker.spawn(shutdown.subscribe()));
-    composition.sandbox_lifecycle.spawn(&mut shutdown);
+    composition
+        .sandbox_lifecycle
+        .spawn(&mut shutdown, &composition.workers);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
     composition.usage.spawn(&mut shutdown);
     composition.usage_metrics.spawn(&mut shutdown);
