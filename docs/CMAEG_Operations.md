@@ -3390,14 +3390,27 @@ The continuation worker uses a separate expiring active-head collection, bounded
 ### Delivery queue and outcome observations
 
 The private exporter additionally exposes `cmaeg_delivery_queue_{depth,capacity,waiters,sample_timestamp_seconds}`
-by `inbound` / `worker` stage, worker `oldest_seconds` and
+by `inbound` / `worker` stage, both stages’ `oldest_seconds` and
 `residence_seconds`, queue `wait_seconds` and `submissions_total` by bounded
 result, and `cmaeg_delivery_outcomes_total{platform,step,destination,outcome}`.
-Worker queues retain cancellation-safe residence guards; old entries disappear
-on dequeue or receiver loss/panic. Queue depth excludes active sends; inbound
-depth uses available capacity and has no oldest timestamp. Require fresh sample
+Production inbound and worker queues retain cancellation-safe residence guards;
+old entries disappear on dequeue or receiver loss/panic. Queue depth excludes
+active sends and blocked producers. The legacy raw-channel constructor supports
+sampled depth/capacity only. Require fresh sample
 timestamps before interpreting snapshots. Local `buffered` does not mean a
 recipient received a message; unknown outcomes are not failures safe to resend.
 Default webhook groups are logical group outcomes. Turn duration buckets cover
 long inference through 3600 seconds. Full semantics and production follow-up
 are in [CMA Observability](CMA_Observability.md#admission-terminal-browser-and-eg-coverage).
+
+
+Provider permits expose per-provider capacity, held/available permits, waiter
+count and oldest waiter timestamp, acquisition outcomes/wait duration and held
+duration. These observe the existing per-provider gates and retain their 50ms
+wait, immediate-capacity refusals and stream ownership. The deployment cap is
+applied separately to each provider; it is not one shared aggregate pool.
+Use `time() - cmaeg_provider_permit_oldest_wait_timestamp_seconds` only with
+`cmaeg_provider_permit_waiters > 0`. Long held permits can be healthy inference.
+See [permit semantics](CMA_Observability.md#admission-terminal-browser-and-eg-coverage).
+Worker/readiness changes belong to [CMA #1740](https://github.com/ChronoAIProject/cma/issues/1740)
+and a separate PR.
