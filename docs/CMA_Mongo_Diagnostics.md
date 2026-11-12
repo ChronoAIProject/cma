@@ -300,15 +300,16 @@ probe alone is not release evidence.
 Rust 1.96.1 native debug, MongoDB 3.9.1/BSON 3.1.0, disposable MongoDB 8.0.13
 replica set (2 CPUs, 2 GiB, 0.25 GiB WiredTiger cache). Each mode reads 40 times
 in the same ABBA blocks, with nested 1 KiB documents, batch size 2,048 and pool
-size 30. The observer includes task-local attribution, CMAP tracking, hashes,
+size 30. The measured source head after merging develop is `137703e39`. The observer
+includes task-local attribution, CMAP tracking, hashes,
 summaries and the nonblocking production text formatter. The API, remote
 transport and production log-sink I/O are outside this fixture.
 
 | Documents | Off/on mean ms | Mean change | Off/on p50 ms | Off/on physical hold total s | Checkouts each |
 | --- | --- | --- | --- | --- | --- |
-| 25 | 1.776 / 1.298 | -26.9% | 1.200 / 0.939 | 0.069966 / 0.050685 | 40 |
-| 200 | 5.025 / 6.120 | +21.8% | 4.473 / 3.987 | 0.202001 / 0.232477 | 40 |
-| 10,001 | 172.505 / 170.826 | -1.0% | 168.132 / 168.348 | 7.039196 / 6.964724 | 200 |
+| 25 | 1.294 / 1.584 | +22.4% | 1.066 / 1.242 | 0.050556 / 0.062151 | 40 |
+| 200 | 4.921 / 4.342 | -11.8% | 3.993 / 3.985 | 0.198674 / 0.174826 | 40 |
+| 10,001 | 167.825 / 164.746 | -1.8% | 165.155 / 161.951 | 6.855596 / 6.711591 | 200 |
 
 The unchanged overhead ceiling passed at every size; results and checkout counts
 matched, privacy checks passed, and both sampled physical holds joined to their
@@ -323,8 +324,11 @@ explicitly unknown getMore outcomes. The final assertion above includes
 `completed` only with `outcome_known=false` and still requires the same hash and
 phase joins. Neither the ABBA workload nor its latency ceiling changed.
 
+The qualifying run before merging develop also passed all checks, with off/on
+means 1.776/1.298, 5.025/6.120 and 172.505/170.826 ms respectively.
+
 Small-read means varied in direction between trials; negative differences are
-not speedup claims, and this is not a production overhead bound. Both large-read
+not speedup claims, and this is not a production overhead bound. All three large-read
 trials remove the previously measured doubling. On successful reads, allocation
 work is limited to command/session metadata in the driver and fixed fields/Arc
 labels in the observer; no heap-allocation profiler was run. Driver error handling
