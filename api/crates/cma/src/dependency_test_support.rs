@@ -39,6 +39,16 @@ pub(crate) struct Exchange {
 }
 
 impl Exchange {
+    pub fn respond_with_headers(self, status: u16, headers: &[(&str, &str)]) {
+        let mut response = Response::builder().status(status);
+        for (name, value) in headers {
+            response = response.header(*name, *value);
+        }
+        self.reply
+            .send(response.body(Body::empty()).unwrap())
+            .expect("fixture response receiver remains alive");
+    }
+
     pub fn respond(self, status: u16, body: impl Into<Body>) {
         self.reply
             .send(
