@@ -329,11 +329,24 @@ async fn real_activity_store_keeps_prefixed_and_concrete_path_resource_history()
 #[ignore = "requires a disposable MongoDB replica set"]
 async fn document_origin_annotation_cannot_archive_another_accounts_body() {
     use layer2_core::document_artifacts::{memory, CreateDocument, DocumentService};
+    use layer2_core::sandbox::store::WorkspaceStore;
     use layer2_core::{Authorization, Caller, Capability, SubjectId};
     use std::{collections::BTreeMap, sync::Arc};
-    let (client, name, _, access) =
+    let (client, name, ordinary, access) =
         crate::store::agent_access_requests::tests::approved_fixture().await;
     let database = client.database(&name);
+    // Admit a canonical Agent ID through the real store: the access fixture's
+    // shorthand identity is deliberately invalid at the public document API.
+    let workspace = ordinary
+        .get_workspace(&access.requester.creation.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut admission =
+        crate::store::agent_access_tools::fixtures::admission(&workspace, "archive-document");
+    admission.agent_id = layer2_core::AgentId(format!("agt_{}", uuid::Uuid::new_v4().simple()));
+    let origin = admission.agent_id.to_string();
+    ordinary.admit_agent(admission).await.unwrap();
     let fixture = support::prepare_source(
         client,
         database.clone(),
@@ -356,7 +369,7 @@ async fn document_origin_annotation_cannot_archive_another_accounts_body() {
             CreateDocument {
                 title: "Retained source".into(),
                 markdown: "# Source body".into(),
-                origin_agent_id: Some(access.requester.agent_id.to_string()),
+                origin_agent_id: Some(origin.clone()),
             },
         )
         .await
@@ -372,7 +385,7 @@ async fn document_origin_annotation_cannot_archive_another_accounts_body() {
             CreateDocument {
                 title: "Unrelated body".into(),
                 markdown: "# Never archive this account".into(),
-                origin_agent_id: Some(access.requester.agent_id.to_string()),
+                origin_agent_id: Some(origin),
             },
         )
         .await
