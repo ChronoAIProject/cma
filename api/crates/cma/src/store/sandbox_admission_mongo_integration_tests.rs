@@ -346,3 +346,57 @@ async fn concurrent_trigger_admissions_converge_on_one_origin_row_and_event() {
 
 #[path = "sandbox_global_admission_mongo_tests.rs"]
 mod global_admission;
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn exact_admission_replay_precedes_deletion_but_new_admission_is_refused() {
+    use layer2_core::account_deletion::AccountDeletionStore;
+    let (client, database) = database("deletion_replay").await;
+    let store = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let created = match store
+        .admit_sandbox(admission("sbx_original", "launch-original", 1))
+        .await
+        .unwrap()
+    {
+        SandboxAdmissionResult::Created(record) => record,
+        SandboxAdmissionResult::Existing(_) => panic!("fresh admission replayed"),
+    };
+    let deletions =
+        super::account_deletions::MongoAccountDeletionStore::open(&client.database(&database))
+            .await
+            .unwrap();
+    deletions
+        .request(&SubjectId::new("owner"), "delete", NOW)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .admit_sandbox(admission("sbx_replay", "launch-original", 0))
+            .await
+            .unwrap(),
+        SandboxAdmissionResult::Existing(created.clone())
+    );
+    assert_eq!(
+        store
+            .admit_sandbox(admission("sbx_new", "launch-new", 1))
+            .await,
+        Err(SandboxStoreError::AccountDeletionInProgress)
+    );
+    assert_eq!(
+        store
+            .sandboxes
+            .count_documents(doc! {"owner":"owner"})
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .sandbox_events(&created.id, 0, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    client.database(&database).drop().await.unwrap();
+}
