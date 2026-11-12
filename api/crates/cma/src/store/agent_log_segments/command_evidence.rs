@@ -2,19 +2,23 @@
 //! lifecycle, writes, reusable capture token or whole-history fallback.
 use super::{
     collections::collection,
-    corrupt, ordinary,
+    corrupt,
     projection::{self, EvidenceRecord},
-    Head, EVIDENCE,
+    read_format, read_head, Head, EVIDENCE,
 };
 use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::MongoSandboxStore};
 use layer2_core::sandbox::{
     agent_io::{AdmittedAgentCommand, AgentCommand, CertifiedCommandSource, CommandEvidence},
-    Agent, AgentLogEntry, AgentLogKind,
+    Agent, AgentLogKind,
 };
 use mongodb::{
     bson::{doc, Document},
     ClientSession,
 };
+
+mod points;
+#[cfg(test)]
+mod points_tests;
 
 type Result<T> = std::result::Result<T, TransactionLogError>;
 
@@ -25,9 +29,14 @@ pub(in crate::store) async fn read_transaction(
     command: &AdmittedAgentCommand,
     session: &mut ClientSession,
 ) -> Result<Option<CommandEvidence>> {
-    let Some((head, state)) = ordinary::source(store, agent, agent_row, session).await? else {
+    if crate::store::agents::read_agent(agent_row)? != *agent {
+        return Err(corrupt().into());
+    }
+    if read_format(agent_row)?.is_none() {
         return Ok(None);
-    };
+    }
+    let head = read_head(store, agent_row, session, false).await?;
+    let state = projection::read(store, agent, &head, session).await?;
     let dispatch = command.work.dispatch.as_ref().ok_or_else(corrupt)?;
     if dispatch.claim.agent_id != agent.id {
         return Err(corrupt().into());
@@ -66,29 +75,13 @@ pub(in crate::store) async fn read_transaction(
     if operation_sequence != dispatch.operation_sequence {
         return Err(corrupt().into());
     }
-    let start = ordinary::point(store, &head, turn, session).await?;
-    let fence = ordinary::point(store, &head, operation_sequence, session).await?;
-    let delivery = if sequence == operation_sequence {
-        fence.clone()
-    } else {
-        ordinary::point(store, &head, sequence, session).await?
-    };
-    let terminal = optional_point(store, &head, facts.end_sequence, session).await?;
     let is_message = matches!(
         command.receipt.envelope.command,
         AgentCommand::Message { .. }
     );
-    let prewrite = optional_point(
-        store,
-        &head,
-        is_message
-            .then_some(facts.prewrite_failure_sequence)
-            .flatten(),
-        session,
-    )
-    .await?;
-    let last_approval =
-        optional_point(store, &head, facts.approval_change_sequence, session).await?;
+    let prewrite = is_message
+        .then_some(facts.prewrite_failure_sequence)
+        .flatten();
     let pending = if is_message && facts.end_sequence.is_none() {
         // The epoch's range is indexed. One member proves nonemptiness without
         // collecting the approval set or scanning lifetime resolved approvals.
@@ -96,36 +89,39 @@ pub(in crate::store) async fn read_transaction(
     } else {
         None
     };
+    let requested = [
+        Some(turn),
+        Some(operation_sequence),
+        Some(sequence),
+        facts.end_sequence,
+        prewrite,
+        facts.approval_change_sequence,
+        pending.as_ref().map(|(_, seq)| *seq),
+    ];
+    let rows = points::read(store, &head, requested, session).await?;
+    let point = |sequence: u64| rows.get(&sequence).ok_or_else(corrupt);
+    let optional = |sequence: Option<u64>| sequence.map(point).transpose();
+    let pending_row = optional(pending.as_ref().map(|(_, seq)| *seq))?;
+    if pending.as_ref().zip(pending_row).is_some_and(|((key, _), row)|
+        !matches!(&row.kind, AgentLogKind::ApprovalRequested { approval_id, .. } if approval_id == key)) {
+        return Err(corrupt().into());
+    }
     CommandEvidence::from_certified_source(
         command,
         CertifiedCommandSource {
             through: state.through_seq,
             facts: &facts,
-            start: &start,
-            fence: &fence,
-            delivery: &delivery,
-            terminal: terminal.as_ref(),
-            prewrite: prewrite.as_ref(),
-            last_approval: last_approval.as_ref(),
-            pending_approval: pending.as_ref(),
+            start: point(turn)?,
+            fence: point(operation_sequence)?,
+            delivery: point(sequence)?,
+            terminal: optional(facts.end_sequence)?,
+            prewrite: optional(prewrite)?,
+            last_approval: optional(facts.approval_change_sequence)?,
+            pending_approval: pending_row,
         },
     )
     .map(Some)
     .map_err(|_| corrupt().into())
-}
-
-async fn optional_point(
-    store: &MongoSandboxStore,
-    head: &Head,
-    sequence: Option<u64>,
-    session: &mut ClientSession,
-) -> Result<Option<AgentLogEntry>> {
-    match sequence {
-        Some(sequence) => ordinary::point(store, head, sequence, session)
-            .await
-            .map(Some),
-        None => Ok(None),
-    }
 }
 
 async fn pending_approval(
@@ -134,7 +130,7 @@ async fn pending_approval(
     turn: u64,
     epoch: u64,
     session: &mut ClientSession,
-) -> Result<Option<AgentLogEntry>> {
+) -> Result<Option<(String, u64)>> {
     if epoch != turn {
         return Err(corrupt().into());
     }
@@ -164,10 +160,5 @@ async fn pending_approval(
     if actual != epoch || turn_sequence != Some(turn) || approval_id != key {
         return Err(corrupt().into());
     }
-    let entry = ordinary::point(store, head, sequence, session).await?;
-    if !matches!(&entry.kind, AgentLogKind::ApprovalRequested { approval_id, .. } if approval_id == &key)
-    {
-        return Err(corrupt().into());
-    }
-    Ok(Some(entry))
+    Ok(Some((key, sequence)))
 }

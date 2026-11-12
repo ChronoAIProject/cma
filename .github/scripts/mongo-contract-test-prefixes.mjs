@@ -66,6 +66,7 @@ export const requiredPrefixes = [
   'store::agent_log_segment_reads::transcript::tests::',
   'store::suggestions::context::tests::',
   'store::agent_log_segments::mongo_tests::',
+  'store::agent_log_segments::command_evidence::points_tests::',
   'store::agent_log_segments::writer_commit::persistence::tests::',
   'store::sandbox_mongo_integration_tests::agent_capacity_recovery_tests::',
   'store::sandbox_mongo_integration_tests::agent_segment_tests::',
