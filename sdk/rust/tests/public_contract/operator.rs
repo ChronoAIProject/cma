@@ -8,6 +8,14 @@ use cma_sdk::{
 pub async fn dispatch(c: &Context<'_>) -> Result<()> {
     let admin = c.client.admin();
     match c.case.operation.as_str() {
+        "POST /api/v1/telemetry/browser" => {
+            let body: serde_json::Value = c.body()?;
+            c.check(
+                c.client
+                    .report_browser_fault(serde_json::from_value(body["kind"].clone()).unwrap())
+                    .await,
+            )
+        }
         "GET /api/v1/conformance" => c.check(c.client.read_conformance().await),
         "GET /api/v1/defaults" => c.check(c.client.read_defaults().await),
         "GET /openapi.json" => c.check(c.client.read_openapi().await),
@@ -56,6 +64,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                     owner: c.q("owner"),
                     status: c.tag("status")?,
                     runtime_version: c.q("runtime_version"),
+                    always_on: c.q("always_on").map(|value| value == "true"),
                     page: c.page()?,
                 })
                 .await,

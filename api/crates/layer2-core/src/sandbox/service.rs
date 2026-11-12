@@ -111,6 +111,8 @@ pub enum SandboxServiceError {
     ConnectionsRequired { services: Vec<ServiceId> },
     #[error("forbidden")]
     Forbidden,
+    #[error("Always on requires approval by an administrator")]
+    AlwaysOnApprovalRequired,
     #[error("sandbox profile not found")]
     ProfileNotFound,
     #[error("sandbox not found")]
@@ -147,6 +149,7 @@ impl SandboxServiceError {
             Self::CredentialSetupRequired => "sandbox_credential_setup_required",
             Self::ConnectionsRequired { .. } => "connections_required",
             Self::Forbidden => "forbidden",
+            Self::AlwaysOnApprovalRequired => "always_on_approval_required",
             Self::ProfileNotFound => "sandbox_profile_not_found",
             Self::NotFound => "sandbox_not_found",
             Self::TrustConfirmationRequired { .. } => "trust_confirmation_required",
@@ -268,10 +271,8 @@ impl SandboxService {
             .map_err(store_error)
     }
 
-    /// Set the owner-controlled per-Sandbox Always on preference. `None` keeps
-    /// legacy profile availability semantics until the platform auto-pause
-    /// policy is enabled; once explicitly set, the preference is durable on
-    /// this Sandbox only.
+    /// Give up an existing Always on exception. Only administrators may approve
+    /// one; an unset or already disabled preference remains unchanged.
     pub async fn set_always_on(
         &self,
         caller: &Caller,
@@ -281,6 +282,9 @@ impl SandboxService {
     ) -> Result<Sandbox, SandboxServiceError> {
         require(caller, Capability::UseOwnSandboxes)?;
         let current = self.owned(caller, id).await?;
+        if always_on {
+            return Err(SandboxServiceError::AlwaysOnApprovalRequired);
+        }
         if current.revision != expected_revision
             || matches!(
                 current.status,
@@ -289,8 +293,11 @@ impl SandboxService {
         {
             return Err(SandboxServiceError::InvalidState);
         }
+        if current.profile.always_on != Some(true) {
+            return Ok(current);
+        }
         let mut next = current.clone();
-        next.profile.always_on = Some(always_on);
+        next.profile.always_on = Some(false);
         next.revision = next
             .revision
             .checked_add(1)

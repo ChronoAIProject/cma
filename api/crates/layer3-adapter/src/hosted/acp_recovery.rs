@@ -85,7 +85,7 @@ impl Bridge {
     pub(in super::super) async fn recover_prompt_result(
         &self,
         id: &str,
-        frame: serde_json::Value,
+        frame: &serde_json::Value,
         updates: &UpdateRelay,
     ) -> bool {
         let mut recovery = self.recovery.lock().await;
@@ -98,7 +98,8 @@ impl Bridge {
         }
         recovery.mark_completed(id);
         recovery.expected = None;
-        let outcome = crate::hosted::acp_turn::turn_outcome(frame);
+        let outcome =
+            crate::hosted::acp_turn::turn_outcome_with_policy(frame, self.json_pools.is_some());
         if recovery.verified {
             updates
                 .send(crate::hosted::acp_turn::scoped_turn_outcome(

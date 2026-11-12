@@ -374,6 +374,7 @@ async fn attachment_runtime_writer_requires_actual_capability_and_exact_boot() {
             agent_filesystem: false,
             agent_attachment_upload: mode != 1,
             agent_skill_install: false,
+            agent_skill_upgrade: false,
             agent_model_catalog: false,
             agent_browser: false,
             agent_resource_preparation: false,

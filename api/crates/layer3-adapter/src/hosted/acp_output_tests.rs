@@ -4,7 +4,7 @@ fn stream() -> uuid::Uuid {
     uuid::Uuid::parse_str("d99003d1-0c3c-46cd-aa47-9bbdbed50b12").unwrap()
 }
 
-async fn reliable_ready(server: &mut ServerSocket) {
+pub(super) async fn reliable_ready(server: &mut ServerSocket) {
     server
         .send(Message::Text(
             serde_json::json!({
@@ -17,7 +17,7 @@ async fn reliable_ready(server: &mut ServerSocket) {
         .unwrap();
 }
 
-async fn retained(server: &mut ServerSocket, cursor: u64, value: serde_json::Value) {
+pub(super) async fn retained(server: &mut ServerSocket, cursor: u64, value: serde_json::Value) {
     let mut bytes = vec![LANE_RETAINED_OUTPUT];
     bytes.extend_from_slice(stream().as_bytes());
     bytes.extend_from_slice(&cursor.to_be_bytes());
@@ -161,11 +161,11 @@ fn output_capability_is_optional_and_rejects_unknown_versions() {
             "t": "ready", "wireVersion": 1, "lanes": ["ctl", "conv"], "agentId": "agent-1",
             "outputAcknowledgement": {"version": version, "streamId": stream()},
         });
-        assert!(validate_ready(Message::Text(ready.to_string()), "agent-1", false).is_err());
+        assert!(validate_ready(Message::Text(ready.to_string()), "agent-1", false, None).is_err());
     }
     let ready = serde_json::json!({"t":"ready", "wireVersion":1, "lanes":["ctl","conv"], "agentId":"agent-1"});
     assert_eq!(
-        validate_ready(Message::Text(ready.to_string()), "agent-1", false).unwrap(),
+        validate_ready(Message::Text(ready.to_string()), "agent-1", false, None).unwrap(),
         None
     );
 }

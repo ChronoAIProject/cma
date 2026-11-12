@@ -18,6 +18,7 @@ pub(super) async fn read(
     caller: Option<AuthenticatedCaller>,
     profile: Option<Extension<Profile>>,
     resource: Option<AuthenticatedResourceCaller>,
+    headers: HeaderMap,
 ) -> Response {
     // Middleware already verified this request. A second resolution repeats
     // provider IO without adding a new authorization boundary.
@@ -64,7 +65,9 @@ pub(super) async fn read(
         }
         None => (
             StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "authenticated": false })),
+            // Advertised so a client only attempts `/auth/login?prompt=none`
+            // against a control plane that implements it.
+            Json(serde_json::json!({ "authenticated": false, "silent_sign_in": auth.silent_sign_in_enabled && !super::silent_preference::suppressed(&auth,&headers).await })),
         )
             .into_response(),
     }
@@ -77,31 +80,74 @@ fn is_visitor(authorization: &Authorization) -> bool {
 
 pub(super) async fn logout(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {
     auth.identity_store.clear();
-    if let Some(value) = request_cookie(&headers, AUTH_COOKIE) {
-        if let Err(error) = auth.revoke_browser_login(value).await {
-            tracing::error!(error = %error, "could not revoke browser authentication");
-            return super::middleware::store_failure();
+    // Every pending callback carries its binding cookie even after consuming
+    // its one-use state. Revoking the same custody row fences session issuance.
+    let suppress = super::silent_preference::same_origin(&auth, &headers);
+    let mut failed = std::collections::HashSet::new();
+    for (name, value) in request_cookies(&headers) {
+        if name == AUTH_COOKIE || name.starts_with(super::flow::BINDING_COOKIE_PREFIX) {
+            let revoked = auth
+                .store
+                .logout_browser_custody(
+                    &super::persistence::SecretDigest::identify(super::AUTH_COOKIE_DOMAIN, value),
+                    name != AUTH_COOKIE,
+                    suppress,
+                )
+                .await;
+            if let Err(error) = revoked {
+                tracing::error!(error = %error, "could not revoke browser authentication");
+                failed.insert(name);
+            }
         }
     }
-    let mut response = StatusCode::SEE_OTHER.into_response();
-    response.headers_mut().insert(
-        header::SET_COOKIE,
-        expired_cookie(AUTH_COOKIE, auth.secure_cookies()),
-    );
-    response
-        .headers_mut()
-        .insert(header::LOCATION, HeaderValue::from_static("/"));
+    if suppress {
+        if let Some((binding, _)) = super::silent_preference::reference(&headers) {
+            if let Err(error) = auth.store.revoke_browser_binding(&binding).await {
+                tracing::error!(error=%error,"could not revoke sign-in preference");
+                failed.insert("cma_signed_in");
+            }
+        }
+    }
+    let mut response = if !failed.is_empty() {
+        super::middleware::store_failure()
+    } else {
+        StatusCode::SEE_OTHER.into_response()
+    };
+    if !failed.contains(AUTH_COOKIE) {
+        response.headers_mut().insert(
+            header::SET_COOKIE,
+            expired_cookie(AUTH_COOKIE, auth.secure_cookies()),
+        );
+    }
+    super::silent_preference::record_sign_out(&mut response, &headers, &auth);
+    for (name, _) in request_cookies(&headers) {
+        if name.starts_with(super::flow::BINDING_COOKIE_PREFIX) && !failed.contains(name) {
+            response.headers_mut().append(
+                header::SET_COOKIE,
+                expired_cookie(name, auth.secure_cookies()),
+            );
+        }
+    }
+    if failed.is_empty() {
+        response
+            .headers_mut()
+            .insert(header::LOCATION, HeaderValue::from_static("/"));
+    }
     response
 }
 
 pub(super) fn request_cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    request_cookies(headers).find_map(|(candidate, value)| (candidate == name).then_some(value))
+}
+
+fn request_cookies(headers: &HeaderMap) -> impl Iterator<Item = (&str, &str)> {
     headers
-        .get(header::COOKIE)?
-        .to_str()
-        .ok()?
-        .split(';')
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
         .filter_map(|part| part.trim().split_once('='))
-        .find_map(|(candidate, value)| (candidate == name && !value.is_empty()).then_some(value))
+        .filter(|(_, value)| !value.is_empty())
 }
 
 pub(super) fn issued_cookie(name: &str, value: &str, secure: bool, max_age: u64) -> HeaderValue {

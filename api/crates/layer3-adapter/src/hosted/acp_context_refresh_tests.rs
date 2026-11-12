@@ -94,6 +94,15 @@ async fn managed_context_unknown_or_native_goal_never_writes_or_closes_the_threa
 
 #[tokio::test]
 async fn managed_context_null_goal_loads_exact_thread_and_settings_after_file_ack() {
+    refresh_context(false).await;
+}
+
+#[tokio::test]
+async fn managed_context_load_survives_the_ordinary_rpc_deadline() {
+    refresh_context(true).await;
+}
+
+async fn refresh_context(slow_load: bool) {
     let (client, mut server) = socket_pair().await;
     send_ready(&mut server, "agent-1").await;
     let (binding, files) = crate::hosted::managed_context::writer_tests::binding(0);
@@ -127,6 +136,9 @@ async fn managed_context_null_goal_loads_exact_thread_and_settings_after_file_ac
             );
             if method == "session/load" {
                 assert_eq!(request["params"]["cwd"], "/home/cma/work");
+                if slow_load {
+                    recovery_deadline_tests::elapse_silent_recovery().await;
+                }
             }
             let result = if method == "session/set_config_option" {
                 serde_json::json!({"configOptions":[{"id":"reasoning_effort","currentValue":"high"}]})
