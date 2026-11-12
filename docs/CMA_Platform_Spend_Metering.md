@@ -406,9 +406,14 @@ Additive to the existing `BudgetError` set:
 
 | Code | Transport | Meaning | Guidance |
 | --- | --- | --- | --- |
-| `platform_budget_exhausted` | HTTP 503, no `Retry-After` | `SpendStop` closure present, or the commitment does not fit below `disposable` (section 3) | "The platform's spend limit for this period has been reached. Completed work is preserved and your Sandbox is paused, not lost. After the limit is raised, send a new message to continue; this turn will not replay automatically." |
+| `platform_budget_exhausted` | HTTP 503, no `Retry-After` | `SpendStop` closure present, or the commitment does not fit below `disposable` (section 3) | "The platform's spend limit for this period does not allow new work right now. Completed work is preserved. After the limit is raised, send a new message to continue; this turn will not replay automatically." |
 | `registration_closed` | HTTP 503 | `SpendWarning` or any stop closure, subject never seen | "New sign-ups are temporarily closed. Existing accounts are unaffected." |
 | `budget_unavailable` (existing) | unchanged | metering source stale, unconfigured or period ended; ledger inconsistent | existing text |
+
+The `platform_budget_exhausted` guidance holds both when the platform is
+stopped and when one allowance does not fit, so it says nothing about a pause;
+when a Sandbox is actually paused, the pause reason of section 5.2 explains it.
+Shared transcripts show the same static guidance.
 
 `platform_budget_exhausted` is a `BudgetError` variant so it travels the same
 guarded-stop, terminal-receipt, AG-UI and Responses paths as the owner and turn

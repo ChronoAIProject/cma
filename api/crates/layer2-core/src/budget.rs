@@ -227,7 +227,7 @@ impl BudgetError {
             Self::OwnerExhausted => "HTTP 402: The owner's model budget is exhausted. After the budget is restored or its daily window resets, send a new message to continue. Completed work is preserved; this turn will not replay automatically.",
             Self::TurnExhausted => "HTTP 402: This turn reached its model budget. Send a new message with a smaller scope after budget is available. Completed work is preserved; this turn will not replay automatically.",
             Self::Unavailable | Self::InvalidPolicy => "HTTP 402: Model budget accounting is unavailable. After accounting is restored, send a new message to continue. Completed work is preserved; this turn will not replay automatically.",
-            Self::PlatformExhausted => "The platform's spend limit for this period has been reached. Completed work is preserved and your Sandbox is paused, not lost. After the limit is raised, send a new message to continue; this turn will not replay automatically.",
+            Self::PlatformExhausted => "The platform's spend limit for this period does not allow new work right now. Completed work is preserved. After the limit is raised, send a new message to continue; this turn will not replay automatically.",
         }
     }
 }
