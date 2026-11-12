@@ -388,3 +388,6 @@ async fn runtime_retirement_preserves_uncertain_writes_when_it_interrupts_the_tu
         assert_eq!(inputs.lock().unwrap().len(), 1);
     }
 }
+
+#[path = "../agent_io/reconcile_pacing_tests.rs"]
+mod reconcile_pacing;

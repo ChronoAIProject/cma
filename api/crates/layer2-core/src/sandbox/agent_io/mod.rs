@@ -34,6 +34,7 @@ mod queued_cancellation;
 mod queued_input;
 pub use queued_input::*;
 mod message_replay_binding;
+mod reconcile_pacing;
 mod replay_binding;
 mod reservation_policy;
 mod response_read;
@@ -44,7 +45,10 @@ mod targeted_control;
 pub(in crate::sandbox) mod trigger;
 mod work;
 mod worker;
+mod worker_discovery;
 mod worker_store;
+pub use reconcile_pacing::{CommandReconcileHead, MAX_COMMAND_RECONCILE_HEADS};
+pub use worker_discovery::{CommandDiscovery, ScheduledAgentCommand};
 
 pub use admission::{
     AdmissionReceipt, AgentActor, AgentAuthorizationRevision, AgentCommandEnvelope,
