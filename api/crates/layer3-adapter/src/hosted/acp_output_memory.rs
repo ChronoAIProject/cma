@@ -3,7 +3,8 @@
 use std::collections::{LinkedList, VecDeque};
 use std::sync::{Arc, OnceLock};
 
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use crate::ingress_budget::{IngressBudget, IngressReservation};
+use tokio::sync::Semaphore;
 
 use super::HeldOutput;
 use crate::AdapterError;
@@ -25,19 +26,15 @@ pub(super) fn process_budget(enabled: bool) -> Option<Arc<Semaphore>> {
 pub(super) fn reserve(
     budget: Option<&Arc<Semaphore>>,
     payload_bytes: usize,
-) -> crate::Result<Option<OwnedSemaphorePermit>> {
+    aggregate: Option<&IngressBudget>,
+) -> crate::Result<Option<IngressReservation>> {
     let Some(budget) = budget else {
         return Ok(None);
     };
-    let weight = payload_bytes
-        .checked_add(NODE_BYTES)
-        .and_then(|bytes| u32::try_from(bytes).ok())
-        .ok_or_else(capacity)?;
-    budget
-        .clone()
-        .try_acquire_many_owned(weight)
+    let weight = payload_bytes.checked_add(NODE_BYTES).ok_or_else(capacity)?;
+    IngressReservation::try_acquire(budget, aggregate, weight)
         .map(Some)
-        .map_err(|_| capacity())
+        .ok_or_else(capacity)
 }
 
 fn capacity() -> AdapterError {
