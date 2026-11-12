@@ -107,6 +107,10 @@ pub struct AgentLogTurnFacts {
     /// The reader still verifies source failure detail and current command authority.
     #[serde(deserialize_with = "required_nullable")]
     pub prewrite_failure_sequence: Option<u64>,
+    /// Last approval change before this turn's terminal. Together with the
+    /// indexed pending set this preserves command delivery/approval ordering.
+    #[serde(deserialize_with = "required_nullable")]
+    pub approval_change_sequence: Option<u64>,
     pub conversation_id: String,
     pub runtime_generation: u64,
     #[serde(deserialize_with = "required_nullable")]
