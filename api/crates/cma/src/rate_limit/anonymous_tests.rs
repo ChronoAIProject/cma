@@ -102,6 +102,113 @@ async fn saturated_concurrency_refuses_immediately_and_recovers_permits() {
     drop(second);
 }
 
+#[tokio::test]
+async fn anonymous_permit_is_held_for_the_request_and_released_on_cancellation() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+        middleware,
+        routing::get,
+        Router,
+    };
+    use tokio::sync::Notify;
+    use tower::ServiceExt;
+
+    let mut limiters = super::RateLimiters::from_quotas(
+        governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
+        governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
+        governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
+        governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
+        governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
+        super::TrustedProxyConfig::sample(),
+    );
+    limiters.anonymous_public =
+        AnonymousPublicBudget::new(NonZeroU32::new(100).unwrap(), NonZeroU32::new(1).unwrap());
+
+    let started = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let handler_started = Arc::clone(&started);
+    let handler_release = Arc::clone(&release);
+    let app = Router::new()
+        .route(
+            "/api/v1/triggers/public/pub_one",
+            get(move || {
+                let started = Arc::clone(&handler_started);
+                let release = Arc::clone(&handler_release);
+                async move {
+                    started.notify_one();
+                    release.notified().await;
+                    StatusCode::NO_CONTENT
+                }
+            }),
+        )
+        .layer(middleware::from_fn_with_state(
+            Arc::new(limiters),
+            super::admit,
+        ));
+    let request = || {
+        Request::get("/api/v1/triggers/public/pub_one")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let first = tokio::spawn({
+        let app = app.clone();
+        async move { app.oneshot(request()).await.unwrap() }
+    });
+    started.notified().await;
+
+    let second = tokio::time::timeout(Duration::from_millis(250), {
+        let app = app.clone();
+        async move { app.oneshot(request()).await.unwrap() }
+    })
+    .await
+    .expect("the second request must be refused without waiting");
+    assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    first.abort();
+    assert!(
+        first.await.is_err(),
+        "the first request should be cancelled"
+    );
+
+    let third = tokio::spawn({
+        let app = app.clone();
+        async move { app.oneshot(request()).await.unwrap() }
+    });
+    started.notified().await;
+    release.notify_one();
+    assert_eq!(third.await.unwrap().status(), StatusCode::NO_CONTENT);
+
+    let fourth = tokio::spawn({
+        let app = app.clone();
+        async move { app.oneshot(request()).await.unwrap() }
+    });
+    started.notified().await;
+    let while_fourth_is_running = tokio::time::timeout(Duration::from_millis(250), {
+        let app = app.clone();
+        async move { app.oneshot(request()).await.unwrap() }
+    })
+    .await
+    .expect("a running request must retain the only permit");
+    assert_eq!(
+        while_fourth_is_running.status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    release.notify_one();
+    assert_eq!(fourth.await.unwrap().status(), StatusCode::NO_CONTENT);
+
+    let fifth = tokio::spawn({
+        let app = app.clone();
+        async move { app.oneshot(request()).await.unwrap() }
+    });
+    started.notified().await;
+    release.notify_one();
+    assert_eq!(fifth.await.unwrap().status(), StatusCode::NO_CONTENT);
+}
+
 #[test]
 fn routes_match_exact_templates() {
     for path in [
