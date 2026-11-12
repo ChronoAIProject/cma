@@ -361,7 +361,15 @@ async fn deleting_publisher_badge_and_open_are_unavailable_but_intent_only_clear
         )
         .await
         .unwrap();
-    assert_eq!(entry.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(entry.status(), StatusCode::NOT_FOUND);
+    assert_eq!(entry.headers()[header::CACHE_CONTROL], "private, no-store");
+    assert_eq!(entry.headers()[header::REFERRER_POLICY], "no-referrer");
+    assert_eq!(
+        entry.headers()[header::SET_COOKIE],
+        format!(
+            "__Host-cma_entry_{PUBLIC_ID}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict; Secure"
+        )
+    );
     let consume = router
         .oneshot(
             Request::post(format!("/api/v1/triggers/public/{PUBLIC_ID}/entry-intent"))
