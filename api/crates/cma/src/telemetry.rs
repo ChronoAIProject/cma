@@ -24,6 +24,10 @@ pub(crate) fn install() -> Result<PrometheusHandle, String> {
         "cma_telemetry_sample_timestamp_seconds",
         "Last local diagnostics sample; not scrape time"
     );
+    metrics::describe_counter!(
+        "cma_document_storage_receipt_mismatch_total",
+        "Document storage receipt integrity mismatches by field"
+    );
     metrics::describe_gauge!(
         "cma_readiness_check_success",
         "Last completed Mongo readiness result; also check its timestamp"
