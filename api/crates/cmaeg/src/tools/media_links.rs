@@ -3,7 +3,7 @@
 //!
 //! A link is a standalone bearer seen by the model provider and stored by CMA
 //! as a tool-call title, so it must be worthless once redeemed or expired.
-use super::{MediaDownload, ToolsState};
+use super::{MediaAuthorization, MediaDownload, ToolsState};
 use crate::{
     channels::resolver::ResolvedChannel,
     telemetry::{self, names},
@@ -180,8 +180,9 @@ impl LinkRefusal {
 impl ToolsState {
     /// Mint a single-use link to attachment `index` of `event` for the
     /// binding and current agent key of the consumer `event` was issued to,
-    /// as one ready `curl` command. The caller has already refused an attachment without a
-    /// source. The token appears only inside `curl` and is never logged.
+    /// as one structured credential with a compatible `curl` command. The
+    /// caller has already refused an attachment without a source. The token
+    /// is never logged.
     pub fn mint_link(
         &self,
         channel: &ResolvedChannel,
@@ -260,9 +261,13 @@ impl ToolsState {
         let url = format!("{}/v1/media/content", self.advertised_api_url());
         // Neither the token's alphabet nor a safe name contains `'`, so the
         // single-quoted words cannot be broken out of.
+        let authorization = MediaAuthorization {
+            scheme: "Bearer".into(),
+            token: token.expose_header_value().to_owned(),
+        };
         let curl = format!(
             "curl -fsSL -H 'Authorization: Bearer {}' -o '{}' '{url}'",
-            token.expose_header_value(),
+            &authorization.token,
             safe_name(attachment.filename.as_deref()),
         );
         tracing::debug!(
@@ -274,6 +279,7 @@ impl ToolsState {
             method: "GET".into(),
             url,
             expires_at: payload.expires_at,
+            authorization,
             curl,
         })
     }
