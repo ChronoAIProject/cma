@@ -1069,6 +1069,8 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SANDBOX_GLOBAL_LIMIT` | Default `0` (off); integer `1..4096` enables a shared transactional ceiling on all nonretired Sandboxes across owners/replicas. Paused/provisioning/retiring rows retain capacity; exact-origin retries bypass new-capacity refusal. Requires all writers upgraded and a capacity-owner limit with unclaimed pool/prepared and failure headroom reserved separately. See [global admission](CMA_Global_Admission.md). |
 | `CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED` | Strict boolean, default `false` in code and manifests. All writes retain 1,024 receipts / 12 MiB while off; compatible readers always accept bounded expanded aggregates. Enable only in a later train after the compatible reader is deployed, older workers have drained and that image is the pinned rollback target. Only owner grant/link revocations may spend the reserve; ordinary writes retain the old limits. Disabling it preserves expanded reads and exact retries. See [Document artifacts](Document_Artifacts.md) for activation and rollback. |
 | `CHRONO_DOCUMENT_QUOTAS_ENABLED` | Strict boolean, default `false`. With a complete installed storage baseline, reserves at most 100 document identities, 1 GiB retained source bytes and 32,768 immutable objects per owner before upload. Failed or uncertain writes retain their reservation. Unknown inventory refuses activation. After preparation, `false` refuses new source puts; it cannot bypass durable accounting. Reads, revocations and exact metadata retries stay available. See [Document quotas](CMA_Document_Quotas.md) for the operator fence, import and compatible rollback contract. |
+| `CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED` | Strict boolean, default `false` in code and manifests. Gates the separate background object delete/list client, whose contract is **unverified**. Enable only after the storage owner confirms the delete/list contract and NyxID grants the required scopes. While off, both operations return typed unavailability without requesting a token or contacting storage. This switch does not enable a document deletion API or start a cleanup worker. See [Dependency contracts](Dependency_Contracts.md) for the outstanding E1 evidence. |
+| `CHRONO_DOCUMENT_STORAGE_RESILIENCE_ENABLED` | Strict boolean, default `false` in code and infra. While off, preserve the serialized token refresh, existing expiry margin and single 401 replay without GET transport retry. When enabled, use shared refresh, bounded failure backoff, refresh ahead, generation-safe rejection and one bounded GET transport retry. Enable only after separate dependency qualification. |
 | `CHRONO_STORAGE_CLIENT_ID` | Deployment-owned machine identity for the existing `chrono-storage-service` proxy. Required when the document bucket is configured. Never passed to runtime Agents or browsers. |
 | `CHRONO_STORAGE_CLIENT_SECRET` | Secret reference for the storage machine identity; required with a configured document bucket. Issued tokens are cached in memory and renewed before expiry or once after a 401. |
 | `CHRONO_BASELINE_SERVICES` | Default `chrono-llm-public,ornn-api`; unioned into newly admitted Sandbox scope |
@@ -1088,6 +1090,8 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` | Creation request budget/burst; default 10 |
 | `CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED` | Strict boolean, default `false`. Opts exact registered existing-Agent input submissions into the existing Input budget, including Responses v2 and its Agent alias; preserves local and Mongo enforcement. See [Response input rate policy](CMA_Response_Input_Rate_Policy.md) for the route inventory and separate activation/rollback. |
 | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` | Agent input request budget/burst; default 120 |
+| `CHRONO_SERVER_RATE_CONTROL_ENABLED` | Strict boolean, default `false`. Separately activates the independent recovery/control policy; while false, prior Create/Input classification and shared keys are preserved. |
+| `CHRONO_SERVER_RATE_CONTROL_PER_MINUTE` | Independent per-subject Control budget/burst; default 120, positive integer. Protects recovery and controls of admitted work after the Create allowance is exhausted. |
 | `CHRONO_PUBLIC_STREAM_LIMIT` | Concurrent public stream request/body lifetimes per process; strict 0..4096, default 0/off. See [public stream admission](CMA_Public_Stream_Admission.md); this is not a decoded-memory or fleet-capacity bound. |
 | `CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED` | Strict default-off hosted output backpressure; requires retained ACK support. See [hosted update backpressure](CMA_Hosted_Update_Backpressure.md). |
 | `CHRONO_USAGE_BILLING_ENABLED` | Default false. Enables durable delivery of recorded Sandbox resource-time to NyxID's existing Lago organization; metering remains active when false. |
@@ -1182,6 +1186,67 @@ fingerprint. A changed timeout or clone-depth environment value must not change
 an already admitted replay plan. Existing Sandboxes likewise keep their pinned
 profile and service scope. Startup defaults seed missing default profiles; they
 are not a live rewrite mechanism for published profiles or existing settings.
+
+## Request rate tiers
+
+Authenticated operation budgets are shared by subject across API replicas through
+MongoDB, with a local limiter checked first. Anonymous requests use the resolved
+client network. Each tier has an independent GCRA allowance: the configured rate
+is also its initial burst, followed by continuous refill. Create's default
+10/min means ten immediate requests and one restored token every six seconds;
+it is not a fixed one-minute window. Health and pre-authentication Admission
+remain separate per-process guards.
+
+Create (10/min) covers creation POSTs and the remaining unclassified POSTs. Input
+(120/min) retains its existing policy: with
+`CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED=false`, only the legacy `/input`
+suffix policy uses Input; with it true, the exact registered input templates
+in [Response input rate policy](CMA_Response_Input_Rate_Policy.md) use Input,
+subject to the existing binding-auth restriction. This change leaves the flag
+false and preserves the classification of input submissions. With the separate
+`CHRONO_SERVER_RATE_CONTROL_ENABLED=true`, recovery and controls take precedence
+over Input in both Input flag modes. The Control switch defaults to false in
+code and infra; while disabled, v2 interrupt retains Input with the Input flag
+true for non-binding callers, and the other listed controls retain Create. With
+Control enabled, v2 interrupt uses Control for either value of the Input flag.
+
+When explicitly enabled, Control covers recovery and controls of admitted work, with a separate 120/min
+default giving headroom above TC-076's 20 input/control requests per minute. It
+applies only to POST requests whose registered MatchedPath exactly equals one of
+these templates, regardless of the input flag or authentication method:
+
+| Operation | MatchedPath | Admission note |
+| --- | --- | --- |
+| Agent stop | `/api/v1/agents/{id}/stop` | Existing checks remain |
+| Agent interrupt | `/api/v1/agents/{id}/interrupt` | Existing checks remain |
+| Approval decision | `/api/v1/agents/{id}/approvals/{request_id}` | Existing checks remain |
+| Access-request approval | `/api/v1/agents/{id}/access-requests/{request_id}/approve` | Existing checks remain |
+| Access-request denial | `/api/v1/agents/{id}/access-requests/{request_id}/deny` | Existing checks remain |
+| Launch cancel | `/api/v1/launches/{id}/cancel` | Existing checks remain |
+| Responses v1 cancel | `/api/v1/responses/{response_id}/cancel` | Existing checks remain |
+| Responses v2 interrupt | `/api/v2/agents/{agent_id}/responses/{response_id}/interrupt` | Replacement message retains existing domain admission |
+| Responses v2 control | `/api/v2/agents/{agent_id}/responses/{response_id}/controls` | Existing checks remain |
+| Responses v2 queued cancellation | `/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | Existing checks remain |
+| Sandbox pause | `/api/v1/sandboxes/{id}/pause` | Existing checks remain |
+| Sandbox command | `/api/v1/sandboxes/{id}/commands` | Revive still passes through existing domain admission |
+| Sandbox revive | `/api/v1/sandboxes/{id}/revive` | Existing domain admission still applies |
+| Agent capacity recovery resume | `/api/v1/agents/{id}/capacity-recovery/resume` | Existing domain admission still applies |
+
+Sandbox command Revive still passes through the existing domain admission
+checks. A Control classification reserves rate allowance only; it does not grant
+authority or bypass resource admission. Exhausting Create does not spend Control
+or Input. Exceeding any operation tier returns HTTP 429 `rate_limited` as
+`application/problem+json`, with a positive integer `Retry-After`; rejections
+use the existing aggregate counter and sparse tier-labelled logs. A shared-store
+failure returns 503 `request_budget_unavailable` without a local-only fallback.
+
+After policy approval, set `CHRONO_SERVER_RATE_CONTROL_ENABLED=true` consistently
+on all API replicas before claiming uniform Control isolation. Rollback sets it
+false and restores prior Create/Input classification. Keep the existing budget
+records; switching policy does not transfer or reset consumed allowance. A predecessor can read the unchanged opaque budget records, but its
+previous Create/Input classification loses this independent Control guarantee.
+The new `control:` keys use the existing schema v1, indexes and TTL, with no
+backfill or data rewrite. Upload/read-POST budget decisions are deferred.
 
 ## Platform Settings
 
