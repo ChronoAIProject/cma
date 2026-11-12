@@ -7,23 +7,24 @@ use layer2_core::document_artifacts::{
 };
 use reqwest::{Client, Method, Response, StatusCode};
 use serde::Deserialize;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tokio::sync::Mutex;
-use zeroize::Zeroizing;
+use std::{sync::Arc, time::Duration};
+use tokio::time::Instant;
+
+pub(crate) mod token;
+use token::StorageToken;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
-// Includes token-lock contention, refresh, the single 401 retry and body reads.
+// Includes token-state/refresh waits, retries, jitter and response body reads.
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
+const GET_TRANSPORT_ATTEMPTS: usize = 2;
+const MIN_RETRY_BUDGET: Duration = Duration::from_secs(3);
 
 pub(crate) struct StorageDocuments {
     http: Client,
     config: DocumentStorageConfig,
     read_only: bool,
-    token: Mutex<Option<(Zeroizing<String>, Instant)>>,
+    token: StorageToken,
 }
 impl StorageDocuments {
     pub(crate) fn new(config: DocumentStorageConfig) -> Result<Arc<Self>, String> {
@@ -37,63 +38,29 @@ impl StorageDocuments {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
+            .retry(reqwest::retry::never())
             .user_agent("cma-document-storage")
             .build()
             .map_err(|_| "document storage HTTP client could not be built")?;
+        let origin = url::Url::parse(&config.platform_origin)
+            .map_err(|_| "document storage origin is invalid")?;
+        let token = StorageToken::new(
+            http.clone(),
+            origin,
+            config.client_id.clone(),
+            config.client_secret.clone(),
+            if read_only {
+                "proxy object:read object:download"
+            } else {
+                "proxy object:create object:read object:download"
+            },
+        );
         Ok(Arc::new(Self {
             http,
             config,
             read_only,
-            token: Mutex::new(None),
+            token,
         }))
-    }
-    async fn token(&self, rejected: Option<&str>) -> Result<Zeroizing<String>, DocumentError> {
-        let mut guard = self.token.lock().await;
-        if let Some((token, expires)) = guard.as_ref() {
-            if *expires > Instant::now() + Duration::from_secs(60)
-                && rejected != Some(token.as_str())
-            {
-                return Ok(token.clone());
-            }
-        }
-        let response = self
-            .http
-            .post(format!("{}/oauth/token", self.config.platform_origin))
-            .form(&[
-                ("grant_type", "client_credentials"),
-                ("client_id", self.config.client_id.as_str()),
-                ("client_secret", self.config.client_secret.as_str()),
-                (
-                    "scope",
-                    if self.read_only {
-                        "proxy object:read object:download"
-                    } else {
-                        "proxy object:create object:read object:download"
-                    },
-                ),
-            ])
-            .send()
-            .await
-            .map_err(|_| DocumentError::Unavailable)?;
-        if !response.status().is_success() {
-            return Err(DocumentError::Unavailable);
-        }
-        let bytes = bounded(response, 16 * 1024).await?;
-        let auth: TokenReply =
-            serde_json::from_slice(&bytes).map_err(|_| DocumentError::Unavailable)?;
-        if auth.access_token.is_empty()
-            || auth.access_token.len() > 16 * 1024
-            || auth.expires_in < 120
-            || auth.expires_in > 86_400
-        {
-            return Err(DocumentError::Unavailable);
-        }
-        let token = Zeroizing::new(auth.access_token);
-        *guard = Some((
-            token.clone(),
-            Instant::now() + Duration::from_secs(auth.expires_in),
-        ));
-        Ok(token)
     }
     fn object_url(&self, key: &str, write: Option<&str>) -> Result<url::Url, DocumentError> {
         if !valid_key(key) {
@@ -119,9 +86,15 @@ impl StorageDocuments {
         method: Method,
         url: url::Url,
         body: Option<Vec<u8>>,
-    ) -> Result<Response, DocumentError> {
-        let mut token = self.token(None).await?;
-        for attempt in 0..2 {
+        replayed: &mut bool,
+        deadline: Instant,
+    ) -> Result<Response, RequestFailure> {
+        ensure_budget(deadline)?;
+        let (mut token, mut generation) = self.token.current(None).await?;
+        loop {
+            // Timeout polls its inner future first. Do not enqueue a request
+            // when a token or retry delay becomes ready at an expired deadline.
+            ensure_budget(deadline)?;
             let mut request = self
                 .http
                 .request(method.clone(), url.clone())
@@ -131,26 +104,22 @@ impl StorageDocuments {
                     .header("content-type", "text/markdown; charset=utf-8")
                     .body(body.clone());
             }
-            let response = request
-                .send()
-                .await
-                .map_err(|_| DocumentError::Unavailable)?;
-            if response.status() == StatusCode::UNAUTHORIZED && attempt == 0 {
-                token = self.token(Some(&token)).await?;
+            let response = request.send().await?;
+            if response.status() == StatusCode::UNAUTHORIZED && !*replayed {
+                ensure_budget(deadline)?;
+                *replayed = true;
+                (token, generation) = self.token.current(Some(generation)).await?;
                 continue;
             }
             if !response.status().is_success() {
-                return Err(DocumentError::Unavailable);
+                return Err(RequestFailure {
+                    error: DocumentError::Unavailable,
+                    retryable: matches!(response.status().as_u16(), 502..=504),
+                });
             }
             return Ok(response);
         }
-        Err(DocumentError::Unavailable)
     }
-}
-#[derive(Deserialize)]
-struct TokenReply {
-    access_token: String,
-    expires_in: u64,
 }
 #[derive(Deserialize)]
 struct StoredReply {
@@ -167,7 +136,12 @@ struct StoredMetadata {
 }
 
 impl StorageDocuments {
-    async fn put_object(&self, key: &str, bytes: Vec<u8>) -> Result<(), DocumentError> {
+    async fn put_object(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+        deadline: Instant,
+    ) -> Result<(), DocumentError> {
         if bytes.is_empty() || bytes.len() > MAX_DOCUMENT_BYTES {
             return Err(DocumentError::Invalid);
         }
@@ -176,9 +150,17 @@ impl StorageDocuments {
             return Err(DocumentError::Invalid);
         }
         let size = bytes.len() as u64;
+        let mut replayed = false;
         let response = self
-            .send(Method::POST, self.object_url(key, Some(&sha))?, Some(bytes))
-            .await?;
+            .send(
+                Method::POST,
+                self.object_url(key, Some(&sha))?,
+                Some(bytes),
+                &mut replayed,
+                deadline,
+            )
+            .await
+            .map_err(|failure| failure.error)?;
         let receipt: StoredReply = serde_json::from_slice(&bounded(response, 16 * 1024).await?)
             .map_err(|_| DocumentError::Corrupt)?;
         if receipt.data.key != key
@@ -191,13 +173,34 @@ impl StorageDocuments {
         }
         Ok(())
     }
-    async fn get_object(&self, key: &str) -> Result<Vec<u8>, DocumentError> {
-        bounded(
-            self.send(Method::GET, self.object_url(key, None)?, None)
-                .await?,
-            MAX_DOCUMENT_BYTES,
-        )
-        .await
+    async fn get_object(&self, key: &str, deadline: Instant) -> Result<Vec<u8>, DocumentError> {
+        let url = self.object_url(key, None)?;
+        let mut replayed = false;
+        for attempt in 0..GET_TRANSPORT_ATTEMPTS {
+            let result = async {
+                read_body(
+                    self.send(Method::GET, url.clone(), None, &mut replayed, deadline)
+                        .await?,
+                    MAX_DOCUMENT_BYTES,
+                )
+                .await
+            }
+            .await;
+            match result {
+                Ok(body) => return Ok(body),
+                Err(failure)
+                    if failure.retryable
+                        && attempt + 1 < GET_TRANSPORT_ATTEMPTS
+                        && deadline.saturating_duration_since(Instant::now())
+                            >= MIN_RETRY_BUDGET =>
+                {
+                    let random = uuid::Uuid::new_v4().as_u128() as u64;
+                    tokio::time::sleep(Duration::from_millis(100 + random % 201)).await;
+                }
+                Err(failure) => return Err(failure.error),
+            }
+        }
+        Err(DocumentError::Unavailable)
     }
 }
 
@@ -207,29 +210,61 @@ impl DocumentBlobStore for StorageDocuments {
         if self.read_only {
             return Err(DocumentError::Invalid);
         }
-        tokio::time::timeout(OPERATION_TIMEOUT, self.put_object(key, bytes))
+        let deadline = Instant::now() + OPERATION_TIMEOUT;
+        tokio::time::timeout_at(deadline, self.put_object(key, bytes, deadline))
             .await
             .map_err(|_| DocumentError::Unavailable)?
     }
 
     async fn get(&self, key: &str) -> Result<Vec<u8>, DocumentError> {
-        tokio::time::timeout(OPERATION_TIMEOUT, self.get_object(key))
+        let deadline = Instant::now() + OPERATION_TIMEOUT;
+        tokio::time::timeout_at(deadline, self.get_object(key, deadline))
             .await
             .map_err(|_| DocumentError::Unavailable)?
     }
 }
-async fn bounded(mut response: Response, max: usize) -> Result<Vec<u8>, DocumentError> {
+struct RequestFailure {
+    error: DocumentError,
+    retryable: bool,
+}
+fn ensure_budget(deadline: Instant) -> Result<(), RequestFailure> {
+    if Instant::now() >= deadline {
+        return Err(DocumentError::Unavailable.into());
+    }
+    Ok(())
+}
+impl From<DocumentError> for RequestFailure {
+    fn from(error: DocumentError) -> Self {
+        Self {
+            error,
+            retryable: false,
+        }
+    }
+}
+impl From<reqwest::Error> for RequestFailure {
+    fn from(error: reqwest::Error) -> Self {
+        Self {
+            error: DocumentError::Unavailable,
+            retryable: error.is_connect()
+                || error.is_timeout()
+                || error.is_request()
+                || error.is_body(),
+        }
+    }
+}
+async fn bounded(response: Response, max: usize) -> Result<Vec<u8>, DocumentError> {
+    read_body(response, max)
+        .await
+        .map_err(|failure| failure.error)
+}
+async fn read_body(mut response: Response, max: usize) -> Result<Vec<u8>, RequestFailure> {
     if response.content_length().is_some_and(|n| n > max as u64) {
-        return Err(DocumentError::Corrupt);
+        return Err(DocumentError::Corrupt.into());
     }
     let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| DocumentError::Unavailable)?
-    {
+    while let Some(chunk) = response.chunk().await? {
         if body.len().saturating_add(chunk.len()) > max {
-            return Err(DocumentError::Corrupt);
+            return Err(DocumentError::Corrupt.into());
         }
         body.extend_from_slice(&chunk);
     }
@@ -270,3 +305,11 @@ mod tests;
 #[cfg(test)]
 #[path = "document_storage_failure_tests.rs"]
 mod failure_tests;
+
+#[cfg(test)]
+#[path = "document_storage_token_tests.rs"]
+mod token_tests;
+
+#[cfg(test)]
+#[path = "document_storage_transport_tests.rs"]
+mod transport_tests;
