@@ -114,12 +114,13 @@ impl Pressure {
         metrics::gauge!("cma_mongo_circuit_until_timestamp_seconds", "pool" => "reporting")
             .set(until as f64);
         metrics::counter!("cma_mongo_circuit_opened_total", "pool" => "reporting", "reason" => reason).increment(1);
-        tracing::warn!(
-            operation,
-            reason,
-            elapsed_ms = duration.as_millis() as u64,
-            failed,
-            "sandbox reporting database circuit opened"
+        super::super::mongo_diagnostics::output::send(
+            super::super::mongo_diagnostics::output::Record::Circuit {
+                operation,
+                reason,
+                elapsed_ms: duration.as_millis() as u64,
+                failed,
+            },
         );
     }
 }
@@ -132,7 +133,11 @@ pub(super) fn observe(options: &mut ClientOptions, circuit: Arc<AtomicU64>) {
         slow_checkouts: Mutex::new((0, None)),
     };
     use super::super::mongo_latency::connection_key;
+    let diagnostics = super::super::mongo_diagnostics::install(options, "reporting");
     options.cmap_event_handler = Some(EventHandler::callback(move |event: CmapEvent| {
+        if let Some(diagnostics) = &diagnostics {
+            diagnostics.cmap(&event);
+        }
         pool_observer(event.clone());
         match event {
             CmapEvent::ConnectionCheckedOut(e) => pressure.checkout(
@@ -224,6 +229,7 @@ mod tests {
     }
 
     fn pressure() -> Pressure {
+        super::super::super::mongo_diagnostics::output::initialize();
         Pressure {
             circuit: Arc::default(),
             checked_out: Mutex::new(HashMap::new()),
