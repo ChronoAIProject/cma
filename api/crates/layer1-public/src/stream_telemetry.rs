@@ -54,9 +54,12 @@ pub fn emit() {
 impl Counters {
     fn emit(&self) {
         for (index, kind) in LABELS.iter().enumerate() {
+            metrics::gauge!("cma_public_streams_active", "stream_kind" => *kind)
+                .set(self.active[index].load(Ordering::Relaxed) as f64);
             tracing::info!(parent: None, metric = "cma_public_streams_active", stream_kind = kind,
                 value = self.active[index].load(Ordering::Relaxed), "public stream gauge");
             for (outcome, label) in OUTCOMES.iter().enumerate() {
+                metrics::counter!("cma_public_stream_polls_total", "stream_kind" => *kind, "outcome" => *label).absolute(self.polls[index][outcome].load(Ordering::Relaxed));
                 tracing::info!(parent: None, metric = "cma_public_stream_polls_total", stream_kind = kind,
                     outcome = label, value = self.polls[index][outcome].load(Ordering::Relaxed),
                     "public stream poll counter");

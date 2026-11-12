@@ -1775,6 +1775,11 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agent-lifecycle/{id}` | - | - | 200 AgentLifecycleOperationView |
 | `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
+| `GET /api/v1/agents/{id}/capacity-recovery/dry-run` | - | - | 200 authorized recovery metadata |
+| `GET /api/v1/agents/{id}/capacity-recovery` | - | - | 200 authorized recovery status |
+| `POST /api/v1/agents/{id}/capacity-recovery/status` | Original recovery request | - | 200 original recovery status |
+| `POST /api/v1/agents/{id}/capacity-recovery/admit` | Original recovery request | - | 200 recorded result; 202 unknown commit |
+| `POST /api/v1/agents/{id}/capacity-recovery/resume` | Original recovery request | - | 200 recorded result; 202 unknown commit |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
 | `GET /api/v1/agents/{id}/suggestions` | - | turn_sequence, answer_sequence | 200 SuggestionReadingView |
@@ -2106,6 +2111,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `POST /api/v2/agents/{agent_id}/responses` | CreateV2ResponseRequest | - | 200 SSE |
 | `GET /api/v2/responses/{response_id}` | - | - | 200 V2ResponseObject |
 | `GET /api/v2/responses/{response_id}/events` | - | starting_after | 200 SSE |
+| `GET /api/v2/responses/{response_id}/output` | - | after | 200 JSON output page |
 | `GET /api/v2/conversations/{conversation_id}` | - | - | 200 Conversation |
 | `GET /api/v2/conversations/{conversation_id}/items` | - | after, before, limit, order | 200 JSON items |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | - | - | 200 V2ResponseControls |
@@ -2462,6 +2468,7 @@ SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both exp
 | `GET /api/v1/agents/{id}/preferences` | - | - | 200 AgentPreferencesView |
 | `PATCH /api/v1/agents/{id}/preferences` | UpdateAgentPreferencesRequest; key | - | 200 AgentPreferencesView |
 
+| `POST /api/v1/telemetry/browser` | Anonymous, bounded browser diagnostic category; no durable receipt. |
 <!-- openapi-operations:end -->
 
 ## Contract Verification
@@ -2631,3 +2638,38 @@ admin route and enumerate current exceptions with
 `GET /api/v1/admin/sandboxes?always_on=true`. See
 [CMA automatic pause](CMA_Auto_Pause.md) for revision rules, audit fields and the
 required review of legacy exceptions before enablement.
+
+### Browser diagnostic reports
+
+`POST /api/v1/telemetry/browser` accepts anonymous JSON such as
+`{"kind":"react_error"}` and returns 204. Fixed kinds are `uncaught_error`,
+`unhandled_rejection`, `react_error`, `resource_error`, `chunk_error`. The body
+is limited to 256 bytes; unknown kinds or additional fields return 422, oversized
+bodies return 413. The local 20/sec process budget returns 429 with Retry-After,
+in addition to normal pre-auth network admission. No identity or durable
+activity record is created. This untrusted signal is diagnostic only. Send no
+exception text, stack, page URL, credentials or resource identifiers. The web
+bootstrap reports each category at most once per page and does not retry.
+
+## Agent capacity recovery
+
+These personal authenticated routes expose current metadata and explicit original
+recovery requests. New recovery admission remains default-off. Every response,
+including authentication refusals, has `Cache-Control: private, no-store`.
+
+| Method and path | Request | Result |
+| --- | --- | --- |
+| `GET /api/v1/agents/{id}/capacity-recovery/dry-run` | None | Authorized metadata only; no history scan, write or runtime call |
+| `GET /api/v1/agents/{id}/capacity-recovery` | None | Current personal recovery status |
+| `POST /api/v1/agents/{id}/capacity-recovery/status` | Original recovery request | Status of that original request |
+| `POST /api/v1/agents/{id}/capacity-recovery/admit` | Original recovery request | Explicit admission, subject to current gates and authority |
+| `POST /api/v1/agents/{id}/capacity-recovery/resume` | Original recovery request | One bounded accepted-work attempt or exact result reconciliation |
+
+The original request contains `agent_id`, `creation_key`, `creation_fingerprint`,
+`failure_seq` and `requested_at`. Preserve every field on retry. It identifies
+the original failure and grants no authority. Routes reject foreign or missing
+resources without revealing native conversation, runtime or home identities.
+A recorded outcome is HTTP 200; an uncertain commit is HTTP 202 with
+`outcome: unknown`. HTTP 409 may carry `outcome: known_abort` or a named problem.
+A missing receipt never proves abort. Neither result authorizes replaying Agent
+input. Admission refusal does not prevent reconciling already accepted work.

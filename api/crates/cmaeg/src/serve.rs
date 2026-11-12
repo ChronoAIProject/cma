@@ -41,6 +41,8 @@ pub(crate) async fn serve(
     service_auth.bearer().await?;
     let (records, creator_auth, browser) =
         crate::serve_storage::compose(&config, service_auth.clone()).await?;
+    // Install before constructing instrumented pools and queues.
+    let metrics = telemetry::install()?;
     let providers = Arc::new(
         providers::ProviderClient::from_config(&config)?
             .with_service_auth(service_auth)
@@ -87,9 +89,8 @@ pub(crate) async fn serve(
     ));
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
-    let (inbound, outcomes) = tokio::sync::mpsc::channel(256);
-    let delivery: std::sync::Arc<dyn delivery::router::DeliverySink> =
-        Arc::new(delivery::router::ShardedScheduler::new(inbound));
+    let (scheduler, outcomes) = delivery::router::ShardedScheduler::channel(256);
+    let delivery: std::sync::Arc<dyn delivery::router::DeliverySink> = Arc::new(scheduler);
     let waiters = Arc::new(delivery::sync::SyncRegistry::default());
     let custom_delivery = delivery::custom::CustomDelivery::new(
         config.management.public_url.clone(),
@@ -114,9 +115,6 @@ pub(crate) async fn serve(
     let (native_lark_controls, native_lark_thread_start) =
         source_settings::lark_issuance(&config, &state);
     let tool_providers = Arc::new(config.media.tool_providers.clone());
-    // Installed before the media transformer's setup so its readiness gauge
-    // is recorded; the metrics listener still binds after the gateway's.
-    let metrics = telemetry::install()?;
     // After the recorder, which registers its gauge. `None` while
     // CMAEG_CONSOLE_ENABLED is off: then no /console route exists.
     let console = console::compose(&config, &state, observers.queue.take())?;
