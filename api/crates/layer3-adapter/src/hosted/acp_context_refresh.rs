@@ -144,8 +144,7 @@ impl Bridge {
             self.call("session/close", serde_json::json!({"sessionId":session}))
                 .await?;
             let loaded = self
-                .call(
-                    "session/load",
+                .load_retained_session(
                     serde_json::json!({"sessionId":session,"cwd":cwd,"mcpServers":tools}),
                 )
                 .await?;
