@@ -391,22 +391,21 @@ build_fixture api 'linux/amd64' true
 build_fixture web 'linux/amd64,linux/arm64' true
 build_fixture runtime 'linux/amd64' true
 build_fixture cmaeg 'linux/amd64' true
-build_fixture image-manager 'linux/amd64' true
-for component in api web runtime cmaeg image-manager; do
+for component in api web runtime cmaeg; do
   create_source_alias "$component"
 done
 pass 'release-shaped OCI fixtures and digest aliases were published locally'
 
 transfer_dir="$work_dir/transfer"
 mkdir "$transfer_dir"
-for component in api web runtime cmaeg image-manager; do
+for component in api web runtime cmaeg; do
   mkdir "$transfer_dir/$component"
   SKOPEO_COMMAND="$skopeo_wrapper" \
     "$export_script" "$component" "$version" "$full_revision" \
     "ghcr.io/chronoaiproject/cma-$component" \
     "$transfer_dir/$component" >/dev/null
 done
-pass 'the real exporter preserved all five source root digests in OCI archives'
+pass 'the real exporter preserved all four source root digests in OCI archives'
 
 verify_platform_config() {
   local component architecture manifest source_reference destination_reference prefix
@@ -451,7 +450,7 @@ verify_destination() {
   local expected_digest tag source_raw destination_raw architecture child_digest
   local source_child destination_child prefix
   destination_prefix=$1
-  for component in api web runtime cmaeg image-manager; do
+  for component in api web runtime cmaeg; do
     metadata="$transfer_dir/$component/cma-${component}-${version}-${revision}.json"
     source_repository="ghcr.io/chronoaiproject/cma-$component"
     destination_repository="${destination_prefix}/cma-$component"
@@ -520,10 +519,10 @@ run_import() {
 absent_destination=registry.example.com/all-absent
 clear_skopeo_log
 run_import "$absent_destination" "$work_dir/absent.stdout" \
-  "$work_dir/absent.stderr" || fail 'the ten-absent-tag import failed'
-[ "$(copy_count)" -eq 10 ] || fail 'the ten-absent-tag import did not copy ten tags'
+  "$work_dir/absent.stderr" || fail 'the eight-absent-tag import failed'
+[ "$(copy_count)" -eq 8 ] || fail 'the eight-absent-tag import did not copy eight tags'
 verify_destination "$absent_destination"
-pass 'ten absent destination tags copy with exact roots, children, and configs'
+pass 'eight absent destination tags copy with exact roots, children, and configs'
 
 clear_skopeo_log
 run_import "$absent_destination" "$work_dir/equal.stdout" \
@@ -539,13 +538,13 @@ run_skopeo copy --all --preserve-digests \
 clear_skopeo_log
 run_import "$partial_destination" "$work_dir/partial.stdout" \
   "$work_dir/partial.stderr" || fail 'the one-preseeded-tag import failed'
-[ "$(copy_count)" -eq 9 ] || fail 'the one-preseeded-tag import did not copy nine tags'
+[ "$(copy_count)" -eq 7 ] || fail 'the one-preseeded-tag import did not copy seven tags'
 verify_destination "$partial_destination"
 clear_skopeo_log
 run_import "$partial_destination" "$work_dir/partial-retry.stdout" \
   "$work_dir/partial-retry.stderr" || fail 'the completed partial retry failed'
 [ "$(copy_count)" -eq 0 ] || fail 'the completed partial retry copied a tag'
-pass 'one exact preseed copies nine tags, then a retry copies zero'
+pass 'one exact preseed copies seven tags, then a retry copies zero'
 
 mismatch_destination=registry.example.com/mismatch
 runtime_digest=$(<"$work_dir/runtime.digest")

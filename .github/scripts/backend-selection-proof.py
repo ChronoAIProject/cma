@@ -19,10 +19,41 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / ".github/scripts/backend-nextest.sh"
 
 
+# Retain the reviewed behavior baseline from the former runner as explicit libtest
+# commands, independent of the new runner's selection syntax and script names.
+SERVICE_AUTH_BASELINE_COMMANDS = [shlex.split(command) for command in (
+    "cargo test --locked -p cmaeg --lib optional_forms_storage -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --lib optional_media_continuation_storage -- --ignored --test-threads=1",
+    "cargo nextest run --locked -p cmaeg -E 'test(=worker_credentials::mongo::integration_tests::worker_history_cross_client_visibility_append_only_grants_and_cutover_barrier)' --run-ignored only --test-threads 1",
+    "cargo test --locked -p cmaeg --lib whatsapp_retention_on_real_mongo -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --test mongo_isolation -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --test management github_integrations:: -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --test management organization_channels:: -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --test github_source -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --lib tools::threads::ledger::mongo_tests:: -- --ignored --test-threads=1",
+    "cargo test --locked -p cma store::isolation::tests::real_ -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --test management binary::compiled_binary_ -- --include-ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --test relay_ingress runner_binary:: -- --ignored --test-threads=1",
+    "cargo test --locked -p cma gateway::tests:: -- --ignored --test-threads=1",
+    "cargo test --locked -p cma sender_context_tests:: -- --ignored --test-threads=1",
+)]
+
+
 def commands(path, prefix):
     text = path.read_text().replace("\\\n", " ")
-    return [shlex.split(line) for line in text.splitlines()
-            if line.startswith(prefix)]
+    selected = []
+    for line in text.splitlines():
+        if prefix not in line:
+            continue
+        tokens = shlex.split(line)
+        command = prefix.strip()
+        if command not in tokens:
+            continue
+        index = tokens.index(command)
+        # Accept sender-specific environment assignments, but not unrelated shell commands.
+        if all(re.match(r"[A-Za-z_][A-Za-z0-9_]*=", token) for token in tokens[:index]):
+            selected.append(tokens[index:])
+    return selected
 
 
 def list_tests(arguments):
@@ -142,14 +173,13 @@ def main():
             "--", "--ignored", "--exact", "--test-threads=1"]
     compare("layer4-exact", old_libtest(args, suites), list_tests([
         "-E", f"package(=layer4-runtime) and test(={layer4})", "--run-ignored", "only"])[0])
-    before = commands(baseline / "image-manager-mongo-contract.sh", "cargo ")
-    before = [args for args in before if args[1] != "build"]
-    after = commands(ROOT / ".github/scripts/image-manager-mongo-contract.sh", "nextest_build ")
+    before = SERVICE_AUTH_BASELINE_COMMANDS
+    after = commands(ROOT / ".github/scripts/service-auth-mongo-contract.sh", "nextest_build ")
     if len(before) != len(after):
-        raise AssertionError("Image Manager invocation count changed")
+        raise AssertionError("Service authentication invocation count changed")
     for index, (old, new) in enumerate(zip(before, after), 1):
         expected = old_libtest(old, suites) if old[1] == "test" else old_nextest(old)
-        compare(f"image-manager-{index:02}", expected, old_nextest(new))
+        compare(f"service-auth-{index:02}", expected, old_nextest(new))
     old_source = (baseline / "mongo-contract-tests.sh").read_text()
     new_source = (ROOT / ".github/scripts/mongo-contract-tests.sh").read_text()
     before_filters, after_filters = mongo_filters(old_source), mongo_filters(new_source)

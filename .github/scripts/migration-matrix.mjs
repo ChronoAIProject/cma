@@ -34,7 +34,7 @@ function artifact(value) {
   fields(value, ['source', 'image']);
   assert.match(value.source, sourcePattern);
   // An OCI root digest, not a tag or a local Docker config ID.
-  assert.match(value.image, /^ghcr\.io\/chronoaiproject\/cma-(api|cmaeg|image-manager|runtime|web)@sha256:[a-f0-9]{64}$/);
+  assert.match(value.image, /^ghcr\.io\/chronoaiproject\/cma-(api|cmaeg|runtime|web)@sha256:[a-f0-9]{64}$/);
 }
 
 function timestamp(value) {

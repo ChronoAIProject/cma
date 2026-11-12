@@ -8,7 +8,6 @@ import { join } from 'node:path';
 // Each row is one former invocation, including both include-ignored cases and
 // nextest's existing exact owner-key contract. Match substrings explicitly.
 const selections = [
-  ['package(=cma-image-manager) and kind(test) and (binary(=mongo_isolation) or binary(=browser_session))', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~optional_forms_storage)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~optional_media_continuation_storage)', 'only', true],
   ['package(=cmaeg) and test(=worker_credentials::mongo::integration_tests::worker_history_cross_client_visibility_append_only_grants_and_cutover_barrier)', 'only', false],
@@ -26,13 +25,13 @@ const selections = [
 ];
 
 function fixture(reuse, scenario = 'success') {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cma-image-manager-runner-')));
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cma-service-auth-runner-')));
   const root = join(directory, 'repo');
   const scripts = join(root, '.github/scripts');
   const metadata = join(root, 'api/target/nextest');
   mkdirSync(scripts, {recursive: true});
   mkdirSync(metadata, {recursive: true});
-  for (const name of ['image-manager-mongo-contract.sh', 'authenticated-mongo-readiness.js', 'backend-nextest.sh']) {
+  for (const name of ['service-auth-mongo-contract.sh', 'authenticated-mongo-readiness.js', 'backend-nextest.sh']) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
   writeFileSync(join(metadata, 'cargo-metadata.json'), JSON.stringify({workspace_root: join(root, 'api'), target_directory: join(root, 'api/target')}));
@@ -46,7 +45,7 @@ const command = path.basename(process.argv[1]);
 const log = process.env.CMA_TEST_LOG;
 const scenario = process.env.CMA_TEST_SCENARIO;
 if (command === 'openssl') { console.log('ab'.repeat(Number(args[2]))); process.exit(0); }
-fs.appendFileSync(log, JSON.stringify({command,args,uri:process.env.CMA_IM_TEST_MONGODB_URI,
+fs.appendFileSync(log, JSON.stringify({command,args,uri:process.env.CMA_SERVICE_AUTH_TEST_MONGODB_URI,
   caller:process.env.CHRONO_TEST_MONGODB_URI,failpoint:process.env.CHRONO_TEST_MONGODB_FAILPOINT_URI})+'\\n');
 if (command === 'cargo') {
   if (scenario === 'test-error') process.exit(8);
@@ -59,25 +58,25 @@ else if (args[0] === 'rm' && scenario === 'cleanup-error') process.exit(10);
 `;
   for (const command of ['cargo', 'docker', 'openssl']) writeFileSync(join(directory, command), cli, {mode: 0o755});
   const env = {...process.env, CI: reuse ? 'true' : 'false', PATH: `${directory}:${process.env.PATH}`,
-    CMA_TEST_LOG: log, CMA_TEST_SCENARIO: scenario, CMA_IM_TEST_MONGODB_URI: 'caller-uri',
+    CMA_TEST_LOG: log, CMA_TEST_SCENARIO: scenario, CMA_SERVICE_AUTH_TEST_MONGODB_URI: 'caller-uri',
     CHRONO_TEST_MONGODB_URI: 'caller-uri', CHRONO_TEST_MONGODB_FAILPOINT_URI: 'caller-uri'};
   if (reuse) env.CMA_NEXTEST_REUSE = '1'; else delete env.CMA_NEXTEST_REUSE;
   return {
     metadata, env, log,
-    run: () => execFileSync('bash', [join(scripts, 'image-manager-mongo-contract.sh')], {env, stdio: 'pipe', timeout: 15000}),
+    run: () => execFileSync('bash', [join(scripts, 'service-auth-mongo-contract.sh')], {env, stdio: 'pipe', timeout: 15000}),
     calls: () => existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(row => JSON.parse(row)) : [],
     close: () => rmSync(directory, {recursive: true}),
   };
 }
 
 for (const reuse of [false, true]) {
-  test(`${reuse ? 'archive' : 'source'}: every Image Manager selection is serial and uses its owned authenticated fixture`, () => {
+  test(`${reuse ? 'archive' : 'source'}: each service authentication test selection is serial and uses its owned authenticated fixture`, () => {
     const f = fixture(reuse);
     try {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 15);
+      assert.equal(selections.length, 14);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];
@@ -95,13 +94,13 @@ for (const reuse of [false, true]) {
       }
       assert.ok(calls.filter(row => row.command === 'docker' && row.args[0] !== 'rm' && row.args[0] !== 'container' && row.args[0] !== 'inspect').every(row => row.uri === undefined));
       const created = calls.find(row => row.command === 'docker' && row.args[0] === 'run');
-      const name = `cma-im-mongo-${'ab'.repeat(12)}`;
+      const name = `cma-service-auth-mongo-${'ab'.repeat(12)}`;
       assert.equal(created.args[created.args.indexOf('--name')+1], name);
-      assert.equal(created.args[created.args.indexOf('--label')+1], `dev.chrono.cma.im-contract=${'ab'.repeat(12)}`);
+      assert.equal(created.args[created.args.indexOf('--label')+1], `dev.chrono.cma.service-auth-contract=${'ab'.repeat(12)}`);
       assert.ok(created.args.includes('mongo:8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c'));
       assert.match(created.args.at(-1), /--setParameter enableTestCommands=1$/);
       assert.deepEqual(calls.at(-1).args, ['rm', '--force', '--volumes', name]);
-      assert.deepEqual(calls.at(-2).args, ['inspect', '--format', '{{index .Config.Labels "dev.chrono.cma.im-contract"}}', name]);
+      assert.deepEqual(calls.at(-2).args, ['inspect', '--format', '{{index .Config.Labels "dev.chrono.cma.service-auth-contract"}}', name]);
     } finally { f.close(); }
   });
   for (const scenario of ['test-error', 'cleanup-error', 'foreign-container']) test(`${reuse ? 'archive' : 'source'}: ${scenario} fails without deleting foreign containers`, () => {
@@ -135,4 +134,25 @@ for (const scenario of ['ci-source', 'empty-mode', 'bad-mode', 'sentinel-mode', 
     assert.throws(f.run);
     assert.deepEqual(f.calls(), []);
   } finally { f.close(); }
+});
+
+
+test('selection proof reads every retained invocation and handles sender-specific environment assignments', () => {
+  const script = new URL('backend-selection-proof.py', import.meta.url).pathname;
+  const runner = new URL('service-auth-mongo-contract.sh', import.meta.url).pathname;
+  const value = execFileSync('python3', ['-c', `
+import json, pathlib, runpy, sys, tempfile
+proof = runpy.run_path(sys.argv[1])
+parse = proof["commands"]
+with tempfile.TemporaryDirectory(prefix="cma-service-selection-") as directory:
+    path = pathlib.Path(directory) / "fixture.sh"
+    path.write_text("nextest_build run -E 'direct'\\nSCOPED_URI=owned nextest_build run -E 'scoped'\\necho nextest_build run -E 'unrelated'\\n")
+    parsed = parse(path, "nextest_build ")
+    assert [row[row.index("-E") + 1] for row in parsed] == ["direct", "scoped"]
+print(json.dumps({"baseline": len(proof["SERVICE_AUTH_BASELINE_COMMANDS"]),
+                  "actual": parse(pathlib.Path(sys.argv[2]), "nextest_build ")}))
+`, script, runner], { encoding: 'utf8', env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'} });
+  const result = JSON.parse(value);
+  assert.equal(result.baseline, 14);
+  assert.deepEqual(result.actual.map(args => args[args.indexOf('-E') + 1]), selections.map(([expression]) => expression));
 });

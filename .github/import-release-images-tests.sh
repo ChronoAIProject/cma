@@ -51,7 +51,6 @@ component_for() {
     *cma-web*) printf 'web\n' ;;
     *cma-runtime*) printf 'runtime\n' ;;
     *cma-cmaeg*) printf 'cmaeg\n' ;;
-    *cma-image-manager*) printf 'image-manager\n' ;;
     *) printf 'cannot identify component: %s\n' "$1" >&2; exit 71 ;;
   esac
 }
@@ -175,15 +174,14 @@ JSON
 JSON
 
   cp "$fixtures/api.raw" "$fixtures/cmaeg.raw"
-  cp "$fixtures/api.raw" "$fixtures/image-manager.raw"
-  for component in api web runtime cmaeg image-manager; do
+  for component in api web runtime cmaeg; do
     printf '{"os":"linux","architecture":"amd64","config":{"Labels":{"org.opencontainers.image.version":"%s","org.opencontainers.image.revision":"%s"}}}\n' \
       "$version" "$full_revision" > "$fixtures/$component.amd64.config"
   done
   printf '{"os":"linux","architecture":"arm64","config":{"Labels":{"org.opencontainers.image.version":"%s","org.opencontainers.image.revision":"%s"}}}\n' \
     "$version" "$full_revision" > "$fixtures/web.arm64.config"
 
-  for component in api web runtime cmaeg image-manager; do
+  for component in api web runtime cmaeg; do
     base="cma-${component}-${version}-${revision}"
     mkdir -p "$transfer/$component"
     archive="$transfer/$component/$base.oci.tar"
@@ -239,7 +237,7 @@ run_import() {
 }
 
 assert_all_equal() {
-  for component in api web runtime cmaeg image-manager; do
+  for component in api web runtime cmaeg; do
     for kind in version revision; do
       cmp -s "$fixtures/$component.raw" "$state/$component.$kind.raw" \
         || fail "$component $kind destination is not exact"
@@ -249,35 +247,35 @@ assert_all_equal() {
 
 new_case
 run_import || fail "all-absent import failed"
-[ "$(grep -c '^<list-tags>' "$log")" -eq 5 ] || fail "preflight did not list all repositories"
-[ "$(grep -c '^<copy>' "$log")" -eq 10 ] || fail "all-absent import did not copy ten tags"
+[ "$(grep -c '^<list-tags>' "$log")" -eq 4 ] || fail "preflight did not list all repositories"
+[ "$(grep -c '^<copy>' "$log")" -eq 8 ] || fail "all-absent import did not copy eight tags"
 third_list=$(grep -n '^<list-tags>' "$log" | tail -1 | cut -d: -f1)
 first_copy=$(grep -n '^<copy>' "$log" | head -1 | cut -d: -f1)
 [ "$third_list" -lt "$first_copy" ] || fail "copy began before the complete destination preflight"
 assert_contains "$log" '<copy><--all><--preserve-digests><--authfile>'
-[ "$(grep -c '<inspect><--config>' "$log")" -eq 18 ] \
+[ "$(grep -c '<inspect><--config>' "$log")" -eq 15 ] \
   || fail "archive and copied tags did not expose all expected platform configs"
 assert_all_equal
 if grep -F 'DO-NOT-LEAK-THIS-CREDENTIAL' "$log" "$stdout" "$stderr" >/dev/null; then
   fail "credential contents escaped into importer output"
 fi
-pass "ten absent tags are preflighted, copied exactly, and credential-safe"
+pass "eight absent tags are preflighted, copied exactly, and credential-safe"
 
 new_case
-for component in api web runtime cmaeg image-manager; do
+for component in api web runtime cmaeg; do
   set_equal "$component" version
   set_equal "$component" revision
 done
 run_import || fail "all-equal retry failed"
 [ "$(grep -c '^<copy>' "$log" || true)" -eq 0 ] || fail "equal destination was copied again"
-[ "$(grep -c '^Keeping ' "$stdout")" -eq 10 ] || fail "equal tags were not reported as retained"
-pass "ten equal tags are idempotently skipped"
+[ "$(grep -c '^Keeping ' "$stdout")" -eq 8 ] || fail "equal tags were not reported as retained"
+pass "eight equal tags are idempotently skipped"
 
 new_case
 set_equal api version
 set_equal web revision
 run_import || fail "partially completed import failed"
-[ "$(grep -c '^<copy>' "$log")" -eq 8 ] || fail "partial retry did not copy only absent tags"
+[ "$(grep -c '^<copy>' "$log")" -eq 6 ] || fail "partial retry did not copy only absent tags"
 assert_all_equal
 pass "partially completed import copies only missing aliases"
 
@@ -286,7 +284,7 @@ printf '%s' '{"different":true}' > "$state/runtime.revision.raw"
 if run_import; then fail "mismatched destination tag was overwritten"; fi
 [ "$(grep -c '^<copy>' "$log" || true)" -eq 0 ] || fail "mismatch was found after mutation began"
 assert_contains "$stderr" 'destination tag has a different digest'
-pass "one mismatch aborts the ten-tag import before mutation"
+pass "one mismatch aborts the eight-tag import before mutation"
 
 new_case
 fail_after_copy=api:version
@@ -294,7 +292,7 @@ if run_import; then fail "injected post-copy failure was ignored"; fi
 [ -f "$state/api.version.raw" ] || fail "partial copy was not recorded by mock"
 fail_after_copy=
 run_import || fail "retry after partial copy failed"
-[ "$(grep -c '^<copy>' "$log")" -eq 10 ] \
+[ "$(grep -c '^<copy>' "$log")" -eq 8 ] \
   || fail "retry did not skip the tag completed by the failed attempt"
 assert_all_equal
 pass "retry resumes after an ambiguous post-copy failure"
@@ -312,7 +310,7 @@ list_error_component=api
 list_error_text='name unknown: repository name not known to registry'
 run_import || fail "known absent repository was not importable"
 assert_all_equal
-pass "a registry-confirmed absent repository is treated as ten absent tags"
+pass "a registry-confirmed absent repository is treated as eight absent tags"
 
 new_case
 printf 'tampered\n' >> "$transfer/web/cma-web-v1.2.3-abcdef0.oci.tar"

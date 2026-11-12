@@ -22,7 +22,7 @@ reject = lambda do |label, &change|
   raise "accepted unsafe workflow mutation: #{label}"
 end
 
-job_ids = mode == "release" ? { "ci" => %w[trigger-release-contract images], "publish" => %w[runtime-image-gate release] } : { "ci" => %w[trigger-provider-smoke-contract backend backend-lint backend-test-build backend-tests backend-timing backend-mongo backend-image-manager cmaeg-latency], "nightly-staging" => %w[journeys] }
+job_ids = mode == "release" ? { "ci" => %w[trigger-release-contract images], "publish" => %w[runtime-image-gate release] } : { "ci" => %w[trigger-provider-smoke-contract backend backend-lint backend-test-build backend-tests backend-timing backend-mongo backend-service-auth cmaeg-latency], "nightly-staging" => %w[journeys] }
 job_ids.each do |workflow, ids|
   ids.each do |id|
     reject.call("remove #{id}") { |candidate| candidate[workflow]["jobs"].delete(id) }
@@ -53,7 +53,8 @@ guarded = mode == "release" ? [
   ["ci", "backend-tests", "Tests"],
   ["ci", "backend-timing", "Gateway socket latency budget"],
   ["ci", "backend-mongo", "Disposable real Mongo persistence contracts"],
-  ["ci", "backend-image-manager", "Image Manager authenticated Mongo isolation"],
+  ["ci", "backend-service-auth", "Authenticated service Mongo isolation"],
+  ["ci", "trigger-provider-smoke-contract", "Authenticated Mongo startup regressions"],
   ["ci", "trigger-provider-smoke-contract", "Backend resource sampling regressions"],
   ["ci", "backend-lint", "Prepare Backend capacity"],
   ["ci", "backend-test-build", "Prepare Backend capacity"],
@@ -81,8 +82,8 @@ if mode == "provider"
   require_relative "omarchy-ci-contract-tests"
   OmarchyCIContractTests.run(reject)
   [nil, 10, 30].each do |timeout|
-    reject.call("Image Manager loses its measured finite margin: #{timeout.inspect}") do |value|
-      row = value["ci"]["jobs"]["backend-image-manager"]["steps"].find { |step| step["name"] == "Image Manager authenticated Mongo isolation" }
+    reject.call("service authentication loses its measured finite margin: #{timeout.inspect}") do |value|
+      row = value["ci"]["jobs"]["backend-service-auth"]["steps"].find { |step| step["name"] == "Authenticated service Mongo isolation" }
       timeout.nil? ? row.delete("timeout-minutes") : row["timeout-minutes"] = timeout
     end
   end
@@ -152,7 +153,7 @@ if mode == "release"
   reject.call("cache regressions no longer execute") do |value|
     value["ci"]["jobs"]["trigger-release-contract"]["steps"].delete_if { |row| row["name"] == "API Cargo cache bridge regressions" }
   end
-  %w[api web runtime cmaeg image-manager].each do |component|
+  %w[api web runtime cmaeg].each do |component|
     reject.call("CI omits #{component} image") do |value|
       value["ci"]["jobs"]["images"]["strategy"]["matrix"]["component"].delete(component)
     end
@@ -345,7 +346,7 @@ else
       reject.call("#{id} step #{index}: override hook") { |v| (v["ci"]["jobs"][id]["steps"][index]["env"] ||= {})["BASH_ENV"] = "/dev/null" }
     end
   end
-  %w[backend-tests backend-timing backend-mongo backend-image-manager cmaeg-latency backend].each do |id|
+  %w[backend-tests backend-timing backend-mongo backend-service-auth cmaeg-latency backend].each do |id|
     reject.call("#{id}: unnecessary capacity preparation") do |v|
       capacity = v["ci"]["jobs"]["backend-lint"]["steps"][1]
       v["ci"]["jobs"][id]["steps"].insert(1, capacity)
@@ -385,7 +386,7 @@ else
   reject.call("join without always") { |v| v["ci"]["jobs"]["backend"].delete("if") }
   reject.call("missing dependency") { |v| v["ci"]["jobs"]["backend"]["needs"].pop }
   reject.call("latency effectively required") { |v| v["ci"]["jobs"]["backend"]["needs"] << "cmaeg-latency" }
-  %w[backend-tests backend-timing backend-mongo backend-image-manager cmaeg-latency].each do |id|
+  %w[backend-tests backend-timing backend-mongo backend-service-auth cmaeg-latency].each do |id|
     reject.call("#{id}: wrong archive dependency") { |v| v["ci"]["jobs"][id]["needs"] = "backend" }
     reject.call("#{id}: source compilation") { |v| v["ci"]["jobs"][id]["env"].delete("CMA_NEXTEST_REUSE") }
     reject.call("#{id}: different artifact") do |v|
@@ -411,7 +412,7 @@ else
       end
     end
   end
-  %w[backend-test-build backend-tests backend-timing backend-mongo backend-image-manager cmaeg-latency].each do |id|
+  %w[backend-test-build backend-tests backend-timing backend-mongo backend-service-auth cmaeg-latency].each do |id|
     reject.call("#{id}: nextest version drift") do |v|
       v["ci"]["jobs"][id]["steps"].find { |r| r["name"] == "Install pinned nextest" }["with"]["tool"] = "cargo-nextest@latest"
     end
@@ -421,7 +422,7 @@ else
       v["ci"]["jobs"]["backend-timing"]["steps"].find { |r| r["name"] == name }["run"].sub!("--test-threads 1", "--test-threads 2")
     end
   end
-  %w[backend-mongo backend-image-manager].each do |id|
+  %w[backend-mongo backend-service-auth].each do |id|
     reject.call("#{id}: unbounded contract") { |v| v["ci"]["jobs"][id]["steps"].last.delete("timeout-minutes") }
   end
   # Execute the actual join command as well as checking its spelling.

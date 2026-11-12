@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise Image Manager with actual, isolated MongoDB credentials.
+"""Verify retained service authentication and data access with isolated MongoDB credentials.
 
 Requires mongod and mongosh. Starts a disposable authenticated local server;
 does not connect to a developer or production database. Passwords are generated
@@ -22,7 +22,7 @@ def main():
     if not mongod or not mongosh:
         raise SystemExit("The authenticated Mongo contract requires mongod and mongosh")
     root = Path(__file__).resolve().parents[2]
-    with tempfile.TemporaryDirectory(prefix="cma-im-mongo-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="cma-service-auth-mongo-") as temporary:
         path = Path(temporary)
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
@@ -32,7 +32,7 @@ def main():
         replica_key.chmod(0o600)
         log = (path / "mongod.log").open("w")
         process = subprocess.Popen(
-            [mongod, "--auth", "--replSet", "cma-im-contract", "--keyFile", str(replica_key), "--bind_ip", "127.0.0.1", "--port", str(port),
+            [mongod, "--auth", "--replSet", "service-auth-contract", "--keyFile", str(replica_key), "--bind_ip", "127.0.0.1", "--port", str(port),
              "--dbpath", temporary, "--quiet", "--wiredTigerCacheSizeGB", "0.25"],
             stdout=log, stderr=subprocess.STDOUT,
         )
@@ -49,32 +49,25 @@ def main():
                         raise RuntimeError("Disposable MongoDB did not start") from None
                     time.sleep(0.2)
             initialize = subprocess.run([mongosh, "--quiet", f"mongodb://127.0.0.1:{port}/admin?directConnection=true", "--eval",
-                f'rs.initiate({{_id:"cma-im-contract",members:[{{_id:0,host:"127.0.0.1:{port}"}}]}}); while (!db.hello().isWritablePrimary) sleep(200)'],capture_output=True,timeout=30)
+                f'rs.initiate({{_id:"service-auth-contract",members:[{{_id:0,host:"127.0.0.1:{port}"}}]}}); while (!db.hello().isWritablePrimary) sleep(200)'],capture_output=True,timeout=30)
             if initialize.returncode:
                 raise RuntimeError("Disposable replica-set initialization failed")
             environment = os.environ.copy()
             password = secrets.token_hex(24)
-            environment["CMA_IM_BOOTSTRAP_PASSWORD"] = password
+            environment["CMA_SERVICE_AUTH_BOOTSTRAP_PASSWORD"] = password
             bootstrap = subprocess.run(
                 [mongosh, "--quiet", f"mongodb://127.0.0.1:{port}/admin", "--eval",
-                 'db.createUser({user:"contract-admin",pwd:process.env.CMA_IM_BOOTSTRAP_PASSWORD,roles:["root"]})'],
+                 'db.createUser({user:"contract-admin",pwd:process.env.CMA_SERVICE_AUTH_BOOTSTRAP_PASSWORD,roles:["root"]})'],
                 env=environment, capture_output=True, timeout=30,
             )
             if bootstrap.returncode:
                 raise RuntimeError("Disposable MongoDB credential bootstrap failed")
-            environment.pop("CMA_IM_BOOTSTRAP_PASSWORD")
-            environment["CMA_IM_TEST_MONGODB_URI"] = (
+            environment.pop("CMA_SERVICE_AUTH_BOOTSTRAP_PASSWORD")
+            environment["CMA_SERVICE_AUTH_TEST_MONGODB_URI"] = (
                 f"mongodb://contract-admin:{password}@127.0.0.1:{port}/admin?directConnection=true"
             )
             subprocess.run(["cargo", "build", "--locked", "-p", "cmaeg"], cwd=root / "api", env=environment, check=True)
             print("Running real MongoDB isolation and lifecycle recovery contracts", flush=True)
-            result = subprocess.run(
-                ["cargo", "test", "--locked", "-p", "cma-image-manager", "--test", "mongo_isolation", "--test", "browser_session",
-                 "--", "--ignored", "--test-threads=1"],
-                cwd=root / "api", env=environment,
-            )
-            if result.returncode:
-                raise SystemExit(result.returncode)
             for command in [
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "optional_forms_storage", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "optional_media_continuation_storage", "--", "--ignored", "--test-threads=1"],

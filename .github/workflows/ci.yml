@@ -56,7 +56,7 @@ jobs:
       - name: Staging authority and evidence regressions
         run: node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs
       - name: Authenticated Mongo startup regressions
-        run: node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/image-manager-mongo-contract.test.mjs
+        run: node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/service-auth-mongo-contract.test.mjs
       - name: Backend resource sampling regressions
         run: python3 .github/scripts/backend-resource-sampler-tests.py
       - name: Gateway sealed-record migration regressions
@@ -318,14 +318,6 @@ jobs:
             infra/cmaeg/serviceaccount.yaml \
             infra/cmaeg/httproute.yaml infra/cmaeg/healthcheckpolicy.yaml \
             infra/cmaeg/gcpbackendpolicy.yaml \
-            infra/image-manager/Dockerfile \
-            infra/image-manager/configmap.yaml \
-            infra/image-manager/deployment.yaml \
-            infra/image-manager/gcpbackendpolicy.yaml \
-            infra/image-manager/healthcheckpolicy.yaml \
-            infra/image-manager/secret.yaml \
-            infra/image-manager/service.yaml \
-            infra/image-manager/serviceaccount.yaml \
             infra/runtime/Dockerfile \
             infra/storage/home-seed.yaml infra/storage/home-template.yaml \
             infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
@@ -389,12 +381,6 @@ jobs:
           hits=$(grep -rniE 'agui|\ba2a\b|\bmcp\b|codex|claude[_-]?code' api/crates/layer2-core/src || true)
           if [ -n "$hits" ]; then
             echo "::error::protocol or kernel name found in layer2-core:"; echo "$hits"; exit 1
-          fi
-      - name: Image Manager has no Agent or Gateway dependencies
-        run: |
-          if grep -qE 'layer[1-4]-|cmaeg|path *=.*["/]cma["/]|cma-agent-manager' api/crates/cma-image-manager/Cargo.toml; then
-            echo '::error::Image Manager cannot depend on Agent or Gateway implementation crates'
-            exit 1
           fi
 
   secrets:
@@ -669,8 +655,8 @@ jobs:
         timeout-minutes: 75
         run: bash ../.github/scripts/mongo-contract-tests.sh
 
-  backend-image-manager:
-    name: Backend Image Manager Mongo isolation
+  backend-service-auth:
+    name: Backend service authentication contracts
     needs: backend-test-build
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -719,11 +705,12 @@ jobs:
         run: |
           node --test ../.github/scripts/install-contract-browser.test.mjs
           node ../.github/scripts/install-contract-browser.mjs
-      - name: Image Manager authenticated Mongo isolation
+      - name: Authenticated service Mongo isolation
         # Allow fixture setup/cleanup, all 14 archived groups and the browser
         # contract to finish with headroom while retaining a finite deadline.
         timeout-minutes: 15
-        run: bash ../.github/scripts/image-manager-mongo-contract.sh
+        run: bash ../.github/scripts/service-auth-mongo-contract.sh
+
 
   cmaeg-latency:
     name: CMAEG latency budget
@@ -771,7 +758,7 @@ jobs:
 
   backend:
     name: Backend
-    needs: [backend-lint, backend-test-build, backend-tests, backend-timing, backend-mongo, backend-image-manager]
+    needs: [backend-lint, backend-test-build, backend-tests, backend-timing, backend-mongo, backend-service-auth]
     # GitHub accepts a skipped required check. Always run this join so failed
     # or cancelled dependencies cannot bypass Backend by skipping it.
     if: always()
@@ -788,7 +775,7 @@ jobs:
           import os
           import sys
           results = json.loads(os.environ["NEEDS"])
-          expected = ["backend-lint", "backend-test-build", "backend-tests", "backend-timing", "backend-mongo", "backend-image-manager"]
+          expected = ["backend-lint", "backend-test-build", "backend-tests", "backend-timing", "backend-mongo", "backend-service-auth"]
           failed = {job: results.get(job, {}).get("result", "missing") for job in expected if results.get(job, {}).get("result") != "success"}
           for job, result in failed.items():
               print(f"::error::{job}: {result}")
@@ -998,7 +985,7 @@ jobs:
           ./kubeconform -strict -summary -output text \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            infra/api/*.yaml infra/cmaeg/*.yaml infra/image-manager/*.yaml infra/web/*.yaml infra/storage/*.yaml
+            infra/api/*.yaml infra/cmaeg/*.yaml infra/web/*.yaml infra/storage/*.yaml
       - name: kube-linter
         uses: stackrox/kube-linter-action@v1
         with:
@@ -1016,7 +1003,7 @@ jobs:
         # Adding a value here adds a check named "Images (<value>)" and leaves
         # the existing names untouched, so branch protection keeps reporting.
         # The new check is not required until it is added to the ruleset.
-        component: [api, web, runtime, runtime-desktop, cmaeg, image-manager]
+        component: [api, web, runtime, runtime-desktop, cmaeg]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       # arm64 builds run under emulation on the amd64 runner.

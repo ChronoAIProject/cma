@@ -91,7 +91,7 @@ def export(component, revision, destination):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("component", choices=("api", "web", "runtime", "runtime-desktop", "runtime-omarchy", "cmaeg", "image-manager"))
+    parser.add_argument("component", choices=("api", "web", "runtime", "runtime-desktop", "runtime-omarchy", "cmaeg"))
     parser.add_argument("revision")
     parser.add_argument("destination", type=Path)
     args = parser.parse_args()
