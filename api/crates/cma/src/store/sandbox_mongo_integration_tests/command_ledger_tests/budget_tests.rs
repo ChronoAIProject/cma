@@ -45,16 +45,50 @@ fn budget_policy() -> BudgetPolicy {
     }
 }
 
-/// Owner budgets under an open, observed platform period.
+/// Owner budgets exactly as #1621 configures them: a platform policy with no
+/// cloud source, so platform spend metering is not enabled (decision 31).
 pub(super) async fn configure(
     store: &MongoSandboxStore,
     owner: &layer2_core::SubjectId,
 ) -> BudgetPolicy {
+    let platform = PlatformBudgetPolicy {
+        period_cap: u64::from(u32::MAX),
+        period_start: "2026-11-01T00:00:00Z".into(),
+        period_end: "2026-12-01T00:00:00Z".into(),
+        warning_percent: 80,
+        stop_percent: 100,
+        protected_reserve: 0,
+        lag_allowance: 0,
+        cloud: None,
+    };
+    configure_with_platform(store, owner, platform, 1).await
+}
+
+/// Owner budgets under an open, observed, metered platform period.
+pub(super) async fn configure_metered(
+    store: &MongoSandboxStore,
+    owner: &layer2_core::SubjectId,
+) -> BudgetPolicy {
+    let policy = configure(store, owner).await;
+    meter(store).await;
+    policy
+}
+
+/// Enable platform metering on an existing configuration: the open period with
+/// a cloud source and a zero observation at its start.
+pub(super) async fn meter(store: &MongoSandboxStore) {
     let platform = open_platform();
-    let policy = configure_with_platform(store, owner, platform.clone(), 1).await;
+    store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {"$set": {"settings.model_budget.platform":
+            mongodb::bson::serialize_to_bson(&platform).unwrap()}},
+        )
+        .await
+        .unwrap();
     let start = layer2_core::seconds_from_rfc3339(OPEN_START).unwrap();
     observe(store, &platform, 0, start).await;
-    policy
 }
 
 pub(super) async fn configure_with_platform(
@@ -186,11 +220,6 @@ pub(super) async fn raise_owner_limit(store: &MongoSandboxStore, factor: u64) {
         .unwrap();
 }
 
-/// Every reservation row except the platform period row.
-fn owner_rows() -> Document {
-    doc! {"_id": {"$not": {"$regex": "^platform:"}}}
-}
-
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn model_budget_reserves_once_and_replay_survives_exhaustion_and_restart() {
@@ -219,7 +248,7 @@ async fn model_budget_reserves_once_and_replay_survives_exhaustion_and_restart()
     assert_eq!(
         reopened
             .model_budget
-            .count_documents(owner_rows())
+            .count_documents(doc! {})
             .await
             .unwrap(),
         2
@@ -276,15 +305,9 @@ async fn aborted_model_budget_transaction_releases_its_reservation() {
     .unwrap_or_else(|_| panic!("reservation must succeed in transaction"));
     session.abort_transaction().await.unwrap();
     assert_eq!(
-        store
-            .model_budget
-            .count_documents(owner_rows())
-            .await
-            .unwrap(),
+        store.model_budget.count_documents(doc! {}).await.unwrap(),
         0
     );
-    let period = period_row(&store, &open_platform()).await.unwrap();
-    assert_eq!((period.reserved, period.revision), (0, 1));
     assert!(store
         .reserve_command(request(&agent, &parent, "budget-after-abort"))
         .await
@@ -312,11 +335,7 @@ async fn model_budget_scope_never_consumes_another_owners_allowance() {
         .await
         .is_ok());
     assert_eq!(
-        store
-            .model_budget
-            .count_documents(owner_rows())
-            .await
-            .unwrap(),
+        store.model_budget.count_documents(doc! {}).await.unwrap(),
         2
     );
     client.database(&name).drop().await.unwrap();

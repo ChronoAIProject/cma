@@ -20,6 +20,7 @@ impl PlatformSpendLedger for Ledger {
 
     async fn spend_state(&self, _: u64) -> Result<PlatformSpendState, BudgetError> {
         Ok(PlatformSpendState {
+            metering_enabled: true,
             settings_revision: 7,
             levels: None,
             committed: None,

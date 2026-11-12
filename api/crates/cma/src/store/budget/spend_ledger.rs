@@ -125,6 +125,7 @@ impl PlatformSpendLedger for MongoSandboxStore {
     async fn spend_state(&self, now: u64) -> Result<PlatformSpendState, BudgetError> {
         let Some(current) = self.platform_snapshot().await? else {
             return Ok(PlatformSpendState {
+                metering_enabled: false,
                 settings_revision: 0,
                 levels: None,
                 committed: None,
@@ -133,6 +134,7 @@ impl PlatformSpendLedger for MongoSandboxStore {
         };
         let Some(platform) = current.platform else {
             return Ok(PlatformSpendState {
+                metering_enabled: false,
                 settings_revision: current.revision,
                 levels: None,
                 committed: None,
@@ -141,6 +143,7 @@ impl PlatformSpendLedger for MongoSandboxStore {
         };
         let ledger = self.period_ledger(platform.period_bounds()?.0).await?;
         Ok(PlatformSpendState {
+            metering_enabled: true,
             settings_revision: current.revision,
             levels: platform.levels().ok(),
             committed: ledger

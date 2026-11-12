@@ -30,10 +30,21 @@ fn platform() -> PlatformBudgetPolicy {
 #[derive(Default)]
 struct Ledger {
     observations: Mutex<BTreeMap<u64, u64>>,
+    /// No cloud source: platform spend metering is not enabled.
+    unmetered: bool,
 }
 
 impl Ledger {
     fn state(&self) -> PlatformSpendState {
+        if self.unmetered {
+            return PlatformSpendState {
+                metering_enabled: false,
+                settings_revision: 3,
+                levels: None,
+                committed: None,
+                ledger: None,
+            };
+        }
         let mut ledger = PlatformPeriodLedger::open(&platform(), 3).unwrap();
         if let Some((through, units)) = self.observations.lock().unwrap().iter().next_back() {
             ledger.cloud = Some(CloudObservation {
@@ -44,6 +55,7 @@ impl Ledger {
             });
         }
         PlatformSpendState {
+            metering_enabled: true,
             settings_revision: 3,
             levels: platform().levels().ok(),
             committed: None,
@@ -94,6 +106,10 @@ struct SpendFixture {
 }
 
 fn spend_fixture(platform_writes: bool) -> SpendFixture {
+    spend_fixture_with(platform_writes, Ledger::default())
+}
+
+fn spend_fixture_with(platform_writes: bool, ledger: Ledger) -> SpendFixture {
     let activity_service = ActivityService::new(Arc::new(MemoryActivity::default()));
     let settings = Arc::new(
         PlatformSettingsService::new(
@@ -112,7 +128,7 @@ fn spend_fixture(platform_writes: bool) -> SpendFixture {
         retirement,
         activity_service.clone(),
     ));
-    let ledger = Arc::new(Ledger::default());
+    let ledger = Arc::new(ledger);
     let spend = PlatformSpendService::new(ledger.clone(), activity_service.clone())
         .with_writes_enabled(settings.platform_spend_writes_enabled());
     SpendFixture {
@@ -138,6 +154,7 @@ async fn get_spend_returns_state_for_operators_and_403_for_others() {
     let read = send(&fixture.app, Method::GET, SPEND, None, ADMIN).await;
     assert_eq!(read.status(), StatusCode::OK);
     let body = response_json(read).await;
+    assert_eq!(body["metering_enabled"], true);
     assert_eq!(body["settings_revision"], 3);
     assert_eq!(
         body["levels"],
@@ -281,4 +298,21 @@ async fn cloud_policy_fields_round_trip_through_the_settings_body() {
     )
     .await;
     assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn get_spend_reports_metering_off_without_a_cloud_source() {
+    let fixture = spend_fixture_with(
+        true,
+        Ledger {
+            unmetered: true,
+            ..Ledger::default()
+        },
+    );
+    let body = response_json(send(&fixture.app, Method::GET, SPEND, None, ADMIN).await).await;
+    assert_eq!(body["metering_enabled"], false);
+    assert_eq!(body["settings_revision"], 3);
+    for absent in ["levels", "committed", "ledger"] {
+        assert!(body.get(absent).is_none(), "{absent}");
+    }
 }

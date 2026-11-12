@@ -15,8 +15,9 @@ pub struct PlatformBudgetPolicy {
     pub stop_percent: u8,
     pub protected_reserve: u64,
     pub lag_allowance: u64,
-    /// Absent means the cloud source is not configured: an enabled policy is
-    /// then metering-unavailable, never a zero cloud figure.
+    /// Absent means platform spend metering is not enabled (decision 31): no
+    /// period row, closure or platform check applies. Once present, a missing
+    /// or stale observation is metering-unavailable, never a zero figure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloud: Option<CloudSpendPolicy>,
 }
