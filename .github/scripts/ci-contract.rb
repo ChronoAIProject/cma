@@ -66,7 +66,7 @@ module CIContract
   def self.api_cargo_cache(ci, images)
     base = "matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'"
     prepare = step(images, "Prepare API Cargo cache identity", "python3 .github/scripts/api-cargo-cache.py prepare",
-      "matrix.component == 'api' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)")
+      "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))")
     require!(prepare["id"] == "api-cargo-cache", "API cache identity changed")
     inject = step(images, "Inject API Cargo cache mounts", "python3 .github/scripts/api-cargo-cache.py inject", base)
     extract = step(images, "Extract API Cargo cache before pruning", "python3 .github/scripts/api-cargo-cache.py extract",

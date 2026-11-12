@@ -25,6 +25,7 @@ pub(super) struct JsonPools {
     scratch: Arc<Semaphore>,
     aggregate: Option<IngressBudget>,
     sign_ins: Arc<Semaphore>,
+    observations: Arc<Semaphore>,
 }
 
 impl JsonPools {
@@ -41,6 +42,7 @@ impl JsonPools {
             scratch: Arc::new(Semaphore::new(scratch)),
             aggregate: None,
             sign_ins: super::sign_in_retention::process_pool(),
+            observations: super::observation_retention::process_pool(),
         }
     }
 
@@ -54,6 +56,13 @@ impl JsonPools {
         frame: &Value,
     ) -> crate::Result<Option<super::sign_in_retention::Admission>> {
         super::sign_in_retention::admit(frame, &self.sign_ins, self.aggregate.as_ref())
+    }
+
+    pub(super) fn admit_observation(
+        &self,
+        frame: &Value,
+    ) -> crate::Result<Option<crate::RuntimeOutputUpdate>> {
+        super::observation_retention::admit(frame, &self.observations, self.aggregate.as_ref())
     }
 
     pub(super) fn admit(&self, payload: &[u8]) -> crate::Result<JsonAdmission> {
@@ -210,6 +219,11 @@ impl fmt::Debug for JsonFrame {
 
 #[cfg(test)]
 impl JsonPools {
+    pub(super) fn with_observation_pool(mut self, pool: Arc<Semaphore>) -> Self {
+        self.observations = pool;
+        self
+    }
+
     pub(super) fn with_sign_in_pool(mut self, pool: Arc<Semaphore>) -> Self {
         self.sign_ins = pool;
         self

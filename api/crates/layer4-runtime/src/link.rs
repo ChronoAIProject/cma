@@ -22,6 +22,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 use crate::failure::RuntimeError;
 use crate::supervisor::{Phase, Supervisor};
+use layer3_adapter::agent_capacity_recovery::CapacityRecoveryRequest;
 
 const CONTROL_BODY_BYTES: usize = 384 * 1024 * 1024;
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
@@ -37,6 +38,10 @@ pub(crate) fn router(supervisor: Arc<Supervisor>) -> Router {
             post(control).layer(DefaultBodyLimit::max(CONTROL_BODY_BYTES)),
         )
         .route("/runtime/agents/{agent_id}/conversation", get(conversation))
+        .route(
+            "/runtime/agents/{agent_id}/capacity-recovery",
+            post(capacity_recovery),
+        )
         .route("/runtime/desktop", get(desktop::websocket))
         .route("/runtime/agents/{agent_id}/history", get(history))
         .route(
@@ -89,6 +94,10 @@ async fn history(
         Err(error) => runtime_failure(error),
     }
 }
+
+#[path = "link/capacity_recovery.rs"]
+mod recovery;
+use recovery::capacity_recovery;
 
 async fn control(
     State(supervisor): State<Arc<Supervisor>>,
