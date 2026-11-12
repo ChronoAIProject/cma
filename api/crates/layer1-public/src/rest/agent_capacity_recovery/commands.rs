@@ -91,6 +91,9 @@ impl RequestAuthority {
 
 type Service = Arc<dyn CapacityRecoveryCommands>;
 
+#[utoipa::path(get, path = "/api/v1/agents/{id}/capacity-recovery", tag = "agents",
+    params(("id" = String, Path)),
+    responses((status = 200, body = serde_json::Value), (status = 400), (status = 401), (status = 404), (status = 409), (status = 503)))]
 async fn status(
     State(service): State<Service>,
     authority: RequestAuthority,
@@ -105,6 +108,10 @@ async fn status(
     }
 }
 
+#[utoipa::path(post, path = "/api/v1/agents/{id}/capacity-recovery/status", tag = "agents",
+    params(("id" = String, Path)),
+    request_body(content = serde_json::Value, description = "Unchanged original request: agent_id, creation_key, creation_fingerprint, failure_seq and requested_at. This request is an identity, never authority."),
+    responses((status = 200, body = serde_json::Value), (status = 400), (status = 401), (status = 404), (status = 409), (status = 503)))]
 async fn request_status(
     State(service): State<Service>,
     authority: RequestAuthority,
@@ -123,6 +130,10 @@ async fn request_status(
     }
 }
 
+#[utoipa::path(post, path = "/api/v1/agents/{id}/capacity-recovery/admit", tag = "agents",
+    params(("id" = String, Path)),
+    request_body(content = serde_json::Value, description = "Unchanged original request: agent_id, creation_key, creation_fingerprint, failure_seq and requested_at. This request is an identity, never authority."),
+    responses((status = 200, body = serde_json::Value), (status = 400), (status = 401), (status = 404), (status = 409), (status = 503) , (status = 202, body = serde_json::Value, description = "Unknown commit; retry the unchanged original request")))]
 async fn admit(
     State(service): State<Service>,
     authority: RequestAuthority,
@@ -140,6 +151,10 @@ async fn admit(
     )
 }
 
+#[utoipa::path(post, path = "/api/v1/agents/{id}/capacity-recovery/resume", tag = "agents",
+    params(("id" = String, Path)),
+    request_body(content = serde_json::Value, description = "Unchanged original request: agent_id, creation_key, creation_fingerprint, failure_seq and requested_at. This request is an identity, never authority."),
+    responses((status = 200, body = serde_json::Value), (status = 400), (status = 401), (status = 404), (status = 409), (status = 503) , (status = 202, body = serde_json::Value, description = "Unknown commit; retry the unchanged original request")))]
 async fn resume(
     State(service): State<Service>,
     authority: RequestAuthority,
@@ -232,6 +247,15 @@ fn error(error: RecoveryError) -> Response {
         status,
         problem_document(status, "capacity-recovery", detail, code),
     )
+}
+
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(status, request_status, admit, resume))]
+struct RecoveryCommandsApi;
+
+pub(super) fn document() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi;
+    RecoveryCommandsApi::openapi()
 }
 
 #[cfg(test)]
