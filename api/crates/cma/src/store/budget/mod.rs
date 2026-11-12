@@ -16,9 +16,11 @@ mod requests;
 mod source;
 mod spend_ledger;
 pub(super) use cancellation::release_unexecuted;
+pub(super) use period::require_open_with_ceilings;
+pub(super) use period::require_open_with_collections_and_ceilings;
+pub(super) use period::{now_seconds, require_open};
 #[cfg(test)]
-pub(super) use period::period_key;
-pub(super) use period::{now_seconds, require_open, require_open_with};
+pub(super) use period::{period_key, require_open_with};
 pub(super) use source::PlatformStopCache;
 
 pub(super) const COLLECTION: &str = "model_budget_reservations";
@@ -130,14 +132,23 @@ pub(super) async fn reserve_command(
     command: &str,
     now: u64,
     cause: layer2_core::admission::AdmissionCause,
+    existing_consumer: bool,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
     let snapshot = period::fenced_snapshot(store, &agent.owner, session).await?;
     let Some(policy) = snapshot.owner.clone() else {
         // An owner without a budget policy reserves nothing, but a new
         // commitment still meets the platform state (decision 24).
-        return period::require_snapshot_open(&store.model_budget, &snapshot, now, cause, session)
-            .await;
+        period::require_snapshot_open(&store.model_budget, &snapshot, now, cause, session).await?;
+        return require_command_capacity(
+            store,
+            agent,
+            &snapshot,
+            cause,
+            existing_consumer,
+            session,
+        )
+        .await;
     };
     reserve(
         store,
@@ -149,7 +160,30 @@ pub(super) async fn reserve_command(
         session,
     )
     .await?;
-    period::require_operator_open(&snapshot, cause)
+    period::require_operator_open(&snapshot, cause)?;
+    require_command_capacity(store, agent, &snapshot, cause, existing_consumer, session).await
+}
+
+async fn require_command_capacity(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    snapshot: &period::PolicySnapshot,
+    cause: layer2_core::admission::AdmissionCause,
+    existing_consumer: bool,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    if cause == layer2_core::admission::AdmissionCause::Continuation {
+        return Ok(());
+    }
+    super::admission_capacity::require_sessions(
+        store,
+        agent,
+        &snapshot.ceilings,
+        cause,
+        existing_consumer,
+        session,
+    )
+    .await
 }
 
 async fn reserve(
@@ -311,6 +345,12 @@ async fn start_turn(
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
     let key = turn_key(agent, turn);
+    // Publication has already validated this server-attributed execution fence
+    // against the current binding and parent in this same transaction.
+    let existing_consumer = mutation
+        .execution_fence
+        .as_ref()
+        .is_some_and(|fence| fence.binding_authority().is_some());
     let snapshot = period::fenced_snapshot(store, &agent.owner, session).await?;
     let live_policy = snapshot.owner.clone();
     let command = mutation
@@ -332,10 +372,19 @@ async fn start_turn(
             let Some(policy) = live_policy.clone() else {
                 // Queued or not, an unbudgeted owner's turn reserved nothing;
                 // a stop entered since its command still refuses starting it.
-                return period::require_open(
+                period::require_open(
                     store,
                     now,
                     layer2_core::admission::AdmissionCause::Continuation,
+                    session,
+                )
+                .await?;
+                return super::admission_capacity::require_sessions(
+                    store,
+                    agent,
+                    &snapshot.ceilings,
+                    layer2_core::admission::AdmissionCause::Continuation,
+                    existing_consumer,
                     session,
                 )
                 .await;
@@ -384,6 +433,15 @@ async fn start_turn(
             return Err(domain(BudgetError::OwnerExhausted));
         }
     }
+    super::admission_capacity::require_sessions(
+        store,
+        agent,
+        &snapshot.ceilings,
+        layer2_core::admission::AdmissionCause::Continuation,
+        existing_consumer,
+        session,
+    )
+    .await?;
     record.turn_sequence = Some(turn);
     record.runtime_generation = Some(mutation.runtime_generation);
     record.reservation.last_usage_at = now;
