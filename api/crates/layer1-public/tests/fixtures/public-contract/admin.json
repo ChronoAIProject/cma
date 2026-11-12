@@ -45,7 +45,7 @@
             },
             "limits": {
               "max_sandboxes_per_user": 10,
-              "visitor_max_sandboxes": 1,
+              "visitor_max_sandboxes": 2,
               "visitor_max_launches_per_day": 5
             },
             "triggers": {
@@ -119,7 +119,7 @@
             },
             "limits": {
               "max_sandboxes_per_user": 10,
-              "visitor_max_sandboxes": 1,
+              "visitor_max_sandboxes": 2,
               "visitor_max_launches_per_day": 5
             },
             "triggers": {
@@ -329,7 +329,7 @@
             },
             "limits": {
               "max_sandboxes_per_user": 10,
-              "visitor_max_sandboxes": 1,
+              "visitor_max_sandboxes": 2,
               "visitor_max_launches_per_day": 5
             },
             "triggers": {
@@ -465,7 +465,7 @@
             },
             "limits": {
               "max_sandboxes_per_user": 10,
-              "visitor_max_sandboxes": 1,
+              "visitor_max_sandboxes": 2,
               "visitor_max_launches_per_day": 5
             },
             "triggers": {
@@ -531,7 +531,7 @@
             },
             "limits": {
               "max_sandboxes_per_user": 10,
-              "visitor_max_sandboxes": 1,
+              "visitor_max_sandboxes": 2,
               "visitor_max_launches_per_day": 5
             },
             "triggers": {
