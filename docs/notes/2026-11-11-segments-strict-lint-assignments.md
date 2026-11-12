@@ -475,3 +475,12 @@ Normal merge of `4476f0bbbd8d2f3716ca053959c232a7a751e0c8` retains the
 The published checkpoint has 17 passing units and strict CMA Clippy, with
 49/52 Mongo passes; the three documented failures still require corrected
 fixture and bounded-settlement caller qualification. Final S4 pin is pending.
+
+### S4 bounded settlement caller integrated
+
+Normal merge of `f2b7d02016c3a7bb57fbf422e256cf712be7b3b8` includes caller
+`c778b1d57` and the corrected private-assembly assertion. The narrow S1 dependency
+was copied by S4; the merge retains the identical source plus integration
+`83241035e` (contradictory-approval rejection and its regression).
+[Complete caller handoff](2026-11-12-segments-publication-checkpoints.md) records
+the exact source. Combined qualification starts now; activation stays closed.

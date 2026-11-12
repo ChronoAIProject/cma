@@ -10,6 +10,7 @@ pub(in crate::store) mod conversation;
 pub(in crate::store) mod current_publication;
 pub(in crate::store) use collections::SegmentCollections;
 pub(in crate::store) mod command;
+pub(in crate::store) mod command_evidence;
 mod digest;
 pub(in crate::store) use digest::incarnation;
 mod envelope;

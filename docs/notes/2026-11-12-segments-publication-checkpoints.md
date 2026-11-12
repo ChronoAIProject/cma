@@ -80,3 +80,21 @@ pauses, inode unchanged. The owned Mongo container and volume passed cleanup
 absence checks even though tests failed. Evidence includes `unit-results.json`,
 `mongo-results.json`, gate logs and supervisor records in the local directory
 above. P1-1 remains open, activation closed; these results are not a green slice.
+
+### S4-B1 complete caller source, dependency integrated
+
+Caller commit `c778b1d571ff19d5897e18804dfae5defd0b957a` wires the requested bounded S1 reader into the actual
+command settlement transaction and adds its single module registration. Legacy
+folding is selected only when that reader proves a legacy root. Unavailable
+proof remains Unavailable; driver errors preserve transaction retry handling.
+The original continuation-authority fence, command dispatch and lane write remain.
+
+S1 published its pin `9a41f5cfb` on mixed integration ancestry. To honor the narrow
+dependency rule, the exact three commits `3bf06a39d`, `9ae6c09b3`, `9a41f5cfb` were
+carried to the owned `tl/cma-log-segments/command-evidence-dependency` branch as
+`ea473ff7a`, `eef2864a2`, `a1209cc7e`, then merged normally into this branch. No
+unrelated integration tip was imported and no published history was rewritten.
+No interface remains missing. Complete-source CMA/core units, strict Clippy and
+all 52 selected Mongo contracts are queued for qualification; prior partial
+results above do not qualify this new source. The 15:00 checkpoint is source-ready,
+with full qualification continuing and activation still closed.
