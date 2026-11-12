@@ -1,23 +1,21 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
+use async_trait::async_trait;
 
 use super::{
     Agent, AgentLogEntry, AgentLogKind, Sandbox, SandboxEvent, SandboxEventKind, SandboxStatus,
     Workspace, Worktree,
 };
 
-mod pagination;
-use pagination::page;
-
 mod sandbox;
 pub use sandbox::SandboxStore;
 pub mod ledger_collection;
+mod pagination;
 mod service_traits;
 pub use super::binding::BindingStore;
+use pagination::page;
 pub use service_traits::*;
 
 mod agent;
@@ -25,7 +23,7 @@ pub use agent::AgentStore;
 mod agent_log;
 pub use agent_log::AgentLogStore;
 mod agent_response_log;
-pub use agent_response_log::{AgentResponseLogStore, AgentResponseLogWindow};
+pub use agent_response_log::{indexed, AgentResponseLogStore, AgentResponseLogWindow};
 mod agent_log_publication;
 pub use agent_log_publication::AgentLogPublicationIdentity;
 mod workspace_worker;

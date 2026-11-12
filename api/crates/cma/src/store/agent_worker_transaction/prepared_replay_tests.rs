@@ -13,13 +13,11 @@ async fn prepared_pair_parent_write_conflicts_with_lifecycle_after_snapshot_read
     let pending = intent(&agent, &parent, &workspace, &tree);
     store.commit_agent_work(pending.clone()).await.unwrap();
     let mut session = client.start_session().await.unwrap();
-    start_transaction(&mut session).await.unwrap();
+    let mut scope = TransactionScope::start(&mut session).await.unwrap();
     // Anchor the old Mongo snapshot before lifecycle admission commits outside
     // this transaction. The real publication must conflict on its parent write.
-    store
-        .sandboxes
-        .find_one(doc! {"_id": parent.id.as_str()})
-        .session(&mut session)
+    scope
+        .find_one(&store.sandboxes, doc! {"_id": parent.id.as_str()})
         .await
         .unwrap()
         .unwrap();
@@ -29,10 +27,8 @@ async fn prepared_pair_parent_write_conflicts_with_lifecycle_after_snapshot_read
         .unwrap();
     store.save_sandbox(revision, parent).await.unwrap();
     let completed = completion(&pending.agent);
-    assert!(
-        matches!(apply_publication(&store, &completed, &mut session).await,
-        Err(ApplyError::Driver(error)) if is_transient(&error))
-    );
+    assert!(matches!(apply_publication(&store, &completed, scope).await,
+        Err(ApplyError::Driver(error)) if is_transient(&error)));
     session.abort_transaction().await.unwrap();
     assert_eq!(
         store.get_agent(&agent.id).await.unwrap().unwrap(),

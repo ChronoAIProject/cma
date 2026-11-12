@@ -8,6 +8,9 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
+#[path = "indexed_projection.rs"]
+pub(in crate::responses) mod indexed;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum V2ResponseStatus {
