@@ -329,7 +329,7 @@ async fn real_activity_store_keeps_prefixed_and_concrete_path_resource_history()
 #[ignore = "requires a disposable MongoDB replica set"]
 async fn document_origin_annotation_cannot_archive_another_accounts_body() {
     use layer2_core::document_artifacts::{memory, CreateDocument, DocumentService};
-    use layer2_core::sandbox::store::WorkspaceStore;
+    use layer2_core::sandbox::store::{AgentAdmissionStore, WorkspaceStore};
     use layer2_core::{Authorization, Caller, Capability, SubjectId};
     use std::{collections::BTreeMap, sync::Arc};
     let (client, name, ordinary, access) =
