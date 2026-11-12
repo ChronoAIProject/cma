@@ -151,11 +151,11 @@ impl SandboxControlService {
             request_fingerprint: submission.command.fingerprint(submission.expected_revision),
         };
         envelope.validate()?;
-        if envelope.command == SandboxControl::Revive {
-            self.require_platform_open()
-                .await
-                .map_err(SandboxControlServiceError::Budget)?;
-        }
+        let new_commitment = if envelope.command == SandboxControl::Revive {
+            self.require_platform_open().await
+        } else {
+            Ok(())
+        };
         let proof = SandboxControlAuthorization::bind(
             (*self.access).clone(),
             authorized,
@@ -177,7 +177,13 @@ impl SandboxControlService {
             admission_audit: proof.audit()?,
             execution_audit: None,
         };
-        Ok(self.store.reserve_sandbox_control(record, proof).await?)
+        self.store
+            .reserve_sandbox_control(record, proof, new_commitment)
+            .await
+            .map_err(|error| match error {
+                SandboxControlError::Budget(reason) => SandboxControlServiceError::Budget(reason),
+                other => SandboxControlServiceError::Store(other),
+            })
     }
 
     /// The requesting actor can recover its receipt only while the exact target

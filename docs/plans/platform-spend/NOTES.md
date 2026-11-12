@@ -333,6 +333,14 @@ The user ruled "pause both under `SpendStop`"; the parent session relayed it.
 
 ### Review round 3 (R7 to R10)
 
+**R7 replay decision superseded, 2026-11-13:** after current resource
+authorization is rechecked, an identical key and fingerprint recover the existing
+durable Revive receipt during STOP. New keys still face platform admission; a
+changed fingerprint remains an idempotency conflict. This honors the migration
+contract and same-key HTTP retry guidance without creating a new commitment.
+The historical R7 refusal below is retained as decision history. See the
+[correction evidence](../../notes/reviews/2026-11-13-pr1741-fix-evidence.md).
+
 - R7: the `Revive` Sandbox control (`POST /api/v1/sandboxes/{id}/commands`,
   also used by bot delegation) skipped the platform check that the owner's
   revive has. `SandboxControlService` now reads the admission state at
