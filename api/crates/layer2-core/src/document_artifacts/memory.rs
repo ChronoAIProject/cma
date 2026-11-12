@@ -95,9 +95,7 @@ impl DocumentBlobMaintenance for MemoryDocumentBlobs {
         let valid = key.rsplit_once('/').is_some_and(|(prefix, file)| {
             valid_document_blob_prefix(&format!("{prefix}/"))
                 && prefix.split('/').count() == 3
-                && file
-                    .strip_suffix(".md")
-                    .is_some_and(blob_maintenance::valid_digest)
+                && file.strip_suffix(".md").is_some_and(valid_digest)
         });
         if !valid {
             return Err(DocumentError::Invalid.into());

@@ -7,7 +7,10 @@ async fn memory_blob_maintenance_deletes_idempotently_and_allows_rewrite() {
     let key = format!("{prefix}{}.md", digest(b"source"));
     assert!(blobs.deletion_supported());
     blobs.put(&key, b"source".to_vec()).await.unwrap();
-    assert_eq!(blobs.list(&prefix, None).await.unwrap().keys, [key.clone()]);
+    assert_eq!(
+        blobs.list(&prefix, None).await.unwrap().keys.as_slice(),
+        std::slice::from_ref(&key)
+    );
     assert_eq!(blobs.delete(&key).await.unwrap(), BlobDeletion::Deleted);
     assert_eq!(blobs.delete(&key).await.unwrap(), BlobDeletion::Absent);
     assert_eq!(blobs.get(&key).await, Err(DocumentError::Unavailable));

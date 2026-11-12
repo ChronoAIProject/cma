@@ -1,4 +1,4 @@
-use super::DocumentError;
+use super::{valid_digest, DocumentError};
 use std::time::Duration;
 
 pub const MAX_BLOB_PAGE_KEYS: usize = 256;
@@ -14,13 +14,6 @@ pub fn valid_document_blob_prefix(prefix: &str) -> bool {
         }
         _ => false,
     }
-}
-
-pub(super) fn valid_digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
