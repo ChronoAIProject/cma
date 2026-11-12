@@ -43,8 +43,8 @@ accounts for the newly isolated test when comparing older harnesses.
 Local evidence is retained at
 `notes/2026-11-12-pr1779-audit-bounds/`, including the unmodified-head
 reproduction, source-identity proof, harness checks, repeated canonical Mongo
-runs, and actual nextest selection proof. The separate diagnostics overhead
-failure is outside this change.
+runs, and actual nextest selection proof. The diagnostics overhead failure was initially handled separately in #1782
+and is integrated below.
 
 Validation of the harness delta: 35/35 harness tests passed. Three consecutive
 canonical `--audit-bounds` runs passed both cases (23.282, 17.349, and 18.396
@@ -54,7 +54,20 @@ invocations covering eight near-capacity cases. The 6,451-file size gate and
 shell/Python syntax checks passed. No Rust source changed after the prior
 whole-CMA strict Clippy, 14 real-Mongo tests, and 20 unit tests were qualified.
 
-The actual nextest selection proof passed: the complete 1,005-test Mongo
+At `9089393f1`, the actual nextest selection proof passed: the complete 1,005-test Mongo
 corpus is unchanged, with 3 singleton exclusive phases and 1,002 ordinary
 tests, no omissions or overlaps. Previously ordinary selection contained
 1,003 tests; the sole removal is the audit now selected by its exclusive phase.
+
+The subsequent diagnostics isolation commit from #1782 is integrated as a
+separate commit. The combined coordinator now runs four exclusive phases
+(report scale, owner allocation, audit bounds, diagnostics) before 1,001
+ordinary tests. Comparing its exact predicates to the saved actual nextest
+inventory proves that all 1,005 tests remain selected exactly once. The audit
+30-second timeout and diagnostics `on_mean < 2 * off_mean + 5,000 us` guard
+are both unchanged. The production and test Rust sources are unchanged.
+
+Combined validation passed: 40/40 runner regressions, ShellCheck with sourced
+files, Bash/Python syntax, the 6,451-file size check, and unchanged guarded-test
+blob identities. Every changed file is below 500 lines. CI must still qualify
+the unchanged diagnostics ceiling and the complete Mongo corpus on this head.
