@@ -133,6 +133,15 @@ async fn commit_once(
         .validate()
         .map_err(LaunchStoreError::from)
         .map_err(AttemptError::Domain)?;
+    if current.home_capacity_admission {
+        crate::store::launch_home_capacity::release(
+            &store.launch_data.admissions,
+            &changed,
+            session,
+        )
+        .await
+        .map_err(AttemptError::from)?;
+    }
     let trigger = if current.launch.ready_at.is_none() && changed.ready_at.is_some() {
         Some(
             counters::record_ready(store, &changed.trigger_id, session)
@@ -177,7 +186,8 @@ async fn commit_once(
                     .map_err(corrupt)
                     .map_err(AttemptError::Domain)?,
             },
-            launch_document(&changed, next_mutation).map_err(AttemptError::Domain)?,
+            launch_document(&changed, next_mutation, current.home_capacity_admission)
+                .map_err(AttemptError::Domain)?,
         )
         .session(session)
         .await
@@ -191,6 +201,7 @@ async fn commit_once(
         launch: StoredLaunch {
             launch: changed,
             mutation_version: next_mutation,
+            home_capacity_admission: current.home_capacity_admission,
         },
         events,
         trigger,
@@ -241,6 +252,15 @@ impl From<CounterError> for AttemptError {
             CounterError::Retry(reason) => Self::Retry(reason),
             CounterError::Domain(error) => Self::Domain(error),
             CounterError::Driver(error) => Self::Driver(error),
+        }
+    }
+}
+
+impl From<crate::store::launch_home_capacity::Error> for AttemptError {
+    fn from(error: crate::store::launch_home_capacity::Error) -> Self {
+        match error {
+            crate::store::launch_home_capacity::Error::Domain(error) => Self::Domain(error),
+            crate::store::launch_home_capacity::Error::Driver(error) => Self::Driver(error),
         }
     }
 }

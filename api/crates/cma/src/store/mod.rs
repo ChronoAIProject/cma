@@ -88,6 +88,7 @@ mod hierarchy;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
+pub(crate) mod launch_home_capacity;
 pub(crate) mod ledger_census;
 pub(crate) mod ledger_collection;
 mod ledger_collection_progress;

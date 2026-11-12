@@ -25,6 +25,11 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
         )
         .await
         .map_err(|error| format!("admission ceilings are not usable: {error}"))?;
+    stores.trigger_definitions = Arc::new(
+        (*stores.trigger_definitions)
+            .clone()
+            .with_global_sandbox_limit(config.global_sandbox_limit),
+    );
     stores.sandbox_model = Arc::new(
         (*stores.sandbox_model)
             .clone()
