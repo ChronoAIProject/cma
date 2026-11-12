@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 289,
+  "openapi_operations": 290,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -2286,7 +2286,8 @@
         "not_authenticated",
         "forbidden",
         "invalid_binding",
-        "binding_skill_version_update_unsupported"
+        "binding_skill_version_update_unsupported",
+        "sandbox_capacity_unavailable"
       ]
     },
     "GET /api/v1/cmaeg/bindings/{binding_id}": {
@@ -3957,6 +3958,18 @@
         "admission_control_writes_unavailable",
         "invalid_request",
         "admission_control_conflict"
+      ]
+    },
+    "PUT /api/v1/admin/admission/ceilings": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/ceilings.rs# ConfigurePlatform protects independently revised capacity policy; the separate gate and revision CAS protect writes.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_ceilings_unavailable",
+        "admission_ceilings_writes_unavailable",
+        "invalid_request",
+        "admission_ceilings_conflict"
       ]
     }
   }
