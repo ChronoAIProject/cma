@@ -443,3 +443,27 @@ All 40 files in the migration review's scoped hash inventory still match the
 reviewed source exactly. The new combined Rust and recovery batch is queued;
 no pending gate is counted as success. Obsolete exports and frontend build
 artifacts were removed; only one build target and its active source remain.
+
+### S1 command settlement dependency, 14:50
+
+Published `9a41f5cfb261e6b6ace51c4902d845b2749e4fee` on the combined integration
+branch. The S4 seam is
+`agent_log_segments::command_evidence::read_transaction(store, agent, agent_row,
+command, session) -> Result<Option<CommandEvidence>, TransactionLogError>`.
+It is read-only inside the existing transaction; None is legacy only. Fixed
+source points plus indexed pending-approval existence replace the lifetime fold.
+The required turn fact `approval_change_sequence` preserves ambiguous trigger
+ordering; older incomplete projection shapes refuse and must be rebuilt before
+activation. Writer/recovery gates remain closed. S4 owns registration/caller
+wiring; full CMA/Mongo qualification follows that pin.
+
+At this exact dependency source: 33/33 core settlement/projection tests and strict
+core/public/adapter Clippy pass. Includes long history above both former limits,
+multiple approvals, trigger ordering, original control/lane custody, runtime-loss
+precedence, invalid original facts and deferred retry adjacency/live authority.
+
+The combined run at `54d5821f7` passed strict Clippy; units returned 681 passes and
+four contract failures. The merged operation count and output-page scenario/docs
+are fixed in `182501b84`; capacity-recovery mounted-route classification remains
+with S5. These fixes require final-source qualification. Historical failures
+remain in the takeover evidence; no pending gate counts as a pass.
