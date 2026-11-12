@@ -6,7 +6,7 @@ Cookie authentication currently reads browser custody and subject authority in t
 
 The identity diagnostic phase isolates ambient middleware from handler reads. Fixed led/shared counters contain no Cookie, token, or subject labels. Successful ordinary Cookie requests are expected to change from three identity commands to two; /auth/session from four to three, with its settings read outside identity. No reduction in documents examined or background load is claimed merely from the round-trip reduction.
 
-Local verification and measurements are appended after the contract run. The local task-experience route uses a no-I/O authenticated fixture; /auth/session uses the real handler without a platform-settings store. NyxID is a local HTTP contract provider. Those measurements do not establish production latency.
+Local verification and measurements appear below. The local task-experience route uses a no-I/O authenticated fixture; /auth/session uses the real handler without a platform-settings store. NyxID is a local HTTP contract provider. Those measurements do not establish production latency.
 
 Production measurement plan (lead/operator executes after deployment):
 
@@ -54,8 +54,13 @@ MongoDB `8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21
 402 focused authentication tests passed; workspace all-target/all-feature clippy
 passed with warnings denied; workspace doctests passed; configuration keys,
 configuration documentation, source-file limits and changed-content gitleaks passed.
-The Mongo runner's 40 infrastructure tests passed. The full contract run is
-recorded separately when finished.
+The Mongo runner's 40 infrastructure tests passed. Before the develop merge,
+the full real-Mongo contract runner passed all **1,019 tests**: four isolated
+checks followed by 26 ordinary partitions (one with 40 tests and 25 with 39).
+The runner exited successfully after its owned fixture cleanup. This run
+covered the #1795 implementation at `04e099e547b0bfb62ba661e8998246e00fe92b1d`;
+the additional duration-bucket tests and diagnostics overhead contract passed
+separately as described below.
 
 LLVM 22.1.2 coverage instrumentation ran all 1,739 `cma` unit tests successfully
 and 15 selected real-Mongo auth contracts successfully after correcting one new
@@ -72,3 +77,108 @@ and zero collection scans. The aggregate uses the `_id_` index on the joined
 collection. Every sequential successful Cookie request still initiated both
 NyxID userinfo and introspection. The source validators, malformed-record refusals,
 logout recheck and token-generation recheck remained active.
+
+## Local before/after measurements
+
+The ordinary, non-coverage run used 50 sequential requests for every
+route/switch/wait combination (400 requests total). The test is
+`store::auth::browser_session::tests::requests::cookie_request_chain_commands_and_local_wait_measurements`.
+The 25 ms case injects a deterministic sleep at each observed auth-store
+boundary to simulate waiting for a connection. This is not actual driver pool
+contention, and it is excluded from the command and actual-checkout timings.
+Both paths used the same local fixture and NyxID HTTP contract server. The
+benchmark mounts authentication middleware only; it excludes rate-limit and
+activity-recording middleware, so it measures the identity chain rather than
+the full production request stack.
+
+| Route | Injected wait per boundary | Commands/request, off → on | Request p50 ms, off → on | Request p95 ms, off → on | Before NyxID p50 ms, off → on | Before NyxID p95 ms, off → on |
+| --- | ---: | --- | --- | --- | --- | --- |
+| GET /api/v2/ui/task-experience | 0 ms | 3 → 2 | 2.510 → 2.248 | 3.510 → 2.909 | 1.500 → 1.093 | 2.376 → 1.827 |
+| GET /auth/session | 0 ms | 4 → 3 | 3.254 → 2.818 | 4.024 → 3.528 | 1.453 → 1.046 | 2.191 → 1.716 |
+| GET /api/v2/ui/task-experience | 25 ms | 3 → 2 | 86.158 → 58.163 | 88.469 → 60.260 | 57.306 → 29.447 | 59.676 → 30.479 |
+| GET /auth/session | 25 ms | 4 → 3 | 115.713 → 87.228 | 119.116 → 90.078 | 57.836 → 29.676 | 59.981 → 30.657 |
+
+| Route | Injected wait | Mongo round trips per 50 requests, off → on | Reply BSON bytes per 50 requests, off → on | Total command duration µs, off → on | Actual checkout mean µs, off → on |
+| --- | ---: | --- | --- | --- | --- |
+| GET /api/v2/ui/task-experience | 0 ms | 150 → 100 | 94,550 → 82,950 | 73,478 → 58,757 | 34.067 → 35.130 |
+| GET /auth/session | 0 ms | 200 → 150 | 114,300 → 102,700 | 91,891 → 76,664 | 35.620 → 35.800 |
+| GET /api/v2/ui/task-experience | 25 ms | 150 → 100 | 94,550 → 82,950 | 130,035 → 95,150 | 64.200 → 59.930 |
+| GET /auth/session | 25 ms | 200 → 150 | 114,300 → 102,700 | 180,534 → 147,389 | 62.235 → 64.460 |
+
+Reply sizes are decoded BSON reply sizes measured by the test observer, not
+compressed wire traffic or server disk bytes. The index explain reported
+baseline documents/keys examined 2/2 and joined outer plus subject documents/keys
+examined 1/1 + 1/1, both with zero collection scans. No getMore was issued.
+The sample is small and runs on a shared machine; the deterministic command
+reduction is established locally, while production latency remains unverified.
+
+## Request-budget instrumentation
+
+The #1806 measurement change adds eleven non-cumulative duration buckets to each
+existing bounded diagnostic group, with inclusive bounds of 1, 5, 10, 25, 50,
+100, 250, 500, 1,000 and 5,000 ms, followed by an overflow-duration bucket. It
+adds 88 bytes per group and no label dimensions. Diagnostics remain gated by
+the existing default-off `CHRONO_MONGO_DIAGNOSTICS_ENABLED` switch. This work
+adds no lease switch or rate-limit behavior change; #1806 stays open pending
+the production measurement and decision in step 6 above.
+
+Focused boundary, overflow, saturation, drain and privacy tests passed. The
+summary module has 212/214 covered lines (99.07%) in the scoped coverage run.
+The real-Mongo diagnostics privacy/overhead contract passed unchanged. Its
+observed off/on mean command times were 1,444/1,483 µs for 25 returned documents,
+4,179/5,647 µs for 200, and 155,035/158,284 µs for 10,001; the corresponding
+p50 values were 1,430/1,449, 4,152/4,474 and 154,022/156,423 µs.
+These local results validate the contract, not a production overhead guarantee.
+
+## Integration handoff
+
+The work lives on `tl/cma-perf-read/request-chain`. Preserve the #1795 commits
+`6bc505f50`, `f6fd885ca` and `04e099e54`. Merge commit `76a81c163` incorporates
+develop `ee0c9d7e2`, including #1783 (`c39c0f797`) and #1773 readiness
+instrumentation. Its only manual conflict resolution keeps the union of both
+branches' Mongo contract selections. The #1806 bucket change is isolated in
+`4a953da21` and touches only the summary module and diagnostics documentation.
+
+After the merge, 559 focused tests passed across auth, configuration, Mongo
+diagnostics, readiness and rate-limit modules, including the Control tier.
+Workspace all-target/all-feature clippy passed with warnings denied. All 26
+selected real-Mongo contracts passed: 16 auth, eight Control/Input policy,
+one shared request-budget and one diagnostics contract. Their disposable
+fixture cleanup succeeded. The unchanged Mongo runner infrastructure suite
+passed all 40 tests after the selection conflict was resolved.
+The final `cargo fmt --all --check`, configuration/infra agreement, operations
+documentation, file-size and changed-content secret-scanning checks passed.
+
+The merged-head Mongo run repeated the same 50-request measurement cases and
+retained the exact command sequences and reply BSON totals above. Its latency
+and actual checkout values were:
+
+| Route | Injected wait | Request p50 ms, off → on | Request p95 ms, off → on | Actual checkout mean µs, off → on |
+| --- | ---: | --- | --- | --- |
+| GET /api/v2/ui/task-experience | 0 ms | 3.922 → 3.018 | 4.305 → 3.448 | 51.147 → 52.160 |
+| GET /auth/session | 0 ms | 4.973 → 4.071 | 5.565 → 4.616 | 53.115 → 54.833 |
+| GET /api/v2/ui/task-experience | 25 ms | 86.684 → 58.551 | 91.268 → 61.198 | 72.707 → 68.860 |
+| GET /auth/session | 25 ms | 115.881 → 87.467 | 119.322 → 91.077 | 74.635 → 122.587 |
+
+These repeated results are retained separately from the full-run numbers;
+neither run establishes production latency or resolves #1806's production gate.
+
+The integration owner should use `Closes #1795` and `Part of #1806` in the PR
+handoff. #1806 must remain open for the production evidence and decision.
+Independent review and dedicated-runner PR CI remain integration gates; the
+local verification here does not substitute for them. The lead/operator owns
+production measurement and activation; no production access was used.
+
+Original local logs were under `api/target/request-chain/`. Their result
+excerpts and measurements are retained in this committed document before
+worktree build-artifact cleanup. SHA-256 values identify the completed logs:
+
+| Log | SHA-256 |
+| --- | --- |
+| mongo.log | `2c307239bb79e3f0a293bcf9f282edb419cb5900510ffc9d4c6f7494d266433d` |
+| nextest.log | `b770733368eb8ae7daab02b233875665ae88e8d13cb54095e31154e06d260bed` |
+| doctest.log | `92a0a764327f6ebef6ee7b8586d5b8161ff3c8d3fb95c8da8798d215e14c8b60` |
+| bucket-mongo.log | `4664fcf01943789e6d8689797f8cd6eed7aec074e4198c512f5e7c2344dfc3e4` |
+| merged-focused.log | `17e01cdaae12cce8533ddc06f6d67ca4a899cddf8f365825fb349e63ced229ae` |
+| merged-clippy.log | `90ed45f540cc99b4a971a424bec675fee994c1b9cb2806fb55838d80842a86f3` |
+| merged-mongo.log | `fd22d3434676567666c6adc0c81af58cfa3863242070d07acaa4b9896aec8474` |
