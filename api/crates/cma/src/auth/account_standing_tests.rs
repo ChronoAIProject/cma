@@ -478,10 +478,7 @@ async fn session_deletion_entitlement_requires_subject_bound_marker() {
             .layer(Extension(layer1_public::AuthenticatedSubject(
                 SubjectId::new("owner"),
             )))
-            .layer(Extension(Authorization::new([
-                Capability::UseOwnSandboxes,
-                Capability::DeleteOwnAccount,
-            ])));
+            .layer(Extension(Authorization::new([Capability::UseOwnSandboxes])));
         if let Some(subject) = marker_subject {
             app = app.layer(Extension(OwnerSessionAuthority::verified_personal(
                 SubjectId::new(subject),
@@ -643,7 +640,10 @@ fn delete_authority_is_only_marked_for_verified_personal_credentials() {
             marker.as_ref().map(|authority| authority.subject()),
             expected.then_some(&request.subject)
         );
-        assert!(!request.authorization.allows(Capability::DeleteOwnAccount));
+        assert_eq!(
+            request.authorization,
+            Authorization::new([Capability::UseOwnSandboxes])
+        );
     }
 }
 

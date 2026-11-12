@@ -1,10 +1,9 @@
 //! Stable wire names for verified CMA authorization capabilities.
 
-use layer2_core::{Authorization, Capability};
+use layer2_core::{account_deletion::OwnerSessionAuthority, Caller, Capability};
 
 pub(crate) fn wire_name(capability: Capability) -> &'static str {
     match capability {
-        Capability::DeleteOwnAccount => "delete_own_account",
         Capability::CreateSandbox => "create_sandbox",
         Capability::UseOwnSandboxes => "use_own_sandboxes",
         Capability::DeleteOwnSandbox => "delete_own_sandbox",
@@ -25,20 +24,28 @@ pub(crate) fn wire_name(capability: Capability) -> &'static str {
     }
 }
 
-pub(crate) fn reported(authorization: &Authorization) -> Vec<&'static str> {
-    authorization
+pub(crate) fn reported(
+    caller: &Caller,
+    authority: Option<&OwnerSessionAuthority>,
+    enabled: bool,
+) -> Vec<&'static str> {
+    let mut capabilities = caller
+        .authorization
         .iter()
-        .filter(|capability| *capability != Capability::DeleteOwnAccount)
         .map(wire_name)
-        .collect()
+        .collect::<Vec<_>>();
+    if enabled && authority.is_some_and(|authority| authority.subject() == &caller.subject) {
+        capabilities.push("delete_own_account");
+    }
+    capabilities
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use layer2_core::{Authorization, SubjectId};
 
-    const ALL: [Capability; 18] = [
-        Capability::DeleteOwnAccount,
+    const ALL: [Capability; 17] = [
         Capability::CreateSandbox,
         Capability::UseOwnSandboxes,
         Capability::DeleteOwnSandbox,
@@ -67,6 +74,27 @@ mod tests {
     }
 
     #[test]
+    fn deletion_entitlement_requires_enabled_subject_bound_session_authority() {
+        let caller = Caller::new(
+            SubjectId::new("owner"),
+            Authorization::new([Capability::UseOwnSandboxes]),
+        );
+        let owner = OwnerSessionAuthority::verified_personal(caller.subject.clone());
+        let other = OwnerSessionAuthority::verified_personal(SubjectId::new("other"));
+        assert_eq!(
+            reported(&caller, Some(&owner), true),
+            ["use_own_sandboxes", "delete_own_account"]
+        );
+        for (authority, enabled) in [(None, true), (Some(&other), true), (Some(&owner), false)] {
+            assert_eq!(reported(&caller, authority, enabled), ["use_own_sandboxes"]);
+        }
+        assert_eq!(
+            serde_json::to_value(&caller.authorization).unwrap(),
+            serde_json::json!(["use_own_sandboxes"])
+        );
+    }
+
+    #[test]
     fn reported_authority_is_stable_and_exact() {
         let authority = Authorization::new([
             Capability::ReadUserDirectory,
@@ -74,7 +102,7 @@ mod tests {
             Capability::LaunchTriggers,
         ]);
         assert_eq!(
-            reported(&authority),
+            reported(&Caller::new(SubjectId::new("owner"), authority), None, true),
             [
                 "use_own_sandboxes",
                 "launch_triggers",

@@ -184,13 +184,7 @@ impl AuthState {
         caller: &Caller,
         authority: Option<&OwnerSessionAuthority>,
     ) -> Vec<&'static str> {
-        let mut capabilities = super::entitlements::reported(&caller.authorization);
-        if self.account_deletion_enabled
-            && authority.is_some_and(|authority| authority.subject() == &caller.subject)
-        {
-            capabilities.push("delete_own_account");
-        }
-        capabilities
+        super::entitlements::reported(caller, authority, self.account_deletion_enabled)
     }
     pub(super) async fn account_gate(
         &self,
