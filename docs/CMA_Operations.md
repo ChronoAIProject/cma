@@ -1088,6 +1088,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` | Creation request budget/burst; default 10 |
 | `CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED` | Strict boolean, default `false`. Opts exact registered existing-Agent input submissions into the existing Input budget, including Responses v2 and its Agent alias; preserves local and Mongo enforcement. See [Response input rate policy](CMA_Response_Input_Rate_Policy.md) for the route inventory and separate activation/rollback. |
 | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` | Agent input request budget/burst; default 120 |
+| `CHRONO_SERVER_RATE_CONTROL_ENABLED` | Strict boolean, default `false`. Separately activates the independent recovery/control policy; while false, prior Create/Input classification and shared keys are preserved. |
 | `CHRONO_SERVER_RATE_CONTROL_PER_MINUTE` | Independent per-subject Control budget/burst; default 120, positive integer. Protects recovery and controls of admitted work after the Create allowance is exhausted. |
 | `CHRONO_PUBLIC_STREAM_LIMIT` | Concurrent public stream request/body lifetimes per process; strict 0..4096, default 0/off. See [public stream admission](CMA_Public_Stream_Admission.md); this is not a decoded-memory or fleet-capacity bound. |
 | `CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED` | Strict default-off hosted output backpressure; requires retained ACK support. See [hosted update backpressure](CMA_Hosted_Update_Backpressure.md). |
@@ -1200,11 +1201,14 @@ Create (10/min) covers creation POSTs and the remaining unclassified POSTs. Inpu
 suffix policy uses Input; with it true, the exact registered input templates
 in [Response input rate policy](CMA_Response_Input_Rate_Policy.md) use Input,
 subject to the existing binding-auth restriction. This change leaves the flag
-false and preserves the classification of input submissions. Recovery and controls
-take precedence over Input in both flag modes. Responses v2 interrupt therefore
-uses Control even when the flag is enabled; it no longer uses Input.
+false and preserves the classification of input submissions. With the separate
+`CHRONO_SERVER_RATE_CONTROL_ENABLED=true`, recovery and controls take precedence
+over Input in both Input flag modes. The Control switch defaults to false in
+code and infra; while disabled, v2 interrupt retains Input with the Input flag
+true for non-binding callers, and the other listed controls retain Create. With
+Control enabled, v2 interrupt uses Control for either value of the Input flag.
 
-Control covers recovery and controls of admitted work, with a separate 120/min
+When explicitly enabled, Control covers recovery and controls of admitted work, with a separate 120/min
 default giving headroom above TC-076's 20 input/control requests per minute. It
 applies only to POST requests whose registered MatchedPath exactly equals one of
 these templates, regardless of the input flag or authentication method:
@@ -1234,8 +1238,10 @@ or Input. Exceeding any operation tier returns HTTP 429 `rate_limited` as
 use the existing aggregate counter and sparse tier-labelled logs. A shared-store
 failure returns 503 `request_budget_unavailable` without a local-only fallback.
 
-All API replicas must run the new classification policy before Control isolation
-is uniform. A predecessor can read the unchanged opaque budget records, but its
+After policy approval, set `CHRONO_SERVER_RATE_CONTROL_ENABLED=true` consistently
+on all API replicas before claiming uniform Control isolation. Rollback sets it
+false and restores prior Create/Input classification. Keep the existing budget
+records; switching policy does not transfer or reset consumed allowance. A predecessor can read the unchanged opaque budget records, but its
 previous Create/Input classification loses this independent Control guarantee.
 The new `control:` keys use the existing schema v1, indexes and TTL, with no
 backfill or data rewrite. Upload/read-POST budget decisions are deferred.

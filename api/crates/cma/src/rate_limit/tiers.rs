@@ -26,7 +26,11 @@ impl RequestTier {
     }
 }
 
-pub(super) fn request_tier(request: &Request, response_inputs: bool) -> RequestTier {
+pub(super) fn request_tier(
+    request: &Request,
+    response_inputs: bool,
+    controls: bool,
+) -> RequestTier {
     let matched_path = request.extensions().get::<MatchedPath>();
     let path = matched_path
         .map(MatchedPath::as_str)
@@ -46,7 +50,8 @@ pub(super) fn request_tier(request: &Request, response_inputs: bool) -> RequestT
     }
     // Recovery and controls of admitted work take precedence over Input.
     // Only exact router metadata can grant this independent allowance.
-    if matched_path.is_some()
+    if controls
+        && matched_path.is_some()
         && matches!(
             path,
             "/api/v1/agents/{id}/stop"
@@ -76,7 +81,7 @@ pub(super) fn request_tier(request: &Request, response_inputs: bool) -> RequestT
             .extensions()
             .get::<layer1_public::AuthMethod>()
             .is_none()
-            && matches!(
+            && (matches!(
                 path,
                 "/api/v2/responses"
                     | "/api/v2/agents/{agent_id}/responses"
@@ -85,7 +90,8 @@ pub(super) fn request_tier(request: &Request, response_inputs: bool) -> RequestT
                     | "/api/v1/agents/{id}/input"
                     | "/api/v1/agents/{id}/steer"
                     | "/api/v2/agents/{agent_id}/responses/{response_id}/queued-input"
-            )
+            ) || (!controls
+                && path == "/api/v2/agents/{agent_id}/responses/{response_id}/interrupt"))
     } else {
         path.split('/').rfind(|segment| !segment.is_empty()) == Some("input")
     };
