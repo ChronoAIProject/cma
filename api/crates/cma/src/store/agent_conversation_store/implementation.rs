@@ -5,6 +5,33 @@ use super::*;
 
 #[async_trait::async_trait]
 impl AgentConversationStore for MongoSandboxStore {
+    async fn commit_agent_capacity_update(
+        &self,
+        settlement: layer2_core::sandbox::store::AgentConversationCapacitySettlement,
+    ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
+        let mut proposal = settlement;
+        loop {
+            let result = checkpoint::commit(
+                self,
+                proposal.current().clone(),
+                proposal.previous().cloned(),
+                proposal.checkpoint().clone(),
+                Some(proposal.mutation().clone()),
+                checkpoint::Authority::Capacity(Box::new(proposal.clone())),
+            )
+            .await;
+            match result {
+                Err(SandboxStoreError::AgentLogCapacityExceeded) => {
+                    let Some(compact) = proposal.compact_failure()? else {
+                        return result;
+                    };
+                    proposal = compact;
+                }
+                _ => return result,
+            }
+        }
+    }
+
     async fn commit_agent_conversation(
         &self,
         mutation: AgentConversationMutation,
@@ -34,7 +61,15 @@ impl AgentConversationStore for MongoSandboxStore {
         mutation: Option<AgentConversationMutation>,
         guard: layer2_core::sandbox::store::AgentReopenGuard,
     ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
-        checkpoint::commit(self, current, previous, next, mutation, Some(guard)).await
+        checkpoint::commit(
+            self,
+            current,
+            previous,
+            next,
+            mutation,
+            checkpoint::Authority::Reopen(Box::new(guard)),
+        )
+        .await
     }
 
     async fn commit_agent_message_update(
@@ -44,6 +79,14 @@ impl AgentConversationStore for MongoSandboxStore {
         next: AgentMessageCheckpoint,
         mutation: Option<AgentConversationMutation>,
     ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
-        checkpoint::commit(self, current, previous, next, mutation, None).await
+        checkpoint::commit(
+            self,
+            current,
+            previous,
+            next,
+            mutation,
+            checkpoint::Authority::Live,
+        )
+        .await
     }
 }
