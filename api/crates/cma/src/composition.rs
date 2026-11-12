@@ -41,7 +41,6 @@ use layer2_core::{
 };
 mod state;
 pub(crate) use state::ControlPlaneComposition;
-
 impl ControlPlaneComposition {
     pub(crate) async fn build(config: &Config) -> Result<Self, String> {
         let stores = stores::connect(config).await?;
