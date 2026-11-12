@@ -164,7 +164,7 @@ impl Fixture {
             meter,
         }
     }
-    pub fn app(&self, access_session: bool) -> Router {
+    pub fn app(&self, access_session: bool, single_fence_pages: bool) -> Router {
         let store = Arc::new(
             self.store
                 .clone()
@@ -174,11 +174,14 @@ impl Fixture {
             store.clone(),
             Arc::new(Authority),
         ));
-        router(AgentV2State::new(
-            AgentReadService::new(store.clone(), Arc::new(Resources))
-                .with_resource_access(access.clone()),
-            AgentCommandService::new(store, access, Arc::new(Authority)),
-        ))
+        router(
+            AgentV2State::new(
+                AgentReadService::new(store.clone(), Arc::new(Resources))
+                    .with_resource_access(access.clone()),
+                AgentCommandService::new(store, access, Arc::new(Authority)),
+            )
+            .with_single_fence_pages(single_fence_pages),
+        )
     }
     pub async fn request(&self, app: &Router, path: &str) -> Vec<u8> {
         let mut request = Request::get(path)
