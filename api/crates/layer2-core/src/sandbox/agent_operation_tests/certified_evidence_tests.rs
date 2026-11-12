@@ -169,7 +169,7 @@ fn requested(id: &str) -> AgentLogKind {
 fn resolved(id: &str) -> AgentLogKind {
     AgentLogKind::ApprovalResolved {
         approval_id: id.into(),
-        decision: AgentApprovalDecision::Allow,
+        decision: "allow".into(),
     }
 }
 
