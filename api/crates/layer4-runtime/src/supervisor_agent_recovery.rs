@@ -14,6 +14,9 @@ impl Supervisor {
         &self,
         request: CapacityRecoveryRequest,
     ) -> Result<CapacityRecoveryNativeProof> {
+        if !self.config.capacity_recovery_enabled {
+            return Err(capacity_error(CapacityRecoveryError::Unsupported));
+        }
         request
             .validate()
             .map_err(|_| identity("capacity recovery request is invalid"))?;
