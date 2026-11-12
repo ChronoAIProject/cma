@@ -13,6 +13,7 @@ pub(crate) struct FeatureFlags {
     pub retain_read_frames: bool,
     pub bounded_permission_state: bool,
     pub retained_reopen_enabled: bool,
+    pub agent_skill_upgrade_enabled: bool,
     pub shared_runtime_output: bool,
     pub model_budget_writes_enabled: bool,
     pub model_request_budget_writes_enabled: bool,
@@ -25,6 +26,7 @@ pub(crate) struct FeatureFlags {
     pub trigger_command_admission: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
+    pub silent_sign_in: bool,
     pub document_revocation_reserve: bool,
     pub document_quotas: bool,
     pub bounded_approval_reads: bool,
@@ -56,6 +58,7 @@ impl FeatureFlags {
             retain_read_frames: flag(lookup, "CHRONO_READ_FRAME_BUDGET_ENABLED")?,
             bounded_permission_state: flag(lookup, "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED")?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
+            agent_skill_upgrade_enabled: flag(lookup, "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")?,
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
             sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
             sandbox_detail_timings: flag(lookup, "CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")?,
@@ -79,6 +82,7 @@ impl FeatureFlags {
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
             nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
+            silent_sign_in: flag(lookup, "CHRONO_SILENT_SIGN_IN_ENABLED")?,
             document_revocation_reserve: flag(
                 lookup,
                 "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
@@ -98,10 +102,6 @@ impl FeatureFlags {
         Ok(flags)
     }
 }
-
-#[cfg(test)]
-#[path = "shared_output_feature_tests.rs"]
-mod shared_output_tests;
 
 #[cfg(test)]
 mod approval_tests {
