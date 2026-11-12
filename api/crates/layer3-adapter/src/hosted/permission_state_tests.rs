@@ -1,5 +1,31 @@
 use super::*;
 
+#[test]
+fn permission_refusal_and_last_replay_owner_preserve_aggregate_accounting() {
+    let root = IngressBudget::new(PROCESS_BYTES);
+    let component = Arc::new(Semaphore::new(PROCESS_BYTES));
+    let mut state = PermissionState::with_budget(component.clone(), 4, Some(root.clone())).unwrap();
+    let after_table = root.available_bytes();
+    assert!(after_table < PROCESS_BYTES);
+    let external = Arc::new(Semaphore::new(PROCESS_BYTES));
+    let held = IngressReservation::try_acquire(&external, Some(&root), after_table).unwrap();
+    assert!(record(&mut state, 1).is_err());
+    assert!(state.entries.is_empty());
+    assert_eq!(component.available_permits(), after_table);
+    drop(held);
+    let entry = record(&mut state, 1).unwrap();
+    entry.select(PermissionDecision::Allow);
+    drop(state);
+    assert!(root.available_bytes() < PROCESS_BYTES);
+    assert!(entry.answer().is_some());
+    let last = entry.clone();
+    drop(entry);
+    assert!(root.available_bytes() < PROCESS_BYTES);
+    drop(last);
+    assert_eq!(root.available_bytes(), PROCESS_BYTES);
+    assert_eq!(component.available_permits(), PROCESS_BYTES);
+}
+
 fn option() -> PermissionOption {
     PermissionOption::new("allow", "Allow", PermissionOptionKind::AllowOnce)
 }
@@ -16,7 +42,7 @@ fn record(state: &mut PermissionState, id: u64) -> Result<Arc<Entry>> {
 #[test]
 fn full_table_keeps_existing_answers_and_refuses_new_records() {
     let budget = Arc::new(Semaphore::new(PROCESS_BYTES));
-    let mut state = PermissionState::with_budget(budget.clone(), 2).unwrap();
+    let mut state = PermissionState::with_budget(budget.clone(), 2, None).unwrap();
     let first = record(&mut state, 1).unwrap();
     first.select(PermissionDecision::Allow);
     record(&mut state, 2).unwrap();
@@ -38,7 +64,7 @@ fn full_table_keeps_existing_answers_and_refuses_new_records() {
 #[test]
 fn final_inflight_owner_retains_storage_after_table_drop() {
     let budget = Arc::new(Semaphore::new(PROCESS_BYTES));
-    let mut state = PermissionState::with_budget(budget.clone(), 2).unwrap();
+    let mut state = PermissionState::with_budget(budget.clone(), 2, None).unwrap();
     let held = record(&mut state, 1).unwrap();
     let replay = held.clone();
     drop(state);
@@ -53,8 +79,8 @@ fn final_inflight_owner_retains_storage_after_table_drop() {
 #[test]
 fn simultaneous_attachments_share_capacity_and_recover_after_drop() {
     let budget = Arc::new(Semaphore::new(4096));
-    let mut first = PermissionState::with_budget(budget.clone(), 4).unwrap();
-    let mut second = PermissionState::with_budget(budget.clone(), 4).unwrap();
+    let mut first = PermissionState::with_budget(budget.clone(), 4, None).unwrap();
+    let mut second = PermissionState::with_budget(budget.clone(), 4, None).unwrap();
     let held = record(&mut first, 1).unwrap();
     let spare = budget
         .clone()
@@ -85,7 +111,7 @@ fn simultaneous_attachments_share_capacity_and_recover_after_drop() {
 #[test]
 fn oversized_shapes_fail_without_spending_retention_capacity() {
     let budget = Arc::new(Semaphore::new(PROCESS_BYTES));
-    let mut state = PermissionState::with_budget(budget.clone(), 4).unwrap();
+    let mut state = PermissionState::with_budget(budget.clone(), 4, None).unwrap();
     let initial = budget.available_permits();
     let id = "a".repeat(64);
     for choices in [
@@ -124,7 +150,7 @@ fn names_and_metadata_are_not_retained_by_compact_permissions() {
     rich["_meta"] = serde_json::json!({"large":"metadata".repeat(10000)});
     let rich: PermissionOption = serde_json::from_value(rich).unwrap();
     let budget = Arc::new(Semaphore::new(PROCESS_BYTES));
-    let mut state = PermissionState::with_budget(budget.clone(), 2).unwrap();
+    let mut state = PermissionState::with_budget(budget.clone(), 2, None).unwrap();
     let initial = budget.available_permits();
     let first = state
         .remember(
@@ -157,7 +183,7 @@ fn names_and_metadata_are_not_retained_by_compact_permissions() {
 #[test]
 fn turn_scope_preserves_uncertain_retries_without_reusing_prior_permission() {
     let budget = Arc::new(Semaphore::new(PROCESS_BYTES));
-    let mut state = PermissionState::with_budget(budget.clone(), 4).unwrap();
+    let mut state = PermissionState::with_budget(budget.clone(), 4, None).unwrap();
     state.begin_prompt("prompt-a");
     let first = record(&mut state, 1).unwrap();
     first.select(PermissionDecision::Allow);

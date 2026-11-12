@@ -1,46 +1,12 @@
 //! Requested allocator bytes are measured separately from reservations and RSS.
 use super::*;
-use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
-use tracking_allocator::{
-    AllocationGroupId, AllocationGroupToken, AllocationRegistry, AllocationTracker, Allocator,
-};
-
-#[global_allocator]
-static ALLOCATOR: Allocator<std::alloc::System> = Allocator::system();
-static GROUP: AtomicUsize = AtomicUsize::new(0);
-static LIVE: AtomicUsize = AtomicUsize::new(0);
-static PEAK: AtomicUsize = AtomicUsize::new(0);
-static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
-struct Tracker;
-impl AllocationTracker for Tracker {
-    fn allocated(&self, _: usize, bytes: usize, _: usize, group: AllocationGroupId) {
-        if group.as_usize().get() == GROUP.load(SeqCst) {
-            ALLOCATED.fetch_add(bytes, SeqCst);
-            let live = LIVE.fetch_add(bytes, SeqCst) + bytes;
-            PEAK.fetch_max(live, SeqCst);
-        }
-    }
-    fn deallocated(
-        &self,
-        _: usize,
-        bytes: usize,
-        _: usize,
-        source: AllocationGroupId,
-        _: AllocationGroupId,
-    ) {
-        if source.as_usize().get() == GROUP.load(SeqCst) {
-            LIVE.fetch_sub(bytes, SeqCst);
-        }
-    }
-}
+use crate::allocation_probe::AllocationProbe;
 
 #[test]
 fn measured_decode_peak_and_reply_lifetime_fit_the_derived_reservation() {
     assert!(std::mem::size_of::<Value>() <= 80);
     assert!(std::mem::size_of::<String>() <= 24);
     assert!(std::mem::size_of::<usize>() <= 8);
-    AllocationRegistry::set_global_tracker(Tracker).unwrap();
-    AllocationRegistry::enable_tracking();
     let pools = JsonPools::new(TREE_BYTES, SCRATCH_BYTES);
     // On macOS the first permit release initializes a 64-byte pthread mutex
     // owned by each semaphore. Initialize coordinator infrastructure before
@@ -74,16 +40,10 @@ fn measured_decode_peak_and_reply_lifetime_fit_the_derived_reservation() {
         let nodes = output_json_budget::inspect(payload).unwrap().nodes;
         let tree = tree_allowance(payload.len(), nodes).unwrap();
         let scratch = scratch_allowance(payload.len()).unwrap();
-        let mut token = AllocationGroupToken::register().unwrap();
-        GROUP.store(token.id().as_usize().get(), SeqCst);
-        LIVE.store(0, SeqCst);
-        PEAK.store(0, SeqCst);
-        ALLOCATED.store(0, SeqCst);
-        let guard = token.enter();
-        let frame = pools.decode(payload).unwrap();
-        drop(guard);
-        let retained = LIVE.load(SeqCst);
-        let peak = PEAK.load(SeqCst);
+        let mut probe = AllocationProbe::new();
+        let frame = probe.track(|| pools.decode(payload).unwrap());
+        let retained = probe.live();
+        let peak = probe.peak();
         assert!(retained <= tree, "{name}: retained {retained} > {tree}");
         assert!(
             peak <= tree + scratch,
@@ -91,25 +51,17 @@ fn measured_decode_peak_and_reply_lifetime_fit_the_derived_reservation() {
             tree + scratch
         );
         assert_eq!(pools.available(), (TREE_BYTES - tree, SCRATCH_BYTES));
-        let guard = token.enter();
-        let clone = frame.clone();
-        let result = frame.into_result();
-        drop(guard);
-        assert_eq!(
-            LIVE.load(SeqCst),
-            retained,
-            "projection must share the root"
-        );
+        let (clone, result) = probe.track(|| (frame.clone(), frame.into_result()));
+        assert_eq!(probe.live(), retained, "projection must share the root");
         drop(clone);
-        assert_eq!(LIVE.load(SeqCst), retained);
+        assert_eq!(probe.live(), retained);
         drop(result);
         assert_eq!(
-            LIVE.load(SeqCst),
+            probe.live(),
             0,
             "{name}: every parsed allocation must be released"
         );
         assert_eq!(pools.available(), (TREE_BYTES, SCRATCH_BYTES));
-        eprintln!("JSON allocation {name}: encoded={} nodes={nodes} retained={retained} peak={peak} tree_allowance={tree} scratch_allowance={scratch} total_requested={}", payload.len(), ALLOCATED.load(SeqCst));
+        eprintln!("JSON allocation {name}: encoded={} nodes={nodes} retained={retained} peak={peak} tree_allowance={tree} scratch_allowance={scratch} total_requested={}", payload.len(), probe.allocated());
     }
-    AllocationRegistry::disable_tracking();
 }
