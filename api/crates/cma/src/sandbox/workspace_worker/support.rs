@@ -120,6 +120,7 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
             "repository_source_invalid", "Repository files could not be safely prepared. The task has not run. Check source contents before starting another task.",
         ),
         AdapterError::Rejected(_)
+        | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)
         | AdapterError::Unsupported(_) => WorkerFailure::terminal(
             "workspace_runtime_rejected",

@@ -5,7 +5,7 @@ import { CmaClientProvider } from '../api/context';
 import type { AgentSkillsView } from '../api/client';
 import { agentClient } from '../test/agent';
 import { referenceClient } from '../test/references';
-import { agentSkillsClient } from '../api/rest/agentSkills';
+import { AgentSkillsError, agentSkillsClient } from '../api/rest/agentSkills';
 import { SkillsSettings } from './SkillsSettings';
 
 afterEach(() => vi.restoreAllMocks());
@@ -273,4 +273,28 @@ it('shows a catalogue failure and its retry inside the Add skills disclosure', a
   expect(await screen.findByRole('button', { name: 'Install TypeScript' })).toBeVisible();
   expect(screen.queryByText('Ornn skills could not be loaded.')).not.toBeInTheDocument();
   expect(profileClient.authoring.searchSkills).toHaveBeenCalledTimes(2);
+});
+
+it('starts a fresh user attempt with a fresh key after a definitive busy refusal', async () => {
+  const install = vi
+    .fn()
+    .mockRejectedValueOnce(new AgentSkillsError('Wait until idle, then try again.', 409))
+    .mockResolvedValue(pending);
+  render(
+    <CmaClientProvider
+      client={agentClient({ readAgentSkills: async () => empty, installAgentSkill: install })}
+      profiles={profiles()}
+    >
+      <SkillsSettings agentId="agent-one" active busy={false} />
+    </CmaClientProvider>,
+  );
+  await openCatalog();
+  await userEvent.click(await screen.findByRole('button', { name: 'Install TypeScript' }));
+  await screen.findByText('Wait until idle, then try again.');
+  await userEvent.click(screen.getByRole('button', { name: 'Install TypeScript' }));
+  await waitFor(() => expect(install).toHaveBeenCalledTimes(2));
+  expect(install.mock.calls[1]?.[1]).toEqual(install.mock.calls[0]?.[1]);
+  expect(install.mock.calls[1]?.[2].idempotencyKey).not.toBe(
+    install.mock.calls[0]?.[2].idempotencyKey,
+  );
 });
