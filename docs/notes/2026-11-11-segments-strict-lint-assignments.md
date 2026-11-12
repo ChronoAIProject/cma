@@ -305,3 +305,14 @@ Full P1-1 closure remains blocked on the additional conversation/checkpoint/
 settlement paths named above; current proof is admission/worker publication only.
 P1-N1 writer permission is published for S5's service qualification, not declared
 service-qualified. Project 9 for #1350 and #1351 was verified In Progress.
+
+### S4 13:00 handoff to the new integrator
+
+Integrator is now cma-cost. Pushed `1b722a42ebb58d3568078084269b8f03f30ff18b`
+on `tl/cma-log-segments/ordinary-v2-admission`; develop `d08742c70` is included.
+This fixes duplicate pagination module/import declarations introduced by the
+normal develop merge. Final-source compilation stopped before executing tests
+on the duplicate declaration; that failure is retained as evidence. Corrected
+units/Mongo/strict gates are queued under shared slot 1. The previous light
+gates and P1-1 output/settlement gap above remain accurately scoped. The writer
+CapacityRecovery permission is available for S5 service qualification. No PR.
