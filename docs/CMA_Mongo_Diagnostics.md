@@ -1,16 +1,18 @@
 # Mongo request attribution
 
-The API emits diagnostic command, physical connection and detail-phase events by
-default. This is observability only: it does not enable optimized readers,
-admission, reconciliation or recovery behavior. Diagnostic builds retain the
-behavioral flags selected by the release owner.
+Mongo command and attributed connection diagnostics are **off by default** in code
+and the checked-in API ConfigMap. Only exact
+`CHRONO_MONGO_DIAGNOSTICS_ENABLED=true` installs the command observer when the
+client starts. Missing, false or other values leave it off and retain the existing
+pool telemetry. Detail-phase timers remain independently on by default;
+`CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED=false` disables them.
 
-`CHRONO_MONGO_DIAGNOSTICS_ENABLED=false` disables command/attributed connection
-monitoring at process startup, while retaining the existing general-pool latency
-summaries. `CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED=false` independently disables
-detail-phase events. Both default to on, including the API ConfigMap; changing
-either requires the release owner's Pod rollout. Do not include diagnostic
-controls when setting *behavioral* feature flags off for the experiment.
+The release controller explicitly enables command diagnostics in the planned
+fix-candidate deployment and keeps them on through tonight's observation. Set the
+environment together with that deployment; no additional diagnostic-only rollout
+is required in the critical chain. Both controls are read at startup. They do not
+enable optimized readers, admission, reconciliation or recovery behavior. Do not
+include diagnostic controls when setting behavioral feature flags off.
 
 ## Event fields and privacy
 
@@ -130,7 +132,7 @@ If observer overhead materially changes the diagnostic window, the release owner
 can disable command monitoring while retaining phase timings and the original
 pool summaries. This limitation does not establish a production root cause.
 
-## Local validation and unresolved overhead
+## Local validation and accepted diagnostic overhead
 
 At source checkpoint `78629bc4c`, strict clippy passed for CMA, layer2-core and
 layer1-public across all targets/features. The targeted selection passed 132
@@ -150,9 +152,8 @@ These are local debug observations, not a production overhead estimate. The
 callback-only test measured approximately 1.025 microseconds per event, which
 excludes the driver's BSON conversion. The real-Mongo assertion is a catastrophic
 regression ceiling (less than twice baseline plus 5 ms), **not** proof of low
-overhead. Low overhead for large reads remains unresolved; the measured decoding
-cost must be considered before enabling this instrumentation in a diagnostic
-window. An optimized comparison is recorded below.
+overhead. The measured decoding cost remains a limitation, accepted for the
+planned diagnostic night. An optimized comparison is recorded below.
 
 The driver's raw command-event interface is private. Its optional OpenTelemetry
 interface avoids whole-reply conversion with query text disabled, but does not
@@ -176,7 +177,15 @@ allowlisted in the harness; no production data is used.
 The negative small-read mean is measurement noise, not a speedup claim; its p50
 increased. A separate minimal callback measured 8.615 ms added for 10,001
 documents, confirming a driver-level cost without the observer. Neither
-comparison establishes a production overhead bound. Default-on full command
-monitoring therefore needs an explicit overhead disposition in review before
-the diagnostic window. Phase timers and existing pool metrics can remain enabled
-with command monitoring off; that mode loses collection/command attribution.
+comparison establishes a production overhead bound. The lead accepted this cost
+for tonight's diagnostic deployment: the measured approximately 0.2 ms on
+200-document reads is small, while production full scans are reported at
+1.3–1.7 seconds and are targeted by segmentation. That production context is a
+rollout decision, not a conversion of the local fixture into a production
+measurement. Full command coverage is needed to diagnose from real logs.
+
+A cheaper observer is tracked in #1765, not a prerequisite for this diagnostic
+window. Preserve the required metadata and compare optimized fixture results
+before changing the implementation. Phase timers and existing pool metrics can
+remain enabled with command monitoring off; that mode loses collection/command
+attribution.
