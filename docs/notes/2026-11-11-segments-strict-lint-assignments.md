@@ -356,3 +356,30 @@ existing runtime module. Exact counts, execution logs and source inventory will
 be recorded after the complete caller/dependency batch passes. Local evidence:
 `notes/2026-11-12-ordinary-v2-publication-evidence/`. P1-1 stays open and activation
 stays closed. No PR or develop merge is performed by this checkpoint.
+
+### S4-B1 executed checkpoint before settlement dependency
+
+Tested source `b5b102777f404eb2f1afe334e2351f4cacd34a7e` (API tree
+`85e990ef3deb3fa01bce278396491e1f9b14f2f5`): 17/17 focused units;
+strict CMA all-targets/all-features Clippy with `-D warnings` passes with zero
+diagnostics (2m51s); fmt/whitespace and 6,407-file size pass; secret history
+4,191 commits / zero findings. The first fresh compile found one omitted snapshot
+mode at keyed replay; `fff30e110` fixes it, and the corrected compile passed.
+
+Real Mongo: 52 executed, 49 passed, 3 failed. The 45 legacy/admission/gate parity
+cases passed, as did four new scoped output/checkpoint abort/refusal and committed/
+uncommitted unknown tests. One new end-to-end test incorrectly required no Agent
+revision change on the first chunk: runtime correctly publishes ExecutionObserved.
+`6c56b8471` fixes that assertion and verifies only that fact is public while the
+message prefix remains private; this correction still needs its rerun. The two
+settlement abort/unknown tests reach the outstanding legacy-only command reader
+and refuse Corrupt. The narrow S1 `command_evidence::read_transaction` pin remains
+required for production wiring and the final complete caller qualification.
+
+The 14:25 slot relay authorized the third lock. Executed batches used
+`lockf -k -n -t 3600` on `.heavy-release.lock`, two jobs and one target. Minimum
+available RAM was 25% for corrected compile/units/strict and 29% for Mongo; no
+pauses, inode unchanged. The owned Mongo container and volume passed cleanup
+absence checks even though tests failed. Evidence includes `unit-results.json`,
+`mongo-results.json`, gate logs and supervisor records in the local directory
+above. P1-1 remains open, activation closed; these results are not a green slice.
