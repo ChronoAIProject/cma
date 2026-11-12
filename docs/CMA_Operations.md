@@ -1009,6 +1009,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_AUTH_ENCRYPTION_KEY` | Secret reference: standard-base64 encoding of exactly 32 random bytes |
 | `CHRONO_MONGODB_URI` | Required secret reference, `mongodb://` or `mongodb+srv://` |
 | `CHRONO_MONGODB_DATABASE` | Database name; code default `chrono_bot`, production explicitly `chrono-bot` |
+| `CHRONO_MONGO_DIAGNOSTICS_ENABLED` | Default off in code and ConfigMap. Exact `true` enables metadata command monitoring and attributed pool summaries at client startup; existing pool telemetry remains available when off. The release controller explicitly enables it in the fix-candidate deployment and keeps it on for the diagnostic night. Set it with the planned deployment to avoid another rollout. See [Mongo diagnostics](CMA_Mongo_Diagnostics.md) for privacy, accounting and measured large-read overhead. |
 | `CHRONO_MONGODB_AUTHORITY_MODE` | `isolated` by default verifies exact collection grants; production `shared-schema` allows the existing database-scoped credential while AM opens only its own collection catalog. Neither mode changes validators, indexes or resource authorization. |
 | `CHRONO_DEPLOYMENT_ID` | Required stable Kubernetes-label-compatible CMA ownership identity |
 | `CHRONO_SANDBOX_BASE_URL` | Required canonical HTTP(S) provider origin |
@@ -2297,12 +2298,13 @@ four snapshot reads; disable both reader flags to restore transactions. See
 [Sandbox hierarchy batching](CMA_Sandbox_Hierarchy_Batching.md) for bounds,
 compatibility tests and local volume measurements. Activation is release-owned.
 
-`CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED` independently defaults to `false` and
+`CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED` independently defaults to `true` and
 accepts only exact `true` or `false`. It emits the allowlisted auth, hierarchy,
 colors, names and final-fence durations and completion/error/cancellation outcome,
-without identifiers, error strings or inherited request spans. Enable it before
-reader activation to collect a baseline, and disable it after the measurement
-window. Optional enrichment retains its existing fallback behavior.
+with route templates and opaque request hashes, without raw identifiers, error
+strings or inherited request spans. Keep it enabled for the diagnostic comparison.
+Optional enrichment retains its existing fallback behavior. See
+[Mongo diagnostics](CMA_Mongo_Diagnostics.md) for fields and the kill switch.
 
 See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
 boundaries, local comparison, security/concurrency tests and the next batching

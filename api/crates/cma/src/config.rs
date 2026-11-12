@@ -46,6 +46,7 @@ const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
 const DEFAULT_CORS_ORIGIN: &str = "http://localhost:5173";
 const DEFAULT_DATABASE: &str = "chrono_bot";
+pub(crate) const MONGO_DIAGNOSTICS_ENABLED: &str = "CHRONO_MONGO_DIAGNOSTICS_ENABLED";
 const DEFAULT_ACTIVITY_RETENTION_DAYS: u64 = 90;
 pub(crate) const REQUIRED_BASELINE_SERVICES: &[&str] = &["chrono-llm-public", "ornn-api"];
 const DEFAULT_BASELINE_SERVICES: &str = "chrono-llm-public,ornn-api";
