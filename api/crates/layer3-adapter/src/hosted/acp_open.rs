@@ -193,6 +193,7 @@ impl Bridge {
             instructions_support: AtomicU8::new(0),
             context_refresh: settings.context_refresh.clone(),
             context_goal: Mutex::new(None),
+            retained_history_deadline: tokio::sync::watch::channel(None).0,
             recovering_context: AtomicU64::new(settings.recovered_context_sequence.unwrap_or(0)),
         });
         let (updates, relay) = crate::hosted::update_relay::spawn(updates_tx, bounded);
