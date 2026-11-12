@@ -39,6 +39,8 @@ spec:
   template:
     metadata:
       annotations:
+        chrono-cd.chrono-ai.fun/metrics-port: "9091"
+        chrono-cd.chrono-ai.fun/metrics-path: /metrics
         cma.chronoai.dev/authoring-activation: "76bcae97d-20261026"
         cma.chronoai.dev/build-mode: "github-ci-artifact"
         cma.chronoai.dev/candidate: "4c61e77e6efbe4e02c6769a378c9e13794f1a14c"
@@ -61,6 +63,7 @@ spec:
       labels:
         app.kubernetes.io/name: cma-event-gateway
         app.kubernetes.io/part-of: cma
+        chrono-cd.chrono-ai.fun/metrics: "true"
     spec:
       serviceAccountName: cmaeg-ksa
       automountServiceAccountToken: false

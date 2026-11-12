@@ -1,4 +1,3 @@
-use serde::Deserialize;
 use std::sync::atomic::Ordering;
 
 use super::acp::{Blocked, Bridge};
@@ -15,7 +14,10 @@ impl Bridge {
         let Some(params) = frame.get("params") else {
             return Ok(());
         };
-        let Ok(request) = crate::RequestPermissionRequest::deserialize(params) else {
+        let Ok(request) = super::runtime_decode::decode::<crate::RequestPermissionRequest>(
+            params,
+            self.json_pools.is_some(),
+        ) else {
             tracing::warn!("ACP permission request has an unreadable shape");
             return Ok(());
         };

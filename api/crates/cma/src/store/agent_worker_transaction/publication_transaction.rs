@@ -58,6 +58,7 @@ pub(super) async fn commit(
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
                 timing.committed();
+                crate::telemetry::work::published(&receipt.logs, "committed");
                 return Ok(true);
             }
             CommitOutcome::Retry(error) => last_transient = Some(error),
@@ -78,6 +79,7 @@ pub(super) async fn commit(
                     )
                     .await?
                     {
+                        crate::telemetry::work::published(&receipt.logs, "reconciled");
                         Ok(true)
                     } else {
                         Err(SandboxStoreError::Unavailable(format!(
