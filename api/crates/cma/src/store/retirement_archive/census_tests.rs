@@ -157,3 +157,64 @@ async fn every_unsupported_nonempty_namespace_refuses_and_never_copies_unrelated
     assert!(store.manifest(&request, &bytes).await.is_err());
     store.database.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn unknown_ownership_schema_cannot_hide_behind_an_unmatched_selector() {
+    let (_temp, store, request, bytes) = fixture().await;
+    store.admit(&request, &bytes).await.unwrap();
+    let held = store.inspect(&request.sandbox_id).await.unwrap();
+    for version in [Bson::Int64(2), Bson::Null] {
+        store
+            .database
+            .collection::<Document>("agent_access_requests")
+            .insert_one(doc! {
+                "_id":"future-request", "document_schema_version":version,
+                "future_ownership":{"parent":&request.sandbox_id}
+            })
+            .await
+            .unwrap();
+        assert!(
+            export::publish(&store, &request, &bytes, &Custody::default(), None)
+                .await
+                .is_err()
+        );
+        assert!(store.manifest(&request, &bytes).await.is_err());
+        assert_eq!(store.inspect(&request.sandbox_id).await.unwrap(), held);
+        store
+            .database
+            .collection::<Document>("agent_access_requests")
+            .drop()
+            .await
+            .unwrap();
+    }
+    store.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn retained_consent_and_provenance_keep_removed_agent_history_in_the_archive() {
+    let (client, name, _, record) =
+        crate::store::agent_access_requests::tests::approved_fixture().await;
+    let database = client.database(&name);
+    let fixture = support::prepare_source(
+        client,
+        database.clone(),
+        record.requester.sandbox_id.as_str(),
+    )
+    .await;
+    let expected = support::inventory(
+        &database,
+        &[
+            "agent_access_requests",
+            "agent_creation_provenance",
+            "agent_log",
+        ],
+    )
+    .await;
+    // Historical records are authoritative after ordinary live hierarchy removal.
+    for name in ["agents", "worktrees", "workspaces"] {
+        database.collection::<Document>(name).drop().await.unwrap();
+    }
+    support::roundtrip(fixture, expected).await;
+}
