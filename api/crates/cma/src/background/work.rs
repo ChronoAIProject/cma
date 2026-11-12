@@ -127,8 +127,15 @@ impl BackgroundWork {
             return None;
         }
         progress.pending_since.get_or_insert(now);
+        // A timestamp lets the evaluator detect growing age while an attempt
+        // is blocked; the sampled value does not need a running worker timer.
+        let pending =
+            crate::telemetry::timestamp() - progress.pending_since.unwrap().elapsed().as_secs_f64();
+        metrics::gauge!("cma_background_pending_since_timestamp_seconds", "work" => self.name)
+            .set(pending);
         let Some(permit) = self.budget.try_enter() else {
             progress.next = now + jitter(BUSY_DELAY);
+            metrics::counter!("cma_background_deferred_total", "work" => self.name).increment(1);
             tracing::info!(parent: None,
                 work = self.name, reason = "shared_budget_denied",
                 attempted = 0_u64, admitted = 0_u64, completed = 0_u64,
@@ -138,6 +145,7 @@ impl BackgroundWork {
             return None;
         };
         progress.active = true;
+        metrics::gauge!("cma_background_active", "work" => self.name).set(1);
         Some(Attempt {
             work: self.clone(),
             started: now,
@@ -174,6 +182,13 @@ impl Attempt {
         };
         progress.next = Instant::now() + jitter(delay);
         progress.active = false;
+        metrics::gauge!("cma_background_active", "work" => self.work.name).set(0);
+        metrics::counter!("cma_background_attempts_total", "work" => self.work.name, "outcome" => reason).increment(1);
+        metrics::histogram!("cma_background_attempt_seconds", "work" => self.work.name, "outcome" => reason).record(self.started.elapsed().as_secs_f64());
+        if reason == "complete" {
+            metrics::gauge!("cma_background_pending_since_timestamp_seconds", "work" => self.work.name).set(0);
+            metrics::gauge!("cma_background_completion_timestamp_seconds", "work" => self.work.name).set(crate::telemetry::timestamp());
+        }
         self.finished = true;
         tracing::info!(
             work = self.work.name,
