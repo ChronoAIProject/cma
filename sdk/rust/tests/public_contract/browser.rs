@@ -6,9 +6,17 @@ use cma_sdk::{
 
 pub const BROWSER_CASES: &[&str] = &[
     "auth-trusted-login-return",
+    "auth-login-preserves-sandbox-tab",
+    "auth-login-preserves-bot-draft",
+    "auth-silent-login-required",
     "auth-trusted-register-return",
     "auth-trusted-callback",
     "auth-trusted-logout",
+    "auth-cross-site-logout",
+    "auth-silent-suppressed",
+    "auth-silent-explicit-resumed",
+    "auth-silent-later-logout",
+    "auth-silent-preference-logout",
     "auth-expired-browser-session",
     "auth-visitor-session",
     "auth-visitor-logout",
@@ -91,6 +99,19 @@ fn desktop_upgrade(c: &Context<'_>) {
 // Cookie authority and OAuth callbacks belong to the browser. Validate their
 // shared response models and navigation helpers without issuing a replacement request.
 pub fn verify(c: &Context<'_>) {
+    let mut cookies = reqwest::header::HeaderMap::new();
+    for cookie in &c.case.response.set_cookies {
+        cookies.append(reqwest::header::SET_COOKIE, cookie.parse().unwrap());
+    }
+    assert_eq!(
+        cookies
+            .get_all(reqwest::header::SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .collect::<Vec<_>>(),
+        c.case.response.set_cookies
+    );
+
     match c.case.operation.as_str() {
         "GET /api/v1/agents/{id}/desktop/ws" => desktop_upgrade(c),
         "GET /api/v1/triggers/public/{public_id}/open/{placement_id}" => {
@@ -150,6 +171,23 @@ pub fn verify(c: &Context<'_>) {
             let target = c.client.auth().logout_url().unwrap();
             assert!(target.path().ends_with("/auth/logout"));
             assert!(target.query().is_none());
+            let secure = if c.case.scenario == "auth_trusted" {
+                ""
+            } else {
+                "; Secure"
+            };
+            let mut expected = vec![];
+            if c.case.response.status != 503 {
+                expected.push(format!(
+                    "cma_session=; Path=/; HttpOnly{secure}; SameSite=Lax; Max-Age=0"
+                ));
+            }
+            if c.case.id != "auth-cross-site-logout" {
+                expected.push(format!(
+                    "cma_signed_out=1000; Path=/; HttpOnly{secure}; SameSite=Lax; Max-Age=2592000"
+                ));
+            }
+            assert_eq!(c.case.response.set_cookies, expected);
         }
         "GET /auth/callback" => assert!(c.case.request.path.starts_with("/auth/callback")),
         "GET /auth/session" => {
@@ -161,9 +199,11 @@ pub fn verify(c: &Context<'_>) {
                 (200, Some(true)) => {
                     let _: Identity = serde_json::from_value(c.case.response.body.clone()).unwrap();
                 }
+                // `silent_sign_in` serves the web client's own browser flow;
+                // the SDK's signed-out session deliberately does not carry it.
                 (401, Some(false)) => assert_eq!(
                     c.case.response.body,
-                    serde_json::json!({"authenticated":false})
+                    serde_json::json!({"authenticated":false,"silent_sign_in": !matches!(c.case.id.as_str(), "auth-silent-suppressed" | "auth-silent-later-logout")})
                 ),
                 (503, None) => {}
                 _ => panic!("invalid browser identity document {}", c.case.id),

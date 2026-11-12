@@ -19,17 +19,25 @@ use sha2::{Digest as _, Sha256};
 use super::{
     identity,
     middleware::store_failure,
-    persistence::{DurableSubjectTokens, LoginAttempt, SecretDigest, SecretValue},
+    persistence::{BrowserLogin, DurableSubjectTokens, LoginAttempt, SecretDigest, SecretValue},
     session_routes::{issued_cookie, logout, read, request_cookie, urlencode},
     signup_options::signup_options,
     token::random_token,
-    AuthMode, AuthState, AUTH_COOKIE, AUTH_COOKIE_LIFETIME,
+    AuthMode, AuthState, AUTH_COOKIE, AUTH_COOKIE_DOMAIN, AUTH_COOKIE_LIFETIME,
 };
+
+mod callback;
+use callback::callback;
+mod return_target;
+mod silent;
+
+use return_target::{app_return_target, opaque_path_segment, MAX_LOGIN_URL_BYTES};
+use silent::LoginPrompt;
 
 const ATTEMPT_DOMAIN: &str = "oidc-login-attempt";
 const BINDING_DOMAIN: &str = "oidc-browser-binding";
-const BINDING_COOKIE_PREFIX: &str = "cma_login_";
-const ATTEMPT_LIFETIME: Duration = Duration::from_secs(10 * 60);
+pub(super) const BINDING_COOKIE_PREFIX: &str = "cma_login_";
+const ATTEMPT_LIFETIME: Duration = super::LOGIN_ATTEMPT_LIFETIME;
 const DEFAULT_ACCESS_TOKEN_LIFETIME: Duration = Duration::from_secs(15 * 60);
 const MAX_ACCESS_TOKEN_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -39,6 +47,12 @@ struct CallbackParams {
     code: Option<String>,
     state: Option<String>,
     error: Option<String>,
+    /// Sent with every provider error; accepted so the error can be handled,
+    /// never shown or trusted.
+    #[serde(default, rename = "error_description")]
+    _error_description: Option<String>,
+    #[serde(default, rename = "error_uri")]
+    _error_uri: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -48,6 +62,8 @@ struct LoginParams {
     return_to: Option<String>,
     #[serde(default)]
     screen: Option<LoginScreen>,
+    #[serde(default)]
+    prompt: Option<LoginPrompt>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -74,6 +90,16 @@ pub fn router(auth: Arc<AuthState>) -> Router {
         .route("/auth/logout", get(logout))
         .merge(super::actor_links::routes())
         .with_state(auth)
+        .layer(axum::middleware::map_response(
+            |mut response: Response| async move {
+                if !response.headers().contains_key(header::CACHE_CONTROL) {
+                    response
+                        .headers_mut()
+                        .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+                }
+                response
+            },
+        ))
 }
 
 /// Reuse the established browser-bound PKCE flow for an opaque actor-link intent.
@@ -90,6 +116,8 @@ pub(super) async fn actor_login(auth: Arc<AuthState>, link_id: &str) -> Response
         Some(format!("/auth/bot-father/link/{link_id}/complete")),
         None,
         intent,
+        false,
+        None,
     )
     .await
 }
@@ -100,6 +128,15 @@ async fn login(
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> Response {
+    let origin_length = match &auth.mode {
+        AuthMode::Provider { public_url, .. } => public_url.trim_end_matches('/').len(),
+        _ => 0,
+    };
+    if origin_length + uri.path_and_query().map_or(0, |value| value.as_str().len())
+        > MAX_LOGIN_URL_BYTES
+    {
+        return login_failure(StatusCode::BAD_REQUEST, "login_url_too_long", None);
+    }
     if let Some(redirect) = auth.canonical_login_redirect(&headers, &uri) {
         return redirect;
     }
@@ -119,15 +156,37 @@ async fn login(
         },
         None => None,
     };
-    begin_login(auth, return_to, params.screen).await
+    let silent = matches!(params.prompt, Some(LoginPrompt::Silent));
+    if silent {
+        if let Some(refusal) = silent::refuse_entry(
+            &auth,
+            params.screen.is_some(),
+            &headers,
+            return_to.as_deref(),
+        )
+        .await
+        {
+            return refusal;
+        }
+    }
+    if silent
+        && (headers
+            .get("sec-fetch-site")
+            .is_some_and(|site| site != "same-origin" && site != "none")
+            || (headers.contains_key(header::ORIGIN) && !auth.permits_browser_origin(&headers)))
+    {
+        return Redirect::to(return_to.as_deref().unwrap_or("/")).into_response();
+    }
+    begin_login(auth, return_to, params.screen, silent).await
 }
 
 async fn begin_login(
     auth: Arc<AuthState>,
     return_to: Option<String>,
     screen: Option<LoginScreen>,
+    silent: bool,
 ) -> Response {
-    begin_login_with_intent(auth, return_to, screen, None).await
+    begin_login_with_intent(auth, return_to, screen, None, silent, None).await
 }
 
 async fn begin_login_with_intent(
@@ -135,6 +194,8 @@ async fn begin_login_with_intent(
     return_to: Option<String>,
     screen: Option<LoginScreen>,
     actor_link_intent: Option<super::actor_links::ActorLoginIntent>,
+    silent: bool,
+    continuation_binding: Option<&str>,
 ) -> Response {
     let AuthMode::Provider {
         client_id,
@@ -146,31 +207,77 @@ async fn begin_login_with_intent(
     };
     let metadata = match auth.metadata().await {
         Ok(metadata) => metadata,
-        Err(error) => return provider_failure("identity_discovery_failed", error),
+        Err(error) => {
+            return silent::fallback(
+                silent,
+                return_to.as_deref(),
+                provider_failure("identity_discovery_failed", error),
+            )
+        }
     };
     let verifier = random_token();
-    let state = random_token();
-    let browser_binding = random_token();
+    // Presentation marker only; state and binding validation still decide authority.
+    let state = if silent {
+        format!("s.{}", random_token())
+    } else {
+        random_token()
+    };
+    let browser_binding = continuation_binding
+        .map(str::to_owned)
+        .unwrap_or_else(random_token);
+    let expires_at = SystemTime::now() + ATTEMPT_LIFETIME;
+    let binding_id = SecretDigest::identify(AUTH_COOKIE_DOMAIN, &browser_binding);
+    let reserved = if continuation_binding.is_none() {
+        auth.store
+            .reserve_browser_login(binding_id, expires_at)
+            .await
+    } else {
+        auth.store
+            .renew_browser_login(&binding_id, expires_at)
+            .await
+    };
+    match reserved {
+        Ok(true) => {}
+        Ok(false) => {
+            return silent::fallback(
+                silent,
+                return_to.as_deref(),
+                login_failure(StatusCode::UNAUTHORIZED, "login_superseded", None),
+            )
+        }
+        Err(error) => {
+            tracing::error!(error = %error, "could not reserve browser login");
+            return silent::fallback(silent, return_to.as_deref(), store_failure());
+        }
+    }
     let cookie_name = binding_cookie_name(&state);
     let attempt = LoginAttempt {
         id: SecretDigest::identify(ATTEMPT_DOMAIN, &state),
         browser_binding: SecretDigest::identify(BINDING_DOMAIN, &browser_binding),
         verifier: SecretValue::new(verifier.clone()),
-        return_to,
+        return_to: return_to.clone(),
         actor_link_intent,
-        expires_at: SystemTime::now() + ATTEMPT_LIFETIME,
+        silent,
+        consent_requested: continuation_binding.is_some(),
+        custody_reserved: true,
+        started_at: Some(expires_at - ATTEMPT_LIFETIME),
+        expires_at,
     };
     if let Err(error) = auth.store.put_login_attempt(attempt).await {
         tracing::error!(error = %error, "could not persist login attempt");
-        return store_failure();
+        return silent::fallback(silent, return_to.as_deref(), store_failure());
     }
     let redirect_uri = format!("{}/auth/callback", public_url.trim_end_matches('/'));
     let mut authorization_url = match reqwest::Url::parse(&metadata.authorization_endpoint) {
         Ok(url) if matches!(url.scheme(), "http" | "https") => url,
         _ => {
-            return provider_failure(
-                "identity_discovery_failed",
-                "invalid authorization endpoint",
+            return silent::fallback(
+                silent,
+                return_to.as_deref(),
+                provider_failure(
+                    "identity_discovery_failed",
+                    "invalid authorization endpoint",
+                ),
             )
         }
     };
@@ -183,6 +290,11 @@ async fn begin_login_with_intent(
         ("code_challenge", &code_challenge(&verifier)),
         ("code_challenge_method", "S256"),
     ]);
+    if silent && continuation_binding.is_none() {
+        authorization_url
+            .query_pairs_mut()
+            .append_pair("prompt", "none");
+    }
     let destination = match screen {
         Some(LoginScreen::Register) => format!(
             "{}/register?return_to={}",
@@ -198,177 +310,7 @@ async fn begin_login_with_intent(
             &cookie_name,
             &browser_binding,
             auth.secure_cookies(),
-            ATTEMPT_LIFETIME.as_secs(),
-        ),
-    );
-    response
-}
-
-async fn callback(
-    State(auth): State<Arc<AuthState>>,
-    Query(params): Query<CallbackParams>,
-    headers: HeaderMap,
-) -> Response {
-    let AuthMode::Provider {
-        client_id,
-        client_secret,
-        public_url,
-        ..
-    } = &auth.mode
-    else {
-        return Redirect::to("/").into_response();
-    };
-    let Some(state) = params.state.as_deref() else {
-        return login_failure(StatusCode::BAD_REQUEST, "login_state_missing", None);
-    };
-    let cookie_name = binding_cookie_name(state);
-    let Some(binding) = request_cookie(&headers, &cookie_name) else {
-        return login_failure(
-            StatusCode::BAD_REQUEST,
-            "login_browser_binding_missing",
-            Some((&cookie_name, auth.secure_cookies())),
-        );
-    };
-    let attempt = match auth
-        .store
-        .take_login_attempt(
-            &SecretDigest::identify(ATTEMPT_DOMAIN, state),
-            &SecretDigest::identify(BINDING_DOMAIN, binding),
-        )
-        .await
-    {
-        Ok(Some(attempt)) => attempt,
-        Ok(None) => {
-            return login_failure(
-                StatusCode::BAD_REQUEST,
-                "login_state_invalid",
-                Some((&cookie_name, auth.secure_cookies())),
-            )
-        }
-        Err(error) => {
-            tracing::error!(error = %error, "could not consume login attempt");
-            return store_failure();
-        }
-    };
-    if attempt.expires_at <= SystemTime::now() {
-        return login_failure(
-            StatusCode::BAD_REQUEST,
-            "login_state_expired",
-            Some((&cookie_name, auth.secure_cookies())),
-        );
-    }
-    if params.error.is_some() {
-        return login_failure(
-            StatusCode::UNAUTHORIZED,
-            "login_cancelled",
-            Some((&cookie_name, auth.secure_cookies())),
-        );
-    }
-    let Some(code) = params
-        .code
-        .as_deref()
-        .filter(|code| !code.trim().is_empty())
-    else {
-        return login_failure(
-            StatusCode::BAD_REQUEST,
-            "login_code_missing",
-            Some((&cookie_name, auth.secure_cookies())),
-        );
-    };
-    let metadata = match auth.metadata().await {
-        Ok(metadata) => metadata,
-        Err(error) => return provider_failure("identity_discovery_failed", error),
-    };
-    let redirect_uri = format!("{}/auth/callback", public_url.trim_end_matches('/'));
-    let response = match auth
-        .http
-        .post(&metadata.token_endpoint)
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", redirect_uri.as_str()),
-            ("client_id", client_id.as_str()),
-            ("client_secret", client_secret.as_str()),
-            ("code_verifier", attempt.verifier.expose()),
-        ])
-        .send()
-        .await
-    {
-        Ok(response) => response,
-        Err(error) => return provider_failure("identity_token_exchange_failed", error.to_string()),
-    };
-    if !response.status().is_success() {
-        return provider_failure(
-            "identity_token_exchange_failed",
-            format!(
-                "identity token endpoint returned HTTP {}",
-                response.status().as_u16()
-            ),
-        );
-    }
-    let token = match response.json::<TokenResponse>().await {
-        Ok(token) if !token.access_token.trim().is_empty() => token,
-        _ => return provider_failure("identity_token_exchange_failed", "invalid token response"),
-    };
-    let lifetime = Duration::from_secs(
-        token
-            .expires_in
-            .unwrap_or(DEFAULT_ACCESS_TOKEN_LIFETIME.as_secs()),
-    )
-    .min(MAX_ACCESS_TOKEN_LIFETIME);
-    let (subject, permission_names, profile) =
-        match identity::resolve_subject(&auth, &metadata, &token.access_token).await {
-            Ok(identity) => identity,
-            Err(error) => return provider_failure("identity_resolution_failed", error),
-        };
-    let authorization = crate::permissions::capabilities_from_permissions(permission_names);
-    if let Err(error) = auth
-        .store_sign_in(
-            subject.clone(),
-            DurableSubjectTokens {
-                access_token: SecretValue::new(token.access_token),
-                refresh_token: token.refresh_token.map(SecretValue::new),
-                expires_at: SystemTime::now() + lifetime,
-            },
-            authorization,
-            profile.clone(),
-        )
-        .await
-    {
-        tracing::error!(error = %error, "could not persist signed-in subject");
-        return store_failure();
-    }
-    auth.note_sign_in(&subject, &profile).await;
-    let browser_login = match auth.issue_browser_login(subject.clone()).await {
-        Ok(value) => value,
-        Err(error) => {
-            tracing::error!(error = %error, "could not persist browser login");
-            return store_failure();
-        }
-    };
-    if auth
-        .retain_actor_login_completion(&attempt, &browser_login, &subject)
-        .await
-        .is_err()
-    {
-        return login_failure(
-            StatusCode::FORBIDDEN,
-            "actor_login_intent_expired",
-            Some((&cookie_name, auth.secure_cookies())),
-        );
-    }
-    let mut response = Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response();
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        issued_cookie(&cookie_name, "", auth.secure_cookies(), 0),
-    );
-    response.headers_mut().append(
-        header::SET_COOKIE,
-        issued_cookie(
-            AUTH_COOKIE,
-            &browser_login,
-            auth.secure_cookies(),
-            AUTH_COOKIE_LIFETIME.as_secs(),
+            super::BROWSER_BINDING_LIFETIME.as_secs(),
         ),
     );
     response
@@ -377,52 +319,6 @@ async fn callback(
 fn binding_cookie_name(state: &str) -> String {
     let suffix = state.get(..16).unwrap_or(state);
     format!("{BINDING_COOKIE_PREFIX}{suffix}")
-}
-
-fn app_return_target(value: &str) -> Result<String, ()> {
-    if value == "/" {
-        return Ok(value.to_owned());
-    }
-    if value.len() > 256 || value.contains(['?', '#', '\\', '%']) {
-        return Err(());
-    }
-    let segments = value
-        .strip_prefix('/')
-        .ok_or(())?
-        .split('/')
-        .collect::<Vec<_>>();
-    if segments.iter().any(|segment| !opaque_path_segment(segment)) {
-        return Err(());
-    }
-    match segments.as_slice() {
-        ["agent-manager" | "event-gateway" | "image-manager"] => {}
-        ["t", public_id] if opaque_path_segment(public_id) => {}
-        ["t", public_id, placement_id]
-            if opaque_path_segment(public_id) && opaque_path_segment(placement_id) => {}
-        ["triggers", "manage"] => {}
-        ["triggers", "manage", trigger_id] if opaque_path_segment(trigger_id) => {}
-        ["triggers", "manage", trigger_id, "embed"] if opaque_path_segment(trigger_id) => {}
-        ["agents", agent_id] if opaque_path_segment(agent_id) => {}
-        ["sandboxes", sandbox_id] if opaque_path_segment(sandbox_id) => {}
-        ["bots"] => {}
-        ["bots", bot_id] if opaque_path_segment(bot_id) => {}
-        ["auth", "bot-father", "link", intent, "complete"] if opaque_path_segment(intent) => {}
-        ["profiles"] | ["marketplace"] => {}
-        ["profiles" | "marketplace", kind, profile_id]
-            if matches!(*kind, "agent" | "workspace" | "sandbox")
-                && opaque_path_segment(profile_id) => {}
-        _ => return Err(()),
-    }
-    Ok(value.to_owned())
-}
-
-fn opaque_path_segment(value: &str) -> bool {
-    !value.is_empty()
-        && value != "."
-        && value != ".."
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~'))
 }
 
 fn code_challenge(verifier: &str) -> String {
@@ -472,3 +368,7 @@ mod tests;
 #[cfg(test)]
 #[path = "flow_registration_tests.rs"]
 mod registration_tests;
+
+#[cfg(test)]
+#[path = "flow_golive_tests.rs"]
+mod golive_tests;

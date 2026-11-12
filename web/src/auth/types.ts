@@ -61,6 +61,12 @@ export interface AuthProvider {
   current(): Promise<AuthState>;
   signIn(returnTo?: string, options?: SignInOptions): Promise<void>;
   signOut(): Promise<void>;
+  /**
+   * Leave to ask the identity provider whether this browser is already signed
+   * in, without letting it show anything. Returns false when no attempt was
+   * started, and the caller keeps the anonymous state it already has.
+   */
+  signInSilently?(): boolean;
 }
 
 export interface SignInOptions {
