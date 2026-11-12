@@ -2,9 +2,16 @@
 
 Refs #1343. Agent Manager keeps process liveness separate from application-store
 readiness. `/livez` returns `200 ok` without consulting MongoDB. `/ready` returns
-200 only when the most recent completed application-store check succeeded and
-its monotonic age is less than five seconds. Startup, dependency errors,
+200 only when the most recent completed application-store check succeeded,
+its monotonic age is less than five seconds, and all required local scheduling
+capabilities are available. See [worker supervision](CMA_Worker_Supervision.md)
+for the worker inventory, recovery limits and bounded `workers` response. Startup, dependency errors,
 expired checks and stale results return 503.
+
+Required capabilities include the independent Sandbox runtime reconciliation
+loop that detects runtime loss and admits recovery. Its long resumable batches
+are owned separately from the scheduling loop; a busy batch alone does not fail
+readiness. Native warm-pool capacity remains optional.
 
 Each composed health router owns one background check loop, shared by all its
 requests and clones. The check uses the application's Mongo client and has a
@@ -15,7 +22,7 @@ concurrent checks or catch-up ticks. A separate healthy connection pool cannot
 mask a stalled application pool.
 
 The JSON response retains `status` (`ready` or `not-ready`) and the `store`
-failure reason. Its `dependency` object includes the last completion's UTC
+failure reason; local execution capability loss uses `workers`. Its `dependency` object includes the last completion's UTC
 `checked_at`, monotonic `age_ms`, `duration_ms`, and fixed failure reason:
 `pending`, `unavailable`, `deadline`, or `stale`. Pending checks have null timing
 fields. Healthy results have a null failure reason. Readiness state changes are
@@ -36,6 +43,11 @@ unexpectedly while the router remains, the freshness limit prevents its last
 success from reporting readiness indefinitely. A healthy cached result can
 remain visible while the next check is in progress, until that check fails or
 the freshness limit is reached.
+
+Readiness-check result, completion timestamp and duration are also exported on
+the private metrics listener. Query result and freshness together; these metrics
+do not establish worker progress. See [CMA observability](CMA_Observability.md)
+for the worker signals and collection/alert integration contract.
 
 ## Background Mongo budget
 

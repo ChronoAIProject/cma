@@ -6,6 +6,12 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
+fn observe(observed: &mut Option<ContextGoal>, frame: &JsonFrame) {
+    if let Some(observation) = Observation::read(frame) {
+        observation.record(observed);
+    }
+}
+
 fn value(session: &str, goal: Value) -> Value {
     json!({"params":{"sessionId":session,"update":{"sessionUpdate":"session_info_update","_meta":{"goal":goal}}}})
 }
@@ -23,24 +29,24 @@ fn exact_identity_and_sticky_goal_safety_match_with_policy_enabled_or_disabled()
     for admitted in [false, true] {
         let pools = JsonPools::new(128 * 1024, 128 * 1024);
         let mut observed = None;
-        ContextGoal::observe(
+        observe(
             &mut observed,
             &frame(&pools, value("s", Value::Null), admitted),
         );
         assert!(observed.as_ref().unwrap().is_safe_for("s"));
         assert!(!observed.as_ref().unwrap().is_safe_for("other"));
-        ContextGoal::observe(
+        observe(
             &mut observed,
             &frame(&pools, value("other", json!({"status":"active"})), admitted),
         );
         assert!(observed.as_ref().unwrap().is_safe_for("s"));
-        ContextGoal::observe(
+        observe(
             &mut observed,
             &frame(&pools, value("s", json!({"status":"active"})), admitted),
         );
         assert!(!observed.as_ref().unwrap().is_safe_for("s"));
         for goal in [json!({"status":"paused"}), Value::Null, json!(false)] {
-            ContextGoal::observe(&mut observed, &frame(&pools, value("s", goal), admitted));
+            observe(&mut observed, &frame(&pools, value("s", goal), admitted));
             assert!(!observed.as_ref().unwrap().is_safe_for("s"));
         }
         drop(observed);
@@ -60,7 +66,7 @@ fn malformed_or_unrelated_observations_do_not_retain_a_frame() {
             json!({"params":{"sessionId":"s","update":{"sessionUpdate":"session_info_update","_meta":{}}}}),
         ] {
             let mut observed = None;
-            ContextGoal::observe(&mut observed, &frame(&pools, value, admitted));
+            observe(&mut observed, &frame(&pools, value, admitted));
             assert!(observed.is_none());
             assert_eq!(pools.available(), (128 * 1024, 128 * 1024));
         }
@@ -85,7 +91,7 @@ fn admitted_observation_and_readiness_add_no_allocation_and_hold_full_frame_stor
     let reserved = TREE - pools.available().0;
     let mut observed = None;
     probe.track(|| {
-        ContextGoal::observe(&mut observed, &frame);
+        observe(&mut observed, &frame);
         for _ in 0..100 {
             assert!(observed.as_ref().unwrap().is_safe_for(&session));
             assert!(!observed.as_ref().unwrap().is_safe_for("foreign"));
@@ -122,7 +128,7 @@ fn held_observation_preserves_local_and_shared_admission_until_drop() {
         let pools = JsonPools::new(if shared { 128 * 1024 } else { charge }, 128 * 1024)
             .with_aggregate(shared.then(|| aggregate.clone()));
         let mut observed = None;
-        ContextGoal::observe(&mut observed, &pools.decode(&payload).unwrap());
+        observe(&mut observed, &pools.decode(&payload).unwrap());
         let component = Arc::new(Semaphore::new(128 * 1024));
         let blocker = shared.then(|| {
             IngressReservation::try_acquire(

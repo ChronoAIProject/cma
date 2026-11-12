@@ -1,5 +1,6 @@
 //! Independently bounded title work discovered from durable, cursor-paged logs.
 
+use layer2_core::diagnostic_context::DiagnosticContext;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,14 +38,20 @@ impl TitleScheduleWork for AgentTitleWorker {
         &self,
         page: &PageRequest,
     ) -> Result<Page<AgentId>, AgentTitleServiceError> {
-        self.candidates(page).await
+        DiagnosticContext::background("title_scheduler")
+            .with_phase("discovery")
+            .scope(self.candidates(page))
+            .await
     }
 
     async fn run_one(
         self: Arc<Self>,
         id: &AgentId,
     ) -> Result<AgentTitleOutcome, AgentTitleServiceError> {
-        AgentTitleWorker::run_one(&self, id).await
+        DiagnosticContext::background("title_scheduler")
+            .with_phase("execution")
+            .scope(AgentTitleWorker::run_one(&self, id))
+            .await
     }
 }
 

@@ -18,6 +18,8 @@ mod current;
 mod defaults;
 mod retirement;
 mod startup;
+mod supervision;
+mod telemetry;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PoolTarget {
@@ -182,31 +184,6 @@ impl NativeWarmPools {
             default_capacity,
             default_target,
             machine: machine.map(|(image, target)| (deployment_image(image), target)),
-        })
-    }
-
-    pub fn spawn(
-        self: Arc<Self>,
-        mut shutdown: tokio::sync::watch::Receiver<bool>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_secs(5));
-            loop {
-                tokio::select! {
-                    result = shutdown.changed() => {
-                        if result.is_err() || *shutdown.borrow() { return; }
-                    }
-                    _ = tick.tick() => {
-                        for _ in 0..20 {
-                            match self.reconcile_one().await {
-                                Ok(true) => {},
-                                Ok(false) => break,
-                                Err(_) => { tracing::warn!("native warm pool reconciliation will retry"); break; }
-                            }
-                        }
-                    }
-                }
-            }
         })
     }
 
@@ -451,5 +428,6 @@ async fn reconcile_claimed(
         Ok(Ok(()))
     );
     store.finish(&target, success).await?;
+    telemetry::applied(&target, success);
     Ok(true)
 }
