@@ -215,6 +215,12 @@ async fn purge_in_transaction(
     {
         return Err(PurgeError::Conflict);
     }
+    if super::agent_log_segments::retention::required(store, id.as_str(), session)
+        .await
+        .map_err(PurgeError::Driver)?
+    {
+        return Err(PurgeError::Conflict);
+    }
     let sandbox = read_sandbox(&aggregate).map_err(|_| PurgeError::Conflict)?;
     if sandbox.retirement_archive_pending()
         || sandbox.status != SandboxStatus::Retired
