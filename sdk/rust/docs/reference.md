@@ -30,9 +30,25 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `agent_events_v2()` | `read_transport_eligibility`, `snapshot`, `events` with `consume_next` and `acknowledged_cursor` |
 | `responses()` | `create_conversation`, `read_conversation`, `list_items`, `create`, `read`, unsupported `delete`, `cancel` |
 | `admin()` | `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_warm_pools`, `configure_warm_pool`, `resize_warm_pool`, `list_activity` |
-| `usage()` | `summary`, `sandboxes`, `sandbox`, `events`, `admin_summary`, `admin_sandboxes` |
+| `usage()` | `summary`, `documents`, `sandboxes`, `sandbox`, `events`, `admin_summary`, `admin_sandboxes` |
 | `Client` reads | `read_conformance`, `read_openapi`, `read_defaults`, `read_trigger_preview`, `read_trigger_badge` |
 | Explicit refusals | `agents().terminal`, `unsupported().mcp`, `unsupported().a2a` |
+
+`client.usage().documents().await` reads `GET /api/v1/usage/documents` for the
+authenticated current owner. `cma_sdk::usage::DocumentUsage` contains the closed
+`DocumentUsageEnforcement` enum (`Enforced` or `NotEnforced`) and the `documents`,
+`bytes` and `objects` counters. Each counter is an `Option<DocumentUsageQuota>`
+with `u64` fields `used` and `limit`. When enforcement is disabled or its ledger
+is not ready, all counters are `None`; unknown usage does not imply zero or an
+available allowance.
+
+Owner quota exhaustion remains an `Error::Api` with HTTP 429 and code
+`document_limit_reached`, `document_bytes_limit_reached` or
+`document_objects_limit_reached`. Structured problem extensions retain `limit`
+and `live`, with `live` reporting usage before the attempted reservation.
+`document_capacity` continues to identify other document capacity
+bounds, while `document_write_busy` identifies temporary write concurrency
+saturation and carries `Retry-After`.
 
 `workspaces().recover_prepare(id, &key)` sends a keyed, bodyless command for the same failed,
 never-ready Workspace. HTTP 202 confirms recovery admission; read the original

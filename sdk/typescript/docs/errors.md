@@ -31,6 +31,15 @@ also have dedicated errors.
 behavior, never prose matching. `isRetryable` identifies HTTP 429 and server
 failures; it does not authorize creating a new command or changing its body.
 
+Document writes report HTTP 429 with `document_limit_reached`,
+`document_bytes_limit_reached` or `document_objects_limit_reached` when the
+corresponding owner quota is exhausted. Their `ApiError.extensions` include the
+authoritative `limit` and `live` values, with `live` reporting usage before the
+attempted reservation. `document_capacity` remains the refusal
+for other document capacity bounds; `document_write_busy` identifies temporary
+write concurrency saturation and carries `Retry-After`. Read current owner
+quotas with `client.usage.documents()` before presenting available capacity.
+
 Profile, instance, Trigger-authoring, Launch and service-connection commands
 require `idempotencyKey` containing 1 to 255 visible ASCII characters without
 spaces. The SDK never generates keys or retries commands automatically. After a

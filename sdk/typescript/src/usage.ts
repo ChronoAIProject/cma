@@ -68,6 +68,15 @@ const event = object({
   quantity: totals,
 });
 const events = object({ items: array(event), next: nullable(text) });
+const documentQuota = object({ used: integer, limit: integer });
+const documentUsage = object({
+  enforcement: enumeration('enforced', 'not_enforced'),
+  documents: nullable(documentQuota),
+  bytes: nullable(documentQuota),
+  objects: nullable(documentQuota),
+});
+export type DocumentUsageQuota = Output<typeof documentQuota>;
+export type DocumentUsage = Output<typeof documentUsage>;
 export type SandboxUsageView = Output<typeof sandbox>;
 export type SandboxUsageSummary = Output<typeof summary>;
 export type SandboxUsagePage = Output<typeof page>;
@@ -89,11 +98,15 @@ function paging(options: PageOptions) {
   return { limit: options.limit, cursor: options.cursor };
 }
 
-/** Durable allocated CPU/RAM/disk time; independent of Agent token usage. */
+/** Owner document quotas and allocated CPU/RAM/disk time; independent of Agent token usage. */
 export class SandboxUsage {
   constructor(readonly config: ResolvedConfig) {}
   summary(options: OperationOptions = {}): Promise<SandboxUsageSummary> {
     return read(this.config, '/api/v1/usage', summary, options);
+  }
+  /** Read document quota enforcement and counters for the authenticated owner. */
+  documents(options: OperationOptions = {}): Promise<DocumentUsage> {
+    return read(this.config, '/api/v1/usage/documents', documentUsage, options);
   }
   sandboxes(options: PageOptions = {}): Promise<SandboxUsagePage> {
     return read(this.config, query('/api/v1/usage/sandboxes', paging(options)), page, options);

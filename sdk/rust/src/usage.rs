@@ -1,6 +1,38 @@
-//! Lifetime Sandbox allocation metering, separate from Agent token usage.
+//! Owner document quotas and lifetime Sandbox allocation metering, separate from Agent token usage.
 use crate::{Client, Error, PageOptions, ResourcePage, Result, resources::identity};
 use serde::Deserialize;
+
+/// Whether the authenticated owner's document quotas are authoritative.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentUsageEnforcement {
+    /// Document quotas are enforced and their counters are authoritative.
+    Enforced,
+    /// Document quotas are disabled or their ledger is not ready; counters are unavailable.
+    NotEnforced,
+}
+
+/// Authoritative usage and limit for one document quota dimension.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DocumentUsageQuota {
+    /// Retained usage charged to the owner.
+    pub used: u64,
+    /// Maximum owner allowance for this dimension.
+    pub limit: u64,
+}
+
+/// Document quota enforcement and counters for the authenticated current owner.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct DocumentUsage {
+    /// Whether document quota enforcement is active.
+    pub enforcement: DocumentUsageEnforcement,
+    /// Charged documents and limit, absent when authoritative usage is unavailable.
+    pub documents: Option<DocumentUsageQuota>,
+    /// Charged retained source bytes and limit, absent when authoritative usage is unavailable.
+    pub bytes: Option<DocumentUsageQuota>,
+    /// Charged source objects and limit, absent when authoritative usage is unavailable.
+    pub objects: Option<DocumentUsageQuota>,
+}
 
 /// Integer allocation-time quantities and display-unit conversions.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -114,13 +146,13 @@ pub struct UsageEvent {
     pub quantity: UsageTotals,
 }
 
-/// Authorized Sandbox usage operations.
+/// Authorized owner document quota and Sandbox usage operations.
 pub struct Usage<'a> {
     client: &'a Client,
 }
 
 impl Client {
-    /// Access allocated CPU, RAM, disk and uptime records.
+    /// Access owner document quotas and allocated CPU, RAM, disk and uptime records.
     pub fn usage(&self) -> Usage<'_> {
         Usage { client: self }
     }
@@ -144,6 +176,11 @@ impl Usage<'_> {
     /// Read lifetime totals for the authenticated owner.
     pub async fn summary(&self) -> Result<UsageSummary> {
         self.client.get(&["usage"], &[]).await
+    }
+
+    /// Read document quota enforcement and counters for the authenticated owner.
+    pub async fn documents(&self) -> Result<DocumentUsage> {
+        self.client.get(&["usage", "documents"], &[]).await
     }
 
     /// List the authenticated owner's retained Sandbox usage records.

@@ -1,5 +1,12 @@
-import { expect, it } from 'vitest';
-import { ProtocolError, ValidationError } from '../src/index.js';
+import { expect, it, vi } from 'vitest';
+import {
+  ApiError,
+  createClient,
+  ProtocolError,
+  ValidationError,
+  type DocumentUsage,
+  type DocumentUsageQuota,
+} from '../src/index.js';
 import { transport } from './resource-fixtures.js';
 
 const totals = {
@@ -43,4 +50,68 @@ it('rejects wrong sandbox identities, unsafe quantities and invalid paging', asy
   test.answer({ ...row, totals: { ...totals, uptime_seconds: -1 } });
   await expect(test.client.usage.sandbox('sandbox-1')).rejects.toBeInstanceOf(ProtocolError);
   expect(() => test.client.usage.sandboxes({ limit: 201 })).toThrow(ValidationError);
+});
+
+it('reads typed document quotas for the authenticated owner and forwards operation options', async () => {
+  const quota: DocumentUsageQuota = { used: 2, limit: 100 };
+  const usage: DocumentUsage = {
+    enforcement: 'enforced',
+    documents: quota,
+    bytes: { used: 1024, limit: 1073741824 },
+    objects: { used: 3, limit: 32768 },
+  };
+  const fetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(Response.json(usage)));
+  const client = createClient({
+    baseUrl: 'https://cma.example.test',
+    credential: () => 'usage-fixture',
+    fetch,
+  });
+  expect(await client.usage.documents({ requestId: 'documents-read' })).toEqual(usage);
+  const [url, init] = fetch.mock.calls[0]!;
+  expect(url).toBe('https://cma.example.test/api/v1/usage/documents');
+  expect(init?.method).toBe('GET');
+  const headers = new Headers(init?.headers);
+  expect(headers.get('authorization')).toBe('Bearer usage-fixture');
+  expect(headers.get('x-request-id')).toBe('documents-read');
+});
+
+it('preserves null document quota counters while enforcement is disabled', async () => {
+  const test = transport();
+  const usage: DocumentUsage = {
+    enforcement: 'not_enforced',
+    documents: null,
+    bytes: null,
+    objects: null,
+  };
+  test.answer(usage);
+  expect(await test.client.usage.documents()).toEqual(usage);
+});
+
+it('rejects malformed document quota counters and unknown enforcement states', async () => {
+  const test = transport();
+  const usage = {
+    enforcement: 'enforced',
+    documents: { used: 2, limit: 100 },
+    bytes: { used: 1024, limit: 1073741824 },
+    objects: { used: 3, limit: 32768 },
+  };
+  for (const invalid of [
+    { ...usage, enforcement: 'unknown' },
+    { ...usage, documents: undefined },
+    { ...usage, documents: { used: -1, limit: 100 } },
+    { ...usage, bytes: { used: 1.5, limit: 1073741824 } },
+    { ...usage, objects: { used: 3, limit: Number.MAX_SAFE_INTEGER + 1 } },
+  ]) {
+    test.answer(invalid);
+    await expect(test.client.usage.documents()).rejects.toBeInstanceOf(ProtocolError);
+  }
+});
+
+it('preserves named authorization failures from document usage reads', async () => {
+  const test = transport();
+  test.answer({ status: 401, code: 'unauthenticated', detail: 'Authentication required.' }, 401);
+  await expect(test.client.usage.documents()).rejects.toMatchObject({
+    status: 401,
+    code: 'unauthenticated',
+  } satisfies Partial<ApiError>);
 });

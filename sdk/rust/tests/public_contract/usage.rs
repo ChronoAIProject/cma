@@ -5,6 +5,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
     let usage = c.client.usage();
     match c.case.operation.as_str() {
         "GET /api/v1/usage" => c.check(usage.summary().await),
+        "GET /api/v1/usage/documents" => c.check(usage.documents().await),
         "GET /api/v1/usage/sandboxes" => c.check(usage.sandboxes(&c.page()?).await),
         "GET /api/v1/usage/sandboxes/{id}" => c.check(usage.sandbox(c.param("id")).await),
         "GET /api/v1/usage/sandboxes/{id}/events" => {
