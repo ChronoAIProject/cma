@@ -445,7 +445,7 @@ fn with_request_context(router: Router) -> Router {
         .layer(PropagateRequestIdLayer::new(X_REQUEST_ID))
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(request_span)
+                .make_span_with(diagnostic_request::request_span)
                 .on_request(DefaultOnRequest::new().level(Level::INFO))
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
@@ -462,22 +462,6 @@ async fn discard_unusable_request_id(mut request: Request, next: Next) -> Respon
         request.headers_mut().insert(X_REQUEST_ID, normalized);
     }
     next.run(request).await
-}
-
-fn request_span(_request: &Request) -> tracing::Span {
-    let context = layer2_core::diagnostic_context::DiagnosticContext::current();
-    let (method, path) = context
-        .route
-        .split_once(' ')
-        .unwrap_or(("OTHER", "unmatched"));
-    tracing::info_span!(
-        parent: None,
-        "http.request",
-        request_hash = %context.request_hash,
-        route = context.route.as_ref(),
-        method,
-        path,
-    )
 }
 
 async fn shutdown_signal() {
