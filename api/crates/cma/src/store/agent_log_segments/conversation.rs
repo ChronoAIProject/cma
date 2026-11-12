@@ -23,6 +23,7 @@ use layer2_core::sandbox::{
 };
 use mongodb::bson::doc;
 
+pub(in crate::store) mod adoption;
 pub(in crate::store) mod checkpoint;
 
 pub(in crate::store) async fn apply(
@@ -31,6 +32,7 @@ pub(in crate::store) async fn apply(
     mutation: &AgentConversationMutation,
     capacity: Option<&AgentConversationCapacitySettlement>,
     checkpoint: Option<&AgentMessageCheckpoint>,
+    adoption: Option<&adoption::Prepared>,
     scope: &mut TransactionScope<'_>,
 ) -> Result<ConversationReceipt, ApplyError> {
     let row = scope
@@ -38,7 +40,7 @@ pub(in crate::store) async fn apply(
         .await
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    if read_format(&row).map_err(ApplyError::Domain)?.is_none() {
+    if read_format(&row).map_err(ApplyError::Domain)?.is_none() && adoption.is_none() {
         return domain::publication::apply_mutation_with_capacity(
             caller,
             store,
@@ -86,7 +88,7 @@ pub(in crate::store) async fn apply(
     let mut fields = agent_replacement_fields(&mutation.agent).map_err(ApplyError::Domain)?;
     domain::carry_checkpoint_fields(&row, &current, &mutation.agent, &mut fields)
         .map_err(ApplyError::Domain)?;
-    let recorded = writer_commit::publish_captured(
+    let recorded = writer_commit::publish_prepared(
         store,
         scope,
         &captured,
@@ -106,6 +108,7 @@ pub(in crate::store) async fn apply(
             filter: doc! {"_id":current.id.as_str()},
             fields,
         },
+        adoption.map(|value| (&value.bootstrap, &value.admission)),
     )
     .await?;
     crate::store::suggestions::enqueue(store, &mutation.agent, &logs, scope.session()).await?;
