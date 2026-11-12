@@ -113,7 +113,7 @@ pub(super) async fn commit(
             }
             return Err(SandboxStoreError::Unavailable(error.to_string()));
         }
-        let outcome = match apply(
+        let (outcome, published) = match apply(
             store,
             &current,
             previous.as_ref(),
@@ -140,7 +140,12 @@ pub(super) async fn commit(
             }
         };
         match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => return Ok(outcome),
+            CommitOutcome::Committed => {
+                if published {
+                    crate::telemetry::work::published(&outcome.appended, "committed");
+                }
+                return Ok(outcome);
+            }
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
             CommitOutcome::Unknown(error) => {
                 let snapshot_time = session.operation_time().ok_or_else(|| {
@@ -156,7 +161,7 @@ pub(super) async fn commit(
                     _ => None,
                 };
                 return wait_for_reconciliation("agent message commit", async move {
-                    reconcile(
+                    let confirmed = reconcile(
                         &store,
                         &current.id,
                         &next,
@@ -169,7 +174,11 @@ pub(super) async fn commit(
                         SandboxStoreError::Unavailable(format!(
                             "agent message commit remained unknown: {unresolved}"
                         ))
-                    })
+                    })?;
+                    if published {
+                        crate::telemetry::work::published(&confirmed.appended, "reconciled");
+                    }
+                    Ok(confirmed)
                 })
                 .await
                 .map_err(|deadline| {
@@ -197,7 +206,7 @@ async fn apply(
     mutation: Option<&AgentConversationMutation>,
     authority: &Authority,
     session: &mut mongodb::ClientSession,
-) -> Result<AgentUpdateOutcome, ApplyError> {
+) -> Result<(AgentUpdateOutcome, bool), ApplyError> {
     let guard = match authority {
         Authority::Reopen(guard) => Some(guard.as_ref()),
         _ => None,
@@ -238,16 +247,16 @@ async fn apply(
         if let Some(outcome) =
             replay_at_anchor(actual.as_ref(), next, true).map_err(ApplyError::Domain)?
         {
-            return Ok(outcome);
+            return Ok((outcome, false));
         }
         if actual_agent != *current || actual.as_ref() != previous || !current.status.is_live() {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
         write(store, current, Some(next), session).await?;
-        return Ok(next.outcome.clone());
+        return Ok((next.outcome.clone(), false));
     }
     if let Some(outcome) = replay(actual.as_ref(), next).map_err(ApplyError::Domain)? {
-        return Ok(outcome);
+        return Ok((outcome, false));
     }
     if actual_agent != *current || actual.as_ref() != previous || !current.status.is_live() {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
@@ -294,7 +303,7 @@ async fn apply(
             .await
             .map_err(ApplyError::Domain)?;
     }
-    Ok(next.outcome.clone())
+    Ok((next.outcome.clone(), mutation.is_some()))
 }
 
 fn replay(

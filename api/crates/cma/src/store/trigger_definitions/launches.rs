@@ -19,6 +19,8 @@ mod claims;
 mod commits;
 mod counters;
 mod documents;
+mod due;
+pub(in crate::store) use due::filter as due_filter;
 mod event_log;
 mod handoffs;
 mod indexes;
