@@ -331,3 +331,28 @@ reconciliation against original publication/domain receipts. Gates remain strict
 CMA/affected-core lint, selected units and real Mongo, fmt, canonical size and
 secret scan; shared slots use `lockf -k -n -t 3600`, two jobs, one target and RAM
 pause below 10%. Activation stays closed until integrated review/qualification.
+
+### S4-B1 source checkpoint while executable gates queue
+
+Executable source `d925c3ead` is on `tl/cma-log-segments/ordinary-v2-publication`.
+Develop `fa292b834` is normally merged. Conversation/checkpoint callers now use
+scoped v2 publication and original immutable receipts; legacy behavior is retained.
+The command transaction's existing evidence fold is extracted for the requested
+bounded S1 reader. That interface pin is still pending; settlement is not closed.
+
+Seven Mongo regressions cover adopted ordinary dispatch/output/settlement,
+checkpoint restart and exact replay, abort/refusal, foreign/missing receipts,
+and committed/uncommitted unknown outcomes without runtime-input replay.
+No current-source executable pass is claimed: the fresh compile has waited on
+shared slot 1 since 13:50. The queue uses `lockf -k -n -t 3600`, two jobs,
+one owned target, and pause below 10% available RAM. Debug symbols and
+incremental caching are disabled to reduce disk use; assertions remain enabled.
+
+Interim light checks: fmt and whitespace pass; canonical size 6,407 files pass;
+all 24 touched publication/settlement source files are under 500 lines. Preliminary
+secret history: 4,184 commits, zero findings. The composition size regression from
+the develop merge was resolved by moving unchanged lifecycle options to the
+existing runtime module. Exact counts, execution logs and source inventory will
+be recorded after the complete caller/dependency batch passes. Local evidence:
+`notes/2026-11-12-ordinary-v2-publication-evidence/`. P1-1 stays open and activation
+stays closed. No PR or develop merge is performed by this checkpoint.
