@@ -71,7 +71,7 @@ pub(super) fn install(
     let value = std::env::var(crate::config::MONGO_DIAGNOSTICS_ENABLED);
     install_configured(options, pool, value.as_deref().ok())
 }
-fn install_configured(
+pub(super) fn install_configured(
     options: &mut mongodb::options::ClientOptions,
     pool: &'static str,
     value: Option<&str>,

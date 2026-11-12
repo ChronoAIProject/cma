@@ -166,7 +166,9 @@ pub(crate) fn observer(
 
 #[cfg(test)]
 fn attach(options: &mut ClientOptions, observer: Observer) {
-    let diagnostics = super::mongo_diagnostics::install(options, "general");
+    // This fixture exercises monitoring explicitly, independent of process flags.
+    let diagnostics =
+        super::mongo_diagnostics::install_configured(options, "general", Some("true"));
     options.cmap_event_handler = Some(EventHandler::callback(move |event| {
         if let Some(diagnostics) = &diagnostics {
             diagnostics.cmap(&event);
