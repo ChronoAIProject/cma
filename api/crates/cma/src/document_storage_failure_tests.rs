@@ -270,3 +270,34 @@ async fn token_wait_and_http_share_one_operation_budget() {
     assert_eq!(peer.count(), 1);
     drop(held);
 }
+
+#[tokio::test]
+async fn retirement_archive_reader_requests_no_creation_scope_and_refuses_writes() {
+    let mut peer = Peer::start().await;
+    let client = StorageDocuments::read_only(DocumentStorageConfig {
+        platform_origin: peer.origin.clone(),
+        bucket: "fixture".into(),
+        client_id: "fixture-machine".into(),
+        client_secret: "local-fixture".to_owned().into(),
+    })
+    .unwrap();
+    assert_eq!(
+        client.put(&key(), b"fixture".to_vec()).await,
+        Err(DocumentError::Invalid)
+    );
+    let task = operation(&client, false);
+    let request = peer.next().await;
+    let fields: std::collections::BTreeMap<_, _> = url::form_urlencoded::parse(&request.body)
+        .into_owned()
+        .collect();
+    assert_eq!(
+        fields.get("scope").map(String::as_str),
+        Some("proxy object:read object:download")
+    );
+    request.json(json!({"access_token":"fixture-authority","expires_in":3600}));
+    let request = peer.next().await;
+    assert_eq!(request.method, Method::GET);
+    request.respond(200, "fixture");
+    assert_eq!(finish(task).await.unwrap(), b"fixture");
+    assert_eq!(peer.count(), 2);
+}
