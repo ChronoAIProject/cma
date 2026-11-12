@@ -1,9 +1,30 @@
 //! Durable output receipt validation and guarded checkpoint commits.
 use super::DurableAgentUpdateRecorder;
 use crate::sandbox::store::{
-    AgentConversationMutation, AgentMessageCheckpoint, AgentReopenGuard, SandboxStoreError,
+    AgentConversationCapacitySettlement, AgentConversationMutation, AgentMessageCheckpoint,
+    AgentReopenGuard, SandboxStoreError,
 };
 use crate::sandbox::{Agent, AgentConversationError, AgentUpdateOutcome};
+use sha2::{Digest, Sha256};
+
+pub(super) fn update_parts(
+    update: &layer3_adapter::ConversationUpdate,
+) -> (
+    Option<&layer3_adapter::RuntimeOutputSource>,
+    Option<&layer3_adapter::ConversationUpdate>,
+    bool,
+) {
+    use layer3_adapter::ConversationUpdate;
+    let retained_effect = matches!(update, ConversationUpdate::RetainedEffect(_));
+    match update.effect() {
+        ConversationUpdate::RuntimeOutput { receipt, update } => (
+            Some(&receipt.source),
+            update.as_deref().map(ConversationUpdate::effect),
+            update.as_ref().is_some_and(|update| update.is_shared()),
+        ),
+        update => (None, Some(update), retained_effect),
+    }
+}
 
 impl DurableAgentUpdateRecorder {
     pub(super) async fn commit_output(
@@ -13,6 +34,7 @@ impl DurableAgentUpdateRecorder {
         next: AgentMessageCheckpoint,
         mut mutation: Option<AgentConversationMutation>,
         guard: Option<&AgentReopenGuard>,
+        identified_terminal: bool,
     ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
         if let Some(guard) = guard {
             if let Some(mutation) = &mut mutation {
@@ -26,10 +48,33 @@ impl DurableAgentUpdateRecorder {
             self.store
                 .commit_agent_reopen_update(current, previous, next, mutation, guard.clone())
                 .await
-        } else {
+        } else if mutation.is_none() {
             self.store
-                .commit_agent_message_update(current, previous, next, mutation)
+                .commit_agent_message_update(current, previous, next, None)
                 .await
+        } else {
+            let result = self
+                .store
+                .commit_agent_message_update(
+                    current.clone(),
+                    previous.clone(),
+                    next.clone(),
+                    mutation.clone(),
+                )
+                .await;
+            match (result, mutation) {
+                (Err(SandboxStoreError::AgentLogCapacityExceeded), Some(mutation)) => {
+                    let settlement = AgentConversationCapacitySettlement::new(
+                        current,
+                        previous,
+                        next,
+                        mutation,
+                        identified_terminal,
+                    )?;
+                    self.store.commit_agent_capacity_update(settlement).await
+                }
+                (result, _) => result,
+            }
         }
     }
 }
@@ -117,4 +162,33 @@ pub(super) fn output_source_for_checkpoint(
         (None, Some(previous)) => Some(previous.clone()),
         (None, None) => None,
     }
+}
+
+pub(super) fn store_error(error: SandboxStoreError) -> AgentConversationError {
+    match error {
+        SandboxStoreError::NotFound => AgentConversationError::NotFound,
+        SandboxStoreError::InvalidTransaction(detail) => {
+            AgentConversationError::InvalidState(detail)
+        }
+        SandboxStoreError::AgentLogCapacityExceeded => AgentConversationError::CapacityExceeded,
+        SandboxStoreError::Corrupt(detail) => AgentConversationError::Corrupt(detail),
+        other => AgentConversationError::Unavailable(other.to_string()),
+    }
+}
+
+pub(super) fn fingerprint(
+    source: Option<&layer3_adapter::RuntimeOutputSource>,
+    update: Option<&layer3_adapter::ConversationUpdate>,
+) -> String {
+    source.map_or_else(
+        || {
+            format!(
+                "{:x}",
+                Sha256::digest(
+                    format!("{:?}", update.as_ref().expect("legacy update is present")).as_bytes()
+                )
+            )
+        },
+        |source| format!("{:x}", Sha256::digest(format!("{source:?}").as_bytes())),
+    )
 }
