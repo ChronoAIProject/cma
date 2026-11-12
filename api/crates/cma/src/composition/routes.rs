@@ -8,13 +8,20 @@ use crate::{
     rate_limit::RateLimiters, store::MongoStores, REQUEST_BODY_LIMIT_BYTES,
 };
 
+pub(super) fn stream_budget(resources: Router, limit: usize) -> Router {
+    resources.layer(axum::middleware::from_fn_with_state(
+        crate::public_streams::StreamBudget::new(limit),
+        crate::public_streams::enforce,
+    ))
+}
+
 pub(super) fn compose(
     resources: Router,
     connections: Arc<BrowserConnections>,
     auth: Arc<AuthState>,
     recorder: Arc<ActivityRecorder>,
     (limits, reads): (Arc<RateLimiters>, Arc<crate::expensive_reads::ReadBudget>),
-    stores: Arc<MongoStores>,
+    health: Router,
     tools: Router,
 ) -> Router {
     let public = crate::rest_router(resources)
@@ -42,7 +49,8 @@ pub(super) fn compose(
         .layer(axum::middleware::from_fn(
             crate::background::interactive_request,
         ))
-        .merge(crate::health::router(stores))
+        .merge(health)
+        .merge(crate::telemetry::browser::router())
         .layer(axum::middleware::from_fn_with_state(
             limits,
             crate::rate_limit::admit,
@@ -119,6 +127,11 @@ pub(super) fn agent_metadata(
     .merge(rest::agent_provider_associations_router(
         AgentProviderAssociationService::new(stores.sandbox_model.clone(), access.clone()),
     ))
+    .merge(rest::agent_capacity_recovery_router(Arc::new(
+        layer2_core::sandbox::agent_capacity_recovery::preflight::CapacityRecoveryPreflightService::new(
+            access.clone(),
+        ),
+    )))
     .merge(rest::agent_provenance_router(AgentProvenanceService::new(
         stores.sandbox_model.clone(),
         access,

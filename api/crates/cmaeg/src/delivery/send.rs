@@ -86,6 +86,7 @@ impl Sender {
             // leg separately; the compatibility aggregate is not another send.
             return;
         }
+        crate::telemetry::delivery::outcome(step, outcome, destination, &event.reply, default);
         self.observer
             .checkpoint(
                 &event.record_id,

@@ -5,7 +5,7 @@ use mongodb::{bson::Document, ClientSession};
 
 pub(super) const FIELD: &str = "agent_capacity_prefix_v1";
 
-pub(super) async fn preserve(
+pub(in crate::store) async fn preserve(
     store: &MongoSandboxStore,
     row: &Document,
     proof: &AgentConversationCapacitySettlement,

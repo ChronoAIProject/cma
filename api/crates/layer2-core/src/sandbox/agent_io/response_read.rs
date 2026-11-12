@@ -8,6 +8,7 @@ use super::*;
 
 /// A response's safe durable acceptance state. Personal callers may also read
 /// their submitted metadata; recipient history keeps that metadata private.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentResponseReading {
     pub deferred_failure_detail: Option<String>,
     pub command: CommandStatusView,

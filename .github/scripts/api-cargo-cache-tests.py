@@ -72,6 +72,9 @@ class CacheTests(unittest.TestCase):
                 cache.authority(dict(self.env, **{field: changed}), self.event)
         with self.assertRaises(ValueError):
             cache.authority(dict(env, GITHUB_REF="refs/heads/main"), self.event)
+        for ref in ("refs/heads/tl/release/train-w2", "refs/heads/tl/release/nested/train"):
+            with self.subTest(ref=ref), self.assertRaisesRegex(ValueError, "only develop push"):
+                cache.authority(dict(env, GITHUB_REF=ref), self.event)
 
     def test_fork_and_mismatched_event_authority_are_rejected(self):
         for route in (("repository", "full_name"), ("pull_request", "head", "repo", "full_name"),

@@ -1,5 +1,8 @@
 //! Owner-facing Sandbox routes.
 
+#[path = "sandbox_enrichment.rs"]
+mod enrichment;
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -280,20 +283,7 @@ pub(super) async fn read(
             .map(|value| SandboxHierarchyReading::Personal(Box::new(value))),
     }
     .map_err(HierarchyProblem::sandbox_read)?;
-    // Only the owner's own read assigns or reads a colour, matching the owner
-    // list; shared-grant readers keep their default colour.
-    let color_timer = state
-        .hierarchy
-        .detail_phase(layer2_core::sandbox::SandboxDetailPhase::Colors);
-    let color = match &reading {
-        SandboxHierarchyReading::Personal(personal) if personal.sandbox.owner == caller.subject => {
-            super::sandbox_colors::colors(&state, &caller.subject, &[&personal.sandbox])
-                .await
-                .remove(personal.sandbox.id.as_str())
-        }
-        _ => None,
-    };
-    color_timer.complete();
+    let (color, owner_name) = enrichment::read(&state, &caller, &reading).await;
     let runtime_update = match (&reading, &state.runtime_updates) {
         (SandboxHierarchyReading::Personal(personal), Some(service))
             if personal.sandbox.owner == caller.subject =>
@@ -311,16 +301,7 @@ pub(super) async fn read(
     if let AccessibleSandboxDetailView::Personal(personal) = &mut view {
         personal.sandbox.runtime_update = runtime_update;
         personal.sandbox.color = color;
-        let names_timer = state
-            .hierarchy
-            .detail_phase(layer2_core::sandbox::SandboxDetailPhase::Names);
-        let names = super::public_names::resolve(
-            &state.users,
-            &[layer2_core::SubjectId::new(personal.sandbox.owner.clone())],
-        )
-        .await;
-        names_timer.complete();
-        personal.sandbox.owner_name = names.get(&personal.sandbox.owner).cloned();
+        personal.sandbox.owner_name = owner_name;
     }
     Ok(Json(view))
 }

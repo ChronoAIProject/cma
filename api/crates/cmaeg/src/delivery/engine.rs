@@ -1,7 +1,7 @@
 //! Eight bounded workers serialize commands by event and consumer without per-send tasks.
 use super::{
-    event::key, intents::DeliveryCommand, pacing::Pacing, relay_client::RelayClient, send::Sender,
-    worker,
+    event::key, intents::DeliveryCommand, pacing::Pacing, queue, relay_client::RelayClient,
+    send::Sender, worker,
 };
 use crate::{
     telemetry::names,
@@ -18,10 +18,7 @@ use std::{
     time::Instant,
 };
 use tokio::{
-    sync::{
-        mpsc::{self, error::SendError},
-        oneshot,
-    },
+    sync::{mpsc::error::SendError, oneshot},
     task::{JoinHandle, JoinSet},
 };
 pub const WORKERS: usize = 8;
@@ -37,7 +34,7 @@ impl Drop for DeliveryEngine {
 }
 impl DeliveryEngine {
     pub fn start(
-        receiver: mpsc::Receiver<DeliveryCommand>,
+        receiver: impl Into<queue::Input<DeliveryCommand>>,
         keys: Arc<MasterKeyRing>,
         relay: RelayClient,
         config: DeliveryConfig,
@@ -57,7 +54,7 @@ impl DeliveryEngine {
 
     /// Start the engine reporting every delivery step's outcome to `observer`.
     pub fn start_observed(
-        receiver: mpsc::Receiver<DeliveryCommand>,
+        receiver: impl Into<queue::Input<DeliveryCommand>>,
         keys: Arc<MasterKeyRing>,
         relay: RelayClient,
         config: DeliveryConfig,
@@ -74,7 +71,7 @@ impl DeliveryEngine {
             observer,
         });
         let (stop, stopping) = oneshot::channel();
-        let task = tokio::spawn(run(receiver, stopping, sender, config, tracker));
+        let task = tokio::spawn(run(receiver.into(), stopping, sender, config, tracker));
         Self {
             stop: Some(stop),
             task,
@@ -95,7 +92,7 @@ impl DeliveryEngine {
     }
 }
 async fn run(
-    receiver: mpsc::Receiver<DeliveryCommand>,
+    receiver: queue::Input<DeliveryCommand>,
     stop: oneshot::Receiver<()>,
     sender: Arc<Sender>,
     config: DeliveryConfig,
@@ -141,20 +138,25 @@ async fn run(
 /// that stopped, for example by panicking, is replaced so one fault never halts
 /// delivery for every channel; only `stop` or a closed inbound queue ends it.
 async fn dispatch<C, S, F>(
-    mut receiver: mpsc::Receiver<C>,
+    receiver: impl Into<queue::Input<C>>,
     mut stop: oneshot::Receiver<()>,
     workers: usize,
     route: impl Fn(&C) -> usize,
     spawn: S,
 ) where
     C: Send + 'static,
-    S: Fn(mpsc::Receiver<C>) -> F,
+    S: Fn(queue::Receiver<C>) -> F,
     F: Future<Output = ()> + Send + 'static,
 {
+    let mut receiver = receiver.into();
+    let inventory = Arc::new(queue::Inventory::default());
+    let _monitor = inventory.monitor();
+    metrics::gauge!("cmaeg_delivery_queue_capacity", "stage" => "worker")
+        .set((workers * WORKER_QUEUE) as f64);
     let mut tasks = JoinSet::new();
     let mut queues = Vec::with_capacity(workers);
     for _ in 0..workers {
-        let (queue, commands) = mpsc::channel(WORKER_QUEUE);
+        let (queue, commands) = queue::channel(WORKER_QUEUE, inventory.clone());
         queues.push(queue);
         tasks.spawn(spawn(commands));
     }
@@ -171,7 +173,7 @@ async fn dispatch<C, S, F>(
                     // behind the one that stopped the worker; only this one returns.
                     tracing::error!(worker = index, "delivery worker stopped; buffered commands lost");
                     metrics::counter!(names::DELIVERY_WORKER_RESTARTS).increment(1);
-                    let (queue, commands) = mpsc::channel(WORKER_QUEUE);
+                    let (queue, commands) = queue::channel(WORKER_QUEUE, inventory.clone());
                     tasks.spawn(spawn(commands));
                     queues[index] = queue;
                     if queues[index].send(command).await.is_err() {
@@ -217,7 +219,7 @@ mod tests {
 
     /// Owns a worker's receiver; the signal means the receiver is already gone.
     struct ReceiverProbe {
-        rx: Option<mpsc::Receiver<u32>>,
+        rx: Option<super::queue::Receiver<u32>>,
         closed: Arc<Notify>,
     }
     impl Drop for ReceiverProbe {
@@ -247,7 +249,10 @@ mod tests {
             };
             (workers, acknowledged)
         }
-        fn spawn(&self, rx: mpsc::Receiver<u32>) -> impl Future<Output = ()> + Send + 'static {
+        fn spawn(
+            &self,
+            rx: super::queue::Receiver<u32>,
+        ) -> impl Future<Output = ()> + Send + 'static {
             let ordinal = self.spawned.fetch_add(1, Ordering::SeqCst);
             let mut probe = ReceiverProbe {
                 rx: Some(rx),
@@ -447,7 +452,7 @@ mod tests {
             let spawned = Arc::new(AtomicUsize::new(0));
             // Only the first worker (index 0) runs; every later one, index 1
             // and each replacement, drops its receiver before it is returned.
-            let factory = move |rx: mpsc::Receiver<u32>| -> Worker {
+            let factory = move |rx: super::queue::Receiver<u32>| -> Worker {
                 if spawned.fetch_add(1, Ordering::SeqCst) == 0 {
                     Box::pin(workers.spawn(rx))
                 } else {

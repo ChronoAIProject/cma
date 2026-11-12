@@ -2,6 +2,9 @@
 use super::*;
 use crate::sandbox::{store::AgentResponseLogWindow, AgentLogKind};
 
+#[path = "response_indexed.rs"]
+pub mod indexed;
+
 impl AgentReadService {
     pub fn with_response_logs(
         self: &Arc<Self>,
