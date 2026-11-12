@@ -28,6 +28,7 @@ mod provider_tool_relay;
 mod public_streams;
 mod rate_limit;
 mod read_telemetry;
+mod retirement_archive;
 mod sandbox;
 mod sandbox_metrics;
 mod shutdown;
@@ -73,6 +74,16 @@ const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 #[tokio::main]
 async fn main() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if retirement_archive::is_command(&arguments) {
+        match retirement_archive::command(&arguments).await {
+            Ok(summary) => println!("{summary}"),
+            Err(reason) => {
+                eprintln!("{reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if arguments.len() == 3 && arguments[0] == "--ledger-collection-observation" {
         if let Err(error) = store::ledger_collection::command(
             std::path::Path::new(&arguments[1]),
