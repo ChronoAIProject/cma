@@ -116,3 +116,8 @@ origin and options. Reference clients should import it through the package alias
 ```ts
 import { MAX_LOGIN_URL_BYTES } from '@chronoai/cma-sdk';
 ```
+
+`api_commands` is optional on authenticated session responses for compatibility
+with older CMA servers. Only `true` advertises command authority for the exact
+verified bearer; false or absence grants nothing. It does not replace per-command
+resource ACL, live provider verification or Sandbox owner credential setup.

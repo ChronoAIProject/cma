@@ -172,3 +172,68 @@ async fn queued_errors_keep_the_existing_cadence_with_pacing_enabled() {
     scheduler.await.unwrap();
     assert_eq!(RECONCILE_AUDIT_INTERVAL, Duration::from_secs(300));
 }
+
+#[tokio::test(start_paused = true)]
+async fn supervised_recovery_preserves_pacing_and_in_flight_commands() {
+    for stall in [false, true] {
+        let probe = Arc::new(Probe::default());
+        let current = probe.dispatched("cmd_a", true, Behavior::Deferred(Duration::from_secs(1)));
+        let release = Arc::new(Notify::new());
+        let held = probe.put("cmd_b", Behavior::Wait(release.clone()));
+        let activity = crate::worker_supervision::Workers::new().get("agent_commands");
+        let (shutdown, signal) = watch::channel(false);
+        let scheduler = probe.paced().spawn_supervised(signal, activity.clone());
+        settle().await;
+        assert_eq!(probe.count(&current), 1);
+        assert_eq!(probe.count(&held), 1);
+        // Skipping current heads is healthy scheduling, even past the watchdog grace.
+        for _ in 0..24 {
+            advance(POLL_INTERVAL).await;
+            assert!(activity.snapshot().available());
+        }
+        assert_eq!(probe.count(&current), 1);
+        if stall {
+            crate::worker_supervision::stall_next_poll(&activity);
+        } else {
+            crate::worker_supervision::panic_next_poll(&activity);
+        }
+        advance(POLL_INTERVAL).await;
+        if stall {
+            advance(Duration::from_secs(6)).await;
+        }
+        assert_eq!(activity.snapshot().state, "backoff");
+        assert!(!activity.snapshot().available());
+        assert_eq!(probe.active.load(Ordering::SeqCst), 1);
+        let fresh = probe.put("cmd_c", Behavior::Complete);
+        advance(Duration::from_secs(1)).await;
+        assert!(activity.snapshot().available());
+        assert_eq!(probe.count(&fresh), 1);
+        assert_eq!(
+            probe.count(&held),
+            1,
+            "recovery must retain the execution child"
+        );
+        assert_eq!(
+            probe.count(&current),
+            1,
+            "loop recovery must retain the audit cache"
+        );
+        release.notify_one();
+        settle().await;
+        assert_eq!(probe.active.load(Ordering::SeqCst), 0);
+        probe
+            .dispatched
+            .lock()
+            .unwrap()
+            .insert(current.clone(), false);
+        advance(POLL_INTERVAL).await;
+        assert_eq!(
+            probe.count(&current),
+            2,
+            "an advanced head still reconciles"
+        );
+        shutdown.send(true).unwrap();
+        scheduler.await.unwrap();
+        assert_eq!(activity.snapshot().state, "stopped");
+    }
+}
