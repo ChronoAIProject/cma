@@ -212,3 +212,10 @@ both positive completed eligibility and refusal for pending adopted work. Both
 stored documents must remain unchanged by discovery. No production predicate,
 fence, recovery admission or writer boundary changes. Targeted rerun is required;
 do not count this correction as passed before execution.
+
+At09f6fb0cb strict CMA passed (zero diagnostics,2m37s), but the fixture rerun
+still returned3passed/1failed: the new legacy-completion helper omitted the
+normal WorkStepCompleted event and revision/sequence advance, so the worker
+store correctly returnedConflict. S2 corrected the fixture to match the normal
+AgentWorker::progress publication contract; the production guard is unchanged.
+The corrected fixture remains unqualified until its next actual Mongo run.
