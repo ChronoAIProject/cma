@@ -18,6 +18,7 @@ mod current;
 mod defaults;
 mod retirement;
 mod startup;
+mod supervision;
 mod telemetry;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -183,35 +184,6 @@ impl NativeWarmPools {
             default_capacity,
             default_target,
             machine: machine.map(|(image, target)| (deployment_image(image), target)),
-        })
-    }
-
-    pub fn spawn(
-        self: Arc<Self>,
-        mut shutdown: tokio::sync::watch::Receiver<bool>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            let telemetry = crate::telemetry::worker::Worker::start("native_warm_pools");
-            let mut tick = tokio::time::interval(Duration::from_secs(5));
-            loop {
-                telemetry.heartbeat();
-                tokio::select! {
-                    result = shutdown.changed() => {
-                        if result.is_err() || *shutdown.borrow() { return; }
-                    }
-                    _ = tick.tick() => {
-                        for _ in 0..20 {
-                            let result = self.reconcile_one().await;
-                            crate::telemetry::worker::completed("native_warm_pools", "execution", match &result { Ok(true) => "attempted", Ok(false) => "idle", Err(_) => "error" });
-                            match result {
-                                Ok(true) => {},
-                                Ok(false) => break,
-                                Err(_) => { tracing::warn!("native warm pool reconciliation will retry"); break; }
-                            }
-                        }
-                    }
-                }
-            }
         })
     }
 

@@ -229,6 +229,8 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 2
             failureThreshold: 3
+          # Cached Mongo availability AND required local scheduler capability.
+          # Worker loss removes traffic; /livez never restarts on dependency loss.
           readinessProbe:
             httpGet:
               path: /ready
