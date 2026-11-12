@@ -23,6 +23,8 @@ struct Totals {
     max_us: u64,
     docs: u64,
     failures: u64,
+    docs_known: u64,
+    outcomes_unknown: u64,
 }
 pub(super) struct Summary {
     start: Instant,
@@ -83,33 +85,56 @@ impl Summary {
         value.total_us = value.total_us.saturating_add(micros(duration));
         value.max_us = value.max_us.max(micros(duration));
         value.docs = value.docs.saturating_add(docs.unwrap_or(0));
+        value.docs_known = value.docs_known.saturating_add(u64::from(docs.is_some()));
+        value.outcomes_unknown = value
+            .outcomes_unknown
+            .saturating_add(u64::from(metric == "command" && !command.outcome_known));
         value.failures = value.failures.saturating_add(u64::from(failed));
         let elapsed = self.start.elapsed();
         (elapsed >= Duration::from_secs(10)).then(|| self.drain())
     }
 }
+pub(in crate::store) struct Row {
+    key: Key,
+    value: Totals,
+    elapsed: Duration,
+    untracked: u64,
+}
 pub(super) fn emit(completed: Option<Completed>) {
     if let Some(completed) = completed {
         for (key, value) in completed.window.groups {
-            tracing::info!(target: "mongo_diagnostic_summary", parent: None,
-                pool = key.pool, route = key.route.as_ref(), worker = key.worker, phase = key.phase,
-                command = key.command, collection = key.collection, metric = key.metric,
-                count = value.count, total_us = value.total_us, max_us = value.max_us,
-                docs_returned = value.docs, failures = value.failures,
-                window_us = micros(completed.elapsed), untracked = completed.window.untracked,
-                "MongoDB attributed totals");
+            super::output::send(super::output::Record::Summary(Row {
+                key,
+                value,
+                elapsed: completed.elapsed,
+                untracked: completed.window.untracked,
+            }));
         }
     }
+}
+pub(super) fn write(row: Row, queue_delay_us: u64) {
+    let Row {
+        key,
+        value,
+        elapsed,
+        untracked,
+    } = row;
+    tracing::info!(target: "mongo_diagnostic_summary", parent: None,
+        queue_delay_us, pool = key.pool, route = key.route.as_ref(), worker = key.worker, phase = key.phase,
+        command = key.command, collection = key.collection, metric = key.metric,
+        count = value.count, total_us = value.total_us, max_us = value.max_us,
+        docs_returned = value.docs, docs_returned_known_count = value.docs_known, outcomes_unknown = value.outcomes_unknown, failures = value.failures,
+        window_us = micros(elapsed), untracked,
+        "MongoDB attributed totals");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mongodb::bson::doc;
     #[test]
     fn all_fast_work_is_counted_and_request_hashes_do_not_expand_cardinality() {
         let mut summary = Summary::default();
-        let mut command = super::super::metadata("find", &doc! {"find":"agents"}, false);
+        let mut command = super::super::metadata("find", "agents", false, false);
         for i in 0..1000 {
             command.context.request_hash = format!("{i:064x}").into();
             assert!(summary
@@ -136,7 +161,7 @@ mod tests {
     #[test]
     fn group_overflow_is_bounded_without_losing_duration_totals() {
         let mut summary = Summary::default();
-        let mut command = super::super::metadata("find", &doc! {"find":"agents"}, false);
+        let mut command = super::super::metadata("find", "agents", false, false);
         for i in 0..5000 {
             command.context.route = format!("route-{i}").into();
             summary.record(&command, "hold", Duration::from_micros(1), None, false);
