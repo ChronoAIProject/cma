@@ -1,4 +1,4 @@
-//! Fetch validated ancestry in one transaction snapshot without combining output rows.
+//! Fetch validated ancestry in one consistent snapshot without combining output rows.
 use layer2_core::resource_access::{
     ResourceAccessStoreError, ResourceLineage, ResourcePolicyRecord, ResourceTarget,
 };
@@ -24,8 +24,10 @@ pub(super) async fn read(
     store: &MongoSandboxStore,
     target: &ResourceTarget,
     session: &mut ClientSession,
+    snapshot_session: bool,
 ) -> Result<(ResourceLineage, Option<ResourcePolicyRecord>), ReadError> {
     let (collection, pipeline) = plan(store, target);
+    let collection = super::super::snapshot_collection::collection(collection, snapshot_session);
     let mut cursor = collection
         .aggregate(pipeline)
         .batch_size(FIELDS.len() as u32 + 1)
