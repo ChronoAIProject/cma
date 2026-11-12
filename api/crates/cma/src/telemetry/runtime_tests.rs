@@ -234,21 +234,57 @@ fn fixed_buckets_and_worker_labels_enforce_the_approved_series_cap() {
             .unwrap();
         let recorder = configure(builder).unwrap().build_recorder();
         let handle = recorder.handle();
-        metrics::with_local_recorder(&recorder, || {
-            let mut sampler = Sampler::new(probe([snapshot(&vec![(1_000, 1); workers])]));
-            sampler.sample(Instant::now());
-            metrics::histogram!("cma_runtime_wake_lag_seconds").record(0.0);
-            for pool in ["application", "reporting", "routing"] {
-                for state in ["below_limit", "at_limit", "unknown"] {
-                    metrics::histogram!("cma_mongo_checkout_wait_seconds", "pool" => pool, "pool_state" => state).record(0.1);
-                }
-            }
-        });
+        metrics::with_local_recorder(&recorder, || record_runtime_and_checkout_series(workers));
         let text = handle.render();
         let series = text.lines().filter(|row| row.starts_with("cma_")).count();
         assert_eq!(series, 2 * workers.min(64) + 195, "{text}");
         assert!(text.contains("cma_runtime_wake_lag_seconds_bucket{le=\"0.005\"}"));
         assert!(!text.contains("le=\"0.001\""));
+    }
+}
+
+fn record_runtime_and_checkout_series(workers: usize) {
+    let mut sampler = Sampler::new(probe([snapshot(&vec![(1_000, 1); workers])]));
+    sampler.sample(Instant::now());
+    metrics::histogram!("cma_runtime_wake_lag_seconds").record(0.0);
+    for pool in ["application", "reporting", "routing"] {
+        for state in ["below_limit", "at_limit", "unknown"] {
+            metrics::histogram!("cma_mongo_checkout_wait_seconds", "pool" => pool, "pool_state" => state)
+                .record(0.1);
+        }
+    }
+}
+
+#[test]
+fn integrated_runtime_and_scan_series_respect_the_combined_limit() {
+    for workers in [0_usize, 8, 63, 64, 100] {
+        // Exercise the production overrides with unrelated exporter defaults.
+        let builder = PrometheusBuilder::new()
+            .set_buckets(&[0.0001, 99.])
+            .unwrap();
+        let recorder = super::super::configure_histograms(builder)
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            record_runtime_and_checkout_series(workers);
+            crate::store::agent_log_telemetry::record_all_execution_callers_for_test();
+        });
+        let text = handle.render();
+        let series = text.lines().filter(|row| row.starts_with("cma_")).count();
+        assert_eq!(series, 2 * workers.min(64) + 676, "{text}");
+        let scans: Vec<_> = text
+            .lines()
+            .filter(|row| row.starts_with("cma_agent_log_scan_"))
+            .collect();
+        assert_eq!(scans.len(), 481, "{text}");
+        assert!(scans.iter().all(|row| !row.contains("worker_step")));
+        assert!(text.contains(
+            "cma_agent_log_scan_longest_section_seconds_count{caller=\"command_reconciliation\"} 2"
+        ));
+        for private in ["agent_id", "sandbox_id", "request_id", "user_id"] {
+            assert!(!text.contains(private), "{text}");
+        }
     }
 }
 
