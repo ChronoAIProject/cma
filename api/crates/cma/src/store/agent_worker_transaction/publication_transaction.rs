@@ -5,6 +5,7 @@ pub(super) async fn commit(
     store: &MongoSandboxStore,
     mutation: AgentWorkMutation,
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
+    repeated_marker: Option<&AgentLogEntry>,
 ) -> Result<bool, SandboxStoreError> {
     ensure_append_batch_size(mutation.agent_logs.len())?;
     let mut timing = contention::PublicationTiming::new(&mutation);
@@ -33,11 +34,8 @@ pub(super) async fn commit(
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
-        let publication = if observed.is_some() {
-            apply_publication_observed(store, &mutation, observed, scope).await
-        } else {
-            apply_publication(store, &mutation, scope).await
-        };
+        let publication =
+            apply_publication_observed(store, &mutation, observed, repeated_marker, scope).await;
         let receipt = match publication {
             Ok(receipt) => receipt,
             Err(ApplyError::PreparedIneligible) => {

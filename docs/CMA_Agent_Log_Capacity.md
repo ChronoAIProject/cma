@@ -51,7 +51,7 @@ is 64 MiB of complete BSON log documents. A byte-budget rejection can leave room
 for a smaller entry, but repeating the rejected append with unchanged history
 cannot succeed. A full entry count leaves no normal append room at all.
 
-Every retained event counts, including lifecycle retries, tool output and turn
+Every retained event counts, including recorded lifecycle failures, tool output and turn
 boundaries. The native provider's context compaction does not free this budget.
 Restarting CMA, waiting for the 18-minute lease, refreshing the browser, or
 retrying a message does not reclaim capacity. A connected native process may
@@ -133,6 +133,25 @@ per-document and 64-entry per-batch checks remain independent.
    log segmentation, physical history removal or implicit replacement Agent.
    Surface an actionable remediation instead of presenting repeated retries as
    recovery. Describe any changed persisted semantic shape and reader floor.
+
+### Repeated ordinary failure markers (#1788)
+
+With the strict, default-off `CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED` switch,
+consecutive failures of the same step and class retain one `WorkStepFailed` row.
+Changing diagnostic detail alone does not create a new class. Each repeat still
+increments attempts and revision, advances ready time and releases the lease;
+it preserves last_seq, work, receipts, stop intent and every retained log row.
+The first failure, class/step change and successful completion still append.
+Capacity and ledger markers retain priority and their exact-detail checks.
+
+The worker point read is only selection evidence. Both memory and Mongo stores
+recheck the exact observed tail and the complete metadata proposal in their own
+fenced snapshot. Segmented publication uses the same marker validation and its
+existing zero-entry publication receipt. No schema migration or new persisted
+field is needed; an older or flag-off worker resumes ordinary failure appends.
+
+Every zero-entry retry still fully verifies the retained history. The normal
+limits and stop/delete reserves continue to count every actual retained row.
 
 ### Selecting an already-marked cleanup retry (#1583)
 

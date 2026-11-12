@@ -19,6 +19,7 @@ mod effects;
 #[cfg(test)]
 mod ledger_hold_tests;
 mod mapping;
+mod repeated_failure;
 mod retry_delay;
 pub(super) use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
 pub(super) use effects::{settle_cleanup_debt, settle_compensated_cleanup_debt};
@@ -164,6 +165,12 @@ impl AgentWorker {
             return self.retry_ledger_hold_at(agent, now, ready_at).await;
         }
         if self.retry_marked_capacity_at(&agent, now, ready_at).await? {
+            return Ok(());
+        }
+        if self
+            .retry_repeated_failure_at(&agent, &failure, now, ready_at)
+            .await?
+        {
             return Ok(());
         }
         let expected = agent.revision;
