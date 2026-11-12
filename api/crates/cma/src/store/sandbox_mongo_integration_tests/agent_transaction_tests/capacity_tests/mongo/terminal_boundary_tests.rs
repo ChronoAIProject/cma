@@ -74,14 +74,17 @@ async fn boundary(bytes: bool) {
                 },
                 acks,
             ),
-            update: Some(Box::new(ConversationUpdate::TurnEndedForPrompt {
-                prompt_id: PromptIdentity::new(
-                    full.conversation.conversation_id.as_deref().unwrap(),
-                    1,
-                    turn,
-                ),
-                response: PromptResponse::new(TurnStopReason::EndTurn),
-            })),
+            update: Some(
+                Box::new(ConversationUpdate::TurnEndedForPrompt {
+                    prompt_id: PromptIdentity::new(
+                        full.conversation.conversation_id.as_deref().unwrap(),
+                        1,
+                        turn,
+                    ),
+                    response: PromptResponse::new(TurnStopReason::EndTurn),
+                })
+                .into(),
+            ),
         };
         // Core recorder does not ACK on behalf of its caller. Check transaction
         // result here and keep the production ACK gate in transaction tests.

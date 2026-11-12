@@ -54,14 +54,17 @@ async fn cleanup(bytes: bool, settled: bool) {
             },
             acks,
         ),
-        update: Some(Box::new(ConversationUpdate::TurnEndedForPrompt {
-            prompt_id: PromptIdentity::new(
-                full.conversation.conversation_id.as_deref().unwrap(),
-                full.conversation.runtime_generation.unwrap(),
-                full.conversation.active_turn.unwrap(),
-            ),
-            response: PromptResponse::new(TurnStopReason::EndTurn),
-        })),
+        update: Some(
+            Box::new(ConversationUpdate::TurnEndedForPrompt {
+                prompt_id: PromptIdentity::new(
+                    full.conversation.conversation_id.as_deref().unwrap(),
+                    full.conversation.runtime_generation.unwrap(),
+                    full.conversation.active_turn.unwrap(),
+                ),
+                response: PromptResponse::new(TurnStopReason::EndTurn),
+            })
+            .into(),
+        ),
     };
     let started = std::time::Instant::now();
     let result = crate::sandbox::record_update_for_test(

@@ -96,14 +96,17 @@ async fn sixty_four_mib_terminal_settlement_measures_trusted_and_full_fallback_t
                 },
                 acks,
             ),
-            update: Some(Box::new(ConversationUpdate::TurnEndedForPrompt {
-                prompt_id: PromptIdentity::new(
-                    full.conversation.conversation_id.as_deref().unwrap(),
-                    1,
-                    full.conversation.active_turn.unwrap(),
-                ),
-                response: PromptResponse::new(TurnStopReason::EndTurn),
-            })),
+            update: Some(
+                Box::new(ConversationUpdate::TurnEndedForPrompt {
+                    prompt_id: PromptIdentity::new(
+                        full.conversation.conversation_id.as_deref().unwrap(),
+                        1,
+                        full.conversation.active_turn.unwrap(),
+                    ),
+                    response: PromptResponse::new(TurnStopReason::EndTurn),
+                })
+                .into(),
+            ),
         };
         trace.lock().unwrap().enabled = true;
         isolated_test(async {
