@@ -302,6 +302,12 @@ message's command, a Launch, an Agent creation that reuses a profile Agent
 reads the admission state before it schedules anything. `Pause` and `Retire` controls carry no new commitment and stay
 available.
 
+An exact-key Revive retry first rechecks current resource authorization and the
+request fingerprint, then returns the retained receipt even during STOP or
+metering failure. It creates no new commitment. A new key still meets the
+platform refusal, and a mismatched fingerprint remains an idempotency conflict.
+This receipt-recovery rule supersedes implementation NOTES round 3 (R7).
+
 Approval decisions remain allowed under `SpendStop` because the turn they
 continue has already reserved its full allowance; refusing them would not reduce
 liability and would strand admitted work.

@@ -88,6 +88,50 @@ gate passed across 6,483 files; formatting and whitespace checks passed at this
 checkpoint. `cargo clippy -p cma -p layer2-core --all-targets --all-features
 --locked -- -D warnings` passed. The full repository Mongo script remains pending.
 
+## Exact-key Revive recovery decision (B8)
+
+On 2026-11-13 the lead confirmed that exact-key, same-fingerprint recovery must
+return the original durable receipt during STOP after current resource
+authorization is rechecked. Recovery creates no new commitment or spend.
+The migration contract's guarantee that exact replays remain available and the
+HTTP `sandbox_command_unavailable` instruction to “Retry the same key to recover
+an unacknowledged receipt” govern this behavior.
+
+This supersedes [implementation NOTES, round 3/R7](../../plans/platform-spend/NOTES.md),
+which said: “An exact retry of a `Revive` admitted before the stop is refused too
+(the receipt stays readable by id).” An unacknowledged caller may not know that
+server-generated ID. The historical note is now explicitly marked superseded.
+
+The service carries the platform decision into the persistence boundary. Both
+stores first validate current authorization and perform the exact-key lookup;
+matching fingerprints return the original receipt. A mismatched fingerprint
+returns `IdempotencyConflict`, and a new key receives the original platform
+budget refusal before any control record is inserted. The budget result is not
+persisted and does not change the durable record schema.
+
+The regression
+`an_admitted_revive_receipt_is_recoverable_by_key_during_stop` fails before the
+fix with `Budget(PlatformExhausted)` on the identical retry. Its fixture admits
+while open and then enters STOP; it also asserts new-key refusal,
+changed-fingerprint conflict, and unchanged records, Sandbox state and events.
+`a_revive_replay_during_stop_still_requires_current_resource_authority` removes
+the shared caller's membership before replay and requires denial.
+The real Mongo service/store test
+`platform_stop_preserves_exact_revive_receipts_and_refuses_new_or_changed_keys`
+checks the same retained receipt and refusal cases with one durable record and
+unchanged Sandbox state. All three tests passed in the corrected **222/222**
+inclusive selection on 2026-11-13. That run includes the surrounding in-memory,
+Mongo and HTTP command contracts, B1–B7 corrections and counter/census checks.
+Its log SHA-256 is
+`cb5f469a1626e54e58142e88e606c8892fe4530aca45d1c851d65b53f72561a2`.
+
+The baseline log fingerprint is
+`54db09c1ea7850b8fc9ba50459122b301fee457a805640f0f5c97fbc2ce3b19a`.
+B7's real-worker baseline fingerprint is
+`60b717f3a0e77d6e119172730ddbbce1cc1f0bf3289a35cc2787849efb6e72e7`;
+it sends once where the regression requires zero, and passes in the corrected
+74/74 Mongo selection.
+
 ## Persistence authority cross-check
 
 MongoDB's [transaction production considerations](https://www.mongodb.com/docs/manual/core/transactions-production-consideration/#in-progress-transactions-and-stale-reads),
