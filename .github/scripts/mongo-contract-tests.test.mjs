@@ -11,6 +11,9 @@ const ownerTest = 'store::usage_reports::tests::owner_allocation::metrics_owner_
 const auditTest = 'store::agent_log_segments::mongo_tests::audit_bounds::near_capacity_audit_keeps_source_bounds_and_limits_each_write_transaction';
 const diagnosticsTest = 'store::mongo_diagnostics::mongo_tests::real_mongo_monitoring_privacy_and_overhead';
 const scanTest = 'store::agent_log_telemetry::tests::cooperation::benchmark::local_scan_scheduling_abba_reproduction';
+// Five isolated fixtures start many mock subprocesses before ordinary work.
+// Bound that setup separately from the signal-to-cleanup deadline below.
+const runnerSetupTimeoutMs = 30_000;
 const fixturePredicate = 'not test(store::migrations::tests::segments_runtime::)';
 const ordinaryPredicate = `not (test(=${scaleTest}) or test(=${ownerTest}) or test(=${auditTest}) or test(=${diagnosticsTest}) or test(=${scanTest}))`;
 
@@ -353,7 +356,7 @@ for (const reuse of [false, true]) {
     const child = spawn('bash', f.args, { env: f.env, stdio: 'ignore' });
     const exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({code,signal})));
     try {
-      const deadline = Date.now() + 10000;
+      const deadline = Date.now() + runnerSetupTimeoutMs;
       while (!active.every(index => existsSync(`${f.log}.started-${index}`))) {
         assert.ok(Date.now() < deadline, 'selected child Cargo processes must start');
         await new Promise(resolve => setTimeout(resolve, 10));
@@ -424,7 +427,7 @@ for (const reuse of [false, true]) {
       const f = fixture(scenario, reuse);
       try {
         const env = {...f.env, NEXTEST_NO_TESTS: 'pass'};
-        assert.throws(() => execFileSync('bash', f.args, {env, timeout:15000, stdio:'pipe'}),
+        assert.throws(() => execFileSync('bash', f.args, {env, timeout:runnerSetupTimeoutMs, stdio:'pipe'}),
           error => error.status === 1, 'an empty invocation must fail the complete gate');
         const cargo = f.calls().filter(row => row.command === 'cargo' && row.args[1] === 'run');
         assert.equal(cargo.length, 7, 'the remaining contracts still run after an empty invocation');
