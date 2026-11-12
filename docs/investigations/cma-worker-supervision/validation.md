@@ -480,3 +480,82 @@ image qualification and isolated real-provider/model journeys remain open.
 External production journey/monitoring acceptance remains in chrono-probe#18.
 No production Kubernetes context was used, and #1740 is not declared fully
 accepted by this local run.
+
+## Integration with the current development base (2026-11-12)
+
+Merge `ac442a67e34c5e978f0e733e4548685023967a7c` incorporates `develop`
+`01a0f5d84c74cd3ce7ec98df120e196e994342f2`, including the new diagnostic
+context and accepted Agent log capacity recovery. Final tested implementation
+is `b1b84b8d1e152ccdea23516c757de52589c8cb35`. The latter moves the unchanged
+request-span function into the existing diagnostic middleware module so the
+combined `main.rs` remains within the 500-line source limit.
+
+The new `agent_capacity_recovery` scheduler is required: already-admitted work
+must continue even when new recovery admission is disabled. It now uses the same
+supervisor and bounded telemetry inventory. There are **eight required loops
+plus optional native warm capacity**. Its single sweep and original five-second
+work cadence remain intact. A separate one-second timer branch in that same
+scheduling select keeps loop activity observable; it is not an independent
+heartbeat task. Work's original ticker retains its planned boundaries, including
+normal wake-up jitter. Three new regressions verify the five-second cadence,
+watchdog recovery without cancelling a long owned sweep, and a 1.1-second delayed
+wake still allowing the next planned sweep at 2.0 seconds.
+
+All final checks passed on this implementation:
+
+- **214 distinct focused tests**, including the three new scheduler regressions,
+  existing supervisor/readiness/reconciliation/shutdown tests, six explicit
+  Mongo recovery/fencing cases and three diagnostic-request tests.
+- **Nine resource execution/authority regressions** in one correctly configured
+  run, with both disposable Mongo and failpoint URIs supplied.
+- **Two real host-native continuity tests**, reproduced again from fresh pinned
+  tool installs in 96.56 seconds, with the same production/native boundary and
+  assertions documented above.
+- **Eleven whole-service fault cases** in PID 97317: panic in each of nine
+  supervised loops, command-scheduler exit and command-scheduler suspension.
+- Strict pinned Clippy for all CMA targets/features, formatting, script syntax,
+  source-size (6,458 source files), nine documentation contract tests and diff
+  checks.
+
+| Native scheduler fault | Fault to detection | Fault to resumed scheduling | Healthy native wait | Model release to original durable completion |
+| --- | ---: | ---: | ---: | ---: |
+| Panic | 0.123 s | 1.133 s | 65 s | 0.160 s |
+| Suspension | 5.802 s | 6.811 s | 10 s | 0.138 s |
+
+The native proofs ended 66.953 and 17.635 seconds after fault injection,
+respectively, including the intentional waiting and subsequent assertions.
+Both runtime processes exited zero. No fixture/runtime process remained after
+the final process check. Runtime executable SHA-256 is
+`da4762823eadaea06b8cf7ded1b705ae4ef4e144373458e941bf817b7194cfb4`;
+the CMA test executable SHA-256 is
+`fdfdc13a61b35ee242edd25015ca18e0cf96ff25eae6d779e88bf89d15ec07eb`.
+ACP and tool pins remain unchanged.
+
+In the HTTP matrix, the new capacity recovery loop became unavailable at
+0.959 seconds and recovered at 1.961 seconds. Across all nine panic cases,
+recovery took 1.066–2.128 seconds. The later command exit recovered at 2.217
+seconds; suspension at 9.924 seconds, including its four-second backoff after the
+previous two failures. Each affected loop restarted once, unrelated loops did
+not restart, required loss returned readiness 503, optional warm loss retained
+200 and liveness retained 200. Normal SIGTERM shutdown completed. The sampler
+retained 516 HTTP observations and 39 metric scrapes.
+
+The first integration HTTP attempt failed before serving because the old local
+isolated test role lacked the nine upstream log-segment/recovery collection
+grants. Synchronizing only those exact collections with the current runtime
+role contract allowed the final run above. The initial failure is retained at
+`/tmp/cma-1740-evidence/native-merged-service-startup-missing-local-grants/`.
+No production database, Kubernetes context or broader database grant was used.
+
+The final native evidence copy is `/tmp/cma-1740-evidence/native-merged-final/`;
+its original private runner directory is
+`/private/var/folders/gq/xbl9r0417sx7r9tm494fsw8m0000gn/T/cma-worker-runtime.iD6HCb`.
+The focused names/results/commands and binary identity are in
+`/tmp/cma-1740-evidence/native-merged-focused/`; final HTTP/service/metrics
+artifacts are in `/tmp/cma-1740-evidence/native-merged-service-faults/`.
+These results supersede the pre-integration measurements for the final PR
+implementation. The candidate-image, real-provider/PVC, remote-model and external
+journey qualification limits above remain open. The previously retained ordinary
+inspection service is historical eight-loop evidence; the nine-loop integration
+is exercised by the final full-service matrix, not claimed as a replacement
+ordinary service startup.
