@@ -1,5 +1,6 @@
 //! Process liveness and a single bounded, cached application-store check.
 
+use layer2_core::diagnostic_context::DiagnosticContext;
 use std::{sync::Arc, time::Duration};
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
@@ -44,7 +45,7 @@ pub fn router(probe: Arc<dyn ReadinessProbe>) -> Router {
     let (result, state) = watch::channel(None);
     // The sender owns no receiver. Dropping the last router cancels the check
     // and stops the worker, including during checkout or an unanswered ping.
-    tokio::spawn(monitor(probe, result));
+    tokio::spawn(DiagnosticContext::background("health_monitor").scope(monitor(probe, result)));
     routes(state)
 }
 

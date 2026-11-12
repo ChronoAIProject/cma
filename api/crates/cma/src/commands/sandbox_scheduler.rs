@@ -1,3 +1,4 @@
+use layer2_core::diagnostic_context::DiagnosticContext;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,7 +34,10 @@ impl SandboxControlScheduleWork for SandboxControlWorker {
         &self,
         page: &PageRequest,
     ) -> Result<Page<SandboxCommandId>, SandboxControlError> {
-        let page = self.discover(page).await?;
+        let page = DiagnosticContext::background("sandbox_control_scheduler")
+            .with_phase("discovery")
+            .scope(self.discover(page))
+            .await?;
         Ok(Page {
             items: page
                 .items
@@ -45,7 +49,10 @@ impl SandboxControlScheduleWork for SandboxControlWorker {
     }
 
     async fn run_one(&self, id: &SandboxCommandId) -> Result<(), SandboxControlError> {
-        self.run_one(id).await
+        DiagnosticContext::background("sandbox_control_scheduler")
+            .with_phase("execution")
+            .scope(self.run_one(id))
+            .await
     }
 }
 
