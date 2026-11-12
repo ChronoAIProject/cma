@@ -29,6 +29,13 @@ pub fn install() -> Result<PrometheusHandle, String> {
                 )
                 .map_err(|error| error.to_string())?
                 .set_buckets_for_metric(
+                    Matcher::Full("cmaeg_provider_permit_held_seconds".into()),
+                    &[
+                        0.005, 0.025, 0.1, 0.5, 1., 5., 30., 120., 600., 1800., 3600.,
+                    ],
+                )
+                .map_err(|error| error.to_string())?
+                .set_buckets_for_metric(
                     Matcher::Prefix("cmaeg_media_".into()),
                     &names::MEDIA_BUCKETS,
                 )
