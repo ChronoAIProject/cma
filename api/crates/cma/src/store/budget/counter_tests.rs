@@ -12,6 +12,8 @@ use layer2_core::budget::{
 
 const NOW: u64 = 1_798_848_000;
 
+#[path = "counter_measurement.rs"]
+mod measurement;
 #[path = "counter_race_tests.rs"]
 mod races;
 

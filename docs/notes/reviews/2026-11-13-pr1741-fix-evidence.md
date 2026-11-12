@@ -1,15 +1,16 @@
 # PR #1741 correction evidence
 
-Evidence checkpoint: 2026-11-12T19:30:11+00:00. This is a partial correction record, not a GO
-verdict or a completed full-diff review. The original PR head is
+Evidence checkpoint: 2026-11-13. This is a correction record, not the final GO
+verdict. The completed [original-head primary review](2026-11-13-pr1741-primary-review.md)
+records eight blockers after reviewing all 126 changed files. The original PR head is
 `821790b422b336684256abbf2b00d30386f40e99`.
 
 The recovered security review is
 `a868a2ab0:notes/reviews/2026-11-12-pr1741-sec-review.md`; it reviewed
 `8d318edc`, not the original PR head above. The unpublished primary report is
 unavailable. The authorized primary list is the five correctness findings
-below plus the shared period-counter hotspot. A fresh exact-head review must
-also identify additional defects rather than assume this list is exhaustive.
+below plus the shared period-counter hotspot. The independent exact-head review additionally identified B7 and B8 below;
+the five recovered security findings overlap B1–B5.
 
 ## Correction status
 
@@ -20,7 +21,9 @@ also identify additional defects rather than assume this list is exhaustive.
 | B3: missing or stale evidence | Admission derives closures from current policy, clock and period evidence; reads never lift persisted closures. New missing-period and threshold tests fail before and pass after. | Commit `04818783e`; focused Mongo run 27/27 passed. |
 | B4: requests without valued holds | An active platform meter refuses missing owner valuation at command, turn and auxiliary request boundaries. Actual HTTP title adapter verifies zero upstream sends on refusal. Historical bypass remains only with the global meter off. | Commit `1b05f4506`; both new Mongo scenarios fail before and pass after. |
 | B5: recovery during STOP | Failed-runtime recovery checks current platform admission state in its transaction. The test fails before by admitting a replacement runtime after a pause failure; after the fix it refuses until lift and preserves retained home and queued work. | Commit `af169e314`; regression and surrounding recovery checks passed. |
-| Shared period-counter hotspot | Reservation and settlement still read and write one global period document. Budget-safe distribution, migration/rollback behavior and local measurements remain required. | Open blocker. |
+| B6: shared period-counter hotspot | Optional sixteen-counter accounting removes routine root writes while preserving exact admission under the settings fence. Legacy holds, OFF recovery and closure revision guards remain supported. | Root-write regression reproduced; corrected counter selection 74/74. See [counter evidence](2026-11-13-pr1741-counter-evidence.md), including the admission trade-off and default-OFF decision. |
+| B7: queued turn after owner policy removal | Current platform admission is checked for every retained reservation, even after its owner policy disappears. | Commit `25adbd3cd`; real worker baseline sends once instead of zero; corrected 74/74 run passes. |
+| B8: exact-key Revive recovery during STOP | Current authorization and fingerprint checks precede new-commitment refusal in both stores. Identical retries recover their durable receipt; new keys and changed fingerprints remain refused. | Baseline reproduced; commit `88d0bdb9b`; all replay, authorization and refusal cases pass in the 222/222 inclusive selection. |
 
 `7cd25987c` separately extracts the evaluator persistence boundary without
 changing behavior. The initial develop merge is `ac4b009f5`. All these commits
@@ -164,6 +167,25 @@ includes the default-off adoption-dispatch correction. The same settlement
 contract passed in the 27-test local run. Final CI and exact-head status still
 need to be checked after all corrections.
 
+## Inclusive correction checkpoint
+
+The corrected selection passed **222/222** across `cma`, `layer2-core` and
+`layer1-public`, including ignored Mongo contracts, B1–B8, counter accounting,
+archive classification and HTTP command behavior. The selector was:
+
+```sh
+cargo nextest run -p cma -p layer2-core -p layer1-public --locked \
+  --run-ignored all --test-threads 1 --no-fail-fast --success-output final \
+  -E 'test(platform_) or test(budget::) or test(budget_tests) or test(request_budget) or test(sandbox_controls_tests) or test(sandbox_command_http_)'
+cargo clippy -p cma -p layer2-core -p layer1-public \
+  --all-targets --all-features --locked -- -D warnings
+```
+
+Clippy passed, as did formatting, whitespace, deployment/configuration docs and
+source-size checks. The latter checked 6,493 files. This working-tree checkpoint
+precedes final integration with updated develop and #1754 and does not substitute
+for the full Mongo contract script or final exact-head qualification.
+
 ## Private raw evidence fingerprints
 
 Only sanitized conclusions and test names are committed here. Raw local logs
@@ -184,6 +206,7 @@ from a shared development host are not production performance claims.
 | `b12345-after.log` | `88013a9d4d8213eedf9780f1f4c0d2e4588171e261d57b5ca97da247abccf4fb` |
 | `security-clippy.log` | `eb33ec76e6b5ee850f3c391da14393fd4679e20fe895adeb394cf09fc1ad9253` |
 
-The complete full-diff review, counter measurements, final verification and
-exact-head verdict remain outstanding. PR #1816 remains stacked until #1741
+The original full-diff review and first counter measurements are complete.
+Final integrated verification and the new candidate exact-head verdict remain
+outstanding. PR #1816 remains stacked until #1741
 has a reviewed and authorized merge.
