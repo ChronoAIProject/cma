@@ -340,6 +340,12 @@ liability and would strand admitted work.
    because their rotation starts a runtime even on a paused Sandbox; they run
    again after the lift.
 
+A failed pause can leave a retained home and runtime eligible for recovery.
+Recovery admission checks the platform state in its transaction before starting
+any replacement runtime. STOP or unavailable metering refuses that new
+commitment; after a lift the same retained home and queued work remain eligible
+for recovery. Existing pause completion can still proceed.
+
 `MeteringUnavailable` performs steps 1–2 **only if** `SpendStop` is also
 present. Staleness alone refuses new commitments and leaves running work alone.
 
