@@ -98,7 +98,7 @@ async fn recovery_fixture(
             match frame {
                 Ok(Message::Close(_)) | Err(_) => break,
                 Ok(Message::Binary(frame)) => assert_ne!(
-                    frame[0], 0x01,
+                    frame[0], crate::hosted::acp::LANE_CONVERSATION,
                     "recovery must not replay input or load another session"
                 ),
                 _ => {}
