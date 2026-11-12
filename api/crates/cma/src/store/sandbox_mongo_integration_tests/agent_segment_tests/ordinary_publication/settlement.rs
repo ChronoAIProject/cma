@@ -67,22 +67,32 @@ async fn adopted_command_unknown_settlement_reopens_without_replaying_runtime_in
         finish(&initial, &current).await;
         let original = snapshot(&admin, &name).await;
         let before_logs = initial.agent_log(&current.id, 0, 100).await.unwrap();
-        let (client, app) = super::uncertain::client_for("settlement").await;
+        let (client, app, original_session) =
+            super::uncertain::observed_client_for("settlement").await;
         let store = MongoSandboxStore::open(&client, &name).await.unwrap();
         super::uncertain::fail_commit(&admin, &app, committed).await;
         let result = store
             .reconcile_command(&command.receipt.envelope.command_id)
             .await;
         super::uncertain::clear(&admin).await;
-        assert_eq!(result.unwrap_err(), CommandLedgerError::Unavailable);
+        assert_eq!(
+            result.unwrap_err(),
+            CommandLedgerError::Unavailable,
+            "committed={committed}"
+        );
+        let unresolved = snapshot(&admin, &name).await;
         if !committed {
-            assert_eq!(snapshot(&admin, &name).await, original);
+            assert_eq!(unresolved, original);
         }
+        super::uncertain::release_abandoned_transaction(&admin, &original_session).await;
+        assert_eq!(snapshot(&admin, &name).await, unresolved);
+        drop(store);
+        client.shutdown().await;
         let reopened = MongoSandboxStore::open(&admin, &name).await.unwrap();
         let settled = reopened
             .reconcile_command(&command.receipt.envelope.command_id)
             .await
-            .unwrap();
+            .unwrap_or_else(|error| panic!("restart settlement, committed={committed}: {error:?}"));
         assert_eq!(settled.status, AgentResponseStatus::Completed);
         assert_eq!(
             reopened.agent_log(&current.id, 0, 100).await.unwrap(),
