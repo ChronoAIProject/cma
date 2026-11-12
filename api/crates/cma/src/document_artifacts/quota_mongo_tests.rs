@@ -165,6 +165,39 @@ async fn exact_object_retry_after_state_fields_still_matches_identity() {
 
 #[tokio::test]
 #[ignore = "requires disposable MongoDB replica set"]
+async fn document_quota_reserve_refuses_condemned_object_before_upload() {
+    let database = database().await;
+    let mut store = MongoDocumentQuotaStore::new(&database, true);
+    store.limits = [1, 4, 1];
+    activate(&store, &database, &[]).await;
+    let original = source("owner", 1, b"body");
+    store.reserve(&original).await.unwrap();
+    assert_eq!(usage(&store, "owner").await, [1, 4, 1]);
+    store
+        .rows
+        .update_one(
+            doc! {"_id": format!("object:{}:{}:{}", original.owner_hash, original.document_id, original.sha256)},
+            doc! {"$set": {"state": "condemned"}},
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store.reserve(&original).await,
+        Err(DocumentError::Unavailable)
+    );
+    assert_eq!(usage(&store, "owner").await, [1, 4, 1]);
+    let object = store
+        .rows
+        .find_one(doc! {"_id": format!("object:{}:{}:{}", original.owner_hash, original.document_id, original.sha256)})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(object.get_str("state").unwrap(), "condemned");
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB replica set"]
 async fn document_quota_default_off_unknown_baseline_and_disabled_after_preparation_fail_safely() {
     let database = database().await;
     let off = MongoDocumentQuotaStore::new(&database, false);
