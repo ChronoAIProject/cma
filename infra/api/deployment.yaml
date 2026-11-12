@@ -64,6 +64,8 @@ spec:
   template:
     metadata:
       annotations:
+        chrono-cd.chrono-ai.fun/metrics-port: "9091"
+        chrono-cd.chrono-ai.fun/metrics-path: /metrics
         cma.chrono-ai.fun/recovery-at: "2026-10-31T16:39:53.824865+00:00"
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
         cma.chronoai.dev/api-image-digest: "sha256:2a167bf3773ebf9c0053b4c8a028cf4098dc95739afcd8c3497d461c16b98147"
@@ -113,6 +115,7 @@ spec:
       labels:
         app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
+        chrono-cd.chrono-ai.fun/metrics: "true"
     spec:
       # Shutdown drains HTTP for up to 30s, then background workers for up to
       # 30s. Leave another five seconds for process and kubelet teardown.
@@ -150,6 +153,9 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9091
               protocol: TCP
           envFrom:
             - configMapRef:

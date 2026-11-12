@@ -35,6 +35,7 @@ USER root
 RUN test -n "${OS_SECURITY_REFRESH}" \
     && apk upgrade --no-cache
 USER 101:101
+# Includes the bounded pre-module /browser-telemetry.js diagnostic bootstrap.
 COPY --from=build /build/web/dist /usr/share/nginx/html
 # The retained-assets volume overlays html/assets in deployed Pods. Keep the
 # current bundle outside that mount so an image-only rollout can always boot.

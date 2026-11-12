@@ -6,6 +6,7 @@ mod claim_observation_tests;
 mod contextual_suggestions;
 mod discovery_tests;
 pub(in crate::store) mod execution_tests;
+mod observability_tests;
 mod queued_cancellation_tests;
 mod queued_input_tests;
 mod refusal_compatibility_tests;
