@@ -6,26 +6,47 @@ use std::{
     time::Instant,
 };
 use tokio::sync::mpsc;
+mod input;
+pub use input::Input;
 
-#[derive(Default)]
-pub(super) struct Inventory(Mutex<Entries>);
+pub(super) struct Inventory {
+    stage: &'static str,
+    entries: Mutex<Entries>,
+}
+impl Default for Inventory {
+    fn default() -> Self {
+        Self::new("worker")
+    }
+}
 #[derive(Default)]
 struct Entries {
     next: u64,
     queued: BTreeMap<u64, Instant>,
 }
 impl Inventory {
+    pub(super) fn new(stage: &'static str) -> Self {
+        Self {
+            stage,
+            entries: Mutex::new(Entries::default()),
+        }
+    }
     fn sample(&self) {
-        let state = self.0.lock().unwrap_or_else(|error| error.into_inner());
-        publish(&state);
+        let state = self
+            .entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        publish(&state, self.stage);
     }
     fn enter(self: &Arc<Self>) -> Residence {
-        let mut state = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        let mut state = self
+            .entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let id = state.next;
         state.next = state.next.wrapping_add(1);
         let started = Instant::now();
         state.queued.insert(id, started);
-        publish(&state);
+        publish(&state, self.stage);
         Residence {
             inventory: self.clone(),
             id,
@@ -47,17 +68,16 @@ impl Inventory {
         }))
     }
 }
-fn publish(state: &Entries) {
-    metrics::gauge!("cmaeg_delivery_queue_sample_timestamp_seconds", "stage" => "worker")
+fn publish(state: &Entries, stage: &'static str) {
+    metrics::gauge!("cmaeg_delivery_queue_sample_timestamp_seconds", "stage" => stage)
         .set(timestamp());
-    metrics::gauge!("cmaeg_delivery_queue_depth", "stage" => "worker")
-        .set(state.queued.len() as f64);
+    metrics::gauge!("cmaeg_delivery_queue_depth", "stage" => stage).set(state.queued.len() as f64);
     let age = state
         .queued
         .values()
         .min()
         .map_or(0., |at| at.elapsed().as_secs_f64());
-    metrics::gauge!("cmaeg_delivery_queue_oldest_seconds", "stage" => "worker").set(age);
+    metrics::gauge!("cmaeg_delivery_queue_oldest_seconds", "stage" => stage).set(age);
 }
 struct Residence {
     inventory: Arc<Inventory>,
@@ -68,11 +88,11 @@ impl Drop for Residence {
     fn drop(&mut self) {
         let mut state = self
             .inventory
-            .0
+            .entries
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         state.queued.remove(&self.id);
-        publish(&state);
+        publish(&state, self.inventory.stage);
     }
 }
 struct Queued<C> {
@@ -90,7 +110,7 @@ pub(super) fn channel<C>(capacity: usize, inventory: Arc<Inventory>) -> (Sender<
 }
 impl<C> Sender<C> {
     pub(super) async fn send(&self, command: C) -> Result<(), mpsc::error::SendError<C>> {
-        let mut wait = Wait::new("worker");
+        let mut wait = Wait::new(self.inventory.stage);
         match self.sender.reserve().await {
             Ok(permit) => {
                 permit.send(Queued {
@@ -107,12 +127,38 @@ impl<C> Sender<C> {
         }
     }
 }
+impl<C> Sender<C> {
+    pub(super) fn try_send(&self, command: C) -> Result<(), mpsc::error::TrySendError<C>> {
+        let mut wait = Wait::new(self.inventory.stage);
+        match self.sender.try_reserve() {
+            Ok(permit) => {
+                permit.send(Queued {
+                    command,
+                    residence: self.inventory.enter(),
+                });
+                wait.finish("accepted");
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                wait.finish("full");
+                Err(mpsc::error::TrySendError::Full(command))
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                wait.finish("closed");
+                Err(mpsc::error::TrySendError::Closed(command))
+            }
+        }
+    }
+}
 impl<C> Receiver<C> {
     pub(super) async fn recv(&mut self) -> Option<C> {
         let queued = self.0.recv().await?;
-        metrics::histogram!("cmaeg_delivery_queue_residence_seconds", "stage" => "worker")
+        metrics::histogram!("cmaeg_delivery_queue_residence_seconds", "stage" => queued.residence.inventory.stage)
             .record(queued.residence.started.elapsed().as_secs_f64());
         Some(queued.command)
+    }
+    pub(super) fn close(&mut self) {
+        self.0.close();
     }
     pub(super) fn is_closed(&self) -> bool {
         self.0.is_closed()
