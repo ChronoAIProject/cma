@@ -79,7 +79,8 @@ async fn document_quota_cross_process_races_never_overshoot_and_reopen_preserves
     while let Some(result) = tasks.join_next().await {
         let (source, result) = result.unwrap();
         match result {
-            Ok(()) => admitted.push(source),
+            Ok(SourceTicket::Ledgered) => admitted.push(source),
+            Ok(SourceTicket::Unledgered) => panic!("activated quota returned an unledgered ticket"),
             Err(DocumentError::Capacity) => refused += 1,
             other => panic!("unexpected admission: {other:?}"),
         }
@@ -137,6 +138,28 @@ async fn document_quota_count_bytes_and_tiny_object_limits_are_independent_and_d
             .await,
         Err(DocumentError::Corrupt)
     );
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MongoDB replica set"]
+async fn exact_object_retry_after_state_fields_still_matches_identity() {
+    let database = database().await;
+    let mut store = MongoDocumentQuotaStore::new(&database, true);
+    store.limits = [1, 4, 1];
+    activate(&store, &database, &[]).await;
+    let original = source("owner", 1, b"body");
+    assert_eq!(store.reserve(&original).await, Ok(SourceTicket::Ledgered));
+    store
+        .rows
+        .update_one(
+            doc! {"_id": format!("object:{}:{}:{}", original.owner_hash, original.document_id, original.sha256)},
+            doc! {"$set": {"state": "committed", "reserved_at": mongodb::bson::DateTime::now()}},
+        )
+        .await
+        .unwrap();
+    assert_eq!(store.reserve(&original).await, Ok(SourceTicket::Ledgered));
+    assert_eq!(usage(&store, "owner").await, [1, 4, 1]);
     database.drop().await.unwrap();
 }
 

@@ -16,18 +16,23 @@ impl DocumentStore for RacingStore {
     async fn get(&self, id: &str) -> Result<Option<StoredDocument>, DocumentError> {
         self.rows.get(id).await
     }
-    async fn insert(&self, record: &StoredDocument) -> Result<bool, DocumentError> {
-        self.rows.insert(record).await
+    async fn insert(
+        &self,
+        record: &StoredDocument,
+        source: Option<(&DocumentSourceReservation, SourceTicket)>,
+    ) -> Result<bool, DocumentError> {
+        self.rows.insert(record, source).await
     }
     async fn compare_exchange(
         &self,
         expected: u64,
         record: &StoredDocument,
+        source: Option<(&DocumentSourceReservation, SourceTicket)>,
     ) -> Result<bool, DocumentError> {
         if self.commits.fetch_add(1, Ordering::SeqCst) < 2 {
             self.barrier.wait().await;
         }
-        self.rows.compare_exchange(expected, record).await
+        self.rows.compare_exchange(expected, record, source).await
     }
     async fn list(
         &self,

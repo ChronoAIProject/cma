@@ -53,9 +53,18 @@ pub fn valid_digest(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceTicket {
+    Ledgered,
+    Unledgered,
+}
+
 #[async_trait::async_trait]
 pub trait DocumentQuotaStore: Send + Sync {
     /// Atomically reserve a document slot and immutable object bytes. Exact
     /// object retries are free; timeouts/cancellation never release reservations.
-    async fn reserve(&self, source: &DocumentSourceReservation) -> Result<(), DocumentError>;
+    async fn reserve(
+        &self,
+        source: &DocumentSourceReservation,
+    ) -> Result<SourceTicket, DocumentError>;
 }

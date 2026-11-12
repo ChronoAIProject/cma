@@ -4,6 +4,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 #[derive(Default)]
@@ -13,13 +14,16 @@ struct Quota {
 }
 #[async_trait::async_trait]
 impl DocumentQuotaStore for Quota {
-    async fn reserve(&self, source: &DocumentSourceReservation) -> Result<(), DocumentError> {
+    async fn reserve(
+        &self,
+        source: &DocumentSourceReservation,
+    ) -> Result<SourceTicket, DocumentError> {
         source.validate()?;
         if self.denied.load(Ordering::SeqCst) {
             return Err(DocumentError::Capacity);
         }
         self.reservations.lock().await.push(source.clone());
-        Ok(())
+        Ok(SourceTicket::Ledgered)
     }
 }
 struct Blobs {
@@ -249,6 +253,153 @@ async fn ambiguous_blob_result_retains_the_original_reservation_and_original_ide
         &[reserved.clone(), reserved]
     );
     assert_eq!(blobs.rows.0.lock().await.len(), 1);
+}
+
+#[tokio::test]
+async fn title_only_update_and_metadata_mutations_pass_no_source_to_the_store() {
+    let (service, quota, _) = fixture();
+    let owner = owner();
+    let document = service.create(&owner, "create", body()).await.unwrap();
+    let source = quota.reservations.lock().await[0].clone();
+    assert_eq!(
+        service
+            .update(
+                &owner,
+                &document.id,
+                "title",
+                UpdateDocument {
+                    expected_revision: 1,
+                    title: Some("Renamed".into()),
+                    markdown: None,
+                },
+            )
+            .await
+            .unwrap()
+            .revision,
+        2
+    );
+    service
+        .grant(
+            &owner,
+            &document.id,
+            "grant",
+            "reader",
+            GrantDocument {
+                expected_revision: 2,
+                permission: DocumentPermission::Read,
+            },
+        )
+        .await
+        .unwrap();
+    service
+        .revoke(&owner, &document.id, "revoke", "reader", 3)
+        .await
+        .unwrap();
+    assert_eq!(
+        service
+            .source(&owner, &document.id, None, None)
+            .await
+            .unwrap()
+            .markdown,
+        "source"
+    );
+    assert_eq!(quota.reservations.lock().await.len(), 1);
+    assert_eq!(source.bytes, 6);
+}
+
+struct BlockingBlobs {
+    rows: memory::MemoryDocumentBlobs,
+    block: AtomicBool,
+    started: AtomicUsize,
+    release: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl DocumentBlobStore for BlockingBlobs {
+    async fn put(&self, key: &str, bytes: Vec<u8>) -> Result<(), DocumentError> {
+        if self.block.load(Ordering::SeqCst) {
+            self.started.fetch_add(1, Ordering::SeqCst);
+            self.release.notified().await;
+        }
+        self.rows.put(key, bytes).await
+    }
+
+    async fn get(&self, key: &str) -> Result<Vec<u8>, DocumentError> {
+        self.rows.get(key).await
+    }
+}
+
+#[tokio::test]
+async fn source_write_slots_refuse_without_queueing() {
+    let blobs = Arc::new(BlockingBlobs {
+        rows: Default::default(),
+        block: false.into(),
+        started: 0.into(),
+        release: Default::default(),
+    });
+    let rows = Arc::new(memory::MemoryDocuments::default());
+    let service = DocumentService::new(rows, blobs.clone());
+    let owner = owner();
+    let existing = service.create(&owner, "existing", body()).await.unwrap();
+    blobs.block.store(true, Ordering::SeqCst);
+    let mut tasks = tokio::task::JoinSet::new();
+    for n in 0..DOCUMENT_SOURCE_WRITE_SLOTS {
+        let service = service.clone();
+        let owner = owner.clone();
+        tasks.spawn(async move { service.create(&owner, &format!("source-{n}"), body()).await });
+    }
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while blobs.started.load(Ordering::SeqCst) < DOCUMENT_SOURCE_WRITE_SLOTS {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        service.create(&owner, "source-17", body()).await,
+        Err(DocumentError::Busy)
+    );
+    assert!(service
+        .update(
+            &owner,
+            &existing.id,
+            "title-only",
+            UpdateDocument {
+                expected_revision: 1,
+                title: Some("Still available".into()),
+                markdown: None,
+            },
+        )
+        .await
+        .is_ok());
+    blobs.block.store(false, Ordering::SeqCst);
+    blobs.release.notify_waiters();
+    let mut successes = 0;
+    while let Some(result) = tasks.join_next().await {
+        assert!(result.unwrap().is_ok());
+        successes += 1;
+    }
+    assert_eq!(successes, DOCUMENT_SOURCE_WRITE_SLOTS);
+}
+
+#[tokio::test]
+async fn commit_failure_after_condemned_object_leaves_metadata_unchanged() {
+    let rows = memory::MemoryDocuments::default();
+    let source =
+        DocumentSourceReservation::new("owner", &format!("doc_{}", "a".repeat(32)), b"source");
+    let service = DocumentService::new(
+        Arc::new(memory::MemoryDocuments::default()),
+        Arc::new(memory::MemoryDocumentBlobs::default()),
+    );
+    let record = service.create(&owner(), "record", body()).await.unwrap();
+    let record = service.store.get(&record.id).await.unwrap().unwrap();
+    rows.condemn_source(&source).await;
+    assert_eq!(
+        rows.insert(&record, Some((&source, SourceTicket::Ledgered)))
+            .await,
+        Err(DocumentError::Unavailable)
+    );
+    assert!(rows.get(&record.metadata.id).await.unwrap().is_none());
 }
 
 #[test]

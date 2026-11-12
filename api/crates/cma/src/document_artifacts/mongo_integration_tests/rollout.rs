@@ -113,7 +113,10 @@ async fn expanded_writes_reopen_through_flag_off_rollback_reader() {
             let previous = record.metadata.revision;
             record.metadata.revision += 1;
             saturate(&mut record, bytes);
-            assert!(store.compare_exchange(previous, &record).await.unwrap());
+            assert!(store
+                .compare_exchange(previous, &record, None)
+                .await
+                .unwrap());
             let revision = record.metadata.revision;
 
             let baseline = DocumentService::new(store.clone(), blobs.clone());

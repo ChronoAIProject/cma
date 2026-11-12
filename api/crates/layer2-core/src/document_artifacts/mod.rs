@@ -8,7 +8,7 @@ mod service;
 mod types;
 mod validation;
 pub use quota::*;
-pub use service::DocumentService;
+pub use service::{DocumentService, DOCUMENT_SOURCE_WRITE_SLOTS};
 pub use types::*;
 #[cfg(any(test, feature = "test-support"))]
 pub mod memory;

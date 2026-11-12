@@ -1,3 +1,4 @@
+use super::quota::{DocumentSourceReservation, SourceTicket};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -26,6 +27,8 @@ pub enum DocumentError {
     IdempotencyConflict,
     #[error("Document capacity reached")]
     Capacity,
+    #[error("Document source writes are busy")]
+    Busy,
     #[error("Document storage is unavailable")]
     Unavailable,
     #[error("Document integrity verification failed")]
@@ -241,12 +244,17 @@ impl DocumentListing {
 pub trait DocumentStore: Send + Sync {
     async fn get(&self, id: &str) -> Result<Option<StoredDocument>, DocumentError>;
     /// Insert exactly once; false means the deterministic identity already exists.
-    async fn insert(&self, record: &StoredDocument) -> Result<bool, DocumentError>;
+    async fn insert(
+        &self,
+        record: &StoredDocument,
+        source: Option<(&DocumentSourceReservation, SourceTicket)>,
+    ) -> Result<bool, DocumentError>;
     /// Replace only the same owner/id at the exact revision; never upsert.
     async fn compare_exchange(
         &self,
         expected_revision: u64,
         record: &StoredDocument,
+        source: Option<(&DocumentSourceReservation, SourceTicket)>,
     ) -> Result<bool, DocumentError>;
     /// Owner or explicit recipient grants only; links never make a document searchable.
     /// Return ordered limit+1 matching rows after the cursor.

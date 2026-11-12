@@ -13,18 +13,23 @@ impl DocumentStore for Metadata {
     async fn get(&self, id: &str) -> Result<Option<StoredDocument>, DocumentError> {
         self.rows.get(id).await
     }
-    async fn insert(&self, record: &StoredDocument) -> Result<bool, DocumentError> {
+    async fn insert(
+        &self,
+        record: &StoredDocument,
+        source: Option<(&DocumentSourceReservation, SourceTicket)>,
+    ) -> Result<bool, DocumentError> {
         if self.fail_insert.load(Ordering::SeqCst) {
             return Err(DocumentError::Unavailable);
         }
-        self.rows.insert(record).await
+        self.rows.insert(record, source).await
     }
     async fn compare_exchange(
         &self,
         expected: u64,
         record: &StoredDocument,
+        source: Option<(&DocumentSourceReservation, SourceTicket)>,
     ) -> Result<bool, DocumentError> {
-        let committed = self.rows.compare_exchange(expected, record).await?;
+        let committed = self.rows.compare_exchange(expected, record, source).await?;
         if self.ambiguous_edit.load(Ordering::SeqCst) {
             Err(DocumentError::Unavailable)
         } else {

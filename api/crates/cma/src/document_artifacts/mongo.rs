@@ -7,7 +7,7 @@ use mongodb::{
 
 pub(crate) const COLLECTION: &str = "cma_document_artifacts";
 pub struct MongoDocumentStore {
-    rows: Collection<Document>,
+    pub(super) rows: Collection<Document>,
 }
 impl MongoDocumentStore {
     pub(crate) fn quota(&self, enabled: bool) -> super::MongoDocumentQuotaStore {
@@ -18,6 +18,13 @@ impl MongoDocumentStore {
                 .database(self.rows.namespace().db.as_str()),
             enabled,
         )
+    }
+
+    pub(super) fn quota_rows(&self) -> Collection<Document> {
+        self.rows
+            .client()
+            .database(self.rows.namespace().db.as_str())
+            .collection(super::QUOTA_COLLECTION)
     }
     pub fn new(database: Database) -> Self {
         Self {
@@ -53,7 +60,14 @@ impl DocumentStore for MongoDocumentStore {
             .map_err(|_| DocumentError::Unavailable)?;
         value.as_ref().map(decode).transpose()
     }
-    async fn insert(&self, record: &StoredDocument) -> Result<bool, DocumentError> {
+    async fn insert(
+        &self,
+        record: &StoredDocument,
+        source: Option<(&DocumentSourceReservation, SourceTicket)>,
+    ) -> Result<bool, DocumentError> {
+        if let Some((source, SourceTicket::Ledgered)) = source {
+            return super::commit::insert(self, record, source).await;
+        }
         match self.rows.insert_one(encode(record)?).await {
             Ok(_) => Ok(true),
             Err(error) => {
@@ -70,10 +84,16 @@ impl DocumentStore for MongoDocumentStore {
         &self,
         expected: u64,
         record: &StoredDocument,
+        source: Option<(&DocumentSourceReservation, SourceTicket)>,
     ) -> Result<bool, DocumentError> {
         let expected = i64::try_from(expected).map_err(|_| DocumentError::Corrupt)?;
+        let expected_revision = expected;
         if record.metadata.revision != expected as u64 + 1 {
             return Err(DocumentError::Corrupt);
+        }
+        if let Some((source, SourceTicket::Ledgered)) = source {
+            return super::commit::compare_exchange(self, expected_revision as u64, record, source)
+                .await;
         }
         let result = self.rows.replace_one(doc! {"_id": &record.metadata.id, "owner_subject": &record.metadata.owner_subject, "revision": expected}, encode(record)?)
             .await.map_err(|_| DocumentError::Unavailable)?;
@@ -126,7 +146,7 @@ impl DocumentStore for MongoDocumentStore {
             .collect()
     }
 }
-fn encode(record: &StoredDocument) -> Result<Document, DocumentError> {
+pub(super) fn encode(record: &StoredDocument) -> Result<Document, DocumentError> {
     record.validate()?;
     let data = mongodb::bson::serialize_to_bson(record).map_err(|_| DocumentError::Corrupt)?;
     Ok(
@@ -136,7 +156,7 @@ fn encode(record: &StoredDocument) -> Result<Document, DocumentError> {
         "record": data},
     )
 }
-fn decode(value: &Document) -> Result<StoredDocument, DocumentError> {
+pub(super) fn decode(value: &Document) -> Result<StoredDocument, DocumentError> {
     let data = value.get("record").ok_or(DocumentError::Corrupt)?.clone();
     let record: StoredDocument =
         mongodb::bson::deserialize_from_bson(data).map_err(|_| DocumentError::Corrupt)?;

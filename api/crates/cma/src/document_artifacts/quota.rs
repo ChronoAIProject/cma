@@ -40,7 +40,7 @@ impl MongoDocumentQuotaStore {
     async fn reserve_bounded(
         &self,
         source: &DocumentSourceReservation,
-    ) -> Result<(), DocumentError> {
+    ) -> Result<SourceTicket, DocumentError> {
         let state = self
             .rows
             .find_one(doc! {"_id": STATE})
@@ -48,7 +48,7 @@ impl MongoDocumentQuotaStore {
             .await
             .map_err(unavailable)?;
         match state {
-            None if !self.enabled => return Ok(()),
+            None if !self.enabled => return Ok(SourceTicket::Unledgered),
             Some(state) if self.enabled && ready(&state) => {}
             _ => return Err(DocumentError::Unavailable),
         }
@@ -64,7 +64,7 @@ impl MongoDocumentQuotaStore {
             let outcome = self.reserve_transaction(source, &mut session).await;
             match outcome {
                 Ok(()) => match session.commit_transaction().await {
-                    Ok(()) => return Ok(()),
+                    Ok(()) => return Ok(SourceTicket::Ledgered),
                     Err(error)
                         if retryable(&error)
                             || error.contains_label("UnknownTransactionCommitResult") => {}
@@ -115,7 +115,7 @@ impl MongoDocumentQuotaStore {
             .session(&mut *session)
             .await?
         {
-            return if existing == object {
+            return if object_identity_matches(&existing, &object) {
                 Ok(())
             } else {
                 Err(DocumentError::Corrupt.into())
@@ -129,7 +129,7 @@ impl MongoDocumentQuotaStore {
             .await?;
         let new_document = match existing {
             None => true,
-            Some(existing) if existing == document => false,
+            Some(existing) if document_identity_matches(&existing, &document) => false,
             _ => return Err(DocumentError::Corrupt.into()),
         };
         let additions = [u64::from(new_document), source.bytes, 1];
@@ -157,12 +157,28 @@ impl MongoDocumentQuotaStore {
 
 #[async_trait::async_trait]
 impl DocumentQuotaStore for MongoDocumentQuotaStore {
-    async fn reserve(&self, source: &DocumentSourceReservation) -> Result<(), DocumentError> {
+    async fn reserve(
+        &self,
+        source: &DocumentSourceReservation,
+    ) -> Result<SourceTicket, DocumentError> {
         source.validate()?;
         tokio::time::timeout(IO, self.reserve_bounded(source))
             .await
             .map_err(|_| DocumentError::Unavailable)?
     }
+}
+
+pub(super) fn object_identity_matches(actual: &Document, expected: &Document) -> bool {
+    actual.get("_id") == expected.get("_id")
+        && actual.get("document_schema_version") == expected.get("document_schema_version")
+        && actual.get("kind") == expected.get("kind")
+        && actual.get("bytes") == expected.get("bytes")
+}
+
+fn document_identity_matches(actual: &Document, expected: &Document) -> bool {
+    actual.get("_id") == expected.get("_id")
+        && actual.get("document_schema_version") == expected.get("document_schema_version")
+        && actual.get("kind") == expected.get("kind")
 }
 
 pub(super) fn ready(state: &Document) -> bool {
@@ -198,13 +214,16 @@ pub(super) fn object_row(source: &DocumentSourceReservation) -> Result<Document,
     source.validate()?;
     Ok(
         doc! {"_id": format!("object:{}:{}:{}", source.owner_hash, source.document_id, source.sha256),
-        "document_schema_version": 1_i64, "kind": "object", "bytes": source.bytes as i64},
+        "document_schema_version": 1_i64, "kind": "object", "bytes": source.bytes as i64,
+        // Correctness does not depend on this client timestamp; it only bounds
+        // the reclaim grace period until a server-time migration is available.
+        "state": "reserved", "reserved_at": mongodb::bson::DateTime::now()},
     )
 }
 pub(super) fn unavailable(_: mongodb::error::Error) -> DocumentError {
     DocumentError::Unavailable
 }
-fn retryable(error: &mongodb::error::Error) -> bool {
+pub(super) fn retryable(error: &mongodb::error::Error) -> bool {
     error.contains_label("TransientTransactionError")
         || matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(e)) if e.code == 11000)
 }
