@@ -355,3 +355,55 @@ fn stale_batch_and_missing_source_digests_cannot_create_a_successor() {
     )
     .is_err());
 }
+
+#[test]
+fn segmented_recovery_permission_forces_a_storage_only_successor() {
+    let current = head(10_000, 1_000_000);
+    let batch = EncodedBatch::new(&current, &[]).unwrap();
+    let result = publication(
+        &current,
+        &batch,
+        AppendCapacity::Normal,
+        RolloverPermission::SegmentedRecovery,
+        SourceFormat::Segmented,
+    )
+    .unwrap();
+    let seal = result.seal.expect("recovery must establish a successor");
+    assert_eq!(seal.entry_count, current.active_count);
+    assert_eq!(result.head.last_seq, current.last_seq);
+    assert_eq!(result.head.active_count, 0);
+    assert_eq!(result.head.revision, current.revision + 1);
+    assert!(publication(
+        &current,
+        &batch,
+        AppendCapacity::Normal,
+        RolloverPermission::SegmentedRecovery,
+        SourceFormat::Legacy,
+    )
+    .is_err());
+}
+
+#[test]
+fn segmented_recovery_refuses_empty_source_event_replay_and_terminal_reserves() {
+    for (count, logs, class) in [
+        (0, vec![], AppendCapacity::Normal),
+        (
+            10,
+            vec![entry(11, "replayed input".into())],
+            AppendCapacity::Normal,
+        ),
+        (10, vec![], AppendCapacity::StopOrFailure),
+        (10, vec![], AppendCapacity::Delete),
+    ] {
+        let current = head(count, if count == 0 { 0 } else { 1000 });
+        let batch = EncodedBatch::new(&current, &logs).unwrap();
+        assert!(publication(
+            &current,
+            &batch,
+            class,
+            RolloverPermission::SegmentedRecovery,
+            SourceFormat::Segmented
+        )
+        .is_err());
+    }
+}
