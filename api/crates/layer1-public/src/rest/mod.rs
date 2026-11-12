@@ -132,7 +132,7 @@ mod shared_hierarchy_tests;
 #[cfg(test)]
 mod shared_source_tests;
 #[cfg(test)]
-mod shared_stream_tests;
+pub(crate) mod shared_stream_tests;
 pub use resource_access::resource_access_router;
 #[cfg(test)]
 mod trigger_assets_test_support;

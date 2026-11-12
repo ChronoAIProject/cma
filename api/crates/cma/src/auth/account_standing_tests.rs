@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 struct Source {
     hashes: std::sync::RwLock<BTreeSet<String>>,
     failed: AtomicBool,
+    refresh_failed: AtomicBool,
     refreshes: AtomicUsize,
     point_reads: AtomicUsize,
 }
@@ -12,7 +13,7 @@ struct Source {
 impl SnapshotSource for Source {
     async fn active_hashes(&self) -> Result<BTreeSet<String>, AccountDeletionError> {
         self.refreshes.fetch_add(1, Ordering::SeqCst);
-        if self.failed.load(Ordering::SeqCst) {
+        if self.failed.load(Ordering::SeqCst) || self.refresh_failed.load(Ordering::SeqCst) {
             return Err(AccountDeletionError::Unavailable);
         }
         Ok(self.hashes.read().unwrap().clone())
@@ -29,6 +30,56 @@ fn fixture() -> (Arc<Source>, ErasingSnapshot, SubjectId) {
     let source = Arc::new(Source::default());
     let gate = ErasingSnapshot::with_source(source.clone());
     (source, gate, SubjectId::new("deleting-owner"))
+}
+#[tokio::test(start_paused = true)]
+async fn startup_snapshot_success_uses_memory_and_refreshes_in_background() {
+    let (source, gate, subject) = fixture();
+    let gate = Arc::new(gate);
+    let refreshing = gate.start().await;
+    assert_eq!(source.refreshes.load(Ordering::SeqCst), 1);
+    assert!(!gate.erasing(&subject).await.unwrap());
+    assert_eq!(source.point_reads.load(Ordering::SeqCst), 0);
+    source
+        .hashes
+        .write()
+        .unwrap()
+        .insert(subject_hash(&subject));
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(source.refreshes.load(Ordering::SeqCst), 2);
+    assert!(gate.erasing(&subject).await.unwrap());
+    assert_eq!(source.point_reads.load(Ordering::SeqCst), 0);
+    refreshing.abort();
+}
+#[tokio::test(start_paused = true)]
+async fn startup_snapshot_failure_keeps_point_reads_and_recovers_in_background() {
+    let (source, gate, subject) = fixture();
+    source.refresh_failed.store(true, Ordering::SeqCst);
+    let gate = Arc::new(gate);
+    let refreshing = gate.start().await;
+    assert_eq!(source.refreshes.load(Ordering::SeqCst), 1);
+    assert!(!gate.erasing(&subject).await.unwrap());
+    assert_eq!(source.point_reads.load(Ordering::SeqCst), 1);
+    source.failed.store(true, Ordering::SeqCst);
+    assert_eq!(
+        gate.erasing(&subject).await,
+        Err(AccountDeletionError::Unavailable)
+    );
+    source.failed.store(false, Ordering::SeqCst);
+    source.refresh_failed.store(false, Ordering::SeqCst);
+    source
+        .hashes
+        .write()
+        .unwrap()
+        .insert(subject_hash(&subject));
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(source.refreshes.load(Ordering::SeqCst), 2);
+    assert!(gate.erasing(&subject).await.unwrap());
+    assert_eq!(source.point_reads.load(Ordering::SeqCst), 2);
+    refreshing.abort();
 }
 #[tokio::test]
 async fn accepting_replica_denies_synchronously() {
@@ -309,16 +360,9 @@ impl AccountStanding for ReplayStanding {
     async fn erasing(&self, _: &SubjectId) -> Result<bool, AccountDeletionError> {
         Ok(true)
     }
-    async fn accepted_request_key(
-        &self,
-        _: &SubjectId,
-        key: &str,
-    ) -> Result<bool, AccountDeletionError> {
-        Ok(key == "accepted-request")
-    }
 }
 #[tokio::test]
-async fn deletion_request_allows_only_the_persisted_key_replay_while_erasing() {
+async fn deletion_request_reaches_handler_for_every_personal_request_while_erasing() {
     use axum::{body::Body, http::Request, routing::post, Router};
     use tower::ServiceExt;
     let auth = super::super::AuthState::in_memory(
@@ -339,8 +383,8 @@ async fn deletion_request_allows_only_the_persisted_key_replay_while_erasing() {
         ));
     for (key, expected) in [
         (Some("accepted-request"), 202),
-        (Some("new-request"), 403),
-        (None, 403),
+        (Some("new-request"), 202),
+        (None, 202),
     ] {
         let mut request = Request::post("/api/v1/account/deletion");
         if let Some(key) = key {
@@ -353,6 +397,115 @@ async fn deletion_request_allows_only_the_persisted_key_replay_while_erasing() {
                 .unwrap()
                 .status(),
             expected
+        );
+    }
+}
+
+#[tokio::test]
+async fn personal_account_authority_never_enters_generic_authorization() {
+    use axum::{body::Body, http::Request, routing::get, Extension, Json, Router};
+    use layer2_core::Authorization;
+    use tower::ServiceExt;
+    for enabled in [false, true] {
+        let auth = super::super::AuthState::in_memory(
+            super::super::AuthMode::Trusted {
+                subject: "owner".into(),
+            },
+            None,
+        )
+        .with_account_deletion_enabled(enabled);
+        let original = auth
+            .resolve_request(&Default::default())
+            .await
+            .unwrap()
+            .unwrap();
+        let expected =
+            serde_json::to_value(original.authorization.iter().collect::<Vec<_>>()).unwrap();
+        let app = Router::new()
+            .route(
+                "/api/v1/authorization-fixture",
+                get(
+                    |Extension(authorization): Extension<Authorization>| async move {
+                        Json(authorization.iter().collect::<Vec<_>>())
+                    },
+                ),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                auth,
+                super::super::middleware::attach_subject,
+            ));
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/authorization-fixture")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let actual: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 16384)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            actual, expected,
+            "personal deletion authority must not alter verified grants"
+        );
+    }
+}
+
+#[tokio::test]
+async fn session_deletion_entitlement_requires_subject_bound_marker() {
+    use axum::{body::Body, http::Request, Extension};
+    use layer2_core::{account_deletion::OwnerSessionAuthority, Authorization, Capability};
+    use tower::ServiceExt;
+    for (enabled, marker_subject, expected) in [
+        (true, None, false),
+        (true, Some("other-owner"), false),
+        (true, Some("owner"), true),
+        (false, Some("owner"), false),
+    ] {
+        let auth = super::super::AuthState::in_memory(
+            super::super::AuthMode::Trusted {
+                subject: "owner".into(),
+            },
+            None,
+        )
+        .with_account_deletion_enabled(enabled);
+        let mut app = super::super::router(auth)
+            .layer(Extension(layer1_public::AuthenticatedSubject(
+                SubjectId::new("owner"),
+            )))
+            .layer(Extension(Authorization::new([
+                Capability::UseOwnSandboxes,
+                Capability::DeleteOwnAccount,
+            ])));
+        if let Some(subject) = marker_subject {
+            app = app.layer(Extension(OwnerSessionAuthority::verified_personal(
+                SubjectId::new(subject),
+            )));
+        }
+        let response = app
+            .oneshot(Request::get("/auth/session").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 16384)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            body["capabilities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|capability| capability == "delete_own_account"),
+            expected,
+            "the entitlement requires enabled personal authority for this caller"
         );
     }
 }
@@ -416,7 +569,7 @@ async fn status_remains_readable_when_request_feature_is_disabled_and_session_om
 }
 
 #[test]
-fn delete_authority_is_only_added_to_verified_personal_credentials() {
+fn delete_authority_is_only_marked_for_verified_personal_credentials() {
     use super::super::{profile::Profile, AuthMode, AuthState, RequestAuth};
     use base64::Engine as _;
     use layer2_core::{resource_access::CredentialSource, Authorization, Capability};
@@ -481,15 +634,16 @@ fn delete_authority_is_only_added_to_verified_personal_credentials() {
             binding: None,
             credential_source: source,
             subject: SubjectId::new("owner"),
-            authorization: Authorization::new([Capability::DeleteOwnAccount]),
+            authorization: Authorization::new([Capability::UseOwnSandboxes]),
             profile: Profile::default(),
             delegated_credential: token,
         };
+        let marker = auth.owner_session_authority(&request);
         assert_eq!(
-            auth.account_authorization(&request)
-                .allows(Capability::DeleteOwnAccount),
-            expected
+            marker.as_ref().map(|authority| authority.subject()),
+            expected.then_some(&request.subject)
         );
+        assert!(!request.authorization.allows(Capability::DeleteOwnAccount));
     }
 }
 

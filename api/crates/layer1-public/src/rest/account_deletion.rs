@@ -10,7 +10,7 @@ use axum::{
 };
 use layer2_core::account_deletion::{
     AccountDeletionError, AccountDeletionId, AccountDeletionService, AccountDeletionStatus,
-    ErasureStep, Receipt, StepProgress,
+    ErasureStep, OwnerSessionAuthority, Receipt, StepProgress,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -29,7 +29,7 @@ pub fn account_deletion_router(service: Arc<AccountDeletionService>) -> Router {
 #[serde(deny_unknown_fields)]
 struct DeletionRequest {
     /// Explicit acknowledgement that deletion is irreversible.
-    #[schema(example = "irreversible")]
+    #[schema(required = true, schema_with = acknowledgement_schema)]
     acknowledge: Option<String>,
 }
 
@@ -53,6 +53,12 @@ struct DeletionStepProgress {
     step: ErasureStep,
     completed_at: String,
     counts: BTreeMap<String, u64>,
+}
+fn acknowledgement_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    utoipa::openapi::schema::ObjectBuilder::new()
+        .schema_type(utoipa::openapi::schema::Type::String)
+        .enum_values(Some(["irreversible"]))
+        .into()
 }
 fn status_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
     utoipa::openapi::schema::ObjectBuilder::new()
@@ -116,6 +122,7 @@ async fn request(
     State(service): State<Arc<AccountDeletionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     method: Option<Extension<AuthMethod>>,
+    authority: Option<Extension<OwnerSessionAuthority>>,
     key: IdempotencyKey,
     body: RequestBody<DeletionRequest>,
 ) -> Response {
@@ -133,6 +140,7 @@ async fn request(
     match service
         .request(
             &caller,
+            authority.as_ref().map(|Extension(authority)| authority),
             &key,
             body.acknowledge.as_deref() == Some("irreversible"),
         )
@@ -156,11 +164,18 @@ async fn status(
     State(service): State<Arc<AccountDeletionService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     method: Option<Extension<AuthMethod>>,
+    authority: Option<Extension<OwnerSessionAuthority>>,
 ) -> Response {
     if method.is_some() {
         return account_deletion_problem(AccountDeletionError::RequiresOwnerSession);
     }
-    match service.status(&caller).await {
+    match service
+        .status(
+            &caller,
+            authority.as_ref().map(|Extension(authority)| authority),
+        )
+        .await
+    {
         Ok(receipt) => Json(DeletionReceipt::from(receipt)).into_response(),
         Err(error) => account_deletion_problem(error),
     }
@@ -170,15 +185,14 @@ async fn status(
 pub fn account_deletion_problem(error: AccountDeletionError) -> Response {
     use AccountDeletionError::*;
     let (status, slug, code, detail) = match error {
-        Conflict => return IdempotencyProblem::Reused.into_response(),
-        RecoveryRequired => return IdempotencyProblem::RecoveryRequired.into_response(),
+        RecoveryRequired => (StatusCode::CONFLICT, "idempotency-recovery-required", "idempotency_recovery_required", "Replay this request with the same Idempotency-Key to reconcile its durable acceptance."),
         Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "account-deletion-unavailable", "account_deletion_unavailable", "Account deletion is not enabled."),
         AcknowledgementRequired => (StatusCode::UNPROCESSABLE_ENTITY, "account-deletion-acknowledgement-required", "account_deletion_acknowledgement_required", "Acknowledge irreversible deletion before requesting it."),
         RequiresOwnerSession => (StatusCode::FORBIDDEN, "account-deletion-requires-owner-session", "account_deletion_requires_owner_session", "Account deletion requires a verified human owner session."),
         NotFound => (StatusCode::NOT_FOUND, "account-deletion-not-found", "account_deletion_not_found", "No account deletion request exists."),
         InProgress => (StatusCode::FORBIDDEN, "account-deletion-in-progress", "account_deletion_in_progress", "Account deletion is in progress."),
-        Invalid => return IdempotencyProblem::Invalid.into_response(),
-        Store(_) | StaleFence => (StatusCode::SERVICE_UNAVAILABLE, "store-failed", "store_failed", "Account deletion state is temporarily unavailable. Retry with the original Idempotency-Key."),
+        InvalidIdempotencyKey => return IdempotencyProblem::Invalid.into_response(),
+        Invalid | Conflict | Store(_) | StaleFence => (StatusCode::SERVICE_UNAVAILABLE, "store-failed", "store_failed", "Account deletion state is temporarily unavailable."),
     };
     super::problem_response(status, super::problem_document(status, slug, detail, code))
 }

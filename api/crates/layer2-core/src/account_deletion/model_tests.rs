@@ -54,7 +54,7 @@ fn blocked_rearm_resumes_same_step() {
             fence,
             NOW,
             ErasureBlock::ObjectStoreRefused {
-                reason: "unsupported".into(),
+                reason: ErasureFailureCode::Unsupported,
             },
         )
         .unwrap();
@@ -130,7 +130,7 @@ fn retry_keeps_the_step_and_releases_the_lease() {
         .claim("worker", NOW, Duration::from_secs(90))
         .unwrap();
     deletion
-        .retry(fence, NOW, "temporary failure".into())
+        .retry(fence, NOW, ErasureFailureCode::Unavailable)
         .unwrap();
     assert_eq!(deletion.step, ErasureStep::Inventory);
     assert_eq!(deletion.work.attempts, 1);

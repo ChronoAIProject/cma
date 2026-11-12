@@ -87,8 +87,11 @@ async fn commit_with_stale_revision_conflicts() {
         .await
         .unwrap()
         .unwrap();
+    let token = claimed.work.lease.as_ref().unwrap().token.clone();
     assert_eq!(
-        store.commit(claimed, vec![], original.revision).await,
+        store
+            .commit(claimed, vec![], original.revision, Some(&token))
+            .await,
         Err(AccountDeletionError::Conflict)
     );
     db.drop().await.unwrap();
@@ -146,8 +149,12 @@ async fn completed_record_has_ttl_and_no_subject() {
         ..ResidueReport::default()
     });
     let fence = claimed.work.lease.as_ref().unwrap().fence;
+    let token = claimed.work.lease.as_ref().unwrap().token.clone();
     let event = claimed.complete(fence, &at, retention).unwrap();
-    store.commit(claimed, vec![event], revision).await.unwrap();
+    store
+        .commit(claimed, vec![event], revision, Some(&token))
+        .await
+        .unwrap();
     let row = db
         .collection::<Document>(RECORDS)
         .find_one(doc! {"_id":original.id.as_str()})
@@ -171,6 +178,37 @@ async fn completed_record_has_ttl_and_no_subject() {
         .await
         .unwrap()
         .is_some());
+    let owner = SubjectId::new("owner");
+    for marked in [true, false] {
+        let update = if marked {
+            doc! {"$set":{"active_subject_hash":subject_hash(&owner)}}
+        } else {
+            doc! {"$unset":{"active_subject_hash":""}}
+        };
+        db.collection::<Document>(RECORDS)
+            .update_one(doc! {"_id":original.id.as_str()}, update)
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .active_hashes()
+                .await
+                .unwrap()
+                .contains(&subject_hash(&owner)),
+            marked
+        );
+        assert_eq!(store.erasing(&owner).await.unwrap(), marked);
+        assert!(!store.erasing(&SubjectId::new("other")).await.unwrap());
+        let mut session = db.client().start_session().await.unwrap();
+        crate::store::sandbox_mongo::start_transaction(&mut session)
+            .await
+            .unwrap();
+        assert_eq!(
+            erasing_in_session(&db, &owner, &mut session).await.unwrap(),
+            marked
+        );
+        session.abort_transaction().await.unwrap();
+    }
     db.drop().await.unwrap();
 }
 #[tokio::test]
@@ -254,12 +292,13 @@ async fn persisted_request_keys_allow_only_exact_owner_replays() {
     let (_, db, store) = fixture().await;
     let owner = SubjectId::new("owner");
     store.request(&owner, "first", NOW).await.unwrap();
-    assert!(store.has_request_key(&owner, "first").await.unwrap());
-    assert!(!store.has_request_key(&owner, "different").await.unwrap());
-    assert!(!store
-        .has_request_key(&SubjectId::new("other"), "first")
+    assert!(store.replay(&owner, "first").await.unwrap().is_some());
+    assert!(store.replay(&owner, "different").await.unwrap().is_none());
+    assert!(store
+        .replay(&SubjectId::new("other"), "first")
         .await
-        .unwrap());
+        .unwrap()
+        .is_none());
     let row = db
         .collection::<Document>(RECORDS)
         .find_one(doc! {})
@@ -314,26 +353,45 @@ async fn latest_prefers_active_over_same_second_completed_history() {
 }
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn malformed_active_hash_fails_closed_on_snapshot_and_point_reads() {
+async fn malformed_active_hash_keeps_its_subject_denied_without_blocking_other_rows() {
     let (_, db, store) = fixture().await;
     let owner = SubjectId::new("owner");
     store.request(&owner, "first", NOW).await.unwrap();
     db.collection::<Document>(RECORDS)
         .update_one(
-            doc! {},
+            doc! {"subject_hash":subject_hash(&owner)},
             doc! {"$set":{"active_subject_hash":"e".repeat(64)}},
         )
         .await
         .unwrap();
-    assert!(store.active_hashes().await.is_err());
+    let other = SubjectId::new("other");
+    store.request(&other, "other", NOW).await.unwrap();
+    let snapshot = store.active_hashes().await.unwrap();
+    assert_eq!(
+        snapshot,
+        BTreeSet::from([subject_hash(&owner), subject_hash(&other)])
+    );
+    let live_snapshot = std::sync::Arc::new(crate::auth::account_standing::ErasingSnapshot::new(
+        std::sync::Arc::new(store.clone()),
+    ));
+    let refresh = live_snapshot.start().await;
+    assert!(live_snapshot.erasing(&owner).await.unwrap());
+    assert!(live_snapshot.erasing(&other).await.unwrap());
+    assert!(!live_snapshot
+        .erasing(&SubjectId::new("absent"))
+        .await
+        .unwrap());
+    refresh.abort();
     assert!(store.active(&owner).await.is_err());
+    assert!(store.erasing(&owner).await.unwrap());
+    assert!(!store.erasing(&SubjectId::new("absent")).await.unwrap());
     assert!(store.request(&owner, "different", NOW).await.is_err());
     assert_eq!(
         db.collection::<Document>(RECORDS)
             .count_documents(doc! {})
             .await
             .unwrap(),
-        1
+        2
     );
     let mut session = db.client().start_session().await.unwrap();
     crate::store::sandbox_mongo::start_transaction(&mut session)
@@ -341,5 +399,312 @@ async fn malformed_active_hash_fails_closed_on_snapshot_and_point_reads() {
         .unwrap();
     assert!(erasing_in_session(&db, &owner, &mut session).await.unwrap());
     session.abort_transaction().await.unwrap();
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn malformed_snapshot_row_without_a_valid_subject_does_not_poison_refresh() {
+    let (_, db, store) = fixture().await;
+    let owner = SubjectId::new("owner");
+    store.request(&owner, "original", NOW).await.unwrap();
+    db.collection::<Document>(RECORDS).insert_one(doc! {
+        "_id":"broken-row", "subject_hash":"invalid", "active_subject_hash":"invalid", "status":"running"
+    }).await.unwrap();
+    assert_eq!(
+        store.active_hashes().await.unwrap(),
+        BTreeSet::from([subject_hash(&owner)])
+    );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn claim_due_skips_a_malformed_oldest_row_and_claims_the_next_valid_record() {
+    let (_, db, store) = fixture().await;
+    let bad = store
+        .request(&SubjectId::new("broken-owner"), "broken", NOW)
+        .await
+        .unwrap();
+    let good = store
+        .request(&SubjectId::new("healthy-owner"), "healthy", LATER)
+        .await
+        .unwrap();
+    db.collection::<Document>(RECORDS)
+        .update_one(
+            doc! {"_id":bad.id.as_str()},
+            doc! {"$set":{"document_schema_version":999_i64}},
+        )
+        .await
+        .unwrap();
+    let claimed = store
+        .claim_due("worker", LATER, Duration::from_secs(90))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, good.id);
+    assert!(store.get(&bad.id).await.is_err());
+    assert!(store
+        .claim_due("other", LATER, Duration::from_secs(90))
+        .await
+        .unwrap()
+        .is_none());
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn claim_due_skips_corrupt_replay_keys_without_releasing_the_subject_gate() {
+    for mutation in [
+        doc! {"$unset":{"request_keys":""}},
+        doc! {"$set":{"request_keys":mongodb::bson::Bson::Null}},
+        doc! {"$set":{"request_keys":[7_i64]}},
+    ] {
+        let (_, db, store) = fixture().await;
+        let owner = SubjectId::new("broken-replay-owner");
+        let bad = store.request(&owner, "broken", NOW).await.unwrap();
+        let good = store
+            .request(&SubjectId::new("healthy-owner"), "healthy", LATER)
+            .await
+            .unwrap();
+        db.collection::<Document>(RECORDS)
+            .update_one(doc! {"_id":bad.id.as_str()}, mutation)
+            .await
+            .unwrap();
+        assert!(store.erasing(&owner).await.unwrap());
+        assert!(store
+            .active_hashes()
+            .await
+            .unwrap()
+            .contains(&subject_hash(&owner)));
+        assert_eq!(
+            store
+                .claim_due("worker", LATER, Duration::from_secs(90))
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            good.id
+        );
+        assert!(store
+            .claim_due("other", LATER, Duration::from_secs(90))
+            .await
+            .unwrap()
+            .is_none());
+        db.drop().await.unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn unknown_fields_are_quarantined_while_the_subject_remains_gated() {
+    let (_, db, store) = fixture().await;
+    let owner = SubjectId::new("future-owner");
+    let future = store.request(&owner, "future", NOW).await.unwrap();
+    let healthy = store
+        .request(&SubjectId::new("healthy-owner"), "healthy", LATER)
+        .await
+        .unwrap();
+    db.collection::<Document>(RECORDS)
+        .update_one(
+            doc! {"_id":future.id.as_str()},
+            doc! {"$set":{"future_schema_field":true}},
+        )
+        .await
+        .unwrap();
+    assert!(store.active(&owner).await.is_err());
+    assert!(store.erasing(&owner).await.unwrap());
+    assert!(store
+        .active_hashes()
+        .await
+        .unwrap()
+        .contains(&subject_hash(&owner)));
+    assert_eq!(
+        store
+            .claim_due("worker", LATER, Duration::from_secs(90))
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        healthy.id
+    );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn active_new_keys_return_existing_without_growing_persisted_keys() {
+    let (_, db, store) = fixture().await;
+    let owner = SubjectId::new("owner");
+    let original = store.request(&owner, "original", NOW).await.unwrap();
+    for index in 0..32 {
+        let key = format!("new-{index}");
+        assert_eq!(
+            store.request(&owner, &key, NOW).await.unwrap().id,
+            original.id
+        );
+        assert!(store.replay(&owner, &key).await.unwrap().is_none());
+    }
+    let row = db
+        .collection::<Document>(RECORDS)
+        .find_one(doc! {"_id":original.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.get_array("request_keys").unwrap().len(), 1);
+    assert_eq!(
+        store.replay(&owner, "original").await.unwrap().unwrap().id,
+        original.id
+    );
+    assert!(store
+        .replay(&SubjectId::new("other"), "original")
+        .await
+        .unwrap()
+        .is_none());
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn renew_and_defer_commit_without_audit_sequence_gaps() {
+    let (_, db, store) = fixture().await;
+    let original = store
+        .request(&SubjectId::new("owner"), "original", NOW)
+        .await
+        .unwrap();
+    let mut record = store
+        .claim_due("worker", NOW, Duration::from_secs(90))
+        .await
+        .unwrap()
+        .unwrap();
+    let lease = record.work.lease.clone().unwrap();
+    let revision = record.revision;
+    record
+        .renew(lease.fence, "2026-11-14T00:01:00Z", Duration::from_secs(90))
+        .unwrap();
+    store
+        .commit(record.clone(), vec![], revision, Some(&lease.token))
+        .await
+        .unwrap();
+    let revision = record.revision;
+    record.defer(lease.fence, "2026-11-14T00:03:00Z").unwrap();
+    store
+        .commit(record, vec![], revision, Some(&lease.token))
+        .await
+        .unwrap();
+    assert!(store
+        .claim_due("other", LATER, Duration::from_secs(90))
+        .await
+        .unwrap()
+        .is_none());
+    let claimed = store
+        .claim_due("other", "2026-11-14T00:03:00Z", Duration::from_secs(90))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.event_seq, 3);
+    assert_eq!(
+        store
+            .events(&original.id)
+            .await
+            .unwrap()
+            .iter()
+            .map(|event| event.seq)
+            .collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn commit_compares_the_callers_lease_token_with_persisted_authority() {
+    let (_, db, store) = fixture().await;
+    let original = store
+        .request(&SubjectId::new("owner"), "original", NOW)
+        .await
+        .unwrap();
+    let mut record = store
+        .claim_due("worker", NOW, Duration::from_secs(90))
+        .await
+        .unwrap()
+        .unwrap();
+    let lease = record.work.lease.clone().unwrap();
+    let revision = record.revision;
+    record
+        .renew(lease.fence, NOW, Duration::from_secs(90))
+        .unwrap();
+    assert_eq!(
+        store
+            .commit(record.clone(), vec![], revision, Some("wrong-token"))
+            .await,
+        Err(AccountDeletionError::StaleFence)
+    );
+    db.collection::<Document>(RECORDS)
+        .update_one(
+            doc! {"_id":original.id.as_str()},
+            doc! {"$set":{"work.lease.token":"replacement-token"}},
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .commit(record, vec![], revision, Some(&lease.token))
+            .await,
+        Err(AccountDeletionError::StaleFence)
+    );
+    assert_eq!(
+        store.get(&original.id).await.unwrap().unwrap().revision,
+        revision
+    );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn snapshot_uses_the_partial_marker_index_and_point_reads_project_only_authority() {
+    use mongodb::{
+        event::command::CommandEvent, event::EventHandler, options::ClientOptions, Client,
+    };
+    use std::sync::{Arc, Mutex};
+    let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let observed = commands.clone();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        if let CommandEvent::Started(event) = event {
+            if event.command_name == "find" {
+                observed.lock().unwrap().push(event.command);
+            }
+        }
+    }));
+    let client = Client::with_options(options).unwrap();
+    let db = client.database(&format!(
+        "cma_acd_projection_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let store = MongoAccountDeletionStore::open(&db).await.unwrap();
+    let owner = SubjectId::new("owner");
+    store.request(&owner, "original", NOW).await.unwrap();
+    commands.lock().unwrap().clear();
+    store.active_hashes().await.unwrap();
+    assert!(store.erasing(&owner).await.unwrap());
+    {
+        let reads = commands.lock().unwrap();
+        assert_eq!(reads.len(), 2);
+        assert_eq!(
+            reads[0].get_document("filter").unwrap(),
+            &doc! {"active_subject_hash":{"$exists":true}}
+        );
+        assert_eq!(
+            reads[0].get_str("hint").unwrap(),
+            "account_deletions_active_subject"
+        );
+        let projection = reads[1].get_document("projection").unwrap();
+        assert!(!projection.contains_key("inventory"));
+        assert!(!projection.contains_key("request_keys"));
+        assert!(projection.get_i32("subject_hash").unwrap_or(0) == 1);
+    }
     db.drop().await.unwrap();
 }

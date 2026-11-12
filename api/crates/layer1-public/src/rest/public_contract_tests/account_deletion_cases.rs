@@ -5,7 +5,7 @@ use layer2_core::{
     account_deletion::{
         AccountDeletion, AccountDeletionError, AccountDeletionId, AccountDeletionService,
         AccountDeletionStore, AccountStanding, AvailableAccounts, ErasureEvent,
-        MemoryAccountDeletionStore,
+        MemoryAccountDeletionStore, OwnerSessionAuthority,
     },
     Authorization, Capability, SubjectId,
 };
@@ -21,8 +21,6 @@ impl FaultStore {
     fn failure(&self) -> AccountDeletionError {
         match self.mode {
             "recovery" => AccountDeletionError::RecoveryRequired,
-            "conflict" => AccountDeletionError::Conflict,
-            "in_progress" => AccountDeletionError::InProgress,
             _ => AccountDeletionError::Store("contract account deletion store unavailable".into()),
         }
     }
@@ -37,6 +35,14 @@ impl AccountDeletionStore for FaultStore {
         _: &str,
     ) -> Result<AccountDeletion, AccountDeletionError> {
         Err(self.failure())
+    }
+
+    async fn replay(
+        &self,
+        subject: &SubjectId,
+        key: &str,
+    ) -> Result<Option<AccountDeletion>, AccountDeletionError> {
+        self.inner.replay(subject, key).await
     }
 
     async fn active(
@@ -71,19 +77,20 @@ impl AccountDeletionStore for FaultStore {
         deletion: AccountDeletion,
         events: Vec<ErasureEvent>,
         expected_revision: u64,
+        expected_lease_token: Option<&str>,
     ) -> Result<(), AccountDeletionError> {
-        self.inner.commit(deletion, events, expected_revision).await
+        self.inner
+            .commit(deletion, events, expected_revision, expected_lease_token)
+            .await
     }
 }
 
 pub(super) fn scenario(name: &str) -> Option<Scenario> {
     let mode = name.strip_prefix("account_deletion_")?;
     let store: Arc<dyn AccountDeletionStore> = match mode {
-        "store_error" | "recovery" | "conflict" | "in_progress" => Arc::new(FaultStore {
+        "store_error" | "recovery" => Arc::new(FaultStore {
             mode: match mode {
                 "recovery" => "recovery",
-                "conflict" => "conflict",
-                "in_progress" => "in_progress",
                 _ => "store_error",
             },
             inner: MemoryAccountDeletionStore::default(),
@@ -93,15 +100,23 @@ pub(super) fn scenario(name: &str) -> Option<Scenario> {
         }
         _ => panic!("unknown account deletion contract scenario {mode}"),
     };
+    let router = super::super::account_deletion::account_deletion_router(Arc::new(
+        AccountDeletionService::new(store, Arc::new(AvailableAccounts), mode != "disabled"),
+    ));
+    let router = if mode == "nonhuman" || mode == "anonymous" {
+        router
+    } else {
+        router.layer(axum::Extension(OwnerSessionAuthority::verified_personal(
+            SubjectId::new("owner"),
+        )))
+    };
     Some(Scenario {
-        router: super::super::account_deletion::account_deletion_router(Arc::new(
-            AccountDeletionService::new(store, Arc::new(AvailableAccounts), mode != "disabled"),
-        )),
+        router,
         subject: (mode != "anonymous").then_some("owner"),
         authorization: if mode == "nonhuman" {
             Authorization::new([Capability::UseBindingConversations])
         } else {
-            Authorization::new([Capability::DeleteOwnAccount])
+            Authorization::new([Capability::UseOwnSandboxes])
         },
         symbols: Default::default(),
     })
