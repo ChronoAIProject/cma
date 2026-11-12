@@ -35,7 +35,7 @@ Mongo or provider result.
 Build and run the common supervisor tests with:
 
 ```sh
-cargo test --manifest-path api/Cargo.toml -p cma --bin cma worker_supervision -- --nocapture
+cargo +1.96.1 test --locked --manifest-path api/Cargo.toml -p cma --bin cma worker_supervision -- --nocapture
 ```
 
 The same test binary can run the `scheduler`, `health::`, `warm_pools::`,
@@ -140,3 +140,109 @@ running state and source/binary hashes are in
 `/tmp/cma-1740-service/`; credentials and private keys are excluded from the
 evidence bundle. The last verified CMA PID was 3823 and it was left running for
 local inspection, together with its loopback Mongo and provider fixture.
+
+## Final synchronized verification (2026-11-12)
+
+The final code checks used source `ae92da71f`, based on `develop` at
+`fa292b83473aa414a43ab9e23edc14a40e8b0aea`, and the repository-pinned Rust
+1.96.1. The pinned test executable SHA-256 is
+`5337bfff5f16e7d2b0cc8834e2fb67c1656393c8b92ae16da1c1a1c151b08281`.
+Strict `cargo +1.96.1 clippy --locked --manifest-path api/Cargo.toml -p cma
+--all-targets --all-features -- -D warnings` passed without lint overrides.
+The earlier pre-synchronization Clippy diagnostic above is historical and does
+not apply to this pinned final result. Formatting, source-size, configuration
+key/documentation, API documentation and provider/release workflow contract
+checks also passed.
+All 136 focused tests passed: eight supervisor tests, 51 scheduler tests,
+eleven health tests, 29 warm-pool tests, 23 Launch recovery tests, two shutdown
+tests, six background-budget tests, two metric tests, and four explicitly run
+real MongoDB 8.0.13 replica-set regressions. The default warm-pool selection
+still leaves nine tests ignored; its fencing/replay test was then run explicitly.
+Eight other opt-in warm-pool integration tests are not claimed as executed.
+The new regressions verify recovery while all Sandbox/Workspace slots hold long
+children, retained-child draining during backoff, and immediate shutdown of a
+suspended scheduling future. No duplicate child execution was observed.
+
+The opt-in whole-service test also passed. It starts the actual `serve()`
+composition in a **test executable**, opens real HTTP/metrics listeners, and uses
+the isolated Mongo database and TLS provider fixture described above. Faults
+are injected at the scheduling future's poll boundary; all injection code and
+state are `#[cfg(test)]` and absent from ordinary service binaries. There is no
+production fault endpoint or deployment configuration switch.
+
+| Worker | Fault | First unavailable state (seconds) | Running and ready again (seconds) |
+| --- | --- | ---: | ---: |
+| `launches` | panic | 1.081 | 2.105 |
+| `agent_commands` | panic | 0.108 | 1.092 |
+| `sandbox_commands` | panic | 0.765 | 1.753 |
+| `agents` | panic | 0.941 | 1.921 |
+| `sandboxes` | panic | 0.950 | 1.994 |
+| `workspaces` | panic | 0.905 | 1.908 |
+| `native_warm_pools` | panic | 1.132 | 2.212 |
+| `agent_commands` | exit | 0.237 | 2.254 |
+| `agent_commands` | stall | 5.150 | 9.845 |
+
+All nine cases ran in the same PID 22735. Each target's restart counter increased
+by exactly one, with the corresponding panic/exit/stall reason; other workers
+stayed running and their restart counters did not change. Required capability
+loss returned `/ready` 503 with reason `workers` while cached Mongo stayed
+healthy. Optional warm-pool failure kept readiness 200. Every sampled `/livez`
+response was 200, and Sandbox list reads succeeded after each recovery.
+The service then handled SIGTERM and returned successfully through its normal
+shutdown path. The external sampler retained 422 HTTP observations and 40 metric
+scrapes. These are individual observed wall-clock timings, not deployment bounds.
+The stall followed two earlier failures of the same worker, so its four-second
+backoff accounts for the longer recovery time.
+
+Reproduce the whole-service test with disposable loopback Mongo/provider settings
+and the explicit isolation guard:
+
+```sh
+CHRONO_TEST_WORKER_SERVICE_FAULTS=isolated \
+CHRONO_SERVER_RATE_HEALTH_PER_MINUTE=10000 \
+RUST_MIN_STACK=33554432 \
+cargo +1.96.1 test --locked --manifest-path api/Cargo.toml -p cma --bin cma \
+  worker_supervision::service_fault_tests::whole_service_worker_failures_recover_over_http \
+  -- --exact --ignored --nocapture --test-threads=1
+```
+
+The elevated local health sampling budget prevents the application's enabled
+rate limiter from rejecting high-frequency test probes; it is not a production
+configuration change. The first harness run hit the default health limit with
+429 and is retained separately. Final results and raw samples are in
+`/tmp/cma-1740-evidence/service-worker-faults-final/`; the focused suite, exact
+commands, source SHA and executable hash are in `final-pinned/` beside it.
+
+Worker failure and recovery do not require Kubernetes to induce or repair the
+fault. The loopback provider fixture only satisfies application composition;
+no cluster operation or production context was used. This service test admits
+no business executions. It does not measure confirmed durable work progress or
+preservation of a real runtime/home/conversation; the separate deployment and
+provider-journey qualification requirements above remain open.
+
+## Ordinary service binary re-verification after synchronization
+
+Built the ordinary `cma` executable from the same source `ae92da71f` with
+`cargo +1.96.1 build --locked --manifest-path api/Cargo.toml -p cma --bin cma`.
+Its SHA-256 is
+`68c6781cab3915edfd027f5c120f940a8811cf8bac72ee6461ba0fa4bf048520`.
+This executable contains no worker fault-injection hooks. It uses the isolated
+local configuration above, including verified provider TLS and the current
+exact scoped runtime Mongo role; no application authority checks were bypassed.
+
+| Observation | Final ordinary binary result |
+| --- | --- |
+| Startup and reads | `/ready`, `/livez`, `/api/v1/sandboxes`, `/api/v1/conformance` all returned 200 |
+| Idle scheduling | All seven worker heartbeats advanced over 15 seconds; worker restarts stayed zero |
+| Mongo interruption | SIGSTOP of disposable Mongo for 5.107 seconds; readiness 503 with reason `store` after 2.552 seconds; liveness stayed 200 |
+| Mongo recovery | Same CMA PID 24065 returned to readiness 200 after 0.511 seconds; Sandbox reads succeeded; no worker restarted |
+| Intentional shutdown | Separately owned PID 24030 received SIGTERM, exited 0 after 0.009 seconds, and closed its HTTP listener; all seven workers logged `stopped`, with no drain deadline warning |
+| Final local state | PID 24065 remains running on `http://127.0.0.1:58483`, metrics on port 58484; all seven workers running |
+
+The shutdown run used an empty execution database and did not exercise draining
+real business work. Retained-child shutdown behavior is covered separately by
+the focused regressions. These local observations do not qualify production
+images or real provider/runtime execution. Final ordinary service logs, metric
+snapshots, HTTP samples, commands, source/binary identity and shutdown results
+are in `/tmp/cma-1740-evidence/service-startup-final/`. The preceding
+pre-synchronization process results are retained as historical evidence only.
