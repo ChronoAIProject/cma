@@ -70,6 +70,7 @@ pub struct RateLimitConfig {
     pub default_per_minute: NonZeroU32,
     pub create_per_minute: NonZeroU32,
     pub input_per_minute: NonZeroU32,
+    pub control_per_minute: NonZeroU32,
     pub response_input_tier_enabled: bool,
 }
 
@@ -109,6 +110,12 @@ impl RateLimitConfig {
             )?,
             create_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_CREATE_PER_MINUTE", 10, 1)?,
             input_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_INPUT_PER_MINUTE", 120, 1)?,
+            control_per_minute: positive_u32(
+                lookup,
+                "CHRONO_SERVER_RATE_CONTROL_PER_MINUTE",
+                120,
+                1,
+            )?,
         })
     }
 }

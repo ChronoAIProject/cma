@@ -90,6 +90,7 @@ fn visitor_limiters() -> Arc<RateLimiters> {
         quota(),
         quota(),
         quota(),
+        quota(),
         TrustedProxyConfig::sample(),
     ))
 }
@@ -160,6 +161,7 @@ async fn connection_polling_keeps_creation_available_and_users_have_separate_log
         quota(100),
         quota(40),
         quota(1),
+        quota(100),
         quota(100),
         TrustedProxyConfig::sample(),
     ));

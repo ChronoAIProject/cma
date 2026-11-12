@@ -119,3 +119,39 @@ mod shared_output_tests {
         }
     }
 }
+
+#[test]
+fn control_rate_rejects_invalid_values_at_startup() {
+    let key = "CHRONO_SERVER_RATE_CONTROL_PER_MINUTE";
+    for invalid in ["", "0", "-1", "1.5", "nope", " 20", "4294967296"] {
+        let error = configured(&[(key, invalid)]).unwrap_err();
+        assert!(error.contains(key), "{error}");
+    }
+}
+
+#[test]
+fn control_rate_defaults_to_120_and_accepts_positive_u32_values() {
+    let defaults = configured(&[]).unwrap().rate_limits;
+    assert_eq!(defaults.control_per_minute.get(), 120);
+    assert_eq!(defaults.create_per_minute.get(), 10);
+    assert_eq!(defaults.input_per_minute.get(), 120);
+    assert!(!defaults.response_input_tier_enabled);
+    let key = "CHRONO_SERVER_RATE_CONTROL_PER_MINUTE";
+    for value in [1, 20, 120, u32::MAX] {
+        let raw = value.to_string();
+        let limits = configured(&[(key, &raw)]).unwrap().rate_limits;
+        assert_eq!(limits.control_per_minute.get(), value);
+        assert_eq!(
+            limits.create_per_minute.get(),
+            defaults.create_per_minute.get()
+        );
+        assert_eq!(
+            limits.input_per_minute.get(),
+            defaults.input_per_minute.get()
+        );
+        assert_eq!(
+            limits.response_input_tier_enabled,
+            defaults.response_input_tier_enabled
+        );
+    }
+}
