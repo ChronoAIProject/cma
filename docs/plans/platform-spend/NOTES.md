@@ -225,7 +225,8 @@ Three were fixed with a failing test first:
 
 The fourth (a refusal at `committed + L > disposable` enters `SpendStop` while
 `committed` is still below `disposable`) is the plan's admission semantics and
-TC-126's expectation; it is kept and recorded as contract decision 29.
+TC-126's expectation; it was kept and recorded as contract decision 29, which
+the user later reversed (see "Decision 29 ruling" below).
 
 ### Review round 1
 
@@ -249,8 +250,35 @@ test that failed first.
 - Section 5.3 states that the alert also fires for `MeteringUnavailable` (the
   code already did).
 - Decisions 26 (keep-alive under a platform pause) and 29 (refusal entering
-  `SpendStop` before `committed` reaches `disposable`) are unchanged and wait
-  for the user's ruling.
+  `SpendStop` before `committed` reaches `disposable`) were left unchanged for
+  the user's ruling.
+
+### Decision 29 ruling (2026-11-12)
+
+The user ruled "stop at 100%"; the parent session relayed it. Decision 26
+still waits for a ruling and is unchanged.
+
+- An allowance that does not fit while `committed < disposable` is refused
+  with `platform_budget_exhausted` and enters no `SpendStop` (a missing
+  `SpendWarning` only, once `committed ≥ warning_level`); running turns
+  continue and no Sandbox is paused.
+- `SpendStop` is entered only at `committed ≥ disposable`: by the evaluator
+  (decision 20, unchanged) or by a refused admission or zero-liability check
+  that finds it there. A zero-liability commitment at exactly `disposable` is
+  refused, matching the evaluator.
+- This departs from the plan's Task 2 refusal semantics and from TC-126's
+  original "refusal enters the stop" expectation; contract section 11 item 2
+  now drives `committed` to `disposable` by settlement or observation.
+- The Mongo test that asserted a refusal-entered stop became
+  `an_allowance_that_does_not_fit_is_refused_and_running_work_stops_only_at_disposable`
+  (a running turn keeps going after the refusal and receives the cancel only
+  after an observation brings `committed` to `disposable`). The two-store
+  test now checks that the race enters no stop and that both stores' later
+  refusals at `disposable` record exactly one. The aborted-transaction test
+  reaches `disposable` through observed cloud spend instead of an oversized
+  allowance.
+- `platform_budget_exhausted` guidance no longer says the Sandbox is paused;
+  the section 5.2 pause reason covers a pause.
 
 ## Blocked
 
