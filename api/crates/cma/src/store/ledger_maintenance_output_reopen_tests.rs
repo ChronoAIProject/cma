@@ -19,6 +19,7 @@ async fn reopening(
         .await;
     parent.runtime.as_mut().unwrap().boot_id = Some("b".repeat(32));
     support::retain_home(&mut parent);
+    support::insert_hierarchy(store, &parent, &current).await;
     let at = layer2_core::now_rfc3339();
     let native = current.conversation.conversation_id.clone().unwrap();
     let archive = b"original conversation fixture".to_vec();

@@ -35,6 +35,7 @@ async fn fixture() -> (mongodb::Client, String, MongoSandboxStore, Sandbox, Agen
     support::retain_home(&mut parent);
     parent.revision += 1;
     store.save_sandbox(revision, parent.clone()).await.unwrap();
+    support::insert_hierarchy(&store, &parent, &current).await;
     (client, name, store, parent, current)
 }
 

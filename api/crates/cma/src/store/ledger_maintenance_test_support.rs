@@ -8,7 +8,7 @@ use layer2_core::sandbox::store::ledger_maintenance::{
     LedgerMaintenanceAdmission, LedgerMaintenanceStore,
 };
 use layer2_core::sandbox::*;
-use layer2_core::{Authorization, Caller, Capability, WorkspaceId, WorkspaceProfileId};
+use layer2_core::{Authorization, Caller, Capability, WorkspaceProfileId};
 use layer3_adapter::runtime_ledger_maintenance::{
     LedgerBindingV1, LedgerSourceFormatV1, LEDGER_BINDING_FORMAT,
 };
@@ -31,7 +31,6 @@ pub(super) fn lease(expires_at: &str) -> LedgerMaintenanceLeaseV1 {
 }
 
 pub(super) async fn fixture(store: &MongoSandboxStore, lane: bool) -> LedgerMaintenanceAdmission {
-    use layer2_core::profiles::*;
     let mut sandbox = active_sandbox("ledger-fixture-parent");
     sandbox.runtime.as_mut().unwrap().boot_id = Some("b".repeat(32));
     retain_home(&mut sandbox);
@@ -39,66 +38,13 @@ pub(super) async fn fixture(store: &MongoSandboxStore, lane: bool) -> LedgerMain
         sandbox.owner.clone(),
         Authorization::new([Capability::UseOwnSandboxes]),
     );
-    let workspace = Workspace {
-        id: WorkspaceId(format!("wks_{}", sandbox.id)),
-        sandbox_id: sandbox.id.clone(),
-        owner: sandbox.owner.clone(),
-        origin: WorkspaceOrigin::Manual,
-        profile: WorkspaceProfileSnapshot {
-            id: WorkspaceProfileId("fixture-profile".into()),
-            revision: 1,
-            digest: "a".repeat(64),
-            content: WorkspaceProfileContent {
-                location: WorkspaceLocation::Directory {
-                    name: "fixture".into(),
-                },
-                name: "fixture".into(),
-                setup_commands: vec![],
-                agent_profiles: vec![],
-            },
-        },
-        name: "fixture".into(),
-        path: "/home/cma/fixture".into(),
-        source: WorkspaceSource::Empty,
-        resolved_commit: Some("c".repeat(40)),
-        status: WorkspaceStatus::Ready,
-        work: WorkspaceWorkState::new(WorkspaceWorkStep::None, NOW.into()),
-        next_worktree_number: 2,
-        created_at: NOW.into(),
-        ready_at: Some(NOW.into()),
-        failed: None,
-        removed_at: None,
-        revision: 1,
-    };
     let agent = ready_agent(&sandbox, "fixture-agent");
-    let worktree = Worktree {
-        id: agent.worktree_id.clone(),
-        workspace_id: workspace.id.clone(),
-        sandbox_id: sandbox.id.clone(),
-        owner: sandbox.owner.clone(),
-        name: "wt-1".into(),
-        path: "/home/cma/fixture/.worktrees/wt-1".into(),
-        branch: "cma/wt-1".into(),
-        base_commit: "c".repeat(40),
-        status: WorktreeStatus::Ready,
-        agent_id: Some(agent.id.clone()),
-        revision: 1,
-    };
     store
         .sandboxes
         .insert_one(super::sandboxes::sandbox_document(&sandbox, 0).unwrap())
         .await
         .unwrap();
-    store
-        .workspaces
-        .insert_one(super::workspaces::workspace_document(&workspace).unwrap())
-        .await
-        .unwrap();
-    store
-        .worktrees
-        .insert_one(super::worktrees::worktree_document(&worktree).unwrap())
-        .await
-        .unwrap();
+    insert_hierarchy(store, &sandbox, &agent).await;
     store
         .agents
         .insert_one(super::agents::agent_document(&agent).unwrap())
@@ -164,6 +110,68 @@ pub(super) async fn fixture(store: &MongoSandboxStore, lane: bool) -> LedgerMain
         lease: lease(EXPIRED),
         now: NOW.into(),
     }
+}
+
+/// Complete the actual Agent's hierarchy before maintenance inspection. Output
+/// fixtures originally omitted these rows; a dangling Worktree must refuse.
+pub(super) async fn insert_hierarchy(store: &MongoSandboxStore, sandbox: &Sandbox, agent: &Agent) {
+    use layer2_core::profiles::*;
+    assert_eq!(agent.sandbox_id, sandbox.id);
+    assert_eq!(agent.owner, sandbox.owner);
+    let workspace = Workspace {
+        id: agent.workspace_id.clone(),
+        sandbox_id: sandbox.id.clone(),
+        owner: sandbox.owner.clone(),
+        origin: WorkspaceOrigin::Manual,
+        profile: WorkspaceProfileSnapshot {
+            id: WorkspaceProfileId("fixture-profile".into()),
+            revision: 1,
+            digest: "a".repeat(64),
+            content: WorkspaceProfileContent {
+                location: WorkspaceLocation::Directory {
+                    name: "fixture".into(),
+                },
+                name: "fixture".into(),
+                setup_commands: vec![],
+                agent_profiles: vec![],
+            },
+        },
+        name: "fixture".into(),
+        path: "/home/cma/fixture".into(),
+        source: WorkspaceSource::Empty,
+        resolved_commit: Some("c".repeat(40)),
+        status: WorkspaceStatus::Ready,
+        work: WorkspaceWorkState::new(WorkspaceWorkStep::None, NOW.into()),
+        next_worktree_number: 2,
+        created_at: NOW.into(),
+        ready_at: Some(NOW.into()),
+        failed: None,
+        removed_at: None,
+        revision: 1,
+    };
+    let worktree = Worktree {
+        id: agent.worktree_id.clone(),
+        workspace_id: workspace.id.clone(),
+        sandbox_id: sandbox.id.clone(),
+        owner: sandbox.owner.clone(),
+        name: "wt-1".into(),
+        path: "/home/cma/fixture/.worktrees/wt-1".into(),
+        branch: "cma/wt-1".into(),
+        base_commit: "c".repeat(40),
+        status: WorktreeStatus::Ready,
+        agent_id: Some(agent.id.clone()),
+        revision: 1,
+    };
+    store
+        .workspaces
+        .insert_one(super::workspaces::workspace_document(&workspace).unwrap())
+        .await
+        .unwrap();
+    store
+        .worktrees
+        .insert_one(super::worktrees::worktree_document(&worktree).unwrap())
+        .await
+        .unwrap();
 }
 
 pub(super) fn artifact(plan: &LedgerMaintenancePlanV1) -> LedgerMaintenancePlanArtifactV1 {
