@@ -354,12 +354,12 @@ async fn start_turn(
         return Err(domain(BudgetError::Unavailable));
     }
     require_runtime(agent)?;
+    if prior.is_some() {
+        // The admitted hold remains valued if its owner policy is removed;
+        // current platform STOP authority still applies before dispatch.
+        period::require_open(store, now, session).await?;
+    }
     if let Some(policy) = &live_policy {
-        if prior.is_some() {
-            // A queued turn's liability was admitted with its command; a stop
-            // entered since then still refuses starting it.
-            period::require_open(store, now, session).await?;
-        }
         record.reservation.revalidate(policy).map_err(domain)?;
         let mut owner = owner_budget(store, agent, policy, now, session).await?;
         owner.advance(policy, now).map_err(domain)?;
