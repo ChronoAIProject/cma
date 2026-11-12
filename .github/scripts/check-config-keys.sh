@@ -172,7 +172,3 @@ check_project cma api
 if [[ -e "${repository_root}/infra/cmaeg/configmap.yaml" || -L "${repository_root}/infra/cmaeg/configmap.yaml" ]]; then
   check_project cmaeg cmaeg
 fi
-
-if [[ -e "${repository_root}/infra/image-manager/configmap.yaml" || -L "${repository_root}/infra/image-manager/configmap.yaml" ]]; then
-  check_project cma-image-manager image-manager
-fi
