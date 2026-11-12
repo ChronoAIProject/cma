@@ -69,8 +69,7 @@ pub(super) fn install(
     if std::env::var("CHRONO_MONGO_DIAGNOSTICS_ENABLED").as_deref() == Ok("false") {
         return None;
     }
-    let mut diagnostics = Diagnostics::default();
-    diagnostics.1 = pool;
+    let diagnostics = Diagnostics(Diagnostics::default().0, pool);
     let commands = diagnostics.clone();
     options.command_event_handler = Some(mongodb::event::EventHandler::callback(move |event| {
         commands.command(event)
