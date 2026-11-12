@@ -158,7 +158,7 @@ impl Bridge {
         let _ = self.send(&frame).await;
     }
 
-    async fn session_update(&self, frame: &serde_json::Value, updates: &UpdateRelay) {
+    async fn session_update(&self, frame: &super::retained_json::JsonFrame, updates: &UpdateRelay) {
         let Some(session) = frame
             .pointer("/params/sessionId")
             .and_then(serde_json::Value::as_str)
@@ -169,7 +169,7 @@ impl Bridge {
         let Some(value) = frame.pointer("/params/update") else {
             return;
         };
-        self.observe_context_goal(session, value).await;
+        self.observe_context_frame_goal(frame).await;
         if let Some(update) = super::acp_observations::observation(value) {
             self.route_update(session, update, updates).await;
             return;
