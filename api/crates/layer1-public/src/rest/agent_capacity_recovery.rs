@@ -28,6 +28,11 @@ pub fn agent_capacity_recovery_router(service: Arc<CapacityRecoveryPreflightServ
         .layer(axum::middleware::map_response(private_no_store))
 }
 
+/// Observe current authorized metadata without admitting recovery or reading history.
+#[utoipa::path(get, path = "/api/v1/agents/{id}/capacity-recovery/dry-run", tag = "agents",
+    params(("id" = String, Path)),
+    responses((status = 200, body = serde_json::Value), (status = 401),
+        (status = 403), (status = 404), (status = 503)))]
 async fn dry_run(
     State(service): State<Arc<CapacityRecoveryPreflightService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -61,6 +66,17 @@ async fn private_no_store(mut response: Response) -> Response {
         HeaderValue::from_static("private, no-store"),
     );
     response
+}
+
+#[derive(utoipa::OpenApi)]
+#[openapi(paths(dry_run))]
+struct PreflightApi;
+
+pub(crate) fn document() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi;
+    let mut document = PreflightApi::openapi();
+    document.merge(commands::document());
+    document
 }
 
 #[cfg(test)]

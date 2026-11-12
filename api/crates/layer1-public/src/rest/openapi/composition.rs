@@ -7,6 +7,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
         .extensions
         .get_or_insert_with(Default::default)
         .insert("x-cma-task-repository".into(), serde_json::json!(true));
+    document.merge(super::super::agent_capacity_recovery::document());
     document.merge(super::super::browser_telemetry::document());
     document.merge(super::super::documents::document());
     document.merge(super::super::desktop_creation::document());
