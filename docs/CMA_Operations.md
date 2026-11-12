@@ -2348,6 +2348,30 @@ its original bundle. This UI change does not authorize deployment or asset remov
 
 ## Sandbox detail read rollout
 
+`CHRONO_ACCESS_SNAPSHOT_SESSION_ENABLED` defaults to `false` and accepts only
+exact `true` or `false`. When enabled, each individual resource authorization
+snapshot uses a Mongo snapshot session for its lineage aggregation and bounded
+share read. Both reads use explicit snapshot concern at the same `atClusterTime`,
+without a transaction abort. The initial authorization and the final release
+fence still create separate, fresh snapshots; their order and timeouts are
+unchanged. Complete record decoding, policy/share checks and transient retry
+limits remain. Transactional share mutations and batch inventory authorization
+keep their existing transactions. Set the switch back to `false` and roll the
+API to restore the original reader; there is no persisted format change.
+
+`CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED` independently defaults to
+`false` and accepts only exact `true` or `false`. It runs optional Sandbox detail
+color and public-name reads concurrently after the final authorization fence,
+using separate storage handles. Each phase retains its timer and empty-data
+fallback. Shared views still skip the owner's palette and personal-name read.
+Disable this switch to restore sequential enrichment. This control changes the
+serial wait, not the number of Mongo commands or existing color assignments.
+
+Activate only one new switch per observation window on the same image. Existing
+hierarchy switches below remain default-off and subject to #1743 attribution.
+Production phase baselines and release-owner approval are still required; local
+measurements alone do not attribute the production multi-second delay.
+
 `CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED` defaults to `false` and accepts only exact
 `true` or `false`. When enabled, Sandbox hierarchy reads use one consistent Mongo
 snapshot session instead of a read-only transaction plus abort. Workspace reads,

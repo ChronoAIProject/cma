@@ -210,6 +210,7 @@ impl ControlPlaneComposition {
             hierarchy,
             Arc::clone(&operations),
         )
+        .with_concurrent_detail_enrichment(config.features.concurrent_sandbox_detail_enrichment)
         .with_runtime_updates(runtime.updates)
         .with_retained_recovery(runtime.recovery)
         .with_retained_reopening(runtime.reopen)
@@ -451,6 +452,8 @@ impl ControlPlaneComposition {
         let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
         let worker_observations = stores.worker_observations();
+        let workers = crate::worker_supervision::Workers::new();
+        let health = crate::health::router_with_workers(stores, workers.clone());
         let router = routes::compose(
             resource_routes,
             browser_connections,
@@ -460,13 +463,14 @@ impl ControlPlaneComposition {
                 limits,
                 crate::expensive_reads::ReadBudget::new(config.features.retain_read_frames),
             ),
-            stores,
+            health,
             tool_routes.merge(service_portal::router(
                 auth.clone(),
                 config.gateway.as_ref(),
             )?),
         );
         Ok(Self {
+            workers,
             document_blob_maintenance,
             worker_observations,
             router,

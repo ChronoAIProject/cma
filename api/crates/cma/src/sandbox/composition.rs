@@ -243,20 +243,33 @@ impl SandboxLifecycleComposition {
             .map_err(|error| format!("sandbox runtime initialization failed: {error}"))
     }
 
-    pub(crate) fn spawn(self, shutdown: &mut ShutdownCoordinator) {
+    pub(crate) fn spawn(
+        self,
+        shutdown: &mut ShutdownCoordinator,
+        workers: &crate::worker_supervision::Workers,
+    ) {
         if let Some(scheduler) = self.capacity_recovery {
-            shutdown.push(scheduler.spawn(shutdown.subscribe()));
+            shutdown.push(
+                scheduler
+                    .spawn_supervised(shutdown.subscribe(), workers.get("agent_capacity_recovery")),
+            );
         }
         shutdown.push(self.warmup.spawn(shutdown.subscribe()));
         let signal = shutdown.subscribe();
-        shutdown.push(self.reconciliation.spawn(signal));
-        shutdown.push(self.agent.spawn(shutdown.subscribe()));
+        shutdown.push(
+            self.reconciliation
+                .spawn_supervised(signal, workers.get("sandbox_reconciliation")),
+        );
+        shutdown.push(
+            self.agent
+                .spawn_supervised(shutdown.subscribe(), workers.get("agents")),
+        );
         shutdown.push(self.titles.spawn(shutdown.subscribe()));
         shutdown.push(self.funding_renewal.spawn(shutdown.subscribe()));
         shutdown.push(self.suggestions.spawn(shutdown.subscribe()));
-        for scheduler in [self.sandbox, self.workspace] {
+        for (scheduler, name) in [(self.sandbox, "sandboxes"), (self.workspace, "workspaces")] {
             let signal = shutdown.subscribe();
-            shutdown.push(scheduler.spawn(signal));
+            shutdown.push(scheduler.spawn_supervised(signal, workers.get(name)));
         }
     }
 }

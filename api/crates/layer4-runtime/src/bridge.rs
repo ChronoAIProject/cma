@@ -2,14 +2,22 @@ use std::collections::BTreeMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use layer3_adapter::agent_capacity_recovery::{
+    CapacityRecoveryConfirmation, CapacityRecoveryError, CapacityRecoveryNativeProof,
+    CapacityRecoveryRequest,
+};
 use layer3_adapter::AgentLaunch;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::sync::{mpsc, Mutex};
 
+#[path = "bridge_observation.rs"]
+mod observation;
+#[path = "bridge_recovery.rs"]
+mod recovery;
 #[path = "bridge_output.rs"]
 mod retained_output;
 pub(crate) use retained_output::OutputRetention;
@@ -19,6 +27,7 @@ const INPUT_BUFFER: usize = 256;
 pub(crate) const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 const CLOSE_POLL: Duration = Duration::from_millis(10);
+const CAPACITY_RECOVERY_LEASE: Duration = Duration::from_secs(30);
 const OUTPUT_UNSELECTED: u8 = 0;
 const OUTPUT_LEGACY: u8 = 1;
 const OUTPUT_ACKNOWLEDGED: u8 = 2;
@@ -83,12 +92,23 @@ pub(crate) struct Bridge {
     reader: tokio::task::AbortHandle,
     ended: tokio::sync::watch::Sender<bool>,
     writer_session_root: Option<i32>,
+    observation: Option<Arc<Mutex<observation::NativeObservation>>>,
+    capacity_recovery: Mutex<recovery::LeaseState>,
 }
 
 impl Bridge {
+    #[cfg(test)]
     pub(crate) fn start(
         launch: &AgentLaunch,
         environment: &BTreeMap<String, String>,
+    ) -> std::io::Result<Self> {
+        Self::start_with_recovery(launch, environment, false)
+    }
+
+    pub(crate) fn start_with_recovery(
+        launch: &AgentLaunch,
+        environment: &BTreeMap<String, String>,
+        recovery_enabled: bool,
     ) -> std::io::Result<Self> {
         let mut process = tokio::process::Command::new(&launch.program);
         process
@@ -131,15 +151,18 @@ impl Bridge {
         let pending = Arc::new(Mutex::new(Pending::default()));
         let retained_output = Arc::new(OutputRetention::default());
         let (ended, _) = tokio::sync::watch::channel(false);
+        let observation = recovery_enabled
+            .then(|| Arc::new(Mutex::new(observation::NativeObservation::default())));
         spawn_writer(stdin, input_rx);
         let reader = spawn_reader(
             stdout,
             output.clone(),
             Arc::clone(&pending),
             Arc::clone(&retained_output),
+            observation.clone(),
         );
-        spawn_diagnostics(stderr);
-        spawn_reaper(child, managed, ended.clone());
+        observation::spawn_diagnostics(stderr);
+        observation::spawn_reaper(child, managed, ended.clone());
         tracing::info!(agent = %launch.agent_id.as_str(), program = %launch.program, "agent bridge started");
         Ok(Self {
             input,
@@ -150,11 +173,25 @@ impl Bridge {
             reader,
             ended,
             writer_session_root,
+            observation,
+            capacity_recovery: Mutex::new(recovery::LeaseState::default()),
         })
     }
 
     pub(crate) async fn send(&self, frame: Vec<u8>) -> bool {
-        frame.len() <= MAX_FRAME_BYTES && self.input.send(frame).await.is_ok()
+        if frame.len() > MAX_FRAME_BYTES {
+            return false;
+        }
+        if let Some(observation) = &self.observation {
+            observation.lock().await.input(&frame);
+        }
+        if self.input.send(frame).await.is_err() {
+            if let Some(observation) = &self.observation {
+                observation.lock().await.invalidate();
+            }
+            return false;
+        }
+        true
     }
 
     /// Legacy recording has no durable cursor. Never replay that history into a
@@ -240,6 +277,7 @@ fn spawn_reader(
     output: tokio::sync::broadcast::Sender<Outbound>,
     pending: Arc<Mutex<Pending>>,
     retained_output: Arc<OutputRetention>,
+    observation: Option<Arc<Mutex<observation::NativeObservation>>>,
 ) -> tokio::task::AbortHandle {
     let reader = tokio::spawn(async move {
         let mut stdout = BufReader::new(stdout);
@@ -267,6 +305,7 @@ fn spawn_reader(
                             &output,
                             &pending,
                             &retained_output,
+                            &observation,
                         )
                         .await;
                     }
@@ -286,7 +325,7 @@ fn spawn_reader(
             retained_output.gap().await;
             pending.lock().await.gap();
         } else if !frame.is_empty() {
-            publish(frame, &output, &pending, &retained_output).await;
+            publish(frame, &output, &pending, &retained_output, &observation).await;
         }
         retained_output.finish().await;
     });
@@ -298,39 +337,22 @@ async fn publish(
     output: &tokio::sync::broadcast::Sender<Outbound>,
     pending: &Arc<Mutex<Pending>>,
     retained_output: &OutputRetention,
+    observation: &Option<Arc<Mutex<observation::NativeObservation>>>,
 ) {
-    retained_output.retain(&frame).await;
+    if let Some(observation) = observation {
+        // A full output window can await an ACK. Mark the in-flight boundary
+        // instead of holding a state lock across backpressure.
+        observation.lock().await.pending_output = true;
+        retained_output.retain(&frame).await;
+        let mut observed = observation.lock().await;
+        observed.output(&frame);
+        observed.pending_output = false;
+    } else {
+        retained_output.retain(&frame).await;
+    }
     if output.send(Outbound::Frame(frame.clone())).is_err() {
         pending.lock().await.push(frame);
     }
-}
-
-fn spawn_diagnostics(stderr: tokio::process::ChildStderr) {
-    tokio::spawn(async move {
-        let mut stderr = BufReader::new(stderr);
-        let mut buffer = [0_u8; 8 * 1024];
-        while let Ok(read) = stderr.read(&mut buffer).await {
-            if read == 0 {
-                break;
-            }
-            tracing::debug!(bytes = read, "agent bridge wrote diagnostics");
-        }
-    });
-}
-
-fn spawn_reaper(
-    mut child: tokio::process::Child,
-    managed: crate::writer_fence::ManagedChild,
-    ended: tokio::sync::watch::Sender<bool>,
-) {
-    tokio::spawn(async move {
-        match child.wait().await {
-            Ok(status) => tracing::info!(%status, "agent bridge exited"),
-            Err(error) => tracing::warn!(%error, "agent bridge wait failed"),
-        }
-        drop(managed);
-        ended.send_replace(true);
-    });
 }
 
 #[cfg(unix)]
