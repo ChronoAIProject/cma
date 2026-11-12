@@ -2,8 +2,72 @@
 //! maintenance transaction (decision 26), leaves the owner's preference alone
 //! and never pauses busy work.
 use super::*;
+use layer2_core::budget::{
+    BudgetSettings, CloudObservationInput, CloudSpendPolicy, PlatformBudgetPolicy,
+    PlatformSpendLedger,
+};
 use layer2_core::sandbox::store::{InactivityPauseCause, SandboxSessionStore};
 use layer2_core::sandbox::PLATFORM_SPEND_PAUSE_NOTICE;
+
+async fn install_stop(store: &MongoSandboxStore) {
+    let settings = layer2_core::PlatformSettings {
+        model_budget: BudgetSettings {
+            enabled: true,
+            owners: vec![layer2_core::budget::OwnerBudgetPolicy {
+                owner: layer2_core::SubjectId::new("unrelated-budget-owner"),
+                policy: layer2_core::budget::BudgetPolicy {
+                    owner_day_limit: 1000,
+                    turn_limit: 100,
+                    max_calls_per_turn: 10,
+                    day_timezone: "UTC".into(),
+                    input_token_units: 1,
+                    output_token_units: 1,
+                    max_unobserved_units: 1,
+                    usage_timeout_seconds: 60,
+                },
+            }],
+            platform: Some(PlatformBudgetPolicy {
+                period_cap: 1000,
+                period_start: "2026-01-01T00:00:00Z".into(),
+                period_end: "2100-01-01T00:00:00Z".into(),
+                warning_percent: 80,
+                stop_percent: 100,
+                protected_reserve: 0,
+                lag_allowance: 0,
+                cloud: Some(CloudSpendPolicy {
+                    run_rate_units_per_day: 1,
+                    max_observation_age_seconds: 3600,
+                }),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    settings.model_budget.validate().unwrap();
+    store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {
+                "$set": {"settings": mongodb::bson::serialize_to_bson(&settings).unwrap()},
+                "$inc": {"revision": 1_i64},
+            },
+        )
+        .await
+        .unwrap();
+    let now = layer2_core::seconds_from_rfc3339(LATER).unwrap();
+    store
+        .record_cloud_observation(
+            CloudObservationInput {
+                observed_through: now,
+                units: 1000,
+            },
+            now,
+        )
+        .await
+        .unwrap();
+    store.evaluate_period(now).await.unwrap();
+}
 
 fn platform_stop(id: &SandboxId) -> SandboxInactivityPauseRequest {
     SandboxInactivityPauseRequest {
@@ -94,6 +158,7 @@ async fn assert_not_paused(store: &MongoSandboxStore, sandbox: &Sandbox) {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn a_platform_stop_pauses_a_keep_alive_sandbox_and_keeps_its_preference() {
     let (client, name, store) = database().await;
+    install_stop(&store).await;
     let (sandbox, _) = fixture(&store, "sbx_stop_always_on").await;
     let always_on = store
         .set_sandbox_always_on(sandbox.id.clone(), sandbox.revision, true)
@@ -123,6 +188,7 @@ async fn a_platform_stop_pauses_a_keep_alive_sandbox_and_keeps_its_preference() 
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn a_platform_stop_pauses_an_agentless_sandbox_unless_a_workspace_or_session_is_busy() {
     let (client, name, store) = database().await;
+    install_stop(&store).await;
     let agentless = active_sandbox("sbx_stop_agentless");
     store.create_sandbox(agentless.clone()).await.unwrap();
     assert_eq!(
@@ -157,5 +223,32 @@ async fn a_platform_stop_pauses_an_agentless_sandbox_unless_a_workspace_or_sessi
         .await
         .unwrap();
     assert_not_paused(&store, &setting_up).await;
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn stale_stop_pause_request_cannot_pause_without_current_authority() {
+    let (client, name, store) = database().await;
+    let sandbox = active_sandbox("sbx_stale_stop");
+    store.create_sandbox(sandbox.clone()).await.unwrap();
+    assert_not_paused(&store, &sandbox).await;
+    install_stop(&store).await;
+    store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {
+                "$set": {"settings.model_budget.platform.period_cap": 2000_i64},
+                "$inc": {"revision": 1_i64},
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .evaluate_period(layer2_core::seconds_from_rfc3339(LATER).unwrap())
+        .await
+        .unwrap();
+    assert_not_paused(&store, &sandbox).await;
     client.database(&name).drop().await.unwrap();
 }
