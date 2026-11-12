@@ -15,6 +15,9 @@ mod credit_failure_tests;
 #[path = "budget_recovery_tests.rs"]
 mod budget_recovery_tests;
 
+#[path = "certified_evidence_tests.rs"]
+mod certified_evidence_tests;
+
 async fn claimed(store: &InMemorySandboxStore, agent: &Agent) -> AdmittedAgentCommand {
     store
         .claim_next_command(request(agent, "worker", &crate::now_rfc3339()))
@@ -385,3 +388,6 @@ async fn runtime_retirement_preserves_uncertain_writes_when_it_interrupts_the_tu
         assert_eq!(inputs.lock().unwrap().len(), 1);
     }
 }
+
+#[path = "../agent_io/reconcile_pacing_tests.rs"]
+mod reconcile_pacing;

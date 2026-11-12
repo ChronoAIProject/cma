@@ -20,6 +20,7 @@ mod binding_cases;
 mod binding_media_cases;
 mod bot_cases;
 mod bot_setup_cases;
+mod capacity_recovery_cases;
 mod channel_usage_cases;
 mod creation_inventory_cases;
 mod credential_cases;
@@ -168,6 +169,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = capacity_recovery_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = task_experience_cases::scenario(name).await {
         return scenario;
     }

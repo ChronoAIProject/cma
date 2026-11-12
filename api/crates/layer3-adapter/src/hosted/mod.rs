@@ -15,6 +15,8 @@ mod acp_turn;
 mod adapter;
 mod agent_sandbox_backend;
 mod backend;
+mod capacity_recovery;
+pub use capacity_recovery::CapacityRecoveryNativeTransport;
 mod channel_tools;
 mod checkpoint_store;
 mod checkpoint_transport;
@@ -104,3 +106,29 @@ mod recovery_tests;
 
 mod access_tools;
 pub use access_tools::{HostedAccessToolBinding, HostedAccessToolSource};
+
+/// Derive the same permission identity used by the ACP bridge and durable replies.
+/// Runtime observations use this contract rather than inventing an approval ID.
+pub fn observed_permission_id(
+    request: &crate::RequestPermissionRequest,
+    call: &serde_json::Value,
+) -> Option<String> {
+    if !acp_inbound::valid_call(call)
+        || permission_state::validate(&request.options).is_err()
+        || request.options.is_empty()
+        || request.options.iter().any(|option| {
+            !matches!(
+                option.kind,
+                crate::PermissionOptionKind::AllowOnce
+                    | crate::PermissionOptionKind::AllowAlways
+                    | crate::PermissionOptionKind::RejectOnce
+                    | crate::PermissionOptionKind::RejectAlways
+            )
+        })
+    {
+        return None;
+    }
+    Some(acp_inbound::permission_id(
+        &acp_inbound::permission_locator(request.session_id.0.as_ref(), call, &request.options),
+    ))
+}
