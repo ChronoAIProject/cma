@@ -1,4 +1,4 @@
-use super::super::budget_tests::{configure, open_platform};
+use super::super::budget_tests::{configure, configure_metered, open_platform};
 use super::*;
 use layer2_core::budget::{
     BudgetError, BudgetStop, Closure, ClosureReason, OwnerBudget, SpendSource,
@@ -333,7 +333,7 @@ async fn lower_usage_timeout_stops_an_already_running_turn() {
 
 async fn running_turn(client: &Client, name: &str) -> (Arc<MongoSandboxStore>, Agent, u64, u64) {
     let (store, agent, parent, execution, _, _) = composed(client, name).await;
-    configure(&store, &agent.owner).await;
+    configure_metered(&store, &agent.owner).await;
     let admitted = record(
         store
             .reserve_command(live_request(&agent, &parent, "platform-running"))

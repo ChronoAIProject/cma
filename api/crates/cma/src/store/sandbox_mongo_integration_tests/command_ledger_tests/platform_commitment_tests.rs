@@ -1,6 +1,8 @@
 //! Zero-liability commitments read the platform admission state inside their
 //! transaction and never write the settings fence or the period row.
-use super::budget_tests::{configure, configure_with_platform, observe, open_platform, period_row};
+use super::budget_tests::{
+    configure_metered, configure_with_platform, observe, open_platform, period_row,
+};
 use super::*;
 use layer2_core::budget::{BudgetError, Closure, ClosureReason};
 
@@ -38,7 +40,7 @@ async fn create_sandbox_is_refused_under_spend_stop_and_admitted_when_open() {
     let (client, name) = database("platform_create_sandbox").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let owner = provisioning_sandbox("sbx_platform_owner").owner;
-    configure(&store, &owner).await;
+    configure_metered(&store, &owner).await;
     let before = (
         fence(&store).await,
         period_row(&store, &open_platform()).await,
@@ -124,7 +126,7 @@ async fn workspace_and_agent_admission_are_refused_under_spend_stop() {
     store.create_sandbox(parent.clone()).await.unwrap();
     let ready = ready_workspace(&parent, "wks_platform_ready", "project");
     store.create_workspace(ready.clone()).await.unwrap();
-    configure(&store, &parent.owner).await;
+    configure_metered(&store, &parent.owner).await;
     assert!(matches!(
         store
             .admit_agent(agent_admission(&ready, "platform-open", "platform_open"))

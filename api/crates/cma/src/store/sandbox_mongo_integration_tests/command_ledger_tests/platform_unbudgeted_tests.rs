@@ -1,6 +1,6 @@
 //! Owners without a model budget policy reserve nothing, yet their new
 //! messages, turns and auxiliary requests still meet the platform closures.
-use super::super::budget_tests::{configure, open_platform, period_row};
+use super::super::budget_tests::{configure_metered, open_platform, period_row};
 use super::*;
 use layer2_core::budget::{
     BudgetError, Closure, ClosureReason, ModelRequest, RequestBudget, RequestScope,
@@ -30,7 +30,7 @@ async fn close(store: &MongoSandboxStore, reasons: &[ClosureReason]) {
 
 /// Budgets are enabled for another owner only; the fixture owner has no policy.
 async fn budget_someone_else(store: &MongoSandboxStore) {
-    configure(
+    configure_metered(
         store,
         &layer2_core::SubjectId("budgeted-someone-else".into()),
     )

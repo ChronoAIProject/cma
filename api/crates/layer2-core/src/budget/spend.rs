@@ -36,6 +36,9 @@ impl PlatformAdmissionState {
 /// units and never leave the authenticated admin surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlatformSpendState {
+    /// Budgets enabled with a platform policy that has a cloud source; false
+    /// means metering is off, not that it is unavailable.
+    pub metering_enabled: bool,
     pub settings_revision: u64,
     pub levels: Option<SpendLevels>,
     pub committed: Option<u64>,

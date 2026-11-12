@@ -77,6 +77,11 @@ quantities from `sandbox_usage` are **not** added to this figure: they are the
 same node cost expressed per pod, and the gate forbids counting a node and its
 pods twice. They remain the owner-attribution source for TC-112.
 
+Platform spend metering is enabled only when budgets are enabled and the
+platform policy carries a `cloud` section (decision 31). Without one there is
+no period row, no closure and no platform check: owner and turn budgets
+behave exactly as #1621 defines them.
+
 Freshness: the policy carries `max_observation_age_seconds`. If
 `now − observed_through` exceeds it, or no observation exists for the period,
 the cloud source is **stale**. A stale source closes new commitments (section
@@ -231,7 +236,8 @@ not present (outside the refusing transaction, section 5.4):
   period is unavailable, not open; the operator rotates to a new period);
 - the settings document is missing, fails validation, or the fence write
   matches no document;
-- cloud source stale or unconfigured (section 2.2);
+- cloud source stale or never observed in the period (section 2.2; a policy
+  with no `cloud` section has metering off, not unavailable);
 - arithmetic overflow.
 
 ## 5. Closures: the platform stop state
@@ -428,7 +434,7 @@ Additive to the existing `BudgetError` set:
 | --- | --- | --- | --- |
 | `platform_budget_exhausted` | HTTP 503, no `Retry-After` | `SpendStop` closure present, or the commitment does not fit below `disposable` (section 3) | "The platform's spend limit for this period does not allow new work right now. Completed work is preserved. After the limit is raised, send a new message to continue; this turn will not replay automatically." |
 | `registration_closed` | HTTP 503 | `SpendWarning` or any stop closure, subject never seen | "New sign-ups are temporarily closed. Existing accounts are unaffected." |
-| `budget_unavailable` (existing) | unchanged | metering source stale, unconfigured or period ended; ledger inconsistent | existing text |
+| `budget_unavailable` (existing) | unchanged | metering source stale or never observed, or period ended; ledger inconsistent | existing text |
 
 The `platform_budget_exhausted` guidance holds both when the platform is
 stopped and when one allowance does not fit, so it says nothing about a pause;
@@ -452,8 +458,11 @@ authority, revision CAS and confidential audit (operation and revision only; no
 amounts).
 
 - `model_budget.platform` gains `cloud: { run_rate_units_per_day, max_observation_age_seconds }`.
-  Required together when present; absent means the cloud source is not
-  configured, which is `MeteringUnavailable` once `enabled` is true.
+  Required together when present. Absent means platform spend metering is
+  off (decision 31): owner and turn budgets still apply, and no period row,
+  closure or platform refusal exists. The fields can only be saved once
+  `CHRONO_PLATFORM_SPEND_WRITES_ENABLED` is open, so enabling #1621 owner
+  budgets never closes the platform by itself.
 - `POST /api/v1/admin/spend/observations`
   `{ source: "cloud", observed_through, units }`
   Appends an immutable observation row
@@ -465,8 +474,12 @@ amounts).
   period start. The `model_provider` and `adjustment` sources of section 2.3
   are deferred.
 - `GET /api/v1/admin/spend`
-  Returns the period row with levels, committed, cloud freshness, closures and
-  the latest observation. Admin-only; values are private by construction.
+  Returns `metering_enabled` and, when it is true, the period row with levels,
+  committed, cloud freshness, closures and the latest observation.
+  `metering_enabled: false` means budgets or the `cloud` section are not
+  configured, which is distinct from enabled but unavailable (a
+  `MeteringUnavailable` closure). Admin-only; values are private by
+  construction.
 - There is no direct "reopen" command in this contract. Lifting a spend closure
   is a settings change (new revision) or a new period. The manual stop/resume
   switch is #1478's `OperatorStop`.
@@ -657,3 +670,14 @@ Recorded during implementation:
     different valuations are admitted side by side. Evaluation runs on every
     reconciliation attempt, at most once per 15 seconds, independent of the
     sweep's other phases.
+31. Platform spend metering is enabled only by `model_budget.enabled` together
+    with a `platform.cloud` section. #1621 already requires a platform policy
+    whenever budgets are enabled, and the cloud fields can be saved only after
+    the third write gate opens, so treating a missing `cloud` as unavailable
+    would close every commitment as soon as owner budgets were switched on.
+    Without `cloud` the settings snapshot carries no platform policy: no period
+    row is created, no platform check or `PlatformWrites` scheduling applies,
+    the evaluator and admission state report nothing, and owner and turn
+    budgets behave exactly as in #1621. With `cloud`, every fail-closed rule is
+    unchanged: a missing or stale observation is `MeteringUnavailable`.
+    Removing `cloud` is a settings revision that turns metering off.

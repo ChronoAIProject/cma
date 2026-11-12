@@ -1,7 +1,7 @@
 //! The platform period row moves inside the owner reservation transactions.
 use super::super::budget_tests::{
-    add_owner, budget_capabilities, configure, configure_with_platform, observe, open_platform,
-    period_row, raise_owner_limit,
+    add_owner, budget_capabilities, configure_metered, configure_with_platform, meter, observe,
+    open_platform, period_row, raise_owner_limit,
 };
 use super::*;
 use layer2_core::budget::{BudgetError, ClosureReason, PlatformBudgetPolicy, SpendSource};
@@ -72,7 +72,7 @@ async fn start_turn(
 async fn turn_reservation_mirrors_into_the_period_row_in_the_same_transaction() {
     let (client, name) = database("platform_turn_mirror").await;
     let (store, agent, parent, execution, _, _) = composed(&client, &name).await;
-    let policy = configure(&store, &agent.owner).await;
+    let policy = configure_metered(&store, &agent.owner).await;
     let admitted = record(
         store
             .reserve_command(live_request(&agent, &parent, "mirrored"))
@@ -92,10 +92,41 @@ async fn turn_reservation_mirrors_into_the_period_row_in_the_same_transaction() 
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn an_aborted_reservation_transaction_leaves_the_period_row_untouched() {
+    let (client, name) = database("platform_rollback").await;
+    let (store, agent, parent) = fixture(&name, &client).await;
+    configure_metered(&store, &agent.owner).await;
+    let before = period_row(&store, &open_platform()).await.unwrap();
+    let current = store.get_agent(&agent.id).await.unwrap().unwrap();
+    let mut session = client.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    crate::store::budget::reserve_command(
+        &store,
+        &current,
+        "rolled-back-command",
+        seconds(NOW),
+        &mut session,
+    )
+    .await
+    .unwrap_or_else(|_| panic!("reservation must succeed in transaction"));
+    session.abort_transaction().await.unwrap();
+    assert_eq!(period_row(&store, &open_platform()).await.unwrap(), before);
+    assert!(store
+        .reserve_command(request(&agent, &parent, "after-abort"))
+        .await
+        .is_ok());
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn request_hold_mirrors_and_settles_against_the_period_row() {
     use layer2_core::budget::{RequestBudget, RequestUsage};
     let (client, name) = database("platform_request_mirror").await;
     let (store, scope, request) = super::request_budget::completed(&client, &name).await;
+    meter(&store).await;
     let before = period_row(&store, &open_platform()).await.unwrap();
     let hold = store
         .reserve_request(&scope, &request)
@@ -123,7 +154,7 @@ async fn request_hold_mirrors_and_settles_against_the_period_row() {
 async fn proven_non_dispatch_releases_period_liability() {
     let (client, name) = database("platform_release").await;
     let (store, agent, parent, execution, _, sends) = composed(&client, &name).await;
-    let policy = configure(&store, &agent.owner).await;
+    let policy = configure_metered(&store, &agent.owner).await;
     let admitted = record(
         store
             .reserve_command(live_request(&agent, &parent, "never-dispatched"))
@@ -322,7 +353,7 @@ async fn two_stores_crossing_the_stop_level_record_one_closure() {
 async fn twenty_concurrent_admissions_on_one_store_exhaust_no_retry_budget() {
     let (client, name) = database("platform_twenty").await;
     let (store, agent, parent) = fixture(&name, &client).await;
-    configure(&store, &agent.owner).await;
+    configure_metered(&store, &agent.owner).await;
     let mut requests = Vec::new();
     for index in 0..20 {
         let mut sandbox = active_sandbox(&format!("sbx_platform_{index}"));
@@ -355,7 +386,7 @@ async fn twenty_concurrent_admissions_on_one_store_exhaust_no_retry_budget() {
 async fn zero_liability_admission_never_writes_the_settings_fence() {
     let (client, name) = database("platform_zero_liability").await;
     let (store, agent, _) = fixture(&name, &client).await;
-    configure(&store, &agent.owner).await;
+    configure_metered(&store, &agent.owner).await;
     let fence = |document: Document| document.get_i64("model_budget_admission_fence").ok();
     let settings = || async {
         store
@@ -387,23 +418,37 @@ async fn zero_liability_admission_never_writes_the_settings_fence() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn missing_cloud_policy_refuses_with_budget_unavailable_and_metering_closure() {
+async fn without_a_cloud_source_platform_metering_is_off_and_refuses_nothing() {
+    use layer2_core::budget::{PlatformAdmissionState, PlatformSpendLedger};
     let (client, name) = database("platform_no_cloud").await;
     let (store, agent, parent) = fixture(&name, &client).await;
-    let unconfigured = PlatformBudgetPolicy {
+    let unmetered = PlatformBudgetPolicy {
         cloud: None,
         ..open_platform()
     };
-    configure_with_platform(&store, &agent.owner, unconfigured.clone(), 1).await;
+    configure_with_platform(&store, &agent.owner, unmetered.clone(), 1).await;
+    assert!(store
+        .reserve_command(request(&agent, &parent, "unmetered"))
+        .await
+        .is_ok());
+    let now = seconds(NOW);
+    assert_eq!(store.evaluate_period(now).await.unwrap(), None);
+    assert_eq!(
+        store.admission_state(now).await.unwrap(),
+        PlatformAdmissionState::default()
+    );
+    let spend = store.spend_state(now).await.unwrap();
+    assert!(!spend.metering_enabled);
+    assert!(spend.ledger.is_none() && spend.levels.is_none());
+    assert!(period_row(&store, &unmetered).await.is_none());
     assert_eq!(
         store
-            .reserve_command(request(&agent, &parent, "unmetered"))
-            .await,
-        Err(CommandLedgerError::Budget(BudgetError::Unavailable))
+            .model_budget
+            .count_documents(doc! {"_id": {"$regex": "^platform:"}})
+            .await
+            .unwrap(),
+        0
     );
-    let row = period_row(&store, &unconfigured).await.unwrap();
-    assert_eq!(reasons(&row), vec![ClosureReason::MeteringUnavailable]);
-    assert_eq!(row.reserved, 0);
     client.database(&name).drop().await.unwrap();
 }
 
@@ -412,7 +457,7 @@ async fn missing_cloud_policy_refuses_with_budget_unavailable_and_metering_closu
 async fn a_turn_reserved_before_activation_settles_without_touching_the_period_row() {
     let (client, name) = database("platform_activation").await;
     let (store, agent, parent, execution, _, _) = composed(&client, &name).await;
-    let policy = configure(&store, &agent.owner).await;
+    let policy = configure_metered(&store, &agent.owner).await;
     let admitted = record(
         store
             .reserve_command(live_request(&agent, &parent, "pre-activation"))
@@ -496,7 +541,7 @@ async fn lowering_the_cap_below_committed_refuses_the_next_admission_without_rel
 async fn settlement_after_period_end_debits_the_original_row() {
     let (client, name) = database("platform_cross_period").await;
     let (store, agent, parent, execution, _, _) = composed(&client, &name).await;
-    let policy = configure(&store, &agent.owner).await;
+    let policy = configure_metered(&store, &agent.owner).await;
     let admitted = record(
         store
             .reserve_command(live_request(&agent, &parent, "spans-periods"))
@@ -532,7 +577,7 @@ async fn settlement_after_period_end_debits_the_original_row() {
 async fn a_lost_runtime_mid_turn_keeps_period_reserved_until_terminal_evidence() {
     let (client, name) = database("platform_lost_runtime").await;
     let (store, agent, parent, execution, _, _) = composed(&client, &name).await;
-    let policy = configure(&store, &agent.owner).await;
+    let policy = configure_metered(&store, &agent.owner).await;
     let admitted = record(
         store
             .reserve_command(live_request(&agent, &parent, "lost-runtime"))
@@ -564,7 +609,7 @@ async fn a_lost_runtime_mid_turn_keeps_period_reserved_until_terminal_evidence()
 async fn disabled_or_absent_platform_policy_changes_nothing() {
     let (client, name) = database("platform_disabled").await;
     let (store, agent, parent) = fixture(&name, &client).await;
-    configure(&store, &agent.owner).await;
+    configure_metered(&store, &agent.owner).await;
     store
         .model_budget
         .delete_many(doc! {"_id": {"$regex": "^platform:"}})
@@ -606,7 +651,7 @@ async fn disabled_or_absent_platform_policy_changes_nothing() {
 async fn owners_priced_differently_share_one_period_total() {
     let (client, name) = database("platform_valuations").await;
     let (store, agent, parent) = fixture(&name, &client).await;
-    configure(&store, &agent.owner).await;
+    configure_metered(&store, &agent.owner).await;
     let mut other_parent = active_sandbox("sbx_platform_priced");
     other_parent.owner = layer2_core::SubjectId("platform-priced-owner".into());
     store.create_sandbox(other_parent.clone()).await.unwrap();
@@ -729,7 +774,7 @@ mod evaluation {
     async fn evaluation_lifts_spend_stop_only_under_a_newer_settings_revision() {
         let (client, name) = database("platform_eval_lift").await;
         let (store, agent, _) = fixture(&name, &client).await;
-        configure(&store, &agent.owner).await;
+        configure_metered(&store, &agent.owner).await;
         let platform = open_platform();
         let (start, _) = platform.period_bounds().unwrap();
         push(
@@ -791,7 +836,7 @@ mod evaluation {
     async fn the_evaluator_does_not_write_when_nothing_changed() {
         let (client, name) = database("platform_eval_quiet").await;
         let (store, agent, _) = fixture(&name, &client).await;
-        configure(&store, &agent.owner).await;
+        configure_metered(&store, &agent.owner).await;
         let now = seconds(NOW);
         store.evaluate_period(now).await.unwrap().unwrap();
         let first = period_row(&store, &open_platform()).await.unwrap();
