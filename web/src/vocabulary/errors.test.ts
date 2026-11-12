@@ -1,7 +1,46 @@
 import { ApiError, ProtocolError, TransportError } from '@chronoai/cma-sdk';
-import { failureRemediation, readableError, refusalSentence } from './errors';
+import {
+  failureRemediation,
+  readableError,
+  refusalSentence,
+  settledAllowanceReset,
+} from './errors';
 
 describe('public allowance guidance', () => {
+  it('returns the shared reset time only for a complete visitor allowance refusal', () => {
+    const resetAt = '2026-11-14T00:00:00Z';
+    const extensions = { resource: 'visitor_launches', reset_at: resetAt };
+    const complete = new ApiError(
+      429,
+      'Allowance used.',
+      'resource_quota',
+      undefined,
+      undefined,
+      extensions,
+    );
+    expect(settledAllowanceReset(complete)).toEqual(new Date(resetAt));
+
+    const uncertain = [
+      undefined,
+      new Error('offline'),
+      { status: 429, code: 'resource_quota', extensions },
+      new ApiError(503, 'Unknown', 'resource_quota', undefined, undefined, extensions),
+      new ApiError(429, 'Unknown', 'rate_limited', undefined, undefined, extensions),
+      ...[
+        { reset_at: resetAt },
+        { ...extensions, resource: 'sandboxes' },
+        { resource: 'visitor_launches' },
+        { ...extensions, reset_at: null },
+        { ...extensions, reset_at: '' },
+        { ...extensions, reset_at: 'unknown' },
+        { ...extensions, reset_at: 1794614400 },
+      ].map(
+        (fields) => new ApiError(429, 'Unknown', 'resource_quota', undefined, undefined, fields),
+      ),
+    ];
+    for (const error of uncertain) expect(settledAllowanceReset(error)).toBeUndefined();
+  });
+
   it('explains the daily allowance with its local reset time without exposing wire words', () => {
     const resetAt = '2026-11-13T00:00:00Z';
     const error = new ApiError(
