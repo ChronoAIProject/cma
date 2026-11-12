@@ -6,13 +6,14 @@ One default-off combined PR to develop; target PR 15:30, review 16:30, merge 17:
 then the owner-mandated deployment and verification tonight. Writer and recovery activation remain closed.
 No issue closes without its required production evidence.
 
-**Current outcome:** strict CMA/core/public/adapter is green at `92ed005a9`.
-The combined selection passes 609 unit tests,361 ordinary Mongo contracts and the
-separate authenticated migration/runtime-role contract. All have zero failures.
-This qualifies the published source, not the unresolved source-review findings.
-The PR is not open. At 11:18 the lead confirmed the earlier pin requests had not
-been relayed and briefed S1/S3/S4/S5 with pins due at 13:00. The PR target remains
-14:00. Integrate each pin as published; no source finding is waived for the target.
+**Current outcome:** the combined source is `c9b981830`; later checkpoints through
+`ea5c57af8` change only this ledger. S3 `9c2db4a46`, S4 `5875b8ddf` and S5's
+provisional `5e82a9e7b` are included normally. Strict combined Rust and unit gates
+are queued against the immutable source; independent QA owns the exact-source
+Mongo and parity/failure matrix. Earlier results below qualify only their named
+source. The PR is not open. S4 ordinary output/checkpoint/command settlement and
+S5 final service qualification remain prerequisites. The PR target is 15:30;
+writer/recovery activation remains closed and no source finding is waived.
 
 ## Handoffs included normally
 
@@ -376,3 +377,31 @@ Both shared lock files retain their recorded inodes. The worktree remains for
 the lead; prior untracked notes are preserved. Gate logs, test inventory and
 `cleanup.json` remain as local evidence. No deploy, activation, PR or develop
 merge was performed. Stand by after this checkpoint per the 13:05 direction.
+
+## Integration review delta at 13:35
+
+The relayed migration/schema/registry verdict is merge with zero source blockers
+at `5582969d4f472ea80d93611cd0f874d15f02d3cf`. The delta through `ea5c57af8`
+contains only these files:
+
+- Recovery admission tests: `segmented_admission.rs` and its new `faults.rs`
+  and `support.rs` children under the capacity-recovery Mongo tests. These add
+  full-source and publication-fault qualification and split the fixture.
+- Rust SDK tests: `sdk/rust/tests/responses_v2.rs` and
+  `sdk/rust/tests/responses_v2/output_pages.rs`.
+- TypeScript SDK tests: `sdk/typescript/tests/response-output-pages.test.ts`.
+- This assignment and gate ledger.
+
+No production, migration, schema, registry, runtime-grant or index contract file
+changes in that delta. Final reviewer readback is still required. S3's relayed
+`9c2db4a465adca730f8fd56ec7a6a25189c1d8e0` is already an ancestor; a normal merge
+reports up to date. Current develop `d08742c70` is also an ancestor.
+
+S4's final admission checkpoint explicitly does not implement ordinary
+conversation mutation, checkpoint apply/write or command reconciliation.
+The lead has been asked to allocate those implementations; another admission
+evidence pin alone cannot close P1-1. Integration continues with strict
+CMA/core/public/adapter and combined units, then Rust SDK qualification.
+Independent QA owns the complete actual Mongo and parity/failure inventory at
+the same immutable source. Count only completed, source-bound gates with exact
+selected/executed inventories and successful fixture cleanup.
