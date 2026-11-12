@@ -15,6 +15,9 @@ struct Quota {
 }
 #[async_trait::async_trait]
 impl DocumentQuotaStore for Quota {
+    async fn usage(&self, _: &str) -> Result<DocumentUsage, DocumentError> {
+        Ok(DocumentUsage::not_enforced())
+    }
     async fn reserve(
         &self,
         source: &DocumentSourceReservation,

@@ -7,6 +7,7 @@ export const requiredPrefixes = [
   'store::sandbox_mongo_integration_tests::sandbox_usage_tests::',
   'document_artifacts::mongo_integration_tests::',
   'document_artifacts::commit_mongo_tests::',
+  'document_artifacts::quota::tests::',
   'agent_access::tests::tenant_isolation::',
   'store::message_feedback::tests::',
   'store::sandbox_colors::tests::',

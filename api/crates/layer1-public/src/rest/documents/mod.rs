@@ -1,6 +1,9 @@
 //! Public document projections; durable policy and mutations belong to Layer 2.
 mod reads;
 mod shapes;
+mod usage;
+#[cfg(test)]
+mod usage_tests;
 mod writes;
 use super::idempotency::{IdempotencyKey, RequestBody};
 use crate::AuthenticatedCaller;
@@ -11,12 +14,15 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use layer2_core::document_artifacts::{DocumentError, DocumentService, MAX_DOCUMENT_BYTES};
+use layer2_core::document_artifacts::{
+    DocumentError, DocumentLimit, DocumentService, MAX_DOCUMENT_BYTES,
+};
 pub(crate) use shapes::*;
 use std::sync::Arc;
 
 pub fn documents_router(service: Arc<DocumentService>) -> Router {
     Router::new()
+        .route("/api/v1/usage/documents", get(usage::read))
         .route("/api/v1/documents", get(reads::list).post(writes::create))
         .route(
             "/api/v1/documents/{id}",
@@ -117,15 +123,30 @@ impl IntoResponse for DocumentProblem {
             DocumentError::Conflict => (StatusCode::CONFLICT, "document_revision_conflict"),
             DocumentError::IdempotencyConflict => (StatusCode::CONFLICT, "idempotency_key_reused"),
             DocumentError::Capacity => (StatusCode::TOO_MANY_REQUESTS, "document_capacity"),
+            DocumentError::LimitReached { dimension, .. } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                match dimension {
+                    DocumentLimit::Documents => "document_limit_reached",
+                    DocumentLimit::Bytes => "document_bytes_limit_reached",
+                    DocumentLimit::Objects => "document_objects_limit_reached",
+                },
+            ),
             DocumentError::Busy => (StatusCode::TOO_MANY_REQUESTS, "document_write_busy"),
             DocumentError::Unavailable | DocumentError::Corrupt => {
                 (StatusCode::SERVICE_UNAVAILABLE, "document_unavailable")
             }
         };
-        let mut response = super::problem_response(
-            status,
-            super::problem_document(status, code, &self.0.to_string(), code),
-        );
+        let slug = if matches!(self.0, DocumentError::LimitReached { .. }) {
+            "resource-limit-reached"
+        } else {
+            code
+        };
+        let mut body = super::problem_document(status, slug, &self.0.to_string(), code);
+        if let DocumentError::LimitReached { limit, live, .. } = self.0 {
+            body["limit"] = serde_json::json!(limit);
+            body["live"] = serde_json::json!(live);
+        }
+        let mut response = super::problem_response(status, body);
         if busy {
             response
                 .headers_mut()
@@ -138,6 +159,7 @@ impl IntoResponse for DocumentProblem {
 #[derive(utoipa::OpenApi)]
 #[openapi(
     paths(
+        usage::read,
         reads::list,
         reads::read,
         reads::source,
@@ -155,6 +177,9 @@ impl IntoResponse for DocumentProblem {
         writes::remove_comment
     ),
     components(schemas(
+        DocumentUsage,
+        DocumentUsageCounter,
+        DocumentQuotaEnforcement,
         DocumentView,
         DocumentPage,
         DocumentSource,

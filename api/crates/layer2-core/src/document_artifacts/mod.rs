@@ -29,3 +29,6 @@ mod rollout_tests;
 
 #[cfg(test)]
 mod quota_tests;
+
+#[cfg(test)]
+mod usage_tests;
