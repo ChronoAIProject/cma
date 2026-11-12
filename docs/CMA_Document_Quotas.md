@@ -261,9 +261,22 @@ condemnation writes the same row as the source commit transaction, forcing the
 writer or the judge to lose their write conflict. The grace reduces aborted slow
 writers; it supplies no concurrency proof.
 
-Deletion runs outside transactions. Both deleted and already absent responses
-permit finalization. A separate transaction increments the owner fence, deletes
-only a condemned object row, and decrements bytes and objects only when that row
+Deletion runs outside transactions. Every condemned candidate, including a row
+just condemned in this round, must first acquire an exclusive deletion lease.
+The atomic claim matches the reservation incarnation, sets the worker's unique
+startup `delete_holder`, increments `delete_fence`, and sets `delete_lease_until`
+for five minutes. An existing lease can be taken over only after strict expiry;
+even its current holder cannot issue another delete under the same active lease.
+Without a successful claim there is no delete or finalization. Immediately before
+delete, remaining lease time must exceed the entire 30-second storage operation
+budget plus a five-second margin; elapsed claim and scheduling time count against
+this allowance. A short lease is abandoned without sending a request. Failed or
+cancelled work retains its lease until expiry, then another round may claim it.
+
+Both deleted and already absent responses permit finalization. A separate
+transaction increments the owner fence, deletes only a condemned object row
+matching the reservation incarnation, deletion holder and deletion fence, and
+decrements bytes and objects only when that row
 was removed. This serializes with reserve and makes accounting release exactly
 once across processes. It also releases a failed-create document slot only after
 the main document and its last object row are absent. Negative counters abort
@@ -375,10 +388,14 @@ consult blocked status before interpreting them.
 Alert when orphan age exceeds 86,400 seconds or blocked status persists after
 activation. Check E1/E2, activation, all-writer versions, budget pressure and
 retry delay before intervening. A delete failure must retain its reservation.
-The storage-owner acceptance must also cover delayed concurrent deletes and
-same-key reuse: accounting exactly once alone cannot prove that a late external
-delete cannot erase a fresh upload. Keep deletion/reclaim closed until that
-external finality contract is demonstrated.
+The deletion lease serializes competing reclaim workers during its validity;
+all reclaim processes must use this lease-aware release before activation.
+The remaining storage-owner acceptance (E1 item 5) must prove an abandoned or
+timed-out DELETE cannot take effect after the lease expires against a new
+generation under the same key. Local cancellation and holder/fence checks cannot
+cancel remote effects. Keep deletion/reclaim closed until the storage owner
+demonstrates that finality or equivalent generation fencing contract. Drain any
+older reclaim workers before enabling this release.
 
 Disable `CHRONO_DOCUMENT_RECLAIM_ENABLED` and restart to stop new rounds. Retain
 all additive rows, indexes and compatible source writers. Reclaim activation

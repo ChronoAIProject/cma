@@ -309,6 +309,13 @@ that outcome.
   object rows to `committed` or `condemned`; new object rows also receive a unique
   `reservation_id`. Judgement, finalization and unknown-commit readback match that
   incarnation so old candidates cannot release a fresh same-key reservation.
+  Each condemned-row deletion additionally claims `delete_holder` (unique worker
+  startup ID), `delete_fence` (incremented on every claim) and
+  `delete_lease_until` (five minutes). A missing lease is claimable; a present
+  lease is claimable only after strict expiry. Finalization must match both holder
+  and fence as well as the reservation incarnation, so an expired holder cannot
+  release a row after takeover. Missing fields on legacy condemned rows require
+  a first claim before deletion; no backfill or new index is needed.
   Legacy rows match only a missing reservation ID. Condemnation writes server
   `condemned_at`. New baseline owner rows add immutable `baseline_documents`,
   `baseline_bytes`, `baseline_objects`; the ready transition adds server
@@ -333,6 +340,10 @@ that outcome.
   shared background budget with a 30-second deadline, no queued admission and
   at most four external deletions. Failed deletion preserves condemned rows and
   respects dependency retry delay. No transaction contains storage I/O.
+  Every deletion claims independently, including newly condemned rows. It starts
+  only when the remaining lease exceeds the 30-second storage operation budget
+  plus a five-second margin. Failed, cancelled or short-budget claims remain
+  leased until expiry; they are never immediately unlocked for another delete.
 - **Counter writers and recovery:** finalization fences the same owner row as
   reserve, removes only a condemned object row, and subtracts bytes/objects only
   for the transaction that removed it. A missing main document plus no remaining
@@ -342,9 +353,11 @@ that outcome.
   time; ambiguous results retry without inventing a release. Process metrics
   observe work and do not replace durable accounting.
 - **External finality and authorization:** automatic deletion covers only
-  ledgered objects proved unreferenced in the judgement transaction. The E1
-  contract must prove delayed concurrent deletes cannot remove a new generation
-  after same-key reuse; state-conditional accounting alone does not prove this.
+  ledgered objects proved unreferenced in the judgement transaction. The deletion
+  lease serializes duplicate deletes by compatible reclaim workers. Drain older
+  reclaim workers before activation. The remaining E1 item 5 contract must prove
+  an abandoned DELETE cannot land after lease expiry and remove a new generation
+  after same-key reuse; local holder/fence checks do not prove remote finality.
   Outside-ledger cleanup requires private report review, ready ledger, proved
   writer quiescence, dry-run and explicit CLI apply; apply rechecks current
   ledger/reference absence. The owner-scoped listing interface cannot attest a

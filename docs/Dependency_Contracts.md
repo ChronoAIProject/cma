@@ -90,14 +90,24 @@ service evidence for all of the following:
 - Versioning or soft deletion and the lifetime of non-current versions.
 - Whether the same content-addressed key can be rewritten after deletion.
 - The maximum landing delay of an abandoned PUT and whether deletion fences it.
+- E1 item 5: finality of abandoned, cancelled or timed-out DELETE requests. Reclaim
+  claims each condemned reservation with a unique worker holder, increasing fence
+  and five-minute lease, and starts deletion only with more than its 30-second
+  operation budget plus a five-second margin remaining. Competing workers cannot
+  delete during that lease. Before automatic deletion is enabled, the storage
+  owner must prove an abandoned request cannot take effect after lease expiry
+  against a subsequently uploaded generation under the same key, or demonstrate
+  an equivalent enforced generation fence. Local cancellation and lease takeover
+  cannot provide this remote finality guarantee.
 - Listing pagination and completeness, including hidden versions and owner scope.
 - Exact delete/list scope names and the corresponding NyxID grants (E2).
 - Rate limits, 429 behavior and Retry-After representation.
 - The real backend's GCS or S3 mapping and pinned implementation version.
 
 Until those answers and grants are verified, keep the maintenance switch off.
-No purge, reclaim or account-erasure worker consumes the maintenance port.
-Each future caller must record a typed blocked state when
+The gated reclaim worker consumes the maintenance port only after its independent
+opt-in and a ready quota ledger. Purge and account-erasure remain separate work.
+Every caller must record a typed blocked state when
 `deletion_supported()` is false.
 Synthetic delete/rewrite fixtures do not establish production rewrite semantics,
 physical deletion, listing completeness or a zero-residual-storage guarantee.
