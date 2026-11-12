@@ -103,7 +103,7 @@ async fn legacy_evidence(
             store,
             agent,
             agent_row,
-            ScanCaller::CommandAdmission,
+            ScanCaller::CommandReconciliation,
             session,
             false,
         )
@@ -137,7 +137,7 @@ async fn legacy_evidence(
         observation.complete();
     } else {
         scan_complete_log_with_session(
-            ScanCaller::CommandAdmission,
+            ScanCaller::CommandReconciliation,
             store,
             agent_id,
             agent.conversation.last_seq,

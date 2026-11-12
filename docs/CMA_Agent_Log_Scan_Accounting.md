@@ -44,7 +44,8 @@ down. Counts and durations saturate at `u64::MAX`.
 | `public_window_prefix` | Shared page/range/prefix readers and pending-approval projections. |
 | `conversation_publication` | Conversation mutations and first-message terminal projection. |
 | `checkpoint` | Checkpoint capture/fencing and checkpoint conversation mutations. |
-| `command_admission` | Command reserve/control/reconciliation, admission/reuse and lifecycle transitions. |
+| `command_admission` | Command reserve/control, admission/reuse and lifecycle transitions. |
+| `command_reconciliation` | Dispatched-command evidence reads, including trusted-prefix validation. |
 | `unknown_commit_proof` | Exact commit reconciliation for worker, append, conversation, title and created admission receipts. |
 | `other` | Generic direct append validation. |
 
@@ -55,7 +56,7 @@ is `install_skill`, `wait_for_workspace`, `add_worktree`, `materialize_home`,
 `dispatch_first_message`, `fence_interaction`, `close_process`, `publish_stopped`,
 `ensure_process_closed`, `remove_home`, `remove_worktree`, `publish_deleted`,
 and `none`. Other callers use `not_applicable`. The closed inventory contains
-42 caller/step pairs and two outcomes; it cannot retain arbitrary strings.
+43 caller/step pairs and two outcomes; it cannot retain arbitrary strings.
 
 Counts/bytes remain local during traversal. Dropping the guard adds one completed
 observation to atomic process totals, including partial work on failure or
@@ -72,3 +73,7 @@ as separate work. The caller categories partition this complete-scan boundary,
 not all database reads or all end-to-end request costs. Shared public log reads
 retain their boundary category even when consumed by another service component.
 No identity, error text, document content or request-span field is emitted.
+
+For comparisons with images before #1785, sum `command_admission` and
+`command_reconciliation` for scans, documents, bytes and duration. Splitting the
+label changes attribution only; it does not reduce any reads.
