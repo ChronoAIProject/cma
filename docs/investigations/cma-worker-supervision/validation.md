@@ -351,3 +351,13 @@ outcome or long claim. Real provider/model execution and preservation of active
 Sandbox/runtime/home/conversation/long reasoning, exact deployment image digests
 and external production journey acceptance remain the qualification gates
 described above. No production Kubernetes context was used.
+
+Before publishing the follow-up, `develop` advanced to `68f26f17f` with #1763's
+public-event contract timestamp tests/fixture correction. Merge `1d8647f46`
+synchronized that base without changing CMA implementation or either executable
+hash above. All 203 focused tests passed again on that merged source; the three
+upstream `rest::public_contract_tests::agent_event_cases` tests also passed.
+The synchronized commands/results and identity are in
+`/tmp/cma-1740-evidence/supplement-synchronized/`. The service-fault and ordinary
+service measurements above remain bound to their original source and identical
+executables rather than being described as new post-merge measurements.
