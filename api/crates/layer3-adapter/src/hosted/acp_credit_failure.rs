@@ -4,7 +4,7 @@ use super::acp::Outcome;
 
 const RECOVERY: &str = "The model request failed with HTTP 402 because its billing account has insufficient credits. Ask the Sandbox owner to top up the account used for model requests, then send a new message to continue. This failed turn will not be replayed automatically.";
 
-pub(super) fn classify(message: &str) -> Option<Outcome> {
+pub(super) fn classify(message: &str, bounded_json: bool) -> Option<Outcome> {
     // Match the observed transport diagnostic, then parse its structured body.
     // A number or billing phrase in arbitrary model output is not evidence.
     let body = message
@@ -12,14 +12,20 @@ pub(super) fn classify(message: &str) -> Option<Outcome> {
         .strip_prefix("unexpected status 402 Payment Required:")?
         .trim_start();
     // The transport can append URL/request diagnostics after the JSON object.
-    let error = serde_json::Deserializer::from_str(body)
-        .into_iter::<serde_json::Value>()
-        .next()?
-        .ok()?;
-    if error.get("error").and_then(serde_json::Value::as_str) != Some("insufficient_credits")
-        || error.get("error_code").and_then(serde_json::Value::as_u64) != Some(11300)
-    {
-        return None;
+    if bounded_json {
+        if !super::credit_error_json::matches(body) {
+            return None;
+        }
+    } else {
+        let error = serde_json::Deserializer::from_str(body)
+            .into_iter::<serde_json::Value>()
+            .next()?
+            .ok()?;
+        if error.get("error").and_then(serde_json::Value::as_str) != Some("insufficient_credits")
+            || error.get("error_code").and_then(serde_json::Value::as_u64) != Some(11300)
+        {
+            return None;
+        }
     }
     Some(Outcome::Failed {
         capability: Some("insufficient_credits".into()),
@@ -79,7 +85,7 @@ mod tests {
             "unexpected status 402 Payment Required: {\"error\":\"other_error\",\"error_code\":11300}",
             "unexpected status 403 Forbidden: {\"error\":\"insufficient_credits\",\"error_code\":11300}",
         ] {
-            assert!(classify(diagnostic).is_none(), "{diagnostic}");
+            assert!(classify(diagnostic, false).is_none(), "{diagnostic}");
             assert!(matches!(turn_outcome(json!({"error": {
                 "message": diagnostic, "data": {"capability": "original_failure"}
             }})), Outcome::Failed { message, capability }
