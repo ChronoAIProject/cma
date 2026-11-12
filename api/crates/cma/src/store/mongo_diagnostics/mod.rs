@@ -10,6 +10,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+mod periodic;
 mod summary;
 use sha2::{Digest, Sha256};
 use summary::Summary;
@@ -74,6 +75,8 @@ pub(super) fn install(
     options.command_event_handler = Some(mongodb::event::EventHandler::callback(move |event| {
         commands.command(event)
     }));
+    // Dropping the handle detaches; the task only keeps a Weak client state.
+    drop(periodic::start(&diagnostics));
     Some(diagnostics)
 }
 impl Diagnostics {
