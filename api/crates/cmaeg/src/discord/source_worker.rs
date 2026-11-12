@@ -131,6 +131,7 @@ pub(super) async fn run(
             }
             Err(
                 GatewayError::InvalidConfiguration
+                | GatewayError::Authentication
                 | GatewayError::MissingMessageContentIntent
                 | GatewayError::Protocol,
             ) => true,
@@ -154,6 +155,10 @@ pub(super) async fn run(
     status.stopped();
 }
 fn retry_delay(attempt: &Attempt, failures: u32, base: Duration) -> Duration {
+    if matches!(attempt.result, Err(GatewayError::SessionLimitUnavailable)) {
+        let jitter = uuid::Uuid::new_v4().as_u128() as u64;
+        return session_limit_delay(failures, jitter).max(attempt.cooldown);
+    }
     let minimum = match &attempt.result {
         Ok(end) => end.retry_after,
         // Lease contention is not permanent revocation. Do not hammer discovery
@@ -166,6 +171,12 @@ fn retry_delay(attempt: &Attempt, failures: u32, base: Duration) -> Duration {
         .min(Duration::from_secs(60))
         .max(minimum)
         .max(attempt.cooldown)
+}
+// Positive jitter preserves a minimum delay even when discovery refuses before
+// opening a socket. The plateau retains jitter rather than synchronizing bots.
+fn session_limit_delay(failures: u32, jitter: u64) -> Duration {
+    let floor_ms = 5_000u64 << failures.saturating_sub(1).min(3);
+    Duration::from_millis(floor_ms + jitter % (floor_ms / 2 + 1))
 }
 pub(super) async fn stopped(stop: &mut watch::Receiver<bool>, delay: Duration) -> bool {
     if *stop.borrow() {
@@ -180,3 +191,7 @@ pub(super) async fn stopped(stop: &mut watch::Receiver<bool>, delay: Duration) -
 #[cfg(test)]
 #[path = "source_worker_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "source_discovery_recovery_tests.rs"]
+mod recovery_tests;

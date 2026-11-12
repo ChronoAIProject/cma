@@ -1,6 +1,8 @@
 //! Durable Agent history reads and append operations.
 
 use super::*;
+#[cfg(test)]
+use crate::sandbox::{AgentOperationDelivery, AgentOperationKind};
 
 #[async_trait]
 pub trait AgentLogStore: Send + Sync {
@@ -172,5 +174,100 @@ pub trait AgentLogStore: Send + Sync {
             entries.extend(page);
         }
         Ok(entries)
+    }
+
+    /// Read only rows that can change the public transcript for a captured
+    /// Agent. `None` means the store cannot prove a bounded projection for the
+    /// requested format, so callers must use the complete compatibility read.
+    /// The returned rows retain their durable sequence numbers and ordering;
+    /// the existing transcript fold remains the semantic authority.
+    async fn agent_log_transcript(
+        &self,
+        agent: &Agent,
+    ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+        // The in-memory compatibility store is used by the unit parity suite.
+        // Keep its projection selector honest without making the production
+        // default claim a durable proof it cannot provide; Mongo supplies the
+        // trusted implementation above this trait boundary.
+        #[cfg(test)]
+        {
+            let entries = self
+                .agent_log_prefix(&agent.id, agent.conversation.last_seq)
+                .await?;
+            return Ok(Some(
+                entries
+                    .into_iter()
+                    .filter(|entry| {
+                        matches!(
+                            entry.kind,
+                            AgentLogKind::Created { .. }
+                                | AgentLogKind::ConversationOpened { .. }
+                                | AgentLogKind::RuntimeGenerationRetired { .. }
+                                | AgentLogKind::TurnStarted { .. }
+                                | AgentLogKind::TurnMetadataSet { .. }
+                                | AgentLogKind::OwnerMessage { .. }
+                                | AgentLogKind::AgentMessage { .. }
+                                | AgentLogKind::TurnCompleted { .. }
+                                | AgentLogKind::TurnFailed { .. }
+                                | AgentLogKind::TurnInterrupted { .. }
+                                | AgentLogKind::ConversationGap { .. }
+                                | AgentLogKind::OperationDeliveryChanged {
+                                    operation: AgentOperationKind::Steer,
+                                    state: AgentOperationDelivery::DispatchFenced,
+                                    ..
+                                }
+                        )
+                    })
+                    .collect(),
+            ));
+        }
+        #[cfg(not(test))]
+        {
+            let _ = agent;
+            Ok(None)
+        }
+    }
+
+    /// Segmented bounded transcript page. None selects legacy compatibility.
+    async fn agent_log_transcript_page(
+        &self,
+        _agent: &Agent,
+        _request: &crate::sandbox::AgentTranscriptPageRequest,
+    ) -> Result<Option<crate::sandbox::AgentTranscriptPage>, SandboxStoreError> {
+        Ok(None)
+    }
+
+    /// Read a trusted transcript projection while visiting source pages. The
+    /// returned transcript owns only public output; stores that cannot prove a
+    /// bounded projection return `None` and retain the compatibility path.
+    async fn agent_log_transcript_projection(
+        &self,
+        _agent: &Agent,
+    ) -> Result<Option<crate::sandbox::AgentTranscript>, SandboxStoreError> {
+        Ok(None)
+    }
+
+    /// Read only rows that can change usage through a captured Agent head.
+    /// `None` means the store cannot prove a bounded usage projection for the
+    /// requested format, so callers must use the complete compatibility read.
+    async fn agent_log_usage(
+        &self,
+        agent: &Agent,
+    ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+        // The in-memory adapter has no durable semantic checkpoint proving
+        // that omitted rows are valid. Claiming a selected usage projection
+        // here would let unrelated malformed entries bypass the exact fold.
+        // Mongo supplies the trusted proof alongside its selected rows.
+        let _ = agent;
+        Ok(None)
+    }
+
+    /// Read usage from the maintained semantic projection without retaining
+    /// selected source rows. Legacy or unproven stores return `None`.
+    async fn agent_log_usage_projection(
+        &self,
+        _agent: &Agent,
+    ) -> Result<Option<crate::sandbox::AgentUsageReading>, SandboxStoreError> {
+        Ok(None)
     }
 }

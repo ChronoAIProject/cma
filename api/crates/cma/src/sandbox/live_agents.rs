@@ -12,6 +12,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
 
 mod budget;
+mod capacity;
 mod publication;
 mod recovery;
 mod updates;
