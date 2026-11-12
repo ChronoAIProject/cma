@@ -60,7 +60,10 @@ paths refuse because their ownership cannot be proved by literal comparison.
 Unknown budget key families, malformed request-turn keys and missing nested
 request ownership refuse capture before selection. The `owner:<subject>` baseline belongs to independent account accounting and is
 not copied. Whole BSON records preserve request, consent, receipt and accounting
-bytes; document revision objects are separately read back and verified.
+bytes; document revision objects are separately read back and verified. `Documents`
+requires both the indexed and embedded owner to match the source Sandbox owner,
+plus the originating/runtime Agent reference. Public creation accepts an origin
+annotation, so it cannot authorize copying another account's body.
 
 The full capture/restore regressions create access-request consent and budget
 reservations through the production stores. Their expected inventories read the

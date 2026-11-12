@@ -11,6 +11,7 @@ mod retained;
 
 pub(super) struct Closure {
     sandbox: Vec<String>,
+    owner: String,
     agents: Vec<String>,
     resources: Vec<String>,
     commands: Vec<String>,
@@ -60,6 +61,12 @@ pub(super) async fn selection(
             fields(&["record.resources.sandbox_id"], &closure.sandbox)
         ]},
         Policy::Activity => activity::selection(db, closure, session).await?,
+        // Public document creation accepts an origin annotation. It is not
+        // authority to archive another account's body under a guessed Agent ID.
+        Policy::Documents => doc! {"$and":[
+            {"owner_subject":&closure.owner,"record.metadata.owner_subject":&closure.owner},
+            fields(&["record.metadata.origin_agent_id", "record.runtime_author_agent_id"], &closure.agents)
+        ]},
         Policy::Budget => doc! {"$or":[
             fields(&["record.agent_id", "record.hold.scope.agent_id"], &closure.agents),
             // Request-turn ledgers have no record-level owner. Their exact key
@@ -107,6 +114,17 @@ pub(super) async fn identities(
     sandbox: &str,
     session: &mut ClientSession,
 ) -> Result<Closure> {
+    let parent = db
+        .collection::<Document>("sandboxes")
+        .find_one(doc! {"_id":sandbox})
+        .session(&mut *session)
+        .await
+        .map_err(|_| REFUSED)?
+        .ok_or(REFUSED)?;
+    let owner = crate::store::sandboxes::read_sandbox(&parent)
+        .map_err(|_| REFUSED)?
+        .owner
+        .to_string();
     let mut ids = BTreeSet::from([sandbox.to_string()]);
     let mut agents = BTreeSet::new();
     for name in ["workspaces", "worktrees", "agents"] {
@@ -204,6 +222,7 @@ pub(super) async fn identities(
     }
     Ok(Closure {
         sandbox: vec![sandbox.into()],
+        owner,
         agents,
         resources: ids.into_iter().collect(),
         commands,
