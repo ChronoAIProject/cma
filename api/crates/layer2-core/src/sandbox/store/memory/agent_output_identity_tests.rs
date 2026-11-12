@@ -1,4 +1,6 @@
 use super::*;
+#[path = "agent_completed_tools_tests.rs"]
+mod completed_tools;
 
 fn identity_terminal(agent: &crate::sandbox::Agent) -> ConversationUpdate {
     ConversationUpdate::TurnEndedForPrompt {
