@@ -44,6 +44,7 @@ pub(crate) struct FeatureFlags {
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
     pub retry_single_marker_enabled: bool,
+    pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
     pub event_driven_reconciliation: bool,
 }
@@ -96,6 +97,10 @@ impl FeatureFlags {
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             retry_single_marker_enabled: flag(lookup, "CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED")?,
+            agent_log_scan_cooperative_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED",
+            )?,
             retained_context_lookup: flag(lookup, "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED")?,
             event_driven_reconciliation: flag(
                 lookup,
@@ -203,6 +208,10 @@ mod sandbox_enrichment_tests;
 
 #[cfg(test)]
 mod retry_single_marker_tests;
+
+#[cfg(test)]
+#[path = "scan_cooperation_tests.rs"]
+mod scan_cooperation_tests;
 
 #[cfg(test)]
 mod document_maintenance_tests;
