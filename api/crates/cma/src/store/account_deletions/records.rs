@@ -10,6 +10,12 @@ fn valid_subject_hash(hash: &str) -> bool {
             .bytes()
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
+pub(super) fn recover_subject_hash(document: &Document) -> Option<&str> {
+    document
+        .get_str("subject_hash")
+        .ok()
+        .filter(|hash| valid_subject_hash(hash))
+}
 pub(super) fn active_hash(document: &Document) -> Result<&str, AccountDeletionError> {
     let invalid = || AccountDeletionError::Store("invalid active account hash identity".into());
     let subject = document.get_str("subject_hash").map_err(|_| invalid())?;

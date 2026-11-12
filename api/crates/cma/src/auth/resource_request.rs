@@ -105,7 +105,6 @@ pub(super) async fn attach(auth: &AuthState, request: Request, next: Next) -> Re
         .account_gate(
             parts.method.as_str(),
             parts.uri.path(),
-            &parts.headers,
             &verified.subject,
             false,
         )

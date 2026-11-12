@@ -140,11 +140,45 @@ impl AccountDeletion {
         self.schedule(at);
         Ok(event)
     }
+    pub fn renew(
+        &mut self,
+        fence: u64,
+        now: &str,
+        lease: Duration,
+    ) -> Result<(), AccountDeletionError> {
+        self.require_fence(fence, now)?;
+        if lease.is_zero() {
+            return Err(AccountDeletionError::Invalid);
+        }
+        let expires_at = later(now, lease)?;
+        if expires_at.as_str() <= now {
+            return Err(AccountDeletionError::Invalid);
+        }
+        self.revise()?;
+        self.work.lease.as_mut().unwrap().expires_at = expires_at;
+        Ok(())
+    }
+    pub fn defer(&mut self, fence: u64, until: &str) -> Result<(), AccountDeletionError> {
+        if self.status != AccountDeletionStatus::Running
+            || self
+                .work
+                .lease
+                .as_ref()
+                .is_none_or(|lease| lease.fence != fence)
+        {
+            return Err(AccountDeletionError::StaleFence);
+        }
+        let ready_at = later(until, Duration::ZERO)?;
+        self.revise()?;
+        self.work.ready_at = ready_at;
+        self.work.lease = None;
+        Ok(())
+    }
     pub fn retry(
         &mut self,
         fence: u64,
         at: &str,
-        failure: String,
+        failure: ErasureFailureCode,
     ) -> Result<ErasureEvent, AccountDeletionError> {
         self.require_fence(fence, at)?;
         let attempts = self
@@ -214,7 +248,7 @@ impl AccountDeletion {
             completed_at: at.into(),
             counts: BTreeMap::new(),
         });
-        // Pending policy decision D2: retain aggregate counts, never the resource
+        // Pending retention policy: retain aggregate counts, never the resource
         // identities or credential identifiers captured before erasure.
         self.inventory = ErasureInventory {
             counts: std::mem::take(&mut self.inventory.counts),
@@ -223,6 +257,7 @@ impl AccountDeletion {
         self.status = AccountDeletionStatus::Completed;
         self.subject = None;
         self.active_subject_hash = None;
+        self.block = None;
         self.completed_at = Some(at.into());
         self.expire_at = Some(expiry);
         self.reverify_at = Some(reverify_at);
@@ -241,6 +276,12 @@ impl AccountDeletion {
         }
     }
     pub fn current_event(&self, at: &str, kind: ErasureEventKind) -> ErasureEvent {
+        let kind = match kind {
+            ErasureEventKind::Blocked { reason } => ErasureEventKind::Blocked {
+                reason: reason.for_audit(),
+            },
+            other => other,
+        };
         ErasureEvent {
             deletion_id: self.id.clone(),
             seq: self.event_seq,
@@ -271,16 +312,19 @@ impl AccountDeletion {
         Ok(self.current_event(at, kind))
     }
     fn bump(&mut self) -> Result<(), AccountDeletionError> {
-        let revision = self
-            .revision
-            .checked_add(1)
-            .ok_or(AccountDeletionError::Invalid)?;
         let seq = self
             .event_seq
             .checked_add(1)
             .ok_or(AccountDeletionError::Invalid)?;
-        self.revision = revision;
+        self.revise()?;
         self.event_seq = seq;
+        Ok(())
+    }
+    fn revise(&mut self) -> Result<(), AccountDeletionError> {
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or(AccountDeletionError::Invalid)?;
         Ok(())
     }
     fn schedule(&mut self, at: &str) {

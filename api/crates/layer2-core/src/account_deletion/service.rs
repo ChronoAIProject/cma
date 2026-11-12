@@ -1,10 +1,15 @@
 use super::*;
-use crate::{Caller, Capability, SubjectId};
+use crate::{Caller, SubjectId};
 use async_trait::async_trait;
 use std::{sync::Arc, time::Duration};
 
 #[async_trait]
 pub trait AccountDeletionStore: Send + Sync {
+    async fn replay(
+        &self,
+        subject: &SubjectId,
+        key: &str,
+    ) -> Result<Option<AccountDeletion>, AccountDeletionError>;
     async fn request(
         &self,
         subject: &SubjectId,
@@ -34,6 +39,7 @@ pub trait AccountDeletionStore: Send + Sync {
         deletion: AccountDeletion,
         events: Vec<ErasureEvent>,
         expected_revision: u64,
+        expected_lease_token: Option<&str>,
     ) -> Result<(), AccountDeletionError>;
 }
 #[async_trait]
@@ -64,41 +70,47 @@ impl AccountDeletionService {
     pub async fn request(
         &self,
         caller: &Caller,
+        authority: Option<&OwnerSessionAuthority>,
         key: &str,
         acknowledged: bool,
     ) -> Result<Receipt, AccountDeletionError> {
-        require_owner(caller)?;
-        if !self.enabled {
-            return Err(AccountDeletionError::Unavailable);
-        }
+        require_owner(caller, authority)?;
         if !acknowledged {
             return Err(AccountDeletionError::AcknowledgementRequired);
         }
-        if key.is_empty()
-            || key.len() > 255
-            || !key.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
-        {
-            return Err(AccountDeletionError::Invalid);
+        if !crate::operation::valid_idempotency_key(key.as_bytes()) {
+            return Err(AccountDeletionError::InvalidIdempotencyKey);
         }
-        let deletion = match self
-            .store
-            .request(&caller.subject, key, &crate::now_rfc3339())
-            .await
-        {
-            Ok(deletion) => deletion,
-            Err(AccountDeletionError::RecoveryRequired) => {
-                self.standing.insert_local(&subject_hash(&caller.subject));
-                return Err(AccountDeletionError::RecoveryRequired);
+        let deletion = if let Some(record) = self.store.replay(&caller.subject, key).await? {
+            record
+        } else {
+            if !self.enabled {
+                return Err(AccountDeletionError::Unavailable);
             }
-            Err(error) => return Err(error),
+            match self
+                .store
+                .request(&caller.subject, key, &crate::now_rfc3339())
+                .await
+            {
+                Ok(deletion) => deletion,
+                Err(AccountDeletionError::RecoveryRequired) => {
+                    self.standing.insert_local(&subject_hash(&caller.subject));
+                    return Err(AccountDeletionError::RecoveryRequired);
+                }
+                Err(error) => return Err(error),
+            }
         };
         if let Some(hash) = &deletion.active_subject_hash {
             self.standing.insert_local(hash);
         }
         Ok(deletion.receipt())
     }
-    pub async fn status(&self, caller: &Caller) -> Result<Receipt, AccountDeletionError> {
-        require_owner(caller)?;
+    pub async fn status(
+        &self,
+        caller: &Caller,
+        authority: Option<&OwnerSessionAuthority>,
+    ) -> Result<Receipt, AccountDeletionError> {
+        require_owner(caller, authority)?;
         self.store
             .latest(&caller.subject)
             .await?
@@ -106,10 +118,15 @@ impl AccountDeletionService {
             .ok_or(AccountDeletionError::NotFound)
     }
 }
-// Pending security decision D7: verified human authority is sufficient; recent
+// Pending security decision: verified human authority is sufficient; recent
 // identity reauthentication is not asserted by this contract.
-fn require_owner(caller: &Caller) -> Result<(), AccountDeletionError> {
-    caller
-        .require(Capability::DeleteOwnAccount)
-        .map_err(|_| AccountDeletionError::RequiresOwnerSession)
+fn require_owner(
+    caller: &Caller,
+    authority: Option<&OwnerSessionAuthority>,
+) -> Result<(), AccountDeletionError> {
+    if authority.is_some_and(|authority| authority.subject() == &caller.subject) {
+        Ok(())
+    } else {
+        Err(AccountDeletionError::RequiresOwnerSession)
+    }
 }

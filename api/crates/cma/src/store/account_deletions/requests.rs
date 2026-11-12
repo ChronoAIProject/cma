@@ -90,15 +90,6 @@ async fn once(
         .map_err(AttemptError::Driver)?
     {
         let record = read_record(row).map_err(AttemptError::Domain)?;
-        store
-            .records
-            .update_one(
-                doc! {"_id":record.id.as_str()},
-                doc! {"$addToSet":{"request_keys":key}},
-            )
-            .session(&mut *session)
-            .await
-            .map_err(AttemptError::Driver)?;
         return Ok(record);
     }
     store

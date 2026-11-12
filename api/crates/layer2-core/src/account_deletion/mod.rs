@@ -10,6 +10,8 @@ pub use service::{AccountDeletionService, AccountDeletionStore, AccountErasureEf
 pub use standing::{AccountStanding, AvailableAccounts};
 pub use types::*;
 #[cfg(test)]
+mod lease_tests;
+#[cfg(test)]
 mod model_tests;
 #[cfg(test)]
 mod service_tests;

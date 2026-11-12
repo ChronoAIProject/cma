@@ -2,6 +2,20 @@ use crate::SubjectId;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, time::Duration};
 
+/// Personal session evidence established at the authentication boundary, never persisted as a capability.
+#[derive(Debug, Clone)]
+pub struct OwnerSessionAuthority {
+    subject: SubjectId,
+}
+impl OwnerSessionAuthority {
+    pub fn verified_personal(subject: SubjectId) -> Self {
+        Self { subject }
+    }
+    pub fn subject(&self) -> &SubjectId {
+        &self.subject
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AccountDeletionId(pub String);
@@ -45,17 +59,57 @@ pub enum AccountDeletionStatus {
     Blocked,
     Completed,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErasureFailureCode {
+    Unavailable,
+    RateLimited,
+    PermissionDenied,
+    Unsupported,
+    InvalidResponse,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ErasureBlock {
     OwnerAuthorityUnavailable,
-    RetirementArchiveHold { sandbox_id: String },
-    SandboxRetirementFailed { sandbox_id: String },
-    HomeNotFinal { sandbox_id: String },
-    ObjectStoreRefused { reason: String },
+    RetirementArchiveHold {
+        sandbox_id: String,
+    },
+    SandboxRetirementFailed {
+        sandbox_id: String,
+    },
+    HomeNotFinal {
+        sandbox_id: String,
+    },
+    ObjectStoreRefused {
+        reason: ErasureFailureCode,
+    },
     BillingSettlementPending,
-    UnsupportedResidue { collection: String },
-    ResidueFound { classes: Vec<String> },
+    /// A name from the static erasure catalog, never caller-supplied text.
+    UnsupportedResidue {
+        collection: String,
+    },
+    /// Static residue class names supplied by the reconciler.
+    ResidueFound {
+        classes: Vec<String>,
+    },
+}
+impl ErasureBlock {
+    pub(super) fn for_audit(&self) -> Self {
+        let hash = |id: &str| crate::document_artifacts::digest(id.as_bytes());
+        match self {
+            Self::RetirementArchiveHold { sandbox_id } => Self::RetirementArchiveHold {
+                sandbox_id: hash(sandbox_id),
+            },
+            Self::SandboxRetirementFailed { sandbox_id } => Self::SandboxRetirementFailed {
+                sandbox_id: hash(sandbox_id),
+            },
+            Self::HomeNotFinal { sandbox_id } => Self::HomeNotFinal {
+                sandbox_id: hash(sandbox_id),
+            },
+            other => other.clone(),
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AccountDeletionError {
@@ -71,6 +125,8 @@ pub enum AccountDeletionError {
     Conflict,
     #[error("invalid account deletion transition")]
     Invalid,
+    #[error("invalid idempotency key")]
+    InvalidIdempotencyKey,
     #[error("account deletion lease is stale")]
     StaleFence,
     #[error("replay the same request to reconcile its commit")]
@@ -146,7 +202,7 @@ impl ResidueReport {
 pub enum ErasureEventKind {
     Started,
     Completed { counts: BTreeMap<String, u64> },
-    Retried { failure: String },
+    Retried { failure: ErasureFailureCode },
     Blocked { reason: ErasureBlock },
     Rearmed,
 }
@@ -182,7 +238,7 @@ pub enum StepOutcome {
     Pending { retry_after: Duration },
 }
 pub enum ErasureFailure {
-    Transient { reason: String },
+    Transient { reason: ErasureFailureCode },
     Blocked { reason: ErasureBlock },
 }
 pub fn subject_hash(subject: &SubjectId) -> String {

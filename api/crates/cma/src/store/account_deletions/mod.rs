@@ -46,24 +46,33 @@ impl MongoAccountDeletionStore {
     pub(crate) async fn active_hashes(&self) -> Result<BTreeSet<String>, AccountDeletionError> {
         let mut cursor = self
             .records
-            .find(doc! {"status":{"$ne":"completed"}})
+            .find(doc! {"active_subject_hash":{"$exists":true}})
+            .hint(mongodb::options::Hint::Name(
+                "account_deletions_active_subject".into(),
+            ))
             .projection(doc! {"_id":0,"subject_hash":1,"active_subject_hash":1})
             .await
             .map_err(driver)?;
         let mut hashes = BTreeSet::new();
         while let Some(row) = cursor.try_next().await.map_err(driver)? {
-            hashes.insert(records::active_hash(&row)?.into());
+            match records::active_hash(&row) {
+                Ok(hash) => {
+                    hashes.insert(hash.into());
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "skipping malformed account deletion snapshot marker");
+                    if let Some(hash) = records::recover_subject_hash(&row) {
+                        hashes.insert(hash.into());
+                    }
+                }
+            }
         }
         Ok(hashes)
     }
-    pub(crate) async fn has_request_key(
-        &self,
-        subject: &SubjectId,
-        key: &str,
-    ) -> Result<bool, AccountDeletionError> {
+    pub(crate) async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
         self.records
-            .find_one(doc! {"subject_hash":subject_hash(subject),"request_keys":key_hash(key)})
-            .projection(doc! {"_id":1})
+            .find_one(doc! {"subject_hash":subject_hash(subject),"$or":[{"active_subject_hash":{"$exists":true}},{"status":{"$ne":"completed"}}]})
+            .projection(doc! {"_id":0,"subject_hash":1,"active_subject_hash":1,"status":1})
             .await
             .map(|row| row.is_some())
             .map_err(driver)
@@ -71,6 +80,19 @@ impl MongoAccountDeletionStore {
 }
 #[async_trait::async_trait]
 impl AccountDeletionStore for MongoAccountDeletionStore {
+    async fn replay(
+        &self,
+        subject: &SubjectId,
+        key: &str,
+    ) -> Result<Option<AccountDeletion>, AccountDeletionError> {
+        self.records
+            .find_one(doc! {"subject_hash":subject_hash(subject),"request_keys":key_hash(key)})
+            .projection(doc! {"request_keys":0})
+            .await
+            .map_err(driver)?
+            .map(read_record)
+            .transpose()
+    }
     async fn request(
         &self,
         subject: &SubjectId,
@@ -85,6 +107,7 @@ impl AccountDeletionStore for MongoAccountDeletionStore {
     ) -> Result<Option<AccountDeletion>, AccountDeletionError> {
         self.records
             .find_one(doc! {"subject_hash":subject_hash(subject),"status":{"$ne":"completed"}})
+            .projection(doc! {"request_keys":0})
             .await
             .map_err(driver)?
             .map(read_record)
@@ -126,8 +149,17 @@ impl AccountDeletionStore for MongoAccountDeletionStore {
         deletion: AccountDeletion,
         events: Vec<ErasureEvent>,
         expected_revision: u64,
+        expected_lease_token: Option<&str>,
     ) -> Result<(), AccountDeletionError> {
-        writes::commit(self, deletion, events, expected_revision, None).await
+        writes::commit(
+            self,
+            deletion,
+            events,
+            expected_revision,
+            None,
+            expected_lease_token,
+        )
+        .await
     }
 }
 /// Must execute after an owner fence write in the same transaction.
@@ -138,7 +170,7 @@ pub(crate) async fn erasing_in_session(
 ) -> Result<bool, mongodb::error::Error> {
     database
         .collection::<Document>(RECORDS)
-        .find_one(doc! {"subject_hash":subject_hash(subject),"status":{"$ne":"completed"}})
+        .find_one(doc! {"subject_hash":subject_hash(subject),"$or":[{"active_subject_hash":{"$exists":true}},{"status":{"$ne":"completed"}}]})
         .projection(doc! {"_id":1})
         .session(session)
         .await

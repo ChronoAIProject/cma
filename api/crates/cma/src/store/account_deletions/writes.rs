@@ -10,16 +10,37 @@ pub(super) async fn claim_due(
     lease: Duration,
 ) -> Result<Option<AccountDeletion>, AccountDeletionError> {
     for _ in 0..8 {
-        let row=store.records.find_one(doc!{
+        let mut cursor=store.records.find(doc!{
             "status":"running","work.ready_at":{"$lte":now},
             "$or":[{"work.lease":{"$exists":false}},{"work.lease":mongodb::bson::Bson::Null},{"work.lease.expires_at":{"$lte":now}}],
         }).sort(doc!{"work.ready_at":1,"_id":1}).await.map_err(driver)?;
-        let Some(row) = row else { return Ok(None) };
-        let mut record = read_record(row)?;
+        let mut candidate = None;
+        while let Some(row) = cursor.try_next().await.map_err(driver)? {
+            let record = records::request_keys(&row).and_then(|_| read_record(row));
+            match record {
+                Ok(record) => {
+                    candidate = Some(record);
+                    break;
+                }
+                Err(error) => tracing::warn!(%error, "skipping unreadable account deletion claim"),
+            }
+        }
+        let Some(mut record) = candidate else {
+            return Ok(None);
+        };
         let expected = record.revision;
         record.claim(holder, now, lease)?;
         let event = record.current_event(now, ErasureEventKind::Started);
-        match commit(store, record.clone(), vec![event], expected, Some(now)).await {
+        match commit(
+            store,
+            record.clone(),
+            vec![event],
+            expected,
+            Some(now),
+            None,
+        )
+        .await
+        {
             Ok(()) => return Ok(Some(record)),
             Err(AccountDeletionError::Conflict) => continue,
             Err(error) => return Err(error),
@@ -33,6 +54,7 @@ pub(super) async fn commit(
     events: Vec<ErasureEvent>,
     expected: u64,
     claim_at: Option<&str>,
+    expected_lease_token: Option<&str>,
 ) -> Result<(), AccountDeletionError> {
     for attempt in 0..8 {
         backoff(attempt, expected).await;
@@ -48,7 +70,17 @@ pub(super) async fn commit(
             }
             return Err(driver(error));
         }
-        match once(store, &deletion, &events, expected, claim_at, &mut session).await {
+        match once(
+            store,
+            &deletion,
+            &events,
+            expected,
+            claim_at,
+            expected_lease_token,
+            &mut session,
+        )
+        .await
+        {
             Ok(()) => {}
             Err(AttemptError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
@@ -77,6 +109,7 @@ async fn once(
     events: &[ErasureEvent],
     expected: u64,
     claim_at: Option<&str>,
+    expected_lease_token: Option<&str>,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), AttemptError> {
     let row = store
@@ -100,6 +133,22 @@ async fn once(
     {
         return Err(AttemptError::Domain(AccountDeletionError::Conflict));
     }
+    let old_lease_token = old.work.lease.as_ref().map(|lease| lease.token.as_str());
+    if !claimed && old_lease_token != expected_lease_token {
+        return Err(AttemptError::Domain(AccountDeletionError::StaleFence));
+    }
+    if !claimed
+        && deletion.work.lease.as_ref().is_some_and(|lease| {
+            Some(lease.token.as_str()) != expected_lease_token
+                || old
+                    .work
+                    .lease
+                    .as_ref()
+                    .is_none_or(|old| old.fence != lease.fence)
+        })
+    {
+        return Err(AttemptError::Domain(AccountDeletionError::StaleFence));
+    }
     if old.event_seq.checked_add(events.len() as u64) != Some(deletion.event_seq)
         || events.iter().enumerate().any(|(index, event)| {
             event.deletion_id != deletion.id || event.seq != old.event_seq + index as u64 + 1
@@ -109,8 +158,15 @@ async fn once(
     }
     let keys = records::request_keys(&row).map_err(AttemptError::Domain)?;
     let mut filter = doc! {"_id":deletion.id.as_str(),"revision":i64::try_from(expected).map_err(|_|AttemptError::Domain(AccountDeletionError::Invalid))?,"work.next_fence":i64::try_from(old.work.next_fence).map_err(|_|AttemptError::Domain(AccountDeletionError::Invalid))?};
-    if let Some(lease) = &old.work.lease {
-        filter.insert("work.lease.token", &lease.token);
+    let held_token = if claimed {
+        old_lease_token
+    } else {
+        expected_lease_token
+    };
+    if let Some(token) = held_token {
+        filter.insert("work.lease.token", token);
+    } else {
+        filter.insert("work.lease", mongodb::bson::Bson::Null);
     }
     let result = store
         .records
