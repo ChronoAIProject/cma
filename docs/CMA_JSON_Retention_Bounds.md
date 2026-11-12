@@ -159,3 +159,7 @@ for the selected-field allowance, final-owner contract and remaining scope.
 Typed session, permission and terminal decoding also use bounded Serde diagnostic
 construction under this policy. See [typed diagnostics](CMA_Typed_Diagnostics.md)
 for compatibility tests and the remaining typed allocation scope.
+
+Context-goal observations retain the admitted original frame and compare their
+session identifier without copying it. See [context-goal ownership](CMA_Context_Goal_Ownership.md)
+for complete-frame retention, safety behavior and remaining independent copies.
