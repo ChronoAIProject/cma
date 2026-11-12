@@ -181,6 +181,7 @@ impl ControlPlaneComposition {
             authoring_bounds,
         );
         let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone())
+            .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
         let native_warm_pools = runtime.warm_pools;
@@ -252,8 +253,10 @@ impl ControlPlaneComposition {
                 funding: runtime::funding(config, &stores, adapter.clone())?,
             },
             SandboxLifecycleConfig {
+                bounded_live_fragments: config.features.bounded_live_fragments,
                 access_transport_migration: config.agent_access_transport_migration.clone(),
                 managed_documents_enabled: config.document_storage.is_some(),
+                event_driven_reconciliation: config.features.event_driven_reconciliation,
                 home_policy: config
                     .runtime
                     .home_policy
@@ -356,6 +359,7 @@ impl ControlPlaneComposition {
             agent_page_origin,
             &bindings,
             config.gateway.as_ref(),
+            config.features.retained_context_lookup,
         )?;
         let event_workers = layer2_core::event_workers::EventWorkerProfileService::new(
             stores.event_workers.clone(),
@@ -402,6 +406,11 @@ impl ControlPlaneComposition {
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes = resource_routes.merge(bindings.router(config.gateway.as_ref())?);
+        // Apply before cloning for delegated dispatch: all entry points share slots.
+        let resource_routes = resource_routes.layer(axum::middleware::from_fn_with_state(
+            crate::public_streams::StreamBudget::new(config.public_stream_limit),
+            crate::public_streams::enforce,
+        ));
         let (bot_routes, bots) = bots::BotComposition::build(bots::BotCompositionDependencies {
             config,
             stores: &stores,
@@ -451,7 +460,10 @@ impl ControlPlaneComposition {
             browser_connections,
             auth.clone(),
             recorder,
-            limits,
+            (
+                limits,
+                crate::expensive_reads::ReadBudget::new(config.features.retain_read_frames),
+            ),
             stores,
             tool_routes.merge(service_portal::router(
                 auth.clone(),

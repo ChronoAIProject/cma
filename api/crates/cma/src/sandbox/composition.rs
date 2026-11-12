@@ -44,8 +44,10 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub bounded_live_fragments: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
+    pub event_driven_reconciliation: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -97,10 +99,11 @@ impl SandboxLifecycleComposition {
                 ),
             )),
         ));
-        let updates = DurableAgentUpdateRecorder::with_spend_source(
+        let updates = DurableAgentUpdateRecorder::with_live_budget(
             dependencies.store.clone(),
             dependencies.store.writer_policy.clone(),
             Some(dependencies.store.clone()),
+            config.bounded_live_fragments,
         );
         let registry = Arc::clone(&dependencies.registry);
         let suggestions = super::suggestion_worker::SuggestionWorker::new(
@@ -163,7 +166,7 @@ impl SandboxLifecycleComposition {
                     Arc::clone(&workspace_worker),
                 )),
                 agents: Arc::new(DurableLiveAgentStopper::new(
-                    dependencies.store,
+                    dependencies.store.clone(),
                     Arc::clone(&registry),
                 )),
                 registry,
@@ -187,7 +190,11 @@ impl SandboxLifecycleComposition {
             reconciliation,
             sandbox: SandboxScheduler::new(sandbox_worker).with_admission_wake(sandbox_admitted),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
-            agent: AgentScheduler::new(agent_worker, agent_admitted),
+            agent: AgentScheduler::new(agent_worker, agent_admitted)
+                .with_event_driven_reconciliation(
+                    Arc::clone(&dependencies.store.agent_parent_ready),
+                    config.event_driven_reconciliation,
+                ),
             titles,
             funding_renewal,
             suggestions,

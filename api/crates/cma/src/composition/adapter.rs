@@ -70,7 +70,13 @@ pub(super) async fn production_adapter(
         .with_reclaimer(reclaimer);
         let transport = ProviderHostedControlTransport::for_retained_opensandbox(client.clone())
             .map_err(|e| e.to_string())?
-            .with_subscriptions(subscriptions.clone());
+            .with_subscriptions(subscriptions.clone())
+            .with_retained_json(config.features.retained_json)
+            .with_bounded_raw_output(config.features.bounded_raw_output)
+            .with_bounded_permission_state(config.features.bounded_permission_state)
+            .with_bounded_update_relay(config.features.bounded_update_relay)
+            .with_output_json_budget(config.features.output_json_budget)
+            .with_shared_runtime_output(config.features.shared_runtime_output);
         backends.opensandbox = Some(Arc::new(
             ProviderHostedBackend::new(client, Arc::new(transport), &config.deployment_id)
                 .map_err(|e| e.to_string())?,
@@ -140,7 +146,13 @@ pub(super) async fn production_adapter(
             config.runtime.agent_sandbox_runtime_transport,
         )
         .map_err(|e| e.to_string())?
-        .with_subscriptions(subscriptions);
+        .with_subscriptions(subscriptions)
+        .with_retained_json(config.features.retained_json)
+        .with_bounded_raw_output(config.features.bounded_raw_output)
+        .with_bounded_permission_state(config.features.bounded_permission_state)
+        .with_bounded_update_relay(config.features.bounded_update_relay)
+        .with_output_json_budget(config.features.output_json_budget)
+        .with_shared_runtime_output(config.features.shared_runtime_output);
         backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(
             client,
             Arc::new(transport),

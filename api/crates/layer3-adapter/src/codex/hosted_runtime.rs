@@ -20,6 +20,11 @@ impl HostedAgentRuntime for CodexRuntime {
             crate::PermissionLevel::Autonomous => "agent-full-access",
         };
         Ok(HostedAgentOpenSettings {
+            retained_json: false,
+            bounded_raw_output: false,
+            bounded_permission_state: false,
+            output_json_budget: false,
+            shared_runtime_output: false,
             // ACP 1.4.0 wraps Codex 0.147.0's native ResponseError using its
             // internal-error envelope. Other initialize errors are not evidence
             // of a retained bridge, even when they share that outer code.
