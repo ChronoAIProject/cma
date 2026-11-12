@@ -88,7 +88,7 @@
         "headers": {}
       },
       "response": {
-        "status": 400,
+        "status": 422,
         "headers": {
           "content-type": "application/json"
         },
