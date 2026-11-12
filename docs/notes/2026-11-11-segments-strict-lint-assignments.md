@@ -1,6 +1,6 @@
 # Segmentation combined PR: current assignments and gate ledger
 
-Updated Thu 2026-11-12 11:10 SGT. Integration owner: S2 cma-db-contention.
+Updated Thu 2026-11-12 11:20 SGT. Integration owner: S2 cma-db-contention.
 Branch: `tl/cma-log-segments/integration-20261111`.
 One default-off combined PR to develop; target PR 14:00, review 15:30, merge 16:00,
 evening train 19:00–22:00. Writer and recovery activation remain closed.
@@ -10,8 +10,9 @@ No issue closes without its required production evidence.
 The combined selection passes 609 unit tests,361 ordinary Mongo contracts and the
 separate authenticated migration/runtime-role contract. All have zero failures.
 This qualifies the published source, not the unresolved source-review findings.
-The PR is not open. The 14:00 target is at risk: S3/S4/S5 follow-up pins are absent
-at 11:05, after the requested 10:30 source cutoff. No owner ETA has been confirmed.
+The PR is not open. At 11:18 the lead confirmed the earlier pin requests had not
+been relayed and briefed S1/S3/S4/S5 with pins due at 13:00. The PR target remains
+14:00. Integrate each pin as published; no source finding is waived for the target.
 
 ## Handoffs included normally
 
@@ -32,16 +33,18 @@ hashes are recorded in 0600 local evidence.
 ## Remaining work: exact owner and next handoff
 
 Paths below are relative to `api/crates/cma/src/` unless otherwise stated.
-The 10:30 source cutoff has passed. The next requested source/ETA update is 11:30;
-this is an integration request, not an accepted delivery promise. A later pin
-must include its exact selected tests/results so S2 can budget final qualification.
+The lead has now relayed every owner assignment, with source pins due at 13:00.
+Each handoff should include the exact new test names and gate results. S2 merges
+pins as they land and verifies those names in the final executable inventory.
+Every dependency on another teammate must be sent to the lead in one line;
+a note or local assignment alone is not a delivered request.
 
 | Owner | Required item and owned files | Current state / dependency |
 | --- | --- | --- |
-| S1 cma-cost | Final response disposition for `projections.rs`, `projections/response_readers_tests.rs`, allocated response/core/public paths and 01:55/05:20 shared callers. Reconcile legacy live replay's selected-turn cost with the declared request bound. | Integrated response/factory/scale tests now pass on 92ed; no extra build required for a no-code evidence handoff. S1 retains response edits. |
-| S3 cma-seg-2 | P1-4/P2: `store/agent_log_segment_reads.rs`, transcript/usage/title projections, `store/agent_titles/bounded.rs`, selected Layer2 folds/tests and `store/suggestions/context.rs` proof-refusal handling. | No follow-up pin. Bound requested-page work at 1/10/100/1000 segments, long first turns and over 10,128 rows / 4 MiB; add parity, continuation, final-authority, stale/corrupt proof and no-write matrix. |
-| S4 cma-seg-lead | P1-1: `store/child_writer_claims.rs`, `store/agent_commands/reserve.rs`, `store/agent_commands/targeted_control/apply.rs`; inventory ordinary roots. P1-N1: `store/agent_log_segments/writer_prepare.rs` and writer plan/persist permission. Own root tests under `store/sandbox_mongo_integration_tests/agent_segment_tests/`. | No follow-up pin. Exact v2 capture authority must replace v1-only Agent predicates; parent stays independently qualified. Segmented CapacityRecovery needs an independent storage-only successor, never relabeled Rollover. Preserve `retirement_archive_pending()` guard. |
-| S5 cma-seg-3 | P1-N1service tests in new `store/sandbox_mongo_integration_tests/agent_capacity_recovery_tests/segmented_admission.rs`; necessary fixes in recovery preparation/admission/authority/records/receipts/restart/accepted_authority. | No follow-up pin. Use existing frozen service/writer signatures below; success needs S4's implementation. Test actual segmented exhausted-source admit, atomic successor/carrier, abort, Unknown/restart, wrong/closed gate and original witness. S2 registers the child. |
+| S1 cma-cost | P1-4/P2 response fixes and final disposition for `projections.rs`, `projections/response_readers_tests.rs`, allocated response/core/public paths and 01:55/05:20 shared callers. Reconcile legacy live replay's selected-turn cost with the declared request bound; do not omit intermediate updates. | Lead briefed; pin due 13:00. Existing response/factory/scale tests pass on 92ed. S1 owns any remaining response bound/parity fix and its explicit evidence. |
+| S3 cma-seg-2 | P1-4/P2: `store/agent_log_segment_reads.rs`, transcript/usage/title projections, `store/agent_titles/bounded.rs`, selected Layer2 folds/tests and `store/suggestions/context.rs` proof-refusal handling. | Lead briefed; follow-up pin due 13:00. Bound requested-page work at 1/10/100/1000 segments, long first turns and over 10,128 rows / 4 MiB; add parity, continuation, final-authority, stale/corrupt proof and no-write matrix. |
+| S4 cma-seg-lead | P1-1: `store/child_writer_claims.rs`, `store/agent_commands/reserve.rs`, `store/agent_commands/targeted_control/apply.rs`; inventory ordinary roots. P1-N1: `store/agent_log_segments/writer_prepare.rs` and writer plan/persist permission. Own root tests under `store/sandbox_mongo_integration_tests/agent_segment_tests/`. | Lead briefed; follow-up pin due 13:00. Exact v2 capture authority must replace v1-only Agent predicates; parent stays independently qualified. Segmented CapacityRecovery needs an independent storage-only successor, never relabeled Rollover. Preserve `retirement_archive_pending()` guard. |
+| S5 cma-seg-3 | P1-N1service tests in new `store/sandbox_mongo_integration_tests/agent_capacity_recovery_tests/segmented_admission.rs`; necessary fixes in recovery preparation/admission/authority/records/receipts/restart/accepted_authority. | Lead briefed; follow-up pin due 13:00. Use existing frozen service/writer signatures below; success needs S4's implementation. Test actual segmented exhausted-source admit, atomic successor/carrier, abort, Unknown/restart, wrong/closed gate and original witness. S2 registers the child. |
 | S2 cma-db-contention | Combined integration, shared adapter/registration/transaction scope, canonical migration/schema/index/runtime grants, source-size/conflict resolution, gate inventory and PR. | Current strict diagnostics0; all selected combined gates pass. Merge owner deltas normally and qualify their final combined source before claiming readiness. |
 
 S4 retains accepted-work `service.rs/accepted_service.rs/worker*.rs/transactions.rs`
@@ -148,14 +151,28 @@ writer/consumer findings or qualify an activated state, and is not needed for
 this disabled code deployment. Link #1348/#1349/#1350/#1351/#1674without premature
 issue closure. Require all source blockers resolved and a final reviewer verdict.
 
-At11:05all published owner branches, including alternate cma-cost/segmentation
-refs, remain unchanged. S3/S4/S5 pins requested by 10:30 are missing. S1 may hand off
-a no-code response evidence disposition using the actual current combined results.
-The next requested owner source/ETA update is 11:30. S2 can begin final integration
-immediately on those pins; the time for strict green/PR 14:00cannot be guaranteed
-without them. The lead's pending request for updated pins/ETAs remains unanswered.
-No gate is dropped to preserve 16:00. If source is still incomplete, report the
-exact unresolved findings for the Friday fallback rather than call this ready.
+The lead clarified at 11:18 that the earlier 10:30 pin requests never reached
+the owners. S1 response, S3 transcript/title/usage, S4 ordinary v2 roots and
+capacity writer, and S5 actual service-admission tests are now briefed; pins are
+due at 13:00. These deadlines replace the unrelayed 10:30/11:30 requests. S2 will
+merge pins as they land rather than wait for a batch. The PR target remains 14:00,
+with exact-head review by 15:30 and explicit relay/merge by 16:00.
+
+Next-source qualification keeps the existing strict and required combined gates.
+Unit selection additionally covers the owned command/claim/title/suggestion roots
+and transcript folds; Mongo selection covers the complete command-ledger family,
+including ordinary and targeted admission. These prepared selectors have not run
+on a new source yet. Verify each owner's new test names against the actual
+nextest inventory; never infer coverage from a broad filter alone. Use separate
+shared-slot acquisitions and release between steps. A new source requires its own
+source-bound evidence; 92ed passes are the baseline, not passes for unmerged fixes.
+
+The next publication should include exact source pins, new regression names and
+local gate results so S2 can begin merging and inventory checks early. Any cross-
+slice break or new dependency is relayed to the lead in one line immediately.
+Final gate duration depends on the arriving diff and shared-slot wait; no gate
+is omitted to preserve 14:00 or 16:00. If a source fix or required gate cannot fit,
+report its exact finding/owner promptly. Writer/recovery activation stays closed.
 
 Final PR gates: fmt, strict CMA/affected-layer lint, exact selected test inventory,
 core/public/adapter/factory units, authenticated schema/runtime permissions,
