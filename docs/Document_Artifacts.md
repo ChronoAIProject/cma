@@ -42,18 +42,29 @@ The storage proxy is
 An upload includes generation 1 and the source digest; CMA checks the returned
 key, size, digest, generation and fence version before acknowledging a save.
 Reads use the service's bounded download endpoint. Redirects are disabled and
-credentials never leave the configured origin. Tokens are refreshed before
-expiry, with one retry after a rejected token. Credentials and source are not
-logged. No new infrastructure, NyxID deployment or runtime storage credential
-is required.
+credentials never leave the configured origin. Token refresh is single-flight
+and survives cancellation of any waiter. Failed refreshes fail fast for a
+nominal 2-second window, doubling to 30 seconds with 75–100% jitter; success
+resets backoff. Below 20% remaining lifetime, a token with more than 60 seconds
+left is returned while one background refresh runs. At 60 seconds or less,
+callers wait for refresh. Only rejection of the current token generation
+invalidates it, with at most one 401 refresh/replay per object operation.
+Credentials and source are not logged. Receipt mismatches increment a bounded
+counter by field and emit a warning containing only that field name. No new
+infrastructure, NyxID deployment or runtime storage credential is required.
 
 Each object read or write has a 30-second total deadline, including waiting for
-the token-refresh mutex, token acquisition, the single 401 refresh/replay and
-response-body validation. Individual HTTP requests remain bounded to 12 seconds
-with a 3-second connection limit. Expiry returns typed `DocumentError::Unavailable`
-and drops the local operation; it cannot undo a write already accepted by the
-storage service. Content addressing and generation fencing remain mandatory,
-and no background retry is spawned. See [the dependency contract ledger](Dependency_Contracts.md)
+token-state lock wait, shared token acquisition, the single 401 refresh/replay,
+retry delay and response-body validation. Individual HTTP requests remain
+bounded to 12 seconds with a 3-second connection limit. Downloads retry at most
+once on connection failure, request timeout (including body reads), or
+502/503/504, after 100–300 ms jitter and only with at least 3 seconds remaining.
+Uploads never retry transport failures or 5xx. Expiry returns typed
+`DocumentError::Unavailable` and drops the local object operation; the shared
+token refresh retains its own deadline. A cancelled caller never sends a late
+object request. The deadline cannot undo a write already accepted by the storage
+service. Content addressing and generation fencing remain mandatory.
+See [the dependency contract ledger](Dependency_Contracts.md)
 for deterministic coverage and the remaining provider acceptance evidence.
 
 Without a configured bucket, storage-dependent requests return an explicit
