@@ -40,6 +40,8 @@ pub(super) const TRANSACTION_ATTEMPTS: usize = 8;
 pub(in crate::store) struct LaunchCollections {
     visitor_days: Collection<Document>,
     settings: Collection<Document>,
+    admissions: Collection<Document>,
+    sandboxes: Collection<Document>,
     model_budget: Collection<Document>,
     launches: Collection<Document>,
     events: Collection<Document>,
@@ -63,6 +65,8 @@ impl LaunchCollections {
         let collections = Self {
             visitor_days: majority_collection(database, visitor_quota::COLLECTION),
             settings: majority_collection(database, "platform_settings"),
+            admissions: majority_collection(database, "sandbox_admissions"),
+            sandboxes: majority_collection(database, "sandboxes"),
             model_budget: majority_collection(database, crate::store::budget::COLLECTION),
             launches: majority_collection(database, LAUNCHES),
             events: majority_collection(database, LAUNCH_EVENTS),

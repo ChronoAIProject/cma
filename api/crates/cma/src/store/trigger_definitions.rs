@@ -41,10 +41,16 @@ pub struct MongoTriggerDefinitionStore {
     pub(super) definitions: Collection<Document>,
     pub(super) revisions: Collection<Document>,
     pub(super) profiles: Arc<MongoProfileStore>,
+    pub(super) global_sandbox_limit: u16,
     pub(super) launch_data: launches::LaunchCollections,
 }
 
 impl MongoTriggerDefinitionStore {
+    pub(crate) fn with_global_sandbox_limit(mut self, limit: u16) -> Self {
+        self.global_sandbox_limit = limit;
+        self
+    }
+
     pub(super) async fn open(
         client: &Client,
         database_name: &str,
@@ -64,6 +70,7 @@ impl MongoTriggerDefinitionStore {
             revisions: majority_collection(&database, TRIGGER_DEFINITION_REVISIONS),
             profiles,
             launch_data,
+            global_sandbox_limit: 0,
         };
         indexes::ensure(&store).await?;
         tracing::info!(

@@ -108,6 +108,7 @@ async fn an_aborted_reservation_transaction_leaves_the_period_row_untouched() {
         "rolled-back-command",
         seconds(NOW),
         layer2_core::admission::AdmissionCause::Fresh,
+        false,
         &mut session,
     )
     .await

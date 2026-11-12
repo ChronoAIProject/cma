@@ -13,6 +13,17 @@ impl MongoAdmissionCeilingsStore {
         let mut effective = ceilings.clone();
         effective.retained_homes = ceilings.effective_retained_homes(self.deployment_limit);
         let mut counts = AdmissionCapacityCounts::default();
+        let fence = self
+            .database
+            .collection::<Document>("sandbox_admissions")
+            .find_one(doc! {"_id": {"scope": "global_sandbox_capacity"}})
+            .max_time(Duration::from_secs(3))
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        counts.pending_launch_homes =
+            super::super::launch_home_capacity::pending_homes(fence.as_ref())
+                .map_err(ApplyError::Domain)?;
         if let Some(limit) = ceilings.registrations {
             let row = self
                 .database
@@ -41,7 +52,12 @@ impl MongoAdmissionCeilingsStore {
                 .session(&mut *session)
                 .await
                 .map_err(ApplyError::Driver)?;
-            counts.retained_homes = Some(observation(count, limit));
+            counts.retained_homes = Some(observation(
+                count
+                    .saturating_add(counts.pending_launch_homes)
+                    .min(u64::from(limit).max(1)),
+                limit,
+            ));
         }
         if let Some(limit) = ceilings.active_sessions {
             let count = self

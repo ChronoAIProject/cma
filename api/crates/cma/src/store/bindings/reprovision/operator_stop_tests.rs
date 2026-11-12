@@ -70,6 +70,14 @@ async fn admitted_binding_reprovision_replays_its_exact_receipt_and_continues_af
         .prepare_retired_binding(&data.intent, &data.key)
         .await
         .unwrap();
+    store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {"$set": {"admission_ceilings": null}},
+        )
+        .await
+        .unwrap();
     stop(&client, &database).await;
     let reopened = Arc::new(MongoSandboxStore::open(&client, &database).await.unwrap());
     let replacement = MongoBindingCredentials::new(reopened.clone(), custody);
@@ -108,6 +116,68 @@ async fn admitted_binding_reprovision_replays_its_exact_receipt_and_continues_af
             .await
             .unwrap(),
         1
+    );
+    client.database(&database).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn unreadable_ceilings_refuse_fresh_binding_reprovision_before_any_preparation_write() {
+    let (client, database, store, _, controller, data) = fixture().await;
+    let before = store
+        .bindings
+        .records
+        .find_one(doc! {"_id": &data.binding.binding_id})
+        .await
+        .unwrap();
+    store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {"$set": {"admission_ceilings": null}},
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        controller
+            .prepare_retired_binding(&data.intent, &data.key)
+            .await,
+        Err(CoreError::AdmissionCapacity(
+            layer2_core::admission::CapacityKind::RetainedHomes,
+        ))
+    );
+    stop(&client, &database).await;
+    assert_eq!(
+        controller
+            .prepare_retired_binding(&data.intent, &data.key)
+            .await,
+        Err(CoreError::AdmissionPaused)
+    );
+    assert_eq!(
+        store
+            .bindings
+            .records
+            .find_one(doc! {"_id": &data.binding.binding_id})
+            .await
+            .unwrap(),
+        before
+    );
+    assert_eq!(
+        store.get_sandbox(&data.sandbox.id).await.unwrap(),
+        Some(data.sandbox)
+    );
+    assert_eq!(
+        store.get_workspace(&data.workspace.id).await.unwrap(),
+        Some(data.workspace)
+    );
+    assert_eq!(
+        store
+            .bindings
+            .preparations
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
     );
     client.database(&database).drop().await.unwrap();
 }
