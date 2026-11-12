@@ -35,8 +35,10 @@ impl AuthState {
 }
 
 pub(super) async fn attach(auth: &AuthState, request: Request, next: Next) -> Response {
+    use crate::telemetry::request::{Consumer, Resolution};
+    let mut observation = Resolution::start(&request, "resource_request");
     if !auth.resource_request_enabled {
-        return refusal(StatusCode::FORBIDDEN, "resource_request_disabled");
+        return observation.rejected(refusal(StatusCode::FORBIDDEN, "resource_request_disabled"));
     }
     let (mut parts, body) = request.into_parts();
     let uri = parts
@@ -46,7 +48,12 @@ pub(super) async fn attach(auth: &AuthState, request: Request, next: Next) -> Re
     let descriptor = match descriptor::Descriptor::from_request(&parts.method, uri, &parts.headers)
     {
         Ok(value) => value,
-        Err(()) => return refusal(StatusCode::FORBIDDEN, "resource_request_unsupported"),
+        Err(()) => {
+            return observation.rejected(refusal(
+                StatusCode::FORBIDDEN,
+                "resource_request_unsupported",
+            ))
+        }
     };
     let proof = match descriptor::one_header(&parts.headers, HEADER) {
         Ok(Some(value))
@@ -54,28 +61,45 @@ pub(super) async fn attach(auth: &AuthState, request: Request, next: Next) -> Re
         {
             zeroize::Zeroizing::new(value.to_owned())
         }
-        _ => return refusal(StatusCode::UNAUTHORIZED, "resource_request_invalid"),
+        _ => {
+            return observation.rejected(refusal(
+                StatusCode::UNAUTHORIZED,
+                "resource_request_invalid",
+            ))
+        }
     };
     // v1 permits zero body bytes. Bound even a streaming empty-body sender so
     // this authentication path cannot retain a connection indefinitely.
     match tokio::time::timeout(std::time::Duration::from_secs(2), to_bytes(body, 0)).await {
         Ok(Ok(bytes)) if bytes.is_empty() => {}
-        _ => return refusal(StatusCode::FORBIDDEN, "resource_request_unsupported"),
+        _ => {
+            return observation.rejected(refusal(
+                StatusCode::FORBIDDEN,
+                "resource_request_unsupported",
+            ))
+        }
     }
     let verified = match verification::verify(auth, &proof, &descriptor).await {
         Ok(value) => value,
         Err(verification::Error::Rejected) => {
-            return refusal(StatusCode::UNAUTHORIZED, "resource_request_invalid")
+            return observation.rejected(refusal(
+                StatusCode::UNAUTHORIZED,
+                "resource_request_invalid",
+            ))
         }
         Err(verification::Error::Unavailable) => {
+            observation.finish("unavailable", Consumer::Unknown);
             return refusal(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "resource_request_unavailable",
-            )
+            );
         }
     };
     let AuthMode::Provider { base_url, .. } = &auth.mode else {
-        return refusal(StatusCode::UNAUTHORIZED, "resource_request_invalid");
+        return observation.rejected(refusal(
+            StatusCode::UNAUTHORIZED,
+            "resource_request_invalid",
+        ));
     };
     let context = CallerContext {
         credential_source: CredentialSource::RequestBoundRead {
@@ -101,7 +125,10 @@ pub(super) async fn attach(auth: &AuthState, request: Request, next: Next) -> Re
         memberships: Vec::new(),
     };
     let Some(deadline) = context.credential_deadline() else {
-        return refusal(StatusCode::UNAUTHORIZED, "resource_request_invalid");
+        return observation.rejected(refusal(
+            StatusCode::UNAUTHORIZED,
+            "resource_request_invalid",
+        ));
     };
     // The proof wins over ambient credentials. None of them reach a public
     // handler or become an outbound/deferred credential on this path.
@@ -118,6 +145,8 @@ pub(super) async fn attach(auth: &AuthState, request: Request, next: Next) -> Re
     parts
         .extensions
         .insert(AuthenticatedSubject(verified.subject));
+    observation.finish("resolved", Consumer::Nyxid);
+    drop(observation);
     match tokio::time::timeout_at(
         deadline,
         next.run(Request::from_parts(parts, Body::empty())),
