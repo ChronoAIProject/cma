@@ -96,3 +96,43 @@ async fn failed_status_reads_and_unknown_states_never_claim_completion() {
     ));
     server.assert_drained();
 }
+
+#[tokio::test]
+async fn completion_timestamp_is_required_but_nullable() {
+    let server = WireServer::new().await;
+    server.expect(expected("GET", 200, receipt()));
+    assert!(
+        server
+            .anonymous
+            .account()
+            .deletion()
+            .status()
+            .await
+            .unwrap()
+            .completed_at
+            .is_none()
+    );
+    let mut completed = receipt();
+    completed["completed_at"] = json!("2026-11-15T00:00:00Z");
+    server.expect(expected("GET", 200, completed));
+    assert_eq!(
+        server
+            .anonymous
+            .account()
+            .deletion()
+            .status()
+            .await
+            .unwrap()
+            .completed_at
+            .as_deref(),
+        Some("2026-11-15T00:00:00Z")
+    );
+    let mut missing = receipt();
+    missing.as_object_mut().unwrap().remove("completed_at");
+    server.expect(expected("GET", 200, missing));
+    assert!(matches!(
+        server.anonymous.account().deletion().status().await,
+        Err(Error::Protocol { .. })
+    ));
+    server.assert_drained();
+}

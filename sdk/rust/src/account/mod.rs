@@ -48,10 +48,17 @@ pub struct AccountDeletionReceipt {
     pub requested_at: String,
     /// Maximum completion deadline, seven days after acceptance.
     pub deadline_at: String,
-    /// Successful completion timestamp; absent while erasure remains unfinished.
+    /// Successful completion timestamp; explicitly null while erasure is unfinished.
+    #[serde(deserialize_with = "required_nullable")]
     pub completed_at: Option<String>,
     /// Recorded completed phases, empty in the initial acceptance release.
     pub steps: Vec<AccountDeletionStepProgress>,
+}
+
+fn required_nullable<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(deserializer)
 }
 
 /// Human owner's account operations.
