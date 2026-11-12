@@ -42,6 +42,7 @@ pub(crate) struct FeatureFlags {
     pub silent_sign_in: bool,
     pub document_revocation_reserve: bool,
     pub document_quotas: bool,
+    pub document_object_deletion: bool,
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
     pub retained_context_lookup: bool,
@@ -92,6 +93,7 @@ impl FeatureFlags {
                 )?,
             },
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
+            document_object_deletion: flag(lookup, "CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED")?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             retained_context_lookup: flag(lookup, "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED")?,
@@ -487,3 +489,6 @@ mod retained_json_tests;
 #[cfg(test)]
 #[path = "sandbox_enrichment_tests.rs"]
 mod sandbox_enrichment_tests;
+
+#[cfg(test)]
+mod document_maintenance_tests;
