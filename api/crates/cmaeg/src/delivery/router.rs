@@ -39,14 +39,63 @@ pub struct Refusal {
 
 /// Today's engine: the 256-command inbound queue in front of the 8 sharded workers.
 pub struct ShardedScheduler {
-    inbound: mpsc::Sender<DeliveryCommand>,
+    inbound: Inbound,
     _monitor: super::queue::Monitor,
 }
+enum Inbound {
+    Raw(mpsc::Sender<DeliveryCommand>),
+    Measured(super::queue::Sender<DeliveryCommand>),
+}
+impl Inbound {
+    async fn send(
+        &self,
+        command: DeliveryCommand,
+    ) -> Result<(), mpsc::error::SendError<DeliveryCommand>> {
+        match self {
+            Self::Raw(sender) => sender.send(command).await,
+            Self::Measured(sender) => sender.send(command).await,
+        }
+    }
+    fn try_send(&self, command: DeliveryCommand) -> Result<(), Refusal> {
+        let result = match self {
+            Self::Raw(sender) => sender.try_send(command),
+            Self::Measured(sender) => sender.try_send(command),
+        };
+        result.map_err(|error| {
+            let (reason, command) = match error {
+                TrySendError::Full(command) => (Refused::Capacity, command),
+                TrySendError::Closed(command) => (Refused::Closed, command),
+            };
+            Refusal {
+                reason,
+                command: Box::new(command),
+            }
+        })
+    }
+    fn measured(&self) -> bool {
+        matches!(self, Self::Measured(_))
+    }
+}
 impl ShardedScheduler {
+    /// Create the production channel with exact queued depth, residence and oldest age.
+    pub fn channel(capacity: usize) -> (Self, super::queue::Input<DeliveryCommand>) {
+        let inventory = Arc::new(super::queue::Inventory::new("inbound"));
+        let monitor = inventory.monitor();
+        let (sender, receiver) = super::queue::channel(capacity, inventory);
+        metrics::gauge!("cmaeg_delivery_queue_capacity", "stage" => "inbound").set(capacity as f64);
+        (
+            Self {
+                inbound: Inbound::Measured(sender),
+                _monitor: monitor,
+            },
+            receiver.into(),
+        )
+    }
+
     pub fn new(inbound: mpsc::Sender<DeliveryCommand>) -> Self {
         let monitor = super::queue::inbound_monitor(&inbound);
         Self {
-            inbound,
+            inbound: Inbound::Raw(inbound),
             _monitor: monitor,
         }
     }
@@ -56,6 +105,9 @@ impl DeliverySink for ShardedScheduler {
     /// a caller must complete, so a closed queue is reported without them.
     fn submit(&self, c: DeliveryCommand) -> BoxFuture<'_, Result<(), Refused>> {
         Box::pin(async move {
+            if self.inbound.measured() {
+                return self.inbound.send(c).await.map_err(|_| Refused::Closed);
+            }
             let mut wait = super::queue::Wait::new("inbound");
             let result = self.inbound.send(c).await.map_err(|_| Refused::Closed);
             wait.finish(if result.is_ok() { "accepted" } else { "closed" });
@@ -65,24 +117,17 @@ impl DeliverySink for ShardedScheduler {
     /// Never drops a refused command itself, so a receipt it carries is never
     /// completed implicitly, possibly under a caller's lock.
     fn try_submit(&self, c: DeliveryCommand) -> Result<(), Refusal> {
-        let mut wait = super::queue::Wait::new("inbound");
-        let result = self.inbound.try_send(c).map_err(|error| {
-            let (reason, command) = match error {
-                TrySendError::Full(command) => (Refused::Capacity, command),
-                TrySendError::Closed(command) => (Refused::Closed, command),
-            };
-            Refusal {
-                reason,
-                command: Box::new(command),
-            }
-        });
-        wait.finish(match &result {
-            Ok(_) => "accepted",
-            Err(refusal) => match refusal.reason {
-                Refused::Capacity => "full",
-                Refused::Closed => "closed",
-            },
-        });
+        let mut wait = (!self.inbound.measured()).then(|| super::queue::Wait::new("inbound"));
+        let result = self.inbound.try_send(c);
+        if let Some(wait) = &mut wait {
+            wait.finish(match &result {
+                Ok(_) => "accepted",
+                Err(refusal) => match refusal.reason {
+                    Refused::Capacity => "full",
+                    Refused::Closed => "closed",
+                },
+            });
+        }
         result
     }
     fn terminal(&self, turn: Arc<LaunchRequest>, outcome: TurnOutcome) {
@@ -274,5 +319,35 @@ mod tests {
         assert!(!waiting.is_finished());
         assert!(queued.recv().await.is_some());
         assert_eq!(waiting.await.unwrap(), Ok(()));
+    }
+    #[tokio::test]
+    async fn production_scheduler_records_one_submission_per_attempt() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let _local = metrics::set_default_local_recorder(&recorder);
+        let (scheduler, mut queued) = ShardedScheduler::channel(1);
+        let (first, _) = reply("first", tracing::Span::none());
+        scheduler.submit(first).await.unwrap();
+        let (second, _) = reply("second", tracing::Span::none());
+        assert_eq!(
+            scheduler.try_submit(second).unwrap_err().reason,
+            Refused::Capacity
+        );
+        assert!(queued.recv().await.is_some());
+        let (third, _) = reply("third", tracing::Span::none());
+        scheduler.try_submit(third).unwrap();
+        drop(queued);
+        let text = handle.render();
+        for (outcome, count) in [("accepted", 2), ("full", 1)] {
+            assert!(
+                text.lines().any(|line| line
+                    .starts_with("cmaeg_delivery_queue_submissions_total{")
+                    && line.contains("stage=\"inbound\"")
+                    && line.contains(&format!("outcome=\"{outcome}\""))
+                    && line.ends_with(&format!(" {count}"))),
+                "{text}"
+            );
+        }
+        assert!(text.contains("cmaeg_delivery_queue_depth{stage=\"inbound\"} 0"));
     }
 }

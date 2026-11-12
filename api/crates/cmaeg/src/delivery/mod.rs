@@ -52,7 +52,7 @@ mod native_lark_card_media;
 mod native_lark_controls;
 mod native_lark_thread_start;
 mod pacing;
-mod queue;
+pub mod queue;
 pub mod relay_client;
 pub mod render;
 pub(crate) mod retained_receipt;
