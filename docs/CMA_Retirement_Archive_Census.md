@@ -2,7 +2,7 @@
 
 This is the namespace audit for #1726 / #1716. It replaces the generic identity
 prefix scan. The catalogue in `store/retirement_archive/census_catalog.rs` names
-all 151 collections in `store/isolation.rs` exactly once. Capture refuses a missing
+all 153 collections in `store/isolation.rs` exactly once. Capture refuses a missing
 or duplicate policy. Its schema hash binds both the namespace set and these
 policies; old manifests cannot be certified under a changed census.
 
@@ -92,6 +92,8 @@ a nonempty collection; its source entry identifies the missing closure or decode
 
 | Namespace | Policy / exact ownership paths | Schema authority / audit basis |
 | --- | --- | --- |
+| `account_deletions` | `Independent` | account_deletions/records.rs (account erasure authority) |
+| `account_deletion_events` | `Independent` | account_deletions/events.rs (account erasure audit) |
 | `model_budget_reservations` | `Budget` | budget/mod.rs; budget/requests.rs; budget/requests/admission.rs |
 | `sandbox_metric_bindings` | `Sandbox(&["sandbox_id"])` | sandbox_metric_bindings/mod.rs |
 | `sandbox_metric_rollups` | `Sandbox(&["sandbox_id"])` | sandbox_metric_rollups/mod.rs |

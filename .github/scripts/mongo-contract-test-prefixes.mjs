@@ -1,5 +1,7 @@
 // Expected Mongo contract suites, shared by source and archive fixtures.
 export const requiredPrefixes = [
+  'auth::account_standing::mongo_tests::',
+  'store::account_deletions::tests::',
   'store::usage_reports::tests::',
   'sandbox::funding::tests::mongo::',
   'usage_billing::tests::',
@@ -16,6 +18,7 @@ export const requiredPrefixes = [
   'store::native_prepared::tests::',
   'store::sandbox_admission_mongo_integration_tests::warmup::',
   'store::auth::api_bearer_tests::',
+  'store::auth::actor_links::tests::',
   'store::agent_conversation_store::checkpoint_tests::',
   'store::agent_conversation_store::admission_tests::',
   'store::agent_conversation_store::reopen_tests::',

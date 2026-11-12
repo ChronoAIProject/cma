@@ -6,6 +6,8 @@ use mongodb::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) const COLLECTIONS: &[&str] = &[
+    "account_deletions",
+    "account_deletion_events",
     super::budget::COLLECTION,
     super::sandbox_metric_bindings::COLLECTION,
     super::sandbox_metric_rollups::COLLECTION,

@@ -13,6 +13,7 @@ use super::{
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
+    pub(crate) account_deletions: Arc<super::account_deletions::MongoAccountDeletionStore>,
     pub(crate) request_limits: Arc<super::request_limits::MongoRequestLimits>,
     pub(crate) document_artifacts: Arc<crate::document_artifacts::MongoDocumentStore>,
     pub(crate) message_feedback: Arc<super::message_feedback::MongoMessageFeedbackStore>,
@@ -202,10 +203,15 @@ impl MongoStores {
             .ensure_indexes()
             .await
             .map_err(|_| StoreError::Unavailable("initialize document registry".into()))?;
+        let account_deletions = Arc::new(
+            super::account_deletions::MongoAccountDeletionStore::open(&client.database(database))
+                .await?,
+        );
         let request_limits = Arc::new(
             super::request_limits::MongoRequestLimits::open(&client.database(database)).await?,
         );
         let stores = Self {
+            account_deletions,
             request_limits,
             document_artifacts,
             message_feedback,

@@ -62,6 +62,14 @@ collections use `im_`; gateway records use `eg_`. Migration must preserve IDs,
 versions, encrypted payloads, histories, unique indexes and retry identities.
 Legacy access is removed only after verified authority transfer.
 
+## Account deletion authority
+
+Agent Manager owns `account_deletions` and `account_deletion_events`. Both are
+independent account-level records, excluded from individual Sandbox retirement
+archives. The request writer is disabled by default; see
+[CMA account deletion](CMA_Account_Deletion.md) for the reader floor, additive
+indexes and activation constraints. No other service opens these collections.
+
 ## Optional Agent provenance progress
 
 The explicit [provenance progress command](CMA_Provenance_Backfill_Progress.md)
