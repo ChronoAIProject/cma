@@ -92,16 +92,17 @@ async fn stopped_and_replaced_runtimes_still_settle_lost_with_both_admission_mod
         for replaced in [false, true] {
             let (client, name) = database("reconcile_runtime_lost").await;
             let (store, agent, command, execution) = working(&client, &name, 1_000, bounded).await;
-            let changes = if replaced {
-                doc! {"record.conversation.runtime_generation": 99_i64}
+            let mut changed = store.get_agent(&agent.id).await.unwrap().unwrap();
+            let revision = changed.revision;
+            if replaced {
+                changed.conversation.runtime_generation = Some(99);
             } else {
-                doc! {"status": "stopped", "record.status": "stopped"}
-            };
-            store
-                .agents
-                .update_one(doc! {"_id": agent.id.as_str()}, doc! {"$set":changes})
-                .await
-                .unwrap();
+                changed.status = AgentStatus::Stopped;
+            }
+            // Use the revision-checked writer so a generation change invalidates
+            // the old trusted checkpoint instead of corrupting its bound revision.
+            changed.revision += 1;
+            store.save_agent(revision, changed).await.unwrap();
             let worker = AgentCommandWorker::with_recheck_delay(
                 store.clone(),
                 execution,
