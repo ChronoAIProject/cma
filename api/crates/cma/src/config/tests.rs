@@ -71,3 +71,51 @@ fn skill_upgrades_require_an_explicit_strict_boolean() {
         .is_err());
     }
 }
+
+#[cfg(test)]
+mod silent_sign_in_tests {
+    use super::*;
+    #[test]
+    fn silent_sign_in_requires_explicit_activation() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_SILENT_SIGN_IN_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.silent_sign_in, expected);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
+                == "CHRONO_SILENT_SIGN_IN_ENABLED")
+                .then(|| value.to_owned())))
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod shared_output_tests {
+    use super::*;
+
+    #[test]
+    fn shared_runtime_output_requires_its_own_strict_opt_in() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.shared_runtime_output, expected);
+            assert!(!flags.bounded_response_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED").then(|| value.into()))
+            })
+            .is_err());
+        }
+    }
+}
