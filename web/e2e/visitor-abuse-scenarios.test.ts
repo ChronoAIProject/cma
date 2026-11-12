@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { sharedQuota, noEffects, identityBoundary } from './visitor-abuse-scenarios';
 import { newCounts } from './visitor-abuse-model';
-import type { TC117Client } from './visitor-abuse-client';
+import { CallerResponseLost, type TC117Client } from './visitor-abuse-client';
 
 function sharedDriver(mode: 'valid' | 'overshoot' | 'server-error' | 'wrong-quota' = 'valid') {
   let attempts = 0;
@@ -132,6 +132,7 @@ it.each([false, true])(
     >();
     const keys = new Map<string, { payload: string; row: Record<string, unknown> }>();
     let sequence = 0;
+    let responseLosses = 0;
     const driver = {
       fixture: {
         instances: ['https://one.example.test', 'https://two.example.test'],
@@ -179,6 +180,15 @@ it.each([false, true])(
         keys.set(scope, { payload, row });
         return { status: 202, body: row, ms: 1 };
       },
+      async launchAndLoseResponse(
+        actor: string,
+        target: { publicId: string; placementId: string },
+        options: { key?: string; data?: unknown } = {},
+      ) {
+        await this.launch(actor, target, options);
+        responseLosses++;
+        throw new CallerResponseLost();
+      },
       list: async () => {
         const boundary = Date.parse('2026-11-14T00:00:00Z');
         if (late && Date.now() >= boundary && Date.now() < boundary + 31000)
@@ -202,6 +212,7 @@ it.each([false, true])(
         return;
       }
       expect(outcome).toBe('passed');
+      expect(responseLosses).toBe(1);
       expect(durable.size).toBe(10);
       expect(driver.counts.idempotentChargeDuplicates).toBe(0);
       expect(driver.counts.idempotencyChecks).toBe(3);

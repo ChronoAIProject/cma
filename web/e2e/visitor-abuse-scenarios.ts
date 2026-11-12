@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { object } from './environment';
-import type { TC117Client } from './visitor-abuse-client';
+import { CallerResponseLost, type TC117Client } from './visitor-abuse-client';
 import type { Actor, Visitor } from './visitor-abuse-environment';
 import {
   admissionDays,
@@ -289,14 +289,25 @@ export async function utcScenario(h: TC117Client) {
   const targets = [h.fixture.triggers.reuseA, h.fixture.triggers.reuseB];
   withinWindow(false);
   const key = randomUUID();
-  // The transport receives the original response for scoped cleanup, but the caller loses it.
-  const lost = await h.launch('utc', targets[0]!, {
-    origin: origins[0],
-    key,
-    data: { placement_id: targets[0]!.placementId, start_if_ready: false },
-  });
-  check(accepted(lost), 'lost-response probe was not admitted');
-  const original = receipt(lost.body);
+  let responseLost = false;
+  try {
+    await h.launchAndLoseResponse('utc', targets[0]!, {
+      origin: origins[0],
+      key,
+      data: { placement_id: targets[0]!.placementId, start_if_ready: false },
+    });
+  } catch (error) {
+    if (!(error instanceof CallerResponseLost)) throw error;
+    responseLost = true;
+  }
+  check(responseLost, 'admitted response was delivered instead of lost');
+  withinWindow(false);
+  const recovered = (await h.list('utc', '/api/v1/launches')).filter(
+    (row) => !baselineIds.has(String(row.id)),
+  );
+  withinWindow(false);
+  check(recovered.length === 1, 'lost-response recovery needs exactly one new public receipt');
+  const original = receipt(recovered[0]!);
   const same = {
     key,
     origin: origins[1],
@@ -382,6 +393,7 @@ export async function utcScenario(h: TC117Client) {
     midnight: new Date(midnight).toISOString(),
     days,
     receipts: rows.length,
+    responseLoss: 'caller_delivery_after_admission',
     chargeProof: 'public receipts plus exhausted daily allowance; no private billing ledger',
   };
   check(

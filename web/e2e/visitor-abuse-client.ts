@@ -35,6 +35,11 @@ interface SendOptions {
   key?: string;
   api?: APIRequestContext;
 }
+export class CallerResponseLost extends Error {
+  constructor() {
+    super('TC-117 injected caller response loss after admission');
+  }
+}
 export class TC117Client {
   readonly counts = newCounts();
   readonly controls: ControlSample[] = [];
@@ -208,6 +213,16 @@ export class TC117Client {
       data: { placement_id: target.placementId, start_if_ready: true },
       ...options,
     });
+  }
+  async launchAndLoseResponse(
+    actor: Visitor,
+    target: Target,
+    options: SendOptions = {},
+  ): Promise<never> {
+    const admitted = await this.launch(actor, target, options);
+    check([201, 202].includes(admitted.status), 'lost-response probe was not admitted');
+    // Keep transport observations for cleanup; deliver no receipt to the scenario caller.
+    throw new CallerResponseLost();
   }
   async settled(actor: Visitor, id: string, ready = true) {
     const deadline = Date.now() + 540_000;
