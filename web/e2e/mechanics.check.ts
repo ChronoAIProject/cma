@@ -220,3 +220,64 @@ for (const mode of ['complete', 'deadline'] as const) {
     }
   });
 }
+
+for (const attemptedWrite of [false, true]) {
+  test(`LOCAL TC117 navigation ${attemptedWrite ? 'refuses automatic writes' : 'has no work effects'}`, async ({
+    browser,
+  }) => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { navigationProbes } = await import('./visitor-abuse-load');
+    const { newCounts } = await import('./visitor-abuse-model');
+    const directory = mkdtempSync(join(tmpdir(), 'cma-tc117-navigation-'));
+    const bearerFile = join(directory, 'bearer');
+    writeFileSync(bearerFile, 'local-navigation-fixture', { mode: 0o600 });
+    let writes = 0;
+    let authorized = false;
+    const service = createServer((incoming, response) => {
+      if (incoming.method === 'POST') writes++;
+      if (incoming.headers.authorization === 'Bearer local-navigation-fixture') authorized = true;
+      incoming.resume();
+      response.writeHead(200, { 'Content-Type': 'text/html' });
+      response.end(
+        `<!doctype html><title>Local TC117 navigation</title>${attemptedWrite ? '<script>fetch("/api/v1/triggers/public/local/launches", { method: "POST" }).catch(() => {});</script>' : ''}`,
+      );
+    });
+    await new Promise<void>((resolve) => service.listen(0, '127.0.0.1', resolve));
+    const address = service.address();
+    if (!address || typeof address === 'string') throw new Error('Local port missing');
+    const snapshot = {
+      fleetLive: 0,
+      launches: { b: [], c: [] },
+      sandboxes: [],
+      liveByVisitor: { b: 0, c: 0 },
+      totals: {},
+    };
+    const driver = {
+      config: { baseURL: `http://127.0.0.1:${address.port}` },
+      fixture: {
+        accounts: { c: { bearerFile } },
+        triggers: { reuseA: { publicId: 'local', placementId: 'local-place' } },
+      },
+      counts: newCounts(),
+      observations: {},
+      snapshot: async () => snapshot,
+      send: async () => ({ status: 200 }),
+      read: async () => ({}),
+    };
+    try {
+      const result = navigationProbes(
+        driver as unknown as import('./visitor-abuse-client').TC117Client,
+        browser,
+      );
+      if (attemptedWrite) await expect(result).rejects.toThrow('attempted a browser write');
+      else await expect(result).resolves.toBeUndefined();
+      expect(authorized).toBe(true);
+      expect(writes).toBe(0);
+    } finally {
+      service.closeAllConnections();
+      await new Promise<void>((resolve) => service.close(() => resolve()));
+    }
+  });
+}

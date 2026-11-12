@@ -33,7 +33,7 @@ export default defineConfig({
   projects: [
     { name: 'smoke', testMatch: '**/smoke.pw.ts' },
     ...(process.env.CMA_E2E_MODE === 'mutation'
-      ? [{ name: 'mutation', testIgnore: '**/smoke.pw.ts' }]
+      ? [{ name: 'mutation', testIgnore: ['**/smoke.pw.ts', '**/visitor-abuse*.pw.ts'] }]
       : []),
   ],
 });
