@@ -77,6 +77,31 @@ impl AgentWorker {
         } else {
             None
         };
+        // This feature only observes parent readiness. It performs no native
+        // operation, so a delayed retry cannot conceal an uncertain effect.
+        // Capture command and parent revisions before inspection; the existing
+        // advisory hint wakes immediately if any of those authorities changes.
+        if self.config.parent_not_ready_pacing_enabled
+            && agent.work.step == AgentWorkStep::PublishConnection
+            && ((sandbox.status != SandboxStatus::Active
+                && !sandbox.restored_connection_is_ready(agent))
+                || workspace.status != WorkspaceStatus::Ready
+                || worktree.status != WorktreeStatus::Ready)
+        {
+            let mut failure = WorkerFailure::retryable(
+                "agent_parent_not_ready",
+                "the sandbox, workspace, or worktree is not ready for connection publication",
+            );
+            failure.observation =
+                command_generation.map(|command_admission_generation| AgentRetryObservation {
+                    agent_revision: agent.revision,
+                    command_admission_generation,
+                    sandbox_revision: sandbox.revision,
+                    workspace_revision: workspace.revision,
+                    worktree_revision: worktree.revision,
+                });
+            return Err(failure);
+        }
         let inspection_started = std::time::Instant::now();
         let attached = crate::sandbox::runtime_attachment::inspect_bound_runtime(
             self.dependencies.adapter.as_ref(),

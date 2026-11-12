@@ -17,6 +17,7 @@ use super::{
 const MAX_ENTRIES: u64 = 200;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
 
+mod indexed;
 mod telemetry;
 pub(crate) use telemetry::emit;
 use telemetry::{Attempt, Outcome};
@@ -28,13 +29,34 @@ impl MongoSandboxStore {
     }
 
     pub(crate) fn response_log_reader(self: &Arc<Self>) -> Option<Arc<dyn AgentResponseLogStore>> {
-        self.bounded_response_reads
-            .then(|| self.clone() as Arc<dyn AgentResponseLogStore>)
+        // The optional optimization applies to legacy records. Adopted records
+        // must keep their compatible reader when writer/admission flags close.
+        Some(self.clone() as Arc<dyn AgentResponseLogStore>)
     }
 }
 
 #[async_trait::async_trait]
 impl AgentResponseLogStore for MongoSandboxStore {
+    async fn agent_output_available(&self, agent: &Agent) -> Result<bool, SandboxStoreError> {
+        let row = self
+            .agents
+            .find_one(mongodb::bson::doc! {"_id":agent.id.as_str()})
+            .await
+            .map_err(|e| SandboxStoreError::Unavailable(e.to_string()))?
+            .ok_or(SandboxStoreError::NotFound)?;
+        Ok(super::agent_log_segments::read_format(&row)?.is_some())
+    }
+    async fn agent_output_reader(
+        &self,
+        agent: &Agent,
+        turn: Option<u64>,
+    ) -> Result<
+        Option<Box<dyn layer2_core::sandbox::store::indexed::AgentOutputReader + '_>>,
+        SandboxStoreError,
+    > {
+        indexed::open(self, agent, turn).await
+    }
+
     async fn agent_response_log_window(
         &self,
         agent: &Agent,
