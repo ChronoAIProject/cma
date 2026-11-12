@@ -1,10 +1,11 @@
 //! A closure transition is valid only while both its policy and accounting
 //! evidence are current. The settings write prevents snapshot write skew.
-use layer2_core::budget::{BudgetError, PlatformPeriodLedger};
+use layer2_core::budget::BudgetError;
 use mongodb::bson::{doc, Document};
 use mongodb::{ClientSession, Collection};
 
-use super::period::{period_document, period_key};
+use super::period::period_key;
+use super::period_storage::PeriodState;
 use super::{ApplyError, DOCUMENT_SCHEMA_VERSION};
 use crate::store::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
@@ -17,7 +18,7 @@ pub(super) async fn persist(
     rows: &Collection<Document>,
     settings_revision: u64,
     expected: Option<u64>,
-    ledger: &PlatformPeriodLedger,
+    state: &PeriodState,
 ) -> Result<bool, BudgetError> {
     let mut session = rows
         .client()
@@ -32,7 +33,7 @@ pub(super) async fn persist(
         rows,
         settings_revision,
         expected,
-        ledger,
+        state,
         &mut session,
     )
     .await;
@@ -65,7 +66,7 @@ async fn write(
     rows: &Collection<Document>,
     settings_revision: u64,
     expected: Option<u64>,
-    ledger: &PlatformPeriodLedger,
+    state: &PeriodState,
     session: &mut ClientSession,
 ) -> Result<bool, ApplyError> {
     let signed = |value| i64::try_from(value).map_err(|_| super::domain(BudgetError::Unavailable));
@@ -81,13 +82,14 @@ async fn write(
     if fenced.matched_count != 1 {
         return Ok(false);
     }
-    let mut next = ledger.clone();
-    next.revision = ledger
+    let ledger = &state.ledger;
+    let mut next = state.clone();
+    next.ledger.revision = ledger
         .revision
         .checked_add(1)
         .filter(|revision| *revision <= i64::MAX as u64)
         .ok_or_else(|| super::domain(BudgetError::Unavailable))?;
-    let document = period_document(&next).map_err(super::domain)?;
+    let document = next.document().map_err(super::domain)?;
     match expected {
         Some(revision) => Ok(rows
             .replace_one(

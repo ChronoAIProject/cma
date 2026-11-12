@@ -37,15 +37,8 @@ impl MongoSandboxStore {
     pub(super) async fn period_ledger(
         &self,
         period_start: u64,
-    ) -> Result<Option<PlatformPeriodLedger>, BudgetError> {
-        self.model_budget
-            .find_one(doc! {"_id": period_key(period_start)})
-            .await
-            .map_err(|_| BudgetError::Unavailable)?
-            .as_ref()
-            .map(decode)
-            .transpose()
-            .map_err(|_| BudgetError::Unavailable)
+    ) -> Result<Option<super::period_storage::PeriodState>, BudgetError> {
+        super::period_storage::read_plain(&self.model_budget, period_start).await
     }
 
     /// Time-driven decisions use plain reads, then commit entries, lifts and
@@ -85,7 +78,7 @@ impl PlatformSpendLedger for MongoSandboxStore {
             return Ok(PlatformAdmissionState::default());
         };
         let ledger = match self.period_ledger(platform.period_bounds()?.0).await? {
-            Some(ledger) => ledger,
+            Some(state) => state.ledger,
             None => PlatformPeriodLedger::open(&platform, revision)?,
         };
         ledger.admission_state(&platform, revision, now)
@@ -110,7 +103,10 @@ impl PlatformSpendLedger for MongoSandboxStore {
                 ledger: None,
             });
         };
-        let ledger = self.period_ledger(platform.period_bounds()?.0).await?;
+        let ledger = self
+            .period_ledger(platform.period_bounds()?.0)
+            .await?
+            .map(|state| state.ledger);
         Ok(PlatformSpendState {
             metering_enabled: true,
             settings_revision: current.revision,
@@ -250,7 +246,10 @@ async fn observe_in(
         .await
         .map_err(ApplyError::Driver)?;
     let (mut ledger, _) = load_or_open(store, &platform, snapshot.revision, session).await?;
-    ledger.record_cloud(observation).map_err(|_| invalid())?;
+    ledger
+        .ledger
+        .record_cloud(observation)
+        .map_err(|_| invalid())?;
     save_period(store, &ledger, session).await?;
     Ok(())
 }

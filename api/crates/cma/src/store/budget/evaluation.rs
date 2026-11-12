@@ -10,19 +10,19 @@ impl MongoSandboxStore {
         &self,
         platform: &PlatformBudgetPolicy,
         revision: u64,
-        read: PlatformPeriodLedger,
+        read: super::super::period_storage::PeriodState,
         now: u64,
     ) -> Result<Option<Evaluation>, BudgetError> {
         let mut ledger = read.clone();
-        let mut evaluation = ledger.evaluate(platform, revision, now)?;
-        if !evaluation.changed() && now.saturating_sub(read.evaluated_at) < REFRESH_SECONDS {
+        let mut evaluation = ledger.ledger.evaluate(platform, revision, now)?;
+        if !evaluation.changed() && now.saturating_sub(read.ledger.evaluated_at) < REFRESH_SECONDS {
             return Ok(Some(evaluation));
         }
         if super::super::transitions::persist(
             &self.budget_settings,
             &self.model_budget,
             revision,
-            Some(read.revision),
+            Some(read.ledger.revision),
             &ledger,
         )
         .await?
