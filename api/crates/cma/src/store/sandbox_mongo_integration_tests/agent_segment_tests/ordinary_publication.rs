@@ -11,6 +11,7 @@ use std::sync::Arc;
 mod settlement;
 mod support;
 mod uncertain;
+mod writer_caller_tests;
 use support::*;
 
 #[tokio::test]
@@ -159,6 +160,7 @@ async fn adopted_output_abort_refusal_and_foreign_receipt_cannot_publish_or_ackn
         &mutation,
         None,
         None,
+        None,
         &mut scope,
     )
     .await
@@ -181,6 +183,7 @@ async fn adopted_output_abort_refusal_and_foreign_receipt_cannot_publish_or_ackn
         crate::store::agent_log_telemetry::ScanCaller::ConversationPublication,
         &store,
         &mutation,
+        None,
         None,
         None,
         &mut scope,
@@ -230,7 +233,7 @@ async fn adopted_checkpoint_abort_and_wrong_boundary_preserve_private_assembly()
     let mut scope = TransactionScope::start(&mut session).await.unwrap();
     let (_, receipt) = scoped::checkpoint::apply(
         &store,
-        &current,
+        (&current, None),
         Some(&previous),
         &next,
         Some(&mutation),
