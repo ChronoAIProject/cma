@@ -43,6 +43,33 @@ async fn schedule(
 
 #[tokio::test(start_paused = true)]
 async fn slow_store_checks_and_expired_discovery_do_not_flap_worker_readiness() {
+    verify_slow_dependencies(None).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn diagnostic_capture_preserves_readiness_during_slow_dependencies() {
+    use crate::readiness_diagnostics::{fixture::Capture, record::Record};
+
+    let capture = Capture::new();
+    verify_slow_dependencies(Some(capture.recorder.clone())).await;
+    let records = capture.records();
+    assert!(records.iter().any(|record| matches!(
+        record,
+        Record::Response {
+            reason: "deadline",
+            ..
+        }
+    )));
+    assert!(!records.iter().any(|record| matches!(
+        record,
+        Record::Response {
+            reason: "workers",
+            ..
+        }
+    )));
+}
+
+async fn verify_slow_dependencies(diagnostics: Option<Arc<Recorder>>) {
     let workers = Workers::new();
     // Other capabilities have already completed a turn and are in valid waits.
     for worker in workers.snapshot().iter().filter(|worker| worker.required) {
@@ -74,7 +101,7 @@ async fn slow_store_checks_and_expired_discovery_do_not_flap_worker_readiness() 
     );
     // A successful ping just inside the unchanged deadline leaves little slack.
     let probe = Arc::new(DelayedProbe(AtomicUsize::new(1900)));
-    let app = router_with_workers(probe.clone(), workers.clone());
+    let app = monitored(probe.clone(), Some(workers.clone()), diagnostics);
     for _ in 0..21 {
         advance().await;
     }
