@@ -16,8 +16,6 @@ pub enum Capability {
     UseOwnSandboxes,
     /// Delete a Sandbox owned by the caller.
     DeleteOwnSandbox,
-    /// Request irreversible erasure of the caller's personal account.
-    DeleteOwnAccount,
     /// Author and revise Profiles owned by the caller.
     ManageOwnProfiles,
     /// Create and manage external Bots owned by the caller.
@@ -124,5 +122,21 @@ mod tests {
         ]);
         assert!(authority.allows(Capability::ConfigurePlatform));
         assert_eq!(authority.iter().count(), 2);
+    }
+
+    #[test]
+    fn generic_authorization_cannot_deserialize_session_deletion_entitlements() {
+        let ordinary: Authorization = serde_json::from_str(r#"["use_own_sandboxes"]"#).unwrap();
+        assert!(ordinary.allows(Capability::UseOwnSandboxes));
+        assert_eq!(
+            serde_json::to_value(&ordinary).unwrap(),
+            serde_json::json!(["use_own_sandboxes"])
+        );
+        for input in [
+            r#"["delete_own_account"]"#,
+            r#"["use_own_sandboxes","delete_own_account"]"#,
+        ] {
+            assert!(serde_json::from_str::<Authorization>(input).is_err());
+        }
     }
 }
