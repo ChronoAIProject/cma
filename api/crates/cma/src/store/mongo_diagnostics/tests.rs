@@ -92,6 +92,7 @@ async fn slow_success_failure_and_hold_emit_safe_fields_without_parent_values() 
             last: Some(command),
             commands: 1,
             sampled: false,
+            check: None,
         },
     );
     diagnostics.returned(1, false);
@@ -196,6 +197,7 @@ fn fast_events_are_sampled_but_totals_and_closed_connection_cleanup_are_complete
             last: None,
             commands: 0,
             sampled: false,
+            check: None,
         },
     );
     diagnostics.returned(2, true);
