@@ -124,6 +124,10 @@ mod shared_output_tests {
 fn direct_oauth_resource_is_optional_and_requires_a_fixed_secure_audience() {
     let key = "CHRONO_NYXID_OAUTH_API_RESOURCE";
     assert!(configured(&[]).unwrap().nyxid_oauth_api_resource.is_none());
+    assert!(configured(&[(key, "")])
+        .unwrap()
+        .nyxid_oauth_api_resource
+        .is_none());
     assert_eq!(
         configured(&[(key, "https://issuer.example/api/v1/proxy/s/cma")])
             .unwrap()
