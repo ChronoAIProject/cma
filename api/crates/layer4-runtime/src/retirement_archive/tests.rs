@@ -1,4 +1,6 @@
 use super::*;
+#[path = "collection_tests.rs"]
+mod completion_tests;
 #[path = "indexed_tests.rs"]
 mod indexed_tests;
 #[path = "transfer_tests.rs"]
@@ -491,3 +493,6 @@ async fn corrupt_archived_payload_cannot_qualify_a_retry_or_completion() {
     );
     archive.close().await.unwrap();
 }
+
+#[path = "skill_upgrade_tests.rs"]
+mod skill_upgrades;

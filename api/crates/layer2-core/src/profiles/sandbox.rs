@@ -267,7 +267,8 @@ pub struct SandboxProfileSnapshot {
     pub id: SandboxProfileId,
     pub revision: u32,
     pub digest: String,
-    /// Per-Sandbox owner preference. `None` preserves historical profile
+    /// Per-Sandbox automatic-pause exception requiring administrator approval.
+    /// Owners may relinquish it. `None` preserves historical profile
     /// availability until the platform auto-pause policy is enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub always_on: Option<bool>,

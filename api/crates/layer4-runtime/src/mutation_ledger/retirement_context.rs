@@ -18,6 +18,13 @@ pub(crate) struct Context {
 }
 
 impl Context {
+    pub(crate) fn revision(&self) -> Result<u64> {
+        u64::try_from(self.accounting[0])
+            .ok()
+            .filter(|revision| *revision > 0)
+            .ok_or_else(invalid)
+    }
+
     pub(super) fn read(db: &Connection, config: &RuntimeConfig) -> Result<Self> {
         let bytes: i64 = db
             .query_row(

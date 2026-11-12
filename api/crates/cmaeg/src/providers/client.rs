@@ -6,18 +6,20 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub(super) use super::permits::acquire;
+use super::permits::{Gate, Permit};
 use cmaeg_core::{
     channel::Secret,
     ids::{BindingId, ConversationId, ProviderSlug},
     profile::canonical_json,
 };
 use serde_json::{json, Value};
-use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{mpsc, oneshot};
 
 use super::{
     client_types::{
         BindingRequest, BindingResponse, ProviderError, ProviderHandle, TurnRequest, TurnStream,
-        MAX_METADATA_KEYS, MAX_METADATA_KEY_BYTES, MAX_METADATA_VALUE_BYTES, MAX_SEMAPHORE_WAIT,
+        MAX_METADATA_KEYS, MAX_METADATA_KEY_BYTES, MAX_METADATA_VALUE_BYTES,
     },
     probe::{classify_conformance, AgentCardProbe},
     stream::forward_turn,
@@ -75,7 +77,7 @@ impl ProviderClient {
                         entry.base_url.clone(),
                         connect_timeout,
                     )),
-                    inflight: Arc::new(Semaphore::new(max_inflight)),
+                    inflight: Arc::new(Gate::new(entry.slug.to_string(), max_inflight)),
                 },
             );
         }
@@ -292,7 +294,7 @@ impl ProviderClient {
         let permit = handle
             .inflight
             .clone()
-            .try_acquire_owned()
+            .try_acquire()
             .map_err(|_| ProviderError::Capacity)?;
         self.start_with_permit(request, handle, permit).await
     }
@@ -301,7 +303,7 @@ impl ProviderClient {
         &self,
         request: TurnRequest,
         handle: &ProviderHandle,
-        permit: OwnedSemaphorePermit,
+        permit: Permit,
     ) -> Result<TurnStream, ProviderError> {
         self.record_worker_key(&request.agent_key).await?;
         let url = handle
@@ -396,17 +398,6 @@ impl ProviderClient {
         }
         Err(classify_error(response).await)
     }
-}
-
-pub(super) async fn acquire(
-    semaphore: &Arc<Semaphore>,
-) -> Result<OwnedSemaphorePermit, ProviderError> {
-    tokio::time::timeout(MAX_SEMAPHORE_WAIT, semaphore.clone().acquire_owned())
-        .await
-        .map_err(|_| ProviderError::Busy {
-            retry_after: Some(MAX_SEMAPHORE_WAIT),
-        })?
-        .map_err(|_| ProviderError::Unavailable("provider semaphore closed".into()))
 }
 
 pub(super) fn validate_metadata(metadata: &BTreeMap<String, String>) -> Result<(), ProviderError> {

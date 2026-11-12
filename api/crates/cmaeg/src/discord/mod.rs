@@ -57,6 +57,7 @@ pub(crate) mod rest;
 pub use rest::{DiscordRest, RestError};
 mod connection;
 mod discovery;
+mod discovery_limits;
 mod gateway;
 mod inbox;
 mod inbox_activity;

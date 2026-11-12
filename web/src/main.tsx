@@ -55,7 +55,16 @@ const operator = createOperatorClient(sdk);
 const publisher = createTriggerPublisherClient(sdk);
 const publicClient = createPublicClient(sdk);
 
-createRoot(container).render(
+createRoot(container, {
+  onUncaughtError(error) {
+    window.cmaReportFatal?.('react_error');
+    console.error(error);
+  },
+  onCaughtError(error) {
+    window.cmaReportFatal?.('react_error');
+    console.error(error);
+  },
+}).render(
   <StrictMode>
     <AuthContextProvider provider={authProvider}>
       <CmaClientProvider

@@ -195,10 +195,10 @@ pub(super) fn active_turn(agent: &Agent) -> Result<u64, AgentConversationError> 
         .ok_or(AgentConversationError::InvalidState("no turn is active"))
 }
 
-pub(super) fn prompt_evidence(update: ConversationUpdate) -> (ConversationUpdate, bool) {
-    match update {
+pub(super) fn prompt_evidence(update: &ConversationUpdate) -> (&ConversationUpdate, bool) {
+    match update.effect() {
         ConversationUpdate::WithoutPromptEvidence(update) => {
-            let (update, _) = prompt_evidence(*update);
+            let (update, _) = prompt_evidence(update);
             (update, false)
         }
         update => {
@@ -275,6 +275,14 @@ pub(super) fn append_bounded(target: &mut String, value: &str, limit: usize) {
     target.push_str(&value[..end]);
 }
 
+pub(super) fn bounded_ref(value: &str, limit: usize) -> String {
+    let mut end = value.len().min(limit);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
+}
+
 pub(super) fn bounded(mut value: String, limit: usize) -> String {
     if value.len() <= limit {
         return value;
@@ -290,10 +298,22 @@ pub(super) fn bounded(mut value: String, limit: usize) -> String {
 pub(super) fn recorded_tool_output(
     fields: &layer3_adapter::ToolCallUpdateFields,
 ) -> Option<super::RecordedToolOutput> {
+    recorded_tool_blocks(layer3_adapter::reported_tool_text(fields))
+}
+
+pub(super) fn recorded_initial_tool_output(
+    call: &layer3_adapter::ToolCall,
+) -> Option<super::RecordedToolOutput> {
+    recorded_tool_blocks(layer3_adapter::reported_tool_call_text(call))
+}
+
+fn recorded_tool_blocks<'a>(
+    blocks: impl IntoIterator<Item = std::borrow::Cow<'a, str>>,
+) -> Option<super::RecordedToolOutput> {
     let mut text = String::new();
     let mut reported = false;
     let mut truncated = false;
-    for block in layer3_adapter::reported_tool_text(fields) {
+    for block in blocks {
         if reported {
             truncated |= text.len() == 16 * 1024;
             append_bounded(&mut text, "\n", 16 * 1024);
