@@ -1,7 +1,7 @@
 //! The platform period row: one document per period in the reservation
 //! collection, moved in the same transactions as the owner rows (contract §4).
 
-use layer2_core::admission::AdmissionCause;
+use layer2_core::admission::{AdmissionCause, AdmissionCeilings};
 use layer2_core::budget::{
     BudgetError, BudgetPolicy, Closure, ClosureReason, OperatorAdmissionState,
     PlatformBudgetPolicy, PlatformPeriodLedger, Refusal,
@@ -20,6 +20,7 @@ pub(super) struct PolicySnapshot {
     pub(super) platform: Option<PlatformBudgetPolicy>,
     pub(super) revision: u64,
     pub(super) operator_control: OperatorAdmissionState,
+    pub(super) ceilings: Result<AdmissionCeilings, ()>,
 }
 
 /// Liability-bearing reservations only: the foundation's fence write plus the
@@ -92,6 +93,9 @@ pub(super) fn snapshot(
     settings.model_budget.validate()?;
     let budget = settings.model_budget;
     Ok(PolicySnapshot {
+        ceilings: crate::store::admission_ceilings::from_document(document)
+            .map(|state| state.ceilings)
+            .map_err(|_| ()),
         operator_control: match crate::store::admission_control::from_document(document) {
             Ok(control) => control.operator_stop.into(),
             Err(_) => OperatorAdmissionState::Unreadable,
@@ -301,6 +305,38 @@ pub(in crate::store) async fn require_open(
         session,
     )
     .await
+}
+
+/// Retained-home admission reuses the same settings read as spend and stop
+/// checks. No additional settings command is needed when ceilings are unset.
+pub(in crate::store) async fn require_open_with_ceilings(
+    store: &MongoSandboxStore,
+    now: u64,
+    cause: AdmissionCause,
+    session: &mut ClientSession,
+) -> Result<Result<AdmissionCeilings, ()>, ApplyError> {
+    require_open_with_collections_and_ceilings(
+        &store.budget_settings,
+        &store.model_budget,
+        now,
+        cause,
+        session,
+    )
+    .await
+}
+
+pub(in crate::store) async fn require_open_with_collections_and_ceilings(
+    settings: &Collection<Document>,
+    rows: &Collection<Document>,
+    now: u64,
+    cause: AdmissionCause,
+    session: &mut ClientSession,
+) -> Result<Result<AdmissionCeilings, ()>, ApplyError> {
+    let Some(snapshot) = read_snapshot(settings, None, session).await? else {
+        return Ok(Ok(AdmissionCeilings::default()));
+    };
+    require_snapshot_open(rows, &snapshot, now, cause, session).await?;
+    Ok(snapshot.ceilings)
 }
 
 /// Enter a refusal's closures after (or regardless of) the abort, then return
