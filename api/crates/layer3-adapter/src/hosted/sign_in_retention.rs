@@ -11,8 +11,7 @@ use crate::{AdapterError, ConversationUpdate, RuntimeOutputUpdate};
 const PROCESS_BYTES: usize = 8 * 1024 * 1024;
 // Separate Arcs hold the effect and reservation, each with two counters. Count
 // their explicit layouts too; allocator metadata and OS overhead remain separate.
-const ENVELOPE_BYTES: usize =
-    size_of::<ConversationUpdate>() + size_of::<IngressReservation>() + 4 * size_of::<usize>();
+const ENVELOPE_BYTES: usize = RuntimeOutputUpdate::ACCOUNTED_STORAGE_BYTES;
 
 pub(super) struct Fields<'a> {
     pub(super) url: &'a str,
