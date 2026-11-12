@@ -94,6 +94,16 @@ fn summary_is_bounded_and_excludes_parent_span_payloads() {
         .with_writer(output.clone())
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
+    // A preceding callback without a subscriber must not cache the writer's
+    // shared summary callsite as disabled for this subscribed caller.
+    tracing::dispatcher::with_default(&tracing::Dispatch::none(), || {
+        let unobserved = Observer(
+            Arc::new(Mutex::new(Window::new(Instant::now() - WINDOW))),
+            "application",
+        );
+        unobserved.record(0, Duration::ZERO, false);
+        super::super::mongo_diagnostics::output::flush();
+    });
     let observer = Observer(
         Arc::new(Mutex::new(Window::new(Instant::now()))),
         "application",
@@ -107,6 +117,7 @@ fn summary_is_bounded_and_excludes_parent_span_payloads() {
     assert!(output.0.lock().unwrap().is_empty());
     observer.0.lock().unwrap().started = Instant::now() - WINDOW;
     observer.record(0, Duration::from_millis(2), true);
+    super::super::mongo_diagnostics::output::flush();
     let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
     assert_eq!(logs.lines().count(), 1);
     assert!(logs.contains("checkout") && logs.contains("count=10001"));
@@ -250,6 +261,7 @@ async fn real_driver_observations_preserve_operations_and_exclude_payloads() {
     let _guard = tracing::subscriber::set_default(subscriber);
     observer.0.lock().unwrap().started = Instant::now() - WINDOW;
     observer.record(0, Duration::ZERO, false);
+    super::super::mongo_diagnostics::output::flush();
     let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
     assert!(logs.contains("MongoDB client latency summary"));
     for private in [sentinel, &name, "private_records", "127.0.0.1"] {
