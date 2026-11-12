@@ -82,6 +82,9 @@ enum ObservationSource {
 
 #[derive(Serialize)]
 struct SpendView {
+    /// False when budgets or the platform cloud source are not configured:
+    /// metering is off, which is distinct from enabled but unavailable.
+    metering_enabled: bool,
     settings_revision: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     levels: Option<LevelsView>,
@@ -136,6 +139,7 @@ fn at(seconds: u64) -> String {
 impl From<PlatformSpendState> for SpendView {
     fn from(value: PlatformSpendState) -> Self {
         Self {
+            metering_enabled: value.metering_enabled,
             settings_revision: value.settings_revision,
             levels: value.levels.map(
                 |SpendLevels {
