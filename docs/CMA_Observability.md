@@ -11,8 +11,9 @@ Agent Manager exports Prometheus text at `GET /metrics` on
 `CHRONO_METRICS_BIND` (default `0.0.0.0:9091`). This is a separate HTTP listener,
 outside the public router, authentication middleware and public Service ports.
 It serves no business API. A separate five-second upkeep task aggregates raw
-histogram samples even when no collector scrapes or the listener fails; both
-tasks stop with the server guard. Startup fails if its address cannot be bound. A
+histogram samples even when no collector scrapes or the listener fails. The
+independent one-second runtime sampler shares the server guard; all three
+tasks stop when that guard is dropped. Startup fails if its address cannot be bound. A
 runtime listener failure is logged and detected by the external scrape/no-data
 rules; it does not stop application traffic or active work.
 
@@ -66,12 +67,80 @@ Unknown routes use `unmatched`. Correlation IDs belong in restricted logs.
 | Authentication | `cma_auth_resolutions_total{path,outcome}` and `cma_auth_resolution_seconds` cover ambient, worker and exact resource-request verification, including early rejection and cancellation. Independent routes record `bypassed`. Resolution is distinct from later endpoint authorization. |
 | Readiness | `cma_readiness_check_success` is the last completed Mongo check's result. `cma_readiness_check_timestamp_seconds` supplies freshness; `cma_readiness_check_seconds{outcome}` reports check duration. A stale successful check is not ready. `/ready` retains its existing five-second Mongo freshness limit and also checks required local scheduling capability; `/livez` retains process liveness semantics. See [worker supervision](CMA_Worker_Supervision.md). |
 | Mongo pool | `cma_mongo_pool_events_total{pool,operation,outcome}`, `cma_mongo_pool_operation_seconds`, `cma_mongo_checkout_started_total`, `cma_mongo_connections_tracked`, `cma_mongo_pool_max_connections`, `cma_mongo_connection_tracking_overflow_total`. Fixed pool labels separate `application`, `reporting` and `routing` clients, each across its server pools; max connections is a per-server pool limit, not a fleet denominator. The reporting observer composes with its existing circuit callback. Tracking is bounded at 4096; overflow means tracked occupancy is incomplete. Checkout starts are events, not queue depth: the pinned driver may omit the end event on cancellation, so starts minus ends is invalid. Duration samples cover completed checkouts only. Command monitoring stays disabled. |
+| Runtime | `cma_runtime_workers`, `cma_runtime_alive_tasks`, `cma_runtime_global_queue_depth`, `cma_runtime_busy_workers`, `cma_runtime_worker_busy_seconds_total{worker}`, `cma_runtime_worker_parks_total{worker}`, `cma_runtime_saturated_seconds_total`, `cma_runtime_wake_lag_seconds`. Stable runtime snapshots once per second, independent of scrape requests and Mongo commands. |
 | Mongo reads | Existing `cma_mongo_read_{operations,failures,documents,document_bytes}_total` snapshots, by bounded collection and `find`. They cover instrumented reads, not every database command or wire byte. |
 | Ledger reads | Existing `cma_agent_log_scan*` counters, by fixed caller/worker step/outcome, exported from periodic diagnostics. They measure read work, not accepted commands. |
 | Workers | `cma_worker_alive`, `cma_worker_heartbeat_timestamp_seconds`, `cma_worker_phase_success_timestamp_seconds{phase}`, `cma_worker_operations_total{phase,outcome}`, `cma_worker_local_queued`, `cma_worker_local_active`. Instrumented schedulers are Agent commands, Sandbox commands, Agent connection/lifecycle work, Sandbox and Workspace lifecycle sweeps, runtime reconciliation/recovery admission, launches and native warm pools. A guard clears alive/queue gauges on return, abort or panic. Heartbeat proves scheduler-loop activity; successful discovery proves a scan completed; neither proves a turn completed. |
 | Optional background work | `cma_background_active`, `cma_background_deferred_total`, `cma_background_attempts_total{outcome}`, `cma_background_attempt_seconds`, `cma_background_pending_since_timestamp_seconds`, `cma_background_completion_timestamp_seconds`. Pending timestamps continue to age during a blocked operation. Zero means no observed pending sweep. These cover local resumable sweeps, not the oldest durable command in Mongo. |
 | Runtime ledger holds | `cma_runtime_ledger_holds_total`: observed runtime capacity holds. This does not invent an occupancy estimate for runtimes lacking that contract. |
 | Collector health | `cma_telemetry_sample_timestamp_seconds` is refreshed by the existing 10-second diagnostics worker. A fresh scrape with an old sample timestamp means that local worker is stalled. |
+
+### Runtime scheduling and checkout classification
+
+The always-on sampler uses stable Tokio runtime metrics; production builds do
+not enable `tokio_unstable`. Worker busy duration measures wall time spent
+processing tasks, **not CPU time**: preemption and CFS throttling can increase
+busy duration without equivalent CPU consumption. The global queue is only the
+injection queue; worker-local queues and LIFO slots remain invisible. Alive
+counts include waiting tasks. These observations identify saturation and queued
+work, not the task responsible or its CPU cost.
+
+`cma_runtime_busy_workers` counts workers busy for at least 95% of the actual
+interval between snapshots. `cma_runtime_saturated_seconds_total` accumulates
+that interval only when every worker meets that threshold and no worker's park
+count increases. Zero workers, changing worker counts, and reset observations
+cannot establish saturation. A delayed sample uses elapsed wall time rather
+than pretending a long gap was one second, and missed ticks are skipped without
+catch-up bursts. Short events within an interval can still be averaged away.
+Cumulative worker busy time and saturated time are exported as whole-second
+absolute counters (the metrics facade's integer counter contract); compute
+rates over multiple samples. Park counts are absolute counters too. Worker
+labels are bounded to 64 values: `0` through `62`, then `overflow` for every
+remaining worker. Overflow busy time and parks are sums, while saturation uses
+each actual worker independently.
+
+The approved #1805 maximum is `2 * min(workers, 64) + 195` new Prometheus
+series: **211 at eight workers**, at most 323 with overflow. The constant is
+five scalar series plus ten histograms (one wake lag and three fixed pool names
+times three fixed states), each with 16 finite buckets, `+Inf`, count and sum.
+Both histogram families explicitly pin their finite boundaries in seconds to
+`0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 120, 600, 1800, 3600`;
+changing the exporter's default buckets cannot expand their series count.
+An exposition test enforces this bound, including the overflow case. Inactive
+pool states may be absent until observed. This replaces the issue's original
+`2 * workers + 12` estimate, which did not account for histogram expansion.
+
+`cma_runtime_wake_lag_seconds` records actual minus scheduled wake time for this
+sampler. It also includes delays in scheduling the sampler itself. Optional
+readiness diagnostics (#1770 / PR #1773) consume the same tick: one wake loop
+supplies both consumers with the same measured lag. Runtime sampling is
+owned by the metrics server guard and survives a running listener's failure.
+No configuration key, network request, Mongo command, or readiness-policy change
+is introduced. Rollback is the previous API image; no data migration is needed.
+
+`cma_mongo_checkout_wait_seconds{pool,pool_state}` records successful checkout
+waits alongside the existing operation histogram. Immediately before insertion,
+tracked occupancy plus the new connection at or above the configured maximum
+is `at_limit`; lower occupancy is `below_limit`. Overflow is `unknown`, retained
+across summary windows for that observer's lifetime because lost connection
+pairings cannot prove occupancy complete again. Failed checkouts remain in the
+existing failure histogram and do not create successful occupancy samples.
+The configured limit applies **per server**, whereas tracked occupancy sums all
+server pools for that client: routing reads across nodes makes classification
+approximate. Occupancy is observed at completion, not throughout the wait;
+`at_limit` alone does not prove exhaustion, nor does `below_limit` alone prove a
+scheduler stall. Existing pool-operation metrics and ten-second summary fields
+retain their meanings.
+
+For the release owner's same-load, at least 30-minute comparison, correlate
+waits of at least 100 ms with per-worker busy rates, saturation, wake lag, and
+platform CPU/throttling. Predominantly `below_limit` waits with near-zero
+saturation and only individual workers near 100% support the non-yielding-task
+hypothesis (#1787); they do not prove LIFO-slot residency. High saturation and
+wake lag support total runtime pressure and require CFS comparison. Predominant
+`at_limit` waits warrant pool-capacity/concurrency investigation. If none align,
+continue investigation of Mongo, network, or log-output latency under #1320.
+Production attribution and activation remain dependent on measured results.
 
 ### Request attribution
 
@@ -374,3 +443,47 @@ are tracked separately in [CMA #1740](https://github.com/ChronoAIProject/cma/iss
 a child of #1470. See [worker supervision](CMA_Worker_Supervision.md) for its
 implementation and qualification boundaries. Long inference and user waits
 remain outside arbitrary scheduler failure deadlines.
+
+The #1805 sampler and #1770 readiness diagnostics share one one-second timing
+task, owned by the telemetry server. Runtime metrics consume the shared wake
+observation on every tick; the existing readiness timer record and metrics
+consume that same lag only when diagnostics are enabled. Dropping the server
+stops both, while a scrape-listener failure stops neither. The readiness check
+loop retains its independent check schedule and deadline; it is not a second
+lag probe. No new configuration is added.
+
+### Scan execution sections (#1787)
+
+Each full-scan attempt now emits `cma_agent_log_scan_longest_section_seconds{caller}`
+and `cma_agent_log_scan_driver_poll_seconds{caller}` once on drop, including
+validation failure and cancellation. `cma_agent_log_scan_yields_total{caller}`
+counts explicit cooperative yields. Labels use only the existing closed caller
+names; no Agent, Sandbox, request, user, query or document content is retained.
+The existing full-scan count, document/byte counts and success/failure accounting
+retain their meanings. Measurements accumulate in local variables, with no
+per-document atomics or logging; optional debug output is once per attempt.
+
+An execution section closes only when an observed future actually returns
+`Pending` or the scan explicitly yields. Time spent waiting to be polled again
+is excluded. Initial-find suspension is observed too, so Mongo/network wait
+does not become a CPU section. Driver-poll duration measures the final `Ready`
+poll of cursor advancement, including driver batch copying; it does not include
+I/O wait or the subsequent row decode, visitor and hash. Both histograms include
+submillisecond, 2 ms, 5 ms and 10 ms boundaries, supporting the issue's A/B/C
+decisions. These are wall-time observations, not CPU profiles or proof that
+a particular task occupied a Tokio LIFO slot.
+
+The histograms aggregate all scan sizes for a caller. For case A's at-least-1,000-
+row subset, the once-per-attempt debug event includes numeric `documents` and
+`bytes`, outcome, section count and both maxima. Use those observations to
+select the subset; an average documents-per-scan ratio cannot prove it.
+
+These #1787 families add at most 481 series: 13 closed caller names, including
+`command_reconciliation`, times two histograms with 15 finite buckets, +Inf,
+sum and count, plus one counter. Worker steps do not label these families.
+This is separate from the #1805 bound of `2 * min(workers, 64) + 195`.
+
+Together #1805 and #1787 add `2 * min(workers, 64) + 676` series: **692 at eight
+workers**, at most **804 per process**. This bound covers those two issues'
+metric families only; existing metrics and the separate retry-audit and command
+reconciliation outcome families are not included.

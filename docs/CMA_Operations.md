@@ -1055,6 +1055,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED` | Strict boolean, default `false`. Shares retained domain effects across startup/retry copies and borrows them during durable folding. No wire/checkpoint format change; no aggregate byte-limit claim. Disable and restart for rollback. See [Shared runtime output](CMA_Shared_Runtime_Output.md). |
 | `CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED` | Strict boolean, default `false`. Repeated failures of the same step/class retain one diagnostic row and update attempts/ready time under the existing lease and revision fences. First/class-changed failures and success still append. Capacity/ledger markers retain priority. Rollback resumes ordinary appends without data repair. |
 | `CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED` | Strict boolean, default `false`. Reuses trusted metadata for ordinary single-failure CloseProcess publication and zero-entry repeated failures within the shared cohort. Repeated retries fully audit on first use after restart and at least hourly; identical conflict snapshots can reuse history within one invocation. First markers, capacity state changes, successful effects and unknown-commit reconciliation retain complete proofs. Disable and restart for rollback; preserve all history and quarantine. See [Bounded close retries](CMA_Bounded_Close_Retries.md). |
+| `CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED` | Strict boolean, default `false`. Adds cooperative checkpoints to complete Agent-log scans with a fixed 2 ms budget, checked every eight completed rows. Enable only after at least 30 minutes with the switch off establishes #1787 case A (at least 1,000 rows and longest-section p95 at least 10 ms), using #1805 runtime/checkout observations. Roll back by setting `false` and rolling the same API image; no data migration, Sandbox restart, identifier change or history rewrite. |
 | `CHRONO_AGENT_SKILL_UPGRADE_ENABLED` | Strict boolean, default `false`. Gates new installed-skill version replacements for owner-authorized idle Agents on capable runtimes. Keep closed until migration `2026-11-11-am-agent-skill-upgrade` reader/drain and recovery evidence is approved. Closing admission preserves reads, global exact-key replay, and already-admitted worker/recovery settlement. It does not remove the reader floor. See [skill upgrade migration record](CMA_Agent_Skills_Runtime.md#reader-floor-and-rollback-record-2026-11-11-am-agent-skill-upgrade). |
 | `CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED` | Strict boolean, default `false`. Enables the CMAEG retained-context API path that carries one buffered command through current authorization and the final release fence, with phase timing and no second command lookup. Keep disabled until the compatible API image is deployed and matched success/failure, binding-rotation and latency evidence is reviewed; disable and restart to roll back. The CMAEG three-second client deadline is unchanged. |
 | `CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED` | `false` | Require retained runtime output and bound compact pending/replay permission state across attachments. See [permission state bounds](CMA_Permission_State_Bounds.md). |
@@ -2400,3 +2401,28 @@ Optional enrichment retains its existing fallback behavior. See
 See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
 boundaries, local comparison, security/concurrency tests and the next batching
 proposal. Production flag changes remain part of the approved release process.
+
+### Cooperative full-scan activation and rollback
+
+`CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED=false` preserves scheduling behavior
+while retaining the execution measurements. The budget is fixed at 2 ms; it is
+not a deployment parameter. Every eighth completed row checks elapsed time,
+and a yield occurs only after validation, the visitor, hashing and row accounting
+finish. Individual driver polls, rows and visitors cannot be preempted, so 2 ms
+is a checkpoint budget rather than a hard upper bound on every poll.
+
+The release owner first records at least 30 minutes under natural load with the
+switch off. If longest sections for scans of at least 1,000 rows have p95 at least
+10 ms (case A), enable the switch in the same image and observe at least 60
+minutes. A driver-poll p95 of at least 5 ms (case B) separately justifies a batch
+limit investigation and its extra getMore/checkout cost. If every caller has
+section p99 below 2 ms (case C), leave cooperation off and retain measurements.
+Local reproduction guides implementation; it does not replace production
+attribution or authorize activation.
+
+Immediately roll back to `false` if scan failures/quarantine rise, publication
+retries rise above baseline, the reporting circuit opens, or new route 5xx
+appear. Roll only API replicas with the same image. Existing Sandboxes,
+Workspaces, Agents, identifiers and history stay intact. Offline retirement
+archive census explicitly uses the disabled strategy. No persistence format
+changes, migration, row omission or weaker validation accompanies this switch.
