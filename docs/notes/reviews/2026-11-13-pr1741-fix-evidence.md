@@ -1,6 +1,6 @@
 # PR #1741 correction evidence
 
-Evidence checkpoint: 2026-11-12T19:19:50+00:00. This is a partial correction record, not a GO
+Evidence checkpoint: 2026-11-12T19:30:11+00:00. This is a partial correction record, not a GO
 verdict or a completed full-diff review. The original PR head is
 `821790b422b336684256abbf2b00d30386f40e99`.
 
@@ -15,8 +15,8 @@ also identify additional defects rather than assume this list is exhaustive.
 
 | Finding | Change and evidence | Status |
 | --- | --- | --- |
-| B1: stale closure persistence | Four deterministic Mongo interleavings capture evidence before a lift, observation correction, liability release, or policy-only change. All four fail against the prior persistence path. Entries, lifts and refreshes now share a transaction guarded by policy and period revisions; refusal persistence first aborts admission. | Implementation awaiting green regression run. |
-| B2: cached STOP authority | The old maintenance path schedules a platform pause without current STOP authority. New cancellation receipts and platform pauses now fence current policy and STOP in their committing transaction. Existing exact-turn receipts survive lifts. | Pause baseline reproduced; corrected cache fixture baseline and green run pending. |
+| B1: stale closure persistence | Four deterministic Mongo interleavings capture evidence before a lift, observation correction, liability release, or policy-only change. All four fail against the prior persistence path. Entries, lifts and refreshes now share a transaction guarded by policy and period revisions; refusal persistence first aborts admission. | Commit `9727d6d81`; all four races pass in the 62/62 run. |
+| B2: cached STOP authority | The old maintenance path schedules a platform pause without current STOP authority. New cancellation receipts and platform pauses now fence current policy and STOP in their committing transaction. Existing exact-turn receipts survive lifts. | Commit `07bdc3b08`; pause and corrected cache baselines reproduced; all guards pass in the 62/62 run. |
 | B3: missing or stale evidence | Admission derives closures from current policy, clock and period evidence; reads never lift persisted closures. New missing-period and threshold tests fail before and pass after. | Commit `04818783e`; focused Mongo run 27/27 passed. |
 | B4: requests without valued holds | An active platform meter refuses missing owner valuation at command, turn and auxiliary request boundaries. Actual HTTP title adapter verifies zero upstream sends on refusal. Historical bypass remains only with the global meter off. | Commit `1b05f4506`; both new Mongo scenarios fail before and pass after. |
 | B5: recovery during STOP | Failed-runtime recovery checks current platform admission state in its transaction. The test fails before by admitting a replacement runtime after a pause failure; after the fix it refuses until lift and preserves retained home and queued work. | Commit `af169e314`; regression and surrounding recovery checks passed. |
@@ -67,20 +67,37 @@ The valid B2 pause baseline is
 `stale_stop_pause_request_cannot_pause_without_current_authority`: the old path
 returns `Scheduled` where `NotEligible` is required. The initial cache test
 failed during setup because its fixture omitted required owner-policy data;
-that failure is not counted as defect reproduction. The fixture is corrected,
-and its proper baseline is pending.
+that failure is not counted as defect reproduction. With the fixture corrected,
+`stale_stop_cache_cannot_create_a_new_turn_receipt_after_lift` fails at the
+intended assertion with the transactional guard removed: the old path returns
+a platform STOP instead of no STOP for the new turn. Restoring the guard makes
+it pass and preserves the prior turn receipt.
 
 The broader B3/B4/B5 run selected 67 Mongo contracts: 65 passed and two pause
 fixtures failed during that same invalid setup. Both B4 cases, the B5 regression
 and surrounding recovery contracts passed. This run is not reported as green.
-The corrected fixtures and B1/B2 guards require the next verification run.
+The subsequent corrected B1–B5 selection passed **62/62** Mongo tests. The
+selection differs from the broader 67-test run; neither count substitutes for
+the final full repository contract gate.
 
 The Mongo contract selector now includes the new budget persistence and recovery
 suites. Its first harness run passed 36/40 checks; four failed because the
 expected prefix list had not yet been updated. After aligning the expected list,
 all four failed selection checks passed. No assertion was loosened. The file-size
 gate passed across 6,483 files; formatting and whitespace checks passed at this
-checkpoint. Clippy and the full repository Mongo script remain pending.
+checkpoint. `cargo clippy -p cma -p layer2-core --all-targets --all-features
+--locked -- -D warnings` passed. The full repository Mongo script remains pending.
+
+## Persistence authority cross-check
+
+MongoDB's [transaction production considerations](https://www.mongodb.com/docs/manual/core/transactions-production-consideration/#in-progress-transactions-and-stale-reads),
+retrieved 2026-11-13, state that snapshot reads can return stale data and that an
+actual modifying write acquires the document lock. Its write-conflict section
+states that a transaction aborts when a document it later modifies changed
+outside its snapshot. B1 and B2 use actual writes to the policy and accounting
+documents; they do not assume snapshot reads alone are serializable. The local
+Mongo 8.0.13 lift and disable tests independently verify this behavior against
+the pinned server used for the contracts.
 
 ## Delta from the recovered review to the original PR head
 
@@ -119,6 +136,9 @@ from a shared development host are not production performance claims.
 | `b1-before.log` | `6630e08d5d12771a1df7402867d0e6b22ae8d0b1592fc11c7842f02d673a5f3d` |
 | `mongo-script-tests.log` | `f190ef973f9697a4798ac914093c94704bac19bf94cbc14efc55dff7d20aa770` |
 | `mongo-script-selection-after.log` | `0fc287461b5ba2124167af3c4b19aa87e9f5d3457a239a6d8fa1b052ce6f432d` |
+| `b2-cache-before.log` | `8321523f3e0ccc6152c95e05ad852b6377bb4cf22106e4d2da01da77db5f1a2c` |
+| `b12345-after.log` | `88013a9d4d8213eedf9780f1f4c0d2e4588171e261d57b5ca97da247abccf4fb` |
+| `security-clippy.log` | `eb33ec76e6b5ee850f3c391da14393fd4679e20fe895adeb394cf09fc1ad9253` |
 
 The complete full-diff review, counter measurements, final verification and
 exact-head verdict remain outstanding. PR #1816 remains stacked until #1741
