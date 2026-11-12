@@ -201,6 +201,13 @@ pub(super) fn authorize(current_records: &[&Record], incoming: &Record) -> Resul
             "runtime mutation authority fence is stale",
         ));
     }
+    if skill_sequence(&incoming.subject)
+        .zip(skill_sequence(&latest.subject))
+        .is_some_and(|(next, previous)| next > previous)
+        && incoming.authority_fence > latest.authority_fence
+    {
+        return Ok(true);
+    }
     let same_disposition = current_records
         .iter()
         .filter(|record| record.disposition == incoming.disposition)
@@ -290,7 +297,7 @@ pub(super) fn validate_history(records: &[&Record]) -> Result<()> {
         .iter()
         .filter(|record| record.disposition == Disposition::Absent)
         .collect::<Vec<_>>();
-    if !same_identity(&present) || !same_identity(&absent) {
+    if !(same_identity(&present) || progressive_skills(&present)) || !same_identity(&absent) {
         return Err(corrupt(
             "runtime mutation authority has conflicting operation identities",
         ));
@@ -306,6 +313,25 @@ pub(super) fn validate_history(records: &[&Record]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn skill_sequence(subject: &Subject) -> Option<u64> {
+    match subject {
+        Subject::InstallAgentSkill { request } => Some(request.sequence()),
+        _ => None,
+    }
+}
+fn progressive_skills(records: &[&&Record]) -> bool {
+    let mut ordered = records.to_vec();
+    ordered.sort_by_key(|r| r.authority_fence);
+    ordered.iter().all(|r| skill_sequence(&r.subject).is_some())
+        && ordered.windows(2).all(|pair| {
+            let a = pair[0];
+            let b = pair[1];
+            a.operation() == b.operation()
+                || (a.authority_fence < b.authority_fence
+                    && skill_sequence(&a.subject) < skill_sequence(&b.subject))
+        })
 }
 
 fn same_identity(records: &[&&Record]) -> bool {
