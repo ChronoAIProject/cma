@@ -200,6 +200,28 @@ fn retirement_preview_requires_home_absence_for_skills_and_all_process_generatio
             ))
             .unwrap();
         semantic::journal(&fixture.config, &record);
+        let mut next = skill_request.skill.clone();
+        next.version = Some("1.1".into());
+        next.archive_sha256 = "b".repeat(64);
+        let upgrade = AgentSkillInstallRequest::upgrade(
+            skill_request.agent_id.clone(),
+            next,
+            skill_request.skill.clone(),
+            Some(layer3_adapter::AgentSkillInstallReceipt::from_request(
+                &skill_request,
+            )),
+            2,
+        );
+        let operation = Operation::install_agent_skill(&upgrade);
+        semantic::authority(&fixture.config, 2, &operation);
+        let record = Record::started(&fixture.config, &operation)
+            .unwrap()
+            .completed(&layer3_adapter::AgentSkillInstallReceipt::from_request(
+                &upgrade,
+            ))
+            .unwrap();
+        let preserved = semantic::journal(&fixture.config, &record);
+        let original_bytes = std::fs::read(&preserved).unwrap();
         let close = Operation::close_agent(&AgentCloseRequest::new(
             "agent:agent:close:v1",
             AgentSlot::new("agent"),
@@ -224,20 +246,21 @@ fn retirement_preview_requires_home_absence_for_skills_and_all_process_generatio
         assert_eq!(report["candidate_resource_groups"], u64::from(!incomplete));
         assert_eq!(
             report["candidate_journal_files"],
-            if incomplete { 0 } else { 4 }
+            if incomplete { 0 } else { 5 }
         );
         assert_eq!(
             report["candidate_current_journal_files"],
-            if incomplete { 0 } else { 3 }
-        );
-        assert_eq!(
-            report["candidate_authority_files"],
             if incomplete { 0 } else { 4 }
         );
         assert_eq!(
+            report["candidate_authority_files"],
+            if incomplete { 0 } else { 5 }
+        );
+        assert_eq!(
             report["candidate_current_authority_files"],
-            if incomplete { 0 } else { 3 }
+            if incomplete { 0 } else { 4 }
         );
         assert_eq!(fixture.scan().unwrap().digest, before);
+        assert_eq!(std::fs::read(preserved).unwrap(), original_bytes);
     }
 }

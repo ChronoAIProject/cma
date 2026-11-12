@@ -34,6 +34,8 @@ mod buffered_recovery_tests;
 mod fresh_bridge_tests;
 #[path = "acp_reconnect_turn_tests.rs"]
 mod reconnect_turn_tests;
+#[path = "acp_recovery_deadline_tests.rs"]
+mod recovery_deadline_tests;
 
 #[path = "acp_backpressure_tests.rs"]
 mod backpressure_tests;
@@ -67,7 +69,7 @@ pub(super) async fn socket_pair() -> (Socket, ServerSocket) {
     )
 }
 
-async fn send_ready(server: &mut ServerSocket, agent_id: &str) {
+pub(super) async fn send_ready(server: &mut ServerSocket, agent_id: &str) {
     server
         .send(Message::Text(
             serde_json::json!({
@@ -140,6 +142,8 @@ pub(super) fn settings(
     own_credential: bool,
 ) -> HostedAgentOpenSettings {
     HostedAgentOpenSettings {
+        coordinated_ingress: false,
+        retained_json: false,
         bounded_raw_output: false,
         bounded_permission_state: false,
         output_json_budget: false,
@@ -176,7 +180,7 @@ fn ready_declaration_requires_exact_version_agent_and_lanes() {
         "lanes": ["ctl", "conv"],
         "agentId": "agent-1",
     });
-    validate_ready(Message::Text(valid.to_string()), "agent-1", false)
+    validate_ready(Message::Text(valid.to_string()), "agent-1", false, None)
         .expect("exact Ready is accepted");
 
     let invalid = [
@@ -198,9 +202,15 @@ fn ready_declaration_requires_exact_version_agent_and_lanes() {
         }),
     ];
     for declaration in invalid {
-        assert!(validate_ready(Message::Text(declaration.to_string()), "agent-1", false).is_err());
+        assert!(validate_ready(
+            Message::Text(declaration.to_string()),
+            "agent-1",
+            false,
+            None
+        )
+        .is_err());
     }
-    assert!(validate_ready(Message::Binary(vec![1, 2, 3]), "agent-1", false).is_err());
+    assert!(validate_ready(Message::Binary(vec![1, 2, 3]), "agent-1", false, None).is_err());
 }
 
 #[tokio::test]

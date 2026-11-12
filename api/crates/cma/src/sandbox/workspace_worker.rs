@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+mod execute;
+
 use layer2_core::sandbox::store::{SandboxStoreError, SandboxTransaction, WorkspaceLifecycleStore};
 use layer2_core::sandbox::{
     Sandbox, SandboxEventKind, SandboxStatus, Workspace, WorkspaceSource, WorkspaceStatus,
@@ -127,20 +129,6 @@ impl WorkspaceWorker {
         };
         self.execute(workspace, now).await?;
         Ok(true)
-    }
-
-    async fn execute(
-        &self,
-        workspace: Workspace,
-        now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        match workspace.work.step {
-            WorkspaceWorkStep::Prepare => self.prepare(workspace, now).await,
-            WorkspaceWorkStep::RecoverPrepare => self.recover_prepare(workspace, now).await,
-            WorkspaceWorkStep::Setup => self.setup(workspace, now).await,
-            WorkspaceWorkStep::Remove => self.remove(workspace, now).await,
-            WorkspaceWorkStep::None => Err(SandboxStoreError::Conflict),
-        }
     }
 
     async fn prepare(

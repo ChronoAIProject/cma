@@ -84,6 +84,18 @@ impl Bridge {
         recovered_prompt: Option<PromptIdentity>,
         updates_tx: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<OpenedBridge> {
+        if settings.coordinated_ingress
+            && !(settings.retained_json
+                && settings.bounded_raw_output
+                && settings.bounded_permission_state)
+        {
+            return Err(AdapterError::Rejected(
+                "ingress coordination requires JSON, raw-output and permission bounds".into(),
+            ));
+        }
+        let aggregate = settings
+            .coordinated_ingress
+            .then(crate::ingress_budget::IngressBudget::process);
         if settings.recovered_context_sequence.is_some()
             && (resume_conversation.is_none() || recovered_prompt.is_some())
         {
@@ -109,7 +121,21 @@ impl Bridge {
             .ok_or_else(|| AdapterError::Unavailable("runtime closed before Ready".into()))?
             .map_err(|error| AdapterError::Unavailable(format!("Ready read failed: {error}")))?;
         let output_json_budget = settings.output_json_budget;
-        let output_stream = validate_ready(declaration, expected_agent, output_json_budget)?;
+        let json_pools = settings
+            .retained_json
+            .then(crate::hosted::retained_json::JsonPools::process)
+            .map(|pools| pools.with_aggregate(aggregate.clone()));
+        let output_stream = validate_ready(
+            declaration,
+            expected_agent,
+            output_json_budget,
+            json_pools.as_ref(),
+        )?;
+        if json_pools.is_some() && output_stream.is_none() {
+            return Err(AdapterError::Rejected(
+                "JSON retention bounds require retained runtime output".into(),
+            ));
+        }
         if bounded && output_stream.is_none() {
             return Err(AdapterError::Unavailable(
                 "bounded output requires retained runtime acknowledgements".into(),
@@ -126,7 +152,8 @@ impl Bridge {
                     "permission bounds require retained runtime output".into(),
                 ));
             }
-            let mut state = crate::hosted::permission_state::PermissionState::new()?;
+            let mut state =
+                crate::hosted::permission_state::PermissionState::new(aggregate.clone())?;
             if let Some(prompt) = &recovered_prompt {
                 state.begin_prompt(prompt.as_str());
             }
@@ -137,6 +164,7 @@ impl Bridge {
         let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
+            json_pools: json_pools.clone(),
             bounded_raw_output: settings.bounded_raw_output,
             shared_runtime_output: settings.shared_runtime_output,
             output_json_budget,
@@ -153,6 +181,8 @@ impl Bridge {
                     stream,
                     acknowledgements,
                     settings.bounded_raw_output,
+                    json_pools,
+                    aggregate,
                 ))
             }),
             blocked: Mutex::new(HashMap::new()),
@@ -163,6 +193,7 @@ impl Bridge {
             instructions_support: AtomicU8::new(0),
             context_refresh: settings.context_refresh.clone(),
             context_goal: Mutex::new(None),
+            retained_history_deadline: tokio::sync::watch::channel(None).0,
             recovering_context: AtomicU64::new(settings.recovered_context_sequence.unwrap_or(0)),
         });
         let (updates, relay) = crate::hosted::update_relay::spawn(updates_tx, bounded);

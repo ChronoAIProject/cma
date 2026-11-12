@@ -279,10 +279,19 @@ async fn acknowledge_instruction_choices(server: &mut ServerSocket) {
 #[tokio::test]
 async fn legacy_instruction_recovery_loads_exact_thread_once_without_interrupting_or_writing_files()
 {
+    instruction_recovery(0..10, false).await;
+}
+
+#[tokio::test]
+async fn instructions_recovery_load_survives_the_ordinary_rpc_deadline() {
+    instruction_recovery(0..1, true).await;
+}
+
+async fn instruction_recovery(scenarios: std::ops::Range<u8>, slow_load: bool) {
     // Success, another error, changed file, active prompt, native goal,
     // wrong generation, wrong native thread, second failure, missing binding,
     // and native work observed while reading the retained session.
-    for scenario in 0..10 {
+    for scenario in scenarios {
         let (client, mut server) = socket_pair().await;
         send_ready(&mut server, "agent-1").await;
         let tools = vec![serde_json::json!({"name":"cma_access","type":"http",
@@ -337,6 +346,9 @@ async fn legacy_instruction_recovery_loads_exact_thread_once_without_interruptin
                         "cwd":"/home/cma/user-current-directory","additionalDirectories":["/home/cma/extra"],
                         "mcpServers": expected_tools})
                     );
+                    if slow_load {
+                        recovery_deadline_tests::elapse_silent_recovery().await;
+                    }
                     respond(&mut server, &load, serde_json::json!({})).await;
                     acknowledge_instruction_choices(&mut server).await;
                     let replay = receive_json(&mut server).await;

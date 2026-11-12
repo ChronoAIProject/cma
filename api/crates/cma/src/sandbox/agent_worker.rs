@@ -189,6 +189,22 @@ impl AgentWorker {
     }
 
     async fn execute(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
+        if matches!(
+            agent.work.step,
+            AgentWorkStep::RemoveHome
+                | AgentWorkStep::RemoveWorktree
+                | AgentWorkStep::EnsureProcessClosed
+        ) {
+            let parent = self
+                .dependencies
+                .store
+                .get_sandbox(&agent.sandbox_id)
+                .await?
+                .ok_or(SandboxStoreError::NotFound)?;
+            if parent.retirement_archive_pending() {
+                return Err(SandboxStoreError::Conflict);
+            }
+        }
         let started = tokio::time::Instant::now();
         let claimed = agent.clone();
         let result = match agent.work.step {
