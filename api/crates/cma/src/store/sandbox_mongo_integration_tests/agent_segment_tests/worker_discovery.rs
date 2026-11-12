@@ -15,6 +15,9 @@ async fn finish_legacy_connection(store: &MongoSandboxStore, agent: Agent) -> Ag
         .work
         .advance("worker", fence, AgentWorkStep::None, NOW.into())
         .unwrap();
+    claimed.updated_at = NOW.into();
+    claimed.revision = expected_agent_revision + 1;
+    claimed.conversation.last_seq += 1;
     store
         .commit_agent_work(AgentWorkMutation {
             expected_agent_revision,
@@ -24,7 +27,9 @@ async fn finish_legacy_connection(store: &MongoSandboxStore, agent: Agent) -> Ag
             worktree: None,
             appended_at: NOW.into(),
             sandbox_event: None,
-            agent_logs: Vec::new(),
+            agent_logs: vec![AgentLogKind::WorkStepCompleted {
+                step: AgentWorkStep::PublishConnection,
+            }],
         })
         .await
         .unwrap();
