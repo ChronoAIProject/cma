@@ -10,15 +10,6 @@ pub struct MongoDocumentStore {
     rows: Collection<Document>,
 }
 impl MongoDocumentStore {
-    pub(crate) fn quota(&self, enabled: bool) -> super::MongoDocumentQuotaStore {
-        super::MongoDocumentQuotaStore::new(
-            &self
-                .rows
-                .client()
-                .database(self.rows.namespace().db.as_str()),
-            enabled,
-        )
-    }
     pub fn new(database: Database) -> Self {
         Self {
             rows: database.collection_with_options(

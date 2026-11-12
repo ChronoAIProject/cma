@@ -93,7 +93,7 @@ a nonempty collection; its source entry identifies the missing closure or decode
 | `request_rate_limits` | `Independent` | request_limits.rs |
 | `visitor_launch_days` | `Independent` | trigger_definitions/launches/visitor_quota.rs |
 | `cma_document_artifacts` | `Documents`: indexed and embedded source owner, plus originating/runtime Agent | document_artifacts/mongo.rs; layer2-core/document_artifacts/types.rs |
-| `cma_document_quotas` | `Independent` | document_artifacts/quota.rs |
+| `cma_document_quotas` | `Independent` | Retained rows from the reverted quota policy; no active writer. |
 | `native_warm_pool_targets` | `Independent` | native_warm_pools.rs |
 | `native_prepared_sandboxes` | `Empty` | native_prepared/model.rs; native_prepared.rs |
 | `runtime_backend_routes` | `Sandbox(&["sandbox_id"])` | runtime_routing.rs |

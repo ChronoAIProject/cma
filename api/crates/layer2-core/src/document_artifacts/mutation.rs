@@ -269,12 +269,7 @@ impl DocumentService {
                 if let Some(markdown) = &body.markdown {
                     let sha = digest(markdown.as_bytes());
                     object = object_key(&record.metadata.owner_subject, &record.metadata.id, &sha);
-                    self.upload(
-                        &record.metadata.owner_subject,
-                        &record.metadata.id,
-                        markdown.as_bytes(),
-                    )
-                    .await?;
+                    self.upload(&object, markdown.as_bytes().to_vec()).await?;
                     record.metadata.sha256 = sha;
                     record.metadata.size_bytes = markdown.len() as u64;
                 }

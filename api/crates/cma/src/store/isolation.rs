@@ -17,7 +17,6 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     super::request_limits::COLLECTION,
     "visitor_launch_days",
     crate::document_artifacts::COLLECTION,
-    crate::document_artifacts::QUOTA_COLLECTION,
     super::native_warm_pools::COLLECTION,
     super::native_prepared::COLLECTION,
     "runtime_backend_routes",
