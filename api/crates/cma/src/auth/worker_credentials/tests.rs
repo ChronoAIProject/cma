@@ -331,3 +331,43 @@ async fn method_query_and_duplicate_bearer_cannot_enter_classifier() {
         StatusCode::UNAUTHORIZED
     );
 }
+
+#[tokio::test]
+async fn worker_metrics_cover_independent_authentication_and_early_rejection() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    let _recording = metrics::set_default_local_recorder(&recorder);
+    let f = Fixture::new().await;
+    let app = f
+        .app()
+        .layer(axum::middleware::from_fn(crate::telemetry::http::observe));
+    for bearer in [Some(f.provider.expected.as_str()), None] {
+        let mut request = HttpRequest::post(WORKER_CLASSIFIER_PATH)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(token) = bearer {
+            request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                request
+                    .body(Body::from(json!({"sha256":"a".repeat(64)}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            if bearer.is_some() {
+                StatusCode::OK
+            } else {
+                StatusCode::UNAUTHORIZED
+            }
+        );
+    }
+    let text = handle.render();
+    assert!(text.contains("cma_auth_resolutions_total{path=\"worker\",outcome=\"resolved\"} 1"));
+    assert!(text.contains("cma_auth_resolutions_total{path=\"worker\",outcome=\"rejected\"} 1"));
+    assert!(text.contains("status=\"200\",consumer=\"internal\",protocol=\"rest\""));
+    assert!(text.contains("status=\"401\",consumer=\"unknown\",protocol=\"rest\""));
+}

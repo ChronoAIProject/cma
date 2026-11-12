@@ -285,14 +285,20 @@ pub(super) async fn read(
     let color_timer = state
         .hierarchy
         .detail_phase(layer2_core::sandbox::SandboxDetailPhase::Colors);
-    let color = match &reading {
-        SandboxHierarchyReading::Personal(personal) if personal.sandbox.owner == caller.subject => {
-            super::sandbox_colors::colors(&state, &caller.subject, &[&personal.sandbox])
-                .await
-                .remove(personal.sandbox.id.as_str())
-        }
-        _ => None,
-    };
+    let color = color_timer
+        .scope(async {
+            match &reading {
+                SandboxHierarchyReading::Personal(personal)
+                    if personal.sandbox.owner == caller.subject =>
+                {
+                    super::sandbox_colors::colors(&state, &caller.subject, &[&personal.sandbox])
+                        .await
+                        .remove(personal.sandbox.id.as_str())
+                }
+                _ => None,
+            }
+        })
+        .await;
     color_timer.complete();
     let runtime_update = match (&reading, &state.runtime_updates) {
         (SandboxHierarchyReading::Personal(personal), Some(service))
@@ -314,11 +320,12 @@ pub(super) async fn read(
         let names_timer = state
             .hierarchy
             .detail_phase(layer2_core::sandbox::SandboxDetailPhase::Names);
-        let names = super::public_names::resolve(
-            &state.users,
-            &[layer2_core::SubjectId::new(personal.sandbox.owner.clone())],
-        )
-        .await;
+        let names = names_timer
+            .scope(super::public_names::resolve(
+                &state.users,
+                &[layer2_core::SubjectId::new(personal.sandbox.owner.clone())],
+            ))
+            .await;
         names_timer.complete();
         personal.sandbox.owner_name = names.get(&personal.sandbox.owner).cloned();
     }

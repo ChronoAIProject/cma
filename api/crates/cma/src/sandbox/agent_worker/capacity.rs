@@ -10,7 +10,73 @@ use layer2_core::{rfc3339_at, seconds_from_rfc3339};
 
 use super::AgentWorker;
 
+#[path = "capacity_recovery.rs"]
+pub(crate) mod recovery;
+
+#[path = "recovery_commands.rs"]
+pub(crate) mod commands;
+
+#[path = "capacity_restart.rs"]
+pub(crate) mod reconnect;
+
 impl AgentWorker {
+    pub(crate) fn capacity_recovery_commands(
+        self: std::sync::Arc<Self>,
+        service: std::sync::Arc<crate::store::agent_capacity_recovery::RecoveryService>,
+    ) -> std::sync::Arc<
+        dyn layer2_core::sandbox::agent_capacity_recovery::commands::CapacityRecoveryCommands,
+    > {
+        self.install_capacity_restart(service.clone());
+        std::sync::Arc::new(commands::AuthorizedRecoveryCommands::new(service, self))
+    }
+
+    /// Background entry for an exact already-published recovery operation.
+    /// The service proves fresh receipt-bound personal authority for every step;
+    /// discovery metadata alone never grants this permission.
+    pub(crate) async fn run_accepted_capacity_recovery(
+        &self,
+        service: &crate::store::agent_capacity_recovery::RecoveryService,
+        request: &layer2_core::sandbox::agent_capacity_recovery::state::RecoveryRequest,
+    ) -> Result<
+        layer2_core::sandbox::agent_capacity_recovery::ports::CommitOutcome<
+            layer2_core::sandbox::agent_capacity_recovery::state::RecoveryWork,
+        >,
+        layer2_core::sandbox::agent_capacity_recovery::ports::RecoveryError,
+    > {
+        let runtime = recovery::RestrictedRecoveryRuntime::new(
+            self.dependencies.adapter.clone(),
+            self.dependencies.registry.clone(),
+            self.dependencies.updates.clone(),
+        );
+        service
+            .run_accepted(&runtime, request, &self.config.holder)
+            .await
+    }
+
+    /// Authenticated accepted-work entry for shared composition. The caller is
+    /// reauthorized by the service on every store operation; a discovery row
+    /// must never be converted into a fabricated owner identity.
+    pub(crate) async fn run_capacity_recovery(
+        &self,
+        service: &crate::store::agent_capacity_recovery::RecoveryService,
+        caller: &layer2_core::Caller,
+        request: &layer2_core::sandbox::agent_capacity_recovery::state::RecoveryRequest,
+    ) -> Result<
+        layer2_core::sandbox::agent_capacity_recovery::ports::CommitOutcome<
+            layer2_core::sandbox::agent_capacity_recovery::state::RecoveryWork,
+        >,
+        layer2_core::sandbox::agent_capacity_recovery::ports::RecoveryError,
+    > {
+        let runtime = recovery::RestrictedRecoveryRuntime::new(
+            self.dependencies.adapter.clone(),
+            self.dependencies.registry.clone(),
+            self.dependencies.updates.clone(),
+        );
+        service
+            .run_one(&runtime, caller, request, &self.config.holder)
+            .await
+    }
+
     /// Select only from a failed-work retry. A point-tail observation is a hint;
     /// commit_agent_work still validates the complete history in its transaction.
     pub(super) async fn retry_marked_capacity_at(
