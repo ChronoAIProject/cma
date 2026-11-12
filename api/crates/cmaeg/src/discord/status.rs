@@ -115,6 +115,8 @@ impl From<super::GatewayError> for FailureCode {
         use super::GatewayError as E;
         match error {
             E::Authority => Self::AuthorityRefused,
+            E::Authentication => Self::AuthenticationFailed,
+            E::SessionLimitUnavailable => Self::SessionLimitInvalid,
             E::Unavailable => Self::Unavailable,
             E::InvalidConfiguration => Self::InvalidConfiguration,
             E::MissingMessageContentIntent => Self::MissingMessageContentIntent,
