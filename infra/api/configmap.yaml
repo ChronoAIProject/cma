@@ -134,6 +134,8 @@ data:
   # Cloud spend policy fields and platform observations need a later reader baseline
   # even if both model budget write gates are on.
   CHRONO_PLATFORM_SPEND_WRITES_ENABLED: "false"
+  # Open only after every replica understands the shared operator stop.
+  CHRONO_ADMISSION_CONTROL_WRITES_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
   CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS: "600"
   CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS: "1800"

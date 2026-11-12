@@ -193,7 +193,11 @@ impl ControlPlaneComposition {
         .with_runtime_updates(runtime.updates.clone())
         .with_maintenance(stores.sandbox_model.clone())
         .with_warm_pools(native_warm_pools.clone())
-        .with_platform_spend(stores::platform_spend(&stores, &activity, &settings));
+        .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
+        .with_admission_control(Arc::new(
+            layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
+                .with_writes_enabled(config.features.admission_control_writes_enabled),
+        ));
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
             stores.sandbox_profiles.clone(),
