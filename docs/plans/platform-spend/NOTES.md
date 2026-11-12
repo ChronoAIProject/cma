@@ -12,16 +12,9 @@ Things noticed while implementing that this plan does not change.
   from the in-transaction insert of a missing period row would surface as
   unavailable. In practice concurrent inserts surface as write conflicts, and
   the evaluator pre-creates the row (rule 6).
-- Explicit revive paths that do not read the platform admission state (found
-  while checking automatic revival for decision 26, not changed here):
-  `POST /api/v1/sandboxes/{id}/commands` with a `Revive` control
-  (`layer2-core/src/sandbox/control/*`, also open to bot delegation) moves a
-  Paused Sandbox to Reviving under `SpendStop`, against contract section 5.1;
-  Agent admission's profile-Agent reuse branch
-  (`cma/src/store/agent_admission.rs`, reuse before `require_open`) can revive
-  a Paused Sandbox for a Launch admitted before the stop; an owner or
-  operator retry of a parked runtime update starts a rotation without the
-  check.
+- A platform pause that fails non-retryably can be reopened to Active by
+  automatic unpublished recovery without reading the platform state (review
+  round 3, R10, follow-up; see below).
 - The admin spend routes (`GET /api/v1/admin/spend`,
   `POST /api/v1/admin/spend/observations`) still need OpenAPI registration,
   `docs/API_REST.md` rows and public-contract corpus coverage.
@@ -143,7 +136,9 @@ Each entry: what the plan said, what was done instead, and why.
   `workspace_admission/retry.rs` beside the error type, next to the new
   conversion from the budget transaction error.
 - The zero-liability checks run after each path's replay and limit checks, so
-  exact replays of admitted creations are not refused.
+  exact replays of admitted creations are not refused. (Agent admission's
+  check moved before the reuse branch and the Agent limit in review round 3;
+  replays still come first.)
 - The Launch Mongo test lives in
   `trigger_definitions/launch_mongo_integration_tests/platform_spend.rs` (its
   fixtures and the CI selector are there); the Sandbox/Workspace/Agent ones in
@@ -334,6 +329,44 @@ The user ruled "pause both under `SpendStop`"; the parent session relayed it.
   kept alive and Active Sandboxes without live Agents, never busy work, does
   not change the preference, and defers managed runtime updates until it
   lifts."
+
+### Review round 3 (R7 to R10)
+
+- R7: the `Revive` Sandbox control (`POST /api/v1/sandboxes/{id}/commands`,
+  also used by bot delegation) skipped the platform check that the owner's
+  revive has. `SandboxControlService` now reads the admission state at
+  admission for `Revive` (any Sandbox status, as the owner's revive does):
+  `SpendStop` refuses with `platform_budget_exhausted` (503, no
+  `Retry-After`), `MeteringUnavailable` alone with `budget_unavailable`
+  (402, the existing budget mapping), before any control record exists.
+  `Pause` and `Retire` are unaffected. An exact retry of a `Revive` admitted
+  before the stop is refused too (the receipt stays readable by id); one
+  admitted while open and executed after the stop still runs, the same
+  window the owner's revive has. Composition attaches the ledger.
+- R8: confirmed that Agent admission's profile-Agent reuse revives a Paused
+  Sandbox (`record_creation_admission_with_managed_runtime` moves it to
+  Reviving) and ran before `require_open`, so a Launch admitted before the
+  stop could revive it. `require_open` now runs before the reuse branch;
+  replays are still answered first. For a new creation under a stop the
+  platform refusal now also precedes the Agent-limit refusal.
+- R9: no change needed. The sweep's runtime-update phase is the only
+  scheduler of image rotation, and it is deferred under `SpendStop`
+  (decision 26), so an owner's update request or a retry of a parked update
+  is recorded but starts no runtime until the lift. Operator requests are
+  deferred the same way; exempting them would need a persisted marker of who
+  asked, which the request does not carry.
+- R10 (read only): a failed pause becomes Failed `restore_failed`
+  (`lifecycle_failure_class`), and `fail_lifecycle` clears the pause intent
+  (`cancel_operation` drops `home_recovery`, its `resume_pause` and the
+  notice; `failed_provision_evidence` keeps nothing for a Pause operation).
+  When the runtime binding is still held (a native retained-home Sandbox
+  whose pause failed before runtime suspension), it is an
+  `unpublished_recovery_candidate`, and automatic recovery
+  (`recover_failed_unpublished`) reopens it through an image rotation to
+  Active without reading the platform state, once per incident
+  (`unpublished_recovery_attempted`). The sweep would then pause it again if
+  `SpendStop` still holds. Follow-up, not fixed in this round; not exercised
+  by a test.
 
 ## Blocked
 
