@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/part-of: cma
 data:
   CHRONO_INGRESS_COORDINATOR_ENABLED: "false"
+  # Enable only after this compatible API image serves every replica.
+  CHRONO_SILENT_SIGN_IN_ENABLED: "false"
   CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED: "false"
   CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED: "false"
   # Measured reporting is independent of allocated billing. Enable only after
@@ -91,6 +93,8 @@ data:
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
+  # Expand-only skill upgrade readers; enable new writers only after migration qualification.
+  CHRONO_AGENT_SKILL_UPGRADE_ENABLED: "false"
   # Reconciliation remains on the existing cadence until a measured rollout.
   CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED: "false"
   # Keep expensive-read admission charged through final returned frame drop.

@@ -148,3 +148,51 @@ describe('public authentication helpers', () => {
     expect(t.fetch).not.toHaveBeenCalled();
   });
 });
+
+it('preserves allowed return queries and rejects the complete forbidden or oversized suffix', () => {
+  const t = transport();
+  for (const returnTo of ['/bots/new?setup=x?y', '/sandboxes/sbx_1?tab=access']) {
+    expect(new URL(t.client.auth.loginUrl({ returnTo })).searchParams.get('return_to')).toBe(
+      returnTo,
+    );
+  }
+  for (const returnTo of [
+    '/bots/new?setup=x?y&token=authority',
+    '/bots/new?setup=' + '界'.repeat(9000),
+    '/sandboxes/sbx_1?tab=a&tab=b',
+  ]) {
+    expect(() => t.client.auth.loginUrl({ returnTo })).toThrow(ValidationError);
+  }
+  expect(t.calls).toHaveLength(0);
+});
+
+it('bounds the fully encoded absolute login URL and rejects raw non-ASCII', async () => {
+  const { MAX_LOGIN_URL_BYTES } = await import('../src/index.js');
+  const { readFileSync } = await import('node:fs');
+  const budget = JSON.parse(
+    readFileSync(
+      new URL(
+        '../../../api/crates/layer1-public/tests/fixtures/browser-auth-limits.json',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
+  ) as { max_login_url_bytes: number };
+  expect(MAX_LOGIN_URL_BYTES).toBe(budget.max_login_url_bytes);
+  const t = transport();
+  const base = '/bots/new?setup=';
+  const overhead = t.client.auth.loginUrl({ returnTo: base }).length;
+  for (const size of [MAX_LOGIN_URL_BYTES - 1, MAX_LOGIN_URL_BYTES]) {
+    expect(t.client.auth.loginUrl({ returnTo: base + 'a'.repeat(size - overhead) }).length).toBe(
+      size,
+    );
+  }
+  for (const target of [
+    base + 'a'.repeat(MAX_LOGIN_URL_BYTES + 1 - overhead),
+    base + '%22'.repeat(1500),
+    base + '界',
+  ]) {
+    expect(() => t.client.auth.loginUrl({ returnTo: target })).toThrow(ValidationError);
+  }
+  expect(t.calls).toHaveLength(0);
+});
