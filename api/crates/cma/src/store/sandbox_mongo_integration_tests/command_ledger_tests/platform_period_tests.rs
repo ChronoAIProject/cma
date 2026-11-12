@@ -4,7 +4,7 @@ use super::super::budget_tests::{
     period_row, raise_owner_limit,
 };
 use super::*;
-use layer2_core::budget::{BudgetError, ClosureReason, PlatformBudgetPolicy};
+use layer2_core::budget::{BudgetError, ClosureReason, PlatformBudgetPolicy, SpendSource};
 use layer3_adapter::{ConversationUpdate, PromptResponse, TurnStopReason};
 
 fn seconds(stamp: &str) -> u64 {
@@ -27,6 +27,10 @@ async fn configure_capped(store: &MongoSandboxStore, agent: &Agent, cap: u64) ->
     observe(store, &platform, 0, seconds(NOW)).await;
     raise_owner_limit(store, 64).await;
     policy.turn_limit
+}
+
+fn wall_clock() -> u64 {
+    seconds(&layer2_core::now_rfc3339())
 }
 
 fn reasons(platform: &layer2_core::budget::PlatformPeriodLedger) -> Vec<ClosureReason> {
@@ -150,29 +154,68 @@ async fn proven_non_dispatch_releases_period_liability() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn admission_refuses_with_platform_exhausted_and_records_the_closure() {
+async fn an_allowance_that_does_not_fit_is_refused_and_running_work_stops_only_at_disposable() {
     let (client, name) = database("platform_refusal").await;
-    let (store, agent, parent) = fixture(&name, &client).await;
-    let turn_limit = configure_capped(&store, &agent, u64::from(u8::MAX) + 1).await;
-    assert!(store
-        .reserve_command(request(&agent, &parent, "fits"))
+    let (store, agent, parent, execution, _, _) = composed(&client, &name).await;
+    // Disposable is one allowance plus two units; the zero observation at the
+    // wall clock projects at most one unit while the turn runs.
+    let platform = capped(u64::from(u8::MAX) + 2);
+    let turn_limit = configure_with_platform(&store, &agent.owner, platform.clone(), 1)
         .await
-        .is_ok());
+        .turn_limit;
+    observe(&store, &platform, 0, wall_clock()).await;
+    raise_owner_limit(&store, 64).await;
+    let admitted = record(
+        store
+            .reserve_command(live_request(&agent, &parent, "fits"))
+            .await
+            .unwrap(),
+    );
+    start_turn(&store, execution, &admitted).await;
+    let working = store.get_agent(&agent.id).await.unwrap().unwrap();
+    let generation = working.conversation.runtime_generation.unwrap();
     assert_eq!(
         store
-            .reserve_command(request(&agent, &parent, "overshoots"))
+            .reserve_command(live_request(&working, &parent, "overshoots"))
             .await,
         Err(CommandLedgerError::Budget(BudgetError::PlatformExhausted))
     );
-    let row = period_row(&store, &capped(turn_limit + 1)).await.unwrap();
+    let row = period_row(&store, &platform).await.unwrap();
     assert_eq!(row.reserved, turn_limit);
-    assert_eq!(
-        reasons(&row),
-        vec![ClosureReason::SpendWarning, ClosureReason::SpendStop]
-    );
+    assert_eq!(reasons(&row), vec![ClosureReason::SpendWarning]);
     assert_eq!(
         store.agent_commands.count_documents(doc! {}).await.unwrap(),
         1
+    );
+    assert_eq!(
+        store
+            .stop_requested(&agent.id, generation, wall_clock())
+            .await
+            .unwrap(),
+        None,
+        "the refused allowance does not stop the running turn"
+    );
+    // An observation brings committed to disposable; only then does the
+    // evaluator enter the stop and the running turn get its cancel.
+    let now = wall_clock();
+    observe(&store, &platform, 2, now).await;
+    let evaluation = store.evaluate_period(now).await.unwrap().unwrap();
+    assert_eq!(
+        evaluation
+            .entered
+            .iter()
+            .map(|closure| closure.reason)
+            .collect::<Vec<_>>(),
+        vec![ClosureReason::SpendStop]
+    );
+    store.age_platform_stop_cache(std::time::Duration::from_secs(5));
+    assert_eq!(
+        store
+            .stop_requested(&agent.id, generation, now)
+            .await
+            .unwrap()
+            .map(|stop| stop.reason),
+        Some(BudgetError::PlatformExhausted)
     );
     client.database(&name).drop().await.unwrap();
 }
@@ -182,8 +225,11 @@ async fn admission_refuses_with_platform_exhausted_and_records_the_closure() {
 async fn a_refused_admission_leaves_one_spend_stop_visible_after_its_transaction_aborted() {
     let (client, name) = database("platform_refusal_visible").await;
     let (store, agent, parent) = fixture(&name, &client).await;
-    // Nothing fits: the very first liability is refused on an untouched row.
-    configure_capped(&store, &agent, u64::from(u8::MAX) - 1).await;
+    // Observed cloud spend alone already reaches disposable: the very first
+    // liability is refused on a row that carries no liability.
+    let cap = u64::from(u8::MAX) - 1;
+    configure_capped(&store, &agent, cap).await;
+    observe(&store, &capped(cap), cap, seconds(NOW)).await;
     for key in ["refused-first", "refused-again"] {
         assert_eq!(
             store.reserve_command(request(&agent, &parent, key)).await,
@@ -219,7 +265,8 @@ async fn a_refused_admission_leaves_one_spend_stop_visible_after_its_transaction
 async fn two_stores_crossing_the_stop_level_record_one_closure() {
     let (client, name) = database("platform_two_stores").await;
     let (store, agent, parent) = fixture(&name, &client).await;
-    let turn_limit = configure_capped(&store, &agent, u64::from(u8::MAX) + 1).await;
+    let cap = u64::from(u8::MAX) + 1;
+    let turn_limit = configure_capped(&store, &agent, cap).await;
     let mut other_parent = active_sandbox("sbx_platform_other");
     other_parent.owner = layer2_core::SubjectId("platform-other-owner".into());
     store.create_sandbox(other_parent.clone()).await.unwrap();
@@ -237,7 +284,27 @@ async fn two_stores_crossing_the_stop_level_record_one_closure() {
         first.err().or(second.err()).unwrap(),
         CommandLedgerError::Budget(BudgetError::PlatformExhausted)
     );
-    let row = period_row(&store, &capped(turn_limit + 1)).await.unwrap();
+    let row = period_row(&store, &capped(cap)).await.unwrap();
+    assert_eq!(row.reserved, turn_limit);
+    assert_eq!(
+        reasons(&row),
+        vec![ClosureReason::SpendWarning],
+        "the allowance that did not fit stopped nothing"
+    );
+    // One more observed unit brings committed to disposable: both stores'
+    // next admissions are refused and exactly one stop is recorded.
+    observe(&store, &capped(cap), 1, seconds(NOW)).await;
+    let (first, second) = tokio::join!(
+        store.reserve_command(request(&agent, &parent, "third")),
+        peer.reserve_command(request(&other, &other_parent, "fourth")),
+    );
+    for refused in [first, second] {
+        assert_eq!(
+            refused,
+            Err(CommandLedgerError::Budget(BudgetError::PlatformExhausted))
+        );
+    }
+    let row = period_row(&store, &capped(cap)).await.unwrap();
     assert_eq!(row.reserved, turn_limit);
     assert_eq!(row.closures.len(), 2);
     assert_eq!(

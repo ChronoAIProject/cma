@@ -167,8 +167,18 @@ impl PlatformPeriodLedger {
         else {
             return Err(self.unavailable(settings_revision, now, committed));
         };
-        if total > levels.disposable {
-            let closures = [ClosureReason::SpendStop, ClosureReason::SpendWarning]
+        // The platform stops only once committed itself reaches disposable
+        // (decision 29): an allowance that does not fit below it is refused
+        // alone, so running turns continue and no Sandbox is paused.
+        if committed >= levels.disposable || total > levels.disposable {
+            let mut reasons = Vec::with_capacity(2);
+            if committed >= levels.disposable {
+                reasons.push(ClosureReason::SpendStop);
+            }
+            if committed >= levels.warning {
+                reasons.push(ClosureReason::SpendWarning);
+            }
+            let closures = reasons
                 .into_iter()
                 .filter(|reason| !self.has(*reason))
                 .map(|reason| closure(reason, now, settings_revision, committed))

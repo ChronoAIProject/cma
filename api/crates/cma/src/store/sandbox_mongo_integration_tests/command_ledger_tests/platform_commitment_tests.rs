@@ -1,6 +1,8 @@
 //! Zero-liability commitments read the platform admission state inside their
 //! transaction and never write the settings fence or the period row.
-use super::budget_tests::{configure, configure_with_platform, open_platform, period_row};
+use super::budget_tests::{
+    configure, configure_with_platform, observe, open_platform, period_row,
+};
 use super::*;
 use layer2_core::budget::{BudgetError, Closure, ClosureReason};
 
@@ -63,6 +65,52 @@ async fn create_sandbox_is_refused_under_spend_stop_and_admitted_when_open() {
             .unwrap_err(),
         SandboxStoreError::Budget(BudgetError::PlatformExhausted)
     );
+    assert_eq!(store.sandboxes.count_documents(doc! {}).await.unwrap(), 1);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn create_sandbox_is_refused_once_committed_equals_disposable_and_enters_the_stop() {
+    let (client, name) = database("platform_create_at_disposable").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let owner = provisioning_sandbox("sbx_platform_owner").owner;
+    let platform = layer2_core::budget::PlatformBudgetPolicy {
+        period_cap: 1_000,
+        ..open_platform()
+    };
+    configure_with_platform(&store, &owner, platform.clone(), 1).await;
+    // Observed half a day ago at one unit per day: the projection adds
+    // exactly one unit for the rest of this test.
+    let now = layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339()).unwrap();
+    let observed_through = now - 43_200;
+    observe(&store, &platform, 998, observed_through).await;
+    assert!(matches!(
+        store.admit_sandbox(admission("sbx_platform_below", 8)).await,
+        Ok(SandboxAdmissionResult::Created(_))
+    ));
+    assert!(period_row(&store, &platform)
+        .await
+        .unwrap()
+        .closures
+        .is_empty());
+    observe(&store, &platform, 999, observed_through).await;
+    assert_eq!(
+        store
+            .admit_sandbox(admission("sbx_platform_at_disposable", 8))
+            .await
+            .unwrap_err(),
+        SandboxStoreError::Budget(BudgetError::PlatformExhausted)
+    );
+    let row = period_row(&store, &platform).await.unwrap();
+    assert_eq!(
+        row.closures
+            .iter()
+            .map(|closure| closure.reason)
+            .collect::<Vec<_>>(),
+        vec![ClosureReason::SpendStop, ClosureReason::SpendWarning]
+    );
+    assert_eq!(row.closures[0].committed_at_entry, 1_000);
     assert_eq!(store.sandboxes.count_documents(doc! {}).await.unwrap(), 1);
     client.database(&name).drop().await.unwrap();
 }
