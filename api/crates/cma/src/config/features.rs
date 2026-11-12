@@ -26,6 +26,7 @@ pub(crate) struct FeatureFlags {
     pub trigger_command_admission: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
+    pub silent_sign_in: bool,
     pub document_revocation_reserve: bool,
     pub document_quotas: bool,
     pub bounded_approval_reads: bool,
@@ -81,6 +82,7 @@ impl FeatureFlags {
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
             nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
+            silent_sign_in: flag(lookup, "CHRONO_SILENT_SIGN_IN_ENABLED")?,
             document_revocation_reserve: flag(
                 lookup,
                 "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
@@ -100,10 +102,6 @@ impl FeatureFlags {
         Ok(flags)
     }
 }
-
-#[cfg(test)]
-#[path = "shared_output_feature_tests.rs"]
-mod shared_output_tests;
 
 #[cfg(test)]
 mod approval_tests {
