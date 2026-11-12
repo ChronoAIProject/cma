@@ -662,7 +662,136 @@ async fn commit_compares_the_callers_lease_token_with_persisted_authority() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn snapshot_uses_the_partial_marker_index_and_point_reads_project_only_authority() {
+async fn standing_predicates_deny_noncompleted_records_without_active_markers() {
+    let (_, db, store) = fixture().await;
+    let mut expected = BTreeSet::new();
+    for (name, mutation) in [
+        ("running", doc! {"$unset":{"active_subject_hash":""}}),
+        (
+            "blocked",
+            doc! {"$unset":{"active_subject_hash":""},"$set":{"status":"blocked"}},
+        ),
+        (
+            "unknown-status",
+            doc! {"$unset":{"active_subject_hash":""},"$set":{"status":"future-state"}},
+        ),
+        (
+            "missing-status",
+            doc! {"$unset":{"active_subject_hash":"","status":""}},
+        ),
+        (
+            "mixed-array-status",
+            doc! {"$unset":{"active_subject_hash":""},"$set":{"status":["completed","running"]}},
+        ),
+        (
+            "completed-array-status",
+            doc! {"$unset":{"active_subject_hash":""},"$set":{"status":["completed"]}},
+        ),
+        (
+            "empty-array-status",
+            doc! {"$unset":{"active_subject_hash":""},"$set":{"status":mongodb::bson::Bson::Array(Vec::new())}},
+        ),
+        (
+            "null-status",
+            doc! {"$unset":{"active_subject_hash":""},"$set":{"status":null}},
+        ),
+    ] {
+        let subject = SubjectId::new(name);
+        let record = store.request(&subject, name, NOW).await.unwrap();
+        db.collection::<Document>(RECORDS)
+            .update_one(doc! {"_id":record.id.as_str()}, mutation)
+            .await
+            .unwrap();
+        expected.insert(subject_hash(&subject));
+        assert!(store.erasing(&subject).await.unwrap(), "{name}");
+        let mut session = db.client().start_session().await.unwrap();
+        crate::store::sandbox_mongo::start_transaction(&mut session)
+            .await
+            .unwrap();
+        assert!(fence_subject_in_session(&db, &subject, &mut session)
+            .await
+            .unwrap());
+        session.abort_transaction().await.unwrap();
+    }
+    let completed_subject = SubjectId::new("completed");
+    let mut completed = AccountDeletion::request(
+        AccountDeletionId::generate(),
+        completed_subject.clone(),
+        NOW,
+    )
+    .unwrap();
+    completed.step = ErasureStep::VerifyNoResidue;
+    completed.residue = Some(ResidueReport {
+        keys: KeyReceipt {
+            remaining: 0,
+            empty_at: Some(NOW.into()),
+        },
+        ..ResidueReport::default()
+    });
+    let fence = completed
+        .claim("worker", NOW, Duration::from_secs(90))
+        .unwrap();
+    completed
+        .complete(fence, NOW, Duration::from_secs(37 * 86400))
+        .unwrap();
+    db.collection::<Document>(RECORDS)
+        .insert_one(record_document(&completed, &[key_hash("completed")]).unwrap())
+        .await
+        .unwrap();
+    let snapshot = store.active_hashes().await.unwrap();
+    assert_eq!(snapshot, expected);
+    assert!(!store.erasing(&completed_subject).await.unwrap());
+    let live_snapshot = std::sync::Arc::new(crate::auth::account_standing::ErasingSnapshot::new(
+        std::sync::Arc::new(store.clone()),
+    ));
+    let refresh = live_snapshot.start().await;
+    for name in [
+        "running",
+        "blocked",
+        "unknown-status",
+        "missing-status",
+        "mixed-array-status",
+        "completed-array-status",
+        "empty-array-status",
+        "null-status",
+    ] {
+        assert!(live_snapshot.erasing(&SubjectId::new(name)).await.unwrap());
+    }
+    assert!(!live_snapshot.erasing(&completed_subject).await.unwrap());
+    assert!(!live_snapshot
+        .erasing(&SubjectId::new("absent"))
+        .await
+        .unwrap());
+    refresh.abort();
+    let mut session = db.client().start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    assert!(
+        !fence_subject_in_session(&db, &completed_subject, &mut session)
+            .await
+            .unwrap()
+    );
+    session.abort_transaction().await.unwrap();
+    db.drop().await.unwrap();
+}
+
+fn plan_has_stage(value: &mongodb::bson::Bson, stage: &str) -> bool {
+    match value {
+        mongodb::bson::Bson::Document(document) => {
+            document.get_str("stage").ok() == Some(stage)
+                || document.values().any(|value| plan_has_stage(value, stage))
+        }
+        mongodb::bson::Bson::Array(values) => {
+            values.iter().any(|value| plan_has_stage(value, stage))
+        }
+        _ => false,
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn standing_queries_use_indexes_and_project_only_authority() {
     use mongodb::{
         event::command::CommandEvent, event::EventHandler, options::ClientOptions, Client,
     };
@@ -687,24 +816,105 @@ async fn snapshot_uses_the_partial_marker_index_and_point_reads_project_only_aut
     let store = MongoAccountDeletionStore::open(&db).await.unwrap();
     let owner = SubjectId::new("owner");
     store.request(&owner, "original", NOW).await.unwrap();
+    let array_owner = SubjectId::new("mixed-array-owner");
+    let array_record = store.request(&array_owner, "array", NOW).await.unwrap();
+    db.collection::<Document>(RECORDS)
+        .update_one(
+            doc! {"_id":array_record.id.as_str()},
+            doc! {"$unset":{"active_subject_hash":""},"$set":{"status":["completed","running"]}},
+        )
+        .await
+        .unwrap();
+    let mut history = Vec::new();
+    for index in 0..1024 {
+        history.push(doc! {
+            "_id":format!("historical-{index}"),
+            "subject_hash":subject_hash(&SubjectId::new(format!("historical-{index}"))),
+            "status":"completed",
+            "request_keys":[format!("historical-key-{index}")],
+        });
+    }
+    db.collection::<Document>(RECORDS)
+        .insert_many(history)
+        .await
+        .unwrap();
     commands.lock().unwrap().clear();
-    store.active_hashes().await.unwrap();
+    assert_eq!(
+        store.active_hashes().await.unwrap(),
+        BTreeSet::from([subject_hash(&owner), subject_hash(&array_owner)])
+    );
     assert!(store.erasing(&owner).await.unwrap());
-    {
-        let reads = commands.lock().unwrap();
-        assert_eq!(reads.len(), 2);
-        assert_eq!(
-            reads[0].get_document("filter").unwrap(),
-            &doc! {"active_subject_hash":{"$exists":true}}
-        );
-        assert_eq!(
-            reads[0].get_str("hint").unwrap(),
-            "account_deletions_active_subject"
-        );
-        let projection = reads[1].get_document("projection").unwrap();
+    let mut session = db.client().start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    assert!(erasing_in_session(&db, &owner, &mut session).await.unwrap());
+    session.abort_transaction().await.unwrap();
+    let reads = commands.lock().unwrap().clone();
+    assert!(reads.len() >= 3);
+    for read in reads {
+        let projection = read.get_document("projection").unwrap();
         assert!(!projection.contains_key("inventory"));
         assert!(!projection.contains_key("request_keys"));
-        assert!(projection.get_i32("subject_hash").unwrap_or(0) == 1);
+        let mut find = Document::new();
+        for key in [
+            "find",
+            "filter",
+            "projection",
+            "hint",
+            "limit",
+            "singleBatch",
+        ] {
+            if let Some(value) = read.get(key) {
+                find.insert(key, value.clone());
+            }
+        }
+        let explain = db
+            .run_command(doc! {"explain":find,"verbosity":"executionStats"})
+            .await
+            .unwrap();
+        let plan = explain
+            .get_document("queryPlanner")
+            .unwrap()
+            .get("winningPlan")
+            .unwrap();
+        assert!(plan_has_stage(plan, "IXSCAN"), "{explain:?}");
+        assert!(!plan_has_stage(plan, "COLLSCAN"), "{explain:?}");
+        let statistics = explain.get_document("executionStats").unwrap();
+        for counter in ["totalDocsExamined", "totalKeysExamined"] {
+            let examined = statistics
+                .get_i64(counter)
+                .or_else(|_| statistics.get_i32(counter).map(i64::from))
+                .unwrap();
+            assert!(
+                examined < 10,
+                "standing must not scan tombstones: {explain:?}"
+            );
+        }
     }
+    let indexes = db
+        .collection::<Document>(RECORDS)
+        .list_indexes()
+        .await
+        .unwrap()
+        .try_collect::<Vec<_>>()
+        .await
+        .unwrap();
+    assert!(indexes.iter().any(|index| {
+        index
+            .options
+            .as_ref()
+            .and_then(|options| options.name.as_deref())
+            == Some("account_deletions_status_subject")
+            && index.keys == doc! {"status":1,"subject_hash":1}
+    }));
+    assert!(indexes.iter().any(|index| {
+        index.options.as_ref().is_some_and(|options| {
+            options.name.as_deref() == Some("account_deletions_array_status_subject")
+                && options.partial_filter_expression == Some(doc! {"status":{"$type":"array"}})
+                && !options.unique.unwrap_or(false)
+                && options.expire_after.is_none()
+        }) && index.keys == doc! {"subject_hash":1}
+    }));
     db.drop().await.unwrap();
 }

@@ -44,25 +44,31 @@ impl MongoAccountDeletionStore {
         Ok(store)
     }
     pub(crate) async fn active_hashes(&self) -> Result<BTreeSet<String>, AccountDeletionError> {
-        let mut cursor = self
-            .records
-            .find(doc! {"active_subject_hash":{"$exists":true}})
-            .hint(mongodb::options::Hint::Name(
-                "account_deletions_active_subject".into(),
-            ))
-            .projection(doc! {"_id":0,"subject_hash":1,"active_subject_hash":1})
-            .await
-            .map_err(driver)?;
         let mut hashes = BTreeSet::new();
-        while let Some(row) = cursor.try_next().await.map_err(driver)? {
-            match records::active_hash(&row) {
-                Ok(hash) => {
-                    hashes.insert(hash.into());
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "skipping malformed account deletion snapshot marker");
-                    if let Some(hash) = records::recover_subject_hash(&row) {
+        // Each disjunct has its own bounded index scan. Arrays need an explicit
+        // branch because scalar equality also matches an array element.
+        for (filter, index) in erasing_filters().into_iter().zip([
+            "account_deletions_active_subject",
+            "account_deletions_status_subject",
+            "account_deletions_array_status_subject",
+        ]) {
+            let mut cursor = self
+                .records
+                .find(filter)
+                .hint(mongodb::options::Hint::Name(index.into()))
+                .projection(doc! {"_id":0,"subject_hash":1,"active_subject_hash":1})
+                .await
+                .map_err(driver)?;
+            while let Some(row) = cursor.try_next().await.map_err(driver)? {
+                match records::active_hash(&row) {
+                    Ok(hash) => {
                         hashes.insert(hash.into());
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "malformed account deletion snapshot marker");
+                        if let Some(hash) = records::recover_subject_hash(&row) {
+                            hashes.insert(hash.into());
+                        }
                     }
                 }
             }
@@ -71,12 +77,25 @@ impl MongoAccountDeletionStore {
     }
     pub(crate) async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
         self.records
-            .find_one(doc! {"subject_hash":subject_hash(subject),"$or":[{"active_subject_hash":{"$exists":true}},{"status":{"$ne":"completed"}}]})
+            .find_one(subject_erasing_filter(subject))
+            .hint(mongodb::options::Hint::Name(
+                "account_deletions_subject_history".into(),
+            ))
             .projection(doc! {"_id":0,"subject_hash":1,"active_subject_hash":1,"status":1})
             .await
             .map(|row| row.is_some())
             .map_err(driver)
     }
+}
+fn erasing_filters() -> [Document; 3] {
+    [
+        doc! {"active_subject_hash":{"$exists":true}},
+        doc! {"status":{"$ne":"completed"}},
+        doc! {"status":{"$type":"array"}},
+    ]
+}
+fn subject_erasing_filter(subject: &SubjectId) -> Document {
+    doc! {"subject_hash":subject_hash(subject),"$or":erasing_filters().to_vec()}
 }
 #[async_trait::async_trait]
 impl AccountDeletionStore for MongoAccountDeletionStore {
@@ -170,7 +189,10 @@ pub(crate) async fn erasing_in_session(
 ) -> Result<bool, mongodb::error::Error> {
     database
         .collection::<Document>(RECORDS)
-        .find_one(doc! {"subject_hash":subject_hash(subject),"$or":[{"active_subject_hash":{"$exists":true}},{"status":{"$ne":"completed"}}]})
+        .find_one(subject_erasing_filter(subject))
+        .hint(mongodb::options::Hint::Name(
+            "account_deletions_subject_history".into(),
+        ))
         .projection(doc! {"_id":1})
         .session(session)
         .await
