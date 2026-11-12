@@ -1,4 +1,4 @@
-//! Deterministic cursor paging for the in-memory store projections.
+//! Shared bounded cursor pagination for the in-memory stores.
 use super::{Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE};
 
 pub(super) fn page<T: Clone>(

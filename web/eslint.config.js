@@ -20,6 +20,10 @@ export default tseslint.config(
     },
   },
   {
+    files: ['public/browser-telemetry.js'],
+    languageOptions: { ecmaVersion: 2022, globals: globals.browser },
+  },
+  {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
       ecmaVersion: 2022,

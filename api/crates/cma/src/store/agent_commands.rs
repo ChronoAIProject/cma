@@ -19,7 +19,7 @@ mod interrupting_message;
 pub(in crate::store) mod lane_records;
 mod queued_cancellation;
 mod queued_input;
-mod reconcile;
+pub(in crate::store) mod reconcile;
 pub(in crate::store) mod records;
 pub(in crate::store) mod reserve;
 mod retry;
@@ -56,14 +56,21 @@ impl AgentCommandStore for MongoSandboxStore {
         request: layer2_core::sandbox::agent_io::InterruptingMessageReservation,
     ) -> Result<layer2_core::sandbox::agent_io::AdmittedInterruptingMessage, CommandLedgerError>
     {
-        interrupting_message::run(self, request).await
+        let mut observation =
+            crate::telemetry::work::Admission::new("reserve_interrupting_message");
+        let result = interrupting_message::run(self, request).await;
+        observation.result(&result);
+        result
     }
 
     async fn edit_queued_input(
         &self,
         request: layer2_core::sandbox::agent_io::QueuedInputReservation,
     ) -> Result<layer2_core::sandbox::agent_io::QueuedInputOutcome, CommandLedgerError> {
-        queued_input::run(self, request).await
+        let mut observation = crate::telemetry::work::Admission::new("edit_queued_input");
+        let result = queued_input::run(self, request).await;
+        observation.result(&result);
+        result
     }
     async fn list_queued_inputs(
         &self,
@@ -94,16 +101,25 @@ impl AgentCommandStore for MongoSandboxStore {
         &self,
         request: layer2_core::sandbox::agent_io::QueuedCancellationReservation,
     ) -> Result<layer2_core::sandbox::agent_io::QueuedCancellationOutcome, CommandLedgerError> {
-        queued_cancellation::run(self, request).await
+        let mut observation = crate::telemetry::work::Admission::new("cancel_queued_response");
+        let result = queued_cancellation::run(self, request).await;
+        observation.result(&result);
+        result
     }
 
     async fn reserve_targeted_control(
         &self,
         request: layer2_core::sandbox::agent_io::TargetedControlReservation,
     ) -> Result<layer2_core::sandbox::agent_io::AdmittedTargetedControl, CommandLedgerError> {
-        targeted_control::run(self, request, true)
-            .await?
-            .ok_or(CommandLedgerError::Corrupt)
+        let mut observation = crate::telemetry::work::Admission::new("reserve_targeted_control");
+        let result = async {
+            targeted_control::run(self, request, true)
+                .await?
+                .ok_or(CommandLedgerError::Corrupt)
+        }
+        .await;
+        observation.result(&result);
+        result
     }
 
     async fn lookup_targeted_control(
@@ -196,59 +212,65 @@ impl AgentCommandStore for MongoSandboxStore {
         &self,
         request: CommandReservation,
     ) -> Result<CommandReservationResult, CommandLedgerError> {
-        request.require_non_channel()?;
-        request.validate()?;
-        if self
-            .fleet_log_activation
-            .selected(&request.envelope.agent_id)
-            && matches!(
-                request.envelope.command,
-                layer2_core::sandbox::agent_io::AgentCommand::Message { .. }
-            )
-        {
-            request.require_current_authority()?;
-            self.prepare_fleet_log(&request.envelope.agent_id).await;
-        }
-        let mut retries = retry::CommandAdmissionRetries::new(request.authority_deadline);
-        while retries.next().await {
-            request.require_current_authority()?;
-            let mut session = self
-                .client
-                .start_session()
-                .await
-                .map_err(|_| CommandLedgerError::Unavailable)?;
-            start_transaction(&mut session)
-                .await
-                .map_err(|_| CommandLedgerError::Unavailable)?;
-            let result = match reserve::apply(self, &request, &mut session).await {
-                Ok(result) => result,
-                Err(ApplyError::Domain(error)) => {
+        let mut observation = crate::telemetry::work::Admission::new("reserve_command");
+        let result = async {
+            request.require_non_channel()?;
+            request.validate()?;
+            if self
+                .fleet_log_activation
+                .selected(&request.envelope.agent_id)
+                && matches!(
+                    request.envelope.command,
+                    layer2_core::sandbox::agent_io::AgentCommand::Message { .. }
+                )
+            {
+                request.require_current_authority()?;
+                self.prepare_fleet_log(&request.envelope.agent_id).await;
+            }
+            let mut retries = retry::CommandAdmissionRetries::new(request.authority_deadline);
+            while retries.next().await {
+                request.require_current_authority()?;
+                let mut session = self
+                    .client
+                    .start_session()
+                    .await
+                    .map_err(|_| CommandLedgerError::Unavailable)?;
+                start_transaction(&mut session)
+                    .await
+                    .map_err(|_| CommandLedgerError::Unavailable)?;
+                let result = match reserve::apply(self, &request, &mut session).await {
+                    Ok(result) => result,
+                    Err(ApplyError::Domain(error)) => {
+                        let _ = session.abort_transaction().await;
+                        return Err(error);
+                    }
+                    Err(ApplyError::Driver(error)) => {
+                        let _ = session.abort_transaction().await;
+                        if is_transient(&error) || is_duplicate_key(&error) {
+                            continue;
+                        }
+                        return Err(CommandLedgerError::Unavailable);
+                    }
+                };
+                if let Err(error) = request.require_current_authority() {
                     let _ = session.abort_transaction().await;
                     return Err(error);
                 }
-                Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
-                    if is_transient(&error) || is_duplicate_key(&error) {
-                        continue;
+                match commit_transaction(&mut session).await {
+                    CommitOutcome::Committed => return Ok(result),
+                    CommitOutcome::Retry(_) => continue,
+                    // Nothing has executed. Never acknowledge an unconfirmed
+                    // reservation or discard its permanent idempotency identity.
+                    CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
+                        return Err(CommandLedgerError::Unavailable);
                     }
-                    return Err(CommandLedgerError::Unavailable);
-                }
-            };
-            if let Err(error) = request.require_current_authority() {
-                let _ = session.abort_transaction().await;
-                return Err(error);
-            }
-            match commit_transaction(&mut session).await {
-                CommitOutcome::Committed => return Ok(result),
-                CommitOutcome::Retry(_) => continue,
-                // Nothing has executed. Never acknowledge an unconfirmed
-                // reservation or discard its permanent idempotency identity.
-                CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
-                    return Err(CommandLedgerError::Unavailable);
                 }
             }
+            Err(CommandLedgerError::Conflict)
         }
-        Err(CommandLedgerError::Conflict)
+        .await;
+        observation.reservation(&result);
+        result
     }
 
     async fn get_command(
