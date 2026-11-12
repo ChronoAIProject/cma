@@ -1,8 +1,7 @@
 use std::time::{Duration, Instant};
 
 use layer2_core::budget::{
-    BudgetError, BudgetStop, ClosureReason, OwnerBudget, PlatformBudgetPolicy,
-    PlatformPeriodLedger, SpendSource,
+    BudgetError, BudgetStop, ClosureReason, OwnerBudget, PlatformBudgetPolicy, SpendSource,
 };
 use layer2_core::sandbox::{store::AgentStore, Agent};
 use layer2_core::AgentId;
@@ -71,8 +70,9 @@ impl MongoSandboxStore {
             .await
             .map_err(|_| BudgetError::Unavailable)?
         {
-            Some(document) => decode::<PlatformPeriodLedger>(&document)
+            Some(document) => super::period_storage::PeriodState::root(&document)
                 .map_err(|_| BudgetError::Unavailable)?
+                .ledger
                 .closures
                 .iter()
                 .any(|closure| closure.reason == ClosureReason::SpendStop),

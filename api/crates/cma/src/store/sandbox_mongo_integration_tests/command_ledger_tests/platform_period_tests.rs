@@ -7,6 +7,9 @@ use super::*;
 use layer2_core::budget::{BudgetError, ClosureReason, PlatformBudgetPolicy, SpendSource};
 use layer3_adapter::{ConversationUpdate, PromptResponse, TurnStopReason};
 
+#[path = "platform_counter_tests.rs"]
+mod counters;
+
 fn seconds(stamp: &str) -> u64 {
     layer2_core::seconds_from_rfc3339(stamp).unwrap()
 }

@@ -4,7 +4,7 @@ use layer2_core::budget::{BudgetError, ClosureReason};
 use mongodb::bson::doc;
 use mongodb::ClientSession;
 
-use super::period::{period_key, read_period, read_snapshot};
+use super::period::{period_key, read_snapshot};
 use super::{domain, ApplyError, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use crate::store::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
@@ -22,7 +22,8 @@ pub(in crate::store) async fn fence_stop(
         return Ok(false);
     };
     let start = platform.period_bounds().map_err(domain)?.0;
-    let Some(state) = read_period(&store.model_budget, start, session).await? else {
+    let Some(state) = super::period_storage::read_root(&store.model_budget, start, session).await?
+    else {
         return Ok(false);
     };
     let ledger = &state.ledger;

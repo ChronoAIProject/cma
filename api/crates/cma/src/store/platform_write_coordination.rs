@@ -1,5 +1,5 @@
-//! Queue local writers of the platform period row so they do not abort each
-//! other's transactions (concurrency rule 5).
+//! Queue local admissions that share the settings fence. Distributed counter
+//! settlements skip the period queue; database fences remain authoritative.
 //!
 //! Scheduling only, like `AgentWrites`: every writer still opens a fresh
 //! transaction, and other replicas or separately opened stores coordinate
@@ -27,13 +27,24 @@ impl PlatformWrites {
 }
 
 impl MongoSandboxStore {
-    /// Held across a transaction that may write the period row, unless the
-    /// last settings read showed no enabled platform policy.
+    pub(crate) fn with_platform_counter_shards(mut self, enabled: bool) -> Self {
+        self.platform_counter_shards = enabled;
+        self
+    }
+
+    /// Admissions still share the settings fence in either accounting layout.
     pub(super) async fn platform_write_guard(&self) -> Option<MutexGuard<'_, ()>> {
         if !self.platform_enabled_hint() {
             return None;
         }
         Some(self.platform.writes.lock().await)
+    }
+
+    pub(super) async fn platform_settlement_guard(&self) -> Option<MutexGuard<'_, ()>> {
+        if self.platform_counter_shards {
+            return None;
+        }
+        self.platform_write_guard().await
     }
 
     /// Turn entry and terminal turn mutations reserve or settle liability; a
@@ -54,7 +65,15 @@ impl MongoSandboxStore {
         if !writes_period {
             return None;
         }
-        self.platform_write_guard().await
+        if mutation
+            .agent_logs
+            .iter()
+            .any(|log| matches!(log, AgentLogKind::TurnStarted { .. }))
+        {
+            self.platform_write_guard().await
+        } else {
+            self.platform_settlement_guard().await
+        }
     }
 }
 
