@@ -109,6 +109,9 @@ where
             }
         })?;
     let database = store.client.database(&store.sandboxes.namespace().db);
+    if let Some(sandbox) = replay_in_transaction(store, admission, session).await? {
+        return Ok(AdmissionReceipt::Existing(sandbox));
+    }
     if super::account_deletions::erasing_in_session(&database, &admission.sandbox.owner, session)
         .await
         .map_err(AdmissionError::Driver)?
@@ -116,9 +119,6 @@ where
         return Err(AdmissionError::Domain(
             SandboxStoreError::AccountDeletionInProgress,
         ));
-    }
-    if let Some(sandbox) = replay_in_transaction(store, admission, session).await? {
-        return Ok(AdmissionReceipt::Existing(sandbox));
     }
     global::admit(store, session).await?;
     let live = store
