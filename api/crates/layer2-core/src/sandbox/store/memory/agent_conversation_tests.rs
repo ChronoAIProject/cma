@@ -25,6 +25,8 @@ mod live_tests;
 #[path = "agent_tool_update_tests.rs"]
 mod tool_update_tests;
 
+#[path = "agent_capacity_planning_tests.rs"]
+mod capacity_planning_tests;
 #[path = "agent_message_recovery_tests.rs"]
 mod message_recovery_tests;
 
