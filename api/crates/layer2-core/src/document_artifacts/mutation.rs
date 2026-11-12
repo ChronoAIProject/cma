@@ -39,6 +39,16 @@ impl Command {
             Self::RemoveComment(..) => "remove_comment",
         }
     }
+
+    fn uploads_source(&self) -> bool {
+        matches!(
+            self,
+            Self::Update(UpdateDocument {
+                markdown: Some(_),
+                ..
+            })
+        )
+    }
 }
 impl DocumentService {
     pub async fn update(
@@ -196,6 +206,7 @@ impl DocumentService {
         operation_key(key)?;
         let receipt_key = types::fingerprint(&(caller.subject.as_str(), command.operation(), key))?;
         let fingerprint = types::fingerprint(&command)?;
+        let mut source_permit = None;
         for _ in 0..4 {
             let mut record = if command.owner_only() {
                 self.owner(caller, id).await?
@@ -224,9 +235,12 @@ impl DocumentService {
             {
                 return Err(DocumentError::Conflict);
             }
+            if command.uploads_source() && source_permit.is_none() {
+                source_permit = Some(self.try_acquire_source_write_slot()?);
+            }
             record.metadata.revision = previous.checked_add(1).ok_or(DocumentError::Capacity)?;
             record.metadata.updated_at = crate::now_rfc3339();
-            let mut outcome = self.apply(caller, key, &command, &mut record).await?;
+            let (mut outcome, source) = self.apply(caller, key, &command, &mut record).await?;
             outcome.document = view(caller, token, &record)?;
             record.receipts.insert(
                 receipt_key.clone(),
@@ -244,7 +258,17 @@ impl DocumentService {
             if let Some(guard) = guard {
                 guard.validate(Some(&record)).await?;
             }
-            if self.store.compare_exchange(previous, &record).await? {
+            if self
+                .store
+                .compare_exchange(
+                    previous,
+                    &record,
+                    source
+                        .as_ref()
+                        .map(|(reservation, ticket)| (reservation, *ticket)),
+                )
+                .await?
+            {
                 return Ok(outcome);
             }
         }
@@ -256,9 +280,16 @@ impl DocumentService {
         key: &str,
         command: &Command,
         record: &mut StoredDocument,
-    ) -> Result<DocumentMutation, DocumentError> {
+    ) -> Result<
+        (
+            DocumentMutation,
+            Option<(DocumentSourceReservation, SourceTicket)>,
+        ),
+        DocumentError,
+    > {
         let mut comment = None;
         let mut link = None;
+        let mut source = None;
         match command {
             Command::Update(body) => {
                 if record.revisions.len() >= MAX_REVISIONS {
@@ -269,12 +300,14 @@ impl DocumentService {
                 if let Some(markdown) = &body.markdown {
                     let sha = digest(markdown.as_bytes());
                     object = object_key(&record.metadata.owner_subject, &record.metadata.id, &sha);
-                    self.upload(
-                        &record.metadata.owner_subject,
-                        &record.metadata.id,
-                        markdown.as_bytes(),
-                    )
-                    .await?;
+                    source = Some(
+                        self.upload(
+                            &record.metadata.owner_subject,
+                            &record.metadata.id,
+                            markdown.as_bytes(),
+                        )
+                        .await?,
+                    );
                     record.metadata.sha256 = sha;
                     record.metadata.size_bytes = markdown.len() as u64;
                 }
@@ -380,10 +413,13 @@ impl DocumentService {
                 record.comments.retain(|c| &c.id != id);
             }
         }
-        Ok(DocumentMutation {
-            document: record.metadata.clone(),
-            comment,
-            link,
-        })
+        Ok((
+            DocumentMutation {
+                document: record.metadata.clone(),
+                comment,
+                link,
+            },
+            source,
+        ))
     }
 }

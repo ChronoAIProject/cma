@@ -291,7 +291,14 @@ impl MongoDocumentQuotaStore {
             .max_time(IO)
             .await
             .map_err(unavailable)?;
-        if actual.as_ref() != Some(&row) {
+        let matches = match actual.as_ref() {
+            Some(actual) if row.get_str("kind").ok() == Some("object") => {
+                object_identity_matches(actual, &row)
+            }
+            Some(actual) => actual == &row,
+            None => false,
+        };
+        if !matches {
             return Err(DocumentError::Corrupt);
         }
         Ok(())

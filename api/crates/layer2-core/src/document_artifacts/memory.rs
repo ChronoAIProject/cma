@@ -4,16 +4,73 @@ use std::collections::BTreeMap;
 use tokio::sync::Mutex;
 
 #[derive(Default)]
-pub struct MemoryDocuments(pub Mutex<BTreeMap<String, StoredDocument>>);
+pub struct MemoryDocuments(
+    pub Mutex<BTreeMap<String, StoredDocument>>,
+    Mutex<BTreeMap<String, MemorySourceState>>,
+);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MemorySourceState {
+    Reserved,
+    Committed,
+    Condemned,
+}
+
+impl MemoryDocuments {
+    pub async fn condemn_source(&self, source: &DocumentSourceReservation) {
+        self.1
+            .lock()
+            .await
+            .insert(source.object_key(), MemorySourceState::Condemned);
+    }
+
+    pub async fn source_state(&self, source: &DocumentSourceReservation) -> Option<&'static str> {
+        match self.1.lock().await.get(&source.object_key()).copied() {
+            Some(MemorySourceState::Reserved) => Some("reserved"),
+            Some(MemorySourceState::Committed) => Some("committed"),
+            Some(MemorySourceState::Condemned) => Some("condemned"),
+            None => None,
+        }
+    }
+}
+
+async fn commit_source(
+    states: &mut BTreeMap<String, MemorySourceState>,
+    source: &DocumentSourceReservation,
+) -> Result<(), DocumentError> {
+    match states.get(&source.object_key()).copied() {
+        Some(MemorySourceState::Condemned) => Err(DocumentError::Unavailable),
+        Some(MemorySourceState::Reserved | MemorySourceState::Committed) => {
+            states.insert(source.object_key(), MemorySourceState::Committed);
+            Ok(())
+        }
+        None => {
+            states.insert(source.object_key(), MemorySourceState::Committed);
+            Ok(())
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl DocumentStore for MemoryDocuments {
     async fn get(&self, id: &str) -> Result<Option<StoredDocument>, DocumentError> {
         Ok(self.0.lock().await.get(id).cloned())
     }
-    async fn insert(&self, record: &StoredDocument) -> Result<bool, DocumentError> {
+    async fn insert(
+        &self,
+        record: &StoredDocument,
+        source: Option<(&DocumentSourceReservation, SourceTicket)>,
+    ) -> Result<bool, DocumentError> {
         let mut rows = self.0.lock().await;
         if rows.contains_key(&record.metadata.id) {
             return Ok(false);
+        }
+        let mut states = self.1.lock().await;
+        if let Some((source, SourceTicket::Ledgered)) = source {
+            states
+                .entry(source.object_key())
+                .or_insert(MemorySourceState::Reserved);
+            commit_source(&mut states, source).await?;
         }
         rows.insert(record.metadata.id.clone(), record.clone());
         Ok(true)
@@ -22,6 +79,7 @@ impl DocumentStore for MemoryDocuments {
         &self,
         expected: u64,
         record: &StoredDocument,
+        source: Option<(&DocumentSourceReservation, SourceTicket)>,
     ) -> Result<bool, DocumentError> {
         let mut rows = self.0.lock().await;
         if !rows.get(&record.metadata.id).is_some_and(|r| {
@@ -29,6 +87,13 @@ impl DocumentStore for MemoryDocuments {
                 && r.metadata.owner_subject == record.metadata.owner_subject
         }) {
             return Ok(false);
+        }
+        let mut states = self.1.lock().await;
+        if let Some((source, SourceTicket::Ledgered)) = source {
+            states
+                .entry(source.object_key())
+                .or_insert(MemorySourceState::Reserved);
+            commit_source(&mut states, source).await?;
         }
         rows.insert(record.metadata.id.clone(), record.clone());
         Ok(true)

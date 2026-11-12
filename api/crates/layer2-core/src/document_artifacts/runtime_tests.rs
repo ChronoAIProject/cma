@@ -266,9 +266,12 @@ async fn revoked_runtime_is_checked_before_reserving_document_storage() {
     struct QuotaCalls(std::sync::atomic::AtomicUsize);
     #[async_trait::async_trait]
     impl DocumentQuotaStore for QuotaCalls {
-        async fn reserve(&self, _: &DocumentSourceReservation) -> Result<(), DocumentError> {
+        async fn reserve(
+            &self,
+            _: &DocumentSourceReservation,
+        ) -> Result<SourceTicket, DocumentError> {
             self.0.fetch_add(1, Ordering::SeqCst);
-            Ok(())
+            Ok(SourceTicket::Ledgered)
         }
     }
     let auth = TransientAuthority {

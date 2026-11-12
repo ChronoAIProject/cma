@@ -2,12 +2,16 @@ use super::*;
 use crate::{Caller, Capability};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+
+pub const DOCUMENT_SOURCE_WRITE_SLOTS: usize = 16;
 
 pub struct DocumentService {
     pub(super) store: Arc<dyn DocumentStore>,
     pub(super) blobs: Arc<dyn DocumentBlobStore>,
     pub(super) revocation_reserve_enabled: bool,
     pub(super) quota: Option<Arc<dyn DocumentQuotaStore>>,
+    source_write_slots: Arc<Semaphore>,
 }
 impl DocumentService {
     pub fn new(store: Arc<dyn DocumentStore>, blobs: Arc<dyn DocumentBlobStore>) -> Arc<Self> {
@@ -32,6 +36,7 @@ impl DocumentService {
             blobs,
             revocation_reserve_enabled,
             quota,
+            source_write_slots: Arc::new(Semaphore::new(DOCUMENT_SOURCE_WRITE_SLOTS)),
         })
     }
     pub async fn create(
@@ -74,7 +79,9 @@ impl DocumentService {
         if let Some(guard) = guard {
             guard.validate(None).await?;
         }
-        self.upload(caller.subject.as_str(), &id, body.markdown.as_bytes())
+        let _source_permit = self.try_acquire_source_write_slot()?;
+        let (reservation, ticket) = self
+            .upload(caller.subject.as_str(), &id, body.markdown.as_bytes())
             .await?;
         let metadata = DocumentView {
             id,
@@ -114,7 +121,11 @@ impl DocumentService {
             guard.validate(Some(&record)).await?;
         }
         self.validate_write(&record, false)?;
-        if self.store.insert(&record).await? {
+        if self
+            .store
+            .insert(&record, Some((&reservation, ticket)))
+            .await?
+        {
             return Ok(metadata);
         }
         creation_replay(
@@ -309,18 +320,29 @@ impl DocumentService {
         owner: &str,
         id: &str,
         bytes: &[u8],
-    ) -> Result<(), DocumentError> {
+    ) -> Result<(DocumentSourceReservation, SourceTicket), DocumentError> {
         let source = DocumentSourceReservation::new(owner, id, bytes);
         source.validate()?;
-        if let Some(quota) = &self.quota {
-            quota.reserve(&source).await?;
-        }
+        let ticket = if let Some(quota) = &self.quota {
+            quota.reserve(&source).await?
+        } else {
+            SourceTicket::Unledgered
+        };
         tokio::time::timeout(
             Duration::from_secs(15),
             self.blobs.put(&source.object_key(), bytes.to_vec()),
         )
         .await
-        .map_err(|_| DocumentError::Unavailable)?
+        .map_err(|_| DocumentError::Unavailable)??;
+        Ok((source, ticket))
+    }
+    pub(super) fn try_acquire_source_write_slot(
+        &self,
+    ) -> Result<OwnedSemaphorePermit, DocumentError> {
+        self.source_write_slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| DocumentError::Busy)
     }
 }
 pub(super) fn access(
