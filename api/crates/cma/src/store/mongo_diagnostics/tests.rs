@@ -1,6 +1,19 @@
 use super::*;
 use mongodb::bson::doc;
 use std::io::Write;
+
+#[test]
+fn command_monitoring_requires_explicit_opt_in() {
+    for value in [None, Some("false"), Some(""), Some("TRUE"), Some(" true ")] {
+        let mut options = mongodb::options::ClientOptions::default();
+        assert!(install_configured(&mut options, "general", value).is_none());
+        assert!(options.command_event_handler.is_none());
+    }
+    let mut options = mongodb::options::ClientOptions::default();
+    assert!(install_configured(&mut options, "general", Some("true")).is_some());
+    assert!(options.command_event_handler.is_some());
+}
+
 #[derive(Clone, Default)]
 pub(super) struct Output(pub(super) Arc<Mutex<Vec<u8>>>);
 impl Write for Output {
