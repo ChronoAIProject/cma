@@ -9,11 +9,7 @@ pub(super) async fn compose(
     stores: &MongoStores,
 ) -> Result<(Arc<AccountDeletionService>, Arc<dyn AccountStanding>), String> {
     let snapshot = Arc::new(ErasingSnapshot::new(stores.account_deletions.clone()));
-    snapshot
-        .refresh()
-        .await
-        .map_err(|_| "account standing snapshot unavailable")?;
-    snapshot.spawn_refresh();
+    snapshot.start().await;
     let service = Arc::new(AccountDeletionService::new(
         stores.account_deletions.clone(),
         snapshot.clone(),

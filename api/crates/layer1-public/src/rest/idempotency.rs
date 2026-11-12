@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 use super::{problem_document, problem_response, BodyProblem, RequestFailure};
 
 const IDEMPOTENCY_KEY: &str = "idempotency-key";
+#[cfg(test)]
 const MAX_KEY_BYTES: usize = 255;
 pub(super) const RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const EXECUTION_LEASE: Duration = Duration::from_secs(2 * 60);
@@ -130,10 +131,7 @@ where
             return Err(IdempotencyProblem::Invalid);
         }
         let bytes = value.as_bytes();
-        if bytes.is_empty()
-            || bytes.len() > MAX_KEY_BYTES
-            || !bytes.iter().all(|byte| (0x21..=0x7e).contains(byte))
-        {
+        if !layer2_core::operation::valid_idempotency_key(bytes) {
             return Err(IdempotencyProblem::Invalid);
         }
         let key = std::str::from_utf8(bytes)

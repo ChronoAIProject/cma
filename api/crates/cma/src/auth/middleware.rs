@@ -115,17 +115,14 @@ async fn attach_subject_inner(
             return response;
         }
     };
-    if let Some(mut resolved) = resolved {
-        resolved.authorization = auth.account_authorization(&resolved);
+    if let Some(resolved) = resolved {
+        let owner_session = auth.owner_session_authority(&resolved);
         if let Some(response) = auth
             .account_gate(
                 request.method().as_str(),
                 request.uri().path(),
-                request.headers(),
                 &resolved.subject,
-                resolved
-                    .authorization
-                    .allows(layer2_core::Capability::DeleteOwnAccount),
+                owner_session.is_some(),
             )
             .await
         {
@@ -162,6 +159,9 @@ async fn attach_subject_inner(
         request
             .extensions_mut()
             .insert(auth.resource_request_context(&resolved));
+        if let Some(authority) = owner_session {
+            request.extensions_mut().insert(authority);
+        }
         if let Some(value) = resolved.delegated_credential {
             request
                 .extensions_mut()

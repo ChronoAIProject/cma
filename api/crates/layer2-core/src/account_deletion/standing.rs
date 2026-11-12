@@ -9,14 +9,6 @@ pub trait AccountStanding: Send + Sync {
     async fn authoritative(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
         self.erasing(subject).await
     }
-    /// Permit only a persisted request identity when a caller reconciles its receipt.
-    async fn accepted_request_key(
-        &self,
-        _subject: &SubjectId,
-        _key: &str,
-    ) -> Result<bool, AccountDeletionError> {
-        Ok(false)
-    }
     /// Block locally after an accepted or uncertain commit until authoritative reconciliation.
     fn insert_local(&self, _hash: &str) {}
 }

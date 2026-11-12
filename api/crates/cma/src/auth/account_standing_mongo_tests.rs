@@ -134,10 +134,10 @@ async fn document_grant_transaction_refuses_erasing_recipient() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn resource_share_transaction_refuses_erasing_recipient() {
+    use crate::auth::test_resources;
     use layer2_core::resource_access::*;
-    use layer2_core::sandbox::store::{
-        SandboxAdmission, SandboxAdmissionName, SandboxAdmissionStore,
-    };
+    use layer2_core::sandbox::store::{AgentStore, SandboxStore, WorkspaceStore, WorktreeStore};
+    use layer2_core::sandbox::{AgentStatus, AgentWorkState, AgentWorkStep};
     let client = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
@@ -149,37 +149,36 @@ async fn resource_share_transaction_refuses_erasing_recipient() {
     let store = crate::store::MongoSandboxStore::open(&client, db.name())
         .await
         .unwrap();
-    let sandbox = crate::store::sandbox_admission_mongo_integration_tests::sandbox(
+    let sandbox = test_resources::sandbox("standing-grant", "owner");
+    let workspace = test_resources::workspace("standing-workspace", "standing-grant", "owner");
+    let worktree = test_resources::worktree(
+        "standing-worktree",
+        "standing-workspace",
         "standing-grant",
-        "standing-launch",
+        "standing-agent",
+        "owner",
     );
-    let target = ResourceTarget::Sandbox {
-        sandbox_id: sandbox.id.clone(),
+    let mut agent = test_resources::agent(
+        "standing-agent",
+        "standing-worktree",
+        "standing-workspace",
+        "standing-grant",
+        "owner",
+        AgentStatus::Starting,
+    );
+    agent.conversation.last_seq = 0;
+    agent.work = AgentWorkState::new(AgentWorkStep::AddWorktree, agent.created_at.clone());
+    let target = ResourceTarget::Agent {
+        agent_id: agent.id.clone(),
     };
-    store
-        .admit_sandbox(
-            SandboxAdmission::new(
-                sandbox,
-                SandboxAdmissionName::Allocate("standing".into()),
-                100,
-                "2026-11-14T00:00:00Z".into(),
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap();
+    store.create_sandbox(sandbox).await.unwrap();
+    store.create_workspace(workspace).await.unwrap();
+    store.create_worktree(worktree).await.unwrap();
+    store.create_agent(agent).await.unwrap();
     let snapshot = store.resource_access_snapshot(&target).await.unwrap();
-    deletions
-        .request(
-            &SubjectId::new("recipient"),
-            "delete",
-            "2026-11-14T00:00:00Z",
-        )
-        .await
-        .unwrap();
     let request = ShareMutation {
-        selector: ResourceSelector::Sandbox {
-            sandbox_id: snapshot.lineage.sandbox.id.clone(),
+        selector: ResourceSelector::Agent {
+            agent_id: snapshot.lineage.agent.as_ref().unwrap().id.clone(),
         },
         owner: ResourceOwner::Person {
             subject: SubjectId::new("owner"),
@@ -188,18 +187,34 @@ async fn resource_share_transaction_refuses_erasing_recipient() {
             subject: SubjectId::new("owner"),
         },
         key_sha256: layer2_core::document_artifacts::digest(b"grant"),
-        change: ShareChange::Create {
-            target_org_id: SubjectId::new("recipient"),
+        change: ShareChange::CreateLink {
+            audience: AgentShareAudience::Users {
+                subjects: vec![SubjectId::new("recipient")],
+            },
             mode: ShareMode::View,
+            token_sha256: layer2_core::document_artifacts::digest(b"standing-link"),
         },
         expected_share_revision: None,
         policy_fence: snapshot.fence(),
         proposed_id: "shr_standing".into(),
         at: "2026-11-14T00:00:00Z".into(),
     };
+    plan_share_mutation(&request, &snapshot, None, 0).unwrap();
+    deletions
+        .request(
+            &SubjectId::new("recipient"),
+            "delete",
+            "2026-11-14T00:00:00Z",
+        )
+        .await
+        .unwrap();
     assert_eq!(
         store.mutate_share(request).await,
         Err(ResourceAccessStoreError::ShareRecipientUnavailable)
+    );
+    assert_eq!(
+        store.resource_access_snapshot(&target).await.unwrap(),
+        snapshot
     );
     db.drop().await.unwrap();
 }
@@ -255,11 +270,12 @@ async fn runtime_subscriptions_refuse_erasing_owner_before_token_custody() {
         "standing-launch",
     );
     let id = sandbox.id.clone();
+    let name = sandbox.name.clone();
     store
         .admit_sandbox(
             SandboxAdmission::new(
                 sandbox,
-                SandboxAdmissionName::Allocate("standing".into()),
+                SandboxAdmissionName::Allocate(name),
                 100,
                 "2026-11-14T00:00:00Z".into(),
             )

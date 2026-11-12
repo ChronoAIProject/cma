@@ -9,14 +9,15 @@ use axum::{
     Extension, Json,
 };
 use layer1_public::AuthenticatedCaller;
-use layer2_core::{Authorization, Capability};
+use layer2_core::{account_deletion::OwnerSessionAuthority, Authorization, Capability};
 
-use super::{entitlements, profile::Profile, AuthState, AUTH_COOKIE};
+use super::{profile::Profile, AuthState, AUTH_COOKIE};
 
 pub(super) async fn read(
     State(auth): State<Arc<AuthState>>,
     caller: Option<AuthenticatedCaller>,
     profile: Option<Extension<Profile>>,
+    authority: Option<Extension<OwnerSessionAuthority>>,
     headers: HeaderMap,
 ) -> Response {
     // Middleware already verified this request. A second resolution repeats
@@ -47,7 +48,7 @@ pub(super) async fn read(
                 "authenticated": true,
                 "usage_reporting": usage_reporting,
                 "subject": caller.subject.as_str(),
-                "capabilities": entitlements::reported(&auth.session_authorization(&caller.authorization)),
+                "capabilities": auth.session_entitlements(&caller, authority.as_ref().map(|Extension(authority)| authority)),
                 "visitor": is_visitor(&caller.authorization),
             });
             if !erasing {

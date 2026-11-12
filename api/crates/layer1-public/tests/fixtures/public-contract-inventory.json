@@ -1935,7 +1935,10 @@
         "resource_not_found",
         "share_capacity",
         "unsafe_interactive_share"
-      ]
+      ],
+      "unreachable_problems": {
+        "share_recipient_unavailable": "api/crates/layer2-core/src/resource_access/sharing_service.rs# Organization-only share creation does not treat an organization ID as a personal account recipient; personal recipient refusals belong to selected-user links and redemption."
+      }
     },
     "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}": {
       "classification": "openapi",
@@ -2950,7 +2953,8 @@
       "required_problems": [
         "not_authenticated",
         "organization_authority_unavailable",
-        "resource_not_found"
+        "resource_not_found",
+        "share_recipient_unavailable"
       ]
     },
     "DELETE /api/v1/agents/{id}/files": {
@@ -3938,12 +3942,10 @@
         "account_deletion_requires_owner_session",
         "missing_idempotency_key",
         "invalid_idempotency_key",
-        "idempotency_key_reused",
         "idempotency_recovery_required",
         "invalid_json",
         "json_content_type_required",
-        "store_failed",
-        "account_deletion_in_progress"
+        "store_failed"
       ]
     },
     "GET /api/v1/account/deletion": {

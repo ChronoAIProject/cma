@@ -6,7 +6,10 @@ use axum::{
     Router,
 };
 use layer2_core::{
-    account_deletion::{AccountDeletionService, AvailableAccounts, MemoryAccountDeletionStore},
+    account_deletion::{
+        AccountDeletionService, AvailableAccounts, MemoryAccountDeletionStore,
+        OwnerSessionAuthority,
+    },
     Authorization, Capability, SubjectId,
 };
 use serde_json::{json, Value};
@@ -38,7 +41,12 @@ fn request(method: Method, key: Option<&str>, body: Option<Value>) -> Request<Bo
         .insert(crate::AuthenticatedSubject(SubjectId::new("owner")));
     request
         .extensions_mut()
-        .insert(Authorization::new([Capability::DeleteOwnAccount]));
+        .insert(Authorization::new([Capability::UseOwnSandboxes]));
+    request
+        .extensions_mut()
+        .insert(OwnerSessionAuthority::verified_personal(SubjectId::new(
+            "owner",
+        )));
     request
 }
 
@@ -255,4 +263,50 @@ fn openapi_receipt_requires_nullable_completion_time() {
         receipt["properties"]["status"]["enum"],
         json!(["running", "blocked", "completed"])
     );
+}
+
+#[test]
+fn openapi_request_requires_irreversible_acknowledgement() {
+    let document = serde_json::to_value(super::account_deletion::document()).unwrap();
+    let request = &document["components"]["schemas"]["DeletionRequest"];
+    assert!(request["required"]
+        .as_array()
+        .is_some_and(|fields| fields.iter().any(|field| field == "acknowledge")));
+    assert_eq!(
+        request["properties"]["acknowledge"]["enum"],
+        json!(["irreversible"])
+    );
+}
+
+#[tokio::test]
+async fn deletion_recovery_and_state_errors_have_actionable_distinct_details() {
+    use layer2_core::account_deletion::AccountDeletionError;
+    for (error, code, expected, forbidden) in [
+        (
+            AccountDeletionError::RecoveryRequired,
+            "idempotency_recovery_required",
+            "same",
+            "manual review",
+        ),
+        (
+            AccountDeletionError::Invalid,
+            "store_failed",
+            "state",
+            "Idempotency-Key",
+        ),
+        (
+            AccountDeletionError::Store("database unavailable".into()),
+            "store_failed",
+            "temporarily unavailable",
+            "Idempotency-Key",
+        ),
+    ] {
+        let response = super::account_deletion::account_deletion_problem(error);
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(body["code"], code);
+        let detail = body["detail"].as_str().unwrap();
+        assert!(detail.contains(expected), "{detail}");
+        assert!(!detail.contains(forbidden), "{detail}");
+    }
 }

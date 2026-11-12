@@ -43,7 +43,6 @@ pub(super) async fn attach(auth: &AuthState, mut request: Request, next: Next) -
                 .account_gate(
                     request.method().as_str(),
                     request.uri().path(),
-                    request.headers(),
                     &subject,
                     false,
                 )

@@ -26,7 +26,11 @@ pub(crate) fn wire_name(capability: Capability) -> &'static str {
 }
 
 pub(crate) fn reported(authorization: &Authorization) -> Vec<&'static str> {
-    authorization.iter().map(wire_name).collect()
+    authorization
+        .iter()
+        .filter(|capability| *capability != Capability::DeleteOwnAccount)
+        .map(wire_name)
+        .collect()
 }
 
 #[cfg(test)]

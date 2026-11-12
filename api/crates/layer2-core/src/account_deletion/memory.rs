@@ -14,6 +14,25 @@ struct State {
 }
 #[async_trait]
 impl AccountDeletionStore for MemoryAccountDeletionStore {
+    async fn replay(
+        &self,
+        subject: &SubjectId,
+        key: &str,
+    ) -> Result<Option<AccountDeletion>, AccountDeletionError> {
+        let state = self
+            .0
+            .lock()
+            .map_err(|_| AccountDeletionError::Store("memory authority poisoned".into()))?;
+        let identity = (
+            subject_hash(subject),
+            crate::document_artifacts::digest(key.as_bytes()),
+        );
+        Ok(state
+            .keys
+            .get(&identity)
+            .and_then(|id| state.records.get(id))
+            .cloned())
+    }
     async fn request(
         &self,
         subject: &SubjectId,
@@ -42,7 +61,6 @@ impl AccountDeletionStore for MemoryAccountDeletionStore {
             .find(|record| record.subject_hash == hash && record.is_active())
             .cloned()
         {
-            state.keys.insert(identity, record.id.clone());
             return Ok(record);
         }
         let record = AccountDeletion::request(AccountDeletionId::generate(), subject.clone(), at)?;
@@ -126,6 +144,7 @@ impl AccountDeletionStore for MemoryAccountDeletionStore {
         deletion: AccountDeletion,
         events: Vec<ErasureEvent>,
         expected_revision: u64,
+        expected_lease_token: Option<&str>,
     ) -> Result<(), AccountDeletionError> {
         let mut state = self
             .0
@@ -141,7 +160,20 @@ impl AccountDeletionStore for MemoryAccountDeletionStore {
         {
             return Err(AccountDeletionError::Conflict);
         }
-        if events.len() as u64 + old.event_seq != deletion.event_seq
+        if old.work.lease.as_ref().map(|lease| lease.token.as_str()) != expected_lease_token {
+            return Err(AccountDeletionError::StaleFence);
+        }
+        if deletion.work.lease.as_ref().is_some_and(|lease| {
+            Some(lease.token.as_str()) != expected_lease_token
+                || old
+                    .work
+                    .lease
+                    .as_ref()
+                    .is_none_or(|old| old.fence != lease.fence)
+        }) {
+            return Err(AccountDeletionError::StaleFence);
+        }
+        if old.event_seq.checked_add(events.len() as u64) != Some(deletion.event_seq)
             || events.iter().enumerate().any(|(index, event)| {
                 event.deletion_id != deletion.id || event.seq != old.event_seq + index as u64 + 1
             })
