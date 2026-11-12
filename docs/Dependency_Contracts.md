@@ -1,10 +1,11 @@
 # Ornn and object-storage dependency contracts
 
-Source contracts for #1569; local source and fixture coverage does not close the
-external-dependency gate. The audit baseline is develop
-`304b44fd9b9d75d282399ccd6ea34e035eb632ca` (2026-11-11), supplemented by
-bounded-token and provisional maintenance contracts. `api/Cargo.lock` pins
-reqwest **0.12.28** and Tokio **1.53.3**; validation uses `--locked`.
+Friday source-contract slice of #1569; this does not close the external-dependency
+gate. Audited against develop `304b44fd9b9d75d282399ccd6ea34e035eb632ca`
+on 2026-11-11. Bounded-token and provisional maintenance contracts are documented
+with their source and fixture evidence below. The reviewed PR head pins the
+resulting source and fixtures. `api/Cargo.lock` pins reqwest **0.12.28**
+and Tokio **1.53.3**; validation uses `--locked`.
 
 Release acceptance must additionally bind these contracts to the train's actual
 source SHA and API/runtime image digests. No production verification, provider
@@ -24,14 +25,13 @@ from local fixtures.
 | Object delete | **Provisional, unverified E1 contract; default off.** DELETE the same proxy's `/objects?key=...`. A separately instantiated maintenance token requests provisional scopes `proxy object:read object:list object:delete`; online scopes remain unchanged. Only generated document object keys are accepted. | `CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED=false` refuses both maintenance operations before token lookup or HTTP. When explicitly enabled for contract testing, only 200 and 204 map to `Deleted`, 404 to `Absent`, and all other statuses (including 202 Accepted) to `Unavailable`. A 429 exposes a request-local optional retry delay (seconds or HTTP date), capped at 3,600 seconds with past dates treated as zero, through `BlobMaintenanceError`; the caller's worker backs off. No inline transport/status retry; at most one 401 refresh/replay. Redirects are disabled. Connection/request/total budgets remain 3s/12s/30s, including token waits. Storage-owner confirmation and NyxID scope grants are required before enabling in production. |
 | Object list | **Provisional, unverified E1 contract; default off.** GET the same proxy's `/objects?prefix=...&cursor=...&limit=256`, expecting `{"data":{"keys":[...],"next":null}}`. Prefixes are limited to `documents/{64-lowercase-hex}/` or that owner's `doc_{32-lowercase-hex}/`. Cursor values are opaque query data, never destinations. | Same gate, separate token, deadlines, redirect refusal and retry rules as delete. Response bodies are capped at 256 KiB, pages at 256 keys and cursors at 4 KiB. Malformed envelopes, non-null errors, excessive pages and keys outside the requested prefix are `Corrupt`. Bad request keys/prefixes/cursor bounds are `Invalid` without HTTP. Listing completeness, including hidden object versions, is unverified; an empty page is not proof of physical erasure. |
 
-The GCS dependency named in #1569 crosses **chrono-storage-service** through
-CMA's configured proxy. CMA's source describes that service as S3-backed and
-contains no direct GCS object-client contract. The storage owner must identify
-the actual backend and provide its GCS/S3 mapping, version, scopes, quota and
-recovery evidence. The Cloud Build/logging client in Image Manager is a different
-dependency; it does not establish GCS object-storage acceptance. Retired Sandbox
-checkpoint schemas do not authorize new archive capture or substitute for
-document storage.
+The GCS dependency named in #1569 crosses **chrono-storage-service** in this
+candidate. CMA's source describes that service as S3-backed and contains no direct
+GCS object-client contract. The storage owner must identify the actual backend and
+provide its GCS/S3 mapping, version, scopes, quota and recovery evidence. The
+Cloud Build/logging client in Image Manager is a different dependency; it does
+not establish GCS object-storage acceptance. Retired Sandbox checkpoint schemas
+do not authorize new archive capture or substitute for document storage.
 
 ## Source and deterministic evidence map
 
@@ -39,12 +39,12 @@ document storage.
 | --- | --- | --- |
 | Metadata pins, 32/four/15s/30s, error taxonomy | `api/crates/cma/src/sandbox/agent_skills.rs:12`, `:125`, `:204`; `agent_skills/http.rs:3` and `:37` | `agent_skills_tests/dependency_contract_tests.rs`: 32 exact pinned references with reverse completion, rejected 33rd reference, unavailable status matrix with one request, four held requests cancelled at 15s with no remaining work scheduled, stalled body, credential lookup and successive HTTP batches stopped by one 30s budget. Existing tests retain digest/identity mismatch, scope refusal and no-partial-result coverage. |
 | Catalogue request and total budgets | `api/crates/cma/src/profile_authoring/http.rs:8`; `mod.rs:108`; `skills.rs:53` | `profile_authoring/dependency_contract_tests.rs`: unavailable status matrix without retry; held search and version body; owner-token wait. Existing `profile_authoring/tests.rs` pins search envelopes, pagination, literal versions, row/byte limits and owner credential behavior. |
-| Runtime archive pins and bounded extraction | `api/crates/layer4-runtime/src/skills.rs:98`; `supervisor_startup.rs:146` | Existing `skills_tests.rs` and `agent_skill_install_tests.rs` cover archive/pin safety. Runtime download-outage acceptance requires separate end-to-end evidence. |
+| Runtime archive pins and bounded extraction | `api/crates/layer4-runtime/src/skills.rs:98`; `supervisor_startup.rs:146` | Existing `skills_tests.rs` and `agent_skill_install_tests.rs` cover archive/pin safety. This PR does not add or claim a runtime download-outage acceptance run. |
 | Storage operation deadlines, shared refresh and bounded retries | `api/crates/cma/src/document_storage.rs`; `document_storage/token.rs` | `document_storage_token_tests.rs`: 100 concurrent callers, first-waiter cancellation, negative-cache backoff and reset, early refresh, hard expiry margin, stale-generation rejection and bounded waits without late object calls. `document_storage_transport_tests.rs`: connection/status recovery, retry exhaustion, insufficient remaining budget, PUT refusal to replay transport failures, and a single 401 replay across transport attempts. `document_storage_failure_tests.rs` retains token-form, invalid-envelope, 401, held-body/header and shared-budget coverage. |
 | Storage authority, receipts and disabled composition | `api/crates/cma/src/document_storage.rs`; `config/documents.rs:12`; `telemetry.rs` | Existing `document_storage_tests.rs`: rejected receipts/redirects/oversize bodies; invalid paths and wrong content never contact storage; successful refresh/cache reuse. `document_storage_receipt_tests.rs` verifies per-field receipt mismatch counters, `Corrupt`, and warnings containing only the field name, without private request context. Configuration tests require the complete canonical deployment config. |
 | Provisional maintenance capability, authority and pagination | `api/crates/layer2-core/src/document_artifacts/blob_maintenance.rs`; `api/crates/cma/src/document_storage/maintenance.rs`; `composition/documents.rs` | `document_storage_maintenance_tests.rs`: independent maintenance/online token scopes, zero requests while disabled, deletion completion limited to 200/204, rejected 202 and other success statuses, idempotent 404, rejected foreign prefixes, bounded pages and opaque cursors, malformed/foreign rows, shared 30-second budget and no late calls. `document_storage_maintenance_retry_tests.rs`: request-local Retry-After capped at one hour for huge seconds and far-future dates, zero delay for past dates, one 429 request, refused redirects, bounded chunked/stalled bodies and fixture-only rewrite after deletion. `blob_maintenance_tests.rs`: deterministic deletion, rewrite, isolation and pagination. `config/features/document_maintenance_tests.rs`: independent strict boolean, default off. These are local provisional-contract evidence only. |
 
-The HTTP fixtures bind only ephemeral loopback ports and use synthetic
+The added HTTP fixtures bind only ephemeral loopback ports and use synthetic
 authority. Production client constructors retain their configured timeout and
 redirect behavior. Request barriers establish that a call reached the fixture;
 paused Tokio time then exercises deadlines without wall-clock sleeps, allowing
@@ -115,6 +115,6 @@ physical deletion, listing completeness or a zero-residual-storage guarantee.
   and recovery, verified generation fencing, storage permission and quota faults.
 - Full public-route latency including authentication, Mongo and service locks;
   the 30-second guarantee applies to this dependency operation only.
-- Verify dependency deadlines through the release train. Source-only
+- Deploy and verify this deadline change through the release train. Source-only
   tests cannot close #1569. Third-party channels and their 24-hour activation
   acceptance remain separately tracked in #1571.
