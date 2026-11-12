@@ -73,6 +73,7 @@ async fn real_mongo_monitoring_privacy_and_overhead() {
     let output = super::tests::Output::default();
     let subscriber = tracing_subscriber::fmt()
         .without_time()
+        .with_ansi(false)
         .with_writer(output.clone())
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
