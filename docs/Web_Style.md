@@ -1680,7 +1680,7 @@ key. Other 429 responses, including missing or unusable reset times, remain
 uncertain and preserve the original intent, choices and key. Never start work
 automatically when the allowance resets.
 
-When the Sandbox allowance is full, explain that the visitor must delete an
+When the sandbox allowance is full, explain that the visitor must delete an
 unused sandbox and wait for deletion to complete before starting again. Do not
 imply that pausing a sandbox or beginning deletion immediately frees a place.
 Use the existing failure alert and recovery actions; all sentences belong in
@@ -6245,4 +6245,4 @@ existing explicit revision review. Disabled policies retain every entered value.
 
 | 2026-11-11 | Complete §20 silent sign-in for opening and eligible SPA navigation with default-off activation, same-origin logout suppression and durable explicit-sign-in recovery, a 4 KiB encoded login URL budget, oversized-draft retention, private draft clearing before Sign out, and bounded browser bindings with inline predecessor completion. |
 
-| 2026-11-12 | Define settled visitor daily allowance refusals with local reset times and fresh request keys, preserve uncertain attempts, and explain completed Sandbox deletion before starting again when the allowance is full. |
+| 2026-11-12 | Define settled visitor daily allowance refusals with local reset times and fresh request keys, preserve uncertain attempts, and explain completed sandbox deletion before starting again when the allowance is full. |

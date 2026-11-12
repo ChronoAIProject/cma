@@ -75,7 +75,7 @@ export function refusalSentence(error: unknown): string {
 export function failureRemediation(code: string): string {
   switch (code) {
     case 'sandbox_limit_reached':
-      return 'Your Sandbox allowance is full. Delete a sandbox you no longer need, wait for deletion to complete, then start again.';
+      return 'Your sandbox allowance is full. Delete a sandbox you no longer need, wait for deletion to complete, then start again.';
     case 'first_message_failed':
       return 'Your first message could not be sent. Open the agent to check its conversation before sending it again.';
     case 'recovery_required':
