@@ -106,8 +106,9 @@ impl TriggerComposition {
         );
         let assets = TriggerAssetsState::new(definitions.clone(), &dependencies.public_origin)
             .map_err(|error| format!("Trigger public origin is not usable: {error}"))?
+            .with_account_standing(dependencies.standing.clone());
+        let companion = LaunchCompanionState::new(definitions.clone())
             .with_account_standing(dependencies.standing);
-        let companion = LaunchCompanionState::new(definitions.clone());
         let routes = trigger_router(route_state)
             .merge(layer1_public::rest::agent_source_router(
                 dependencies.agent_reads,

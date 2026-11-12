@@ -26,6 +26,29 @@ struct Portal {
     http: reqwest::Client,
 }
 
+#[derive(Debug, thiserror::Error)]
+enum PortalError {
+    #[error("activity stream authorization changed: {0}")]
+    Status(StatusCode),
+    #[error("account_deletion_in_progress")]
+    AccountDeletionInProgress,
+}
+
+impl From<StatusCode> for PortalError {
+    fn from(status: StatusCode) -> Self {
+        Self::Status(status)
+    }
+}
+
+impl PortalError {
+    fn response(self) -> Response {
+        match self {
+            Self::Status(status) => problem(status),
+            Self::AccountDeletionInProgress => super::account_standing::deletion_problem(),
+        }
+    }
+}
+
 pub(crate) fn router(
     auth: Arc<AuthState>,
     gateway: Option<&crate::config::GatewayConfig>,
@@ -101,23 +124,23 @@ fn allowed(method: &Method, path: &str) -> bool {
 async fn forward(State(portal): State<Arc<Portal>>, request: Request) -> Response {
     match forward_checked(&portal, request).await {
         Ok(response) => response,
-        Err(status) => problem(status),
+        Err(error) => error.response(),
     }
 }
 
-async fn forward_checked(portal: &Portal, request: Request) -> Result<Response, StatusCode> {
+async fn forward_checked(portal: &Portal, request: Request) -> Result<Response, PortalError> {
     let path = request
         .uri()
         .path()
         .strip_prefix(PREFIX)
         .ok_or(StatusCode::NOT_FOUND)?;
     if !allowed(request.method(), path) {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(StatusCode::NOT_FOUND.into());
     }
     let activity_stream = path.ends_with("/activity/stream");
     let mutation = request.method() != Method::GET;
     if mutation && !portal.auth.permits_browser_origin(request.headers()) {
-        return Err(StatusCode::FORBIDDEN);
+        return Err(StatusCode::FORBIDDEN.into());
     }
     let custody = credentials::resolve(&portal.auth, request.headers()).await?;
     let target = format!(
@@ -144,7 +167,7 @@ async fn forward_checked(portal: &Portal, request: Request) -> Result<Response, 
         header::HeaderName::from_static("idempotency-key"),
     ] {
         if request.headers().get_all(&name).iter().count() > 1 {
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(StatusCode::BAD_REQUEST.into());
         }
         if let Some(value) = request.headers().get(&name) {
             outgoing = outgoing.header(name, value);
@@ -153,11 +176,11 @@ async fn forward_checked(portal: &Portal, request: Request) -> Result<Response, 
     if activity_stream {
         let cursor = header::HeaderName::from_static("last-event-id");
         if request.headers().get_all(&cursor).iter().count() > 1 {
-            return Err(StatusCode::BAD_REQUEST);
+            return Err(StatusCode::BAD_REQUEST.into());
         }
         if let Some(value) = request.headers().get(&cursor) {
             if value.len() > 1024 || value.to_str().is_err() {
-                return Err(StatusCode::BAD_REQUEST);
+                return Err(StatusCode::BAD_REQUEST.into());
             }
             outgoing = outgoing.header(cursor, value);
         }
@@ -166,7 +189,7 @@ async fn forward_checked(portal: &Portal, request: Request) -> Result<Response, 
         .await
         .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
     if !mutation && !body.is_empty() {
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(StatusCode::BAD_REQUEST.into());
     }
     custody.current(&portal.auth).await?;
     let mut upstream = outgoing
@@ -175,7 +198,7 @@ async fn forward_checked(portal: &Portal, request: Request) -> Result<Response, 
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
     if upstream.status().is_redirection() {
-        return Err(StatusCode::BAD_GATEWAY);
+        return Err(StatusCode::BAD_GATEWAY.into());
     }
     let status = upstream.status();
     let mut headers = HeaderMap::new();
@@ -199,7 +222,7 @@ async fn forward_checked(portal: &Portal, request: Request) -> Result<Response, 
         .map_err(|_| StatusCode::BAD_GATEWAY)?
     {
         if bytes.len().saturating_add(chunk.len()) > BODY_LIMIT {
-            return Err(StatusCode::BAD_GATEWAY);
+            return Err(StatusCode::BAD_GATEWAY.into());
         }
         bytes.extend_from_slice(&chunk);
     }

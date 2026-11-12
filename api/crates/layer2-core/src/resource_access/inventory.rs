@@ -157,6 +157,7 @@ impl ResourceAccessService {
             authorized.push(AuthorizedResource {
                 snapshot,
                 decision,
+                caller: context.caller.clone(),
                 binding: None,
             });
         }

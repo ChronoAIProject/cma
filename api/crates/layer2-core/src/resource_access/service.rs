@@ -24,6 +24,7 @@ pub enum ResourceAccessError {
 pub struct AuthorizedResource {
     pub snapshot: ResourceAccessSnapshot,
     pub decision: AccessDecision,
+    pub(crate) caller: crate::Caller,
     pub(crate) binding: Option<crate::sandbox::binding::BindingConversationAuthority>,
 }
 
@@ -86,6 +87,7 @@ impl ResourceAccessService {
             return Ok(AuthorizedResource {
                 snapshot,
                 decision: independent,
+                caller: context.caller.clone(),
                 binding: None,
             });
         }
@@ -178,6 +180,7 @@ impl ResourceAccessService {
         Ok(AuthorizedResource {
             snapshot: refreshed,
             binding: None,
+            caller: context.caller.clone(),
             decision,
         })
     }
