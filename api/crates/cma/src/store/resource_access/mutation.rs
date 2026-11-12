@@ -179,7 +179,6 @@ async fn fence_recipients(
     session: &mut ClientSession,
 ) -> Result<(), ReadError> {
     let subjects: Vec<_> = match &request.change {
-        ShareChange::Create { target_org_id, .. } => vec![target_org_id],
         ShareChange::CreateLink {
             audience: layer2_core::resource_access::AgentShareAudience::Users { subjects },
             ..

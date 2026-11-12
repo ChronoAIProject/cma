@@ -155,13 +155,23 @@ async fn admit_once(
         )));
     }
     let database = store.client.database(&store.definitions.namespace().db);
-    if crate::store::account_deletions::fence_subject_in_session(&database, &launch.owner, session)
-        .await
-        .map_err(AttemptError::Driver)?
-    {
-        return Err(AttemptError::Domain(
-            LaunchStoreError::AccountDeletionInProgress,
-        ));
+    // Both accounts serialize with deletion before quota or Trigger counters
+    // can change. Stable ordering also covers visitors launching each other's
+    // Triggers concurrently, and a publisher launching their own Trigger.
+    let mut subjects = vec![&launch.owner, &trigger.owner];
+    subjects.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    subjects.dedup();
+    for subject in subjects {
+        if crate::store::account_deletions::fence_subject_in_session(&database, subject, session)
+            .await
+            .map_err(AttemptError::Driver)?
+        {
+            return Err(AttemptError::Domain(if subject == &launch.owner {
+                LaunchStoreError::AccountDeletionInProgress
+            } else {
+                LaunchStoreError::TriggerRetired
+            }));
+        }
     }
     super::visitor_quota::admit(&store.launch_data, launch, session).await?;
     let trigger =
