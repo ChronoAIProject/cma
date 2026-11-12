@@ -107,14 +107,17 @@ impl Fixture {
                 },
                 acks,
             ),
-            update: Some(Box::new(ConversationUpdate::TurnEndedForPrompt {
-                prompt_id: PromptIdentity::new(
-                    self.full.conversation.conversation_id.as_deref().unwrap(),
-                    1,
-                    self.full.conversation.active_turn.unwrap(),
-                ),
-                response: PromptResponse::new(TurnStopReason::EndTurn),
-            })),
+            update: Some(
+                Box::new(ConversationUpdate::TurnEndedForPrompt {
+                    prompt_id: PromptIdentity::new(
+                        self.full.conversation.conversation_id.as_deref().unwrap(),
+                        1,
+                        self.full.conversation.active_turn.unwrap(),
+                    ),
+                    response: PromptResponse::new(TurnStopReason::EndTurn),
+                })
+                .into(),
+            ),
         }
     }
     async fn failpoint(&self, mode: Bson, mut data: Document) -> i64 {
@@ -343,12 +346,15 @@ async fn prefix_failure_unknown(committed: bool, retained: bool) {
         let ConversationUpdate::RuntimeOutput { update: inner, .. } = &mut update else {
             unreachable!()
         };
-        *inner = Some(Box::new(ConversationUpdate::Said(
-            layer3_adapter::SessionUpdate::ToolCallUpdate(layer3_adapter::ToolCallUpdate::new(
-                "refused",
-                layer3_adapter::ToolCallUpdateFields::new().title("Unrecorded tool output"),
-            )),
-        )));
+        *inner = Some(
+            Box::new(ConversationUpdate::Said(
+                layer3_adapter::SessionUpdate::ToolCallUpdate(layer3_adapter::ToolCallUpdate::new(
+                    "refused",
+                    layer3_adapter::ToolCallUpdateFields::new().title("Unrecorded tool output"),
+                )),
+            ))
+            .into(),
+        );
     }
     let started = Instant::now();
     let result = recorder
