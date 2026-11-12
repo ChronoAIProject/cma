@@ -152,6 +152,9 @@ impl Supervisor {
             // Keep recovery, the idle check and the detached mutation in one
             // critical section so an Agent cannot open between them.
             let operation_guard = Arc::clone(&self.operation_gate).lock_owned().await;
+            if let Err(error) = self.mutations.require_serving().await {
+                return error.response(operation);
+            }
             if self.held_checkpoint.lock().await.is_some() {
                 return writers_held_error().response(operation);
             }
@@ -189,6 +192,9 @@ impl Supervisor {
             };
         }
         let _operation = self.operation_gate.lock().await;
+        if let Err(error) = self.mutations.require_serving().await {
+            return error.response(operation);
+        }
         if let Err(error) = crate::persistent_home::verify(&self.config) {
             return error.response(operation);
         }

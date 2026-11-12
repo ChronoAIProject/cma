@@ -33,6 +33,7 @@ pub enum NativeRuntimeTransport {
 
 /// Concrete authenticated control and ACP transport for provider-hosted runtimes.
 pub struct ProviderHostedControlTransport {
+    output_json_budget: bool,
     client: RuntimeDiscovery,
     http: reqwest::Client,
     archive_factory: Option<Arc<dyn CheckpointArchiveStoreFactory>>,
@@ -40,7 +41,11 @@ pub struct ProviderHostedControlTransport {
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
     native_transport: NativeRuntimeTransport,
     native_http_budget: Arc<tokio::sync::Semaphore>,
+    retained_json: bool,
+    bounded_raw_output: bool,
     bounded_permission_state: bool,
+    bounded_update_relay: bool,
+    shared_runtime_output: bool,
 }
 
 #[derive(Clone)]
@@ -83,8 +88,41 @@ impl ActiveLink {
 }
 
 impl ProviderHostedControlTransport {
+    fn pin_output_policy(&self, settings: &mut HostedAgentOpenSettings) {
+        settings.retained_json = self.retained_json;
+        settings.bounded_raw_output = self.bounded_raw_output;
+        settings.bounded_permission_state = self.bounded_permission_state;
+        settings.output_json_budget = self.output_json_budget;
+        settings.shared_runtime_output = self.shared_runtime_output;
+    }
+
+    pub fn with_retained_json(mut self, enabled: bool) -> Self {
+        self.retained_json = enabled;
+        self
+    }
+
+    pub fn with_bounded_raw_output(mut self, enabled: bool) -> Self {
+        self.bounded_raw_output = enabled;
+        self
+    }
+
     pub fn with_bounded_permission_state(mut self, enabled: bool) -> Self {
         self.bounded_permission_state = enabled;
+        self
+    }
+
+    pub fn with_bounded_update_relay(mut self, enabled: bool) -> Self {
+        self.bounded_update_relay = enabled;
+        self
+    }
+
+    pub fn with_output_json_budget(mut self, enabled: bool) -> Self {
+        self.output_json_budget = enabled;
+        self
+    }
+
+    pub fn with_shared_runtime_output(mut self, enabled: bool) -> Self {
+        self.shared_runtime_output = enabled;
         self
     }
 
