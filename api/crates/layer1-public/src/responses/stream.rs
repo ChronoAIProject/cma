@@ -25,6 +25,8 @@ mod live;
 
 #[path = "stream_authorized.rs"]
 mod authorized;
+#[path = "stream_indexed.rs"]
+mod indexed;
 pub(super) use authorized::open as open_authorized;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -44,7 +46,7 @@ pub(super) fn open(
     turn: u64,
     watching: Option<layer2_core::sandbox::AgentLiveSubscription>,
 ) -> Response {
-    open_inner(state, caller, agent, turn, watching, None)
+    open_inner(state, caller, agent, turn, watching, None, false)
 }
 
 fn open_inner(
@@ -54,6 +56,7 @@ fn open_inner(
     turn: u64,
     watching: Option<layer2_core::sandbox::AgentLiveSubscription>,
     authorization: Option<AgentEventStreamAuthorization>,
+    indexed: bool,
 ) -> Response {
     let open = Open {
         state,
@@ -70,8 +73,11 @@ fn open_inner(
         ended: false,
         live: live::LiveState::new(watching),
         authorization,
+        indexed,
+        pagination_required: false,
     };
     sse_response(stream::unfold(open, |mut open| async move {
+        let mut quiet_pages = 0;
         loop {
             if let Some(value) = open.pending.pop_front() {
                 if let Some(authorization) = &open.authorization {
@@ -87,22 +93,43 @@ fn open_inner(
                 }
                 return Some((Ok::<_, Infallible>(sse_event(value)), open));
             }
+            if open.pagination_required {
+                if let Some(held) = &open.authorization {
+                    if open.state.reads.validate_event_stream(held).await.is_err() {
+                        return None;
+                    }
+                }
+                open.pagination_required = false;
+                open.ended = true;
+                let value = envelope(
+                    "error",
+                    open.sequence,
+                    json!({"code":"response_pagination_required","message":"Read the response with output_page=true and its returned cursor; output was not truncated."}),
+                );
+                return Some((Ok(sse_event(value)), open));
+            }
             if open.ended {
                 return None;
             }
             let poll = Poll::new(Kind::Responses);
-            let (agent, history) = match open.read().await {
-                Ok(snapshot) => snapshot,
-                // Observation loss ends this connection. It cannot manufacture
-                // a durable turn outcome or release buffered private frames.
-                Err(_) => return None,
-            };
-            let Some(response) =
-                retrieve::project(&open.state.agent_page_origin, &agent, &history, open.turn)
-            else {
-                poll.complete(false);
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
+            let (agent, response, history, more) = if open.indexed {
+                match open.read_indexed().await {
+                    Ok(value) => value,
+                    Err(_) => return None,
+                }
+            } else {
+                let (agent, history) = match open.read().await {
+                    Ok(value) => value,
+                    Err(_) => return None,
+                };
+                let Some(response) =
+                    retrieve::project(&open.state.agent_page_origin, &agent, &history, open.turn)
+                else {
+                    poll.complete(false);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                };
+                (agent, response, history, false)
             };
             open.announce(&response);
             let mut message_count = 0;
@@ -120,8 +147,15 @@ fn open_inner(
                 }
                 open.cursor = entry.seq;
                 match &entry.kind {
-                    AgentLogKind::AgentMessage { .. } => {
-                        open.append_output(&response, message_count)
+                    AgentLogKind::AgentMessage { content } => {
+                        if open.indexed {
+                            let message =
+                                retrieve::output_message(&agent, turn, open.output_count, content);
+                            open.append_message(&message, open.output_count);
+                            open.output_count += 1;
+                        } else {
+                            open.append_output(&response, message_count);
+                        }
                     }
                     AgentLogKind::ToolCallStarted {
                         call_id,
@@ -164,7 +198,15 @@ fn open_inner(
                     _ => {}
                 }
             }
-            if response.status != ResponseStatus::InProgress {
+            if open.indexed
+                && (serde_json::to_vec(&open.tools).map_or(true, |b| b.len() > 4 * 1024 * 1024)
+                    || serde_json::to_vec(&open.pending)
+                        .map_or(true, |b| b.len() > 6 * 4 * 1024 * 1024))
+            {
+                open.pending.clear();
+                open.pagination_required = true;
+            }
+            if response.status != ResponseStatus::InProgress && !more && !open.pagination_required {
                 open.finish_reasoning();
                 let kind = match response.status {
                     ResponseStatus::Completed => "response.completed",
@@ -173,7 +215,7 @@ fn open_inner(
                 };
                 open.push(kind, json!({"response": response}));
                 open.ended = true;
-            } else {
+            } else if !more && !open.pagination_required {
                 let committed = history
                     .iter()
                     .rev()
@@ -182,7 +224,16 @@ fn open_inner(
                 open.drain_live(&agent, committed);
             }
             poll.complete(!open.pending.is_empty());
-            if open.pending.is_empty() {
+            if open.indexed && open.pending.is_empty() && more {
+                quiet_pages += 1;
+                if quiet_pages == 8 {
+                    // A sparse turn must not scan its entire prefix in one
+                    // body poll. SSE comments preserve event numbering and
+                    // every intermediate update while yielding to backpressure.
+                    return Some((Ok(Event::default().comment("keep-alive")), open));
+                }
+            }
+            if open.pending.is_empty() && !more {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
@@ -204,6 +255,8 @@ struct Open {
     ended: bool,
     live: live::LiveState,
     authorization: Option<AgentEventStreamAuthorization>,
+    indexed: bool,
+    pagination_required: bool,
 }
 
 impl Open {
@@ -242,64 +295,68 @@ impl Open {
             .take(count)
             .skip(self.output_count)
         {
-            let announced = self.live.message_announced && ordinal == self.output_count;
-            let index = if announced {
-                self.live.message_index
-            } else {
-                let index = self.next_output_index;
-                self.next_output_index += 1;
-                index
-            };
+            self.append_message(message, ordinal);
+        }
+        self.output_count = count;
+    }
+
+    fn append_message(&mut self, message: &super::OutputMessage, ordinal: usize) {
+        let announced = self.live.message_announced && ordinal == self.output_count;
+        let index = if announced {
+            self.live.message_index
+        } else {
+            let index = self.next_output_index;
+            self.next_output_index += 1;
+            index
+        };
+        if !announced {
+            let mut opening = message.clone();
+            opening.status = "in_progress";
+            opening.content.clear();
+            self.push(
+                "response.output_item.added",
+                json!({"output_index": index, "item": opening}),
+            );
+        }
+        for (content_index, content) in message.content.iter().enumerate() {
+            let mut empty = content.clone();
+            empty.text.clear();
             if !announced {
-                let mut opening = message.clone();
-                opening.status = "in_progress";
-                opening.content.clear();
                 self.push(
-                    "response.output_item.added",
-                    json!({"output_index": index, "item": opening}),
+                    "response.content_part.added",
+                    json!({"output_index": index, "item_id": message.id,
+                        "content_index": content_index, "part": empty}),
                 );
             }
-            for (content_index, content) in message.content.iter().enumerate() {
-                let mut empty = content.clone();
-                empty.text.clear();
-                if !announced {
-                    self.push(
-                        "response.content_part.added",
-                        json!({"output_index": index, "item_id": message.id,
-                        "content_index": content_index, "part": empty}),
-                    );
-                }
-                let delta = if announced {
-                    content.text.strip_prefix(&self.live.message_text)
-                } else {
-                    Some(content.text.as_str())
-                };
-                if let Some(delta) = delta.filter(|delta| !delta.is_empty()) {
-                    self.push(
-                        "response.output_text.delta",
-                        json!({"output_index": index, "item_id": message.id,
+            let delta = if announced {
+                content.text.strip_prefix(&self.live.message_text)
+            } else {
+                Some(content.text.as_str())
+            };
+            if let Some(delta) = delta.filter(|delta| !delta.is_empty()) {
+                self.push(
+                    "response.output_text.delta",
+                    json!({"output_index": index, "item_id": message.id,
                         "content_index": content_index, "delta": delta, "logprobs": []}),
-                    );
-                }
-                self.push(
-                    "response.output_text.done",
-                    json!({"output_index": index, "item_id": message.id,
-                    "content_index": content_index, "text": content.text, "logprobs": []}),
-                );
-                self.push(
-                    "response.content_part.done",
-                    json!({"output_index": index, "item_id": message.id,
-                    "content_index": content_index, "part": content}),
                 );
             }
             self.push(
-                "response.output_item.done",
-                json!({"output_index": index, "item": message}),
+                "response.output_text.done",
+                json!({"output_index": index, "item_id": message.id,
+                    "content_index": content_index, "text": content.text, "logprobs": []}),
             );
-            self.live.message_announced = false;
-            self.live.message_text.clear();
+            self.push(
+                "response.content_part.done",
+                json!({"output_index": index, "item_id": message.id,
+                    "content_index": content_index, "part": content}),
+            );
         }
-        self.output_count = count;
+        self.push(
+            "response.output_item.done",
+            json!({"output_index": index, "item": message}),
+        );
+        self.live.message_announced = false;
+        self.live.message_text.clear();
     }
 }
 

@@ -125,6 +125,7 @@ async fn close_retry_unknown_commit_uses_complete_receipt_proof_without_reappend
     );
     let mutation = retry(&f.agent);
     let receipt = PublicationReceipt {
+        segmented: None,
         agent: mutation.agent,
         worktree: None,
         event: None,

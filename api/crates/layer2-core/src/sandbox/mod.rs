@@ -7,6 +7,7 @@ mod agent;
 pub mod agent_artifacts;
 pub mod agent_attachments;
 pub mod agent_browser_control;
+pub mod agent_capacity_recovery;
 mod agent_context;
 pub mod agent_environment;
 pub mod agent_filesystem;
@@ -14,6 +15,7 @@ pub mod agent_io;
 pub mod agent_live_skills;
 mod agent_managed_context;
 mod agent_operation;
+pub mod agent_output_index;
 mod agent_preferences;
 mod agent_settings;
 pub mod desktop_creation;
@@ -33,8 +35,17 @@ mod agent_operation_settlement;
 mod agent_read_types;
 mod agent_reads;
 pub use admission_checkpoint::AgentLogCheckpoint;
+mod agent_log_projection;
 mod agent_reads_fold;
+mod agent_reads_transcript;
 mod agent_reads_usage;
+pub use agent_log_projection::{
+    AgentLogAnswerEvidence, AgentLogAnswerLookup, AgentLogEvidenceChange, AgentLogProjectionState,
+    AgentLogQueuedReference, AgentLogTurnFacts, AgentLogTurnLookup, BoundedAgentLogFold,
+};
+pub use agent_reads_transcript::{
+    AgentTranscriptFold, AgentTranscriptPage, AgentTranscriptPageRequest,
+};
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
@@ -215,9 +226,10 @@ pub use agent_read_types::{
 };
 pub use agent_reads::{
     AgentConfigurationRead, AgentDetailReading, AgentEventStreamAuthorization,
-    AgentEventStreamHeader, AgentEventStreamSnapshot, AgentHistoryReading, AgentReadService,
-    AgentReplayEntry, AgentReplayWindow, AgentResponseBinding, AgentSourceReadError,
-    AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
+    AgentEventStreamHeader, AgentEventStreamSnapshot, AgentHistoryReading, AgentOutputObservation,
+    AgentReadService, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
+    AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail,
+    SharedAgentOrigin,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,
