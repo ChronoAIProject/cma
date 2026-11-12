@@ -188,6 +188,19 @@ pub(in crate::store) fn snapshot_all() -> [u64; 4] {
     total
 }
 #[cfg(test)]
+pub(crate) fn record_all_execution_callers_for_test() {
+    let counters = Arc::new(Counters::default());
+    for caller in CALLERS {
+        for complete in [false, true] {
+            let mut scan = Scan::with_counters(Arc::clone(&counters), caller);
+            scan.document(1);
+            if complete {
+                scan.complete();
+            }
+        }
+    }
+}
+#[cfg(test)]
 #[path = "agent_log_telemetry_tests.rs"]
 mod tests;
 
