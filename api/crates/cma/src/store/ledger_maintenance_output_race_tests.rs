@@ -33,7 +33,7 @@ async fn apply_output(
             .await?;
         }
         Write::Checkpoint => {
-            apply(store, current, None, next, None, None, session).await?;
+            apply(store, current, None, next, None, &Authority::Live, session).await?;
         }
     }
     Ok(())
