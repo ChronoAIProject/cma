@@ -353,3 +353,43 @@ async fn typed_links_persist_redeem_and_revoke_without_migrating_legacy_shares()
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn organization_share_bypasses_personal_recipient_fence_but_user_link_does_not() {
+    use layer2_core::account_deletion::AccountDeletionStore;
+    let (client, name) = database("organization_recipient_fence").await;
+    let (store, target) = fixture(&client, &name).await;
+    let db = client.database(&name);
+    let deletions = crate::store::account_deletions::MongoAccountDeletionStore::open(&db)
+        .await
+        .unwrap();
+    deletions
+        .request(&SubjectId::new("org"), "delete-personal-org", NOW)
+        .await
+        .unwrap();
+    let snapshot = store.resource_access_snapshot(&target).await.unwrap();
+    let organization = store
+        .mutate_share(mutation(&snapshot, "org-allowed", ShareMode::View))
+        .await
+        .unwrap();
+    assert_eq!(organization.share.target_org_id, SubjectId::new("org"));
+    let current = store.resource_access_snapshot(&target).await.unwrap();
+    let mut users = mutation(&current, "user-denied", ShareMode::View);
+    users.change = ShareChange::CreateLink {
+        audience: AgentShareAudience::Users {
+            subjects: vec![SubjectId::new("org")],
+        },
+        mode: ShareMode::View,
+        token_sha256: "a".repeat(64),
+    };
+    assert_eq!(
+        store.mutate_share(users).await,
+        Err(ResourceAccessStoreError::ShareRecipientUnavailable)
+    );
+    assert_eq!(
+        store.resource_access_snapshot(&target).await.unwrap(),
+        current
+    );
+    db.drop().await.unwrap();
+}
