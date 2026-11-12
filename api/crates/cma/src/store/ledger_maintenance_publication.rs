@@ -23,6 +23,17 @@ pub(super) async fn fence(
     current: &Agent,
     session: &mut ClientSession,
 ) -> Result<(), Error> {
+    fence_as(store, current, LedgerWriterClass::AgentWorker, session).await
+}
+
+/// Reuse actual-child custody for recorder and checkpoint writers. The caller
+/// must load/validate `current` in this same transaction before invoking this.
+pub(super) async fn fence_as(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    class: LedgerWriterClass,
+    session: &mut ClientSession,
+) -> Result<(), Error> {
     let row = store
         .sandboxes
         .find_one(doc! {"_id": current.sandbox_id.as_str()})
@@ -34,28 +45,24 @@ pub(super) async fn fence(
     if parent.id != current.sandbox_id || parent.owner != current.owner {
         return Err(SandboxStoreError::Conflict.into());
     }
-    super::ledger_maintenance_writer::fence_writer(
-        store,
-        &parent.id,
-        LedgerWriterClass::AgentWorker,
-        None,
-        session,
-    )
-    .await
-    .map_err(|error| match error {
-        ApplyError::Driver(error) => Error::Driver(error),
-        ApplyError::Domain(error) => Error::Domain(match error {
-            LedgerMaintenanceStoreError::WriterRefused(_)
-            | LedgerMaintenanceStoreError::Refused(LedgerMaintenanceAdmissionRefusal::Conflict) => {
-                SandboxStoreError::Conflict
-            }
-            LedgerMaintenanceStoreError::Refused(LedgerMaintenanceAdmissionRefusal::NotFound) => {
-                SandboxStoreError::NotFound
-            }
-            LedgerMaintenanceStoreError::Corrupt => {
-                SandboxStoreError::Corrupt("ledger maintenance authority is inconsistent".into())
-            }
-            _ => SandboxStoreError::Unavailable("ledger maintenance authority unavailable".into()),
-        }),
-    })
+    super::ledger_maintenance_writer::fence_writer(store, &parent.id, class, None, session)
+        .await
+        .map_err(|error| match error {
+            ApplyError::Driver(error) => Error::Driver(error),
+            ApplyError::Domain(error) => Error::Domain(match error {
+                LedgerMaintenanceStoreError::WriterRefused(_)
+                | LedgerMaintenanceStoreError::Refused(
+                    LedgerMaintenanceAdmissionRefusal::Conflict,
+                ) => SandboxStoreError::Conflict,
+                LedgerMaintenanceStoreError::Refused(
+                    LedgerMaintenanceAdmissionRefusal::NotFound,
+                ) => SandboxStoreError::NotFound,
+                LedgerMaintenanceStoreError::Corrupt => SandboxStoreError::Corrupt(
+                    "ledger maintenance authority is inconsistent".into(),
+                ),
+                _ => SandboxStoreError::Unavailable(
+                    "ledger maintenance authority unavailable".into(),
+                ),
+            }),
+        })
 }
