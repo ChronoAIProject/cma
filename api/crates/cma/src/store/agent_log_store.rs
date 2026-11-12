@@ -125,7 +125,7 @@ pub(in crate::store) async fn visit_page(
             id,
             head.last_seq,
             &mut session,
-            true,
+            crate::store::agent_log_integrity::ScanOptions::new(true, store.scan_cooperation),
             |entry| {
                 head.validate_lineage(&entry)?;
                 if entry.seq > start && entry.seq <= end {

@@ -201,9 +201,9 @@ async fn unrelated_attempts_do_not_share_progress() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn timer_records_late_wakeup_and_stops_when_monitor_guard_is_dropped() {
+async fn shared_timer_records_late_wakeup_and_stops_when_aborted() {
     let capture = Capture::new();
-    let timer = Timer::start(Some(&capture.recorder));
+    let timer = tokio::spawn(timer::run(Some(capture.recorder.clone()), |_, _| {}));
     tokio::task::yield_now().await;
     tokio::time::advance(Duration::from_millis(1500)).await;
     tokio::task::yield_now().await;
@@ -214,7 +214,8 @@ async fn timer_records_late_wakeup_and_stops_when_monitor_guard_is_dropped() {
             ..
         }
     )));
-    drop(timer);
+    timer.abort();
+    assert!(timer.await.unwrap_err().is_cancelled());
     tokio::time::advance(Duration::from_secs(5)).await;
     tokio::task::yield_now().await;
     assert!(capture.records().is_empty());
