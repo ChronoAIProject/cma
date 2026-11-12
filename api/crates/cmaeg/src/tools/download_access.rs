@@ -92,7 +92,11 @@ impl ToolsState {
                 "media_link_used",
             ));
         }
-        let channel = match self.resolver.resolve(link.event.channel_id.as_str()).await {
+        let channel = match self
+            .resolver
+            .resolve_current(link.event.channel_id.as_str())
+            .await
+        {
             Ok(channel) => channel,
             // A deleted or unreadable channel no longer authorizes anything.
             Err(ResolveError::NotFound | ResolveError::Tampered | ResolveError::Invalid) => {

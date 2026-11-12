@@ -2313,7 +2313,8 @@ its short lifetime. Single use is therefore exact per replica and best effort
 across replicas.
 
 **Re-validation.** Every request checks, in this order, that the link is
-authentic and unexpired; that the channel still exists with the same record;
+authentic and unexpired; that a fresh authority read establishes that the channel
+still exists with the same record;
 that its binding, provider and agent key are the ones the link was minted for
 (rotating the agent key revokes every outstanding link); that the binding may
 still download (it is autonomous, and its provider is still in
