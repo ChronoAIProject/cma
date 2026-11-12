@@ -106,8 +106,12 @@ async fn startup_keeps_the_same_owner_until_activation_or_final_teardown() {
         assert!(held < CAPACITY);
         let owner_address = {
             let state = opened.bridge.output.as_ref().unwrap().lock().await;
-            &**state.queued.front().unwrap().observation.as_ref().unwrap()
-                as *const ConversationUpdate as usize
+            let held = match &state.queued {
+                memory::OutputQueue::Legacy(queue) => queue.front(),
+                memory::OutputQueue::Bounded(queue) => queue.front(),
+            }
+            .unwrap();
+            &**held.observation.as_ref().unwrap() as *const ConversationUpdate as usize
         };
         if activate {
             opened
