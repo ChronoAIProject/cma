@@ -69,8 +69,16 @@ export const AttachmentImageSchema = object({
 });
 export type AttachmentImage = Output<typeof AttachmentImageSchema>;
 
-// A ready download: only `curl` carries the single-use link.
+// The structured header credential for clients that cannot execute shell text.
+export const MediaAuthorizationSchema = object({
+  scheme: text,
+  token: text,
+});
+export type MediaAuthorization = Output<typeof MediaAuthorizationSchema>;
+
+// A ready download: `authorization` and `curl` carry the same single-use link.
 export const MediaDownloadSchema = object({
+  authorization: MediaAuthorizationSchema,
   curl: text,
   expires_at: integer,
   method: text,

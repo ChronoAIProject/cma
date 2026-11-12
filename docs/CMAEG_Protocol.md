@@ -2080,7 +2080,7 @@ context is unchanged. Both `readEventContext` and `verifyEventContext` report it
 
 | `inbound_media` field | True or value when |
 | --- | --- |
-| `read_tool` | The binding installs `readEventAttachment`: a profile binding of a provider named in `CMAEG_MEDIA_TOOL_PROVIDERS`. Existing-agent bindings and other providers report `false`. |
+| `read_tool` | The binding installs `readEventAttachment`: a profile binding of a provider named in `CMAEG_MEDIA_TOOL_PROVIDERS` (the CMAEG deployment enables `cma_codex` and `nyxbot`). Existing-agent bindings and other providers report `false`. |
 | `transcripts` | A transcriber is configured, so audio and video can be transcribed. |
 | `visuals` | `keyframes` while the operator's media transformer is configured, for every source (see [Event attachments](#event-attachments)); otherwise `platform_thumbnail` for natively received Telegram activities, whose videos can carry the platform's preview image; otherwise `none`. |
 | `downloads` | The binding may save originals with `readEventAttachment` view `download`: `read_tool` is true and the profile's `action_mode` is `autonomous` (see [Media downloads](#media-downloads)). Guarded and other bindings report `false`. |
@@ -2171,7 +2171,7 @@ The response is an `AttachmentView`:
 | `text?` | `{source,content,page,pages,truncated}`: one page of at most 16 KiB of a `transcript` or `document`. `page` is 1-based; `truncated` means the transcript or document text was itself cut at its cap (document text is read up to 1 MiB). |
 | `images[]` | Metadata of each delivered image, in order: `{origin,mime_type,width,height,bytes,at_ms?}`. `origin` is `normalized` (the attachment itself, re-encoded within 2048 px and 1 MiB), `platform_thumbnail` or `keyframe`, decided per image; `at_ms` is a keyframe's position in the video. |
 | `notice?` | Human-readable guidance; several notices are joined with `; `. |
-| `download?` | With view `download` and status `ready`: `{method,url,expires_at,curl}`, a single-use link to the original as one ready `curl` command. |
+| `download?` | With view `download` and status `ready`: `{method,url,expires_at,authorization,curl}`. `authorization` is `{scheme:"Bearer",token}` for clients that cannot execute shell text; it is scoped to this event attachment, expires shortly, and is accepted once. `curl` carries the same credential for compatibility. |
 
 A page past the last returns `unavailable` with `not_found`, and `text.pages`
 still says how many pages exist. The reasons are:
@@ -2243,10 +2243,10 @@ attachment bytes and text are not stored by CMA.
 An autonomous agent can save an attachment's original, such as a PDF, an
 archive, a large video or a full-resolution image, into its own workspace and
 open it with its own tools. It calls `readEventAttachment` with view
-`download` and runs the returned `curl` command once; that command fetches
-`GET /v1/media/content` with a single-use media link. The operation is not an
-agent tool: it never accepts the agent key, and the SDKs have no method for
-it, because the link is meant for `curl` in an agent's sandbox. The route is
+`download` and either runs the returned `curl` command once or sends the
+structured `authorization` object to its own HTTP client; both use the same
+single-use media link. The operation is not an agent tool: it never accepts the
+agent key. The route is
 always mounted; while `CMAEG_MEDIA_ENABLED` is `false` it answers
 `503 media_unavailable` with detail `media_disabled`.
 
@@ -2269,15 +2269,27 @@ event's reply token. A link that would not fit the 4096-character token
 limit, such as one for an event with a very large partition key, is never
 truncated: the view is `unavailable` with `link_unavailable`.
 
+The deployment includes `nyxbot` alongside `cma_codex` in the provider setting.
+NyxBot's autonomous profile bindings can download native Discord and WhatsApp
+originals through this same authority path; `existing_agent` bindings do not gain
+download permission.
+
 A minted view is `ready`, with the notice `the command works once and expires
 at expires_at; run it in your workspace` and `download`:
 
 | Field | Meaning |
 | --- | --- |
 | `method` | Always `GET`. |
-| `url` | `<CMAEG_PUBLIC_URL>/v1/media/content`; it never carries the link. |
+| `url` | The advertised public API base followed by `/v1/media/content`; it never carries the link. |
 | `expires_at` | Unix seconds after which the link is refused. |
-| `curl` | `curl -fsSL -H 'Authorization: Bearer <link>' -o '<name>' '<url>'`, the only place the link appears; `<name>` is the safe file name described below. |
+| `authorization` | `{scheme:"Bearer",token:"<link>"}` for clients that cannot execute shell text. The token is scoped to this event attachment and is accepted once. |
+| `curl` | `curl -fsSL -H 'Authorization: Bearer <link>' -o '<name>' '<url>'`, a compatibility command carrying the same link; `<name>` is the safe file name described below. |
+
+With `CMAEG_ADVERTISE_PUBLIC_API_URL=true`, the base is `CMAEG_PUBLIC_API_URL`;
+otherwise it is `CMAEG_PUBLIC_URL`. The checked-in deployment advertises
+`https://cma.nyxid.ai/event-gateway/v1/media/content`. Clients pin the base from
+operator configuration and compare it with the returned URL before sending the
+capability. This configuration is not evidence that a particular image is live.
 
 The REST twin returns the same view. When the media response budget defers an
 MCP result, the deferred `pending` view carries no `download`, so a link never
@@ -2308,8 +2320,9 @@ still download (it is autonomous, and its provider is still in
 `CMAEG_MEDIA_TOOL_PROVIDERS`); that the provider's persisted activity still
 verifies against the sealed activity digest; that the attachment exists; and
 that its source is still configured: the relay source of the platform still
-routes the activity's route, the native Telegram bot is still configured with
-its token, or a custom URL's origin is still in the source's allowlist. Relay
+routes the activity's route, the native Telegram/Discord bot or WhatsApp
+app/account/phone is still configured with its credentials, or a custom URL's
+origin is still in the source's allowlist. Relay
 originals are fetched with the channel key, never the event's reply token,
 which a link does not carry.
 
@@ -2781,7 +2794,7 @@ week 41: 1,204 orders
 and its provider is listed in the operator's `CMAEG_MEDIA_TOOL_PROVIDERS`
 (default `cma_codex`). Neither the conformance level nor the binding request
 proves that a provider installed the gateway MCP server, so the set is
-configured. Existing-agent bindings and other providers, such as `nyxbot`, are
+configured. Existing-agent bindings and providers omitted from that setting are
 never tool-bearing. Downloads additionally require the profile's `action_mode`
 to be `autonomous`. The first matching rule wins:
 

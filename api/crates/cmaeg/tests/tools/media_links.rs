@@ -1,17 +1,20 @@
 //! Minting media links through `readEventAttachment` view `download`: only
 //! for autonomous tool-bearing bindings, within quotas, delivered exactly
-//! once inside a ready `curl` command, and never logged, prompted or echoed
-//! by event context.
+//! once through both structured and shell-compatible credentials, and never
+//! logged, prompted or echoed by event context.
 use super::{
-    download_support::{autonomous, autonomous_custom, download, relay},
-    media::support::{assert_absent, capture_logs, TRACE_ENV},
+    download_support::{autonomous, autonomous_custom, download, redefine, relay},
+    media::{
+        fakes::attachment,
+        support::{assert_absent, capture_logs, TRACE_ENV},
+    },
     media_support::{relayed, MediaSetup, PARTITION_MARKER},
     relay_support::now,
     support::App,
 };
 use cmaeg::turns::{render_input::render, render_media::RenderMedia};
 use cmaeg_core::{
-    activity::AttachmentKind,
+    activity::{Attachment, AttachmentKind, AttachmentSource},
     seal::{media_link, MediaLinkRef},
 };
 use serde_json::{json, Value};
@@ -38,6 +41,90 @@ fn nyxbot_autonomous(value: &mut Value) {
     autonomous(value);
     value["provider"]["slug"] = "nyxbot".into();
     value["profile"]["metadata"]["provider"] = "nyxbot".into();
+}
+
+fn nyxbot_discord_autonomous(value: &mut Value) {
+    nyxbot_autonomous(value);
+    value["sources"].as_array_mut().unwrap().push(json!({
+        "type": "discord",
+        "bot_id": "77",
+        "intents": 37377,
+        "admission": {"type": "all"}
+    }));
+    value["secrets"]["discord_bot_token"] = "fixture-discord-token".into();
+}
+
+fn nyxbot_whatsapp_autonomous(value: &mut Value) {
+    nyxbot_autonomous(value);
+    value["sources"].as_array_mut().unwrap().push(json!({
+        "type": "whatsapp",
+        "app_id": "12345",
+        "waba_id": "23456",
+        "phone_number_id": "34567",
+        "group_ids": ["group-1"],
+        "admission": {"type": "all"}
+    }));
+    value["secrets"]["whatsapp"] = json!({
+        "app_secret": "fixture-app-secret-12345",
+        "access_token": "fixture-access-token-12345",
+        "verify_token": "fixture-verify-token-12345"
+    });
+}
+
+fn native_discord(unique: &str, kind: AttachmentKind) -> Attachment {
+    let mut item = attachment(
+        kind,
+        Some(AttachmentSource::Discord {
+            channel_id: "99".into(),
+            message_id: "700".into(),
+            attachment_id: unique.into(),
+        }),
+    );
+    item.reference = format!("discord:{unique}");
+    item
+}
+
+fn native_whatsapp(unique: &str, kind: AttachmentKind, group: bool) -> Attachment {
+    let mut item = attachment(
+        kind,
+        Some(AttachmentSource::Whatsapp {
+            message_id: "wamid.original".into(),
+            media_id: unique.into(),
+            sha256: "ab".repeat(32),
+        }),
+    );
+    item.reference = if group {
+        format!("whatsapp:group:{unique}")
+    } else {
+        format!("whatsapp:{unique}")
+    };
+    item
+}
+
+fn native_discord_app() -> MediaSetup {
+    let attachment = native_discord("800", AttachmentKind::Image);
+    let source = attachment.source.clone().unwrap();
+    let setup = MediaSetup::new(vec![attachment])
+        .native_discord()
+        .edit(nyxbot_discord_autonomous)
+        .tool_providers(vec!["nyxbot"]);
+    setup.fakes.source.serve(&source, Ok(photo()));
+    setup
+}
+
+fn native_whatsapp_app(group: bool) -> MediaSetup {
+    let attachment = native_whatsapp("45678", AttachmentKind::Image, group);
+    let source = attachment.source.clone().unwrap();
+    let setup = MediaSetup::new(vec![attachment])
+        .edit(nyxbot_whatsapp_autonomous)
+        .tool_providers(vec!["nyxbot"]);
+    let setup = if group {
+        setup.native_whatsapp_group()
+    } else {
+        setup.native_whatsapp()
+    };
+    setup.fakes.source.serve(&source, Ok(photo()));
+    setup
 }
 
 /// `tools/call readEventAttachment {view:"download"}`: the serialized
@@ -91,6 +178,8 @@ async fn mint_then_download_end_to_end() {
     let ready = &view["download"];
     assert_eq!(ready["method"], "GET");
     assert_eq!(ready["url"], "https://gateway.example/v1/media/content");
+    assert_eq!(ready["authorization"]["scheme"], "Bearer");
+    assert_eq!(ready["authorization"]["token"], link);
     assert_eq!(
         ready["curl"],
         format!("curl -fsSL -H 'Authorization: Bearer {link}' -o 'attachment.bin' 'https://gateway.example/v1/media/content'")
@@ -109,12 +198,12 @@ async fn mint_then_download_end_to_end() {
 }
 
 #[tokio::test]
-async fn token_appears_exactly_once_in_tool_result() {
+async fn structured_and_shell_credentials_share_one_capability() {
     let app = App::with_media(photo_app(autonomous)).await;
     let (body, view) = mint(&app, 0).await;
     let link = token(&view);
-    assert_eq!(body.matches(&link).count(), 1);
-    assert_eq!(body.matches("cmaeg1.md.").count(), 1);
+    assert_eq!(body.matches(&link).count(), 2);
+    assert_eq!(body.matches("cmaeg1.md.").count(), 2);
     assert!(!view["download"]["url"].as_str().unwrap().contains(&link));
 }
 
@@ -128,10 +217,69 @@ async fn guarded_binding_gets_download_not_permitted() {
 }
 
 #[tokio::test]
-async fn nyxbot_binding_gets_download_not_permitted() {
-    let app = App::with_media(photo_app(nyxbot_autonomous)).await;
+async fn nyxbot_binding_gets_structured_download() {
+    let app = App::with_media(photo_app(nyxbot_autonomous).tool_providers(vec!["nyxbot"])).await;
     let rest = mint_rest(&app, "0").await;
-    not_permitted(&rest.to_string(), &rest);
+    assert_eq!(rest["status"], "ready", "{rest}");
+    assert_eq!(rest["download"]["authorization"]["scheme"], "Bearer");
+    assert_eq!(rest["download"]["authorization"]["token"], token(&rest));
+}
+
+#[tokio::test]
+async fn nyxbot_native_discord_and_whatsapp_bindings_get_structured_downloads() {
+    for setup in [native_discord_app(), native_whatsapp_app(false)] {
+        let app = App::with_media(setup).await;
+        let rest = mint_rest(&app, "0").await;
+        assert_eq!(rest["status"], "ready", "{rest}");
+        assert_eq!(rest["download"]["authorization"]["scheme"], "Bearer");
+        assert_eq!(rest["download"]["authorization"]["token"], token(&rest));
+        let link = rest["download"]["authorization"]["token"].as_str().unwrap();
+        assert_eq!(download(&app, link).await.bytes().await.unwrap(), photo());
+        assert_eq!(download(&app, link).await.status(), 410);
+    }
+}
+
+#[tokio::test]
+async fn nyxbot_native_whatsapp_group_binding_gets_structured_download() {
+    let app = App::with_media(native_whatsapp_app(true)).await;
+    let rest = mint_rest(&app, "0").await;
+    assert_eq!(rest["status"], "ready", "{rest}");
+    assert_eq!(rest["download"]["authorization"]["scheme"], "Bearer");
+    assert_eq!(rest["download"]["authorization"]["token"], token(&rest));
+    let link = rest["download"]["authorization"]["token"].as_str().unwrap();
+    assert_eq!(download(&app, link).await.bytes().await.unwrap(), photo());
+    assert_eq!(download(&app, link).await.status(), 410);
+}
+
+#[tokio::test]
+async fn native_nyxbot_download_refuses_removed_source_before_fetching() {
+    for setup in [
+        native_discord_app(),
+        native_whatsapp_app(false),
+        native_whatsapp_app(true),
+    ] {
+        let source = setup.fakes.source.clone();
+        let app = App::with_media(setup).await;
+        let rest = mint_rest(&app, "0").await;
+        let link = rest["download"]["authorization"]["token"].as_str().unwrap();
+        redefine(&app, |definition| {
+            definition.sources.retain(|source| {
+                !matches!(
+                    source,
+                    cmaeg_core::channel::Source::Discord { .. }
+                        | cmaeg_core::channel::Source::Whatsapp { .. }
+                )
+            });
+        })
+        .await;
+        let response = download(&app, link).await;
+        assert_eq!(response.status(), 403);
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["detail"],
+            "media_link_revoked"
+        );
+        assert_eq!(source.calls(), 0);
+    }
 }
 
 #[tokio::test]
@@ -289,12 +437,13 @@ async fn no_capability_in_logs_prompts_or_context() {
 
 #[tokio::test]
 async fn context_reports_downloads_for_autonomous_only() {
-    for (edit, expected) in [
-        (autonomous as fn(&mut Value), true),
-        ((|_| {}) as fn(&mut Value), false),
-        (nyxbot_autonomous as fn(&mut Value), false),
+    for (edit, providers, expected) in [
+        (autonomous as fn(&mut Value), vec!["cma_codex"], true),
+        ((|_| {}) as fn(&mut Value), vec!["cma_codex"], false),
+        (nyxbot_autonomous as fn(&mut Value), vec!["nyxbot"], true),
     ] {
-        let app = App::with_media(photo_app(edit)).await;
+        let setup = photo_app(edit).tool_providers(providers);
+        let app = App::with_media(setup).await;
         let context: Value = app
             .fixture
             .client
