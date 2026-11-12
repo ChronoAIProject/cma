@@ -285,8 +285,9 @@ async fn runtime_subscriptions_refuse_erasing_owner_before_token_custody() {
             None,
         )
         .await;
-    assert!(
-        matches!(result,Err(layer3_adapter::AdapterError::Rejected(detail)) if detail=="account_deletion_in_progress")
-    );
+    assert!(matches!(
+        result,
+        Err(layer3_adapter::AdapterError::AccessRevoked)
+    ));
     db.drop().await.unwrap();
 }

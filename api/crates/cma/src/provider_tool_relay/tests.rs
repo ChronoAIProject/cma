@@ -210,9 +210,7 @@ async fn relay_account_deletion_is_a_typed_forbidden_problem() {
             _: &str,
             _: bool,
         ) -> layer3_adapter::Result<(url::Url, SecretValue)> {
-            Err(layer3_adapter::AdapterError::Rejected(
-                "account_deletion_in_progress".into(),
-            ))
+            Err(layer3_adapter::AdapterError::AccessRevoked.context("current relay authority"))
         }
     }
     let response = routes(Arc::new(Erasing))

@@ -356,6 +356,9 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     let external = matches!(&error, AdapterError::Unavailable(detail)
         if crate::sandbox::work_retry::replaced_runtime(detail));
     match error {
+        AdapterError::AccessRevoked => {
+            WorkerFailure::terminal_security("current runtime authority was revoked")
+        }
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
         | AdapterError::Unavailable(_) => WorkerFailure::retryable(

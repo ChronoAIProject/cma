@@ -68,9 +68,7 @@ impl HostedSubscriptionSource for RuntimeSubscriptions {
                 .await
                 .map_err(|_| unavailable())?
             {
-                return Err(AdapterError::Rejected(
-                    "account_deletion_in_progress".into(),
-                ));
+                return Err(AdapterError::AccessRevoked);
             }
             if sandbox.profile.content.model_access != ModelAccess::OwnCredentials
                 || matches!(

@@ -3,6 +3,10 @@ use super::*;
 
 pub(in crate::sandbox::agent_worker) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     match error {
+        AdapterError::AccessRevoked => WorkerFailure::terminal(
+            "agent_access_revoked",
+            "current runtime authority was revoked",
+        ),
         AdapterError::InputAuthorityUnavailable(detail)
         | AdapterError::PromptNotWritten(detail)
         | AdapterError::Unavailable(detail) => {
