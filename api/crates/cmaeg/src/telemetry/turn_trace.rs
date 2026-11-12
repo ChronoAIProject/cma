@@ -229,12 +229,15 @@ pub(crate) fn start() {
         .name("cmaeg-nyxid-trace".into())
         .spawn(move || {
             let stdout = io::stdout();
-            let mut output = io::BufWriter::new(stdout.lock());
             while let Ok(record) = receiver.recv() {
-                if let Ok(bytes) = serde_json::to_vec(&record) {
+                if let Ok(mut bytes) = serde_json::to_vec(&record) {
                     if bytes.len() <= 2048 {
+                        bytes.push(b'\n');
+                        // Ordinary service logs share stdout. Own its lock only
+                        // while emitting one complete line, never while waiting
+                        // for the next trace record.
+                        let mut output = stdout.lock();
                         let _ = output.write_all(&bytes);
-                        let _ = output.write_all(b"\n");
                         let _ = output.flush();
                     }
                 }
@@ -342,6 +345,77 @@ pub(crate) fn child_traceparent(value: &TurnTraceContext) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_trace_writer_releases_stdout_for_service_logs() {
+        use std::io::BufRead;
+        use std::process::{Command, Stdio};
+        use std::time::Duration;
+
+        const PROBE: &str = "CMAEG_TRACE_STDOUT_PROBE";
+        const MARKER: &str = "ordinary service log after trace";
+        if std::env::var_os(PROBE).is_some() {
+            start();
+            ingress_gap(GapReason::MissingParent);
+            let mut acknowledgement = String::new();
+            io::stdin().read_line(&mut acknowledgement).unwrap();
+            writeln!(io::stdout(), "{MARKER}").unwrap();
+            return;
+        }
+
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "telemetry::turn_trace::tests::idle_trace_writer_releases_stdout_for_service_logs",
+                "--nocapture",
+            ])
+            .env(PROBE, "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (send, receive) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            for line in io::BufReader::new(stdout).lines() {
+                if send.send(line.unwrap()).is_err() {
+                    break;
+                }
+            }
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut saw_trace = false;
+        let mut saw_service_log = false;
+        while let Ok(line) =
+            receive.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+        {
+            if !saw_trace && line.contains("\"target\":\"nyxid::turn_trace\"") {
+                saw_trace = true;
+                child
+                    .stdin
+                    .take()
+                    .unwrap()
+                    .write_all(b"continue\n")
+                    .unwrap();
+            }
+            if line.contains(MARKER) {
+                saw_service_log = true;
+                break;
+            }
+        }
+        if !saw_service_log {
+            let _ = child.kill();
+        }
+        let status = child.wait().unwrap();
+        reader.join().unwrap();
+        assert!(saw_trace, "background writer must emit its trace record");
+        assert!(
+            saw_service_log,
+            "idle trace writer must release stdout for service logs"
+        );
+        assert!(status.success());
+    }
 
     #[test]
     fn traceparent_is_strict_and_never_echoes_invalid_input() {
