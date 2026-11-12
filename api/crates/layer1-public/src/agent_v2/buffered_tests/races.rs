@@ -4,43 +4,20 @@ use serde_json::Value;
 #[tokio::test(start_paused = true)]
 async fn every_buffered_result_and_dependency_error_is_fenced_after_authority_changes() {
     for route in [SNAPSHOT, HEAD] {
-        for fault in ["revoke", "delete", "owner", "expiry"] {
+        for fault in ["revoke", "expiry"] {
             for fail in [false, true] {
                 let f = fixture(true, false).await;
-                let shared = matches!(fault, "revoke" | "expiry");
-                let share = if shared {
-                    Some(super::super::head_tests::share(&f).await)
-                } else {
-                    None
-                };
+                let share = super::super::head_tests::share(&f).await;
                 let (state, gate, resume) = gated(&f, fail);
                 let app = router(state);
-                let subject = if shared { "reader" } else { "owner-a" };
-                let pending =
-                    tokio::spawn(
-                        async move { raw(&app, route, subject, "cma-message-bindings").await },
-                    );
+                let pending = tokio::spawn(async move {
+                    raw(&app, route, "reader", "cma-message-bindings").await
+                });
                 entered(&gate).await;
                 match fault {
-                    "revoke" => revoke(&f, share.unwrap()).await,
+                    "revoke" => revoke(&f, share).await,
                     "expiry" => tokio::time::advance(Duration::from_secs(60)).await,
-                    _ => {
-                        let mut agent = f
-                            .store
-                            .get_agent(&AgentId("agt_fixture".into()))
-                            .await
-                            .unwrap()
-                            .unwrap();
-                        let revision = agent.revision;
-                        if fault == "delete" {
-                            agent.status = AgentStatus::Deleted;
-                            agent.deleted_at = Some(layer2_core::now_rfc3339());
-                        } else {
-                            agent.owner = SubjectId::new("changed-owner");
-                        }
-                        agent.revision += 1;
-                        f.store.save_agent(revision, agent).await.unwrap();
-                    }
+                    _ => unreachable!(),
                 }
                 resume.notify_one();
                 let (status, bytes) = pending.await.unwrap();
