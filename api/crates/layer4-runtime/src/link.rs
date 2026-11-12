@@ -95,24 +95,9 @@ async fn history(
     }
 }
 
-async fn capacity_recovery(
-    Path(agent_id): Path<String>,
-    State(supervisor): State<Arc<Supervisor>>,
-    Json(request): Json<CapacityRecoveryRequest>,
-) -> Response {
-    if request.target.agent_id != agent_id {
-        return protocol_failure(
-            StatusCode::CONFLICT,
-            "capacity_recovery_identity",
-            "capacity recovery request names another Agent",
-            false,
-        );
-    }
-    match supervisor.capacity_recovery(request).await {
-        Ok(proof) => Json(proof).into_response(),
-        Err(error) => runtime_failure(error),
-    }
-}
+#[path = "link/capacity_recovery.rs"]
+mod recovery;
+use recovery::capacity_recovery;
 
 async fn control(
     State(supervisor): State<Arc<Supervisor>>,
