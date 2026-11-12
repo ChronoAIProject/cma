@@ -43,7 +43,32 @@ selectors, local/shared pressure, partial rollback, exact retry, startup transfe
 two attachments sharing one component, cancellation, disabled behavior, foreign
 conversation rejection and final-clone release. Allocation fixtures include
 maximal 4 MiB frames and large selectors/input discarded by the legacy decoder.
-Local gate results and measured values are recorded after qualification.
+Local qualification passed 672 focused tests, workspace formatting, strict
+all-target/all-feature CMA/core/adapter clippy, source-size, configuration/docs,
+whitespace and secret-history checks. All changed Rust files are below 500 lines.
+The first gate was deliberately interrupted during dependency compilation to
+correct a test's queue accessor; no failure was hidden or assertion relaxed.
+
+Qualified source and API tree, using Rust 1.96.1 on aarch64-apple-darwin:
+
+```text
+revision c8e56915af012ee72d67f021c7ab1385a1a3c566
+tree 869e8a1eb776f859863d23bf1726800aba8a772b
+```
+
+| Fixture | Encoded bytes | Reservation | Peak / retained bytes | Final bytes |
+| --- | ---: | ---: | ---: | ---: |
+| Maximal metadata | 4,194,304 | 4,194,625 | 4,194,625 | 0 |
+| Maximal usage | 4,194,304 | 4,194,591 | 4,194,591 | 0 |
+
+Large ignored source/input fields produce a 2,097,163-byte legacy transient peak;
+the enabled selection uses only the 560-byte effect/reservation envelope. Both
+return to zero tracked bytes. Local/shared refusal of a selected 1 MiB field
+stays below 1 KiB and restores the reservation pools. Tests initialize pool
+bookkeeping before selected-effect measurement; process infrastructure remains
+a separate owner. Clones allocate no additional effect storage, and final drops
+restore both component and shared capacity. These values measure requested
+allocations rather than process RSS.
 
 The coordinated component maxima now total 117 MiB: raw 16 MiB, permission 8 MiB,
 live fragments 32 MiB, parsed trees 32 MiB, JSON scratch 13 MiB, sign-in 8 MiB and
