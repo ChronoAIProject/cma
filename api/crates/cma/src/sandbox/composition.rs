@@ -221,7 +221,10 @@ impl SandboxLifecycleComposition {
     ) {
         shutdown.push(self.warmup.spawn(shutdown.subscribe()));
         let signal = shutdown.subscribe();
-        shutdown.push(self.reconciliation.spawn(signal));
+        shutdown.push(
+            self.reconciliation
+                .spawn_supervised(signal, workers.get("sandbox_reconciliation")),
+        );
         shutdown.push(
             self.agent
                 .spawn_supervised(shutdown.subscribe(), workers.get("agents")),

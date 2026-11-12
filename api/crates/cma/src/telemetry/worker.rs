@@ -1,11 +1,12 @@
 //! Local scheduler liveness and phase health. Success can include an idle scan.
-const WORKERS: [&str; 7] = [
+const WORKERS: [&str; 8] = [
     "launches",
     "agent_commands",
     "sandbox_commands",
     "agents",
     "sandboxes",
     "workspaces",
+    "sandbox_reconciliation",
     "native_warm_pools",
 ];
 

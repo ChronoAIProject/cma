@@ -14,6 +14,7 @@ ChronoAIProject/chrono-probe#18.
 | `agents` | Schedule Agent lifecycle work and connection reconciliation | Required loop | Single discovery, up to fifty executions, one separately admitted reconciliation child; fresh durable Agent claims |
 | `sandboxes` | Drive Sandbox lifecycle sweeps | Required | Four owned sweeps; existing per-resource durable authority |
 | `workspaces` | Drive Workspace lifecycle sweeps | Required | One owned sweep; existing per-resource durable authority |
+| `sandbox_reconciliation` | Adopt runtime bindings, detect runtime loss, admit recovery and reconcile orphan resources / maintenance | Required loop | One owned resumable batch; retained cursors, binding holds, recovery schedule, durable revision/identity fences and existing background budget/deadlines |
 | `native_warm_pools` | Maintain spare native runtime capacity | Optional | One batch child, at most twenty targets; durable pool target lease/revision, planned identity and original provider UIDs |
 
 Agent connection reconciliation remains single-flight under the shared background
@@ -23,9 +24,17 @@ child failure does not mean the Agent scheduling loop exited. Pool reconciliatio
 has its own child, so a long batch no longer blocks scheduler activity or shutdown
 notification. The existing per-target provider/reconciliation contracts are retained.
 
+Runtime reconciliation is a distinct worker from Sandbox lifecycle sweeps and
+Agent connection reconciliation. Its loss removes local recovery-admission
+capability, so it participates in readiness. Its scheduling loop ticks every
+second while at most one batch follows the existing fifteen-second cadence.
+A long batch or background pacing does not block loop activity. Both the batch
+and its retained reconciliation state survive scheduling-future recovery;
+shutdown drains that child under the existing coordinator deadline.
+
 The inventory distinguishes execution scheduling from auxiliary work. Titles,
 suggestions, prewarming/prepared-capacity replenishment, backfill, observations,
-usage aggregation and background maintenance are auxiliary workers outside this
+usage aggregation and other background maintenance are auxiliary workers outside this
 supervisor. Their loss can reduce features, freshness or recovery capacity; this
 change does not assert that these workers are supervised or that all application
 features are healthy merely because `/ready` succeeds. Credential/channel service

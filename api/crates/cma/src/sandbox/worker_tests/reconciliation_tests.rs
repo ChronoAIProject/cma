@@ -510,7 +510,9 @@ async fn bound_runtime_with_conflicting_sandbox_identity_is_not_adopted_or_recla
 async fn periodic_reconciliation_exits_on_shutdown() {
     let harness = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
     let (shutdown, signal) = tokio::sync::watch::channel(false);
-    let task = reconciler(&harness, fresh_adapter(&harness, None)).spawn(signal);
+    let activity = crate::worker_supervision::Workers::new().get("sandbox_reconciliation");
+    let task =
+        reconciler(&harness, fresh_adapter(&harness, None)).spawn_supervised(signal, activity);
     shutdown.send(true).unwrap();
     task.await.unwrap();
 }
