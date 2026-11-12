@@ -10,11 +10,11 @@ use crate::{
     DeliveryConfig,
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::{sync::mpsc, time::Instant};
+use tokio::time::Instant;
 use tracing::Instrument;
 const MAX_EVENTS: usize = 8192;
 pub(super) async fn run(
-    mut commands: mpsc::Receiver<DeliveryCommand>,
+    mut commands: super::queue::Receiver<DeliveryCommand>,
     sender: Arc<Sender>,
     config: DeliveryConfig,
     tracker: Arc<TurnTracker>,
