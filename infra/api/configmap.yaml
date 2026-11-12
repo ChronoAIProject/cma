@@ -9,6 +9,9 @@ metadata:
 data:
   # Private pod scrape listener; never routed by the public Service/Gateway.
   CHRONO_METRICS_BIND: "0.0.0.0:9091"
+  CHRONO_INGRESS_COORDINATOR_ENABLED: "false"
+  # Enable only after this compatible API image serves every replica.
+  CHRONO_SILENT_SIGN_IN_ENABLED: "false"
   CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED: "false"
   CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED: "false"
   # Measured reporting is independent of allocated billing. Enable only after

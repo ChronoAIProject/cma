@@ -41,6 +41,7 @@ pub struct ProviderHostedControlTransport {
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
     native_transport: NativeRuntimeTransport,
     native_http_budget: Arc<tokio::sync::Semaphore>,
+    coordinated_ingress: bool,
     retained_json: bool,
     bounded_raw_output: bool,
     bounded_permission_state: bool,
@@ -89,11 +90,17 @@ impl ActiveLink {
 
 impl ProviderHostedControlTransport {
     fn pin_output_policy(&self, settings: &mut HostedAgentOpenSettings) {
+        settings.coordinated_ingress = self.coordinated_ingress;
         settings.retained_json = self.retained_json;
         settings.bounded_raw_output = self.bounded_raw_output;
         settings.bounded_permission_state = self.bounded_permission_state;
         settings.output_json_budget = self.output_json_budget;
         settings.shared_runtime_output = self.shared_runtime_output;
+    }
+
+    pub fn with_coordinated_ingress(mut self, enabled: bool) -> Self {
+        self.coordinated_ingress = enabled;
+        self
     }
 
     pub fn with_retained_json(mut self, enabled: bool) -> Self {

@@ -44,6 +44,7 @@ COPY --from=build /build/web/dist/assets /usr/share/nginx/current/assets
 # control plane lives.
 # Includes route-specific 20 MiB attachment uploads, 43 MiB encoded Agent file
 # writes (32 MiB decoded), and compression of immutable JavaScript/CSS assets.
+# nginx.conf pins an 8 KiB request-line buffer; public login URLs stay <=4 KiB.
 COPY web/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 8080
 # Health is asserted by the Kubernetes probes in infra/web/deployment.yaml.
