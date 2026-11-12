@@ -150,6 +150,23 @@ async fn fixture_with_events(
     reader: Option<Arc<dyn layer2_core::sandbox::store::AgentResponseLogStore>>,
     paged_events: bool,
 ) -> Fixture {
+    fixture_with_events_and_standing(
+        reader,
+        paged_events,
+        Arc::new(layer2_core::account_deletion::AvailableAccounts),
+    )
+    .await
+}
+pub(crate) async fn fixture_with_standing(
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+) -> Fixture {
+    fixture_with_events_and_standing(None, false, standing).await
+}
+async fn fixture_with_events_and_standing(
+    reader: Option<Arc<dyn layer2_core::sandbox::store::AgentResponseLogStore>>,
+    paged_events: bool,
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+) -> Fixture {
     let (state, store) = fixtures::conversation_fixture().await;
     fixtures::insert_agent(
         &store,
@@ -158,7 +175,10 @@ async fn fixture_with_events(
     )
     .await;
     let authority = Arc::new(Authority);
-    let access = Arc::new(ResourceAccessService::new(store.clone(), authority.clone()));
+    let access = Arc::new(
+        ResourceAccessService::new(store.clone(), authority.clone())
+            .with_account_standing(standing),
+    );
     let commands = AgentCommandService::new(store.clone(), access.clone(), authority);
     let reads = state
         .reads

@@ -1,6 +1,6 @@
 //! Activity stays a stream through the existing browser credential boundary.
 //! The transport's finite lifetime forces normal reauthentication on reconnect.
-use super::{credentials::Custody, AuthState};
+use super::{credentials::Custody, AuthState, PortalError};
 use axum::{
     body::Body,
     http::{header, HeaderMap, HeaderValue, StatusCode},
@@ -10,18 +10,22 @@ use std::{io, sync::Arc, time::Duration};
 
 const STREAM_BYTES: usize = 64 * 1024 * 1024;
 
+#[derive(Debug, thiserror::Error)]
+#[error("activity stream authorization changed: {0}")]
+struct StreamAuthorizationError(#[source] PortalError);
+
 pub(super) async fn response(
     upstream: reqwest::Response,
     mut headers: HeaderMap,
     auth: Arc<AuthState>,
     custody: Custody,
-) -> Result<Response, StatusCode> {
+) -> Result<Response, PortalError> {
     let content_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split(';').next());
     if content_type != Some("text/event-stream") {
-        return Err(StatusCode::BAD_GATEWAY);
+        return Err(StatusCode::BAD_GATEWAY.into());
     }
     custody.current(&auth).await?;
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -51,7 +55,7 @@ pub(super) async fn response(
             custody
                 .current(&auth)
                 .await
-                .map_err(|_| io::Error::other("activity stream authorization changed"))?;
+                .map_err(|error| io::Error::other(StreamAuthorizationError(error)))?;
             Ok(Some((chunk, (upstream, auth, custody, bytes))))
         },
     );

@@ -36,11 +36,23 @@ const LAST_EVENT_ID: &str = "last-event-id";
 #[derive(Clone)]
 pub struct LaunchCompanionState {
     pub launches: Arc<dyn LaunchStore>,
+    pub standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
 }
 
 impl LaunchCompanionState {
     pub fn new(launches: Arc<dyn LaunchStore>) -> Self {
-        Self { launches }
+        Self {
+            launches,
+            standing: Arc::new(layer2_core::account_deletion::AvailableAccounts),
+        }
+    }
+
+    pub fn with_account_standing(
+        mut self,
+        standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+    ) -> Self {
+        self.standing = standing;
+        self
     }
 }
 
@@ -68,6 +80,9 @@ async fn events(
         Ok(None) => return CompanionProblem::NotFound.into_response(),
         Err(_) => return CompanionProblem::Unavailable.into_response(),
     };
+    if let Err(problem) = require_standing(state.standing.as_ref(), &owner).await {
+        return problem.into_response();
+    }
 
     let input = match StreamInput::parse(raw_query.as_deref(), &headers) {
         Ok(input) => input,
@@ -92,9 +107,13 @@ async fn events(
     if !valid_page(&first_page, &id, input.after, input.limit) {
         return CompanionProblem::Unavailable.into_response();
     }
+    if let Err(problem) = require_standing(state.standing.as_ref(), &owner).await {
+        return problem.into_response();
+    }
 
     let replay = Replay {
         launches: state.launches,
+        standing: state.standing,
         id,
         owner,
         after: input.after,
@@ -233,6 +252,7 @@ fn valid_launch_id(value: &str) -> bool {
 
 struct Replay {
     launches: Arc<dyn LaunchStore>,
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
     id: LaunchId,
     owner: SubjectId,
     after: u64,
@@ -245,6 +265,12 @@ struct Replay {
 fn replay_stream(replay: Replay) -> impl Stream<Item = Result<Event, Infallible>> + Send + 'static {
     stream::unfold(replay, |mut replay| async move {
         loop {
+            if require_standing(replay.standing.as_ref(), &replay.owner)
+                .await
+                .is_err()
+            {
+                return None;
+            }
             if let Some(event) = replay.buffered.pop_front() {
                 replay.after = event.seq;
                 return Some((Ok(sse_event(event)), replay));
@@ -282,6 +308,17 @@ fn replay_stream(replay: Replay) -> impl Stream<Item = Result<Event, Infallible>
     })
 }
 
+async fn require_standing(
+    standing: &dyn layer2_core::account_deletion::AccountStanding,
+    owner: &SubjectId,
+) -> Result<(), CompanionProblem> {
+    match standing.erasing(owner).await {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(CompanionProblem::AccountDeletionInProgress),
+        Err(_) => Err(CompanionProblem::Unavailable),
+    }
+}
+
 fn valid_page(events: &[LaunchEvent], id: &LaunchId, after: u64, limit: u16) -> bool {
     if events.len() > usize::from(limit) {
         return false;
@@ -304,6 +341,7 @@ fn sse_event(event: LaunchEventView) -> Event {
 }
 
 enum CompanionProblem {
+    AccountDeletionInProgress,
     NotFound,
     InvalidQuery,
     CursorBeyondEnd { head: u64 },
@@ -313,6 +351,13 @@ enum CompanionProblem {
 impl IntoResponse for CompanionProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code, head) = match self {
+            Self::AccountDeletionInProgress => (
+                StatusCode::FORBIDDEN,
+                "account-deletion-in-progress",
+                "Account deletion is in progress.",
+                "account_deletion_in_progress",
+                None,
+            ),
             Self::NotFound => (
                 StatusCode::NOT_FOUND,
                 "launch-not-found",

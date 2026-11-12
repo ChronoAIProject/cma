@@ -287,3 +287,72 @@ async fn replay_refuses_ambiguous_cursors_and_invalid_queries_without_changing_w
     }
     assert_eq!(f.store.get_command(&command).await.unwrap(), before);
 }
+
+#[tokio::test]
+async fn responses_v2_buffered_frames_recheck_deleting_recipient_and_owner() {
+    use crate::rest::shared_stream_tests::ChangingStanding;
+    for deleting in ["reader", "owner-a", "unrelated", "outage"] {
+        let standing = Arc::new(ChangingStanding::default());
+        let f = fixture_with_standing(standing.clone()).await;
+        let response = create(&f, false).await;
+        let id = response.headers()["x-cma-response-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        drop(response);
+        f.access
+            .as_ref()
+            .clone()
+            .with_account_standing(Arc::new(layer2_core::account_deletion::AvailableAccounts))
+            .change_share(
+                &context("owner-a"),
+                Some("fixture-credential"),
+                ShareCommand {
+                    selector: ResourceSelector::Agent {
+                        agent_id: AgentId("agt_fixture".into()),
+                    },
+                    change: ShareChange::Create {
+                        target_org_id: SubjectId::new("org"),
+                        mode: ShareMode::View,
+                    },
+                    expected_share_revision: None,
+                    idempotency_key: "standing-share".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let response = f
+            .router
+            .clone()
+            .oneshot(request(
+                Method::GET,
+                &format!("/api/v2/responses/{id}/events"),
+                "reader",
+                None,
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body().into_data_stream();
+        assert_eq!(
+            events(&body.next().await.unwrap().unwrap())[0]["type"],
+            "response.created"
+        );
+        *standing.0.lock().unwrap() = Some(deleting);
+        let next = tokio::time::timeout(Duration::from_millis(500), body.next()).await;
+        if deleting == "unrelated" {
+            assert!(
+                next.is_err(),
+                "an unrelated deletion must leave the idle stream open"
+            );
+        } else {
+            let bytes = next
+                .expect("revoked stream must stop at the next recheck")
+                .unwrap()
+                .unwrap();
+            assert_eq!(events(&bytes)[0]["type"], "error");
+            assert!(body.next().await.is_none());
+        }
+    }
+}

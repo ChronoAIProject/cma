@@ -1,6 +1,6 @@
+use super::resource_access_tests::context;
 use super::{
     agents_tests as agents,
-    resource_access_tests::context,
     shared_agent_tests::{Authority, Reply},
 };
 use crate::{AgentConversationState, DelegatedCredential};
@@ -21,19 +21,24 @@ use layer2_core::{
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
-pub(super) struct Fixture {
-    pub state: AgentConversationState,
-    pub store: Arc<InMemorySandboxStore>,
-    pub authority: Arc<Authority>,
-    pub access: Arc<ResourceAccessService>,
-    pub share: ResourceShare,
+pub(crate) struct Fixture {
+    pub(crate) state: AgentConversationState,
+    pub(crate) store: Arc<InMemorySandboxStore>,
+    pub(super) authority: Arc<Authority>,
+    pub(super) access: Arc<ResourceAccessService>,
+    pub(super) share: ResourceShare,
 }
 
 pub(super) async fn fixture() -> Fixture {
+    fixture_with_standing(Arc::new(layer2_core::account_deletion::AvailableAccounts)).await
+}
+
+pub(crate) async fn fixture_with_standing(
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+) -> Fixture {
     let (mut state, store) = agents::conversation_fixture().await;
     let authority = Arc::new(Authority(Mutex::new(Reply::Member)));
     let access = Arc::new(ResourceAccessService::new(store.clone(), authority.clone()));
-    state.reads = state.reads.with_resource_access(access.clone());
     agents::insert_agent(
         &store,
         agents::seeded_agent("agt_shared_stream", AgentStatus::Ready, 9, None),
@@ -99,6 +104,8 @@ pub(super) async fn fixture() -> Fixture {
         .await
         .unwrap()
         .share;
+    let access = Arc::new(access.as_ref().clone().with_account_standing(standing));
+    state.reads = state.reads.with_resource_access(access.clone());
     Fixture {
         state,
         store,
@@ -266,4 +273,53 @@ async fn buffered_and_idle_streams_close_at_membership_deadline_and_reconnect_ch
             StatusCode::OK
         );
     }
+}
+
+#[derive(Default)]
+pub(crate) struct ChangingStanding(pub(crate) Mutex<Option<&'static str>>);
+#[async_trait::async_trait]
+impl layer2_core::account_deletion::AccountStanding for ChangingStanding {
+    async fn erasing(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        match *self.0.lock().unwrap() {
+            Some("outage") => Err(layer2_core::account_deletion::AccountDeletionError::Unavailable),
+            Some(deleting) => Ok(subject.as_str() == deleting),
+            None => Ok(false),
+        }
+    }
+    async fn authoritative(
+        &self,
+        _: &SubjectId,
+    ) -> Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        panic!("stream frame revalidation must use the standing snapshot")
+    }
+}
+
+#[tokio::test]
+async fn agui_buffered_frames_recheck_deleting_recipient_and_owner() {
+    for deleting in ["recipient", "owner-a", "unrelated", "outage"] {
+        let standing = Arc::new(ChangingStanding::default());
+        let f = fixture_with_standing(standing.clone()).await;
+        let router = crate::agui::router(f.state);
+        let response = router
+            .oneshot(request("recipient", "follow=false", true))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body().into_data_stream();
+        assert!(body.next().await.unwrap().is_ok());
+        *standing.0.lock().unwrap() = Some(deleting);
+        let next = body.next().await;
+        if deleting == "unrelated" {
+            assert!(next.unwrap().is_ok());
+        } else {
+            assert!(next.is_none(), "a buffered frame escaped after {deleting}");
+        }
+    }
+}
+
+pub(crate) fn stream_context(subject: &str) -> CallerContext {
+    context(subject)
 }
