@@ -91,6 +91,7 @@ mod marketplace_visibility;
 mod message_feedback;
 pub(crate) mod migrations;
 pub mod mongo;
+mod mongo_diagnostics;
 mod mongo_latency;
 pub(crate) mod mongo_read_telemetry;
 pub(crate) mod native_prepared;

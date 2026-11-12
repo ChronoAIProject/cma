@@ -45,7 +45,10 @@ async fn timings_are_opt_in_allowlisted_and_preserve_errors_and_cancellation() {
         assert_eq!(
             service
                 .detail_phase(phase)
-                .result(async { Ok::<_, &str>(42) })
+                .result(async {
+                    assert_eq!(DiagnosticContext::current().phase, phase.label());
+                    Ok::<_, &str>(42)
+                })
                 .await,
             Ok(42)
         );
@@ -73,5 +76,8 @@ async fn timings_are_opt_in_allowlisted_and_preserve_errors_and_cancellation() {
     assert_eq!(logs.matches("outcome=\"error\"").count(), 1);
     assert_eq!(logs.matches("outcome=\"cancelled\"").count(), 1);
     assert_eq!(logs.matches("elapsed_us=").count(), 7);
+    assert_eq!(logs.matches("request_hash=").count(), 7);
+    assert_eq!(logs.matches("route=").count(), 7);
+    assert_eq!(DiagnosticContext::current().phase, "unspecified");
     assert!(!logs.contains("private"));
 }

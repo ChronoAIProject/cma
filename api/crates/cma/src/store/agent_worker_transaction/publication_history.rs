@@ -34,43 +34,56 @@ pub(super) async fn read(
     } else {
         ScanCaller::WorkerPublication(current.work.step)
     };
-    if ordinary
-        && store.bounded_close_retries
-        && store.bounded_log_enabled(&current.id)
-        && eligible(current, mutation)
-    {
-        if let Some(summary) = trusted_summary(store, current, row, caller, session, false).await? {
-            return Ok(History {
-                summary,
-                entries: vec![],
-                last: None,
-            });
-        }
-    }
-    // Capacity/cleanup markers, successful effects and all other publications
-    // keep their complete audit. A missing/untrusted proof also follows it.
-    let mut entries = Vec::new();
-    let mut last = None;
-    let summary = scan_complete_log_with_session(
-        caller,
-        store,
-        &current.id,
-        current.conversation.last_seq,
-        session,
-        |entry| {
-            entries.push(entry.clone());
-            if needs_marker && entry.seq == current.conversation.last_seq {
-                last = Some(entry);
+    let work = if matches!(caller, ScanCaller::CapacitySettlement(_)) {
+        "capacity_settlement"
+    } else {
+        "worker_publication"
+    };
+    layer2_core::diagnostic_context::DiagnosticContext::current()
+        .with_worker(work)
+        .with_phase(current.work.step.operation_name())
+        .scope(async {
+            if ordinary
+                && store.bounded_close_retries
+                && store.bounded_log_enabled(&current.id)
+                && eligible(current, mutation)
+            {
+                if let Some(summary) =
+                    trusted_summary(store, current, row, caller, session, false).await?
+                {
+                    return Ok(History {
+                        summary,
+                        entries: vec![],
+                        last: None,
+                    });
+                }
             }
-            Ok(())
-        },
-    )
-    .await?;
-    Ok(History {
-        summary,
-        entries,
-        last,
-    })
+            // Capacity/cleanup markers, successful effects and all other publications
+            // keep their complete audit. A missing/untrusted proof also follows it.
+            let mut entries = Vec::new();
+            let mut last = None;
+            let summary = scan_complete_log_with_session(
+                caller,
+                store,
+                &current.id,
+                current.conversation.last_seq,
+                session,
+                |entry| {
+                    entries.push(entry.clone());
+                    if needs_marker && entry.seq == current.conversation.last_seq {
+                        last = Some(entry);
+                    }
+                    Ok(())
+                },
+            )
+            .await?;
+            Ok(History {
+                summary,
+                entries,
+                last,
+            })
+        })
+        .await
 }
 
 fn eligible(current: &Agent, mutation: &AgentWorkMutation) -> bool {
