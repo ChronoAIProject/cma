@@ -142,8 +142,14 @@ pub(super) async fn commit(
         if let Some(mutation) = &mutation {
             admission::require_current(mutation, &mut session).await?;
         }
+        let published = publication.is_some();
         match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => return Ok(outcome),
+            CommitOutcome::Committed => {
+                if published {
+                    crate::telemetry::work::published(&outcome.appended, "committed");
+                }
+                return Ok(outcome);
+            }
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
             CommitOutcome::Unknown(error) => {
                 let snapshot_time = session.operation_time().ok_or_else(|| {
@@ -159,7 +165,7 @@ pub(super) async fn commit(
                     _ => None,
                 };
                 return wait_for_reconciliation("agent message commit", async move {
-                    reconcile(
+                    let confirmed = reconcile(
                         &store,
                         &current.id,
                         &next,
@@ -173,7 +179,11 @@ pub(super) async fn commit(
                         SandboxStoreError::Unavailable(format!(
                             "agent message commit remained unknown: {unresolved}"
                         ))
-                    })
+                    })?;
+                    if published {
+                        crate::telemetry::work::published(&confirmed.appended, "reconciled");
+                    }
+                    Ok(confirmed)
                 })
                 .await
                 .map_err(|deadline| {

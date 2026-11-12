@@ -3,6 +3,10 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'POST /api/v1/telemetry/browser': ({ client, body }) =>
+    client.reportBrowserFault(
+      (body as { kind: import('../../src/browser-telemetry.js').BrowserFault }).kind,
+    ),
   'GET /api/v1/agents/{id}/environment': ({ client, param }) =>
     client.agentFiles.environment(param('id')),
   'POST /api/v1/cmaeg/worker-credentials/classify': ({ client, body }) =>

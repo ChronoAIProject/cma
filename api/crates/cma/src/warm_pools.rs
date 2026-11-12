@@ -18,6 +18,7 @@ mod current;
 mod defaults;
 mod retirement;
 mod startup;
+mod telemetry;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PoolTarget {
@@ -190,15 +191,19 @@ impl NativeWarmPools {
         mut shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
+            let telemetry = crate::telemetry::worker::Worker::start("native_warm_pools");
             let mut tick = tokio::time::interval(Duration::from_secs(5));
             loop {
+                telemetry.heartbeat();
                 tokio::select! {
                     result = shutdown.changed() => {
                         if result.is_err() || *shutdown.borrow() { return; }
                     }
                     _ = tick.tick() => {
                         for _ in 0..20 {
-                            match self.reconcile_one().await {
+                            let result = self.reconcile_one().await;
+                            crate::telemetry::worker::completed("native_warm_pools", "execution", match &result { Ok(true) => "attempted", Ok(false) => "idle", Err(_) => "error" });
+                            match result {
                                 Ok(true) => {},
                                 Ok(false) => break,
                                 Err(_) => { tracing::warn!("native warm pool reconciliation will retry"); break; }
@@ -451,5 +456,6 @@ async fn reconcile_claimed(
         Ok(Ok(()))
     );
     store.finish(&target, success).await?;
+    telemetry::applied(&target, success);
     Ok(true)
 }
