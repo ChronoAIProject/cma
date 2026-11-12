@@ -1,6 +1,8 @@
 use super::*;
 use crate::store::agent_commands::ApplyError;
 use crate::store::sandbox_mongo::{is_transient, start_transaction};
+use layer2_core::sandbox::ledger_maintenance_admission::LedgerMaintenanceAdmissionRefusal;
+use layer2_core::sandbox::store::ledger_maintenance::LedgerMaintenanceStoreError;
 
 #[tokio::test]
 #[ignore = "requires an owned disposable replica set and unclaimed hooks"]

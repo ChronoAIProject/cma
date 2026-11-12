@@ -21,7 +21,7 @@ async fn reserved(
     let CommandReservationResult::Created(command) = result else {
         panic!("fixture must create command")
     };
-    (source.sandbox.clone(), command)
+    (source.sandbox.clone(), *command)
 }
 
 async fn reject(
