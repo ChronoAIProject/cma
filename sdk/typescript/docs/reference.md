@@ -131,9 +131,9 @@ irreversible deletion of the human owner's CMA data and sends
 same caller-selected key when the response is uncertain. The method accepts
 only HTTP 202 and returns an `AccountDeletionReceipt`; acceptance is separate
 from completed erasure.
-While the access gate is active, only that owner's exact already-persisted key
-can recover the existing receipt; a new or different key receives
-`403 account_deletion_in_progress`.
+While requests are enabled, any valid key returns the existing active receipt
+without appending replay keys. Retain the original accepted key: only that
+exact key remains replayable after the writer switch is disabled.
 
 `client.account.deletion.status()` reads the current receipt with HTTP 200.
 Its closed `status` and `step` values and completed-step counts are validated;

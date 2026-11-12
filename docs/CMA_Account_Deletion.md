@@ -12,16 +12,22 @@ The production writer switch remains disabled by default.
 A verified human browser session or identity bearer may request deletion of its
 own CMA account. Binding keys, Agent keys, resource-request actors, identity
 proxy actors and worker credentials cannot request deletion. CMA does not delete
-the external identity account. Pending decision D7 uses existing verified owner
-authority; recent sign-in verification is not implemented.
+the external identity account. Existing verified owner authority is sufficient under the pending security
+decision; recent sign-in verification is not implemented. Owner-session authority
+is a subject-bound request marker, separate from generic Authorization. The new
+capability is presented in session entitlements only and is never injected into
+persisted lifecycle capabilities.
 
 `POST /api/v1/account/deletion` requires `Idempotency-Key` and the JSON body
 `{"acknowledge":"irreversible"}`. It returns `202 Accepted`,
 `Location: /api/v1/account/deletion`, and `Cache-Control: private, no-store`.
-Replay of the accepted key returns the existing receipt. The domain store also
-deduplicates concurrent requests against the active deletion; after the gate
-observes that deletion, a new or different-key POST is refused. Reuse cannot
-create a second active deletion. A request writes
+Replay of the original accepted key returns the existing receipt, including
+after the writer switch is disabled. While requests are enabled, a different
+valid key also returns the current active receipt without storing another key.
+Only the original accepted key is retained, bounding per-record replay storage.
+When requests are disabled, a key without its own durable acceptance returns 503. Personal POST requests reach authoritative storage even while a conservative
+local denial marker exists; a previously aborted transaction can be retried
+without reopening ordinary data access. Reuse cannot create a second active deletion. A request writes
 the deletion, its initial audit event and the owner's admission fence in one
 transaction. Explicitly aborted transactions may retry with bounded backoff;
 an unknown commit result requires replay of the original key to reconcile.
@@ -32,15 +38,20 @@ durable records; an uncertain result never creates a success receipt.
 
 `GET /api/v1/account/deletion` returns `200` with the latest receipt or
 `404 account_deletion_not_found`. It remains available when new requests are
-disabled. Both routes return private, non-cacheable responses, including errors.
+disabled for callers that still hold valid personal authentication. An erasing
+account cannot sign in again; an expired browser session cannot reauthenticate
+to read progress while deletion remains active. An already valid eligible
+personal bearer can still read status. This release provides no separate
+recovery login. Both routes return
+private, non-cacheable responses, including errors.
 Receipts contain `id`, `status`, `step`, `requested_at`, `deadline_at`,
 `completed_at`, and `steps`. They expose no raw subject, hash, credentials,
 resource inventory or worker leases. The deadline is seven days after request;
 this release does not claim the cleanup deadline is achieved.
 
 The request switch is `CHRONO_ACCOUNT_DELETION_ENABLED`, strictly `true` or
-`false`, default `false`. Disabled requests return `503
-account_deletion_unavailable`; the session omits `delete_own_account`.
+`false`, default `false`. Disabled new requests return `503
+account_deletion_unavailable`; exact accepted-key replay remains available; the session omits `delete_own_account`.
 Missing acknowledgement returns `422 account_deletion_acknowledgement_required`;
 non-human authority returns `403 account_deletion_requires_owner_session`.
 The standard idempotency and JSON problems apply. See [REST](API_REST.md) and
@@ -56,20 +67,29 @@ refresh, normally within one second plus scheduling/network delay. If a snapshot
 has not refreshed successfully for more than ten seconds, requests fall back to
 authoritative point reads. A failed point read denies access with a typed service
 unavailability response; absence from a stale snapshot never grants access.
-Steady-state checks do not add a database command per request.
+Steady-state checks do not add a database command per request. Initial snapshot
+refresh failure logs a warning and starts in authoritative point-read mode while
+background refresh continues. Snapshot scanning uses the active-marker partial
+index. Malformed rows are logged individually; a recoverable subject hash stays
+in the denial set and does not prevent other rows from being loaded or claimed.
 
 The gate covers:
 
 - Ambient browser and bearer authentication, including the resource-request
   and worker-credential branches that return early from authentication.
 - Sign-in callbacks and actor-link renewal.
+- Event Gateway portal reads, outbound sends and each streamed body chunk.
+  Custody checks deny access before refreshing or forwarding the owner token.
 - Agent tool capability authentication and provider tool relay, using the
   Sandbox owner.
 - Resource authorization for both the caller and personal resource owner,
-  including stream reauthorization and sharing to other callers.
+  including stream reauthorization of both caller and owner, and sharing to
+  other callers. Launch progress streams and desktop connection rechecks also
+  revoke an erasing caller.
 - Document owner, recipient and link-token reads.
-- Public Trigger preview, badge, entry and open routes; an erasing publisher's
-  Trigger is unavailable.
+- Public Trigger preview, badge and open routes; an erasing publisher's
+  Trigger is unavailable. Consuming a navigation-intent cookie does not resolve
+  a publisher or admit a launch.
 - Deferred Agent commands, Sandbox controls and runtime subscription credentials.
 
 An active deletion returns `403 account_deletion_in_progress` on authenticated
@@ -83,13 +103,13 @@ Agent/Workspace operations are handled by later inventory and erasure work;
 the inventory must be recomputed from current resource lineage.
 
 The ordinary exceptions are `GET /auth/session`, `/auth/logout`, and
-`GET /api/v1/account/deletion`. An additional narrowly scoped recovery exception
-allows `POST /api/v1/account/deletion` only when authoritative storage proves
-the exact key was already accepted for this subject. A new or different key
-remains refused. This reconciles the original request's unknown commit result
-without reopening data access or admitting a second deletion. These exceptions
-preserve identity inspection, sign-out and progress recovery while data access
-is revoked. While erasing, session inspection retains authentication metadata
+`GET /api/v1/account/deletion`. A personal `POST /api/v1/account/deletion` also
+reaches the authoritative request service for bounded active deduplication and
+unknown-result recovery. The original accepted key remains replayable after
+writer shutdown; an unaccepted key requires the writer to be enabled. These
+exceptions preserve inspection and progress for existing valid authentication;
+they do not permit renewed sign-in or ordinary data access.
+While erasing, session inspection retains authentication metadata
 but omits optional profile details such as name, email and avatar. Deletion's own owner-token
 custody paths, including `delegated_credential_for`, deliberately bypass the
 gate so later credential revocation can execute.
@@ -111,18 +131,21 @@ aggregate counts, and applies the caller-supplied tombstone retention interval t
 and its events. No tombstone retention configuration is introduced here.
 Zero residue requires an explicit, parseable empty-key-list receipt; an absent
 receipt is not proof of revocation. Later delayed verification must reconcile
-D2's minimal tombstone with any provider identity evidence it needs. This release
+the minimal tombstone with any provider identity evidence it needs. This release
 does not execute that verification or retain a separate recovery inventory.
 
 The following remain later deliveries: worker scheduling, actual inventory,
 Sandbox retirement, home finality, record/object erasure, credential revocation,
 zero-residue verification, operator retry, tombstone export/restore replay, and
-real deletion drills. External dependencies E1–E6 and policy decisions D1–D8
-remain pending. D2's suggested 37-day receipt retention and other policy
-exceptions require confirmation; this PR does not implement or assert physical
-retention exceptions. Organization-owned resources remain outside personal
-account ownership (D5). D6's suggested irreversible request has no cooling-off
-period; final policy approval is pending.
+real deletion drills. External provider capabilities and final product/security
+policies remain pending. The suggested 37-day receipt retention and physical
+retention exceptions require product approval; this release does not implement
+or assert those exceptions. Organization-owned resources remain outside personal
+account ownership. The irreversible request has no cooling-off period; final
+policy approval is pending. Audit retry/refusal payloads use closed failure
+codes; resource identifiers in block events are hashed rather than retained raw.
+Lease renewal and external-state deferral increment revisions without failure
+attempts or synthetic retry events.
 
 ## Activation and rollback
 
@@ -140,14 +163,15 @@ operators must preserve durable state rather than claim that deletion failed.
 
 ## Data migration record
 
-| Required field                                       | Evidence                                                                                                                                                                                                                                                                                                                                                                                           |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Release / migration identity, phase and owners       | Issue #1500, PR B: additive reader-floor release; implementation source commits are in the review report. API/store owners must record the released digest before activation.                                                                                                                                                                                                                      |
-| Affected stores and all writer triggers              | New `account_deletions` and `account_deletion_events`; only the enabled owner request writes new deletions. The same transaction increments existing `sandbox_admissions.fence`. Claim/commit interfaces support later workers; this release starts no worker. Document/resource share transactions also check recipient standing.                                                                 |
-| Old/new format and preservation contract             | Existing resource aggregates and owner fence shape are preserved. Deletions have unique partial `active_subject_hash`, subject lookup, replay and due-work indexes; completed rows have a BSON date `expire_at` TTL. Events have unique `(deletion_id, seq)` and their own TTL. Exactly two collections are added; no object-inventory collection is created. Both are Independent census entries. |
-| Compatible reader floor / allowed recovery artifacts | The release containing this PR's gate and typed record readers is the floor. Exact immutable image digest and tested rollback executable are pending release-owner evidence; no older artifact is certified.                                                                                                                                                                                       |
-| Writer gate and cohort                               | `CHRONO_ACCOUNT_DELETION_ENABLED=false` in code and ConfigMap; strictly boolean. Enable only after every replica has the floor and later cascade capability is proved. Status reads and gates remain active with the writer disabled.                                                                                                                                                              |
-| Backfill execution                                   | No existing rows are rewritten and no backfill runs. Startup creates idempotent indexes for the two collections. No raw subject is removed until explicit model completion; this release never completes a deletion automatically.                                                                                                                                                                 |
-| Backup and dry-run                                   | Production backup IDs, timestamp, protected tombstones, restore owner and rehearsal evidence remain pending later PRs/operators. Local tests exercise synthetic isolated databases only and cannot prove production backup behavior.                                                                                                                                                               |
-| Rollback / forward recovery                          | Close the writer first; preserve the two collections and existing admission fences. Retain the compatible API reader floor while any active deletion exists. Unknown commits reconcile through original-key replay. No destructive schema rollback.                                                                                                                                                |
-| Verification and completion                          | Targeted model, HTTP, SDK, gate, transaction and census checks are recorded with actual outcomes in the PR B review report. Production activation, release digest, end-to-end erasure and operator sign-off remain unverified.                                                                                                                                                                     |
+| Required field                                       | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Release / migration identity, phase and owners       | Issue #1500, additive account-deletion reader floor. Source identity: the commit containing this document (`git log -1 --format=%H -- docs/CMA_Account_Deletion.md`). Pending: release owner records immutable image digest.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Affected stores and all writer triggers              | New `account_deletions` and `account_deletion_events`; enabled personal requests seed an owner row in `sandbox_admissions` outside the transaction, then increment its fence with deletion and initial-event writes in one transaction. Exact replay is read-only. Existing Sandbox admission, Trigger visitor admission, Trigger publisher validation, personal document grants, selected-user share grants and share redemption also upsert/increment per-person fences independently of the deletion writer switch. Organization IDs are never personal-account fences. Claim, commit, renewal and deferral support later workers; this release starts none.                                                 |
+| Old/new format and preservation contract             | Existing owner fence shape is preserved. Shared fence writes serialize conflicting admission/grant/deletion transactions; contention may cause bounded abort/retry and latency even with deletion admission disabled. Two new Independent census collections have active/replay/due indexes, unique `(deletion_id, seq)` events and BSON date TTL. No object-inventory collection exists. `AccountDeletion` and nested state use `deny_unknown_fields`: future field additions require compatible readers and schema-version handling before writing; the current reader floor must not be assumed to ignore new fields. Corrupt rows are warned and skipped individually, with recoverable subjects denied.    |
+| Authorization preservation                           | Personal deletion authority is a request-only subject marker. Generic Authorization and `agent_lifecycle_operations.capabilities` retain their existing capability values; `delete_own_account` is never injected into captured durable operations. Validate with `personal_account_authority_is_not_persisted_in_lifecycle_capabilities`.                                                                                                                                                                                                                                                                                                                                                                      |
+| Compatible reader floor / allowed recovery artifacts | Deploy this gate and record-reader release to every replica before enabling writes. Pending: exact immutable image digest and tested rollback executable; no older artifact is certified.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Writer gate and cohort                               | `CHRONO_ACCOUNT_DELETION_ENABLED=false` in code and ConfigMap. It gates new deletion acceptance, not status, original-key replay, standing checks, indexes or the fence writers listed above. Enable only after the reader floor and later cascade capabilities are proved.                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Backfill execution                                   | No existing rows are rewritten or backfilled. Startup creates idempotent indexes. Unknown snapshot state starts with point reads and retries; one malformed deletion does not fail process startup or block unrelated claims. No deletion completes automatically.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Backup and dry-run                                   | Pending: staging drill, production backup IDs/timestamp, protected tombstones, restore owner and rehearsal evidence. Synthetic isolated tests cannot prove production backup behavior.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Rollback / forward recovery                          | Close new requests first; retain the reader floor, both collections, events and existing fences. Original accepted keys remain replayable. Reconcile uncertain outcomes from durable storage; do not destructively roll back state. Strict record readers require coordinated future schema changes.                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Verification and completion                          | Run guarded `cargo nextest run -p layer2-core -p layer1-public -p cma` for model, HTTP and gate checks. With `CHRONO_TEST_MONGODB_URI` set, use `--run-ignored only -E 'test(store::account_deletions::tests::)'` and separately `--run-ignored only -E 'test(auth::account_standing::mongo_tests::)'` for real transaction and snapshot checks. `shared_public_contract_matches_real_backend` compares the public corpus; `every_documented_operation_and_named_problem_has_exact_contract_coverage` checks inventory. Run `npm test` and `npm run docs:check` in `sdk/typescript`, and guarded `cargo test` in `sdk/rust`. Pending: staging drill, released digest, end-to-end erasure and operator sign-off. |

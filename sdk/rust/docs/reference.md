@@ -160,9 +160,9 @@ CMA data deletion with `POST /api/v1/account/deletion` and the fixed body
 `IdempotencyKey` after an uncertain response. HTTP 202 returns a typed
 `AccountDeletionReceipt`, with closed status/step enums, timestamps and
 completed-step counts. Acceptance does not mean erasure has completed.
-While the access gate is active, only that owner's exact already-persisted key
-can recover the existing receipt; a new or different key receives
-`403 account_deletion_in_progress`.
+While requests are enabled, any valid key returns the existing active receipt
+without appending replay keys. Retain the original accepted key: only that
+exact key remains replayable after the writer switch is disabled.
 
 `client.account().deletion().status()` requires HTTP 200 and reads the safe
 progress receipt, including while the ordinary account data surfaces are gated.
