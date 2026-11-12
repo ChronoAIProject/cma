@@ -1,3 +1,4 @@
+use layer2_core::diagnostic_context::DiagnosticContext;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,7 +38,10 @@ impl CommandScheduleWork for AgentCommandWorker {
         &self,
         page: &PageRequest,
     ) -> Result<Page<AgentCommandId>, CommandLedgerError> {
-        let page = self.discover(page).await?;
+        let page = DiagnosticContext::background("command_scheduler")
+            .with_phase("discovery")
+            .scope(self.discover(page))
+            .await?;
         Ok(Page {
             items: page
                 .items
@@ -49,7 +53,10 @@ impl CommandScheduleWork for AgentCommandWorker {
     }
 
     async fn run_one(&self, id: &AgentCommandId) -> Result<Duration, CommandLedgerError> {
-        self.run_scheduled(id).await
+        DiagnosticContext::background("command_scheduler")
+            .with_phase("execution")
+            .scope(self.run_scheduled(id))
+            .await
     }
 }
 
