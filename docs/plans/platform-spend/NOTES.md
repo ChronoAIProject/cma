@@ -279,6 +279,15 @@ still waits for a ruling and is unchanged.
   allowance.
 - `platform_budget_exhausted` guidance no longer says the Sandbox is paused;
   the section 5.2 pause reason covers a pause.
+- The resume test `after_a_lift_an_explicit_new_message_is_admitted_and_nothing_replays`
+  also relied on a refusal-entered stop; it now observes one unit to reach
+  `disposable` before the refusal (found by the plan selection run, fixed in
+  its own commit).
+- Observed, not caused here: `store::usage_reports::budget::tests::genuine_pressure_is_diagnosed_rejected_and_recovers_at_expiry`
+  (a file this branch does not touch) failed in three of four full parallel
+  `cma` unit runs and passed alone and within its module every time; it
+  captures events through a thread-local tracing subscriber, which other
+  tests' subscribers can race. nextest runs each test in its own process.
 
 ## Blocked
 
