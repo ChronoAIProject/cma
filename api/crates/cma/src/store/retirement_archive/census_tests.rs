@@ -8,6 +8,9 @@ use layer2_core::{budget::RequestBudget, sandbox::store::AgentStore};
 #[path = "census_test_support.rs"]
 mod support;
 
+#[path = "census_counter_tests.rs"]
+mod counters;
+
 #[test]
 fn every_declared_namespace_has_exactly_one_explicit_policy() {
     census::validate_catalog().unwrap();
