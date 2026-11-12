@@ -140,7 +140,14 @@ impl Observer {
 }
 
 pub(super) fn observe(options: &mut ClientOptions) {
-    options.cmap_event_handler = Some(EventHandler::callback(observer(options, "application")));
+    let pool_observer = observer(options, "application");
+    let diagnostics = super::mongo_diagnostics::install(options, "general");
+    options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        if let Some(diagnostics) = &diagnostics {
+            diagnostics.cmap(&event);
+        }
+        pool_observer(event);
+    }));
 }
 
 /// Each independently configured client keeps its own bounded occupancy state.
@@ -158,13 +165,17 @@ pub(crate) fn observer(
 
 #[cfg(test)]
 fn attach(options: &mut ClientOptions, observer: Observer) {
+    let diagnostics = super::mongo_diagnostics::install(options, "general");
     options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        if let Some(diagnostics) = &diagnostics {
+            diagnostics.cmap(&event);
+        }
         record_event(&observer, event)
     }));
 }
 
 fn record_event(observer: &Observer, event: CmapEvent) {
-    // Command monitoring remains disabled: it decodes complete BSON commands/replies.
+    // Diagnostic command monitoring is composed separately from pool metrics.
     match event {
         CmapEvent::ConnectionCheckoutStarted(_) => {
             // Cancellation can omit the end event; starts minus ends is not queue depth.
