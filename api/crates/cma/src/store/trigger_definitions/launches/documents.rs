@@ -18,11 +18,13 @@ use super::corrupt;
 pub(super) struct StoredLaunch {
     pub launch: Launch,
     pub mutation_version: u64,
+    pub home_capacity_admission: bool,
 }
 
 pub(super) fn launch_document(
     launch: &Launch,
     mutation_version: u64,
+    home_capacity_admission: bool,
 ) -> Result<Document, LaunchStoreError> {
     launch.validate()?;
     let lease = launch.work.lease.as_ref();
@@ -51,6 +53,9 @@ pub(super) fn launch_document(
         "mutation_version": storage_integer(mutation_version, "Launch mutation version")?,
         "record": encode(launch)?,
     };
+    if home_capacity_admission {
+        document.insert("home_capacity_admission", true);
+    }
     if let Some(initiation) = &launch.initiation {
         document.insert("launch_initiation", encode(initiation)?);
     }
@@ -121,9 +126,15 @@ pub(super) fn read_launch(document: &Document) -> Result<StoredLaunch, LaunchSto
             "Launch query fields disagree with its aggregate record",
         ));
     }
+    let home_capacity_admission = match document.get("home_capacity_admission") {
+        None => false,
+        Some(Bson::Boolean(true)) => true,
+        Some(_) => return Err(corrupt("invalid Launch home capacity marker")),
+    };
     Ok(StoredLaunch {
         launch,
         mutation_version,
+        home_capacity_admission,
     })
 }
 
