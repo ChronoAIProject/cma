@@ -15,6 +15,7 @@ async fn client(uri: &str, enabled: bool) -> (Client, Arc<Mutex<Counts>>) {
     options.max_pool_size = Some(30);
     let diagnostics = enabled.then(Diagnostics::default);
     if let Some(commands) = diagnostics.clone() {
+        drop(super::periodic::start(&commands));
         options.command_event_handler = Some(EventHandler::callback(move |e| commands.command(e)));
     }
     let counts = Arc::new(Mutex::new(Counts::default()));

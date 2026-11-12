@@ -43,6 +43,13 @@ pub(super) struct Completed {
     elapsed: Duration,
 }
 impl Summary {
+    pub(super) fn drain(&mut self) -> Completed {
+        let elapsed = self.start.elapsed();
+        Completed {
+            window: std::mem::take(self),
+            elapsed,
+        }
+    }
     pub(super) fn record(
         &mut self,
         command: &Command,
@@ -78,10 +85,7 @@ impl Summary {
         value.docs = value.docs.saturating_add(docs.unwrap_or(0));
         value.failures = value.failures.saturating_add(u64::from(failed));
         let elapsed = self.start.elapsed();
-        (elapsed >= Duration::from_secs(10)).then(|| Completed {
-            window: std::mem::take(self),
-            elapsed,
-        })
+        (elapsed >= Duration::from_secs(10)).then(|| self.drain())
     }
 }
 pub(super) fn emit(completed: Option<Completed>) {
