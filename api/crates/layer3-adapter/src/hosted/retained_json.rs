@@ -159,6 +159,14 @@ impl JsonFrame {
         }
     }
 
+    /// Share only admitted storage; legacy values must not be deep-cloned here.
+    pub(super) fn shared(&self) -> Option<Self> {
+        match &self.storage {
+            Storage::Accounted(_) => Some(self.clone()),
+            Storage::Legacy(_) => None,
+        }
+    }
+
     pub(super) fn into_result(self) -> Self {
         match self.storage {
             Storage::Legacy(value) => {
