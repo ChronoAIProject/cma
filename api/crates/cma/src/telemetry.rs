@@ -3,6 +3,7 @@
 pub(crate) mod browser;
 pub(crate) mod http;
 pub(crate) mod request;
+pub(crate) mod runtime;
 pub(crate) mod server;
 pub(crate) mod work;
 pub(crate) mod worker;
@@ -10,13 +11,13 @@ pub(crate) mod worker;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 
 pub(crate) fn install() -> Result<PrometheusHandle, String> {
-    let recorder = PrometheusBuilder::new()
+    let builder = PrometheusBuilder::new()
         .set_buckets(&[
             0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1., 2., 5., 10., 30., 120., 600., 1800.,
             3600.,
         ])
-        .map_err(|error| error.to_string())?
-        .build_recorder();
+        .map_err(|error| error.to_string())?;
+    let recorder = runtime::configure(builder)?.build_recorder();
     let handle = recorder.handle();
     metrics::set_global_recorder(recorder)
         .map_err(|_| "a metrics recorder is already installed".to_owned())?;
@@ -37,6 +38,7 @@ pub(crate) fn install() -> Result<PrometheusHandle, String> {
     work::initialize();
     browser::initialize();
     worker::initialize();
+    runtime::initialize();
     sample();
     Ok(handle)
 }
