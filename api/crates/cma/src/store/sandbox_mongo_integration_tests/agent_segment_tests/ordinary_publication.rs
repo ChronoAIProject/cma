@@ -8,6 +8,7 @@ use crate::store::agent_log_segments::{
 use layer2_core::sandbox::agent_io::*;
 use layer2_core::sandbox::{AgentMessageAssembly, AgentUpdateRecorder, DurableAgentUpdateRecorder};
 use std::sync::Arc;
+mod settlement;
 mod support;
 mod uncertain;
 use support::*;
