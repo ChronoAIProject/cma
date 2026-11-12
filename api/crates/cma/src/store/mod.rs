@@ -128,6 +128,9 @@ mod sandbox_credentials;
 mod sandbox_events;
 mod sandbox_maintenance;
 mod sandbox_mongo;
+pub(crate) use sandbox_mongo::{
+    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
+};
 #[cfg(test)]
 mod sandbox_mongo_integration_tests;
 #[cfg(test)]
