@@ -291,6 +291,16 @@ decision: `agent_conversation_store::{apply_mutation,checkpoint::apply,
 checkpoint::write}` and `agent_commands::reconcile::apply`. Keep P1-1 open,
 both issues In Progress, and writer/recovery activation closed.
 
-The additional strict `layer2-core` check for the merge-declaration correction is
-queued on a shared slot; it is not a claimed pass. The owned target is retained
-only for that reuse, then removed before standby.
+Final additional gate: strict `layer2-core` Clippy, all targets/all features,
+`--no-deps -- -D warnings`, passed with zero diagnostics in 1m04s. API contents
+are unchanged from tested `6a64f7c3d`; `71dd2edb9` only publishes the gate ledger.
+The separate shared-slot batch exited 0, minimum available RAM 22%, no pauses,
+lock inode unchanged. See `clippy-core.log` and `supervisor-core.json`.
+
+Cleanup complete: removed the owned `api/target`, four unused CMA incremental
+caches, and this checkpoint's temporary runners/comment drafts (23.77 GB
+of allocated files removed in total). Mongo cleanup succeeded before lint.
+Both shared lock files retain their recorded inodes. The worktree remains for
+the lead; prior untracked notes are preserved. Gate logs, test inventory and
+`cleanup.json` remain as local evidence. No deploy, activation, PR or develop
+merge was performed. Stand by after this checkpoint per the 13:05 direction.
