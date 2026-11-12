@@ -4,7 +4,7 @@ set -euo pipefail
 script_directory=$(dirname -- "${BASH_SOURCE[0]}")
 repo_root=$(CDPATH='' cd -- "${script_directory}/../.." && pwd -P)
 readonly repo_root
-unset CHRONO_TEST_MONGODB_URI CHRONO_TEST_MONGODB_FAILPOINT_URI CMA_IM_TEST_MONGODB_URI
+unset CHRONO_TEST_MONGODB_URI CHRONO_TEST_MONGODB_FAILPOINT_URI CMA_SERVICE_AUTH_TEST_MONGODB_URI
 # shellcheck source=.github/scripts/backend-nextest.sh
 source "$script_directory/backend-nextest.sh"
 
