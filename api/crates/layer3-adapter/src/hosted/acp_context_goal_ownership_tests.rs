@@ -7,6 +7,18 @@ use std::time::Duration;
 
 const CAPACITY: usize = 1024 * 1024;
 
+async fn stop_after_final_owner(opened: super::super::OpenedBridge) {
+    let lifetime = Arc::downgrade(&opened.bridge);
+    stop(opened).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lifetime.strong_count() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("retired attachment releases the writer and context observation");
+}
+
 async fn configure(bridge: &Bridge, startup: bool) -> JsonPools {
     let pools = JsonPools::new(CAPACITY, CAPACITY);
     let mut state = bridge.output.as_ref().unwrap().lock().await;
@@ -73,7 +85,7 @@ async fn retained_goal_owns_its_frame_after_receipt_then_replacement_and_teardow
             .is_err(),
         "observing or dropping a receipt cannot fabricate a durable ACK"
     );
-    stop(opened).await;
+    stop_after_final_owner(opened).await;
     assert_eq!(second.available(), (CAPACITY, CAPACITY));
 }
 
@@ -109,6 +121,6 @@ async fn startup_observation_transfers_its_existing_owner_after_activation() {
         .as_ref()
         .unwrap()
         .is_safe_for("conversation-1"));
-    stop(opened).await;
+    stop_after_final_owner(opened).await;
     assert_eq!(pools.available(), (CAPACITY, CAPACITY));
 }

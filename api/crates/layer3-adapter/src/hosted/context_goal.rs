@@ -19,7 +19,11 @@ impl ContextGoal {
         match &self.session {
             Session::Legacy(id) => id == session,
             Session::Admitted(frame) => {
-                frame.pointer("/params/sessionId").and_then(Value::as_str) == Some(session)
+                frame
+                    .get("params")
+                    .and_then(|params| params.get("sessionId"))
+                    .and_then(Value::as_str)
+                    == Some(session)
             }
         }
     }
@@ -29,16 +33,19 @@ impl ContextGoal {
     }
 
     pub(super) fn observe(observed: &mut Option<Self>, frame: &JsonFrame) {
-        let Some(session) = frame.pointer("/params/sessionId").and_then(Value::as_str) else {
+        let Some(params) = frame.get("params") else {
             return;
         };
-        let Some(update) = frame.pointer("/params/update") else {
+        let Some(session) = params.get("sessionId").and_then(Value::as_str) else {
+            return;
+        };
+        let Some(update) = params.get("update") else {
             return;
         };
         if update.get("sessionUpdate").and_then(Value::as_str) != Some("session_info_update") {
             return;
         }
-        let Some(goal) = update.pointer("/_meta/goal") else {
+        let Some(goal) = update.get("_meta").and_then(|meta| meta.get("goal")) else {
             return;
         };
         if observed
