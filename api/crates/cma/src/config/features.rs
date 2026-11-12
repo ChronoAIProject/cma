@@ -1,6 +1,10 @@
 //! Independent rollout policy for the current CMA interfaces.
+#[cfg(test)]
+#[path = "ingress_coordinator_tests.rs"]
+mod ingress_coordinator_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub coordinated_ingress: bool,
     pub retained_json: bool,
     pub bounded_raw_output: bool,
     pub output_json_budget: bool,
@@ -22,6 +26,7 @@ pub(crate) struct FeatureFlags {
     pub trigger_command_admission: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
+    pub silent_sign_in: bool,
     pub document_revocation_reserve: bool,
     pub document_quotas: bool,
     pub bounded_approval_reads: bool,
@@ -44,6 +49,7 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            coordinated_ingress: flag(lookup, "CHRONO_INGRESS_COORDINATOR_ENABLED")?,
             retained_json: flag(lookup, "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED")?,
             bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
             output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
@@ -76,6 +82,7 @@ impl FeatureFlags {
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
             nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
+            silent_sign_in: flag(lookup, "CHRONO_SILENT_SIGN_IN_ENABLED")?,
             document_revocation_reserve: flag(
                 lookup,
                 "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
@@ -84,32 +91,15 @@ impl FeatureFlags {
         if flags.sandbox_batched_reads && !flags.sandbox_snapshot_reads {
             return Err("CHRONO_SANDBOX_BATCHED_READS_ENABLED requires CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED".into());
         }
+        if flags.coordinated_ingress
+            && !(flags.retained_json
+                && flags.bounded_raw_output
+                && flags.bounded_permission_state
+                && flags.bounded_live_fragments)
+        {
+            return Err("CHRONO_INGRESS_COORDINATOR_ENABLED requires JSON retention, raw output, permission and live fragment bounds".into());
+        }
         Ok(flags)
-    }
-}
-
-#[cfg(test)]
-mod shared_output_tests {
-    use super::*;
-
-    #[test]
-    fn shared_runtime_output_requires_its_own_strict_opt_in() {
-        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")
-                    .then(|| value.map(str::to_owned))
-                    .flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.shared_runtime_output, expected);
-            assert!(!flags.bounded_response_reads);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED").then(|| value.into()))
-            })
-            .is_err());
-        }
     }
 }
 
