@@ -50,7 +50,7 @@ pub(in crate::store) async fn source(
     Ok(Some((head, state)))
 }
 
-async fn point(
+pub(super) async fn point(
     store: &MongoSandboxStore,
     head: &Head,
     sequence: u64,
