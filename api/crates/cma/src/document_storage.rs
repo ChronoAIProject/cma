@@ -163,12 +163,22 @@ impl StorageDocuments {
             .map_err(|failure| failure.error)?;
         let receipt: StoredReply = serde_json::from_slice(&bounded(response, 16 * 1024).await?)
             .map_err(|_| DocumentError::Corrupt)?;
-        if receipt.data.key != key
-            || receipt.data.content_length != size
-            || receipt.data.generation != 1
-            || receipt.data.digest != sha
-            || receipt.data.fence_version != 1
-        {
+        let mut mismatch = false;
+        for (field, matches) in [
+            ("key", receipt.data.key == key),
+            ("length", receipt.data.content_length == size),
+            ("generation", receipt.data.generation == 1),
+            ("digest", receipt.data.digest == sha),
+            ("fence", receipt.data.fence_version == 1),
+        ] {
+            if !matches {
+                mismatch = true;
+                metrics::counter!("cma_document_storage_receipt_mismatch_total", "field" => field)
+                    .increment(1);
+                tracing::warn!(parent: None, field, "document storage receipt mismatch");
+            }
+        }
+        if mismatch {
             return Err(DocumentError::Corrupt);
         }
         Ok(())
@@ -313,3 +323,7 @@ mod token_tests;
 #[cfg(test)]
 #[path = "document_storage_transport_tests.rs"]
 mod transport_tests;
+
+#[cfg(test)]
+#[path = "document_storage_receipt_tests.rs"]
+mod receipt_tests;
