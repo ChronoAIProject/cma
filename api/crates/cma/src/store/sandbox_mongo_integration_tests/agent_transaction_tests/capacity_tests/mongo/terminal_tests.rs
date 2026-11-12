@@ -54,7 +54,7 @@ async fn terminal_case(bytes: bool, refuse_output: bool) {
         terminal.clone()
     };
     let (acks, _acknowledged) = tokio::sync::mpsc::channel(8);
-    let retained = |cursor, update| ConversationUpdate::RuntimeOutput {
+    let retained = |cursor, update: ConversationUpdate| ConversationUpdate::RuntimeOutput {
         receipt: layer3_adapter::RuntimeOutputReceipt::new(
             layer3_adapter::RuntimeOutputSource {
                 stream_id: "72111111-1111-4111-8111-111111111111".into(),
