@@ -1,3 +1,4 @@
+import { CapacityRecovery } from './agents/capacity-recovery.js';
 import {
   readTranscript,
   readTranscriptPage,
@@ -127,6 +128,9 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
+  capacityRecovery(id: string) {
+    return new CapacityRecovery(this.config, id);
+  }
   suggestions(
     id: string,
     scope: import('./answer-context.js').AnswerContext,
