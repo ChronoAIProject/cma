@@ -129,6 +129,9 @@ pub use resource_access::resource_access_router;
 #[cfg(test)]
 mod trigger_assets_test_support;
 
+mod browser_telemetry;
+pub use browser_telemetry::{browser_telemetry_router, BrowserFault};
+
 mod bindings;
 #[cfg(test)]
 mod bindings_tests;
