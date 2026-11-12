@@ -36,6 +36,7 @@ impl Supervisor {
         request.validate().map_err(|_| invalid())?;
         self.require_removal_process_boundary()?;
         let _operation = self.operation_gate.lock().await;
+        self.mutations.require_serving().await?;
         if self.held_checkpoint.lock().await.is_some() {
             return Err(writers_held_error());
         }

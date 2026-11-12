@@ -257,3 +257,49 @@ async fn idle_thoughts_emit_nothing_and_per_agent_lag_is_explicit() {
     assert!(live.try_recv().is_ok());
     assert_eq!(unrelated.try_recv(), Err(TryRecvError::Empty));
 }
+
+#[tokio::test]
+async fn budgeted_delivery_shares_source_and_preserves_the_durable_terminal() {
+    let (store, ready) = ready_agent(None).await;
+    let recorder = DurableAgentUpdateRecorder::with_live_budget(
+        Arc::new(store.clone()),
+        Arc::default(),
+        None,
+        true,
+    );
+    let mut first = recorder.subscribe_live(&ready.id).unwrap();
+    let mut second = recorder.subscribe_live(&ready.id).unwrap();
+    let mutation = begin_turn(&store, ready);
+    let working = mutation.agent.clone();
+    store.commit_agent_conversation(mutation).await.unwrap();
+    let mut assembly = AgentMessageAssembly::default();
+    for text in ["first ", "second"] {
+        recorder
+            .record_update(
+                &working.id,
+                1,
+                &mut assembly,
+                message_chunk("reply", text),
+                NOW.into(),
+            )
+            .await
+            .unwrap();
+    }
+    let held = first.try_recv().unwrap();
+    let same = second.try_recv().unwrap();
+    assert!(std::ptr::eq(&*held, &*same));
+    assert_eq!(held.delta, "first ");
+    drop((first, second));
+    let ended = recorder
+        .record_update(&working.id, 1, &mut assembly, turn_ended(), NOW.into())
+        .await
+        .unwrap();
+    assert!(ended.appended.iter().any(|entry| matches!(
+        &entry.kind, AgentLogKind::AgentMessage { content } if content == "first second"
+    )));
+    assert!(ended
+        .appended
+        .iter()
+        .any(|entry| matches!(&entry.kind, AgentLogKind::TurnCompleted { .. })));
+    assert_eq!(held.delta, "first ");
+}

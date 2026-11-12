@@ -2,6 +2,34 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxStore for MongoSandboxStore {
+    async fn retained_reopen_snapshot(
+        &self,
+        id: &SandboxId,
+    ) -> Result<layer2_core::sandbox::RetainedReopenSnapshot, SandboxStoreError> {
+        super::super::retained_reopen::snapshot(self, id).await
+    }
+
+    async fn retained_reopen_receipt(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Option<layer2_core::sandbox::RetainedReopenReceipt>, SandboxStoreError> {
+        super::super::retained_reopen::receipt(self, id).await
+    }
+
+    async fn admit_retained_reopen(
+        &self,
+        request: layer2_core::sandbox::RetainedReopenRequest,
+    ) -> Result<layer2_core::sandbox::RetainedReopenAccepted, SandboxStoreError> {
+        super::super::retained_reopen::admit(self, request).await
+    }
+
+    async fn retained_runtime_recovery_snapshot(
+        &self,
+        id: &SandboxId,
+    ) -> Result<layer2_core::sandbox::RetainedRecoverySnapshot, SandboxStoreError> {
+        super::super::sandbox_unpublished_recovery::retained_snapshot(self, id).await
+    }
+
     fn managed_runtime_version(&self) -> Option<&str> {
         self.managed_runtime_version.as_deref()
     }
@@ -21,6 +49,11 @@ impl SandboxStore for MongoSandboxStore {
     }
 
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
+        if self.global_sandbox_limit != 0 {
+            return Err(SandboxStoreError::InvalidTransaction(
+                "global capacity requires transactional sandbox admission",
+            ));
+        }
         if !sandbox.credential.service_grants.is_empty()
             || sandbox.credential.service_scope.is_some()
         {
@@ -73,6 +106,9 @@ impl SandboxStore for MongoSandboxStore {
         if current.revision != expected_revision {
             return Err(SandboxStoreError::Conflict);
         }
+        current
+            .validate_retirement_archive_successor(&sandbox)
+            .map_err(|_| SandboxStoreError::Conflict)?;
         current
             .validate_service_access_successor(&sandbox)
             .map_err(|_| SandboxStoreError::Conflict)?;
