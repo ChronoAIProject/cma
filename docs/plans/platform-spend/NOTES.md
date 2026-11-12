@@ -12,12 +12,16 @@ Things noticed while implementing that this plan does not change.
   from the in-transaction insert of a missing period row would surface as
   unavailable. In practice concurrent inserts surface as write conflicts, and
   the evaluator pre-creates the row (rule 6).
-- Sandboxes with an Always keep alive preference (`always_on` or historical
-  profile availability) are still kept alive by the maintenance transaction
-  under a platform stop; the contract does not say whether a platform pause
-  overrides an owner's keep-alive. Sandboxes with no live Agents are not
-  candidates of the quiet-pause predicate either. Both keep running cloud
-  spend under `SpendStop`; decide with #1478.
+- Explicit revive paths that do not read the platform admission state (found
+  while checking automatic revival for decision 26, not changed here):
+  `POST /api/v1/sandboxes/{id}/commands` with a `Revive` control
+  (`layer2-core/src/sandbox/control/*`, also open to bot delegation) moves a
+  Paused Sandbox to Reviving under `SpendStop`, against contract section 5.1;
+  Agent admission's profile-Agent reuse branch
+  (`cma/src/store/agent_admission.rs`, reuse before `require_open`) can revive
+  a Paused Sandbox for a Launch admitted before the stop; an owner or
+  operator retry of a parked runtime update starts a rotation without the
+  check.
 - The admin spend routes (`GET /api/v1/admin/spend`,
   `POST /api/v1/admin/spend/observations`) still need OpenAPI registration,
   `docs/API_REST.md` rows and public-contract corpus coverage.
@@ -288,6 +292,48 @@ still waits for a ruling and is unchanged.
   `cma` unit runs and passed alone and within its module every time; it
   captures events through a thread-local tracing subscriber, which other
   tests' subscribers can race. nextest runs each test in its own process.
+
+### Decision 26 ruling (2026-11-12)
+
+The user ruled "pause both under `SpendStop`"; the parent session relayed it.
+
+- For `InactivityPauseCause::PlatformSpendStop` only, the maintenance
+  admission (Mongo transaction and in-memory store) no longer reads
+  `always_on`, profile or binding availability, or retained availability,
+  and no longer fences the profile for that policy; an Active Sandbox without
+  live Agents is a candidate (`is_platform_stop_pause_candidate`). Inactivity
+  pauses are unchanged.
+- Safety kept and, for the platform cause, extended: live Agents must be
+  quiet exactly as before (no active turn, pending work, queued messages,
+  nonterminal commands or open sessions) and the revision, `last_seq`,
+  desktop-activity and Agent fences apply. New for the platform cause: any
+  Workspace with pending or leased work leaves the Sandbox running (its
+  Workspaces are fenced as image rotation does), and a Sandbox without live
+  Agents with an open owner session is not paused.
+- The preference is never written: `always_on` and profile availability stay
+  as they are, so Always keep alive applies again after the owner revives.
+- Automatic revival check (requirement 4): no automatic path was found that
+  returns a platform-paused Sandbox to Active. Managed runtime updates were
+  the one automatic path that starts a runtime on a Paused Sandbox (a
+  rotation that ends Paused again) and that kept an Active Sandbox with an
+  outstanding update from ever reaching the platform pause; the sweep now
+  defers its runtime-update phase while `SpendStop` is in force. Two other
+  automatic paths restart a runtime only to finish a pause that was already
+  under way (a retained-home runtime lost while Pausing; unpublished recovery
+  of a stuck Reviving/Rotating Sandbox) and end Paused; they are unchanged.
+  The explicit revive paths without a platform check are listed under Out of
+  scope.
+- Not determined: whether automatic unpublished recovery could ever take a
+  platform pause that failed non-retryably (`restore_failed`) back to Active.
+- CLAUDE.md (left to the user, not edited): section 5 says "Quiet Sandboxes
+  pause according to platform settings after every Agent is quiet, unless
+  their Profile has Always keep alive enabled", and the Layer 2 text says
+  "Always keep alive prevents inactivity pause". Both stay true for
+  inactivity. Suggested addition after the section 5 sentence: "A platform
+  spend stop (`SpendStop`) is the one exception: it also pauses Sandboxes
+  kept alive and Active Sandboxes without live Agents, never busy work, does
+  not change the preference, and defers managed runtime updates until it
+  lifts."
 
 ## Blocked
 
