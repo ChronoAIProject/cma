@@ -1956,14 +1956,12 @@ your Sandboxes, Workspaces, Agent conversations, documents, shares, Triggers,
 Bots, and credentials.** State separately: **This deletes only CMA data; it does
 not delete your NyxID account.** Explain that deletion is irreversible, access is
 revoked immediately when the request is accepted, and live CMA data cleanup must
-finish within 7 days of the request. Link to the published retention policy from
-#1499 for privacy information, backup retention and disclosed exceptions; use the
-published destination rather than inventing a URL or implying that retained
-backups are erased within the live-data deadline.
+finish within 7 days of the request. Link to the published privacy and retention
+policy for backup retention and disclosed exceptions; use the published
+destination rather than inventing a URL or implying that retained backups are
+erased within the live-data deadline.
 
-The proposed no-withdrawal policy follows recommendation D6 in the account
-deletion plan and remains pending owner confirmation. This specification does
-not add a cancellation or cooling-off control.
+There is no cancellation or cooling-off control.
 
 **Acceptance and progress.** Replace the confirmation in the same overlay seat
 with the shared Modal's recorded progress treatment. Say **Your request was
