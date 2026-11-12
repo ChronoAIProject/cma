@@ -1,5 +1,6 @@
 //! Independent, bounded Launch scheduling: a slow dependency must not delay other visitors.
 
+use layer2_core::diagnostic_context::DiagnosticContext;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -32,11 +33,17 @@ trait LaunchScheduleWork: Send + Sync {
 #[async_trait::async_trait]
 impl LaunchScheduleWork for LaunchWorker {
     async fn due(&self, now: SystemTime) -> Result<Vec<LaunchId>, LaunchWorkerError> {
-        self.due_work(now, WORK_BATCH_SIZE).await
+        DiagnosticContext::background("launch_scheduler")
+            .with_phase("discovery")
+            .scope(self.due_work(now, WORK_BATCH_SIZE))
+            .await
     }
 
     async fn run_one(&self, id: &LaunchId, now: SystemTime) -> Result<bool, LaunchWorkerError> {
-        self.run_scheduled(id, now).await
+        DiagnosticContext::background("launch_scheduler")
+            .with_phase("execution")
+            .scope(self.run_scheduled(id, now))
+            .await
     }
 }
 
