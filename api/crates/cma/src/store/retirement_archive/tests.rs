@@ -10,8 +10,10 @@ use layer3_adapter::{permanent_custody::PermanentCustody, HomeVolumePolicy, Home
 
 #[path = "commit_test_support.rs"]
 mod commit_support;
+#[path = "completion_tests.rs"]
+mod completion_tests;
 
-async fn fixture() -> (Temp, ArchiveStore, Request, Vec<u8>) {
+pub(super) async fn fixture() -> (Temp, ArchiveStore, Request, Vec<u8>) {
     let temp = Temp::new();
     let mut request = request(&temp);
     request.sandbox_id = "sbx_retirement_fixture".into();

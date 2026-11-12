@@ -102,7 +102,9 @@ pub(crate) async fn command(args: &[String]) -> Result<String> {
         return publish(&invocation.output_file, &evidence);
     }
     request.validate()?;
-    export::exclusion(&request)?;
+    if action != "complete" {
+        export::exclusion(&request)?;
+    }
     if action == "hold" {
         store.admit(&request, &bytes).await?;
         return publish(
