@@ -12,6 +12,7 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 mod access_migration;
 mod access_origins;
+mod access_snapshot;
 mod admission_log;
 mod global_admission;
 mod provider_tool_relay;

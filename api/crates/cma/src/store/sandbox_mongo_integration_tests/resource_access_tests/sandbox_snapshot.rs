@@ -314,3 +314,6 @@ mod batched_measurement;
 mod batched_races;
 #[path = "sandbox_snapshot/batched_tests.rs"]
 mod batched_tests;
+
+#[path = "sandbox_snapshot/access_fence.rs"]
+mod access_fence;
