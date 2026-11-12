@@ -174,9 +174,6 @@ pub struct Config {
     pub agent_access_retained_origins: Vec<String>,
     pub(crate) agent_access_transport_migration: Option<AgentAccessMigration>,
     pub(crate) provider_tool_relay: Option<ProviderToolRelay>,
-    /// Base URL for the independently deployed Image Manager service.  CMA
-    /// only uses it with the request's delegated user credential.
-    pub image_manager_base_url: String,
     pub nyxid_public_url: Option<String>,
     pub nyxid_service_id: Option<String>,
     pub nyxid_proxy_issuer: Option<String>,
@@ -220,7 +217,6 @@ impl std::fmt::Debug for Config {
                 "agent_access_retained_origins",
                 &self.agent_access_retained_origins,
             )
-            .field("image_manager_base_url", &self.image_manager_base_url)
             .field("nyxid_public_url", &self.nyxid_public_url)
             .field("cors_origins", &self.cors_origins)
             .field("rate_limits", &self.rate_limits)
@@ -277,14 +273,6 @@ impl Config {
         {
             return Err("CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION origin must match CHRONO_SERVER_PUBLIC_URL".into());
         }
-        let image_manager_base_url = parse_service_base_url(
-            "CHRONO_IMAGE_MANAGER_BASE_URL",
-            &value_or(
-                &mut lookup,
-                "CHRONO_IMAGE_MANAGER_BASE_URL",
-                &format!("{}/api/image-manager", public_url.trim_end_matches('/')),
-            )?,
-        )?;
         let cors_origins = value_or(
             &mut lookup,
             "CHRONO_SERVER_CORS_ORIGIN",
@@ -410,7 +398,6 @@ impl Config {
             agent_access_retained_origins,
             agent_access_transport_migration,
             provider_tool_relay,
-            image_manager_base_url,
             nyxid_public_url,
             nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),
             nyxid_proxy_issuer: lookup("CHRONO_NYXID_PROXY_ISSUER")?,
@@ -460,9 +447,9 @@ impl Config {
 #[path = "config_validation.rs"]
 mod validation;
 use validation::{
-    parse_canonical_https_origin, parse_networks, parse_service_base_url, parse_service_ids,
-    parse_u64, parse_usize, positive_u32, required, strict_env, validate_cloudflare_networks,
-    validate_mongodb_uri, validate_origin, value_or,
+    parse_canonical_https_origin, parse_networks, parse_service_ids, parse_u64, parse_usize,
+    positive_u32, required, strict_env, validate_cloudflare_networks, validate_mongodb_uri,
+    validate_origin, value_or,
 };
 
 #[cfg(test)]

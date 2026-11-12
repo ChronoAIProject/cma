@@ -147,30 +147,6 @@ pub(super) fn validate_origin(key: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn parse_service_base_url(key: &str, value: &str) -> Result<String, String> {
-    let parsed =
-        reqwest::Url::parse(value).map_err(|error| format!("{key} is not a URL: {error}"))?;
-    if !matches!(parsed.scheme(), "http" | "https")
-        || parsed.host_str().is_none()
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-        || parsed.query().is_some()
-        || parsed.fragment().is_some()
-        || value.len() > 2_048
-        || parsed.path().contains("//")
-        || parsed
-            .path()
-            .split('/')
-            .any(|part| part == ".." || part == ".")
-        || value.ends_with('/')
-    {
-        return Err(format!(
-            "{key} must be an HTTP(S) service base URL without credentials, query, fragment or trailing slash"
-        ));
-    }
-    Ok(value.to_owned())
-}
-
 pub(super) fn parse_canonical_https_origin(key: &str, raw: &str) -> Result<String, String> {
     let parsed = reqwest::Url::parse(raw)
         .map_err(|_| format!("{key} must be one canonical absolute HTTPS origin"))?;
