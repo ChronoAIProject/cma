@@ -7,6 +7,7 @@ mod fixture;
 mod pacing;
 mod records;
 mod restart;
+mod segmented_admission;
 mod service;
 mod source;
 mod transactions;
