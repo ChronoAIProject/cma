@@ -94,6 +94,16 @@ fn summary_is_bounded_and_excludes_parent_span_payloads() {
         .with_writer(output.clone())
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
+    // A preceding callback without a subscriber must not cache the writer's
+    // shared summary callsite as disabled for this subscribed caller.
+    tracing::dispatcher::with_default(&tracing::Dispatch::none(), || {
+        let unobserved = Observer(
+            Arc::new(Mutex::new(Window::new(Instant::now() - WINDOW))),
+            "application",
+        );
+        unobserved.record(0, Duration::ZERO, false);
+        super::super::mongo_diagnostics::output::flush();
+    });
     let observer = Observer(
         Arc::new(Mutex::new(Window::new(Instant::now()))),
         "application",
