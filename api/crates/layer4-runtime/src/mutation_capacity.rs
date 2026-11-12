@@ -116,10 +116,24 @@ pub(crate) fn occupancy(
             Disposition::Present => &mut resource.present,
             Disposition::Absent => &mut resource.absent,
         };
-        if identity.as_ref().is_some_and(|old| old != operation) {
-            return Err(mutation_authority::corrupt(
-                "runtime mutation authority has conflicting operation identities",
-            ));
+        if let Some(old) = identity.as_ref().filter(|old| *old != operation) {
+            match (&old.subject, &operation.subject) {
+                (
+                    mutation_journal::Subject::InstallAgentSkill { request: old },
+                    mutation_journal::Subject::InstallAgentSkill { request: next },
+                ) if old.sequence() != next.sequence() => {
+                    // Every version keeps its journal reservation, while the
+                    // resource's single authority slot advances monotonically.
+                    if old.sequence() > next.sequence() {
+                        continue;
+                    }
+                }
+                _ => {
+                    return Err(mutation_authority::corrupt(
+                        "runtime mutation authority has conflicting operation identities",
+                    ))
+                }
+            }
         }
         *identity = Some(operation.clone());
     }

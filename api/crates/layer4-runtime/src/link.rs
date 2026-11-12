@@ -162,6 +162,8 @@ async fn control(
                 .flat_map(|value| value.split(','))
                 .any(|value| value.trim() == media_type)
         };
+        status.agent_skill_upgrade =
+            accepts(layer3_adapter::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE);
         status.agent_resource_preparation =
             accepts(layer3_adapter::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE);
         status.agent_browser = accepts(layer3_adapter::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE);
