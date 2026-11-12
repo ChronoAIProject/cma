@@ -42,3 +42,25 @@ pub(super) async fn fence(
     .await?;
     Ok(())
 }
+
+/// Fresh successor allocation is a recovery writer even when the parent public
+/// revision stays unchanged. Historical recovery receipts bypass this helper.
+pub(super) async fn worktree_fence(
+    store: &MongoSandboxStore,
+    sandbox: &SandboxId,
+    session: &mut ClientSession,
+) -> Result<(), super::agent_worktree_recovery_records::ApplyError> {
+    use super::agent_worktree_recovery_records::ApplyError as WorktreeError;
+    use super::sandbox_events::TransactionEventError;
+    super::ledger_maintenance_writer_ports::parent_write(
+        store,
+        sandbox,
+        LedgerWriterClass::Recovery,
+        session,
+    )
+    .await
+    .map_err(|error| match error {
+        TransactionEventError::Domain(error) => WorktreeError::from(error),
+        TransactionEventError::Driver(error) => WorktreeError::Driver(error),
+    })
+}
