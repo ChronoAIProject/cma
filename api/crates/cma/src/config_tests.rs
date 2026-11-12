@@ -167,10 +167,16 @@ fn retained_defaults_and_runtime_values_form_a_complete_configuration() {
 #[test]
 fn account_deletion_config_defaults_off() {
     assert!(!configured(&[]).unwrap().account_deletion_enabled);
-    assert!(!configured(&[("CHRONO_ACCOUNT_DELETION_ENABLED", "false")])
-        .unwrap().account_deletion_enabled);
-    assert!(configured(&[("CHRONO_ACCOUNT_DELETION_ENABLED", "true")])
-        .unwrap().account_deletion_enabled);
+    assert!(
+        !configured(&[("CHRONO_ACCOUNT_DELETION_ENABLED", "false")])
+            .unwrap()
+            .account_deletion_enabled
+    );
+    assert!(
+        configured(&[("CHRONO_ACCOUNT_DELETION_ENABLED", "true")])
+            .unwrap()
+            .account_deletion_enabled
+    );
 }
 
 #[test]
@@ -380,15 +386,37 @@ fn provider_mode_requires_all_identity_configuration() {
 
 #[test]
 fn retained_agent_access_origins_are_explicit_and_do_not_change_browser_callbacks() {
-    assert!(configured(&[]).unwrap().agent_access_retained_origins.is_empty());
+    assert!(configured(&[])
+        .unwrap()
+        .agent_access_retained_origins
+        .is_empty());
     let config = configured(&[
         ("CHRONO_SERVER_PUBLIC_URL", "https://new.example"),
-        ("CHRONO_AGENT_ACCESS_RETAINED_ORIGINS", "https://old.example, https://old.example"),
-    ]).unwrap();
+        (
+            "CHRONO_AGENT_ACCESS_RETAINED_ORIGINS",
+            "https://old.example, https://old.example",
+        ),
+    ])
+    .unwrap();
     assert_eq!(config.public_url, "https://new.example");
-    assert_eq!(config.agent_access_retained_origins, ["https://old.example"]);
-    for value in ["http://old.example", "https://user@old.example", "https://old.example/api", "https://old.example,", "*", "https://old.example/", "https://Old.example", "https://a.example,https://b.example,https://c.example,https://d.example,https://e.example"] {
-        assert!(configured(&[("CHRONO_AGENT_ACCESS_RETAINED_ORIGINS", value)]).is_err(), "{value}");
+    assert_eq!(
+        config.agent_access_retained_origins,
+        ["https://old.example"]
+    );
+    for value in [
+        "http://old.example",
+        "https://user@old.example",
+        "https://old.example/api",
+        "https://old.example,",
+        "*",
+        "https://old.example/",
+        "https://Old.example",
+        "https://a.example,https://b.example,https://c.example,https://d.example,https://e.example",
+    ] {
+        assert!(
+            configured(&[("CHRONO_AGENT_ACCESS_RETAINED_ORIGINS", value)]).is_err(),
+            "{value}"
+        );
     }
 }
 
@@ -429,8 +457,16 @@ fn interface_feature_flags_are_strict_independent_booleans() {
         "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
     ] {
         let config = configured(&[(key, "true")]).unwrap();
-        assert_eq!(config.features.retained_reopen_enabled, key == "CHRONO_RETAINED_REOPEN_ENABLED");
-        assert!(!configured(&[(key, "false")]).unwrap().features.retained_reopen_enabled);
+        assert_eq!(
+            config.features.retained_reopen_enabled,
+            key == "CHRONO_RETAINED_REOPEN_ENABLED"
+        );
+        assert!(
+            !configured(&[(key, "false")])
+                .unwrap()
+                .features
+                .retained_reopen_enabled
+        );
         assert_eq!(
             config.features.model_budget_writes_enabled,
             key == "CHRONO_MODEL_BUDGET_WRITES_ENABLED"
@@ -439,14 +475,18 @@ fn interface_feature_flags_are_strict_independent_booleans() {
             config.features.model_request_budget_writes_enabled,
             key == "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED"
         );
-        assert!(!configured(&[(key, "false")])
-            .unwrap()
-            .features
-            .model_request_budget_writes_enabled);
-        assert!(!configured(&[(key, "false")])
-            .unwrap()
-            .features
-            .model_budget_writes_enabled);
+        assert!(
+            !configured(&[(key, "false")])
+                .unwrap()
+                .features
+                .model_request_budget_writes_enabled
+        );
+        assert!(
+            !configured(&[(key, "false")])
+                .unwrap()
+                .features
+                .model_budget_writes_enabled
+        );
         assert_eq!(
             config.features.v2_ui_transport,
             key == "CHRONO_V2_UI_TRANSPORT_ENABLED"
@@ -471,7 +511,12 @@ fn interface_feature_flags_are_strict_independent_booleans() {
             config.features.event_driven_reconciliation,
             key == "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED"
         );
-        assert!(!configured(&[(key, "false")]).unwrap().features.document_revocation_reserve);
+        assert!(
+            !configured(&[(key, "false")])
+                .unwrap()
+                .features
+                .document_revocation_reserve
+        );
         assert_eq!(
             configured(&[(key, "enabled")]).unwrap_err(),
             format!("{key} must be true or false")
@@ -483,7 +528,17 @@ fn interface_feature_flags_are_strict_independent_booleans() {
 fn metrics_listener_is_private_and_has_a_distinct_valid_address() {
     let config = configured(&[]).unwrap();
     assert_eq!(config.metrics_bind.to_string(), "0.0.0.0:9091");
-    assert!(configured(&[("CHRONO_METRICS_BIND", "invalid")]).unwrap_err().contains("CHRONO_METRICS_BIND"));
-    assert!(configured(&[("CHRONO_METRICS_BIND", "0.0.0.0:8080")]).unwrap_err().contains("must differ"));
-    assert_eq!(configured(&[("CHRONO_METRICS_BIND", "127.0.0.1:9191")]).unwrap().metrics_bind.to_string(), "127.0.0.1:9191");
+    assert!(configured(&[("CHRONO_METRICS_BIND", "invalid")])
+        .unwrap_err()
+        .contains("CHRONO_METRICS_BIND"));
+    assert!(configured(&[("CHRONO_METRICS_BIND", "0.0.0.0:8080")])
+        .unwrap_err()
+        .contains("must differ"));
+    assert_eq!(
+        configured(&[("CHRONO_METRICS_BIND", "127.0.0.1:9191")])
+            .unwrap()
+            .metrics_bind
+            .to_string(),
+        "127.0.0.1:9191"
+    );
 }
