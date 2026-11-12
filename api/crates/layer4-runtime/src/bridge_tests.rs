@@ -1,4 +1,4 @@
-use layer3_adapter::agent_capacity_recovery::{CapacityRecoveryRequest, RetainedAgentTarget};
+use layer3_adapter::agent_capacity_recovery::{CapacityRecoveryRequest, ConfirmedAgentState, RetainedAgentTarget};
 use layer3_adapter::AgentSlot;
 use layer3_adapter::RuntimeHandle;
 
@@ -220,12 +220,9 @@ async fn recovery_proof_requires_the_reserved_lease_and_preserves_no_input_path(
         .reserve_capacity_recovery(&request.challenge, request.writer_fence)
         .await
         .unwrap();
-    assert!(
-        bridge
-            .send(br#"{"method":"session/load","params":{"sessionId":"conversation"}}"#.to_vec())
-            .await
-    );
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    observe_input(&bridge, serde_json::json!({"id":"load", "method":"session/load", "params":{"sessionId":"conversation"}})).await;
+    observe_output(&bridge, serde_json::json!({"id":"load", "result":{}})).await;
+    bridge.retained_output.retain(b"retained").await;
     assert_eq!(bridge.select_output_acknowledgement(true), Ok(true));
     let proof = bridge
         .capacity_recovery_proof(&request, "/tmp".into())
@@ -236,4 +233,59 @@ async fn recovery_proof_requires_the_reserved_lease_and_preserves_no_input_path(
     assert_eq!(proof.confirmation.output.first_retained, 1);
     assert_eq!(proof.confirmation.output.observed_through, 1);
     bridge.terminate().await.unwrap();
+}
+
+async fn observe_input(bridge: &Bridge, frame: serde_json::Value) {
+    bridge
+        .observation
+        .lock()
+        .await
+        .input(&serde_json::to_vec(&frame).unwrap());
+}
+
+async fn observe_output(bridge: &Bridge, frame: serde_json::Value) {
+    bridge
+        .observation
+        .lock()
+        .await
+        .output(&serde_json::to_vec(&frame).unwrap());
+}
+
+#[tokio::test]
+async fn recovery_failed_load_cannot_authorize_a_proof() {
+    let bridge = Bridge::start(&launch(), &BTreeMap::new()).unwrap();
+    let request = recovery_request(&"d".repeat(32), 10);
+    observe_input(&bridge, serde_json::json!({"id":"load", "method":"session/load", "params":{"sessionId":"conversation"}})).await;
+    observe_output(
+        &bridge,
+        serde_json::json!({"id":"load", "error":{"code":-32603, "message":"load failed"}}),
+    )
+    .await;
+    bridge
+        .reserve_capacity_recovery(&request.challenge, request.writer_fence)
+        .await
+        .unwrap();
+    let proof = bridge
+        .capacity_recovery_proof(&request, "/tmp".into())
+        .await;
+    bridge.terminate().await.unwrap();
+    assert!(proof.is_err(), "failed load authorized proof: {proof:?}");
+}
+
+#[tokio::test]
+async fn recovery_unrelated_response_preserves_a_working_prompt() {
+    let bridge = Bridge::start(&launch(), &BTreeMap::new()).unwrap();
+    observe_input(&bridge, serde_json::json!({"id":"load", "method":"session/load", "params":{"sessionId":"conversation"}})).await;
+    observe_output(&bridge, serde_json::json!({"id":"load", "result":{}})).await;
+    let prompt = layer3_adapter::PromptIdentity::new("conversation", 1, 1);
+    observe_input(&bridge, serde_json::json!({"id":prompt.as_str(), "method":"session/prompt", "params":{"sessionId":"conversation"}})).await;
+    observe_output(&bridge, serde_json::json!({"id":"initialize", "error":{"code":-32603, "message":"Already initialized"}})).await;
+    let state = bridge.observation.lock().await.native_state.clone();
+    bridge.terminate().await.unwrap();
+    assert_eq!(
+        state,
+        Some(ConfirmedAgentState::Working {
+            prompt_id: prompt.as_str().into()
+        })
+    );
 }
