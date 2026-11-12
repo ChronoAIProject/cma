@@ -2,6 +2,8 @@
 use super::census_catalog::{Policy, AUDIT};
 use super::*;
 use std::collections::BTreeSet;
+#[path = "census_budget.rs"]
+mod budget;
 #[path = "census_retained.rs"]
 mod retained;
 
@@ -29,6 +31,9 @@ pub(super) async fn selection(
     session: &mut ClientSession,
 ) -> Result<Document> {
     let policy = AUDIT.iter().find(|(n, _)| *n == name).ok_or(REFUSED)?.1;
+    if matches!(policy, Policy::Budget) {
+        budget::require_known_shapes(db, session).await?;
+    }
     // A future or unversioned ownership shape cannot disappear behind a v1
     // selector. Inspect schema admission for the whole supported namespace.
     if !matches!(policy, Policy::Independent | Policy::Empty)

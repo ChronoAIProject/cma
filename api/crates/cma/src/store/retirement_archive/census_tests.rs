@@ -218,3 +218,42 @@ async fn retained_consent_and_provenance_keep_removed_agent_history_in_the_archi
     }
     support::roundtrip(fixture, expected).await;
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn unsupported_budget_keys_and_missing_nested_ownership_refuse_certification() {
+    let (_temp, store, request, bytes) = fixture().await;
+    store.admit(&request, &bytes).await.unwrap();
+    for key in [
+        "unqualified-ledger",
+        "request:agt_missing:call",
+        "request-turn:agt_missing:invalid",
+    ] {
+        store
+            .database
+            .collection::<Document>("model_budget_reservations")
+            .insert_one(doc! {
+                "_id":key, "document_schema_version":1_i64, "record":{}
+            })
+            .await
+            .unwrap();
+        assert!(
+            export::publish(&store, &request, &bytes, &Custody::default(), None)
+                .await
+                .is_err()
+        );
+        assert!(store.manifest(&request, &bytes).await.is_err());
+        store
+            .database
+            .collection::<Document>("model_budget_reservations")
+            .drop()
+            .await
+            .unwrap();
+    }
+    assert!(
+        read_sandbox(&store.inspect(&request.sandbox_id).await.unwrap())
+            .unwrap()
+            .retirement_archive_pending()
+    );
+    store.database.drop().await.unwrap();
+}
