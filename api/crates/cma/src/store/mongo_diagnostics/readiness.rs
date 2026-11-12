@@ -22,6 +22,8 @@ pub(super) fn event(
     row.collection = command.collection;
     row.session = command.session;
     row.transaction = command.transaction;
+    row.transaction_known = command.transaction_known;
+    row.outcome_known = command.outcome_known;
     row.hold_hash = command.hold_hash.clone();
     row.operation = command.operation;
     if let Some(check) = &command.check {
@@ -60,9 +62,6 @@ pub(crate) fn attach(
         2: Some(recorder),
         ..Default::default()
     };
-    let commands = diagnostics.clone();
-    options.command_event_handler = Some(mongodb::event::EventHandler::callback(move |event| {
-        commands.command(event)
-    }));
+    super::metadata_hook::install(options, diagnostics.clone());
     move |event| diagnostics.cmap(event)
 }
