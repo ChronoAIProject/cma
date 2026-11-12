@@ -1,4 +1,5 @@
 use super::*;
+mod platform_tests;
 mod worker_tests;
 use crate::resource_access::*;
 use crate::sandbox::agent_io::{

@@ -31,12 +31,15 @@ pub enum SandboxControlServiceError {
     Authority(#[from] CommandAuthorizationError),
     #[error(transparent)]
     Store(#[from] SandboxControlError),
+    #[error("model budget refused the revival: {0}")]
+    Budget(crate::budget::BudgetError),
 }
 
 pub struct SandboxControlService {
     store: Arc<dyn SandboxControlStore>,
     access: Arc<ResourceAccessService>,
     authority: Arc<dyn AgentCommandAdmissionAuthority>,
+    platform_spend: std::sync::OnceLock<Arc<dyn crate::budget::PlatformSpendLedger>>,
 }
 
 impl SandboxControlService {
@@ -49,7 +52,27 @@ impl SandboxControlService {
             store,
             access,
             authority,
+            platform_spend: std::sync::OnceLock::new(),
         })
+    }
+
+    /// An explicit Revive reads the platform admission state at admission,
+    /// as the owner's revive does (contract section 5.1); other controls
+    /// carry no new commitment and stay available under a stop.
+    pub fn attach_platform_spend(&self, spend: Arc<dyn crate::budget::PlatformSpendLedger>) {
+        let _ = self.platform_spend.set(spend);
+    }
+
+    async fn require_platform_open(&self) -> Result<(), crate::budget::BudgetError> {
+        let Some(spend) = self.platform_spend.get() else {
+            return Ok(());
+        };
+        let now = crate::seconds_from_rfc3339(&crate::now_rfc3339())
+            .ok_or(crate::budget::BudgetError::Unavailable)?;
+        match spend.admission_state(now).await?.commitment_refusal() {
+            Some(reason) => Err(reason),
+            None => Ok(()),
+        }
     }
 
     pub async fn admit(
@@ -128,6 +151,11 @@ impl SandboxControlService {
             request_fingerprint: submission.command.fingerprint(submission.expected_revision),
         };
         envelope.validate()?;
+        if envelope.command == SandboxControl::Revive {
+            self.require_platform_open()
+                .await
+                .map_err(SandboxControlServiceError::Budget)?;
+        }
         let proof = SandboxControlAuthorization::bind(
             (*self.access).clone(),
             authorized,
