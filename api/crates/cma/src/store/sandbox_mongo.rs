@@ -118,9 +118,7 @@ pub struct MongoSandboxStore {
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
     pub(super) agent_writes: std::sync::Arc<super::agent_write_coordination::AgentWrites>,
-    pub(super) platform_writes: std::sync::Arc<super::platform_write_coordination::PlatformWrites>,
-    pub(super) platform_stop_cache:
-        std::sync::Arc<std::sync::Mutex<super::budget::PlatformStopCache>>,
+    pub(super) platform: std::sync::Arc<super::platform_write_coordination::PlatformState>,
     pub(super) agent_access_tools: Collection<Document>,
     pub(super) agent_access_requests: Collection<Document>,
     pub(super) agent_reuse_bindings: Collection<Document>,
@@ -219,8 +217,7 @@ impl MongoSandboxStore {
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
             agent_writes: Default::default(),
-            platform_writes: Default::default(),
-            platform_stop_cache: Default::default(),
+            platform: Default::default(),
             agent_access_tools: majority_collection(
                 &database,
                 super::agent_access_tools::COLLECTION,
