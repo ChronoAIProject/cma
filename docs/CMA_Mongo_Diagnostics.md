@@ -22,6 +22,7 @@ controls when setting *behavioral* feature flags off for the experiment.
 | `pool` | `general` or `reporting`; never combine reporting-pool demand with general-pool contention |
 | `route` | HTTP method plus matched route **template**; `unmatched` is used without a template, never the raw URI |
 | `request_hash` | SHA-256 of a process-random salt and the normalized request ID; correlation is confined to a process lifetime |
+| `hold_hash` | Hash of a client-random salt and checkout sequence; joins commands to their eventual physical hold without exposing driver/server identities |
 | `worker` | Fixed background work name, `request`, or `unattributed`; never a job/resource identity |
 | `phase` | Fixed operation phase, including `auth`, `hierarchy`, `colors`, `names`, `final_fence` |
 | `command`, `collection` | Allowlisted Mongo command and schema collection; unknown values become `other` |
@@ -53,7 +54,9 @@ metric`. `metric` is `command`, `checkout`, or `hold`; `count`, `total_us`, `max
 `docs_returned`, `failures` and `window_us` are numeric. Sum `total_us / 1e6` for
 `metric=hold` to rank physical hold-seconds. Do not add command time, checkout
 wait, phase time or scan time to physical hold time: these measurements overlap.
-Use summaries for totals and sampled/slow details for request correlation.
+Use summaries for totals and sampled/slow details for request correlation. Join
+command events to completed physical holds by `hold_hash` (plus Pod hash);
+`none` means no matching tracked checkout.
 
 A physical hold spanning multiple commands is labelled command/collection
 `multiple` and retains the checkout context. It is not falsely assigned entirely
