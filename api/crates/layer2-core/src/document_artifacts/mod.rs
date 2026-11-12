@@ -5,6 +5,7 @@ mod mutation;
 mod quota;
 mod runtime;
 mod service;
+mod standing;
 mod types;
 mod validation;
 pub use quota::*;
@@ -29,3 +30,6 @@ mod rollout_tests;
 
 #[cfg(test)]
 mod quota_tests;
+
+#[cfg(test)]
+mod standing_tests;

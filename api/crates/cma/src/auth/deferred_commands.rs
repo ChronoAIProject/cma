@@ -36,6 +36,8 @@ impl AgentCommandAdmissionAuthority for AuthState {
         credential: &str,
         owner: &AgentOwner,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
+        self.require_actor_owner_accounts(&context.actor, owner)
+            .await?;
         if matches!(
             context.credential_source,
             layer2_core::resource_access::CredentialSource::IdentityProxy { .. }
@@ -132,6 +134,7 @@ impl PersonalCommandAdmissionAuthority for AuthState {
         caller: &Caller,
         credential: &str,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
+        self.require_command_account(&caller.subject).await?;
         tokio::time::timeout(VERIFICATION_TIMEOUT, async {
             let state = self
                 .store
@@ -211,6 +214,8 @@ impl AgentCommandAuthorizer for AuthState {
         envelope: &AgentCommandEnvelope,
     ) -> Result<Caller, CommandAuthorizationError> {
         tokio::time::timeout(VERIFICATION_TIMEOUT, async {
+            self.require_actor_owner_accounts(&envelope.actor, &envelope.owner)
+                .await?;
             if envelope.authorization.authority_id.starts_with("binding:") {
                 return Ok(self.retained_binding_context(envelope).await?.caller);
             }

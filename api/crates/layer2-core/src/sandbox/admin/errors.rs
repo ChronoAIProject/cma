@@ -7,7 +7,8 @@ impl OperatorError {
             SandboxStoreError::GlobalCapacityReached => Self::Unavailable(error.to_string()),
             SandboxStoreError::NotFound => Self::NotFound,
             SandboxStoreError::InvalidPage => Self::InvalidRequest(error.to_string()),
-            SandboxStoreError::Conflict
+            SandboxStoreError::AccountDeletionInProgress
+            | SandboxStoreError::Conflict
             | SandboxStoreError::CheckpointInProgress
             | SandboxStoreError::LifecycleBusy { .. }
             | SandboxStoreError::Duplicate

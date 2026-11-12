@@ -80,10 +80,18 @@ impl AccountDeletionService {
         {
             return Err(AccountDeletionError::Invalid);
         }
-        let deletion = self
+        let deletion = match self
             .store
             .request(&caller.subject, key, &crate::now_rfc3339())
-            .await?;
+            .await
+        {
+            Ok(deletion) => deletion,
+            Err(AccountDeletionError::RecoveryRequired) => {
+                self.standing.insert_local(&subject_hash(&caller.subject));
+                return Err(AccountDeletionError::RecoveryRequired);
+            }
+            Err(error) => return Err(error),
+        };
         if let Some(hash) = &deletion.active_subject_hash {
             self.standing.insert_local(hash);
         }

@@ -108,6 +108,15 @@ where
                 AdmissionError::Driver(error)
             }
         })?;
+    let database = store.client.database(&store.sandboxes.namespace().db);
+    if super::account_deletions::erasing_in_session(&database, &admission.sandbox.owner, session)
+        .await
+        .map_err(AdmissionError::Driver)?
+    {
+        return Err(AdmissionError::Domain(
+            SandboxStoreError::AccountDeletionInProgress,
+        ));
+    }
     if let Some(sandbox) = replay_in_transaction(store, admission, session).await? {
         return Ok(AdmissionReceipt::Existing(sandbox));
     }

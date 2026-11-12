@@ -142,7 +142,8 @@ impl SandboxControlWorker {
                 .await;
         }
         match error {
-            Custody(CommandAuthorizationError::Revoked)
+            Resource(ResourceAccessError::AccountDeletionInProgress)
+            | Custody(CommandAuthorizationError::Revoked)
             | Resource(ResourceAccessError::Access(
                 AccessError::NotFound | AccessError::Forbidden,
             ))

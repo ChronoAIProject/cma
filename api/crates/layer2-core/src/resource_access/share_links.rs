@@ -230,6 +230,8 @@ impl ResourceAccessService {
         token: &str,
     ) -> Result<ResourceShare, ResourceAccessError> {
         let started_at = SystemTime::now();
+        self.require_recipient_available(&context.caller.subject)
+            .await?;
         if !context.validate_principal()
             || context.actor.ordinary_subject() != Some(&context.caller.subject)
             || !context

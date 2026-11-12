@@ -12,12 +12,16 @@ impl ResourceAccessService {
         target: &ResourceTarget,
         capability: ResourceCapability,
     ) -> Result<AuthorizedResource, ResourceAccessError> {
+        self.require_account_available(&caller.subject, false)
+            .await?;
         let snapshot = self.store.resource_access_snapshot(target).await?;
         let ResourceOwner::Person { subject } = snapshot.scope(target)?.owner else {
             return Err(AccessError::NotFound.into());
         };
         let decision = AccessDecision::personal(caller, &subject);
         decision.require(capability)?;
+        self.require_owner_available(&snapshot.scope(target)?.owner, false)
+            .await?;
         Ok(AuthorizedResource {
             snapshot,
             decision,
@@ -65,6 +69,8 @@ impl ResourceAccessService {
     ) -> Result<(), ResourceAccessError> {
         authorized.decision.require(capability)?;
         let original_scope = authorized.snapshot.scope(target)?;
+        self.require_owner_available(&original_scope.owner, false)
+            .await?;
         if current.fence() != authorized.snapshot.fence()
             || current.scope(target)? != original_scope
         {

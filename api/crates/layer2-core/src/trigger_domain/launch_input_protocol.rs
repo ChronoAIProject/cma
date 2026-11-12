@@ -71,6 +71,7 @@ impl LaunchService {
     pub fn with_common_first_messages(&self, enabled: bool) -> Arc<Self> {
         Arc::new(Self {
             common_first_messages: enabled,
+            standing: self.standing.clone(),
             definitions: self.definitions.clone(),
             profile_reader: self.profile_reader.clone(),
             sandbox_profiles: self.sandbox_profiles.clone(),

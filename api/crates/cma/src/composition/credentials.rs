@@ -8,6 +8,7 @@ use std::sync::Arc;
 pub(super) fn provider_tools(
     config: &Config,
     stores: &crate::store::MongoStores,
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
 ) -> Result<(Arc<crate::store::MongoProviderToolSource>, axum::Router), String> {
     let source = crate::store::MongoProviderToolSource::with_relay(
         stores.sandbox_model.clone(),
@@ -15,7 +16,8 @@ pub(super) fn provider_tools(
         config.provider_tool_relay.clone(),
         &config.public_url,
         &config.auth_encryption_key,
-    )?;
+    )?
+    .with_account_standing(standing);
     let routes = crate::provider_tool_relay::router(source.clone());
     Ok((source, routes))
 }
@@ -23,6 +25,7 @@ pub(super) fn provider_tools(
 pub(super) fn agent_access_tools(
     config: &Config,
     stores: &crate::store::MongoStores,
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
 ) -> Result<Arc<crate::store::MongoAgentAccessToolSource>, String> {
     crate::store::MongoAgentAccessToolSource::with_retained_origins(
         stores.sandbox_model.clone(),
@@ -30,6 +33,7 @@ pub(super) fn agent_access_tools(
         &config.agent_access_retained_origins,
         &config.auth_encryption_key,
     )
+    .map(|source| source.with_account_standing(standing))
 }
 
 pub(super) fn key_issuer(config: &Config) -> Option<Arc<KeyIssuer>> {

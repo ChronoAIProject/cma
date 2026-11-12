@@ -146,18 +146,26 @@ impl AuthStore for MemoryAuthStore {
     async fn due_actor_links(
         &self,
         renewed_before: u64,
+        after_actor_key: Option<&str>,
         limit: usize,
     ) -> Result<Vec<crate::auth::actor_links::ActorLinkRecord>, StoreError> {
         self.available()?;
-        Ok(self
+        let mut due = self
             .actor_links
             .lock()
             .await
             .values()
-            .filter(|row| row.active && !row.revoked && row.renewed_at <= renewed_before)
-            .take(limit)
+            .filter(|row| {
+                row.active
+                    && !row.revoked
+                    && row.renewed_at <= renewed_before
+                    && after_actor_key.is_none_or(|key| row.actor_key.as_str() > key)
+            })
             .cloned()
-            .collect())
+            .collect::<Vec<_>>();
+        due.sort_by(|left, right| left.actor_key.cmp(&right.actor_key));
+        due.truncate(limit.clamp(1, 100));
+        Ok(due)
     }
     async fn actor_link_for_actor(
         &self,

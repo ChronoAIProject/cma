@@ -61,6 +61,119 @@ pub(super) fn key() -> ProvidedCredential {
     ProvidedCredential::new(format!("nyx_{}", uuid::Uuid::new_v4().simple())).unwrap()
 }
 
+struct DeletingBindingOwner(bool);
+#[async_trait::async_trait]
+impl layer2_core::account_deletion::AccountStanding for DeletingBindingOwner {
+    async fn erasing(
+        &self,
+        _: &SubjectId,
+    ) -> Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        Ok(self.0)
+    }
+}
+
+#[tokio::test]
+async fn binding_authentication_checks_standing_and_refuses_owner_deletion_authority() {
+    for (erasing, path, code) in [
+        (true, "/api/v2/responses", "account_deletion_in_progress"),
+        (
+            false,
+            "/api/v1/account/deletion",
+            "account_deletion_requires_owner_session",
+        ),
+    ] {
+        let store = Arc::new(InMemorySandboxStore::default());
+        let credential = key();
+        store
+            .save_binding(None, reserved(&credential))
+            .await
+            .unwrap();
+        let auth = AuthState::in_memory(
+            AuthMode::Trusted {
+                subject: "development".into(),
+            },
+            None,
+        )
+        .with_binding_store(store)
+        .with_account_standing(Arc::new(DeletingBindingOwner(erasing)));
+        let app = Router::new()
+            .route(
+                path,
+                axum::routing::post(|| async { StatusCode::NO_CONTENT }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                auth,
+                crate::auth::attach_subject,
+            ));
+        let mut request = axum::http::Request::post(path)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        *request.headers_mut() = headers(&credential);
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["code"], code);
+    }
+}
+
+#[tokio::test]
+async fn account_deletion_endpoint_refuses_binding_before_scope_and_marks_private() {
+    use layer2_core::account_deletion::{
+        AccountDeletionService, AvailableAccounts, MemoryAccountDeletionStore,
+    };
+    let store = Arc::new(InMemorySandboxStore::default());
+    let credential = key();
+    store
+        .save_binding(None, reserved(&credential))
+        .await
+        .unwrap();
+    let auth = AuthState::in_memory(
+        AuthMode::Trusted {
+            subject: "development".into(),
+        },
+        None,
+    )
+    .with_binding_store(store);
+    let service = Arc::new(AccountDeletionService::new(
+        Arc::new(MemoryAccountDeletionStore::default()),
+        Arc::new(AvailableAccounts),
+        true,
+    ));
+    let app = layer1_public::rest::account_deletion_router(service).layer(
+        axum::middleware::from_fn_with_state(auth, crate::auth::attach_subject),
+    );
+    for method in ["GET", "POST"] {
+        let mut request = axum::http::Request::builder()
+            .method(method)
+            .uri("/api/v1/account/deletion")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        *request.headers_mut() = headers(&credential);
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "private, no-store"
+        );
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/problem+json"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["code"], "account_deletion_requires_owner_session");
+        assert_eq!(
+            body["type"],
+            "https://spec.chrono-ai.fun/cma/1.0/problems/account-deletion-requires-owner-session"
+        );
+    }
+}
+
 #[tokio::test]
 async fn binding_key_bypasses_nyxid_and_cookie_custody_and_never_inherits_owner_rights() {
     let calls = Arc::new(AtomicUsize::new(0));

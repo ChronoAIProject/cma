@@ -28,6 +28,8 @@ impl AuthState {
         &self,
         envelope: &AgentCommandEnvelope,
     ) -> Result<CallerContext, CommandAuthorizationError> {
+        self.require_actor_owner_accounts(&envelope.actor, &envelope.owner)
+            .await?;
         envelope
             .validate_integrity()
             .map_err(|_| CommandAuthorizationError::Revoked)?;

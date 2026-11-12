@@ -142,6 +142,7 @@ impl DocumentService {
 
 fn authority_error(error: AgentAccessError) -> DocumentError {
     match error {
+        AgentAccessError::AccountDeletionInProgress => DocumentError::AccountDeletionInProgress,
         AgentAccessError::Forbidden
         | AgentAccessError::NotFound
         | AgentAccessError::OwnerAuthorityRequired

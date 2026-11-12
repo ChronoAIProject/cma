@@ -1,0 +1,307 @@
+//! Process-local access revocation, refreshed independently of request traffic.
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{Arc, RwLock},
+    time::{Duration, Instant},
+};
+
+use axum::{
+    http::{header, HeaderMap},
+    response::Response,
+};
+use layer2_core::{
+    account_deletion::{subject_hash, AccountDeletionError, AccountDeletionStore, AccountStanding},
+    resource_access::{CredentialSource, ResourceActor, ResourceOwner},
+    sandbox::agent_io::CommandAuthorizationError,
+    Authorization, Capability, SubjectId,
+};
+
+use super::{AuthMode, AuthState, RequestAuth};
+use crate::store::account_deletions::MongoAccountDeletionStore;
+
+const MAX_SNAPSHOT_AGE: Duration = Duration::from_secs(10);
+
+#[async_trait::async_trait]
+trait SnapshotSource: Send + Sync {
+    async fn active_hashes(&self) -> Result<BTreeSet<String>, AccountDeletionError>;
+    async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError>;
+    async fn accepted_request_key(
+        &self,
+        _: &SubjectId,
+        _: &str,
+    ) -> Result<bool, AccountDeletionError> {
+        Ok(false)
+    }
+}
+
+#[async_trait::async_trait]
+impl SnapshotSource for MongoAccountDeletionStore {
+    async fn active_hashes(&self) -> Result<BTreeSet<String>, AccountDeletionError> {
+        MongoAccountDeletionStore::active_hashes(self).await
+    }
+    async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
+        Ok(self.active(subject).await?.is_some())
+    }
+    async fn accepted_request_key(
+        &self,
+        subject: &SubjectId,
+        key: &str,
+    ) -> Result<bool, AccountDeletionError> {
+        self.has_request_key(subject, key).await
+    }
+}
+
+#[derive(Default)]
+struct Snapshot {
+    hashes: BTreeSet<String>,
+    refreshed_at: Option<Instant>,
+    generation: u64,
+    local: BTreeMap<String, u64>,
+}
+
+pub(crate) struct ErasingSnapshot {
+    source: Arc<dyn SnapshotSource>,
+    state: RwLock<Snapshot>,
+    refresh_lock: tokio::sync::Mutex<()>,
+}
+
+impl ErasingSnapshot {
+    pub(crate) fn new(source: Arc<MongoAccountDeletionStore>) -> Self {
+        Self::with_source(source)
+    }
+    fn with_source(source: Arc<dyn SnapshotSource>) -> Self {
+        Self {
+            source,
+            state: RwLock::new(Snapshot::default()),
+            refresh_lock: tokio::sync::Mutex::new(()),
+        }
+    }
+    pub(crate) async fn refresh(&self) -> Result<(), AccountDeletionError> {
+        let _refresh = self.refresh_lock.lock().await;
+        let generation = self
+            .state
+            .read()
+            .expect("standing snapshot lock")
+            .generation;
+        let mut hashes = self.source.active_hashes().await?;
+        let mut state = self.state.write().expect("standing snapshot lock");
+        // A query started before acceptance cannot erase the synchronous local
+        // insertion made after its durable commit.
+        state.local.retain(|_, inserted| *inserted > generation);
+        hashes.extend(state.local.keys().cloned());
+        state.hashes = hashes;
+        state.refreshed_at = Some(Instant::now());
+        Ok(())
+    }
+    pub(crate) fn spawn_refresh(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let snapshot = Arc::downgrade(self);
+        tokio::spawn(async move {
+            let period = Duration::from_secs(1);
+            let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                ticks.tick().await;
+                let Some(snapshot) = snapshot.upgrade() else {
+                    break;
+                };
+                if snapshot.refresh().await.is_err() {
+                    tracing::warn!("account standing snapshot refresh failed");
+                }
+            }
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl AccountStanding for ErasingSnapshot {
+    async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
+        {
+            let state = self.state.read().expect("standing snapshot lock");
+            if state
+                .refreshed_at
+                .is_some_and(|at| at.elapsed() <= MAX_SNAPSHOT_AGE)
+            {
+                return Ok(state.hashes.contains(&subject_hash(subject)));
+            }
+        }
+        self.source.erasing(subject).await
+    }
+    async fn authoritative(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
+        self.source.erasing(subject).await
+    }
+    fn insert_local(&self, hash: &str) {
+        let mut state = self.state.write().expect("standing snapshot lock");
+        state.generation = state
+            .generation
+            .checked_add(1)
+            .expect("standing generation exhausted");
+        let generation = state.generation;
+        state.local.insert(hash.to_owned(), generation);
+        state.hashes.insert(hash.to_owned());
+    }
+    async fn accepted_request_key(
+        &self,
+        subject: &SubjectId,
+        key: &str,
+    ) -> Result<bool, AccountDeletionError> {
+        self.source.accepted_request_key(subject, key).await
+    }
+}
+
+pub(super) fn allowed_while_erasing(method: &str, path: &str) -> bool {
+    matches!(
+        (method, path),
+        (
+            "GET",
+            "/auth/session" | "/api/v1/account/deletion" | "/auth/logout"
+        ) | ("POST", "/auth/logout")
+    )
+}
+
+impl AuthState {
+    pub(crate) fn with_account_standing(
+        mut self: Arc<Self>,
+        standing: Arc<dyn AccountStanding>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("standing configured before sharing auth")
+            .standing = standing;
+        self
+    }
+    pub(crate) fn with_account_deletion_enabled(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("deletion policy configured before sharing auth")
+            .account_deletion_enabled = enabled;
+        self
+    }
+    pub(super) fn account_authorization(&self, request: &RequestAuth) -> Authorization {
+        let personal = request.binding.is_none()
+            && matches!(
+                request.credential_source,
+                CredentialSource::Retained | CredentialSource::Independent { .. }
+            )
+            && match request.delegated_credential.as_deref() {
+                Some(token) => {
+                    !super::agent_keys::is_agent_key(token)
+                        && super::bearer::permits_personal_authority(token)
+                }
+                None => {
+                    request.credential_source == CredentialSource::Retained
+                        && matches!(self.mode, AuthMode::Trusted { .. })
+                }
+            };
+        Authorization::new(
+            request
+                .authorization
+                .iter()
+                .filter(|cap| *cap != Capability::DeleteOwnAccount)
+                .chain(personal.then_some(Capability::DeleteOwnAccount)),
+        )
+    }
+    pub(super) fn session_authorization(&self, authorization: &Authorization) -> Authorization {
+        Authorization::new(
+            authorization.iter().filter(|cap| {
+                self.account_deletion_enabled || *cap != Capability::DeleteOwnAccount
+            }),
+        )
+    }
+    pub(super) async fn account_gate(
+        &self,
+        method: &str,
+        path: &str,
+        headers: &HeaderMap,
+        subject: &SubjectId,
+        owner_session: bool,
+    ) -> Option<Response> {
+        if path == "/api/v1/account/deletion" && matches!(method, "GET" | "POST") && !owner_session
+        {
+            return Some(problem(AccountDeletionError::RequiresOwnerSession));
+        }
+        if allowed_while_erasing(method, path) {
+            return None;
+        }
+        match self.standing.erasing(subject).await {
+            Ok(false) => None,
+            Ok(true) => {
+                if method == "POST" && path == "/api/v1/account/deletion" && owner_session {
+                    if let Some(key) = accepted_key(headers) {
+                        match self.standing.accepted_request_key(subject, key).await {
+                            Ok(true) => return None,
+                            Err(_) => return Some(unavailable()),
+                            Ok(false) => {}
+                        }
+                    }
+                }
+                Some(deletion_problem())
+            }
+            Err(_) => Some(unavailable()),
+        }
+    }
+    pub(super) async fn require_command_account(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<(), CommandAuthorizationError> {
+        if self
+            .standing
+            .authoritative(subject)
+            .await
+            .map_err(|_| CommandAuthorizationError::Unavailable)?
+        {
+            return Err(CommandAuthorizationError::Revoked);
+        }
+        Ok(())
+    }
+    pub(super) async fn require_actor_owner_accounts(
+        &self,
+        actor: &ResourceActor,
+        owner: &ResourceOwner,
+    ) -> Result<(), CommandAuthorizationError> {
+        if let Some(subject) = actor.ordinary_subject() {
+            self.require_command_account(subject).await?;
+        }
+        if let ResourceOwner::Person { subject } = owner {
+            if actor.ordinary_subject() != Some(subject) {
+                self.require_command_account(subject).await?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn accepted_key(headers: &HeaderMap) -> Option<&str> {
+    let mut values = headers.get_all("idempotency-key").iter();
+    let key = values.next()?.to_str().ok()?;
+    (values.next().is_none()
+        && !key.is_empty()
+        && key.len() <= 256
+        && key.trim() == key
+        && !key.bytes().any(|byte| byte.is_ascii_control()))
+    .then_some(key)
+}
+pub(super) fn deletion_problem() -> Response {
+    problem(AccountDeletionError::InProgress)
+}
+fn problem(error: AccountDeletionError) -> Response {
+    let mut response = layer1_public::rest::account_deletion_problem(error);
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        "no-store".parse().expect("static cache policy"),
+    );
+    response
+}
+pub(super) fn unavailable() -> Response {
+    let mut response = super::middleware::store_failure();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        "no-store".parse().expect("static cache policy"),
+    );
+    response
+}
+
+#[cfg(test)]
+#[path = "account_standing_tests.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "account_standing_mongo_tests.rs"]
+mod mongo_tests;

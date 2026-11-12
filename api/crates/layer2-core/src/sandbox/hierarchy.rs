@@ -199,6 +199,8 @@ impl HierarchyReadError {
                     ResourceAccessStoreError as S,
                 };
                 match error {
+                    R::AccountDeletionInProgress => "account_deletion_in_progress",
+                    R::Store(S::ShareRecipientUnavailable) => "share_recipient_unavailable",
                     R::Access(A::NotFound) | R::Store(S::NotFound) => "resource_not_found",
                     R::Access(A::Forbidden) | R::Membership(M::NotMember) => "resource_forbidden",
                     R::Access(A::UnsafeInteractiveShare) | R::Store(S::UnsafeInteractiveShare) => {

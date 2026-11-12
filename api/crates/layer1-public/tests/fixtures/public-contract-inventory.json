@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 286,
+  "openapi_operations": 288,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -2922,7 +2922,8 @@
         "idempotency_key_reused",
         "invalid_share_command",
         "not_authenticated",
-        "resource_not_found"
+        "resource_not_found",
+        "share_recipient_unavailable"
       ]
     },
     "DELETE /api/v1/agents/{id}/share-links/{share_id}": {
@@ -3131,7 +3132,8 @@
         "invalid_json",
         "json_content_type_required",
         "missing_idempotency_key",
-        "not_authenticated"
+        "not_authenticated",
+        "share_recipient_unavailable"
       ]
     },
     "DELETE /api/v1/documents/{id}/shares/{subject}": {
@@ -3925,6 +3927,34 @@
       "non_problem_statuses": {
         "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
       }
+    },
+    "POST /api/v1/account/deletion": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/account_deletion.rs# Owner-only account deletion acceptance and safe progress reads use the durable deletion ledger and typed refusals.",
+      "required_problems": [
+        "not_authenticated",
+        "account_deletion_unavailable",
+        "account_deletion_acknowledgement_required",
+        "account_deletion_requires_owner_session",
+        "missing_idempotency_key",
+        "invalid_idempotency_key",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_json",
+        "json_content_type_required",
+        "store_failed",
+        "account_deletion_in_progress"
+      ]
+    },
+    "GET /api/v1/account/deletion": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/account_deletion.rs# Owner-only account deletion acceptance and safe progress reads use the durable deletion ledger and typed refusals.",
+      "required_problems": [
+        "not_authenticated",
+        "account_deletion_requires_owner_session",
+        "account_deletion_not_found",
+        "store_failed"
+      ]
     }
   }
 }
