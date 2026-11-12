@@ -107,6 +107,7 @@
   {"operation":"GET /api/v2/conversations/{conversation_id}","positive":"responses-v2-conversation","negative":"responses-v2-conversation-foreign","proof":"contract"},
   {"operation":"GET /api/v2/conversations/{conversation_id}/items","positive":"responses-v2-items","negative":"responses-v2-items-foreign","proof":"contract"},
   {"operation":"GET /api/v2/responses/{response_id}","positive":"responses-v2-retrieve","negative":"responses-v2-retrieve-foreign","proof":"contract"},
+  {"operation":"GET /api/v2/responses/{response_id}/output","positive":"responses-v2-output-success","negative":"responses-v2-output-foreign","proof":"contract"},
   {"operation":"GET /api/v2/responses/{response_id}/events","positive":"responses-v2-replay","negative":"responses-v2-replay-foreign","proof":"contract"},
   {"operation":"PATCH /api/v1/agents/{id}/preferences","positive":"agent-preferences-update","negative":"preferences-agent-input-unavailable-denied","proof":"probe"},
   {"operation":"PATCH /api/v1/agents/{id}/settings","positive":"agent-settings-update","negative":"settings-agent-input-unavailable-denied","proof":"probe"},
@@ -171,5 +172,10 @@
   {"operation":"PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","positive":"binding-conversation-put","negative":"binding-put-conversation-forbidden","proof":"binding-contract"},
   {"operation":"PUT /api/v1/documents/{id}/shares/{subject}","positive":"document-grant-success","negative":"document-grant-foreign","proof":"probe"},
   {"operation":"GET /api/v1/sandboxes/{id}/runtime-recovery","positive":"retained-recovery-owner","negative":"retained-recovery-foreign","proof":"probe"},
-  {"operation":"POST /api/v1/sandboxes/{id}/runtime-recovery","positive":"retained-reopen-accepted","negative":"retained-reopen-foreign","proof":"probe"}
+  {"operation":"POST /api/v1/sandboxes/{id}/runtime-recovery","positive":"retained-reopen-accepted","negative":"retained-reopen-foreign","proof":"probe"},
+  {"operation":"GET /api/v1/agents/{id}/capacity-recovery/dry-run","positive":"capacity-dry-run-owner","negative":"capacity-dry-run-foreign","proof":"contract"},
+  {"operation":"GET /api/v1/agents/{id}/capacity-recovery","positive":"capacity-read-status-owner","negative":"capacity-read-status-foreign","proof":"contract"},
+  {"operation":"POST /api/v1/agents/{id}/capacity-recovery/status","positive":"capacity-request-status-owner","negative":"capacity-request-status-foreign","proof":"contract"},
+  {"operation":"POST /api/v1/agents/{id}/capacity-recovery/admit","positive":"capacity-admit-owner","negative":"capacity-admit-foreign","proof":"contract"},
+  {"operation":"POST /api/v1/agents/{id}/capacity-recovery/resume","positive":"capacity-resume-owner","negative":"capacity-resume-foreign","proof":"contract"}
 ]

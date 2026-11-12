@@ -2,13 +2,13 @@
 use super::{parse_event, parse_sse, response_id_from_frame, Accepted, ResponsesEvent};
 use futures_util::StreamExt;
 use std::time::Instant;
-use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit};
+use tokio::sync::{mpsc, oneshot};
 
 pub(super) async fn forward_turn(
     response: reqwest::Response,
     accepted_tx: oneshot::Sender<Accepted>,
     events_tx: mpsc::Sender<ResponsesEvent>,
-    _permit: OwnedSemaphorePermit,
+    _permit: super::permits::Permit,
     complete: super::transport::Completion,
 ) {
     let mut accepted_tx = Some(accepted_tx);
