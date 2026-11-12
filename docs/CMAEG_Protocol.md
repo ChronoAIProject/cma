@@ -1864,12 +1864,27 @@ channel without routing) and `Content-Type: application/json`:
 | `replyToTarget` | POST `/v1/reply-targets/{reply_target_ref}/messages`, required `Idempotency-Key` header, body `OutboundMessage` | The ordinary `{message_ref?,rendering,delivery}` receipt |
 
 The sealed `cmaeg1.rt` capability derives only from the original authenticated
-relay event with verified retained activity. The request cannot supply a route,
-sender, chat or replacement event. It is bounded to 4 KiB and carries no NyxID
-user credential or relay reply token. The gateway uses the current channel key
-to reply to the original relay message. Custom/synchronous destinations cannot
-issue this capability. Providers retain the opaque reference securely with their
+event with verified retained activity. Native Discord, native WhatsApp private,
+and native WhatsApp group destinations are supported alongside relay and
+Telegram destinations. The request cannot supply a route, sender, chat or
+replacement event. It is bounded to 4 KiB and carries no NyxID user credential
+or relay reply token. The gateway reads the current platform credentials from
+the encrypted channel record and uses the channel key for relay delivery.
+Custom/synchronous destinations cannot issue this capability. Providers retain the opaque reference securely with their
 own pending operation; it is not a login grant or a new incoming user event.
+
+| Native source | Retained destination |
+| --- | --- |
+| Discord channel | Original bot, channel and message. |
+| Discord thread | Original bot, thread channel and message; a thread never falls back to its parent channel. |
+| WhatsApp private | Original app, business account, phone number, recipient and message. |
+| WhatsApp group | Original app, business account, phone number, group, participant and message, plus the original source/credential revision. The group must remain admitted. |
+
+All of these variants use the same maximum 24-hour target lifetime and return
+the authoritative Unix `expires_at` at minting. A sealed target does not override
+platform permissions or WhatsApp's messaging window; a platform refusal remains
+a rejected receipt. Providers must deploy against a gateway version supporting
+the listed native variants; minting alone is not a successful send probe.
 
 Creation and every send, including receipt replay, read current channel authority
 without accepting a stale cache. The original route must still belong to the

@@ -16,8 +16,8 @@ use cmaeg::{
 };
 use cmaeg_core::{
     activity::Activity,
-    channel::ChannelDefinition,
     channel::Secret,
+    channel::{ChannelDefinition, Source},
     ids::{ChannelId, ConsumerId, ConversationId, IdempotencyKey},
     seal::{seal_blob, ChannelPointer, EventRef, EventRefPayload, MasterKeyRing, ReplyAddress},
 };
@@ -250,31 +250,84 @@ impl App {
             },
             route_id: format!("route-{actor}"),
         };
+        enum NativeSource {
+            Telegram {
+                bot_id: String,
+            },
+            Discord {
+                bot_id: String,
+            },
+            Whatsapp {
+                app_id: String,
+                waba_id: String,
+                phone_number_id: String,
+            },
+        }
         let native = self
             .definition
             .sources
             .iter()
             .find_map(|source| match source {
-                cmaeg_core::channel::Source::Telegram { bot_id, .. } => Some(bot_id.clone()),
+                Source::Telegram { bot_id, .. } => Some(NativeSource::Telegram {
+                    bot_id: bot_id.clone(),
+                }),
+                Source::Discord { bot_id, .. } => Some(NativeSource::Discord {
+                    bot_id: bot_id.clone(),
+                }),
+                Source::Whatsapp {
+                    app_id,
+                    waba_id,
+                    phone_number_id,
+                    ..
+                } => Some(NativeSource::Whatsapp {
+                    app_id: app_id.clone(),
+                    waba_id: waba_id.clone(),
+                    phone_number_id: phone_number_id.clone(),
+                }),
                 _ => None,
             });
-        if let Some(bot_id) = &native {
-            activity.source = cmaeg_core::activity::SourceKind::Telegram {
-                platform: cmaeg_core::channel::Platform::Telegram,
-                bot_id: bot_id.clone(),
-            };
-            activity.conversation.id = actor.into();
+        match &native {
+            Some(NativeSource::Telegram { bot_id }) => {
+                activity.source = cmaeg_core::activity::SourceKind::Telegram {
+                    platform: cmaeg_core::channel::Platform::Telegram,
+                    bot_id: bot_id.clone(),
+                };
+                activity.conversation.id = actor.into();
+            }
+            Some(NativeSource::Discord { bot_id }) => {
+                activity.source = cmaeg_core::activity::SourceKind::Discord {
+                    bot_id: bot_id.clone(),
+                };
+                activity.conversation.id = actor.into();
+            }
+            Some(NativeSource::Whatsapp {
+                app_id,
+                waba_id,
+                phone_number_id,
+            }) => {
+                activity.source = cmaeg_core::activity::SourceKind::Whatsapp {
+                    app_id: app_id.clone(),
+                    waba_id: waba_id.clone(),
+                    phone_number_id: phone_number_id.clone(),
+                };
+                activity.actor.id = actor.into();
+                activity.conversation.id = actor.into();
+            }
+            None => {}
         }
+        let telegram_admission = self.state.telegram_effects_issuance_enabled
+            && matches!(native.as_ref(), Some(NativeSource::Telegram { .. }));
         let conversation_id = ConversationId::derive(&self.state.keys, &self.id, 1, actor);
         let event = EventRefPayload {
-            telegram_admission: (self.state.telegram_effects_issuance_enabled && native.is_some())
-                .then(|| cmaeg_core::seal::TelegramAdmissionProof {
+            telegram_admission: telegram_admission.then(|| {
+                cmaeg_core::seal::TelegramAdmissionProof {
                     actor_id: actor.into(),
                     actor_kind: activity.actor.kind,
                     conversation_kind: activity.conversation.kind,
                     mentioned: Some(true),
                     replied_to_bot: Some(false),
-                }),
+                }
+            }),
             v: 1,
             activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: self.id.clone(),
@@ -283,15 +336,31 @@ impl App {
             partition_key: actor.into(),
             conversation_id: conversation_id.clone(),
             expires_at: now() + 600,
-            reply: if let Some(bot_id) = native {
-                ReplyAddress::Telegram {
+            reply: match native {
+                Some(NativeSource::Telegram { bot_id }) => ReplyAddress::Telegram {
                     bot_id,
                     chat_id: actor.into(),
                     message_id: "5".into(),
                     thread_id: None,
-                }
-            } else {
-                ReplyAddress::NyxidRelay {
+                },
+                Some(NativeSource::Discord { bot_id }) => ReplyAddress::Discord {
+                    bot_id,
+                    channel_id: actor.into(),
+                    message_id: "700".into(),
+                    thread_id: None,
+                },
+                Some(NativeSource::Whatsapp {
+                    app_id,
+                    waba_id,
+                    phone_number_id,
+                }) => ReplyAddress::Whatsapp {
+                    app_id,
+                    waba_id,
+                    phone_number_id,
+                    recipient_id: actor.into(),
+                    message_id: "wamid.original".into(),
+                },
+                None => ReplyAddress::NyxidRelay {
                     thread_reply: threaded,
                     message_id: name.into(),
                     route_id: format!("route-{actor}"),
@@ -302,7 +371,7 @@ impl App {
                     },
                     reply_token: cmaeg_core::channel::Secret::new("fixture-unused-reply-token"),
                     reply_token_expires_at: now() + 600,
-                }
+                },
             },
             consumer,
             lineage: None,
