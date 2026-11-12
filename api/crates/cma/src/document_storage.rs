@@ -22,10 +22,17 @@ const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) struct StorageDocuments {
     http: Client,
     config: DocumentStorageConfig,
+    read_only: bool,
     token: Mutex<Option<(Zeroizing<String>, Instant)>>,
 }
 impl StorageDocuments {
     pub(crate) fn new(config: DocumentStorageConfig) -> Result<Arc<Self>, String> {
+        Self::with_access(config, false)
+    }
+    pub(crate) fn read_only(config: DocumentStorageConfig) -> Result<Arc<Self>, String> {
+        Self::with_access(config, true)
+    }
+    fn with_access(config: DocumentStorageConfig, read_only: bool) -> Result<Arc<Self>, String> {
         let http = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
@@ -36,6 +43,7 @@ impl StorageDocuments {
         Ok(Arc::new(Self {
             http,
             config,
+            read_only,
             token: Mutex::new(None),
         }))
     }
@@ -55,7 +63,14 @@ impl StorageDocuments {
                 ("grant_type", "client_credentials"),
                 ("client_id", self.config.client_id.as_str()),
                 ("client_secret", self.config.client_secret.as_str()),
-                ("scope", "proxy object:create object:read object:download"),
+                (
+                    "scope",
+                    if self.read_only {
+                        "proxy object:read object:download"
+                    } else {
+                        "proxy object:create object:read object:download"
+                    },
+                ),
             ])
             .send()
             .await
@@ -189,6 +204,9 @@ impl StorageDocuments {
 #[async_trait::async_trait]
 impl DocumentBlobStore for StorageDocuments {
     async fn put(&self, key: &str, bytes: Vec<u8>) -> Result<(), DocumentError> {
+        if self.read_only {
+            return Err(DocumentError::Invalid);
+        }
         tokio::time::timeout(OPERATION_TIMEOUT, self.put_object(key, bytes))
             .await
             .map_err(|_| DocumentError::Unavailable)?
