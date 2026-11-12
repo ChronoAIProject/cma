@@ -2281,6 +2281,137 @@
         "bodyKind": "json"
       },
       "captures": {}
+    },
+    {
+      "id": "trigger-error-create-image-unsupported",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-create-image-unsupported"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "inline": {
+                "image": {
+                  "id": "custom-image",
+                  "version": "v1",
+                  "reference": "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "agent": {
+                  "model": "gpt-5.6-sol",
+                  "reasoning_effort": "medium",
+                  "permission_mode": "guarded",
+                  "skills": [],
+                  "system_prompt": "",
+                  "services": []
+                }
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-image-selection-unsupported",
+          "title": "trigger image selection unsupported",
+          "status": 422,
+          "detail": "Custom image selection is not supported.",
+          "code": "trigger_image_selection_unsupported",
+          "field": "target.inline.image"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-error-save-image-unsupported",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_owner",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-error-save-image-unsupported"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "inline": {
+                "image": {
+                  "id": "custom-image",
+                  "version": "v1",
+                  "reference": "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                "agent": {
+                  "model": "gpt-5.6-sol",
+                  "reasoning_effort": "medium",
+                  "permission_mode": "guarded",
+                  "skills": [],
+                  "system_prompt": "",
+                  "services": []
+                }
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-image-selection-unsupported",
+          "title": "trigger image selection unsupported",
+          "status": 422,
+          "detail": "Custom image selection is not supported.",
+          "code": "trigger_image_selection_unsupported",
+          "field": "target.inline.image"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
     }
   ]
 }

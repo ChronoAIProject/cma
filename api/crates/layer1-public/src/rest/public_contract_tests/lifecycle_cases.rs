@@ -56,6 +56,7 @@ impl AgentLifecycleProvisioner for Lifecycle {
                 "This deployment has no verified desktop runtime.".into(),
             )),
             "unavailable" => Err(AgentLifecycleProvisioningError::Unavailable),
+            "foreign" => Err(AgentLifecycleProvisioningError::Forbidden),
             "image_unsupported" => Err(AgentLifecycleProvisioningError::ImageSelectionUnsupported),
             "connection" => Err(AgentLifecycleProvisioningError::ConnectionRequired {
                 services: vec!["api-github".into()],
