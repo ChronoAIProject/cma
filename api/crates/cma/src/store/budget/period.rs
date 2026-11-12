@@ -1,5 +1,5 @@
-//! The platform period row: one document per period in the reservation
-//! collection, moved in the same transactions as the owner rows (contract §4).
+//! Exact period admission over its stored accounting layout. Owner and platform
+//! liability changes share the caller's transaction (contract section 4).
 
 use layer2_core::budget::{
     BudgetError, BudgetPolicy, Closure, PlatformBudgetPolicy, PlatformPeriodLedger, Refusal,
@@ -28,20 +28,12 @@ pub(super) async fn fenced_snapshot(
     owner: &SubjectId,
     session: &mut ClientSession,
 ) -> Result<PolicySnapshot, ApplyError> {
-    // A real write also fences activation against previously disabled admissions.
-    // The additive fence is outside the strict settings record.
-    let result = store
-        .budget_settings
-        .update_one(
-            doc! {"_id": "platform", "document_schema_version": DOCUMENT_SCHEMA_VERSION},
-            doc! {"$inc": {"model_budget_admission_fence": 1_i64}},
-        )
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?;
-    if result.matched_count != 1 {
-        return Err(domain(BudgetError::Unavailable));
-    }
+    fence_settings(
+        &store.budget_settings,
+        "model_budget_admission_fence",
+        session,
+    )
+    .await?;
     let document = store
         .budget_settings
         .find_one(doc! {"_id": "platform"})
@@ -52,6 +44,29 @@ pub(super) async fn fenced_snapshot(
     let snapshot = snapshot(&document, Some(owner)).map_err(domain)?;
     store.note_platform_enabled(snapshot.platform.is_some());
     Ok(snapshot)
+}
+
+/// Every model liability increase shares this real write, including late usage
+/// and cloud corrections. Snapshot reads alone do not prevent cross-counter skew.
+pub(super) async fn fence_settings(
+    settings: &Collection<Document>,
+    counter: &str,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    // A real write also fences activation against previously disabled admissions.
+    // The additive fence is outside the strict settings record.
+    let result = settings
+        .update_one(
+            doc! {"_id": "platform", "document_schema_version": DOCUMENT_SCHEMA_VERSION},
+            doc! {"$inc": {counter: 1_i64}},
+        )
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    if result.matched_count != 1 {
+        return Err(domain(BudgetError::Unavailable));
+    }
+    Ok(())
 }
 
 /// Zero-liability commitments: a plain read inside the session snapshot, with
@@ -119,7 +134,12 @@ pub(super) async fn load_or_open(
     let (start, _) = platform
         .period_bounds()
         .map_err(|_| domain(BudgetError::Unavailable))?;
-    if let Some(ledger) = read_period(&store.model_budget, start, session).await? {
+    let read = if store.platform_counter_shards {
+        super::period_storage::read_batched(&store.model_budget, start, session).await?
+    } else {
+        read_period(&store.model_budget, start, session).await?
+    };
+    if let Some(ledger) = read {
         return Ok((ledger, false));
     }
     let ledger = PeriodState::from(
@@ -171,22 +191,38 @@ pub(super) async fn save_period(
 pub(super) async fn admit_liability(
     store: &MongoSandboxStore,
     snapshot: &PolicySnapshot,
+    owner: &SubjectId,
     liability: u64,
     now: u64,
     session: &mut ClientSession,
-) -> Result<Option<u64>, ApplyError> {
+) -> Result<Option<super::counter_accounting::Charge>, ApplyError> {
     let Some(platform) = &snapshot.platform else {
         return Ok(None);
     };
     let (mut ledger, inserted) = load_or_open(store, platform, snapshot.revision, session).await?;
-    match ledger
-        .ledger
-        .admit(platform, snapshot.revision, liability, now)
-    {
+    let mut admitted = ledger.ledger.clone();
+    match admitted.admit(platform, snapshot.revision, liability, now) {
         Ok(entered) => {
-            save_period(store, &ledger, session).await?;
+            let metadata_changed = admitted.period_end != ledger.ledger.period_end
+                || admitted.settings_revision != ledger.ledger.settings_revision
+                || !entered.is_empty();
+            // Convert only a successful admission, using pre-admission balances.
+            // A refusal must retain the committed layout/revision as evidence
+            // for its independent closure write after the transaction aborts.
+            super::counter_accounting::activate(store, &mut ledger, session).await?;
+            admitted.revision = ledger.ledger.revision;
+            ledger.ledger = admitted;
+            let charge = super::counter_accounting::reserve(
+                store,
+                &ledger,
+                owner,
+                liability,
+                metadata_changed,
+                session,
+            )
+            .await?;
             entered.iter().for_each(alert);
-            Ok(Some(ledger.ledger.period_start))
+            Ok(Some(charge))
         }
         Err(refusal) => Err(refuse(
             &store.budget_settings,
@@ -209,6 +245,16 @@ pub(crate) async fn require_open_with(
     now: u64,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
+    require_open_read(settings, rows, now, false, session).await
+}
+
+async fn require_open_read(
+    settings: &Collection<Document>,
+    rows: &Collection<Document>,
+    now: u64,
+    batched: bool,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
     let Some(PolicySnapshot {
         platform: Some(platform),
         revision,
@@ -220,7 +266,11 @@ pub(crate) async fn require_open_with(
     let (start, _) = platform
         .period_bounds()
         .map_err(|_| domain(BudgetError::Unavailable))?;
-    let read = read_period(rows, start, session).await?;
+    let read = if batched {
+        super::period_storage::read_batched(rows, start, session).await?
+    } else {
+        read_period(rows, start, session).await?
+    };
     let expected = read.as_ref().map(|state| state.ledger.revision);
     let mut ledger = match read {
         Some(ledger) => ledger,
@@ -248,7 +298,14 @@ pub(in crate::store) async fn require_open(
     now: u64,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
-    require_open_with(&store.budget_settings, &store.model_budget, now, session).await
+    require_open_read(
+        &store.budget_settings,
+        &store.model_budget,
+        now,
+        store.platform_counter_shards,
+        session,
+    )
+    .await
 }
 
 /// The historical owner-policy bypass is only valid with global metering off.
@@ -325,25 +382,6 @@ pub(super) async fn ensure_period_row(
         Err(error) if is_duplicate_key(&error) => Ok(()),
         Err(_) => Err(BudgetError::Unavailable),
     }
-}
-
-/// Apply a settlement, release or retention to the row a reservation was
-/// charged to, in the caller's transaction. A reservation made before the
-/// platform policy existed carries no period and never touches a row.
-pub(super) async fn mirror(
-    store: &MongoSandboxStore,
-    period_start: Option<u64>,
-    session: &mut ClientSession,
-    change: impl FnOnce(&mut PlatformPeriodLedger) -> Result<(), BudgetError>,
-) -> Result<(), ApplyError> {
-    let Some(start) = period_start else {
-        return Ok(());
-    };
-    let mut ledger = read_period(&store.model_budget, start, session)
-        .await?
-        .ok_or_else(|| domain(BudgetError::Unavailable))?;
-    change(&mut ledger.ledger).map_err(domain)?;
-    save_period(store, &ledger, session).await
 }
 
 /// The alert record: reason and settings revision, never amounts.

@@ -11,6 +11,10 @@ use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 
 mod baseline;
 mod cancellation;
+mod counter_accounting;
+#[cfg(test)]
+mod counter_tests;
+mod counters;
 mod period;
 mod period_storage;
 mod requests;
@@ -39,6 +43,8 @@ struct TurnRecord {
     /// reservations made before a platform policy was enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     period_start: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    period_shard: Option<u16>,
 }
 
 fn domain(reason: BudgetError) -> ApplyError {
@@ -176,8 +182,15 @@ async fn reserve(
     }
     let mut owner = owner_budget(store, agent, &policy, now, session).await?;
     owner.reserve(&policy, now).map_err(domain)?;
-    let period_start =
-        period::admit_liability(store, snapshot, policy.turn_limit, now, session).await?;
+    let charge = period::admit_liability(
+        store,
+        snapshot,
+        &agent.owner,
+        policy.turn_limit,
+        now,
+        session,
+    )
+    .await?;
     save(store, &owner_key(agent), &owner, session).await?;
     save(
         store,
@@ -188,7 +201,8 @@ async fn reserve(
             turn_sequence: None,
             runtime_generation: None,
             reservation: TurnReservation::new(policy, now),
-            period_start,
+            period_start: charge.map(|charge| charge.start),
+            period_shard: charge.and_then(|charge| charge.shard),
         },
         session,
     )
@@ -287,13 +301,17 @@ pub(super) async fn apply(
                 record.reservation.reserved_units,
                 record.reservation.settlement_debit(),
             );
-            period::mirror(store, record.period_start, session, |ledger| {
-                ledger.retain(extra)?;
-                if ended {
-                    ledger.settle(reserved, debit)?;
-                }
-                Ok(())
-            })
+            counter_accounting::mirror(
+                store,
+                record.period_start,
+                record.period_shard,
+                counters::Change {
+                    retained: extra,
+                    released: if ended { reserved } else { 0 },
+                    debit: if ended { debit } else { 0 },
+                },
+                session,
+            )
             .await?;
         }
         save(store, &owner_key(current), &owner, session).await?;

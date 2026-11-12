@@ -82,6 +82,11 @@ async fn write(
     if fenced.matched_count != 1 {
         return Ok(false);
     }
+    if let Some(counters) = &state.counters {
+        if !super::counters::fence(rows, counters, session).await? {
+            return Ok(false);
+        }
+    }
     let ledger = &state.ledger;
     let mut next = state.clone();
     next.ledger.revision = ledger
