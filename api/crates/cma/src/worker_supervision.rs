@@ -31,6 +31,7 @@ impl Workers {
                 ("agents", true),
                 ("sandboxes", true),
                 ("workspaces", true),
+                ("sandbox_reconciliation", true),
                 ("native_warm_pools", false),
             ]
             .into_iter()
@@ -319,6 +320,11 @@ where
 #[cfg(test)]
 pub(crate) fn panic_next_poll(activity: &Activity) {
     activity.0.lock().unwrap().fault = Some(service_fault_tests::Fault::Panic);
+}
+
+#[cfg(test)]
+pub(crate) fn stall_next_poll(activity: &Activity) {
+    activity.0.lock().unwrap().fault = Some(service_fault_tests::Fault::Stall);
 }
 
 #[cfg(test)]
