@@ -16,6 +16,7 @@ use mongodb::{
     Client, ClientSession, Collection, Database,
 };
 
+mod completion;
 mod export;
 pub(crate) use export::{capture, schema_sha256};
 #[cfg(test)]
@@ -231,67 +232,6 @@ impl ArchiveStore {
         accepted(&document, request, bytes)?;
         mongodb::bson::deserialize_from_bson(document.get(field).ok_or(REFUSED)?.clone())
             .map_err(|_| REFUSED)
-    }
-    pub(crate) async fn complete(
-        &self,
-        request: &Request,
-        bytes: &[u8],
-        receipt: RetirementArchiveReceipt,
-    ) -> Result<()> {
-        receipt.validate().map_err(|_| REFUSED)?;
-        let mut session = self.client.start_session().await.map_err(|_| REFUSED)?;
-        start_transaction(&mut session).await.map_err(|_| REFUSED)?;
-        let result = self
-            .complete_in(&mut session, request, bytes, &receipt)
-            .await;
-        if result.is_err() {
-            let _ = session.abort_transaction().await;
-            return result;
-        }
-        self.commit_or_reconcile(session, request, bytes, Some(&receipt))
-            .await
-    }
-    async fn complete_in(
-        &self,
-        session: &mut ClientSession,
-        request: &Request,
-        bytes: &[u8],
-        receipt: &RetirementArchiveReceipt,
-    ) -> Result<()> {
-        let current = self
-            .parents()
-            .find_one(doc! {"_id":&request.sandbox_id})
-            .session(&mut *session)
-            .await
-            .map_err(|_| REFUSED)?
-            .ok_or(REFUSED)?;
-        let mut parent = accepted(&current, request, bytes)?;
-        let gate = parent
-            .lifecycle
-            .retirement_archive
-            .as_mut()
-            .ok_or(REFUSED)?;
-        if let Some(existing) = &gate.verified {
-            return if existing == receipt {
-                Ok(())
-            } else {
-                Err(REFUSED)
-            };
-        }
-        let manifest: ObjectReceipt =
-            mongodb::bson::deserialize_from_bson(current.get(MANIFEST).ok_or(REFUSED)?.clone())
-                .map_err(|_| REFUSED)?;
-        let restore: ObjectReceipt =
-            mongodb::bson::deserialize_from_bson(current.get(RESTORE).ok_or(REFUSED)?.clone())
-                .map_err(|_| REFUSED)?;
-        if manifest.sha256 != receipt.manifest_sha256
-            || restore.sha256 != receipt.verification_sha256
-        {
-            return Err(REFUSED);
-        }
-        gate.verified = Some(receipt.clone());
-        self.advance(session, &current, parent, Document::new())
-            .await
     }
     async fn advance(
         &self,
