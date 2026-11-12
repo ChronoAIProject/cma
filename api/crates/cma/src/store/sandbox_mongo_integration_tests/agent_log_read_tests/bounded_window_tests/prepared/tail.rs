@@ -32,11 +32,6 @@ async fn tail_proof_shares_snapshot_with_predecessor_and_frozen_page() {
             .agent_log_prefix(&fixture.id, 260)
             .await
             .unwrap();
-        layer2_core::sandbox::store::agent_log_contract::assert_tail_page_contract(
-            &fixture.store,
-            &entries,
-        )
-        .await;
         for (after, through, limit) in [(0_u64, 0, 1), (0, 100, 100), (99, 200, 100), (200, 200, 1)]
         {
             let start = after.saturating_sub(1);
@@ -76,6 +71,14 @@ async fn tail_proof_shares_snapshot_with_predecessor_and_frozen_page() {
                 .await,
             Err(SandboxStoreError::InvalidPage)
         );
+        // The visitor-failure contract drops a partially consumed cursor;
+        // its asynchronous killCursors cleanup is outside the read session.
+        // Run it after measuring the successful page commands, not before.
+        layer2_core::sandbox::store::agent_log_contract::assert_tail_page_contract(
+            &fixture.store,
+            &entries,
+        )
+        .await;
         fixture.cleanup().await;
     }
 }
