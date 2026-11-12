@@ -328,3 +328,6 @@ mod status_compatibility;
 
 #[path = "provider_output_json_tests.rs"]
 mod output_json_policy;
+
+#[path = "provider_capacity_recovery_tests.rs"]
+mod capacity_recovery;
