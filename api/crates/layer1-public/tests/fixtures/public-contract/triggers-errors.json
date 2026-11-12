@@ -2302,6 +2302,18 @@
               "theme": "auto"
             },
             "target": {
+              "sandbox_profile": {
+                "id": "",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "",
+                "revision": 1
+              },
               "inline": {
                 "image": {
                   "id": "custom-image",
@@ -2368,6 +2380,18 @@
               "theme": "auto"
             },
             "target": {
+              "sandbox_profile": {
+                "id": "",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "",
+                "revision": 1
+              },
               "inline": {
                 "image": {
                   "id": "custom-image",
