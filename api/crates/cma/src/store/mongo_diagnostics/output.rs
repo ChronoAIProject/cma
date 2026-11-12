@@ -134,9 +134,16 @@ pub(in crate::store) fn initialize() -> bool {
 pub(in crate::store) fn send(record: Record) {
     // Initialized before installing callbacks; no thread creation or formatting here.
     if let Some(Some(queue)) = WRITER.get() {
+        let dispatch = tracing::dispatcher::get_default(Clone::clone);
+        // An unsubscribed caller has no output destination. Do not register the
+        // writer's callsites under NoSubscriber: tracing's single-dispatch cache
+        // can otherwise suppress a later record from a scoped subscriber.
+        if dispatch.is::<tracing::subscriber::NoSubscriber>() {
+            return;
+        }
         queue.enqueue(Envelope {
             record,
-            dispatch: tracing::dispatcher::get_default(Clone::clone),
+            dispatch,
             queued_at: Instant::now(),
         });
     }
