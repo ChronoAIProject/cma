@@ -66,6 +66,7 @@ mod default_profiles;
 pub mod directory;
 mod durability;
 mod encryption;
+mod execution_sections;
 mod media_uploads;
 pub(crate) mod provenance_progress;
 mod segment_response;

@@ -2,6 +2,7 @@
 use super::*;
 use futures_util::TryStreamExt;
 use mongodb::options::ReadConcern;
+use std::future::IntoFuture;
 
 pub(in crate::store) async fn scan_complete_log_with_session<F>(
     caller: ScanCaller,
@@ -217,16 +218,18 @@ where
     } else {
         find
     };
-    let mut cursor = find
-        .session(&mut *session)
+    // Track suspension of the initial find too, so network wait never
+    // becomes an uninterrupted execution section. Driver-poll timing below
+    // is restricted to cursor advancement, where batch copying occurs.
+    let mut cursor = observation
+        .observe(find.session(&mut *session).into_future(), false)
         .await
         .map_err(TransactionLogError::Driver)?;
     let mut entry_count = 0_u64;
     let mut encoded_bytes = 0_usize;
     let mut head_hash = [0_u8; HASH_BYTES];
-    while let Some(raw) = cursor
-        .stream(session)
-        .try_next()
+    while let Some(raw) = observation
+        .observe(cursor.stream(session).try_next(), true)
         .await
         .map_err(TransactionLogError::Driver)?
     {
