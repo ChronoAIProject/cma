@@ -11,10 +11,11 @@ function controlledBinary(directory, binary) {
 const { spawn } = require("node:child_process");
 const { createServer } = require("node:net");
 const { createInterface } = require("node:readline");
-const { rmSync } = require("node:fs");
+const { rmSync, writeFileSync } = require("node:fs");
 const socket = ${JSON.stringify(socket)};
 rmSync(socket, { force: true });
 const child = spawn(${JSON.stringify(binary)}, process.argv.slice(2), { stdio: ["pipe", "pipe", "inherit"] });
+writeFileSync(${JSON.stringify(join(directory, "native-control.pid"))}, String(child.pid));
 const pending = new Map(); let serial = 0;
 process.stdin.pipe(child.stdin);
 createInterface({ input: child.stdout }).on("line", line => {

@@ -107,6 +107,9 @@ impl SandboxStore for MongoSandboxStore {
             return Err(SandboxStoreError::Conflict);
         }
         current
+            .validate_retirement_archive_successor(&sandbox)
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        current
             .validate_service_access_successor(&sandbox)
             .map_err(|_| SandboxStoreError::Conflict)?;
         current

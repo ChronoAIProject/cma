@@ -27,6 +27,16 @@ fn admin_filter(query: &SandboxAdminQuery) -> Document {
     if let Some(runtime_version) = &query.runtime_version {
         filter.insert("runtime_version", runtime_version);
     }
+    if let Some(always_on) = query.always_on {
+        filter.insert(
+            "record.profile.always_on",
+            if always_on {
+                Bson::Boolean(true)
+            } else {
+                Bson::Document(doc! { "$ne": true })
+            },
+        );
+    }
     if let Some(cursor) = &query.page.cursor {
         filter.insert("_id", doc! { "$gt": cursor });
     }
@@ -217,6 +227,7 @@ mod tests {
             owner: Some(SubjectId("operator-target".into())),
             status: Some(SandboxStatus::Paused),
             runtime_version: Some("runtime-7".into()),
+            always_on: Some(true),
             page: PageRequest {
                 limit: 25,
                 cursor: Some("sbx_after".into()),
@@ -229,6 +240,7 @@ mod tests {
                 "owner": "operator-target",
                 "status": "paused",
                 "runtime_version": "runtime-7",
+                "record.profile.always_on": true,
                 "_id": { "$gt": "sbx_after" },
             } }
         );

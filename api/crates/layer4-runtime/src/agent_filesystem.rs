@@ -19,7 +19,7 @@ use std::{
 };
 
 #[path = "agent_filesystem/io.rs"]
-mod io;
+pub(crate) mod io;
 use io::{cstring, descend, mkdir, names, open_at, parent, read_regular, rename, stat, unlink};
 
 pub(crate) fn list(

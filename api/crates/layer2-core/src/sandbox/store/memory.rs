@@ -164,6 +164,9 @@ impl SandboxStore for InMemorySandboxStore {
         let mut state = self.lock();
         if state.sandboxes.get(&id).is_some_and(|current| {
             current.owner != sandbox.owner
+                || current
+                    .validate_retirement_archive_successor(&sandbox)
+                    .is_err()
                 || current.validate_service_access_successor(&sandbox).is_err()
                 || current
                     .validate_unpublished_recovery_save(&sandbox)
