@@ -1,7 +1,7 @@
 use super::*;
 use mongodb::options::ClientOptions;
 
-async fn client_for(name: &str) -> (Client, String) {
+pub(super) async fn client_for(name: &str) -> (Client, String) {
     let app = format!("ordinary-v2-{name}-{}", uuid::Uuid::new_v4());
     let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
     let mut options = ClientOptions::parse(uri).await.unwrap();
@@ -9,7 +9,7 @@ async fn client_for(name: &str) -> (Client, String) {
     (Client::with_options(options).unwrap(), app)
 }
 
-async fn fail_commit(admin: &Client, app: &str, committed: bool) {
+pub(super) async fn fail_commit(admin: &Client, app: &str, committed: bool) {
     let mut data = doc! {"failCommands":["commitTransaction"], "appName":app};
     if committed {
         data.insert(
@@ -29,7 +29,7 @@ async fn fail_commit(admin: &Client, app: &str, committed: bool) {
         .unwrap();
 }
 
-async fn clear(admin: &Client) {
+pub(super) async fn clear(admin: &Client) {
     admin
         .database("admin")
         .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
