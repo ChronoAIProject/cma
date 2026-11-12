@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -182,7 +183,8 @@ impl Bridge {
             "sessionId": session,
             "prompt": content,
         });
-        let recoverable = prompt_id.is_some();
+        let recoverable =
+            prompt_id.is_some() || self.bounded_raw_output || self.json_pools.is_some();
         let bounded_permissions = self.permission_state.is_some();
         let terminal_identity = prompt_id.clone();
         match self.begin_prompt(params, prompt_id).await {
@@ -289,7 +291,8 @@ pub(super) fn scoped_turn_outcome(
     }
 }
 
-pub(super) fn turn_outcome(frame: serde_json::Value) -> Outcome {
+pub(super) fn turn_outcome(frame: impl std::borrow::Borrow<serde_json::Value>) -> Outcome {
+    let frame = frame.borrow();
     if let Some(error) = frame.get("error") {
         let message = error
             .get("message")
@@ -336,7 +339,7 @@ pub(super) fn turn_outcome(frame: serde_json::Value) -> Outcome {
             };
         }
     }
-    match serde_json::from_value::<PromptResponse>(result.clone()) {
+    match PromptResponse::deserialize(result) {
         Ok(response) => Outcome::Ended(response),
         Err(error) => {
             tracing::warn!(%error, "turn ended in a newer ACP shape");
