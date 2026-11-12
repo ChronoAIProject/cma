@@ -88,18 +88,38 @@ impl Summary {
         (elapsed >= Duration::from_secs(10)).then(|| self.drain())
     }
 }
+pub(in crate::store) struct Row {
+    key: Key,
+    value: Totals,
+    elapsed: Duration,
+    untracked: u64,
+}
 pub(super) fn emit(completed: Option<Completed>) {
     if let Some(completed) = completed {
         for (key, value) in completed.window.groups {
-            tracing::info!(target: "mongo_diagnostic_summary", parent: None,
-                pool = key.pool, route = key.route.as_ref(), worker = key.worker, phase = key.phase,
-                command = key.command, collection = key.collection, metric = key.metric,
-                count = value.count, total_us = value.total_us, max_us = value.max_us,
-                docs_returned = value.docs, failures = value.failures,
-                window_us = micros(completed.elapsed), untracked = completed.window.untracked,
-                "MongoDB attributed totals");
+            super::output::send(super::output::Record::Summary(Row {
+                key,
+                value,
+                elapsed: completed.elapsed,
+                untracked: completed.window.untracked,
+            }));
         }
     }
+}
+pub(super) fn write(row: Row, queue_delay_us: u64) {
+    let Row {
+        key,
+        value,
+        elapsed,
+        untracked,
+    } = row;
+    tracing::info!(target: "mongo_diagnostic_summary", parent: None,
+        queue_delay_us, pool = key.pool, route = key.route.as_ref(), worker = key.worker, phase = key.phase,
+        command = key.command, collection = key.collection, metric = key.metric,
+        count = value.count, total_us = value.total_us, max_us = value.max_us,
+        docs_returned = value.docs, failures = value.failures,
+        window_us = micros(elapsed), untracked,
+        "MongoDB attributed totals");
 }
 
 #[cfg(test)]
