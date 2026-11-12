@@ -162,6 +162,7 @@ it('submits image-free inline Agent setup without any profile authoring choice',
     },
   });
   expect(create.mock.calls[0]?.[0]).not.toHaveProperty('profile');
+  expect(create.mock.calls[0]?.[0]).not.toHaveProperty('image');
 });
 
 it.each([false, true])(

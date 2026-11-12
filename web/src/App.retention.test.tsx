@@ -78,7 +78,6 @@ it('retains the exact Agent draft, Gateway editor and uncertain request across p
   await waitFor(() => expect(writes).toHaveLength(2));
   expect(writes[1]?.body).toBe(writes[0]?.body);
   expect(writes[1]?.headers).toEqual(writes[0]?.headers);
-  expect(fetcher.mock.calls.some(([url]) => url.includes('/image-manager'))).toBe(false);
 });
 
 it('discards retained private service drafts when the global account signs out', async () => {

@@ -28,8 +28,8 @@ function setup() {
   const done = vi.fn();
   render(
     <WriteForm
-      service="image-manager"
-      path="/v1/images/img_one/builds"
+      service="event-gateway"
+      path="/v1/channels"
       label="Start build"
       fields={[
         { name: 'repository', label: 'Repository', initial: 'https://github.com/example/repo' },

@@ -92,15 +92,11 @@ it('fades a retained Event Gateway on re-entry while preserving its form and avo
   await screen.findByRole('heading', { name: 'Welcome to CMA' });
   expect(field).not.toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: /^Service: / }));
-  expect(screen.getByRole('menuitemradio', { name: /^Image Manager/ })).toHaveAttribute(
-    'aria-disabled',
-    'true',
-  );
+  expect(screen.getAllByRole('menuitemradio')).toHaveLength(2);
   fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
   chooseService('Event Gateway');
   expect(screen.getByRole('textbox', { name: 'Channel name' })).toBe(field);
   expect(field).toHaveValue(draft);
   expect(motion.records.filter((record) => record.element === surface)).toHaveLength(2);
   expect(gatewayReads()).toHaveLength(reads);
-  expect(fetcher.mock.calls.some(([url]) => url.startsWith('/api/image-manager/'))).toBe(false);
 });

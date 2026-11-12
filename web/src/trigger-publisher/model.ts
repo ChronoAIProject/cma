@@ -63,10 +63,9 @@ export function validateStep(
   const errors: Record<string, string> = {};
   if (step === 0 && content.target.inline !== undefined) {
     const inline = content.target.inline;
-    if (inline.image?.id.trim() === '')
-      errors['target.inline.image'] = 'Choose an image or use the system default.';
-    else if (inline.image !== undefined && inline.image.reference === undefined)
-      errors['target.inline.image'] = 'The selected image has no immutable successful version.';
+    if (inline.image !== undefined)
+      errors['target.inline.image'] =
+        'Custom image selection is unsupported. Use the system default image.';
     if (inline.agent.model !== undefined && inline.agent.model.trim() === '')
       errors['target.inline.agent.model'] = 'Enter a model or leave it at the deployment default.';
     if (inline.agent.skills.length > 32)

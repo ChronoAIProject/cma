@@ -47,9 +47,9 @@ async function next(user: ReturnType<typeof userEvent.setup>) {
 }
 
 async function selectTargets(user: ReturnType<typeof userEvent.setup>) {
-  const inlineImage = screen.queryByRole('button', { name: 'Image' });
-  if (inlineImage !== null) {
-    await waitFor(() => expect(inlineImage).toBeEnabled());
+  const inlineModel = screen.queryByRole('textbox', { name: 'Model' });
+  if (inlineModel !== null) {
+    await waitFor(() => expect(inlineModel).toBeEnabled());
     return;
   }
   for (const kind of ['sandbox', 'workspace', 'agent'] as const) {

@@ -127,9 +127,6 @@ main.sign-in-landing {
   padding: 24px 0 0;
   border-top: 1px solid var(--dsw-alias-border-l2);
 }
-.sign-in-landing__card--soon {
-  color: var(--dsw-alias-label-secondary);
-}
 .sign-in-landing__card h3 {
   display: flex;
   flex-wrap: wrap;
@@ -151,17 +148,6 @@ main.sign-in-landing {
   font-family: var(--ds-font-family-code);
   font-size: 12px;
   line-height: 20px;
-}
-.sign-in-landing__soon {
-  display: inline-flex;
-  align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-3);
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  font-weight: 500;
 }
 .sign-in-landing__open {
   margin-top: auto;

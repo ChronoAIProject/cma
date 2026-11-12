@@ -3,12 +3,7 @@ import * as React from 'react';
 import type { TriggerContent, TriggerInlineTarget } from '@chronoai/cma-sdk';
 import { Presence } from '../ui/Presence';
 import { Input } from '../ui/Input';
-import {
-  imageVisibilityLabel,
-  listAgentImages,
-  resolveAgentImage,
-  type AgentImageChoice,
-} from '../create/imageCatalog';
+import { Button } from '../ui/Button';
 import { inlineResultSentence } from './model';
 
 export function InlineTargetStep({
@@ -16,44 +11,13 @@ export function InlineTargetStep({
   errors,
   disabled,
   onChange,
-  onImageResolving,
 }: {
   readonly value: TriggerContent;
   readonly errors: Readonly<Record<string, string>>;
   readonly disabled: boolean;
   readonly onChange: (value: React.SetStateAction<TriggerContent>) => void;
-  readonly onImageResolving: (resolving: boolean) => void;
 }) {
   const target = value.target.inline as TriggerInlineTarget;
-  const [images, setImages] = React.useState<readonly AgentImageChoice[]>([]);
-  const [imageFailure, setImageFailure] = React.useState<string>();
-  const [imageResolving, setImageResolving] = React.useState(false);
-  React.useEffect(() => {
-    onImageResolving(imageResolving);
-    return () => onImageResolving(false);
-  }, [imageResolving, onImageResolving]);
-  const imageRequest = React.useRef(0);
-  const imageController = React.useRef<AbortController | undefined>(undefined);
-  React.useEffect(() => {
-    const controller = new AbortController();
-    void listAgentImages(controller.signal)
-      .then((next) => {
-        if (!controller.signal.aborted) {
-          setImages(next.filter((image) => image.retired !== true));
-          setImageFailure(undefined);
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted)
-          setImageFailure(
-            'Image Manager is unavailable. Use the system default image or try again later.',
-          );
-      });
-    return () => {
-      controller.abort();
-      imageController.current?.abort();
-    };
-  }, []);
   const updateTarget = (next: React.SetStateAction<TriggerInlineTarget>) =>
     onChange((current) => ({
       ...current,
@@ -74,53 +38,22 @@ export function InlineTargetStep({
   return (
     <>
       <div className="trigger-field">
-        <label htmlFor="trigger-inline-image">Image</label>
-        <Picker
-          id="trigger-inline-image"
-          value={target.image?.id ?? ''}
-          disabled={disabled || imageResolving}
-          onChange={(choice) => {
-            const id = choice;
-            const request = ++imageRequest.current;
-            if (id === '') {
-              setImageFailure(undefined);
-              updateTarget({ ...target, image: undefined });
-              return;
-            }
-            updateTarget({ ...target, image: { id } });
-            setImageResolving(true);
-            setImageFailure(undefined);
-            imageController.current?.abort();
-            const controller = new AbortController();
-            imageController.current = controller;
-            void resolveAgentImage(id, controller.signal)
-              .then((resolved) => {
-                if (request !== imageRequest.current || controller.signal.aborted) return;
-                updateTarget((current) => ({ ...current, image: resolved }));
-              })
-              .catch(() => {
-                if (request !== imageRequest.current || controller.signal.aborted) return;
-                setImageFailure('The selected image has no successful immutable version.');
-              })
-              .finally(() => {
-                if (request === imageRequest.current) setImageResolving(false);
-              });
-          }}
-          label="Image"
-          options={[
-            { value: '', label: 'System default image' },
-            ...images.map((image) => ({
-              value: image.id,
-              label: `${image.name} (${imageVisibilityLabel(image.visibility)})`,
-            })),
-          ]}
-        />
+        <span>Image</span>
+        {target.image === undefined ? (
+          <p>System default image</p>
+        ) : (
+          <>
+            <p className="trigger-caption">Custom image selection is unsupported.</p>
+            <Button
+              disabled={disabled}
+              onClick={() => updateTarget({ ...target, image: undefined })}
+            >
+              Use system default image
+            </Button>
+          </>
+        )}
         <Presence>
           <div>
-            {imageResolving ? (
-              <p className="trigger-caption">Resolving immutable image version…</p>
-            ) : null}
-            {imageFailure === undefined ? null : <p className="trigger-caption">{imageFailure}</p>}
             {errors['target.inline.image'] === undefined ? null : (
               <p className="trigger-error" role="alert">
                 {errors['target.inline.image']}
