@@ -39,7 +39,7 @@ impl AgentModelCatalog for Models {
     }
 }
 
-struct RuntimeSupport(bool);
+struct RuntimeSupport(bool, bool);
 
 #[async_trait]
 impl AgentModelRuntimeSupport for RuntimeSupport {
@@ -52,6 +52,9 @@ impl AgentModelRuntimeSupport for RuntimeSupport {
 impl AgentSkillRuntimeSupport for RuntimeSupport {
     async fn supported(&self, _: &Sandbox) -> bool {
         self.0
+    }
+    async fn upgrade_supported(&self, _: &Sandbox) -> bool {
+        self.1
     }
 }
 
@@ -95,6 +98,10 @@ impl SandboxCredentialPrerequisite for Connections {
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let mode = name.strip_prefix("agent_customization_")?;
     let mut fixture = agents::fixture().await;
+    fixture.state.agent_operations = fixture
+        .state
+        .agent_operations
+        .with_skill_upgrades_enabled(mode != "upgrade_disabled");
     let agent = agents::seeded_agent(
         "agt_contract",
         if mode == "stopped" {
@@ -128,9 +135,53 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             .agent_operations
             .with_connections(Arc::new(Connections(connection)));
     }
-    let support = Arc::new(RuntimeSupport(mode != "unsupported"));
-    if matches!(mode, "installed" | "failed") {
-        settle_skill(&fixture, mode).await;
+    let support = Arc::new(RuntimeSupport(
+        mode != "unsupported",
+        matches!(mode, "upgrade" | "upgrade_disabled" | "history_full"),
+    ));
+    if matches!(
+        mode,
+        "installed"
+            | "failed"
+            | "upgrade"
+            | "upgraded"
+            | "upgrade_failed"
+            | "upgrade_disabled"
+            | "upgrade_closed"
+    ) {
+        settle_skill(
+            &fixture,
+            if mode == "failed" {
+                "failed"
+            } else {
+                "installed"
+            },
+            "1.0",
+        )
+        .await;
+        if matches!(mode, "upgraded" | "upgrade_failed" | "upgrade_closed") {
+            settle_skill(
+                &fixture,
+                if matches!(mode, "upgraded" | "upgrade_closed") {
+                    "installed"
+                } else {
+                    "failed"
+                },
+                "1.1",
+            )
+            .await;
+        }
+    }
+    if mode == "history_full" {
+        for index in 0..128 {
+            settle_skill(&fixture, "installed", &format!("v{index}")).await;
+        }
+    }
+    if mode == "upgrade_closed" {
+        fixture.state.agent_operations = fixture
+            .state
+            .agent_operations
+            .with_skill_upgrades_enabled(false);
     }
     let models = agent_models_router(
         fixture.state.reads.clone(),
@@ -160,7 +211,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     })
 }
 
-async fn settle_skill(fixture: &agents::Fixture, mode: &str) {
+async fn settle_skill(fixture: &agents::Fixture, mode: &str, version: &str) {
     use std::time::{Duration, SystemTime};
     let caller = layer2_core::Caller {
         subject: SubjectId::new("owner-a"),
@@ -175,7 +226,7 @@ async fn settle_skill(fixture: &agents::Fixture, mode: &str) {
             SkillRef {
                 source: SkillSource::Ornn,
                 id: SkillId("research".into()),
-                version: Some("1.0".into()),
+                version: Some(version.into()),
             },
         )
         .await
@@ -206,7 +257,7 @@ async fn settle_skill(fixture: &agents::Fixture, mode: &str) {
                 source: SkillSource::Ornn,
                 id: SkillId("research".into()),
                 name: Some("Research".into()),
-                version: "1.0".into(),
+                version: version.into(),
                 archive_sha256: "a".repeat(64),
             });
         } else {

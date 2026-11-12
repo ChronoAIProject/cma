@@ -62,6 +62,8 @@ export interface AdminSandboxListOptions extends PageOptions {
   readonly owner?: string;
   readonly status?: SandboxStatus;
   readonly runtime_version?: string;
+  /** True selects explicit exceptions; false includes unset preferences. */
+  readonly always_on?: boolean;
 }
 export interface AdminProfileListOptions extends PageOptions {
   readonly kind?: ProfileKind;
@@ -151,6 +153,7 @@ export class Administration {
         owner: options.owner,
         status: options.status,
         runtime_version: options.runtime_version,
+        always_on: options.always_on?.toString(),
         cursor: options.cursor,
         limit: options.limit,
       }),
@@ -280,6 +283,7 @@ export class Administration {
       body: input(pauseIdleNowRequest, { confirmed }),
     });
   }
+  /** Approve or revoke an exception with revision CAS and an administrator audit record. */
   setSandboxAlwaysOn(id: string, body: SetSandboxAlwaysOnRequest, options: OperationOptions = {}) {
     return read(
       this.config,

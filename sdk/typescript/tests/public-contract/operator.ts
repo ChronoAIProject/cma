@@ -19,7 +19,13 @@ export const operatorDispatch: Record<string, Dispatch> = {
     client.admin.setSandboxAlwaysOn(param('id'), body),
   'POST /api/v1/admin/triggers/pause': ({ client }) => client.admin.pauseTriggers(),
   'POST /api/v1/admin/triggers/resume': ({ client }) => client.admin.resumeTriggers(),
-  'GET /api/v1/admin/sandboxes': ({ client, options }) => client.admin.listSandboxes(options),
+  'GET /api/v1/admin/sandboxes': ({ client, options }) => {
+    const values = options as { always_on?: string };
+    return client.admin.listSandboxes({
+      ...values,
+      always_on: values.always_on === undefined ? undefined : values.always_on === 'true',
+    });
+  },
   'GET /api/v1/admin/sandboxes/{id}': ({ client, param }) => client.admin.readSandbox(param('id')),
   'GET /api/v1/admin/sandboxes/{id}/events': ({ client, param, options }) =>
     client.admin.sandboxEvents(param('id'), options),

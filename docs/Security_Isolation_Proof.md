@@ -245,7 +245,7 @@ above supplement ports that intentionally use HTTP projection doubles.
 | `POST /api/v1/responses` | `responses-create-completes` | `responses-create-foreign` | contract |
 | `POST /api/v1/responses/{response_id}/cancel` | `responses-cancel-refused` | `` | unsupported |
 | `POST /api/v1/sandboxes` | `sandbox-create` | `sandbox-create-denied` | profile-creation |
-| `POST /api/v1/sandboxes/{id}/always-on` | `auto-pause-owner-always-on` | `auto-pause-owner-forbidden` | probe |
+| `POST /api/v1/sandboxes/{id}/always-on` | `auto-pause-owner-disable-unset` | `auto-pause-owner-forbidden` | probe |
 | `POST /api/v1/sandboxes/{id}/commands` | `sandbox-command-owner-admission` | `sandbox-command-revoked` | contract |
 | `POST /api/v1/sandboxes/{id}/pause` | `sandbox-pause` | `sandbox-pause-denied` | probe |
 | `POST /api/v1/sandboxes/{id}/revive` | `sandbox-revive-accepted` | `sandbox-revive-not-paused-denied` | probe |

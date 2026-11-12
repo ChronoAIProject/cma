@@ -25,6 +25,8 @@ pub struct SandboxAdminQuery {
     pub owner: Option<SubjectId>,
     pub status: Option<SandboxStatus>,
     pub runtime_version: Option<String>,
+    /// True selects explicit exceptions; false includes unset preferences.
+    pub always_on: Option<bool>,
     pub page: PageRequest,
 }
 
@@ -232,12 +234,14 @@ pub enum OperatorError {
     Unavailable(String),
 }
 
+mod always_on;
 mod errors;
 
 pub struct SandboxOperatorService {
     sandboxes: Arc<dyn SandboxAdminStore>,
     profiles: Arc<dyn ProfileAdminStore>,
     retirement: Arc<dyn SandboxRetirement>,
+    maintenance: Option<Arc<dyn super::SandboxMaintenanceStore>>,
     activity: Arc<ActivityService>,
 }
 
@@ -252,6 +256,7 @@ impl SandboxOperatorService {
             sandboxes,
             profiles,
             retirement,
+            maintenance: None,
             activity,
         }
     }
