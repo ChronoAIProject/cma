@@ -14,7 +14,7 @@ use layer2_core::sandbox::{store::AgentLogPublicationIdentity, Agent};
 use mongodb::bson::{spec::BinarySubtype, Binary};
 
 mod claim;
-mod preparation;
+pub(in crate::store) mod preparation;
 pub(in crate::store) mod settlement;
 
 pub(in crate::store) struct Attempt {
