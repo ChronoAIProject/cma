@@ -1,19 +1,21 @@
 # #1472 gap plan — Friday closure
 
-Prepared 2026-11-11 16:45 SGT by cma-abuse. Deadline remains **Fri 2026-11-13 15:00 SGT**.
+Prepared 2026-11-11 16:45 SGT; refreshed 2026-11-12 for current source delivery. Deadline remains **Fri 2026-11-13 15:00 SGT**.
 Issue: https://github.com/ChronoAIProject/cma/issues/1472
 Baseline: `origin/develop` at `542485b8b` when work began. Work only in the assigned
 `tl/cma-abuse/integration` worktree; the main checkout and security branch are untouched.
 
 ## Delivery judgment and evidence rules
 
-The four original application fixes are implemented. Full closure still needs
-separate revocation activation, candidate-bound acceptance, global allocation
-admission, document quotas, actual isolated dependency failure and runtime/network
-qualification. Code delivery is within this workstream; external qualification
+The four original application fixes, global Sandbox admission and document
+quota implementation are merged. Full closure still needs separate revocation
+activation, quota/admission baseline and activation, complete ingress ownership
+code, candidate-bound acceptance, a real isolated dependency failure and
+runtime/network qualification. Code delivery is within this workstream; external qualification
 requires named owners and relayed execution slots. No Friday closure is claimed
-until every row below passes. The security plan forecasts partial delivery; this
-plan preserves the Friday deadline and makes the missing closure steps explicit.
+until every row below passes. The updated security plan preserves full Friday delivery and explicitly
+supersedes its earlier partial-delivery forecast. This plan makes the missing
+closure steps and external inputs explicit.
 It does not import another gate's seven-day/24-hour calendar as a new #1472 DoD.
 
 Read: the closure queue, sprint W46 Friday plan, security Friday plan and retained
@@ -44,10 +46,10 @@ The harness cleanup correction is tracked separately in #1662.
 | History post-I/O fence and projection | #1606 merged `89b04a71fe3bd23b29dc9f9c7286e9942b4912f9`, deployed in Train E; HTTP test `thousand_revoke_export_interleavings_release_no_native_bytes` covers 1,000 ordered races. Owner-only raw export and fresh authority after I/O. | **Evidence**: final-candidate 1,000-race receipt, nonempty live owner control, shared/foreign/stale denial, zero protected bytes. Sequential smoke cannot prove an in-flight race. | cma-abuse supplies exact-source test mapping; cma-security runs only relayed harness; runtime/provider owner supplies legitimate ready history fixture and any approved real I/O barrier. | Candidate contracts Thu daytime; live controls Fri 09:00–11:30 after final deployment. |
 | At least 1,000 identity negatives | #1637 merged `47b78758b23c3872d69a53b64911e00d7b94292a`, application isolation proof; harness has low-count invalid/stale controls. | **Harness code + evidence**, not 1,000 random strings renamed as scope/audience cases. Required classes: expired/revoked, wrong owner, insufficient scope and wrong audience. | cma-security adds reviewed default-disabled batching through lead relay. NyxID owner supplies supported credential forms and validity receipts. cma-abuse prepares matrix and expected typed outcomes. | Four 250-negative batches + controls, Thu/Fri nonoverlapping owner-approved slot. |
 | Bounded invalid-credential fanout | #1608 merged `21811fc8b207d2e16cc0d7304eb8dde042de3f03`, Train E. Existing 64-slot, 2.5-second verification budget; deterministic 1,000-distinct-credential saturation, no waiting queue, permit recovery. | **Evidence**: real inflight/queue, healthy-user latency/errors and first-run bounded load on the exact candidate. | cma-abuse designs bounded profile; NyxID, monitoring and release owners supply headroom and metrics; cma-security owns reviewed execution extension. | Thu daytime profile review; isolated authorized load Fri morning, separate from outage/rollout. |
-| Large GET and metadata bounds | #1612 merged `b6bcab742f89c98ec9b7b026d7ff1162e87e3c9d`, Train E: two expensive reads, response/deadline bounds, permits held through consumption/drop, metadata storage projection. | **Evidence**: cancellation/size boundary and storage read projection, RSS/latency under bounded load. 128 MiB retained public response bound is not total-process RSS. | cma-abuse candidate tests and load specification; cma-db-contention/admission-scan supply aggregate scan/pool evidence; release/monitoring own live observations. Do not override the current harness 1 MiB response cap. | Thu reviewed contracts; separately reviewed streaming/cancel probe Fri morning if fixture exists. |
-| Global admission across owners/replicas | Existing owner-scoped transactional Sandbox admission, visitor Launch quota and replay fencing. `store/sandbox_admission.rs` serializes by owner; no global capacity ceiling found. #1485 retains visitor policy ownership. | **Code + activation + evidence**: many owners can exhaust total allocations; runtime/pool physical capacity is outside owner quota. | cma-abuse implements default-off durable global admission in the shared Mongo admission transaction, before allocation/claim effects, with replay at saturation, concurrent different-owner race and failure tests. Count all nonretired Sandboxes conservatively, including paused/resuming, so resume does not obtain an unreserved slot. GKE/controller owner supplies physical pool/prepared reserve and approved maximum; never infer it from per-owner quota. | PR `tl/cma-abuse/global-admission`, ready before Thu 06:00 cutoff; deploy OFF Thu morning. Separate capacity-owner enablement/measurement before Fri 12:00. |
-| Document count and retained source quota | Per-document source, revision, receipt and metadata ceilings exist; source objects are immutable. `MongoDocumentStore` has no owner aggregate quota; uploads currently precede metadata persistence. | **Code + activation + evidence**: owner document count and retained source bytes unbounded; failed uploads/commits must not bypass the budget. | cma-abuse implements default-off persistent owner reservations before object writes, idempotent document/object reservation, bounded count/bytes and concurrency tests. Retain uncertain reservations until reconciled; do not free possibly written objects on timeout. Existing records need an explicit accounted baseline; activation refuses unknown inventory. Document/store owner supplies baseline and orphan accounting. | PR `tl/cma-abuse/document-quotas`, ready before Thu 14:00 cutoff, target earlier Thu 06:00. Deploy OFF; enable only after baseline/rollback checks. Fri 06:00 is final contingency. |
-| Safe identity-outage policy | Existing process-local non-sliding <=60-second verified-token fallback, safe-read route restriction, invalidation/logout fences; mutations/creation fail closed. `auth/identity_fallback_tests.rs` and bearer/cookie tests cover mechanism. | **Evidence**, plus fix only if a concrete failure is found: actual isolated provider outage, cache expiry, denied-context controls, typed write refusal and recovery. | NyxID owner supplies account-scoped real verification failure <=75 seconds and removal <=10 seconds. cma-security runs reviewed <=30-request phase after relay; cma-abuse records policy/results. No shared endpoint/DNS fault. | Thu or Fri owner-booked slot, separate from load and rollout, before Fri 11:30. |
+| Large GET, metadata and ingress memory bounds | #1612 merged `b6bcab742f89c98ec9b7b026d7ff1162e87e3c9d`, Train E; returned-frame, live-fragment, relay and structural/shared-effect slices landed in #1715 with 25/25 exact develop CI. Permission #1709 merged `61a0c9f0cd65bedcc8cdf36a807bb6dbe64ebcc7`; raw #1717 merged `ce72ee311c703da38653aa227bb81d0d3c1e7ae5` with 25/25 PR CI. | **Code + activation + evidence**: #1720 decoded ownership merged at `3aee1ff68730d53c5a4cfa91fea5c1cf463fa64a`; #1723 coordinator, #1725 embedded-error parser, #1728 sign-in ownership and #1730 typed diagnostics are review-ready; #1731 context-goal frame ownership passes 661 focused tests and local gates; review and merge are pending. Exact heads and qualification are recorded in the linked PRs and aggregate issue comments. Typed domain/prepared, codec/fragment, desktop, durable assembly and independent working storage remain open. Selected requested allocations do not prove total ingress or RSS. | cma-abuse completes the remaining #1702 boundaries and measured contracts. The response projection owner retains read working-buffer scope; runtime/capacity and monitoring owners supply useful-capacity mapping and final-candidate workload/RSS receipts. cma-security owns the relayed bounded live profile. | Keep raw/JSON controls OFF on Thursday 13:00 train. Remaining source Friday 06:00; candidate-bound qualification before Friday evidence freeze. |
+| Global admission across owners/replicas | #1672 merged `6bf560d737ecf468e654fcaab55aec939a4642d8`: durable default-off Mongo admission before allocation, cross-owner concurrency, replay and failure contracts. Existing visitor limits remain independent. | **Activation + evidence**: physical capacity mapping, conservative admitted-state baseline, replica/rolling overlap and useful capacity are not certified by source tests. | GKE/controller owner supplies physical pool/prepared reserve and approved cap; release owner enables only after inventory/convergence. cma-security runs the reviewed bounded refusal/recovery profile. cma-abuse fixes any demonstrated application defect. | Source merged; retain OFF until owner baseline. Candidate-bound capacity/refusal receipt before Fri 12:00. |
+| Document count and retained source quota | #1677 delivered through #1715 merge `1d425cffc6e48bf33cc26635b6e1a58f92aec79f`; default-off persistent count/source reservations, write fencing, retry and uncertain-effect handling. Batch exact develop CI 43080307598 passed 25/25. | **Baseline + activation + evidence**: complete source/orphan inventory and compatible writer convergence are required. Source delivery does not establish live quota enforcement. | Document/store owner supplies an accounted baseline and orphan reconciliation; cma-migration/release owners execute the fenced install and ready readback. cma-security runs supported boundary/replay controls through the reviewed harness. | Source merged for Thursday train, OFF. Separate baseline/activation window required before Friday evidence freeze. |
+| Safe identity-outage policy | Existing process-local non-sliding <=60-second verified-token fallback, GET `/auth/session`-only restriction, invalidation/logout fences; mutations/creation fail closed. `auth/identity_fallback_tests.rs` and bearer/cookie tests cover mechanism. | **Evidence**, plus fix only if a concrete failure is found: actual isolated provider outage, session-inspection cache expiry, document GET fail-closed behavior, denied-context controls, typed write refusal and recovery. | NyxID owner supplies account-scoped real verification failure <=75 seconds and removal <=10 seconds. cma-security runs reviewed <=30-request phase after relay; cma-abuse records policy/results. No shared endpoint/DNS fault. | Thu or Fri owner-booked slot, separate from load and rollout, before Fri 11:30. |
 | Remote runtime/network isolation, cold/warm/resumed | #1637 supplies application isolation contracts. Deployment manifests and runtime authority exist; application denial is not network isolation. | **External runtime/controller implementation if probe finds a gap + evidence**. No demonstrated 2-direction x 3-state network/file/metadata/K8s/credential matrix. | GKE/network and sandbox-controller owners supply exact deployed policy/runtime receipts and execute scoped probes; runtime/image owner supplies positive dependency controls and lifecycle/volume cleanup. cma-abuse owns CMA-side fixes revealed by those results. No speculative shared-network policy change. | Owner nomination/window by Thu 09:00; cold/warm/resumed campaign Thu afternoon or Fri 09:00–11:30 after runtime HOLD resolved. |
 
 Train E evidence: issue #1472 comment 6782263576 and closure sweep 6788334403;
@@ -55,7 +57,7 @@ source `304b44fd9b9d75d282399ccd6ea34e035eb632ca`, fully green push CI
 42886990359, API generations 177/178, Web 209. These receipts establish deployed
 slices, not hostile/load/outage qualification of the future final candidate.
 
-## Small PR sequence and gates
+## Original core PR sequence and gates (source delivered)
 
 1. #1660, `tl/cma-abuse/global-admission` -> develop: global allocation ceiling with
    default-off config, infra parity, typed capacity refusal, success/replay and
@@ -73,12 +75,16 @@ with a security topic label. Bodies say `Closes #<slice>` and `Part of #1472`;
 never auto-close the umbrella on a narrow slice. Every changed/new source and test
 file stays below 500 lines. Gates: cargo fmt, clippy, targeted allowed/denied tests,
 real disposable-Mongo contracts for shared atomicity, file-size check and gitleaks.
-Web gates apply only if web changes. Preserve >=30 GiB free, use the shared heavy-1
-build lock and at most two Cargo jobs, and remove only owned temporary artifacts.
+Web gates apply only if web changes. Start heavy work only with >=32 decimal GB free, pause below 30 GB and retry
+after ten minutes. Use an existing shared heavy lock with `lockf -k`, keep one
+target directory and at most two Cargo jobs, and remove only owned temporary artifacts.
 Fetch and merge origin/develop before push; never rebase or force-push. No push
 to an open PR without lead instruction. Exact-head reviewer-sec verdict plus lead
 MERGE relay permits admin merge when no job has failed. No protection changes.
 Production trains still require the release owner's qualified artifact receipt.
+The Thursday performance candidate freezes at 08:30 SGT for the 13:00 train;
+unselected resource policies stay OFF. Remaining aggregate source targets Friday
+06:00. An explicit freeze lift is required before any queued merge.
 
 ## Campaign tiers and execution authority
 
@@ -139,8 +145,8 @@ explicit owner authorization. Stop new effects by 01:30; zero traffic 02:00–02
   permit recovery and normal controls, then watch 30 stable minutes. Missing
   telemetry prevents start, rather than becoming a zero-impact claim.
 * **Actual outage:** fault selector proven to match only test credentials; <=75s
-  outage, <=10s remove mechanism, <=30 requests total and <=1/sec. Sample safe
-  reads near 0/30/59/61/75 seconds from last real verification; mutations fail
+  outage, <=10s remove mechanism, <=30 requests total and <=1/sec. Sample GET `/auth/session`
+  near 0/30/59/61/75 seconds from last real verification; mutations fail
   closed, revoked/unknown/expired/scope-mismatched credentials stay denied.
   Stop on one unauthorized result, sliding cache, unrelated impact or fault
   removal delay. NyxID removes fault first; then reconcile original pending keys,
