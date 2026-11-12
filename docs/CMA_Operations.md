@@ -1009,6 +1009,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_AUTH_ENCRYPTION_KEY` | Secret reference: standard-base64 encoding of exactly 32 random bytes |
 | `CHRONO_MONGODB_URI` | Required secret reference, `mongodb://` or `mongodb+srv://` |
 | `CHRONO_MONGODB_DATABASE` | Database name; code default `chrono_bot`, production explicitly `chrono-bot` |
+| `CHRONO_MONGO_DIAGNOSTICS_ENABLED` | Default on. Exact `false` disables metadata command monitoring and attributed pool summaries at client startup; existing pool telemetry remains. Requires a Pod rollout. See [Mongo diagnostics](CMA_Mongo_Diagnostics.md) for privacy, accounting, measured large-read overhead and diagnostic comparison controls. |
 | `CHRONO_MONGODB_AUTHORITY_MODE` | `isolated` by default verifies exact collection grants; production `shared-schema` allows the existing database-scoped credential while AM opens only its own collection catalog. Neither mode changes validators, indexes or resource authorization. |
 | `CHRONO_DEPLOYMENT_ID` | Required stable Kubernetes-label-compatible CMA ownership identity |
 | `CHRONO_SANDBOX_BASE_URL` | Required canonical HTTP(S) provider origin |

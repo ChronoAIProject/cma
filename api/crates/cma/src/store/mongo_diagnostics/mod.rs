@@ -66,7 +66,7 @@ pub(super) fn install(
     options: &mut mongodb::options::ClientOptions,
     pool: &'static str,
 ) -> Option<Diagnostics> {
-    if std::env::var("CHRONO_MONGO_DIAGNOSTICS_ENABLED").as_deref() == Ok("false") {
+    if std::env::var(crate::config::MONGO_DIAGNOSTICS_ENABLED).as_deref() == Ok("false") {
         return None;
     }
     let diagnostics = Diagnostics(Diagnostics::default().0, pool);
