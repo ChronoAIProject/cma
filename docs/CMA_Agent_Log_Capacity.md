@@ -221,30 +221,238 @@ Run affected crates with `CARGO_BUILD_JOBS=4` while iterating. After integration
 run full required local gates once, including source size/structure, before
 opening the PR. Do not push further commits to an open PR unless the lead asks.
 
-## Production verification
+## Native terminal settlement at exhaustion
 
-1. Record deployed source/image and the initial Agent counts, statuses and log
-   heads using owner API reads. Preserve the investigation cutoff above; compare
-   new VictoriaLogs windows by lifecycle step and distinct Agent/Sandbox counts.
-2. Observe for at least 36 minutes (two former 18-minute leases). An old claim
-   can survive the rollout until its existing expiry; the fix does not steal it.
-   On the next owned attempt, a normal capacity failure should emit
-   `Agent log capacity failure settled`, have the named public failure, and have
-   no pending lifecycle work/lease. No repeated 18-minute reconnect cycle is
-   expected after that settlement.
-3. For the already-requested cleanup, require an authoritative close receipt and
-   `Stopped`, or a released claim with the original cleanup pending and normal
-   retry timing. A transient runtime failure may keep cleanup pending, but its
-   fixed capacity diagnostic must not grow the log on every retry. Never infer a
-   close from a capacity error or a failed acknowledgement alone.
-4. Check `Agent log capacity rejected` by dimension and ceiling; investigate
-   physical-reserve/document failures separately. This finite reserve cannot
-   repair already-corrupt or physically over-budget history.
-5. Read retained history/tail (including durable tool output) through owner APIs;
-   compare identity, log continuity and original input/receipt recovery facts.
-   Check terminal remediation and queued/dispatched command outcomes without
-   sending a message or replaying an input.
+Conversation output first uses the normal append budget. Only a known-aborted
+`AgentLogCapacityExceeded` permits a capacity settlement. The immutable proof
+captures the Agent, checkpoint and original refused batch; the committing Mongo
+snapshot rechecks that the original batch cannot fit the normal budget. Revision,
+head and checkpoint CAS, log integrity and the original runtime generation still
+apply. An unknown commit never grants permission to choose another outcome.
 
-All verification is read-only. No production test turn, stop, cancellation,
-replacement, cleanup admission, database write or runtime restart is authorized
-by this plan. The lead records the result before closing the issue.
+If the entire native terminal batch fits the stop/failure reserve, the turn
+retains its native completed/cancelled/failed outcome. If it cannot fit, or if an
+earlier output was refused, settlement uses `FailedForPrompt` with
+`agent_log_capacity_exceeded`. The same fold as live failure first flushes the
+saved assistant prefix, then appends the typed failure. Text already committed
+to the checkpoint and streamed live therefore remains visible after reload when
+that complete failure batch fits. The Response is failed; the partial text is
+not presented as a successful answer. Refused tool/model output is not invented.
+
+Only if that failure batch also exceeds the remaining stop reserve does the
+writer select fixed failure records with private retention. This is a bounded
+sequence of immutable candidates: native terminal, failure with the visible
+prefix, then private-prefix failure. Each fallback requires a known-aborted
+capacity rejection; an unknown commit instead reconciles the exact attempted
+candidate. No alternate candidate may be published while its predecessor's
+commit remains uncertain. There is still at most one durable terminal.
+
+The existing atomic batch ceiling is 64 entries; a 100-entry proposal is reduced
+to failure before validating its terminal receipt, and the ordinary live fold
+emits only a few entries per native update. Tests cover actual count overflow,
+a 1 MiB final flush beyond the 512 KiB byte reserve, and exact count/BSON-byte
+boundaries for prefix publication. One entry or byte beyond the complete public
+failure batch selects private retention without partial writes.
+
+The fixed failure records are independent of assistant text size: `TurnFailed`,
+the Agent status transition, applicable first-input failure state, and any small
+usage observation from the refused batch. The original cumulative and turn usage
+checkpoint is carried into every candidate. `store/budget/mod.rs` uses
+`UsageUpdated` plus `conversation.observations.usage.current_turn` before closing
+the reservation in this transaction. Tests check consumed units, the settled
+reservation and public Response usage exactly once. Existing conservative
+liability accounting is unchanged.
+
+When the prefix is too large to publish, its entire original checkpoint is
+preserved in `agents.agent_capacity_prefix_v1`. It is not truncated. The
+owner-facing failure states: partial output could not be saved in the
+conversation history, is retained privately, and can be recovered through
+support/operator export. The runbook below retains that export procedure. This
+private field is absent when the failure fold successfully publishes the prefix.
+The prefix is not lost when the native home is later removed.
+
+Both failure variants keep the previous runtime output high-water mark and do
+not ACK refused output. The live recorder closes that attachment after recording
+the capacity failure and leaves the refused frame in the native journal. Native
+success is ACKed only after its full terminal batch commits. Unknown-commit
+proof checks Agent, retained log and active receipt, plus the retained prefix
+when the selected candidate requires it. Regression tests exercise committed
+and unproved outcomes for both visible-prefix and privately retained failures.
+
+Both outcomes leave the Agent `Failed / agent_log_capacity_exceeded`, with no
+pending work or live lifecycle lease. Turn completion means the admitted task
+finished; the Failed Agent separately indicates that the retained-history budget
+cannot support continued work. Original native identity, receipts, cleanup debt,
+prior output and pending-input recovery facts remain. No queued prompt is sent by
+settlement. A Failed Agent has no ordinary reopen operation; capacity increase,
+replacement or recovery is a separate owner decision.
+
+### Exhausting the stop reserve
+
+When even the fixed failure records cannot fit, the transaction refuses without
+ACK or partial publication. The owner still sees Working (or the existing
+WaitingApproval state), the active turn and previously recorded output; a command
+without a terminal remains `in_progress`. Elapsed time never manufactures a
+completion. The original checkpoint remains intact. The capacity rejection and
+its dimensions identify why publication cannot progress.
+
+The recovery path is an explicit owner stop followed by delete. Stopping a live
+Agent is a prerequisite for deletion. If the stop reserve cannot fit the proposed
+validated stop step, the normal worker transaction permits its finite
+`FenceInteraction`, `CloseProcess` and `PublishStopped` completions to use the
+remaining delete reserve. The existing single-marker cleanup retry contract can
+also release its lease there; ordinary retries and conversation settlement cannot
+spend this reserve. All domain/lease/receipt checks still precede capacity
+selection. For an Agent already Failed by native-terminal settlement, delete can
+be requested directly: `EnsureProcessClosed` closes the original process before
+`RemoveHome`, `RemoveWorktree` and `PublishDeleted`. Tests verify all three actual
+runtime effects exactly once, released leases and retained output on reopening
+for count and byte exhaustion, both before and after native settlement.
+
+If the physical 10,128-entry / 65 MiB ceiling is also full, stop/delete may return
+a typed capacity refusal. Preserve its original claim, effect identity and
+checkpoint for separately authorized operator recovery. Do not remove retained
+rows, invent a close receipt or resend an uncertain prompt to recover space.
+
+### Transaction cost and trusted metadata
+
+Capacity settlement uses the same validated `trusted_summary` as ordinary
+conversation publication when the existing admission cohort/fleet policy allows
+it. Exact raw BSON count/bytes, creation lineage, revision, tail hash, semantic
+checkpoint and quarantine checks stay in place. Missing, unsupported, stale or
+disabled proof falls back to complete validation; corrupt proof refuses. The
+reserve decision depends on exact validated cumulative count/bytes plus the new
+encoded batch, so it does not require a second audit of an already trusted
+immutable prefix. Capacity-marker lifecycle retries still retain their separate
+full-history/tail validation contract.
+
+The dedicated real-Mongo timing test prints recorder wall time and each
+transaction's first-command-to-commit/abort interval for exactly 64 MiB of BSON,
+with prepared cohort on and off. It asserts zero complete scans when enabled and
+two when disabled (the refused normal transaction and the settlement transaction),
+and checks each measured transaction against 60 seconds. Raw command monitoring
+includes Mongo command/checkout waits within that interval. These local N=1 cells
+are mechanism evidence; they do not certify production tail latency.
+
+Production #1320/#1475's approximate 1.2 s per 3.7 MiB scan would extrapolate to
+about 21 s per 64 MiB scan if cost were linear. That assumption omits tail
+contention, so it is not a guarantee against Atlas's 60 s transaction lifetime.
+Prefer the already-qualified trusted cohort for these cases; the operator must
+record transaction and checkout tails for the exact candidate. A timeout remains
+an unavailable/uncertain result with no false ACK or model resend. Do not raise
+the transaction lifetime or capacity ceilings to make this test pass.
+
+### Retained-prefix migration record
+
+Migration ID: `2026-11-11-am-capacity-prefix-v1`; owner: Agent Manager backend;
+operator: the release/incident owner. Source/executable hashes are recorded in the
+candidate evidence ledger. This is additive expansion plus finite settlement of
+already-admitted work, not a backfill or general new-work admission. The D1
+visibility correction adds no stored format: it prefers the existing public
+failure fold and narrows private retention to prefixes that cannot fit.
+
+The old and current `record` schema, message checkpoint version 1, events,
+collections, indexes and TTLs are unchanged. The new envelope field contains the
+exact old-format message checkpoint. Ordinary readers decode `record` and ignore
+unknown envelope fields; Agent saves, lifecycle and control publications use
+`$set` and retain the field. Tests compare the complete retained checkpoint and
+reopen the store. Active checkpoint carry cannot overwrite it. Unknown-commit
+reconciliation requires it when the compact proof included a prefix.
+
+The writer gate is the finite known-aborted capacity proof plus exact snapshot
+CAS; private-prefix writing additionally requires that the visible-prefix
+failure batch was proved not to fit. No new ordinary work is admitted and the Agent becomes Failed; there is no
+startup scan, new configuration, background writer, DDL, backfill or contraction.
+Reader deployment is needed for the operator to understand/export the prefix,
+but strict predecessor `record` and checkpoint decoders remain compatible. A
+source/protocol check does not qualify an older deployed binary: the release
+owner must pin recovery artifacts that preserve the complete envelope, including
+this field. Restore the entire Agent document with its logs/receipts; never import
+only `record` or clear the prefix to make a rollback work. The native runtime image
+and home remain unchanged by settlement.
+
+## Production verification (operator, read only)
+
+No production credentials or execution are available to the implementer. The
+incident/release operator owns these checks. Record source SHA, candidate image
+digest, environment, UTC start/cutoff, per-case N, flags/cohort, log retention and
+raw-result location. The historical rollout anchor is 2026-11-05 approximately
+08:34 UTC; partition the observation by subsequent candidate/rollout, including
+Train E. Pre-existing cleanup cannot count as recovery by a newer image.
+
+Obtain the two exact Agent IDs from authorized incident diagnostics; the public
+investigation discarded raw IDs. For a fixed cutoff, query VictoriaLogs through
+the authorized read-only LogsQL endpoint. Replace `<CUTOFF_UTC>` and each Agent
+placeholder explicitly. Keep absent cluster labels separate from explicitly
+labelled production rows. The filter and aggregation syntax follows the
+[LogsQL contract](https://docs.victoriametrics.com/victorialogs/logsql/).
+
+```text
+_time:[2026-11-05T08:34:00Z,<CUTOFF_UTC>)
+kubernetes.pod_namespace:="chrono-bot" kubernetes.container_name:="api"
+(kubernetes.pod_name:"cma-agent-manager-"* OR kubernetes.pod_name:"cma-usage-api-"*)
+"agent log capacity exceeded"
+| stats by (_time:1h, kubernetes.pod_name) count() as capacity_errors
+```
+
+Use the same filter/window for `"Agent work attempt completed" "published=false"`,
+`"Agent log capacity failure settled"` and `"Agent log capacity rejected"`.
+For each exact Agent, add `"agt_<exact-id>"` to the failed-attempt query and select
+only `_time,kubernetes.pod_name`; sort by time to compare successive attempts.
+The historical loop was about 1,080 seconds. Observe at least 36 minutes after
+settlement, or after any old claim naturally expires. Expected: no recurrent
+known-capacity reconnect loop; one explicit settlement or authoritative cleanup
+progress. Missing samples or incomplete retention are not a pass. Capacity
+rejection without later settlement is a failure requiring disposition.
+
+Authenticated owner GETs (no message/control request) verify:
+
+```text
+GET /api/v1/agents/<exact-agent-id>
+GET /api/v2/agents/<exact-agent-id>/events/snapshot?limit=1
+GET /api/v2/responses/<exact-response-id>
+GET /api/v2/commands/<exact-command-id>
+```
+
+Normal lifecycle capacity settlement should show Agent `failed` and
+`failure.class=agent_log_capacity_exceeded`. A prior authorized cleanup may instead
+have reached `stopped`/`deleted`; record its real receipt/disposition, never relabel
+it. Native terminal-only settlement may show a completed Response with a Failed
+Agent; refused output must show a failed Response with the capacity class. Retain
+original command/Response/native IDs and history hashes. Read retained history
+pages including tool output and confirm continuous sequences without replaying
+input. Verify all terminal projections correspond to the same command.
+
+Public Agent GET deliberately does not expose the lifecycle lease. An operator
+with production Mongo read authority must use this exact content-free projection:
+
+```javascript
+const ids = ["agt_<first-exact-id>", "agt_<second-exact-id>"];
+db.agents.find(
+  { _id: { $in: ids } },
+  { _id: 1, "record.status": 1, "record.failure.class": 1,
+    "record.work.step": 1, "record.work.lease": 1 }
+).readConcern("majority").maxTimeMS(15000).toArray();
+```
+
+Require N=2 found, the reviewed dispositions, `record.work.step="none"`, and no
+live `record.work.lease`. If cleanup is intentionally pending, capture the released
+claim and typed due/recovery state separately; it does not satisfy a Failed/None
+assertion. Do not modify leases or Agent records during verification.
+
+For a failure naming a retained private prefix, the operator may export only
+that Agent's `agent_capacity_prefix_v1` under owner authorization to a private
+0600 artifact. Verify its Agent scope via the containing document and its native
+conversation/generation/turn, original receipt, byte count and hash. Report only
+IDs/counts/hash and artifact location; do not paste the prefix into issue comments.
+The ordinary active checkpoint remains a terminal receipt; never resubmit the
+prefix as a prompt. This export is a content-bearing recovery step, separate from
+the content-free status query above.
+
+Close #1321 only after the reviewer accepts count/byte, terminal, stop/delete,
+unknown-commit and lease evidence at the exact candidate, and the operator
+provides both historical dispositions with retained readable history and the
+post-rollout observation. Merging alone does not pass. Combined-PR and post-merge
+develop runs belong to the coordinating reviewer; no separate PR or production
+mutation is authorized here. Broader lifetime continuation/segmentation remains a
+separate M-STAB-03 decision.

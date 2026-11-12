@@ -9,6 +9,9 @@ use super::{
     Workspace, Worktree,
 };
 
+mod pagination;
+use pagination::page;
+
 mod sandbox;
 pub use sandbox::SandboxStore;
 pub mod ledger_collection;
@@ -59,6 +62,8 @@ pub use agent_admission::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentCreation,
 };
 mod agent_conversation;
+mod agent_conversation_capacity;
+pub use agent_conversation_capacity::AgentConversationCapacitySettlement;
 mod agent_message_checkpoint;
 mod agent_reopen;
 pub use agent_conversation::{
