@@ -228,6 +228,61 @@ describe('public visitor admission', () => {
     expect(calls[1]?.[1]).toEqual(intent.body);
   });
 
+  it('discards a credential recovery intent after a settled quota refusal without automatically resubmitting', async () => {
+    const client = publicClient();
+    vi.mocked(client.requests.createOrResume)
+      .mockRejectedValueOnce(
+        new ApiError(409, 'Sign in again.', 'sandbox_credential_setup_required'),
+      )
+      .mockRejectedValueOnce(
+        new ApiError(429, 'Daily allowance used.', 'resource_quota', undefined, undefined, {
+          resource: 'visitor_launches',
+          limit: 5,
+          reset_at: '2026-11-14T00:00:00Z',
+        }),
+      )
+      .mockResolvedValue(PUBLIC_RECORD);
+    const popup = { opener: {}, location: { href: '' }, close: vi.fn() };
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              authenticated: true,
+              subject: PUBLIC_USER.id,
+              visitor: true,
+              capabilities: PUBLIC_USER.capabilities,
+            }),
+            { headers: { 'Content-Type': 'application/json' } },
+          ),
+      ),
+    );
+    const test = setup(auth(signedIn), client);
+
+    await test.user.click(await screen.findByRole('button', { name: 'Open in CMA' }));
+    await test.user.click(await screen.findByRole('button', { name: 'Sign in to CMA' }));
+    await test.user.click(screen.getByRole('button', { name: 'Check signed-in account' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open in CMA' })).toBeEnabled());
+    expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+
+    await test.user.click(screen.getByRole('button', { name: 'Open in CMA' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('daily allowance');
+    expect(readIntent(path)).toBeUndefined();
+    await act(async () => undefined);
+    expect(client.requests.createOrResume).toHaveBeenCalledTimes(2);
+    expect(test.navigate).not.toHaveBeenCalled();
+
+    await test.user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(test.navigate).toHaveBeenCalledOnce());
+    const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+    expect(calls).toHaveLength(3);
+    expect(calls[1]?.[2].idempotencyKey).not.toBe(calls[0]?.[2].idempotencyKey);
+    expect(calls[2]?.[2].idempotencyKey).not.toBe(calls[1]?.[2].idempotencyKey);
+    expect(calls[2]?.[1]).toEqual(calls[1]?.[1]);
+  });
+
   it.each([
     [429, 'resource_quota', { resource: 'visitor_launches' }],
     [429, 'resource_quota', { resource: 'visitor_launches', reset_at: 'unknown' }],
