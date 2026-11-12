@@ -1,12 +1,14 @@
 //! Personal durable documents, independent of the environment that produced them.
 //! Metadata and access change atomically; immutable source bytes live behind a
 //! separate bounded object repository. No caller selects an object location.
+mod blob_maintenance;
 mod mutation;
 mod quota;
 mod runtime;
 mod service;
 mod types;
 mod validation;
+pub use blob_maintenance::*;
 pub use quota::*;
 pub use service::DocumentService;
 pub use types::*;
@@ -29,3 +31,6 @@ mod rollout_tests;
 
 #[cfg(test)]
 mod quota_tests;
+
+#[cfg(test)]
+mod blob_maintenance_tests;
