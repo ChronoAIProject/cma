@@ -15,6 +15,7 @@ the release owner's API Pod rollout and do not edit durable gates or records.
 | --- | --- |
 | `CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED` | Enables the independently configured transcript source. It does not enable title, usage, response, writer or recovery behavior. Qualify segmented/current-state and long-history compatibility before writer activation. |
 | `CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED` | Enables the usage reader through strict process configuration and production store composition. The disabled path preserves the legacy reader. Current legacy filtered-query coverage is not proof of bounded work on segmented histories. |
+| `CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED` | Default-off process dispatch for natural v1-to-v2 adoption. Off skips the entire adoption preflight, including gate queries and transactions; ordinary v1 work uses its original Mongo commands and existing v2 roots remain compatible. On permits discovery only: the durable writer gate still selects and fences every new adoption. |
 | `CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED` | Permits new personal capacity-recovery admission after current authorization and both durable cohort gates succeed. Status and exact already-admitted continuation retain fresh authority checks when admission is disabled. This switch does not provide a native proof capability or authorize ordinary reconnect/input replay. |
 | `CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED` | Enables the independent parent-readiness pacing path. It uses persisted parent state and existing retry fences; it does not authorize a missing native recovery capability, alter writer admission, or revive a stopped parent. |
 
@@ -45,6 +46,14 @@ an explicit unsupported capability, never permission to create a replacement
 conversation or replay input.
 
 ## Kill switch and recovery floor
+
+Writer activation requires both the process adoption switch and the durable
+cohort gate. Roll out the process switch only for the controlled writer stage.
+For rollback, close the durable gate first and resolve exact admitted uncertainty
+with the switch still on. Once those preparations have drained, roll out
+`CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED=false` to restore the original
+request-path operation count. Durable closure alone, while dispatch stays on,
+still performs discovery; it must not be reported as zero-overhead rollback.
 
 Close new durable writer/recovery admission first when a stage fails. Preserve
 original receipts, carrier result witnesses, metadata, log rows and native homes.
