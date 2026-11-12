@@ -17,6 +17,7 @@ mod activity;
 mod lifecycle_failure;
 mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
+mod account_deletion;
 mod admission_log;
 mod debug;
 mod global_admission;
@@ -131,6 +132,7 @@ impl TrustedProxyConfig {
 /// Complete process configuration for the temporary discovery boundary.
 #[derive(Clone)]
 pub struct Config {
+    pub(crate) account_deletion_enabled: bool,
     pub(crate) global_sandbox_limit: u16,
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
@@ -244,6 +246,7 @@ impl Config {
         }
 
         let features = FeatureFlags::from_lookup(&mut lookup)?;
+        let account_deletion_enabled = account_deletion::enabled(&mut lookup)?;
         let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
         let bounded_admission_agents = admission_log::from_lookup(&mut lookup)?;
         let agent_log_fleet_percent =
@@ -346,6 +349,7 @@ impl Config {
         }
         Ok(Self {
             global_sandbox_limit,
+            account_deletion_enabled,
             bind,
             metrics_bind,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
