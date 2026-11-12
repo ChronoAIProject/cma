@@ -1,3 +1,4 @@
+import { reportBrowserFault, type BrowserFault } from './browser-telemetry.js';
 import { Documents } from './documents.js';
 import { TaskExperiencePolicy } from './task-experience.js';
 import { SandboxUsage } from './usage.js';
@@ -133,6 +134,11 @@ export class Cma {
   /** The resolved transport configuration held by this client. */
   get config(): ResolvedConfig {
     return this.#config;
+  }
+
+  /** Send one anonymous, content-free diagnostic; never a durable success receipt. */
+  reportBrowserFault(kind: BrowserFault, options: OperationOptions = {}): Promise<void> {
+    return reportBrowserFault(this.#config, kind, options);
   }
 
   /** Read the anonymous deployment state. */

@@ -10,6 +10,7 @@ publish = false
 test-support = []
 
 [dependencies]
+metrics = { workspace = true }
 # For the terminal plane's raw input, which arrives base64-encoded because a
 # JSON string cannot carry an arbitrary control sequence.
 base64 = { workspace = true }
