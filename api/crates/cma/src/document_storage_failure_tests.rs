@@ -3,7 +3,11 @@ use crate::dependency_test_support::{assert_deadline, finish, Peer};
 use serde_json::json;
 
 pub(super) fn client(peer: &Peer) -> Arc<StorageDocuments> {
+    client_with_policy(peer, true)
+}
+pub(super) fn client_with_policy(peer: &Peer, enabled: bool) -> Arc<StorageDocuments> {
     StorageDocuments::new(DocumentStorageConfig {
+        resilience_enabled: enabled,
         platform_origin: peer.origin.clone(),
         bucket: "fixture".into(),
         client_id: "fixture-machine".into(),
@@ -297,6 +301,7 @@ async fn token_wait_and_http_share_one_operation_budget() {
 async fn retirement_archive_reader_requests_no_creation_scope_and_refuses_writes() {
     let mut peer = Peer::start().await;
     let client = StorageDocuments::read_only(DocumentStorageConfig {
+        resilience_enabled: true,
         platform_origin: peer.origin.clone(),
         bucket: "fixture".into(),
         client_id: "fixture-machine".into(),

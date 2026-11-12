@@ -10,6 +10,7 @@ use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 
+mod legacy;
 pub(crate) mod token;
 use token::StorageToken;
 
@@ -25,6 +26,7 @@ pub(crate) struct StorageDocuments {
     config: DocumentStorageConfig,
     read_only: bool,
     token: StorageToken,
+    legacy_token: legacy::SerializedToken,
 }
 impl StorageDocuments {
     pub(crate) fn new(config: DocumentStorageConfig) -> Result<Arc<Self>, String> {
@@ -34,12 +36,17 @@ impl StorageDocuments {
         Self::with_access(config, true)
     }
     fn with_access(config: DocumentStorageConfig, read_only: bool) -> Result<Arc<Self>, String> {
-        let http = Client::builder()
+        let builder = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
-            .retry(reqwest::retry::never())
-            .user_agent("cma-document-storage")
+            .user_agent("cma-document-storage");
+        let builder = if config.resilience_enabled {
+            builder.retry(reqwest::retry::never())
+        } else {
+            builder
+        };
+        let http = builder
             .build()
             .map_err(|_| "document storage HTTP client could not be built")?;
         let origin = url::Url::parse(&config.platform_origin)
@@ -60,6 +67,7 @@ impl StorageDocuments {
             config,
             read_only,
             token,
+            legacy_token: Default::default(),
         }))
     }
     fn object_url(&self, key: &str, write: Option<&str>) -> Result<url::Url, DocumentError> {
@@ -89,6 +97,9 @@ impl StorageDocuments {
         replayed: &mut bool,
         deadline: Instant,
     ) -> Result<Response, RequestFailure> {
+        if !self.config.resilience_enabled {
+            return self.legacy_send(method, url, body).await;
+        }
         ensure_budget(deadline)?;
         let (mut token, mut generation) = self.token.current(None).await?;
         loop {
@@ -173,9 +184,11 @@ impl StorageDocuments {
         ] {
             if !matches {
                 mismatch = true;
-                metrics::counter!("cma_document_storage_receipt_mismatch_total", "field" => field)
-                    .increment(1);
-                tracing::warn!(parent: None, field, "document storage receipt mismatch");
+                if self.config.resilience_enabled {
+                    metrics::counter!("cma_document_storage_receipt_mismatch_total", "field" => field)
+                        .increment(1);
+                    tracing::warn!(parent: None, field, "document storage receipt mismatch");
+                }
             }
         }
         if mismatch {
@@ -199,7 +212,8 @@ impl StorageDocuments {
             match result {
                 Ok(body) => return Ok(body),
                 Err(failure)
-                    if failure.retryable
+                    if self.config.resilience_enabled
+                        && failure.retryable
                         && attempt + 1 < GET_TRANSPORT_ATTEMPTS
                         && deadline.saturating_duration_since(Instant::now())
                             >= MIN_RETRY_BUDGET =>
@@ -327,3 +341,7 @@ mod transport_tests;
 #[cfg(test)]
 #[path = "document_storage_receipt_tests.rs"]
 mod receipt_tests;
+
+#[cfg(test)]
+#[path = "document_storage_disabled_tests.rs"]
+mod disabled_tests;
