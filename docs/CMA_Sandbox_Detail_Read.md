@@ -2,11 +2,15 @@
 
 `GET /api/v1/sandboxes/{id}` retains the same authorization, hierarchy projection,
 optional enrichment, response, error concealment, and final revocation fence.
-This rollout changes only how the Mongo Sandbox hierarchy reader holds its
-consistent view. It does not batch queries or remove record validation.
+The reader controls change how Mongo authorization and hierarchy readers hold
+their consistent views. Complete record validation remains intact.
 
 ## Reader and diagnostic controls
 
+- `CHRONO_ACCESS_SNAPSHOT_SESSION_ENABLED`: use a fresh Mongo snapshot session
+  for each individual authorization snapshot, removing its abort command. Defaults
+  to `false`; accepts only exact `true` or `false`. Initial authorization and the
+  final release fence remain separate snapshots, including failure paths.
 - `CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED`: use a Mongo snapshot session for
   Sandbox hierarchy reads. Defaults to `false` in configuration and the API
   manifest. Only exact `true` and `false` are accepted.
