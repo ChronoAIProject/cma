@@ -143,6 +143,9 @@ data:
   # Production must remain provider-authenticated. The trusted identity below
   # is read only in explicit local-development trusted mode.
   CHRONO_AUTH_MODE: "provider"
+  # Restricted user OAuth commands stay disabled until rollout verification.
+  # Set the canonical RFC 8707 audience only under the #1760 activation plan.
+  CHRONO_NYXID_OAUTH_API_RESOURCE: ""
   # Resource server audience for service-scoped NyxID agent key introspection.
   CHRONO_NYXID_SERVICE_ID: "b48c8aff-02a6-43b6-87b5-98d3e66c1a06"
   # Existing NyxID signed service identity; enable the CMA catalog connection's
@@ -281,6 +284,8 @@ data:
   CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED: "false"
   # Requires a complete, fenced storage inventory; never enable on unknown usage.
   CHRONO_DOCUMENT_QUOTAS_ENABLED: "false"
+  # Unverified delete/list contract: requires storage-owner confirmation and scopes.
+  CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED: "false"
   # Off until capacity-owner headroom and all admission writers are verified.
   CHRONO_SANDBOX_GLOBAL_LIMIT: "0"
   # Separately activate only after dependency qualification; preserve the online policy while off.

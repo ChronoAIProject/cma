@@ -20,6 +20,9 @@ Authenticate backend requests with `Authorization: Bearer <NyxID access token>`:
 use an ordinary NyxID **user access token** obtained through NyxID OAuth for the
 account that owns or is authorized to use the Agent. This is not the runtime's
 scoped Agent key, an ID token, an Event Gateway binding key or a machine token.
+For third-party clients, request an explicit CMA resource grant and deploy the
+[direct OAuth command reader](CMA_Direct_OAuth.md); identity-only grants do not
+authorize follow-up commands. Check `api_commands` in `/auth/session`.
 CMA verifies the token's subject, current permissions and expiry; requests use
 that user's authority. No browser cookie is required for bearer API calls.
 The same-origin CMA browser session cookie is also accepted. Creating a new
