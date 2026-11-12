@@ -7,6 +7,8 @@ pub(super) struct Counts {
     pub probes: AtomicUsize,
     pub points: AtomicUsize,
     pub opens: AtomicUsize,
+    pub source_pages: AtomicUsize,
+    pub source_rows: AtomicUsize,
     pub fail: AtomicBool,
     pub stall: AtomicBool,
     pub entered: tokio::sync::Notify,
@@ -128,13 +130,18 @@ impl AgentOutputReader for Reader {
         limit: u16,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
         assert!((1..=32).contains(&limit));
-        Ok(self
+        self.counts.source_pages.fetch_add(1, Ordering::SeqCst);
+        let rows: Vec<_> = self
             .data
             .rows
             .range(after + 1..=self.metadata.index.as_ref().unwrap().through_sequence)
             .take(usize::from(limit))
             .map(|(_, row)| row.clone())
-            .collect())
+            .collect();
+        self.counts
+            .source_rows
+            .fetch_add(rows.len(), Ordering::SeqCst);
+        Ok(rows)
     }
 }
 

@@ -77,6 +77,7 @@ fn open_inner(
         pagination_required: false,
     };
     sse_response(stream::unfold(open, |mut open| async move {
+        let mut quiet_pages = 0;
         loop {
             if let Some(value) = open.pending.pop_front() {
                 if let Some(authorization) = &open.authorization {
@@ -223,6 +224,15 @@ fn open_inner(
                 open.drain_live(&agent, committed);
             }
             poll.complete(!open.pending.is_empty());
+            if open.indexed && open.pending.is_empty() && more {
+                quiet_pages += 1;
+                if quiet_pages == 8 {
+                    // A sparse turn must not scan its entire prefix in one
+                    // body poll. SSE comments preserve event numbering and
+                    // every intermediate update while yielding to backpressure.
+                    return Some((Ok(Event::default().comment("keep-alive")), open));
+                }
+            }
             if open.pending.is_empty() && !more {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
