@@ -381,7 +381,7 @@ pub(super) fn i64_field_matches(document: &Document, field: &str, expected: i64)
     matches!(document.get_i64(field), Ok(actual) if actual == expected)
 }
 
-pub(super) fn is_duplicate_key(error: &Error) -> bool {
+pub(crate) fn is_duplicate_key(error: &Error) -> bool {
     match error.kind.as_ref() {
         ErrorKind::Write(WriteFailure::WriteError(write)) => write.code == DUPLICATE_KEY,
         ErrorKind::Command(command) => command.code == DUPLICATE_KEY,
@@ -389,18 +389,18 @@ pub(super) fn is_duplicate_key(error: &Error) -> bool {
     }
 }
 
-pub(super) fn is_transient(error: &Error) -> bool {
+pub(crate) fn is_transient(error: &Error) -> bool {
     error.contains_label(TRANSIENT_TRANSACTION_ERROR)
 }
 
-pub(super) enum CommitOutcome {
+pub(crate) enum CommitOutcome {
     Committed,
     Retry(Error),
     Unknown(Error),
     Failed(Error),
 }
 
-pub(super) async fn start_transaction(session: &mut ClientSession) -> Result<(), Error> {
+pub(crate) async fn start_transaction(session: &mut ClientSession) -> Result<(), Error> {
     session
         .start_transaction()
         .read_concern(ReadConcern::snapshot())
@@ -408,7 +408,7 @@ pub(super) async fn start_transaction(session: &mut ClientSession) -> Result<(),
         .await
 }
 
-pub(super) async fn commit_transaction(session: &mut ClientSession) -> CommitOutcome {
+pub(crate) async fn commit_transaction(session: &mut ClientSession) -> CommitOutcome {
     for attempt in 0..COMMIT_ATTEMPTS {
         match session.commit_transaction().await {
             Ok(()) => return CommitOutcome::Committed,
