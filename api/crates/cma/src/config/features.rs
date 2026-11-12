@@ -133,127 +133,16 @@ impl FeatureFlags {
 mod capacity_tests;
 
 #[cfg(test)]
-mod parent_pacing_tests {
-    use super::*;
-
-    #[test]
-    fn parent_readiness_pacing_is_independent_and_default_off() {
-        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED")
-                    .then(|| value.map(str::to_owned))
-                    .flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.parent_not_ready_pacing_enabled, expected);
-            assert!(!flags.bounded_close_retries);
-            assert!(!flags.bounded_response_reads);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED").then(|| value.into()))
-            })
-            .is_err());
-        }
-    }
-}
+mod parent_pacing_tests;
 
 #[cfg(test)]
-mod approval_tests {
-    use super::*;
-
-    #[test]
-    fn approval_reader_rollout_requires_an_explicit_boolean() {
-        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")
-                    .then(|| value.map(str::to_owned))
-                    .flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.bounded_approval_reads, expected);
-            assert!(!flags.bounded_title_reads);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
-                == "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")
-                .then(|| value.to_owned())))
-            .is_err());
-        }
-    }
-}
+mod approval_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn document_quotas_require_an_independent_strict_opt_in() {
-        let key = "CHRONO_DOCUMENT_QUOTAS_ENABLED";
-        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |name| {
-                Ok((name == key).then(|| value.map(str::to_owned)).flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.document_quotas, enabled);
-            assert!(!flags.document_revocation_reserve);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |name| Ok(
-                (name == key).then(|| value.to_owned())
-            ))
-            .is_err());
-        }
-    }
-
-    #[test]
-    fn bounded_title_reads_require_an_explicit_boolean_opt_in() {
-        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok(if key == "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED" {
-                    value.map(str::to_owned)
-                } else {
-                    None
-                })
-            })
-            .unwrap();
-            assert_eq!(flags.bounded_title_reads, expected);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED").then(|| value.into()))
-            })
-            .is_err());
-        }
-    }
-}
+mod tests;
 
 #[cfg(test)]
-mod close_retry_tests {
-    use super::*;
-
-    #[test]
-    fn close_retry_optimization_requires_its_own_strict_boolean() {
-        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok(if key == "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED" {
-                    value.map(str::to_owned)
-                } else {
-                    None
-                })
-            })
-            .unwrap();
-            assert_eq!(flags.bounded_close_retries, expected);
-            assert!(!flags.bounded_title_reads && !flags.bounded_approval_reads);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED").then(|| value.into()))
-            })
-            .is_err());
-        }
-    }
-}
+mod close_retry_tests;
 
 #[cfg(test)]
 #[path = "sandbox_detail_diagnostics_tests.rs"]
@@ -263,206 +152,28 @@ mod sandbox_read_tests;
 mod reconciliation_tests;
 
 #[cfg(test)]
-mod sandbox_batch_tests {
-    use super::*;
-    #[test]
-    fn batching_is_default_off_strict_and_requires_snapshot_sessions() {
-        for snapshot in [false, true] {
-            for value in [
-                None,
-                Some("false"),
-                Some("true"),
-                Some("TRUE"),
-                Some("1"),
-                Some(" true "),
-                Some(""),
-            ] {
-                let flags = FeatureFlags::from_lookup(&mut |key| {
-                    Ok(match key {
-                        "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED" => Some(snapshot.to_string()),
-                        "CHRONO_SANDBOX_BATCHED_READS_ENABLED" => value.map(str::to_owned),
-                        _ => None,
-                    })
-                });
-                match value {
-                    None | Some("false") => assert!(!flags.unwrap().sandbox_batched_reads),
-                    Some("true") if snapshot => assert!(flags.unwrap().sandbox_batched_reads),
-                    _ => assert!(flags.is_err()),
-                }
-            }
-        }
-    }
-}
+mod sandbox_batch_tests;
 
 #[cfg(test)]
-mod response_tests {
-    use super::*;
-
-    #[test]
-    fn bounded_response_reads_require_their_own_strict_opt_in() {
-        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")
-                    .then(|| value.map(str::to_owned))
-                    .flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.bounded_response_reads, expected);
-            assert!(!flags.bounded_approval_reads && !flags.bounded_title_reads);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
-                == "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")
-                .then(|| value.into())))
-            .is_err());
-        }
-    }
-}
+mod response_tests;
 
 #[cfg(test)]
-mod paged_event_tests {
-    use super::*;
-    #[test]
-    fn paged_events_are_default_off_and_require_their_own_strict_boolean() {
-        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")
-                    .then(|| value.map(str::to_owned))
-                    .flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.paged_response_events, enabled);
-            assert!(!flags.bounded_response_reads);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
-                == "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")
-                .then(|| value.into())))
-            .is_err());
-        }
-    }
-}
+mod paged_event_tests;
 
 #[cfg(test)]
-mod transcript_tests {
-    use super::*;
-    #[test]
-    fn transcript_reads_require_an_independent_strict_opt_in() {
-        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED")
-                    .then(|| value.map(str::to_owned))
-                    .flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.bounded_transcript_reads, enabled);
-            assert!(!flags.bounded_response_reads && !flags.bounded_title_reads);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
-                == "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED")
-                .then(|| value.into())))
-            .is_err());
-        }
-    }
-}
+mod transcript_tests;
 
 #[cfg(test)]
-mod permission_bound_tests {
-    use super::*;
-
-    #[test]
-    fn permission_state_requires_its_own_strict_opt_in() {
-        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED")
-                    .then(|| value.map(str::to_owned))
-                    .flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.bounded_permission_state, expected);
-            assert!(!flags.bounded_response_reads);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED").then(|| value.into()))
-            })
-            .is_err());
-        }
-    }
-}
+mod permission_bound_tests;
 
 #[cfg(test)]
-mod read_frame_tests {
-    use super::*;
-
-    #[test]
-    fn read_frame_ownership_requires_an_independent_strict_boolean() {
-        const KEY: &str = "CHRONO_READ_FRAME_BUDGET_ENABLED";
-        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.retain_read_frames, enabled);
-            assert!(!flags.bounded_response_reads && !flags.bounded_title_reads);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == KEY).then(|| value.to_owned()))
-            })
-            .is_err());
-        }
-    }
-}
+mod read_frame_tests;
 
 #[cfg(test)]
-mod live_buffer_tests {
-    use super::*;
-
-    #[test]
-    fn live_buffer_budget_requires_its_own_strict_boolean() {
-        const KEY: &str = "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED";
-        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.bounded_live_fragments, enabled);
-            assert!(!flags.bounded_close_retries);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == KEY).then(|| value.to_owned()))
-            })
-            .is_err());
-        }
-    }
-}
+mod live_buffer_tests;
 
 #[cfg(test)]
-mod relay_tests {
-    use super::*;
-
-    #[test]
-    fn bounded_update_relay_requires_a_separate_strict_boolean() {
-        const KEY: &str = "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED";
-        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.bounded_update_relay, enabled);
-            assert!(!flags.bounded_close_retries);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == KEY).then(|| value.to_owned()))
-            })
-            .is_err());
-        }
-    }
-}
+mod relay_tests;
 
 #[cfg(test)]
 mod rollout_tail_tests;
