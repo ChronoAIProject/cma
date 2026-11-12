@@ -265,6 +265,22 @@ pub(in crate::store) async fn require_open(
     require_open_with(&store.budget_settings, &store.model_budget, now, session).await
 }
 
+/// The historical owner-policy bypass is only valid with global metering off.
+/// An active meter cannot value this commitment without an owner policy; do
+/// not grant a provider permit or a turn without its conservative reservation.
+pub(super) async fn require_unbudgeted(
+    store: &MongoSandboxStore,
+    snapshot: &PolicySnapshot,
+    now: u64,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    require_open(store, now, session).await?;
+    if snapshot.platform.is_some() {
+        return Err(domain(BudgetError::Unavailable));
+    }
+    Ok(())
+}
+
 /// Enter a refusal's closures after (or regardless of) the abort, then return
 /// the refusal reason for the caller's loop to abort on (rule 1). Entering is
 /// best effort: the refusal stands and the evaluator re-derives the closure.
