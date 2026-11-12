@@ -1,10 +1,14 @@
 //! Process-local audit age is only a reason to do more verification.
+pub(super) mod telemetry;
+
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use layer2_core::{sandbox::Agent, AgentId};
 
+// Approved integrity contract: audit on the next retry at one hour, never an
+// operator-tunable interval. Restart and eviction require the first audit again.
 const AUDIT_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const MAX_AUDITS: usize = 10_000;
 

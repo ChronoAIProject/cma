@@ -109,10 +109,28 @@ middle-row damage. Consequently the first repeated retry in each store process,
 and each first retry after one hour since its last confirmed complete audit,
 fully scans again. Audit age uses a monotonic process clock, is shared by store
 clones, and is never persisted; restart and bounded-cache eviction force an audit.
+The one-hour interval is a documented code constant, not an environment knob;
+the next eligible retry triggers the audit rather than an independent timer.
+Middle-history corruption that point reads cannot see is detected at the next
+complete audit, subject to the existing full verifier; history immutability
+remains an assumption between audits.
 An aborted or ambiguous publication does not postpone the next required audit.
 Missing, stale or semantically untrusted proof falls back to full verification;
 corruption and quarantine retain the existing refusal policy. Successful effects,
 step advances and first markers retain their full proof requirements.
+
+`cma_agent_retry_audits_total{worker_step,outcome}` counts `completed_full` after
+both full-log and semantic verification, once per scanned history even if a
+conflict reuses it. `skipped_proof` counts trusted-summary verification without a
+full scan; `skipped_conflict_reuse` separately counts exact-snapshot cache reuse.
+These are verification observations, not committed-publication counts: an audit
+may complete before a later write aborts, and a proof still needs the unchanged
+mutation/lease/CAS checks. Only a confirmed commit advances the audit-age map.
+`cma_agent_retry_audit_fallbacks_total{worker_step,reason}` distinguishes `missing`,
+`unsupported`, `stale`, and `untrusted` proof fallbacks. Gate/cohort exclusions and
+scheduled audits are not proof fallbacks. Existing `cma_agent_log_scans_total`
+outcomes retain failed full-scan visibility. All labels are fixed operation or
+decision classes; no Agent identity, failure text or log content is emitted.
 
 During one publication invocation, the Agent writer lock remains held. After a
 known-aborted transaction, its scanned history may be reused only when the new

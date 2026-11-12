@@ -323,6 +323,7 @@ async fn apply_publication_observed(
                 .await?
             }
         };
+        history.audited(&current);
         let next_semantic = prior_semantic
             .after_append(&logs, &final_agent)
             .map_err(ApplyError::Domain)?;
