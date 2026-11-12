@@ -2,6 +2,8 @@
 use super::census_catalog::{Policy, AUDIT};
 use super::*;
 use std::collections::BTreeSet;
+#[path = "census_activity.rs"]
+mod activity;
 #[path = "census_budget.rs"]
 mod budget;
 #[path = "census_retained.rs"]
@@ -57,9 +59,7 @@ pub(super) async fn selection(
             fields(&["record.agent_id"], &closure.agents),
             fields(&["record.resources.sandbox_id"], &closure.sandbox)
         ]},
-        Policy::Activity => {
-            doc! {"record.target.kind":"resource", "record.target.id":{"$in": &closure.resources}}
-        }
+        Policy::Activity => activity::selection(db, closure, session).await?,
         Policy::Budget => doc! {"$or":[
             fields(&["record.agent_id", "record.hold.scope.agent_id"], &closure.agents),
             // Request-turn ledgers have no record-level owner. Their exact key
