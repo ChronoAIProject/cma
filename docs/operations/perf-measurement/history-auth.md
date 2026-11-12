@@ -3,6 +3,11 @@
 Tracks #1793, based on the reviewed #1797 implementation at
 `58238ad13201a8dee7b7ce67bb11fb7dc7d651a7`.
 
+Local evidence is retained in the [pre-implementation baseline](history-auth-baseline.md)
+and [four-mode paired results](history-auth-results.md). Those results establish
+the local command-count gate; production activation and attribution remain the
+operator-owned steps below.
+
 The issue's production evidence is limited to one short Agent history in the
 2026-11-12 06:46–07:02 UTC window, image `ade94de34`: snapshot n=8, p50 5.56 s,
 range 1.67–9.35 s; head n=5, p50 2.63 s, maximum 4.11 s. Those observations include
