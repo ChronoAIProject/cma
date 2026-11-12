@@ -40,7 +40,9 @@ async fn repeated_failure_conflict_cache_rechecks_changed_revision_and_integrity
                         }
                     }).await.unwrap();
                     let update = if changed == "revision" {
-                        doc! {"$inc": {"revision": 1_i64, "record.revision": 1_i64, "agent_log_integrity_v1.bound_agent_revision": 1_i64}}
+                        // Keep proof bytes identical so only the Agent comparison
+                        // can invalidate the prior attempt's history.
+                        doc! {"$inc": {"revision": 1_i64, "record.revision": 1_i64}}
                     } else if changed == "quarantine" {
                         doc! {"$set": {QUARANTINE_FIELD: Bson::Null}}
                     } else {
