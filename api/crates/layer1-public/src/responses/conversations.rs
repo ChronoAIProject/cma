@@ -52,7 +52,12 @@ pub(super) async fn create(
         sandbox_id: metadata.remove("sandbox").map(SandboxId),
     };
     // Own creation once it begins, even when the requesting connection closes.
-    match tokio::spawn(async move { state.context.create(&caller, overrides).await }).await {
+    match tokio::spawn(
+        layer2_core::diagnostic_context::DiagnosticContext::current()
+            .scope(async move { state.context.create(&caller, overrides).await }),
+    )
+    .await
+    {
         Ok(Ok(agent)) => Json(project(&agent)).into_response(),
         Ok(Err(error)) => context_failure(error),
         Err(error) => {
