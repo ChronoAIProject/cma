@@ -13,7 +13,12 @@ const SAMPLES: usize = 20;
 async fn measure(rows: u64) {
     let f = Fixture::new(rows).await;
     // Measure the authorization-session switch independently of page composition.
-    let apps = [f.app(false), f.app(true)];
+    let apps = [
+        f.app(false, false),
+        f.app(true, false),
+        f.app(false, true),
+        f.app(true, true),
+    ];
     for route in ["snapshot", "head_active", "head_idle"] {
         if route == "head_idle" {
             f.idle().await;
@@ -28,7 +33,9 @@ async fn measure(rows: u64) {
         let mut next = Some(path.clone());
         while let Some(path) = next {
             let expected = f.request(&apps[0], &path).await;
-            assert_eq!(expected, f.request(&apps[1], &path).await);
+            for app in &apps[1..] {
+                assert_eq!(expected, f.request(app, &path).await);
+            }
             let body: serde_json::Value = serde_json::from_slice(&expected).unwrap();
             if pages.is_empty() {
                 if route == "snapshot" {
@@ -61,11 +68,13 @@ async fn measure(rows: u64) {
                 1
             }
         );
-        let mut samples: [Vec<u128>; 2] = Default::default();
+        let mut samples: [Vec<u128>; 4] = Default::default();
         let mut counts = std::collections::BTreeMap::new();
         for sample in 0..SAMPLES {
-            for offset in 0..2 {
-                let mode = (sample + offset) % 2;
+            for offset in 0..4 {
+                let mode = (sample + offset) % 4;
+                let access_session = mode % 2 == 1;
+                let single_fence = mode >= 2;
                 for (page, (path, expected)) in pages.iter().enumerate() {
                     f.meter.clear();
                     let scan_before = scans();
@@ -79,12 +88,34 @@ async fn measure(rows: u64) {
                         .zip(scan_before)
                         .map(|(a, b)| a - b)
                         .collect();
-                    let snapshots = match route {
+                    let baseline_snapshots = match route {
                         "snapshot" => 8,
                         "head_active" => 7,
                         _ => 4,
                     };
+                    let snapshots = if single_fence { 3 } else { baseline_snapshots };
                     assert_eq!(stats.snapshots, snapshots);
+                    let baseline_log_commands = match route {
+                        "snapshot" if page == 0 => 6,
+                        "snapshot" => 4,
+                        "head_active" => 5,
+                        _ => 0,
+                    };
+                    let auth_per_snapshot = if access_session { 2 } else { 3 };
+                    let log_commands =
+                        baseline_log_commands - u64::from(single_fence && route != "head_idle");
+                    assert_eq!(stats.auth_commands, snapshots * auth_per_snapshot);
+                    assert_eq!(
+                        stats.checkouts,
+                        snapshots * auth_per_snapshot + log_commands
+                    );
+                    if single_fence && route == "snapshot" {
+                        let baseline =
+                            baseline_snapshots * auth_per_snapshot + baseline_log_commands;
+                        assert!(stats.checkouts * 100 <= baseline * 60);
+                    }
+                    assert_eq!(scan_delta[0], u64::from(route != "head_idle"));
+                    assert_eq!(scan_delta[1], if route == "head_idle" { 0 } else { rows });
                     assert_eq!(stats.commands.values().sum::<u64>(), stats.checkouts);
                     let count = (
                         stats.commands.clone(),
@@ -98,8 +129,8 @@ async fn measure(rows: u64) {
                         counts.insert((mode, page), count);
                     }
                     if sample == 0 {
-                        println!("HISTORY_COMMANDS rows={rows} route={route} page={page} access_session={} page_single_fence=false snapshots={} commands={} auth_commands={} returned_docs={} returned_bson_bytes={} full_scan_counts_docs_bytes_us={:?} groups={:?}",
-                            mode == 1, stats.snapshots, stats.checkouts, stats.auth_commands,
+                        println!("HISTORY_COMMANDS rows={rows} route={route} page={page} access_session={} page_single_fence={} snapshots={} commands={} auth_commands={} returned_docs={} returned_bson_bytes={} full_scan_counts_docs_bytes_us={:?} groups={:?}",
+                            access_session, single_fence, stats.snapshots, stats.checkouts, stats.auth_commands,
                             stats.docs, stats.bytes, scan_delta, stats.commands);
                     }
                 }
@@ -107,8 +138,8 @@ async fn measure(rows: u64) {
         }
         for (mode, values) in samples.iter_mut().enumerate() {
             values.sort_unstable();
-            println!("HISTORY_LATENCY rows={rows} route={route} access_session={} page_single_fence=false samples={} p50_us={} p95_us={} max_us={}",
-                mode == 1, values.len(), values[values.len().div_ceil(2)-1], values[(values.len()*95).div_ceil(100)-1], values[values.len()-1]);
+            println!("HISTORY_LATENCY rows={rows} route={route} access_session={} page_single_fence={} samples={} p50_us={} p95_us={} max_us={}",
+                mode % 2 == 1, mode >= 2, values.len(), values[values.len().div_ceil(2)-1], values[(values.len()*95).div_ceil(100)-1], values[values.len()-1]);
         }
     }
     f.close().await;
