@@ -17,6 +17,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     super::request_limits::COLLECTION,
     "visitor_launch_days",
     crate::document_artifacts::COLLECTION,
+    crate::document_artifacts::QUOTA_COLLECTION,
     super::native_warm_pools::COLLECTION,
     super::native_prepared::COLLECTION,
     "runtime_backend_routes",
@@ -30,6 +31,15 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "agent_access_tools",
     "agent_access_requests",
     "agent_log",
+    super::agent_log_segments::HEADS,
+    super::agent_log_segments::SEGMENTS,
+    super::agent_log_segments::PUBLICATIONS,
+    super::agent_log_segments::PROJECTIONS,
+    super::agent_log_segments::EVIDENCE,
+    super::agent_log_segments::AUDITS,
+    super::agent_log_segments::writer_gate::COLLECTION,
+    super::agent_log_segments::writer_admission::COLLECTION,
+    super::agent_capacity_recovery::records::COLLECTION,
     super::message_feedback::COLLECTION,
     "agent_lifecycle_operations",
     "agent_profile_revisions",
@@ -287,6 +297,8 @@ mod lifecycle_children_contract;
 #[cfg(test)]
 #[path = "profile_internal_contract.rs"]
 mod profile_internal_contract;
+#[cfg(test)]
+mod segments;
 #[cfg(test)]
 #[path = "shared_schema_contract.rs"]
 mod shared_schema_contract;

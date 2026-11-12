@@ -23,7 +23,7 @@ The changelog at the end is **append-only**. Entries are never edited or deleted
 | CMA Trigger | Signed-in authoring, publication, placements and integration snippets. |
 | Public Trigger | A visitor's landing, consent, review, connection assistance and progress. |
 | Operations | Capability-gated inventory, usage, Profiles, activity and settings. |
-| Account | Canonical Appearance choices and the owner-scoped Your usage dialog. |
+| Account | Canonical Appearance choices, the owner-scoped Your usage dialog, and capability-gated account deletion. |
 | Bots | Owner Bot configuration and lifecycle through CMAEG, opened from Consumers in Event Gateway navigation. |
 
 Each view has a canonical route. Refresh and browser history restore it without
@@ -632,7 +632,11 @@ starts no work. Visitors do not get it.
 
 The account row is the only foot content: avatar, name, and email. Long identity lines truncate
 within the fixed seat. Its upward-opening menu contains Docs, capability-gated Operations,
-Appearance, System text size, **Copy build version · <version>**, and Sign out.
+Appearance, System text size, **Copy build version · <version>**, capability-gated
+**Delete account**, and Sign out. Delete account sits immediately before Sign out
+and uses the existing danger row from §12.3. It appears only when the authenticated
+session entitlements include `delete_own_account`; otherwise it is absent under
+§12.4's unavailable-control rule. It opens the account deletion flow in §16.
 The build row copies `CMA <version> (<full commit SHA>)` from the bundle's own
 compile-time identity; local runs show `dev (local)`. It announces **Build version
 copied** on success. A denied or absent clipboard announces **Could not copy. Select
@@ -1938,6 +1942,73 @@ Tree menu reasons sit beneath their labels using the existing 13/20 voice and
 secondary ink, wrap within the menu and remain readable when the action is disabled.
 Written tree states also use secondary ink so small status text remains readable.
 
+### Self-service account deletion
+
+**Confirmation.** The account menu's **Delete account** opens the shared
+`RiskConfirmation` in the existing overlay seat, titled **Delete account**.
+Reuse §12.4's acknowledgement checkbox and warning glyph, with the ordinary
+primary **Delete account** confirm key disabled until the acknowledgement is
+ticked. The warning glyph remains the only red on the card. Do not stack dialogs
+or change the shared Modal geometry, keyboard handling or focus behavior.
+
+State the loss in one sentence: **Deleting your CMA account permanently removes
+your Sandboxes, Workspaces, Agent conversations, documents, shares, Triggers,
+Bots, and credentials.** State separately: **This deletes only CMA data; it does
+not delete your NyxID account.** Explain that deletion is irreversible, access is
+revoked immediately when the request is accepted, and live CMA data cleanup must
+finish within 7 days of the request. Link to the published privacy and retention
+policy for backup retention and disclosed exceptions; use the published
+destination rather than inventing a URL or implying that retained backups are
+erased within the live-data deadline.
+
+There is no cancellation or cooling-off control.
+
+**Acceptance and progress.** Replace the confirmation in the same overlay seat
+with the shared Modal's recorded progress treatment. Say **Your request was
+accepted. Cleanup is still in progress.** Acceptance alone never says **Deleted**
+or **Done**. Keep a closed **Cleanup progress** disclosure containing these
+steps in order: **Retire sandboxes → Release home storage → Erase records →
+Erase document objects → Revoke credentials → Verify**. Step states and the
+polite live summary come only from the public deletion record. Keep the current
+summary, failures and recovery action visible outside the disclosure. Report
+completion only when the public record confirms completed cleanup and
+verification; elapsed time and a missing record never prove completion.
+
+Persist the original command key in the signed-in viewer's scope before
+submission. An uncertain response, dismissal, navigation or page refresh retains
+that same key and resumes observation or reconciliation of the same request.
+Provide **Check request** using that key; it never generates a replacement key
+or submits a separate deletion. After acceptance, observe the public deletion
+status with read-only, non-overlapping polling and the existing failure backoff.
+Closing the progress dialog does not cancel cleanup.
+
+For a blocked status, show **Cleanup is delayed. Our team will handle it. You do
+not need to submit another request.** Keep that message outside Cleanup progress
+and retain Check request. Missing external cleanup capabilities remain blocked;
+the UI never invents successful steps or offers an unsupported repair action.
+If a status read fails, retain only the last confirmed deletion progress and say
+**Could not check cleanup progress. Deletion is not confirmed.** Keep Check
+request available with the same key. A failed read is never an empty result or
+evidence of successful deletion.
+
+**Deletion in progress.** Any request returning problem
+`account_deletion_in_progress` replaces the entire application surface with a
+page titled **Deletion in progress**. This account state takes precedence over
+the retained-content rules above: immediately hide all account data, including
+the sidebar hierarchy, identity rows, Agent conversations, documents and mounted
+service views. Stop their reads and streams and prevent cached content or late
+responses from repopulating the surface. Show only the deletion progress
+treatment above, including its disclosure, status errors and Check request, and
+**Sign out**. The accepted deletion request enters this same page immediately;
+keep its progress in the existing overlay seat until dismissed, then in the page,
+with one active progress surface and no nested dialog. Refresh restores this
+restricted page and the same request key. A blocked status or failed status read
+keeps the restriction in place and never restores account data.
+
+Use only the existing Menu danger row, RiskConfirmation, Modal, Button, Alert,
+disclosure and recorded progress components, with their established typography,
+colour roles, spacing, responsive behavior and accessible status treatment.
+
 ## 17. Sandbox and Agent details
 
 The Sandbox page serves the ordinary owner: keeping an Agent environment healthy.
@@ -2382,6 +2453,43 @@ the centre column of the collapsed portal frame and scrolls as one page:
   motion, and starts once. A failure restores every action and shows an inline
   alert with Try again.
 - Copy never names the agent provider; CMA is the brand.
+
+A browser without a CMA sign-in may still be signed in to NyxID. When the API
+advertises silent sign-in, the opening identity read checks once before showing
+this surface. Navigating inside the SPA from a skipped page to an eligible page
+gets the same opportunity. An attempt marker prevents a second round trip in
+that tab until successful authentication. The existing **Signing you in** state
+lasts at most 10 seconds if navigation is stopped; navigation failure shows the
+ordinary signed-out surface without an error. A valid provider session returns
+to the address opened, including `/`; consent may show NyxID's consent screen.
+A provider refusal or bound automatic exchange failure returns signed out.
+
+Preserve the existing `setup` query on `/bots/new` and `tab` query on Sandbox
+pages through the backend's validated return target. The complete encoded absolute
+login URL, including origin and options, must fit the shared 4 KiB budget. If a
+setup draft exceeds that budget, keep it in the current URL and tab storage,
+skip silent sign-in, and use a path-only return for explicit sign-in. Return
+targets are percent-encoded ASCII; unknown or duplicate query keys are excluded
+because they may carry undefined redirect or authority data. Addresses with
+fragments skip silent sign-in so share tokens stay in the browser. Public
+Trigger, Launch, share-link and document journeys retain their own explicit
+sign-in.
+
+Focus, visibility and online refreshes never navigate. Background identity
+outages preserve mounted authenticated views. Anonymous presentation and a
+stopped round trip retain owner-scoped unsubmitted drafts and command identities.
+Sign out clears private task and Agent-creation drafts before navigating; a
+verified different owner clears the previous owner's retained private state
+before mounting the new view. Nothing automatically creates or submits work.
+
+Same-origin server logout records an opt-out of automatic sign-in. A later
+successful explicit Sign in or Create account re-enables silent sign-in when
+the attempt started after that logout and its durable preference proof remains
+active. Logout revokes that proof, so delayed responses cannot reopen a revoked
+sign-in. An opted-out anonymous browser receives a false capability hint and
+stays on the ordinary signed-out surface. No new control or visual primitive is
+introduced. Deployment activation follows the default-off startup flag and
+compatible-image rollout in the API Overview.
 
 A public Trigger URL has its own complete read-only landing (§13b), not this
 generic gate. Sign in and Create account preserve the canonical local return
@@ -6083,6 +6191,8 @@ saving. Use existing form spacing, labels and validation; introduce no new token
 
 | 2026-11-06 | Preserve the owner’s existing keyboard focus when the conversation becomes ready; computer Home/End/Arrow navigation keeps focus on its selected tab while initial composer focus remains available on an otherwise unfocused page. |
 
+| 2026-11-06 | Check for a live NyxID session once, silently, before showing the signed-out surface (§20), keeping the existing Signing you in state for at most 10 seconds and never repeating after an explicit Sign out. |
+
 | 2026-11-07 | Integrate Workspace v3 with stable streaming recovery, retained sidebar status, deterministic desktop reconnection, mounted identity retries and complete-cohort resource usage; preserve channel queue policy independently of composer follow-ups. |
 
 ### 2026-11-10 — Usage reporting backoff
@@ -6186,3 +6296,9 @@ silently replace concurrent list changes. Independent field edits still use the
 existing explicit revision review. Disabled policies retain every entered value.
 
 | 2026-11-11 | Complete owner-override and request-model editing with blank inputs, independent availability, validation and conservative list-conflict recovery. |
+
+| 2026-11-11 | Sandbox Overview identifies an enabled Always on exception as administrator-approved and explains that only an administrator can approve an exception when it is off. It offers only the existing compact Button to turn an enabled exception off; unset/disabled state directs the owner to an administrator. Keep the administrator detail switch. Use existing Sandbox bands and hint text; introduce no visual tokens. |
+
+| 2026-11-11 | Complete §20 silent sign-in for opening and eligible SPA navigation with default-off activation, same-origin logout suppression and durable explicit-sign-in recovery, a 4 KiB encoded login URL budget, oversized-draft retention, private draft clearing before Sign out, and bounded browser bindings with inline predecessor completion. |
+
+| 2026-11-12 | Specify capability-gated self-service account deletion, acknowledged CMA-only loss, immediate access revocation and the seven-day live-data deadline, published retention-policy guidance, recorded cleanup progress and same-key recovery, and the restricted Deletion in progress page using existing components. |

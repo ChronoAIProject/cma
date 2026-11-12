@@ -18,7 +18,18 @@ pub use agent_client_protocol_schema::v1::{
 };
 
 pub fn reported_tool_text(fields: &ToolCallUpdateFields) -> Vec<std::borrow::Cow<'_, str>> {
-    if let Some(content) = &fields.content {
+    reported_tool_text_parts(fields.content.as_deref(), fields.raw_output.as_ref())
+}
+
+pub fn reported_tool_call_text(call: &ToolCall) -> Vec<std::borrow::Cow<'_, str>> {
+    reported_tool_text_parts(Some(&call.content), call.raw_output.as_ref())
+}
+
+fn reported_tool_text_parts<'a>(
+    content: Option<&'a [ToolCallContent]>,
+    raw_output: Option<&'a serde_json::Value>,
+) -> Vec<std::borrow::Cow<'a, str>> {
+    if let Some(content) = content {
         let diffs = crate::tool_diff::reported_diffs(content).map(std::borrow::Cow::Owned);
         return diffs
             .into_iter()
@@ -33,9 +44,7 @@ pub fn reported_tool_text(fields: &ToolCallUpdateFields) -> Vec<std::borrow::Cow
             }))
             .collect();
     }
-    fields
-        .raw_output
-        .as_ref()
+    raw_output
         .and_then(|output| output.get("formatted_output"))
         .and_then(serde_json::Value::as_str)
         .into_iter()
@@ -152,10 +161,12 @@ pub enum TurnEvidence {
 /// One ordered update from the ACP conversation.
 #[derive(Debug, Clone)]
 pub enum ConversationUpdate {
+    /// Immutable domain storage whose reservation follows every shared owner.
+    RetainedEffect(crate::RuntimeOutputUpdate),
     /// One ordered runtime frame. A protocol-only frame still needs a durable cursor.
     RuntimeOutput {
         receipt: crate::RuntimeOutputReceipt,
-        update: Option<Box<ConversationUpdate>>,
+        update: Option<crate::RuntimeOutputUpdate>,
     },
     WithoutPromptEvidence(Box<ConversationUpdate>),
     Said(SessionUpdate),
@@ -189,6 +200,14 @@ pub enum ConversationUpdate {
 }
 
 impl ConversationUpdate {
+    /// Borrow a domain effect without separating it from its storage owner.
+    pub fn effect(&self) -> &Self {
+        match self {
+            Self::RetainedEffect(update) => update.effect(),
+            update => update,
+        }
+    }
+
     pub fn without_prompt_evidence(self) -> Self {
         match self {
             already @ Self::WithoutPromptEvidence(_) => already,
@@ -198,6 +217,7 @@ impl ConversationUpdate {
 
     pub fn turn_evidence(&self) -> Option<TurnEvidence> {
         match self {
+            Self::RetainedEffect(update) => update.turn_evidence(),
             Self::RuntimeOutput { update, .. } => update.as_deref().and_then(Self::turn_evidence),
             Self::WithoutPromptEvidence(_) => None,
             Self::Said(SessionUpdate::AgentMessageChunk(_)) => {

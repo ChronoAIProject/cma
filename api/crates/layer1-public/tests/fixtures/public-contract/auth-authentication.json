@@ -13,6 +13,7 @@
       "response": {
         "status": 200,
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
@@ -47,6 +48,7 @@
       "response": {
         "status": 303,
         "headers": {
+          "cache-control": "no-store",
           "location": "/t/public-contract/placement-contract"
         },
         "body": null,
@@ -66,6 +68,7 @@
       "response": {
         "status": 303,
         "headers": {
+          "cache-control": "no-store",
           "location": "/agents/agt_contract"
         },
         "body": null,
@@ -85,6 +88,7 @@
       "response": {
         "status": 303,
         "headers": {
+          "cache-control": "no-store",
           "location": "/"
         },
         "body": null,
@@ -99,13 +103,19 @@
       "request": {
         "method": "GET",
         "path": "/auth/logout",
-        "headers": {}
+        "headers": {
+          "sec-fetch-site": "same-origin"
+        }
       },
       "response": {
         "status": 303,
+        "setCookies": [
+          "cma_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+          "cma_signed_out=1000; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000"
+        ],
         "headers": {
-          "location": "/",
-          "set-cookie": "cma_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+          "cache-control": "no-store",
+          "location": "/"
         },
         "body": null,
         "bodyKind": "empty"
@@ -149,10 +159,12 @@
       "response": {
         "status": 401,
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
-          "authenticated": false
+          "authenticated": false,
+          "silent_sign_in": true
         },
         "bodyKind": "json"
       },
@@ -172,10 +184,12 @@
       "response": {
         "status": 401,
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
-          "authenticated": false
+          "authenticated": false,
+          "silent_sign_in": true
         },
         "bodyKind": "json"
       },
@@ -195,6 +209,7 @@
       "response": {
         "status": 200,
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
@@ -224,14 +239,19 @@
         "method": "GET",
         "path": "/auth/logout",
         "headers": {
-          "cookie": "cma_session=contract-browser"
+          "cookie": "cma_session=contract-browser",
+          "sec-fetch-site": "same-origin"
         }
       },
       "response": {
         "status": 303,
+        "setCookies": [
+          "cma_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
+          "cma_signed_out=1000; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000"
+        ],
         "headers": {
-          "location": "/",
-          "set-cookie": "cma_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+          "cache-control": "no-store",
+          "location": "/"
         },
         "body": null,
         "bodyKind": "empty"
@@ -252,10 +272,12 @@
       "response": {
         "status": 401,
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
-          "authenticated": false
+          "authenticated": false,
+          "silent_sign_in": true
         },
         "bodyKind": "json"
       },
@@ -275,6 +297,7 @@
       "response": {
         "status": 200,
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
@@ -570,6 +593,7 @@
       "response": {
         "status": 503,
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
@@ -597,6 +621,7 @@
       "response": {
         "status": 503,
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
@@ -624,6 +649,7 @@
       "response": {
         "status": 503,
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
@@ -645,12 +671,17 @@
         "method": "GET",
         "path": "/auth/logout",
         "headers": {
-          "cookie": "cma_session=contract-browser"
+          "cookie": "cma_session=contract-browser",
+          "sec-fetch-site": "same-origin"
         }
       },
       "response": {
         "status": 503,
+        "setCookies": [
+          "cma_signed_out=1000; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000"
+        ],
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
@@ -676,6 +707,7 @@
       "response": {
         "status": 400,
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
@@ -698,6 +730,7 @@
       "response": {
         "status": 400,
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
@@ -720,6 +753,7 @@
       "response": {
         "status": 503,
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
@@ -743,6 +777,7 @@
       "response": {
         "status": 400,
         "headers": {
+          "cache-control": "no-store",
           "content-type": "application/json"
         },
         "body": {
@@ -767,8 +802,8 @@
       "response": {
         "status": 400,
         "headers": {
-          "content-type": "application/json",
-          "set-cookie": "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+          "cache-control": "no-store",
+          "content-type": "application/json"
         },
         "body": {
           "title": "Sign-in could not be completed",
@@ -794,8 +829,8 @@
       "response": {
         "status": 400,
         "headers": {
-          "content-type": "application/json",
-          "set-cookie": "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+          "cache-control": "no-store",
+          "content-type": "application/json"
         },
         "body": {
           "title": "Sign-in could not be completed",
@@ -820,9 +855,12 @@
       },
       "response": {
         "status": 400,
+        "setCookies": [
+          "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+        ],
         "headers": {
-          "content-type": "application/json",
-          "set-cookie": "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+          "cache-control": "no-store",
+          "content-type": "application/json"
         },
         "body": {
           "title": "Sign-in could not be completed",
@@ -847,9 +885,12 @@
       },
       "response": {
         "status": 401,
+        "setCookies": [
+          "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+        ],
         "headers": {
-          "content-type": "application/json",
-          "set-cookie": "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+          "cache-control": "no-store",
+          "content-type": "application/json"
         },
         "body": {
           "title": "Sign-in could not be completed",
@@ -874,9 +915,12 @@
       },
       "response": {
         "status": 400,
+        "setCookies": [
+          "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+        ],
         "headers": {
-          "content-type": "application/json",
-          "set-cookie": "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+          "cache-control": "no-store",
+          "content-type": "application/json"
         },
         "body": {
           "title": "Sign-in could not be completed",
@@ -914,7 +958,223 @@
           "code": "identity_unavailable"
         },
         "bodyKind": "json"
-      }
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-silent-capability-disabled",
+      "operation": "GET /auth/session",
+      "scenario": "auth_anonymous_disabled",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": false,
+          "silent_sign_in": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-login-preserves-sandbox-tab",
+      "operation": "GET /auth/login",
+      "scenario": "auth_trusted",
+      "request": {
+        "method": "GET",
+        "path": "/auth/login?return_to=%2Fsandboxes%2Fsbx_contract%3Ftab%3Daccess",
+        "headers": {}
+      },
+      "response": {
+        "status": 303,
+        "headers": {
+          "cache-control": "no-store",
+          "location": "/sandboxes/sbx_contract?tab=access"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-login-preserves-bot-draft",
+      "operation": "GET /auth/login",
+      "scenario": "auth_trusted",
+      "request": {
+        "method": "GET",
+        "path": "/auth/login?return_to=%2Fbots%2Fnew%3Fsetup%3D%257B%2522v%2522%253A1%257D",
+        "headers": {}
+      },
+      "response": {
+        "status": 303,
+        "headers": {
+          "cache-control": "no-store",
+          "location": "/bots/new?setup=%7B%22v%22%3A1%7D"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-silent-login-required",
+      "operation": "GET /auth/callback",
+      "scenario": "auth_callback_silent_declined",
+      "request": {
+        "method": "GET",
+        "path": "/auth/callback?state=contract-state&error=login_required&error_description=Not%20signed%20in&error_uri=https%3A%2F%2Fidentity.example.test",
+        "headers": {
+          "cookie": "cma_login_contract-state=contract-binding"
+        }
+      },
+      "response": {
+        "status": 303,
+        "setCookies": [
+          "cma_login_contract-state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+        ],
+        "headers": {
+          "cache-control": "no-store",
+          "location": "/t/public-contract/placement-contract"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-silent-suppressed",
+      "operation": "GET /auth/session",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {
+          "cookie": "cma_signed_out=1000"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": false,
+          "silent_sign_in": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-silent-explicit-resumed",
+      "operation": "GET /auth/session",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {
+          "cookie": "cma_signed_out=1000; cma_signed_in=1001.tPuWtswBg6ow3ijL_D8GUCvru5vfPBWFZJlojAkSTa4"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": false,
+          "silent_sign_in": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-silent-preference-logout",
+      "operation": "GET /auth/logout",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/logout",
+        "headers": {
+          "cookie": "cma_signed_in=1001.tPuWtswBg6ow3ijL_D8GUCvru5vfPBWFZJlojAkSTa4",
+          "sec-fetch-site": "same-origin"
+        }
+      },
+      "response": {
+        "status": 303,
+        "setCookies": [
+          "cma_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
+          "cma_signed_out=1000; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000"
+        ],
+        "headers": {
+          "cache-control": "no-store",
+          "location": "/"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-silent-later-logout",
+      "operation": "GET /auth/session",
+      "scenario": "auth_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/auth/session",
+        "headers": {
+          "cookie": "cma_signed_out=1000; cma_signed_in=1001.tPuWtswBg6ow3ijL_D8GUCvru5vfPBWFZJlojAkSTa4"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "authenticated": false,
+          "silent_sign_in": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auth-cross-site-logout",
+      "operation": "GET /auth/logout",
+      "scenario": "auth_trusted",
+      "request": {
+        "method": "GET",
+        "path": "/auth/logout",
+        "headers": {
+          "sec-fetch-site": "cross-site"
+        }
+      },
+      "response": {
+        "status": 303,
+        "setCookies": [
+          "cma_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+        ],
+        "headers": {
+          "cache-control": "no-store",
+          "location": "/"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
     }
   ]
 }

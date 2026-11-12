@@ -169,8 +169,32 @@ pub(super) async fn record(
     expected_source: (u64, u64),
     mode: impl Into<UsageObservation>,
 ) -> Result<(), TransactionEventError> {
-    let current = store
-        .sandbox_usage
+    record_collections(
+        (&store.sandbox_usage, &store.sandbox_usage_events),
+        session,
+        sandbox,
+        source_seq,
+        at,
+        expected_source,
+        mode,
+    )
+    .await
+}
+
+pub(super) async fn record_collections(
+    collections: (
+        &mongodb::Collection<Document>,
+        &mongodb::Collection<Document>,
+    ),
+    session: &mut ClientSession,
+    sandbox: &Sandbox,
+    source_seq: u64,
+    at: &str,
+    expected_source: (u64, u64),
+    mode: impl Into<UsageObservation>,
+) -> Result<(), TransactionEventError> {
+    let current = collections
+        .0
         .find_one(doc! { "_id": sandbox.id.as_str() })
         .session(&mut *session)
         .await
@@ -208,22 +232,22 @@ pub(super) async fn record(
     };
     let document = state_document(&state).map_err(TransactionEventError::Domain)?;
     if previous.is_some() {
-        store
-            .sandbox_usage
+        collections
+            .0
             .replace_one(doc! { "_id": sandbox.id.as_str() }, document)
             .session(&mut *session)
             .await
             .map_err(TransactionEventError::Driver)?;
     } else {
-        store
-            .sandbox_usage
+        collections
+            .0
             .insert_one(document)
             .session(&mut *session)
             .await
             .map_err(TransactionEventError::Driver)?;
     }
-    store
-        .sandbox_usage_events
+    collections
+        .1
         .insert_one(event_document(&event).map_err(TransactionEventError::Domain)?)
         .session(&mut *session)
         .await

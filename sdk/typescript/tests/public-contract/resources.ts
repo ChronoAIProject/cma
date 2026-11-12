@@ -3,6 +3,10 @@ import type { AgentProvenanceInventoryOptions } from '../../src/agents.js';
 import type { AccessibleSandboxListOptions } from '../../src/sandboxes.js';
 
 export const resourceDispatch: Record<string, Dispatch> = {
+  'POST /api/v1/telemetry/browser': ({ client, body }) =>
+    client.reportBrowserFault(
+      (body as { kind: import('../../src/browser-telemetry.js').BrowserFault }).kind,
+    ),
   'GET /api/v1/agents/{id}/environment': ({ client, param }) =>
     client.agentFiles.environment(param('id')),
   'POST /api/v1/cmaeg/worker-credentials/classify': ({ client, body }) =>
@@ -284,6 +288,10 @@ export const resourceDispatch: Record<string, Dispatch> = {
     client.sandboxes.revive(param('id'), command),
   'POST /api/v1/sandboxes/{id}/runtime-update': ({ client, param, body, command }) =>
     client.sandboxes.updateRuntime(param('id'), body, command),
+  'GET /api/v1/sandboxes/{id}/runtime-recovery': ({ client, param }) =>
+    client.sandboxes.inspectRuntimeRecovery(param('id')),
+  'POST /api/v1/sandboxes/{id}/runtime-recovery': ({ client, param, body, command }) =>
+    client.sandboxes.recoverRetained(param('id'), body, command),
   'POST /api/v1/sandboxes/{id}/always-on': ({ client, param, body, command }) =>
     client.sandboxes.setAlwaysOn(param('id'), body, command),
   'POST /api/v1/sandboxes/{id}/service-access': ({ client, param, body, command }) =>

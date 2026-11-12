@@ -3,12 +3,15 @@
 mod client;
 mod client_types;
 mod context;
+mod context_retry;
+pub(crate) use context_retry::ContextFailure;
 mod conversation;
 mod inspection;
 pub use inspection::ConversationInspection;
 mod frozen;
 mod management_auth;
 mod media_continuations;
+mod permits;
 mod preparation;
 mod probe;
 mod recovery;

@@ -31,6 +31,7 @@ pub mod assets;
 pub mod auth;
 pub mod bot_setups;
 pub mod bots;
+pub mod browser_telemetry;
 mod client;
 pub mod cmaeg;
 mod conformance;

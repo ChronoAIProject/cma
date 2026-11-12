@@ -4,6 +4,8 @@ mod activity;
 mod binding;
 #[path = "responses_v2/fixture.rs"]
 mod fixture;
+#[path = "responses_v2/output_pages.rs"]
+mod output_pages;
 #[path = "support/wire.rs"]
 mod wire;
 use cma_sdk::{
