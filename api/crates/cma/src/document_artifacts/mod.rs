@@ -7,6 +7,7 @@ mod quota_baseline;
 mod reclaim;
 pub(crate) use reclaim::MongoDocumentReclaimStore;
 pub(crate) mod quota_cli;
+mod reconcile;
 pub(crate) mod worker;
 pub use mongo::MongoDocumentStore;
 pub(crate) use mongo::COLLECTION;
