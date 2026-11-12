@@ -9,9 +9,6 @@ use super::{
     Workspace, Worktree,
 };
 
-mod pagination;
-use pagination::page;
-
 mod sandbox;
 pub use sandbox::SandboxStore;
 pub mod ledger_collection;
