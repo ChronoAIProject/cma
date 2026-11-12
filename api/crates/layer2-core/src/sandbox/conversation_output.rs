@@ -5,6 +5,7 @@ use crate::sandbox::store::{
     AgentReopenGuard, SandboxStoreError,
 };
 use crate::sandbox::{Agent, AgentConversationError, AgentUpdateOutcome};
+use sha2::{Digest, Sha256};
 
 impl DurableAgentUpdateRecorder {
     pub(super) async fn commit_output(
@@ -154,4 +155,21 @@ pub(super) fn store_error(error: SandboxStoreError) -> AgentConversationError {
         SandboxStoreError::Corrupt(detail) => AgentConversationError::Corrupt(detail),
         other => AgentConversationError::Unavailable(other.to_string()),
     }
+}
+
+pub(super) fn fingerprint(
+    source: Option<&layer3_adapter::RuntimeOutputSource>,
+    update: Option<&layer3_adapter::ConversationUpdate>,
+) -> String {
+    source.map_or_else(
+        || {
+            format!(
+                "{:x}",
+                Sha256::digest(
+                    format!("{:?}", update.as_ref().expect("legacy update is present")).as_bytes()
+                )
+            )
+        },
+        |source| format!("{:x}", Sha256::digest(format!("{source:?}").as_bytes())),
+    )
 }
