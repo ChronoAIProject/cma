@@ -322,6 +322,9 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
             layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD,
             layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD_DETAIL,
         ),
+        AdapterError::SkillUpgradeRefused(reason) => {
+            WorkerFailure::terminal(reason.code(), reason.to_string())
+        }
         AdapterError::AtCapacity(detail) => WorkerFailure::terminal("agent_resource_quota", detail),
         AdapterError::Rejected(detail) | AdapterError::OperationIdentityConflict(detail) => {
             WorkerFailure::terminal("agent_runtime_rejected", detail)
