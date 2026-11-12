@@ -19,6 +19,8 @@ pub(crate) struct Metadata {
     pub check: u64,
     pub session: bool,
     pub transaction: bool,
+    pub transaction_known: bool,
+    pub outcome_known: bool,
 }
 
 impl Metadata {
@@ -43,6 +45,8 @@ impl Metadata {
             check: 0,
             session: false,
             transaction: false,
+            transaction_known: false,
+            outcome_known: false,
         }
     }
 }
@@ -153,7 +157,9 @@ impl Event {
             check_sequence=m.check, operation_sequence=m.operation, hold_hash=%m.hold_hash,
             route=m.context.route.as_ref(), request_hash=%m.context.request_hash,
             worker=m.context.worker, phase=m.context.phase, pool=m.pool,
-            command=m.command, collection=m.collection, session=m.session, transaction=m.transaction, event=self.event,
+            command=m.command, collection=m.collection, session=m.session, transaction=m.transaction,
+            transaction_known=m.transaction_known, outcome_known=m.outcome_known,
+            command_duration_scope="driver_command_span", event=self.event,
             duration_us=self.duration_us, queue_delay_us, "Readiness Mongo metadata");
     }
 }
