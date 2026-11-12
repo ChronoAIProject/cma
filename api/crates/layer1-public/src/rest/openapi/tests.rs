@@ -326,7 +326,7 @@ fn every_trigger_launch_and_connection_operation_is_documented() {
 }
 
 #[test]
-fn only_public_discovery_and_previews_are_anonymous() {
+fn only_public_discovery_previews_and_bounded_diagnostics_are_anonymous() {
     let document = serde_json::to_value(document()).expect("OpenAPI serializes");
     let authenticated = serde_json::json!([
         {"bearerAuth": []},
@@ -361,6 +361,7 @@ fn only_public_discovery_and_previews_are_anonymous() {
             "get /api/v1/triggers/public/{public_id}/open/{placement_id}".to_owned(),
             "post /api/v1/triggers/public/{public_id}/entry-intent".to_owned(),
             "get /auth/signup-options".to_owned(),
+            "post /api/v1/telemetry/browser".to_owned(),
         ])
     );
     assert_eq!(

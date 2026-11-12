@@ -31,14 +31,48 @@ pub async fn attach_subject(
         return super::resource_request::attach(&auth, request, next).await;
     }
     if bypasses_ambient_auth(request.uri().path()) {
+        let mut observation = crate::telemetry::request::Resolution::start(&request, "independent");
+        observation.finish("bypassed", crate::telemetry::request::Consumer::Unknown);
+        drop(observation);
         return next.run(request).await;
     }
     let allow_fallback = auth
         .fallback_policy
         .permits(request.method(), request.uri().path());
+    let mut observation = crate::telemetry::request::Resolution::start(&request, "ambient");
     let (resolved, failure) =
         diagnostics::capture(auth.resolve_request_with_policy(request.headers(), allow_fallback))
             .await;
+    let outcome = match &resolved {
+        Ok(Some(_)) => "resolved",
+        Ok(None) => "anonymous",
+        Err(_) => "unavailable",
+    };
+    // The resolver exclusively verifies this path when configured; an accepted
+    // proxy read need not have enrolled renewable owner authority.
+    let verified_proxy =
+        auth.identity_proxy.is_some() && request.headers().contains_key(super::nyxid_proxy::HEADER);
+    let consumer = resolved.as_ref().ok().and_then(Option::as_ref).map_or(
+        crate::telemetry::request::Consumer::Unknown,
+        |request| match request.credential_source {
+            _ if verified_proxy => crate::telemetry::request::Consumer::Nyxid,
+            layer2_core::resource_access::CredentialSource::IdentityProxy { .. } => {
+                crate::telemetry::request::Consumer::Nyxid
+            }
+            layer2_core::resource_access::CredentialSource::Independent { .. }
+            | layer2_core::resource_access::CredentialSource::Binding => {
+                crate::telemetry::request::Consumer::DirectApi
+            }
+            layer2_core::resource_access::CredentialSource::Retained
+                if matches!(auth.mode, super::AuthMode::Provider { .. }) =>
+            {
+                crate::telemetry::request::Consumer::PublicUser
+            }
+            _ => crate::telemetry::request::Consumer::Unknown,
+        },
+    );
+    observation.finish(outcome, consumer);
+    drop(observation);
     let resolved = match resolved {
         Ok(resolved) => resolved,
         Err(error) => {
