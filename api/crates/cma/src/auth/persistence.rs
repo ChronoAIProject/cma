@@ -298,6 +298,12 @@ pub trait AuthStore: Send + Sync {
     #[cfg(test)]
     async fn put_browser_login(&self, login: BrowserLogin) -> Result<(), StoreError>;
     async fn browser_login(&self, id: &SecretDigest) -> Result<Option<BrowserLogin>, StoreError>;
+    /// Read browser custody and its subject in one store operation. Expired logins
+    /// need no subject decoding: the caller must revoke them before authorizing.
+    async fn browser_session(
+        &self,
+        id: &SecretDigest,
+    ) -> Result<Option<(BrowserLogin, Option<SubjectAuthState>)>, StoreError>;
     async fn delete_browser_login(&self, id: &SecretDigest) -> Result<(), StoreError>;
     async fn insert_subject(&self, state: SubjectAuthState) -> Result<bool, StoreError>;
     /// Successful login alone may replace an exact unfenced current-schema row.
@@ -319,3 +325,6 @@ pub use memory::MemoryAuthStore;
 #[cfg(test)]
 #[path = "persistence_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod test_observer;
