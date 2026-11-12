@@ -52,11 +52,11 @@ pub struct SandboxInventoryRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SandboxHierarchyRecord {
+pub struct SandboxHierarchyRecord<A = Agent> {
     pub sandbox: Sandbox,
     pub workspaces: Vec<Workspace>,
     pub worktrees: Vec<Worktree>,
-    pub agents: Vec<Agent>,
+    pub agents: Vec<A>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
