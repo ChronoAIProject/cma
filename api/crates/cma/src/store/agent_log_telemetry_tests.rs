@@ -219,18 +219,30 @@ async fn real_complete_scan_counts_success_corruption_and_failed_reads() {
     super::super::mongo_read_telemetry::isolated_test(isolated_test(async {
         let mut session = client.start_session().await.unwrap();
         for caller in CALLERS {
-            assert!(
-                scan_collection(caller, &collection, &id, 1, &mut session, false, |_| Ok(()))
-                    .await
-                    .is_ok()
-            );
+            assert!(scan_collection(
+                caller,
+                &collection,
+                &id,
+                1,
+                &mut session,
+                crate::store::agent_log_integrity::ScanOptions::new(false, Default::default()),
+                |_| Ok(())
+            )
+            .await
+            .is_ok());
             assert_eq!(&snapshot(caller, true)[..3], &[1, 1, bytes]);
             // Missing tail retains consumption without successful validation.
-            assert!(
-                scan_collection(caller, &collection, &id, 2, &mut session, false, |_| Ok(()))
-                    .await
-                    .is_err()
-            );
+            assert!(scan_collection(
+                caller,
+                &collection,
+                &id,
+                2,
+                &mut session,
+                crate::store::agent_log_integrity::ScanOptions::new(false, Default::default()),
+                |_| Ok(())
+            )
+            .await
+            .is_err());
             assert_eq!(&snapshot(caller, false)[..3], &[1, 1, bytes]);
         }
         assert_eq!(
@@ -247,18 +259,30 @@ async fn real_complete_scan_counts_success_corruption_and_failed_reads() {
             .update_one(doc! {}, doc! {"$set": {"seq": 7_i64}})
             .await
             .unwrap();
-        assert!(
-            scan_collection(caller, &collection, &id, 1, &mut session, false, |_| Ok(()))
-                .await
-                .is_err()
-        );
+        assert!(scan_collection(
+            caller,
+            &collection,
+            &id,
+            1,
+            &mut session,
+            crate::store::agent_log_integrity::ScanOptions::new(false, Default::default()),
+            |_| Ok(())
+        )
+        .await
+        .is_err());
         assert_eq!(&snapshot(caller, false)[..3], &[2, 2, 2 * bytes]);
         let invalid = database.collection::<Document>("invalid\0collection");
-        assert!(
-            scan_collection(caller, &invalid, &id, 1, &mut session, false, |_| Ok(()))
-                .await
-                .is_err()
-        );
+        assert!(scan_collection(
+            caller,
+            &invalid,
+            &id,
+            1,
+            &mut session,
+            crate::store::agent_log_integrity::ScanOptions::new(false, Default::default()),
+            |_| Ok(())
+        )
+        .await
+        .is_err());
         assert_eq!(&snapshot(caller, false)[..3], &[3, 2, 2 * bytes]);
         assert_eq!(
             super::super::mongo_read_telemetry::snapshot("other"),
@@ -271,7 +295,7 @@ async fn real_complete_scan_counts_success_corruption_and_failed_reads() {
             &id,
             10_129,
             &mut session,
-            false,
+            crate::store::agent_log_integrity::ScanOptions::new(false, Default::default()),
             |_| Ok(())
         )
         .await
@@ -313,3 +337,6 @@ fn scan_execution_export_is_once_per_attempt_including_failure() {
         }
     }
 }
+
+#[path = "agent_log_telemetry_tests/cooperation.rs"]
+mod cooperation;

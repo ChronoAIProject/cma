@@ -62,6 +62,7 @@ mod checkpoint_storage;
 mod checkpoints;
 mod child_writer_claims;
 mod codex_subscriptions;
+mod cooperative_budget;
 mod default_profiles;
 pub mod directory;
 mod durability;
