@@ -18,6 +18,7 @@ pub use capacity_recovery::CapacityRecoveryNativeTransport;
 mod channel_tools;
 mod checkpoint_store;
 mod checkpoint_transport;
+mod context_goal;
 mod control_correlation;
 mod credit_error_json;
 mod deployment;
