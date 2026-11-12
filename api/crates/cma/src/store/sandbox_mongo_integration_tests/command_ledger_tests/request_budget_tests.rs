@@ -5,7 +5,7 @@ use layer3_adapter::{ConversationUpdate, PromptResponse, TurnStopReason};
 #[path = "request_budget_tests/settlement_tests.rs"]
 mod settlement_tests;
 
-async fn completed(
+pub(in crate::store) async fn completed(
     client: &Client,
     name: &str,
 ) -> (Arc<MongoSandboxStore>, RequestScope, ModelRequest) {
