@@ -353,3 +353,7 @@ mod coordinator_tests;
 #[cfg(test)]
 #[path = "acp_sign_in_retention_tests.rs"]
 mod sign_in_retention_tests;
+
+#[cfg(test)]
+#[path = "acp_context_goal_ownership_tests.rs"]
+mod context_goal_ownership_tests;
