@@ -1671,6 +1671,21 @@ MiB, millis, or snake_case wire tokens. Sandbox and workspace are allowed nouns.
 Technical disclosures and verbatim user-authored commands remain data, not
 translated or altered prose.
 
+A daily allowance refusal is settled only when HTTP 429 carries `resource_quota`,
+`resource: visitor_launches`, and a usable `reset_at` timestamp. Explain the daily
+allowance and show its reset date and time in the visitor's locale and time zone,
+with a short month, numeric day and hour, and two-digit minute. Clear the saved
+browser intent and request key so the next explicit attempt starts with a fresh
+key. Other 429 responses, including missing or unusable reset times, remain
+uncertain and preserve the original intent, choices and key. Never start work
+automatically when the allowance resets.
+
+When the Sandbox allowance is full, explain that the visitor must delete an
+unused sandbox and wait for deletion to complete before starting again. Do not
+imply that pausing a sandbox or beginning deletion immediately frees a place.
+Use the existing failure alert and recovery actions; all sentences belong in
+the public vocabulary module and follow the same vocabulary restrictions.
+
 Use semantic headings and the shared dialogs. One polite live summary announces
 progress; failures are announced once. On narrow viewports disclosures and steps
 become one column, text wraps, and every action is available without hover.
@@ -6229,3 +6244,5 @@ existing explicit revision review. Disabled policies retain every entered value.
 | 2026-11-11 | Sandbox Overview identifies an enabled Always on exception as administrator-approved and explains that only an administrator can approve an exception when it is off. It offers only the existing compact Button to turn an enabled exception off; unset/disabled state directs the owner to an administrator. Keep the administrator detail switch. Use existing Sandbox bands and hint text; introduce no visual tokens. |
 
 | 2026-11-11 | Complete §20 silent sign-in for opening and eligible SPA navigation with default-off activation, same-origin logout suppression and durable explicit-sign-in recovery, a 4 KiB encoded login URL budget, oversized-draft retention, private draft clearing before Sign out, and bounded browser bindings with inline predecessor completion. |
+
+| 2026-11-12 | Define settled visitor daily allowance refusals with local reset times and fresh request keys, preserve uncertain attempts, and explain completed Sandbox deletion before starting again when the allowance is full. |
