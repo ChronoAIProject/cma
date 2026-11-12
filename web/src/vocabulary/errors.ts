@@ -42,6 +42,24 @@ export function refusalSentence(error: unknown): string {
   if (error instanceof CredentialAccountError) return error.message;
   if (
     error instanceof ApiError &&
+    error.status === 429 &&
+    error.code === 'resource_quota' &&
+    error.extensions.resource === 'visitor_launches' &&
+    typeof error.extensions.reset_at === 'string'
+  ) {
+    const resetAt = new Date(error.extensions.reset_at);
+    if (!Number.isNaN(resetAt.getTime())) {
+      const resetTime = new Intl.DateTimeFormat(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      }).format(resetAt);
+      return `You have used your daily allowance for starting agents. Try again after ${resetTime}.`;
+    }
+  }
+  if (
+    error instanceof ApiError &&
     error.code !== undefined &&
     Object.hasOwn(refusalSentences, error.code)
   )
@@ -51,6 +69,8 @@ export function refusalSentence(error: unknown): string {
 
 export function failureRemediation(code: string): string {
   switch (code) {
+    case 'sandbox_limit_reached':
+      return 'Your Sandbox allowance is full. Delete a sandbox you no longer need, wait for deletion to complete, then start again.';
     case 'first_message_failed':
       return 'Your first message could not be sent. Open the agent to check its conversation before sending it again.';
     case 'recovery_required':

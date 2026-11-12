@@ -5,7 +5,19 @@ import { publicCopy } from '../vocabulary/needs';
 
 const pending = new Map<string, Promise<Launch>>();
 
+export function isSettledQuotaRefusal(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    error.status === 429 &&
+    error.code === 'resource_quota' &&
+    error.extensions.resource === 'visitor_launches' &&
+    typeof error.extensions.reset_at === 'string' &&
+    !Number.isNaN(Date.parse(error.extensions.reset_at))
+  );
+}
+
 export function isUnsettledCommand(error: unknown): boolean {
+  if (isSettledQuotaRefusal(error)) return false;
   return (
     !(error instanceof ApiError) ||
     error.isRetryable ||
