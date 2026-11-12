@@ -92,14 +92,23 @@ pub(crate) struct Bridge {
     reader: tokio::task::AbortHandle,
     ended: tokio::sync::watch::Sender<bool>,
     writer_session_root: Option<i32>,
-    observation: Arc<Mutex<observation::NativeObservation>>,
+    observation: Option<Arc<Mutex<observation::NativeObservation>>>,
     capacity_recovery: Mutex<Option<(String, u64, Instant)>>,
 }
 
 impl Bridge {
+    #[cfg(test)]
     pub(crate) fn start(
         launch: &AgentLaunch,
         environment: &BTreeMap<String, String>,
+    ) -> std::io::Result<Self> {
+        Self::start_with_recovery(launch, environment, false)
+    }
+
+    pub(crate) fn start_with_recovery(
+        launch: &AgentLaunch,
+        environment: &BTreeMap<String, String>,
+        recovery_enabled: bool,
     ) -> std::io::Result<Self> {
         let mut process = tokio::process::Command::new(&launch.program);
         process
@@ -142,14 +151,15 @@ impl Bridge {
         let pending = Arc::new(Mutex::new(Pending::default()));
         let retained_output = Arc::new(OutputRetention::default());
         let (ended, _) = tokio::sync::watch::channel(false);
-        let observation = Arc::new(Mutex::new(observation::NativeObservation::default()));
+        let observation = recovery_enabled
+            .then(|| Arc::new(Mutex::new(observation::NativeObservation::default())));
         spawn_writer(stdin, input_rx);
         let reader = spawn_reader(
             stdout,
             output.clone(),
             Arc::clone(&pending),
             Arc::clone(&retained_output),
-            Arc::clone(&observation),
+            observation.clone(),
         );
         observation::spawn_diagnostics(stderr);
         observation::spawn_reaper(child, managed, ended.clone());
@@ -172,9 +182,13 @@ impl Bridge {
         if frame.len() > MAX_FRAME_BYTES {
             return false;
         }
-        self.observation.lock().await.input(&frame);
+        if let Some(observation) = &self.observation {
+            observation.lock().await.input(&frame);
+        }
         if self.input.send(frame).await.is_err() {
-            self.observation.lock().await.invalidate();
+            if let Some(observation) = &self.observation {
+                observation.lock().await.invalidate();
+            }
             return false;
         }
         true
@@ -263,7 +277,7 @@ fn spawn_reader(
     output: tokio::sync::broadcast::Sender<Outbound>,
     pending: Arc<Mutex<Pending>>,
     retained_output: Arc<OutputRetention>,
-    observation: Arc<Mutex<observation::NativeObservation>>,
+    observation: Option<Arc<Mutex<observation::NativeObservation>>>,
 ) -> tokio::task::AbortHandle {
     let reader = tokio::spawn(async move {
         let mut stdout = BufReader::new(stdout);
@@ -323,9 +337,11 @@ async fn publish(
     output: &tokio::sync::broadcast::Sender<Outbound>,
     pending: &Arc<Mutex<Pending>>,
     retained_output: &OutputRetention,
-    observation: &Arc<Mutex<observation::NativeObservation>>,
+    observation: &Option<Arc<Mutex<observation::NativeObservation>>>,
 ) {
-    observation.lock().await.output(&frame);
+    if let Some(observation) = observation {
+        observation.lock().await.output(&frame);
+    }
     retained_output.retain(&frame).await;
     if output.send(Outbound::Frame(frame.clone())).is_err() {
         pending.lock().await.push(frame);

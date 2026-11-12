@@ -6,6 +6,9 @@ impl Bridge {
         challenge: &str,
         writer_fence: u64,
     ) -> Result<(), CapacityRecoveryError> {
+        if self.observation.is_none() {
+            return Err(CapacityRecoveryError::Unsupported);
+        }
         let mut lease = self.capacity_recovery.lock().await;
         if lease
             .as_ref()
@@ -51,6 +54,10 @@ impl Bridge {
         request: &CapacityRecoveryRequest,
         cwd: String,
     ) -> Result<CapacityRecoveryNativeProof, CapacityRecoveryError> {
+        let observation = self
+            .observation
+            .as_ref()
+            .ok_or(CapacityRecoveryError::Unsupported)?;
         let lease_matches = self.capacity_recovery.lock().await.as_ref().is_some_and(
             |(challenge, fence, expires_at)| {
                 challenge == &request.challenge
@@ -64,7 +71,7 @@ impl Bridge {
         if self.is_ended() || self.select_output_acknowledgement(true) != Ok(true) {
             return Err(CapacityRecoveryError::Unavailable);
         }
-        let observed = self.observation.lock().await;
+        let observed = observation.lock().await;
         let conversation_id = &observed.conversation_id;
         if conversation_id.as_deref() != Some(request.target.conversation_id.as_str()) {
             return Err(CapacityRecoveryError::IdentityConflict);
