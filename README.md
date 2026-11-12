@@ -43,14 +43,13 @@ tests alone do not establish that a capability is deployed or provider-verified.
 
 ### Services
 
-The unified web client has three portals, backed by separately deployable
+The unified web client has two portals, backed by separately deployable
 application services:
 
 | Service | Responsibility |
 |---|---|
 | `cma-agent-manager` | Agents, messages, turns, approvals, workspaces, runtime bindings, persistent homes and recovery. |
 | `cma-event-gateway` | Channels, sealed credentials, incoming event normalization, routing and reply delivery. |
-| `cma-image-manager` | Image catalog, builds, immutable versions, sharing and image lifecycle. |
 
 Each service owns its permissions, records and migrations. Agent Manager uses
 the infrastructure-owned Kubernetes `agent-sandbox` controller to provision
@@ -120,7 +119,7 @@ it is not a blanket statement of current API availability.
 | Path | Contents |
 |---|---|
 | `api/` | Rust workspace: four layers, service implementations and production composition. |
-| `web/` | React/TypeScript client: Agent Manager, Event Gateway, Image Manager, Trigger journeys and Operations. |
+| `web/` | React/TypeScript client: Agent Manager, Event Gateway, Trigger journeys and Operations. |
 | `sdk/` | Repository-only TypeScript and Rust SDKs, tests and bundled guides; unpublished. |
 | `infra/` | Fixed Dockerfile and Kubernetes manifest inventory; kept aligned with code. |
 | `docs/` | Public contracts, design authority, operations and evidence. |
@@ -211,8 +210,9 @@ not evidence that the deployed provider or credentials work.
 
 ## CMA Triggers
 
-A publisher selects an image, inline Agent settings and an optional GitHub
-workspace. CMA records the immutable target and returns a stable public URL
+A publisher configures inline Agent settings and an optional GitHub workspace
+using the system default image. Custom image selection is unsupported. CMA
+records the immutable target and returns a stable public URL
 and host-specific integration snippets. Historical profile-based targets retain
 their recorded reuse policy for replay. For example:
 
