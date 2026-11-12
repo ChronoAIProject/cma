@@ -55,9 +55,19 @@ async fn reconciliation_commit_invalidates_admission_snapshot_and_original_plan(
     .await
     .unwrap_or_else(|_| panic!("fixture snapshot failed"));
     let other = MongoSandboxStore::open(&client, &name).await.unwrap();
+    // Keep the old provider binding as suspended authority so fresh inspection
+    // can reach the stale-source comparison rather than refuse an absent binding.
+    let mut request = loss(&parent);
+    request.retain_runtime = true;
     assert_eq!(
-        other.recover_runtime_loss(loss(&parent)).await.unwrap(),
+        other.recover_runtime_loss(request).await.unwrap(),
         SandboxRuntimeLossOutcome::RecoveryScheduled
+    );
+    let next = other.get_sandbox(&parent.id).await.unwrap().unwrap();
+    assert!(next.runtime.is_none());
+    assert_eq!(
+        next.lifecycle.suspended_runtime.as_deref(),
+        parent.runtime.as_ref()
     );
     let written = support::all_rows(&store).await;
     assert!(

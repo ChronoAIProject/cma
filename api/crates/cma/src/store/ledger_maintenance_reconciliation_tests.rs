@@ -36,33 +36,21 @@ async fn runtime_loss_has_positive_controls_and_both_holds_refuse_after_reopen()
             let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
             let result = reopened.recover_runtime_loss(loss(&parent)).await;
             if hold == 0 {
+                // Retained home and credential custody preserve the conversation
+                // with or without a checkpoint; the existing non-retained regression
+                // covers the Failed outcome separately.
                 assert_eq!(
                     result.unwrap(),
-                    if checkpointed {
-                        SandboxRuntimeLossOutcome::RecoveryScheduled
-                    } else {
-                        SandboxRuntimeLossOutcome::Failed
-                    }
+                    SandboxRuntimeLossOutcome::RecoveryScheduled
                 );
                 let next = store.get_sandbox(&parent.id).await.unwrap().unwrap();
-                assert_eq!(
-                    next.status,
-                    if checkpointed {
-                        SandboxStatus::Reviving
-                    } else {
-                        SandboxStatus::Failed
-                    }
-                );
+                assert_eq!(next.status, SandboxStatus::Reviving);
                 assert!(next.revision > parent.revision);
                 assert_eq!(next.lifecycle.home, parent.lifecycle.home);
                 assert_eq!(maintenance::fence_value(&store, &parent).await, fence + 1);
                 assert_eq!(
                     store.get_agent(&agent.id).await.unwrap().unwrap().status,
-                    if checkpointed {
-                        AgentStatus::Paused
-                    } else {
-                        AgentStatus::Stopped
-                    }
+                    AgentStatus::Paused
                 );
                 let committed = support::all_rows(&store).await;
                 assert_ne!(committed, before);
@@ -145,11 +133,7 @@ async fn failed_reconciliation_commit_rolls_back_fence_history_and_parent_then_r
         assert_eq!(support::all_rows(&store).await, before);
         assert_eq!(
             store.recover_runtime_loss(loss(&parent)).await.unwrap(),
-            if checkpointed {
-                SandboxRuntimeLossOutcome::RecoveryScheduled
-            } else {
-                SandboxRuntimeLossOutcome::Failed
-            }
+            SandboxRuntimeLossOutcome::RecoveryScheduled
         );
         client.database(&name).drop().await.unwrap();
     }
