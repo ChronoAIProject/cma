@@ -8,6 +8,9 @@ import {
 export type * from './warm-pools.js';
 import type { ResolvedConfig } from '../config.js';
 import {
+  admissionCeilingsState,
+  replaceAdmissionCeilingsRequest,
+  type ReplaceAdmissionCeilingsRequest,
   admissionControl,
   admissionControlRead,
   changeAdmissionRequest,
@@ -276,6 +279,14 @@ export class Administration {
       ...options,
       method: 'POST',
       body: input(changeAdmissionRequest, body),
+    });
+  }
+  /** Replace independently revised capacity policy; null leaves a ceiling unlimited. */
+  replaceAdmissionCeilings(body: ReplaceAdmissionCeilingsRequest, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/admission/ceilings', admissionCeilingsState, {
+      ...options,
+      method: 'PUT',
+      body: input(replaceAdmissionCeilingsRequest, body),
     });
   }
   replaceSettings(body: ReplaceSettingsRequest, options: OperationOptions = {}) {
