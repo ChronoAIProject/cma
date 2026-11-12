@@ -401,3 +401,6 @@ mod runtime_update_tests;
 
 #[cfg(test)]
 mod runtime_update_resume_tests;
+
+#[cfg(test)]
+mod always_on_tests;
