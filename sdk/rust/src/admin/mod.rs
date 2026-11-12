@@ -23,6 +23,8 @@ pub struct SandboxListOptions {
     pub status: Option<SandboxStatus>,
     /// Pinned runtime version filter.
     pub runtime_version: Option<String>,
+    /// True selects explicit exceptions; false includes unset preferences.
+    pub always_on: Option<bool>,
     /// Opaque pagination.
     pub page: PageOptions,
 }
@@ -57,7 +59,7 @@ pub struct Administration<'a> {
 }
 
 impl Administration<'_> {
-    /// Set an explicit automatic-pause whitelist preference for any Sandbox.
+    /// Approve or revoke an exception with revision CAS and an administrator audit record.
     pub async fn set_sandbox_always_on(
         &self,
         id: &str,
@@ -110,6 +112,9 @@ impl Administration<'_> {
         }
         if let Some(version) = &options.runtime_version {
             query.push(("runtime_version", version.clone()));
+        }
+        if let Some(always_on) = options.always_on {
+            query.push(("always_on", always_on.to_string()));
         }
         self.client.get(&["admin", "sandboxes"], &query).await
     }

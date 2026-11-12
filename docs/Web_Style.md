@@ -6186,3 +6186,5 @@ silently replace concurrent list changes. Independent field edits still use the
 existing explicit revision review. Disabled policies retain every entered value.
 
 | 2026-11-11 | Complete owner-override and request-model editing with blank inputs, independent availability, validation and conservative list-conflict recovery. |
+
+| 2026-11-11 | Sandbox Overview identifies an enabled Always on exception as administrator-approved and explains that only an administrator can approve an exception when it is off. It offers only the existing compact Button to turn an enabled exception off; unset/disabled state directs the owner to an administrator. Keep the administrator detail switch. Use existing Sandbox bands and hint text; introduce no visual tokens. |
