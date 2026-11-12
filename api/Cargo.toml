@@ -8,7 +8,6 @@ members = [
     "crates/cma",
     "crates/cmaeg-core",
     "crates/cmaeg",
-    "crates/cma-image-manager",
     "crates/cma-service-auth",
 ]
 
