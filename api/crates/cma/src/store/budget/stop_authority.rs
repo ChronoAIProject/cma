@@ -22,9 +22,10 @@ pub(in crate::store) async fn fence_stop(
         return Ok(false);
     };
     let start = platform.period_bounds().map_err(domain)?.0;
-    let Some(ledger) = read_period(&store.model_budget, start, session).await? else {
+    let Some(state) = read_period(&store.model_budget, start, session).await? else {
         return Ok(false);
     };
+    let ledger = &state.ledger;
     if !ledger
         .closures
         .iter()
