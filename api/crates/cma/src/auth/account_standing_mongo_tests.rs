@@ -63,6 +63,98 @@ async fn gate_adds_no_mongo_command_per_request() {
     db.drop().await.unwrap();
 }
 
+struct GatedMongoPointSource {
+    store: Arc<MongoAccountDeletionStore>,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Semaphore,
+}
+#[async_trait::async_trait]
+impl SnapshotSource for GatedMongoPointSource {
+    async fn active_hashes(&self) -> Result<BTreeSet<String>, AccountDeletionError> {
+        self.store.active_hashes().await
+    }
+    async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
+        self.entered.notify_one();
+        self.release.acquire().await.unwrap().forget();
+        self.store.erasing(subject).await
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn stale_fallback_concurrent_frames_issue_one_real_mongo_point_read() {
+    const FRAMES: usize = 32;
+    for erasing in [false, true] {
+        let mut options = ClientOptions::parse(
+            std::env::var("CHRONO_TEST_MONGODB_URI").expect("isolated replica set required"),
+        )
+        .await
+        .unwrap();
+        let point_reads = Arc::new(AtomicUsize::new(0));
+        let observed = point_reads.clone();
+        options.command_event_handler = Some(EventHandler::callback(move |event| {
+            if let CommandEvent::Started(event) = event {
+                if event.command_name == "find"
+                    && event.command.get_str("find").ok()
+                        == Some(crate::store::account_deletions::RECORDS)
+                {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        }));
+        let client = Client::with_options(options).unwrap();
+        let db = client.database(&format!(
+            "cma_standing_fallback_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let store = Arc::new(MongoAccountDeletionStore::open(&db).await.unwrap());
+        let owner = SubjectId::new("owner");
+        if erasing {
+            store
+                .request(&owner, "delete", "2026-11-14T00:00:00Z")
+                .await
+                .unwrap();
+        }
+        let source = Arc::new(GatedMongoPointSource {
+            store,
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Semaphore::new(0),
+        });
+        let gate = Arc::new(ErasingSnapshot::with_source(source.clone()));
+        gate.state.write().unwrap().refreshed_at = Some(Instant::now() - Duration::from_secs(11));
+        let barrier = Arc::new(tokio::sync::Barrier::new(FRAMES + 1));
+        let started = Arc::new(AtomicUsize::new(0));
+        let mut frames = tokio::task::JoinSet::new();
+        point_reads.store(0, Ordering::SeqCst);
+        for _ in 0..FRAMES {
+            let gate = gate.clone();
+            let owner = owner.clone();
+            let barrier = barrier.clone();
+            let started = started.clone();
+            frames.spawn(async move {
+                barrier.wait().await;
+                started.fetch_add(1, Ordering::SeqCst);
+                gate.erasing(&owner).await
+            });
+        }
+        barrier.wait().await;
+        source.entered.notified().await;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while started.load(Ordering::SeqCst) < FRAMES {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        source.release.add_permits(FRAMES);
+        while let Some(frame) = frames.join_next().await {
+            assert_eq!(frame.unwrap(), Ok(erasing));
+        }
+        assert_eq!(point_reads.load(Ordering::SeqCst), 1);
+        db.drop().await.unwrap();
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn document_grant_transaction_refuses_erasing_recipient() {
