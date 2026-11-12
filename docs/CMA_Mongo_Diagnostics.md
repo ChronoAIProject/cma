@@ -216,3 +216,35 @@ exit. Report loss and queue delay with comparisons. This is best-effort diagnost
 output, never an audit trail. Command monitoring remains default off; if this fix
 misses the candidate cutoff, keep it off with detail timers on as directed by the
 release plan.
+
+## CI overhead isolation
+
+The real-Mongo diagnostics contract runs once on its own disposable replica set,
+after report scale, owner allocation and audit bounds, before the concurrent ordinary Mongo
+partitions. The coordinator waits for fixture cleanup before starting the next
+phase. `bash .github/scripts/mongo-contract-tests.sh --diagnostics` selects the
+same test directly; CI retains successful output as well as failure output.
+The 40 reads per mode, ABBA order, three document sizes, privacy and correlation
+checks, equal checkout counts and `on_mean < 2 * off_mean + 5,000 us` ceiling are
+unchanged. This is a test-scheduling change, not a runtime optimization or a
+relaxation of the guard. There is no retry-until-pass policy.
+
+PR #1779 job 131174448380 failed with unchanged diagnostics code and driver:
+
+| Documents | Off mean (us) | On mean (us) | Off/on p50 (us) | Checkouts per mode |
+| --- | ---: | ---: | --- | ---: |
+| 25 | 2,030 | 3,181 | 1,974 / 3,327 | 40 |
+| 200 | 9,818 | 19,454 | 9,673 / 20,177 | 40 |
+| 10,001 | 428,278 | 871,132 | 417,531 / 863,294 | 200 |
+
+The large-read mean exceeded the 861,556 us limit by 9,576 us. Its p50 also
+exceeded the analogous relative bound, so replacing the mean with a median
+would not explain that sample. The same test passed in develop run 43200000706,
+attempt 2, job 131136521321, in 26.798 seconds versus 55.560 seconds here.
+Successful-test output was suppressed, so that run's means are unavailable;
+the complete develop Mongo job failed for a different contract.
+Both runs overlapped two disposable Mongo fixtures. This supports investigating
+load sensitivity but does not establish a production regression or prove runner
+contention caused the failure. The exclusive run removes this known confounder
+and makes the next measurements available for comparison. A failure in that
+controlled run must still be investigated; the threshold remains a hard gate.

@@ -12,14 +12,18 @@ source "$script_directory/backend-nextest.sh"
 # disposable fixtures from this list, keeping database metadata growth bounded.
 readonly scale_test='store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages'
 readonly owner_allocation_test='store::usage_reports::tests::owner_allocation::metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound'
+readonly audit_bounds_test='store::agent_log_segments::mongo_tests::audit_bounds::near_capacity_audit_keeps_source_bounds_and_limits_each_write_transaction'
+readonly diagnostics_test='store::mongo_diagnostics::mongo_tests::real_mongo_monitoring_privacy_and_overhead'
 selection='all'
 nextest_contracts() {
   local selection_filter='all()'
   case "$selection" in
     scale) selection_filter="package(=cma) and test(=$scale_test)" ;;
     owner-allocation) selection_filter="package(=cma) and test(=$owner_allocation_test)" ;;
+    audit-bounds) selection_filter="package(=cma) and test(=$audit_bounds_test)" ;;
+    diagnostics) selection_filter="package(=cma) and test(=$diagnostics_test)" ;;
     cpu-profile) selection_filter="package(=cma) and test(::cpu_profile::)" ;;
-    ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test))" ;;
+    ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test))" ;;
   esac
   # Isolated role proof belongs to image-manager-mongo-contract.sh, which owns
   # an authenticated fixture. Never run it against this unauthenticated set.
@@ -38,6 +42,10 @@ if [[ $# == 1 && "$1" == '--scale' ]]; then
   selection='scale'
 elif [[ $# == 1 && "$1" == '--owner-allocation' ]]; then
   selection='owner-allocation'
+elif [[ $# == 1 && "$1" == '--audit-bounds' ]]; then
+  selection='audit-bounds'
+elif [[ $# == 1 && "$1" == '--diagnostics' ]]; then
+  selection='diagnostics'
 elif [[ $# == 1 && "$1" == '--cpu-profile' ]]; then
   selection='cpu-profile'
 else
@@ -124,7 +132,7 @@ endpoint=$(docker port "$contract_name" 27017/tcp)
 export CHRONO_TEST_MONGODB_URI="mongodb://${endpoint}/?directConnection=true&replicaSet=cma_ci"
 export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
 cd "$repo_root/api"
-if [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'cpu-profile' ]]; then
+if [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'cpu-profile' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --success-output final
 else
   nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition"
