@@ -4,6 +4,7 @@ impl OperatorError {
     pub(super) fn from_sandbox_store(error: SandboxStoreError) -> Self {
         match error {
             SandboxStoreError::Budget(_) => Self::Unavailable(error.to_string()),
+            SandboxStoreError::GlobalCapacityReached => Self::Unavailable(error.to_string()),
             SandboxStoreError::NotFound => Self::NotFound,
             SandboxStoreError::InvalidPage => Self::InvalidRequest(error.to_string()),
             SandboxStoreError::Conflict

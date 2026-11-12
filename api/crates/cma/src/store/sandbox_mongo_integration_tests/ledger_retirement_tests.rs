@@ -3,7 +3,12 @@ use crate::store::ledger_retirement::observe;
 use layer2_core::sandbox::{RuntimeBinding, SandboxHome};
 use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
 
-fn hierarchy() -> (Sandbox, Workspace, Worktree, Agent) {
+#[path = "../ledger_collection_mongo_tests.rs"]
+mod collection;
+#[path = "../ledger_collection_progress_tests.rs"]
+mod collection_progress;
+
+pub(in crate::store) fn hierarchy() -> (Sandbox, Workspace, Worktree, Agent) {
     let mut sandbox = sandbox("sbx_retirement_fixture");
     sandbox.runtime = Some(RuntimeBinding {
         boot_id: None,

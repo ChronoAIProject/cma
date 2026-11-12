@@ -11,7 +11,9 @@ mod commands;
 mod events;
 pub use commands::*;
 mod lifecycle;
+mod retained_recovery;
 mod runtime_update;
+pub use retained_recovery::*;
 mod shared;
 pub use runtime_update::*;
 mod types;
@@ -47,17 +49,19 @@ pub struct Sandboxes<'a> {
     client: &'a Client,
 }
 
-/// Owner or operator automatic-pause whitelist update.
+/// Owner relinquishment of an administrator-approved automatic-pause exception.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AlwaysOnRequest {
-    /// Whether this Sandbox should remain running while idle.
+    /// Send false to relinquish; true is refused with 403 `always_on_approval_required`.
     pub always_on: bool,
     /// Exact Sandbox revision being changed.
     pub expected_revision: u64,
 }
 
 impl Sandboxes<'_> {
-    /// Set the owner's explicit automatic-pause whitelist preference.
+    /// Relinquish an exception with `always_on: false`. Unset/false is a
+    /// revision-checked no-op. `true` returns 403 `always_on_approval_required`.
+    /// Only `Administration::set_sandbox_always_on` can approve an exception.
     pub async fn set_always_on(
         &self,
         id: &str,
