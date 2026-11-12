@@ -329,7 +329,7 @@ impl layer2_core::account_deletion::AccountStanding for ErasingPublisher {
     }
 }
 #[tokio::test]
-async fn deleting_publisher_badge_and_entry_are_unavailable() {
+async fn deleting_publisher_badge_and_open_are_unavailable_but_intent_only_clears_cookie() {
     let fixture = Fixture::no_review();
     let state = super::TriggerAssetsState::new(
         fixture.store.clone(),
@@ -371,5 +371,10 @@ async fn deleting_publisher_badge_and_entry_are_unavailable() {
         )
         .await
         .unwrap();
-    assert_eq!(consume.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(consume.status(), StatusCode::OK);
+    assert_eq!(
+        consume.headers()[header::CACHE_CONTROL],
+        "private, no-store"
+    );
+    assert_eq!(consume.headers()[header::REFERRER_POLICY], "no-referrer");
 }

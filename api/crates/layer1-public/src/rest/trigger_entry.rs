@@ -91,19 +91,8 @@ pub(super) async fn consume(
     {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let trigger = match state
-        .triggers
-        .trigger_by_public_id(&PublicTriggerId(public_id.clone()))
-        .await
-    {
-        Ok(Some(trigger)) if trigger.availability == TriggerAvailability::Published => trigger,
-        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
-        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
-    };
-    match state.standing.erasing(&trigger.owner).await {
-        Ok(false) => {}
-        _ => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
-    }
+    // This timestamp/placement cookie records navigation only. Publisher
+    // authority is checked by open and by launch admission, never by consuming it.
     let name = cookie_name(&state, &public_id);
     let placement_id = headers
         .get_all(header::COOKIE)
@@ -277,5 +266,80 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+    #[tokio::test]
+    async fn consuming_navigation_intent_preserves_cookie_headers_without_public_lookup() {
+        let fixture = Fixture::no_review();
+        let cookie = format!(
+            "__Host-cma_entry_{PUBLIC_ID}={}.{PLACEMENT_ID}",
+            now_seconds()
+        );
+        let response = fixture
+            .router()
+            .oneshot(
+                Request::post(format!("/api/v1/triggers/public/{PUBLIC_ID}/entry-intent"))
+                    .header(header::ORIGIN, ORIGIN)
+                    .header("sec-fetch-site", "same-origin")
+                    .header(header::COOKIE, cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "private, no-store"
+        );
+        assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+        assert!(response.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0"));
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 2048).await.unwrap()).unwrap();
+        assert_eq!(body["accepted"], true);
+        assert_eq!(body["placement_id"], PLACEMENT_ID);
+        assert_eq!(fixture.store.public_lookups(), 0);
+    }
+    #[tokio::test]
+    async fn opening_navigation_uses_existing_publisher_snapshot_without_extra_lookup() {
+        use crate::rest::shared_stream_tests::ChangingStanding;
+        for deleting in [None, Some("publisher"), Some("outage")] {
+            let fixture = Fixture::no_review();
+            let standing = std::sync::Arc::new(ChangingStanding::default());
+            *standing.0.lock().unwrap() = deleting;
+            let state = super::super::TriggerAssetsState::new(fixture.store.clone(), ORIGIN)
+                .unwrap()
+                .with_account_standing(standing);
+            let response = super::super::trigger_assets_router(state)
+                .oneshot(
+                    Request::get(format!(
+                        "/api/v1/triggers/public/{PUBLIC_ID}/open/{PLACEMENT_ID}"
+                    ))
+                    .header("sec-fetch-user", "?1")
+                    .header("sec-fetch-mode", "navigate")
+                    .header("sec-fetch-dest", "document")
+                    .body(Body::empty())
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+            if deleting.is_none() {
+                assert_eq!(response.status(), StatusCode::SEE_OTHER);
+                assert_eq!(
+                    response.headers()[header::CACHE_CONTROL],
+                    "private, no-store"
+                );
+                assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+                assert!(response.headers()[header::SET_COOKIE]
+                    .to_str()
+                    .unwrap()
+                    .contains("Max-Age=600"));
+            } else {
+                assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            }
+            assert_eq!(fixture.store.public_lookups(), 1);
+        }
     }
 }
