@@ -5,14 +5,16 @@ optional enrichment, response, error concealment, and final revocation fence.
 This rollout changes only how the Mongo Sandbox hierarchy reader holds its
 consistent view. It does not batch queries or remove record validation.
 
-## Default-off controls
+## Reader and diagnostic controls
 
 - `CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED`: use a Mongo snapshot session for
   Sandbox hierarchy reads. Defaults to `false` in configuration and the API
   manifest. Only exact `true` and `false` are accepted.
-- `CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED`: emit bounded phase events. Independent
-  of the reader flag and also defaults to `false`, so operators can first measure
-  the unchanged reader. This is a configuration change owned by the release train.
+- `CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED`: emit bounded phase events; defaults
+  to `true` independently of the reader flag. Sandbox and Workspace authorization,
+  hierarchy and final-fence phases retain route templates and request hashes.
+  Sandbox colors/names enrichment also has phase timers. Workspace detail has
+  no colors/names enrichment. See [Mongo diagnostics](CMA_Mongo_Diagnostics.md).
 
 A snapshot session pins the first response's `atClusterTime` across Sandbox,
 Workspace, Worktree and Agent reads and cursor batches. Its four collections

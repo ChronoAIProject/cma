@@ -22,6 +22,7 @@ use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 
 mod agents;
 mod reconciliation;
+mod transaction;
 use reconciliation::{reconcile_after_unknown, reconcile_publication};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,14 +149,7 @@ pub(super) async fn publish_checkpoint(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
-                last_transient = Some(error.to_string());
-                continue;
-            }
-            return Err(SandboxStoreError::Unavailable(error.to_string()));
-        }
-        let receipt = match apply_publication(store, &mutation, &mut session).await {
+        let receipt = match transaction::attempt(store, &mutation, &mut session).await {
             Ok(receipt) => receipt,
             Err(PublishError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
@@ -214,95 +208,6 @@ pub(super) async fn publish_checkpoint(
         "checkpoint publication exhausted its retry budget: {}",
         last_transient.unwrap_or_else(|| "no driver result".into())
     )))
-}
-
-async fn apply_publication(
-    store: &MongoSandboxStore,
-    mutation: &SandboxCheckpointMutation,
-    session: &mut mongodb::ClientSession,
-) -> Result<PublicationReceipt, PublishError> {
-    let current = store
-        .sandboxes
-        .find_one(doc! { "_id": mutation.guard.sandbox_id.as_str() })
-        .session(&mut *session)
-        .await
-        .map_err(PublishError::Driver)?
-        .as_ref()
-        .map(read_sandbox)
-        .transpose()
-        .map_err(PublishError::Domain)?
-        .ok_or(PublishError::Domain(SandboxStoreError::NotFound))?;
-    agents::validate_and_fence(store, &current, mutation, session).await?;
-
-    store
-        .checkpoints
-        .insert_one(
-            checkpoint_document(
-                &mutation.sandbox.id,
-                mutation.sandbox.revision,
-                &mutation.checkpoint,
-            )
-            .map_err(PublishError::Domain)?,
-        )
-        .session(&mut *session)
-        .await
-        .map_err(classify_write)?;
-    prune_checkpoint_metadata(store, &mutation.sandbox, session).await?;
-    let advanced = store
-        .sandboxes
-        .update_one(
-            doc! {
-                "_id": current.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "channel_reuse_cleanup_execution": { "$exists": false },
-                "revision": signed(current.revision, "checkpoint sandbox revision")
-                    .map_err(|_| PublishError::Domain(SandboxStoreError::Conflict))?,
-            },
-            doc! { "$set": sandbox_replacement_fields(&mutation.sandbox)
-            .map_err(PublishError::Domain)? },
-        )
-        .session(&mut *session)
-        .await
-        .map_err(classify_write)?;
-    if advanced.matched_count != 1 {
-        return Err(PublishError::Domain(SandboxStoreError::Conflict));
-    }
-    crate::store::sandbox_usage::save::record_saved(
-        store,
-        session,
-        &mutation.sandbox,
-        current.revision,
-    )
-    .await?;
-    let event = append_in_transaction(
-        store,
-        session,
-        &current.id,
-        mutation.appended_at.clone(),
-        SandboxEventKind::CheckpointSealed {
-            object_reference: mutation.checkpoint.object_reference.clone(),
-        },
-    )
-    .await?;
-    // Archive reclamation shares this transaction so metadata and object
-    // authority cannot disagree after a retry or ambiguous commit.
-    for evicted in evicted_archives(
-        &current.lifecycle.checkpoints,
-        &mutation.sandbox.lifecycle.checkpoints,
-    ) {
-        prune_evicted(
-            &store.checkpoint_objects,
-            current.id.as_str(),
-            evicted,
-            session,
-        )
-        .await?;
-    }
-    Ok(PublicationReceipt {
-        sandbox: mutation.sandbox.clone(),
-        checkpoint: mutation.checkpoint.clone(),
-        event,
-    })
 }
 
 fn evicted_archives<'a>(

@@ -95,6 +95,7 @@ data:
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
+  CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED: "false"
   # Expand-only skill upgrade readers; enable new writers only after migration qualification.
   CHRONO_AGENT_SKILL_UPGRADE_ENABLED: "false"
   # Reconciliation remains on the existing cadence until a measured rollout.
@@ -107,9 +108,18 @@ data:
   CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED: "false"
   CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED: "false"
   CHRONO_SANDBOX_BATCHED_READS_ENABLED: "false"
-  CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "false"
+  CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "true"
+  # The release controller opts in with the planned diagnostic deployment.
+  CHRONO_MONGO_DIAGNOSTICS_ENABLED: "false"
   # Response projection uses a proven target-turn window; independent rollout.
   CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
+  CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED: "false"
+  # New recovery admission also requires both durable gates; accepted work survives closure.
+  CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED: "false"
+  # Avoid any adoption discovery on the default publication path.
+  CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED: "false"
+  CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED: "false"
+  CHRONO_RESPONSE_PAGED_EVENTS_ENABLED: "false"
   # Retained-context lookup remains opt-in until the compatible API path is
   # deployed and its latency and authorization evidence is reviewed.
   CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED: "false"
