@@ -9,6 +9,7 @@ export interface ConsoleProps {
   readonly onServiceNavigate?: (route: AppRoute) => void;
   readonly route: AppRoute;
   readonly onSignOut: () => void;
+  readonly onDeleteAccount?: () => void;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onCreate?: (action: CreateAction) => void;
   readonly hierarchyRevision?: number;
