@@ -97,6 +97,7 @@ async fn sandbox_inventory_applies_every_filter_and_reads_child_summaries() {
                 owner: Some(SubjectId::new("owner-a")),
                 status: Some(SandboxStatus::Active),
                 runtime_version: Some("v2".into()),
+                always_on: None,
                 page: PageRequest::default(),
             },
         )

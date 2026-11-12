@@ -10,16 +10,21 @@ mod agent_attachment;
 mod agent_filesystem;
 #[cfg(test)]
 mod allocation_probe;
+pub mod archive_source;
 pub mod binding_diagnostics;
 mod browser;
 mod browser_control;
+pub mod permanent_custody;
 pub use browser::{
     BrowserAdapter, BrowserFrame, BrowserObservation, BrowserOperation, BrowserReceipt,
     BrowserRequest, BrowserState,
 };
 pub use browser_control::*;
 mod agent_skill_install;
-pub use agent_skill_install::{AgentSkillInstallReceipt, AgentSkillInstallRequest};
+pub use agent_skill_install::{
+    AgentSkillInstallReceipt, AgentSkillInstallRequest, AgentSkillUpgrade,
+    AgentSkillUpgradeRefusal, MAX_AGENT_SKILL_UPGRADE_PREPARATION_ATTEMPTS,
+};
 mod agent_provider;
 mod capabilities;
 mod checkpoint;
