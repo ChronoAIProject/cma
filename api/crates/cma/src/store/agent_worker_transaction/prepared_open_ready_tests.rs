@@ -190,7 +190,7 @@ async fn prepared_open_ready_parent_write_conflicts_after_snapshot_read() {
         .await
         .unwrap();
     assert!(
-        matches!(apply_publication_observed(&store,&completion(&agent,&observed.worktree),Some(&observed),None,scope).await,Err(ApplyError::Driver(error)) if is_transient(&error))
+        matches!(apply_publication_observed(&store,&completion(&agent,&observed.worktree),Some(&observed),None,&mut publication_history::AttemptHistory::default(),scope).await,Err(ApplyError::Driver(error)) if is_transient(&error))
     );
     session.abort_transaction().await.unwrap();
     assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
@@ -204,9 +204,16 @@ async fn prepared_open_ready_unknown_commit_requires_complete_atomic_evidence() 
     let done = completion(&agent, &observed.worktree);
     let mut session = client.start_session().await.unwrap();
     let scope = TransactionScope::start(&mut session).await.unwrap();
-    let rolled_back = apply_publication_observed(&store, &done, Some(&observed), None, scope)
-        .await
-        .unwrap_or_else(|_| panic!("valid prepared publication"));
+    let rolled_back = apply_publication_observed(
+        &store,
+        &done,
+        Some(&observed),
+        None,
+        &mut publication_history::AttemptHistory::default(),
+        scope,
+    )
+    .await
+    .unwrap_or_else(|_| panic!("valid prepared publication"));
     session.abort_transaction().await.unwrap();
     assert!(
         !super::super::agent_worker_reconcile::reconcile_publication(&store, &rolled_back)
@@ -215,9 +222,16 @@ async fn prepared_open_ready_unknown_commit_requires_complete_atomic_evidence() 
     );
     assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
     let scope = TransactionScope::start(&mut session).await.unwrap();
-    let receipt = apply_publication_observed(&store, &done, Some(&observed), None, scope)
-        .await
-        .unwrap_or_else(|_| panic!("valid prepared publication"));
+    let receipt = apply_publication_observed(
+        &store,
+        &done,
+        Some(&observed),
+        None,
+        &mut publication_history::AttemptHistory::default(),
+        scope,
+    )
+    .await
+    .unwrap_or_else(|_| panic!("valid prepared publication"));
     session.commit_transaction().await.unwrap();
     let at = session.operation_time().unwrap();
     assert!(
