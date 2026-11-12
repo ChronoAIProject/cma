@@ -1,38 +1,34 @@
 //! Per-process admission for buffered reads, independent of control mutations.
-use std::{sync::Arc, time::Duration};
+use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use axum::{
-    body::to_bytes,
+    body::{to_bytes, Body},
     extract::{MatchedPath, Request, State},
     http::{header, Method},
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use futures_util::stream;
 use layer1_public::rest::HttpProblem;
 use tokio::sync::Semaphore;
 
-mod retained;
-
 // Match the existing native-history byte ceiling. Two concurrent responses
-// bound admitted response payloads to 128 MiB per process. The optional frame
-// policy keeps admission charged after body EOF while bytes remain retained.
-// Store/provider working memory and total RSS require separate qualification.
+// bound retained public response buffers to 128 MiB per process. Store/provider
+// working memory has separate limits; this is not a total RSS bound.
 const CONCURRENT_READS: usize = 2;
 const RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 const METADATA_BYTES: usize = 256 * 1024;
 const READ_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub(crate) struct ReadBudget {
-    retain_frames: bool,
     slots: Arc<Semaphore>,
     response_bytes: usize,
     timeout: Duration,
 }
 
 impl ReadBudget {
-    pub(crate) fn new(retain_frames: bool) -> Arc<Self> {
+    pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
-            retain_frames,
             slots: Arc::new(Semaphore::new(CONCURRENT_READS)),
             response_bytes: RESPONSE_BYTES,
             timeout: READ_TIMEOUT,
@@ -83,7 +79,12 @@ pub(crate) async fn enforce(
     let Ok(Ok((parts, bytes))) = result else {
         return private(HttpProblem::RequestBudgetUnavailable.into_response());
     };
-    let body = retained::body(bytes, permit, budget.retain_frames);
+    // Keep admission charged after the handler returns, until the consumer
+    // finishes or drops its response. No detached task or permit queue exists.
+    let body = Body::from_stream(stream::unfold(
+        (Some(bytes), permit),
+        |(bytes, permit)| async move { bytes.map(|bytes| (Ok::<_, Infallible>(bytes), (None, permit))) },
+    ));
     Response::from_parts(parts, body)
 }
 

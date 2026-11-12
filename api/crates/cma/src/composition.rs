@@ -462,10 +462,7 @@ impl ControlPlaneComposition {
             browser_connections,
             auth.clone(),
             recorder,
-            (
-                limits,
-                crate::expensive_reads::ReadBudget::new(config.features.retain_read_frames),
-            ),
+            limits,
             stores,
             tool_routes.merge(service_portal::router(
                 auth.clone(),
