@@ -116,6 +116,8 @@ data:
   CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED: "false"
   # New recovery admission also requires both durable gates; accepted work survives closure.
   CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED: "false"
+  # Avoid any adoption discovery on the default publication path.
+  CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED: "false"
   CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED: "false"
   CHRONO_RESPONSE_PAGED_EVENTS_ENABLED: "false"
   # Retained-context lookup remains opt-in until the compatible API path is
