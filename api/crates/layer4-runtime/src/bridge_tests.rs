@@ -203,6 +203,13 @@ async fn recovery_lease_is_single_use_and_binds_the_writer_fence() {
             .await,
         Err(layer3_adapter::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict)
     ));
+    assert!(!bridge.consume_capacity_recovery(&request.challenge).await);
+    observe_input(&bridge, serde_json::json!({"id":"load", "method":"session/load", "params":{"sessionId":"conversation"}})).await;
+    observe_output(&bridge, serde_json::json!({"id":"load", "result":{}})).await;
+    bridge
+        .capacity_recovery_proof(&request, "/tmp".into())
+        .await
+        .unwrap();
     assert!(bridge.consume_capacity_recovery(&request.challenge).await);
     assert!(!bridge.consume_capacity_recovery(&request.challenge).await);
     bridge.terminate().await.unwrap();
@@ -326,3 +333,6 @@ async fn recovery_default_off_bypasses_native_observation() {
         "default-off runtime performed native state tracking"
     );
 }
+
+#[path = "bridge_recovery_tests.rs"]
+mod recovery_tests;
