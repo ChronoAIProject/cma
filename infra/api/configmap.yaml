@@ -224,6 +224,10 @@ data:
   CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE: "600"
   CHRONO_SERVER_RATE_CREATE_PER_MINUTE: "10"
   CHRONO_SERVER_RATE_INPUT_PER_MINUTE: "120"
+  # Independent allowance for recovery and controls of admitted work.
+  CHRONO_SERVER_RATE_CONTROL_PER_MINUTE: "120"
+  # Activate only after the separate recovery/control policy review.
+  CHRONO_SERVER_RATE_CONTROL_ENABLED: "false"
   # Separate policy activation after exact-route classification review.
   CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED: "false"
   # Per-process public stream lifetimes; zero keeps admission disabled.
@@ -277,6 +281,8 @@ data:
   CHRONO_DOCUMENT_QUOTAS_ENABLED: "false"
   # Off until capacity-owner headroom and all admission writers are verified.
   CHRONO_SANDBOX_GLOBAL_LIMIT: "0"
+  # Separately activate only after dependency qualification; preserve the online policy while off.
+  CHRONO_DOCUMENT_STORAGE_RESILIENCE_ENABLED: "false"
   CHRONO_DOCUMENT_BUCKET: "chrono-platform-bot"
   CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
   # Agent model calls use the scoped AgentKey through this platform proxy.
