@@ -22,6 +22,8 @@ pub enum AdapterError {
     Unavailable(String),
     #[error("runtime rejected request: {0}")]
     Rejected(String),
+    #[error("skill upgrade refused: {0}")]
+    SkillUpgradeRefused(crate::AgentSkillUpgradeRefusal),
     #[error("runtime rejected conflicting operation identity: {0}")]
     OperationIdentityConflict(String),
     /// Reachable runtime whose retained mutation ledger cannot admit work.
@@ -48,6 +50,7 @@ impl AdapterError {
             }
             Self::Unavailable(message) => Self::Unavailable(format!("{context}: {message}")),
             Self::Rejected(message) => Self::Rejected(format!("{context}: {message}")),
+            refusal @ Self::SkillUpgradeRefused(_) => refusal,
             Self::OperationIdentityConflict(message) => {
                 Self::OperationIdentityConflict(format!("{context}: {message}"))
             }

@@ -282,3 +282,77 @@ async fn removed_catalogue_policy_keeps_the_exact_instance_active_after_store_re
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn always_on_inventory_filters_exceptions_and_revocation_allows_inactivity_pause() {
+    use layer2_core::sandbox::{SandboxAdminQuery, SandboxAdminStore};
+    let (client, name, store) = database().await;
+    let (sandbox, _) = fixture(&store, "sbx_exception").await;
+    let (profiles, mut profile) = profile_fixture(&client, &name, &sandbox).await;
+    profile.availability.always_keep_alive = true;
+    profile.draft_version = 2;
+    profiles.save_sandbox_draft(1, profile).await.unwrap();
+    let (ordinary, _) = fixture(&store, "sbx_ordinary").await;
+    let approved = store
+        .set_sandbox_always_on(sandbox.id.clone(), sandbox.revision, true)
+        .await
+        .unwrap();
+    let query = SandboxAdminQuery {
+        always_on: Some(true),
+        ..Default::default()
+    };
+    let exceptions = store.list_admin_sandboxes(&query).await.unwrap();
+    assert_eq!(exceptions.items.len(), 1);
+    assert_eq!(exceptions.items[0].id, sandbox.id);
+    let mut request = pause(&sandbox.id);
+    request.auto_pause_enabled = true;
+    assert_eq!(
+        store
+            .schedule_inactivity_pause(request.clone())
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::NotEligible
+    );
+    let mut ordinary_request = pause(&ordinary.id);
+    ordinary_request.auto_pause_enabled = true;
+    assert_eq!(
+        store
+            .schedule_inactivity_pause(ordinary_request)
+            .await
+            .unwrap(),
+        SandboxMaintenanceOutcome::Scheduled
+    );
+    store
+        .set_sandbox_always_on(sandbox.id.clone(), approved.revision, false)
+        .await
+        .unwrap();
+    assert!(store
+        .list_admin_sandboxes(&query)
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    let not_on = store
+        .list_admin_sandboxes(&SandboxAdminQuery {
+            always_on: Some(false),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(not_on.items.len(), 2);
+    assert_eq!(
+        store.schedule_inactivity_pause(request).await.unwrap(),
+        SandboxMaintenanceOutcome::Scheduled
+    );
+    assert_eq!(
+        store
+            .get_sandbox(&sandbox.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        SandboxStatus::Pausing
+    );
+    client.database(&name).drop().await.unwrap();
+}

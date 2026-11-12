@@ -42,6 +42,10 @@ pub(crate) enum InstanceProblem {
         installed: String,
         requested: String,
     },
+    SkillInstallUnsupported,
+    SkillUpgradeDisabled,
+    SkillHistoryFull,
+    SkillNotReady,
     OperationInFlight,
     CheckpointInProgress,
     DeliveryAmbiguous,
@@ -140,6 +144,8 @@ impl From<AgentOperationError> for InstanceProblem {
                 Self::CapabilityUnsupported { capability }
             }
             AgentOperationError::ContentUnsupported => Self::ContentUnsupported,
+            AgentOperationError::SkillUpgradeDisabled => Self::SkillUpgradeDisabled,
+            AgentOperationError::SkillHistoryFull => Self::SkillHistoryFull,
             AgentOperationError::SkillVersionUpgradeUnsupported {
                 id,
                 installed,
@@ -233,9 +239,29 @@ impl IntoResponse for InstanceProblem {
                 StatusCode::CONFLICT,
                 "agent-skill-version-upgrade-unsupported",
                 &format!(
-                    "Skill {id:?} is already installed at version {installed:?}; changing it to version {requested:?} is unsupported on an existing Agent. Create a replacement Agent with the requested profile."
+                    "Skill {id:?} is already installed at version {installed:?}; this runtime does not support upgrading it to version {requested:?}. No upgrade was admitted. After runtime support becomes available, make a new attempt with a new Idempotency-Key."
                 ),
                 "agent_skill_version_upgrade_unsupported",
+            ),
+            Self::SkillHistoryFull => (
+                StatusCode::CONFLICT, "agent-skill-history-full",
+                "This Agent has reached its retained skill installation history limit (128 attempts). Existing skills and conversation remain available; use a new Agent for further installations.",
+                "agent_skill_history_full",
+            ),
+            Self::SkillUpgradeDisabled => (
+                StatusCode::CONFLICT, "agent-skill-upgrade-disabled",
+                "New skill upgrades are not enabled. No upgrade was admitted. After upgrades are enabled, make a new attempt with a new Idempotency-Key.",
+                "agent_skill_upgrade_disabled",
+            ),
+            Self::SkillInstallUnsupported => (
+                StatusCode::CONFLICT, "agent-skill-install-unsupported",
+                "This Agent runtime does not support installing skills. No installation was admitted. After runtime support becomes available, make a new attempt with a new Idempotency-Key.",
+                "agent_skill_install_unsupported",
+            ),
+            Self::SkillNotReady => (
+                StatusCode::CONFLICT, "agent-not-ready",
+                "The Agent or its Sandbox is not ready and idle. No skill operation was admitted. After it becomes ready and idle, make a new attempt with a new Idempotency-Key.",
+                "agent_not_ready",
             ),
             Self::WorkspaceNotReady => (
                 StatusCode::CONFLICT,
@@ -355,6 +381,20 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn exhausted_skill_admission_is_service_unavailable_without_a_busy_claim() {
+        let response = InstanceProblem::from(AgentOperationError::Unavailable(
+            "skill admission contention".into(),
+        ))
+        .into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "instance_service_unavailable");
+    }
+
+    #[tokio::test]
     async fn skill_version_upgrade_refusal_has_a_named_conflict_code() {
         let response = InstanceProblem::from(AgentOperationError::SkillVersionUpgradeUnsupported {
             id: "research".into(),
@@ -371,6 +411,6 @@ mod tests {
         assert!(body["detail"]
             .as_str()
             .unwrap()
-            .contains("replacement Agent"));
+            .contains("new Idempotency-Key"));
     }
 }
