@@ -183,3 +183,41 @@ async fn an_unbudgeted_owners_turns_and_requests_meet_the_stop() {
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_reserved_queued_turn_checks_stop_after_its_owner_policy_is_removed() {
+    let (client, name) = database("platform_removed_owner").await;
+    let (store, agent, parent, execution, _, sends) = composed(&client, &name).await;
+    configure_metered(&store, &agent.owner).await;
+    let queued = record(
+        store
+            .reserve_command(live_request(&agent, &parent, "reserved-before-stop"))
+            .await
+            .unwrap(),
+    );
+    budget_someone_else(&store).await;
+    close(&store, &[ClosureReason::SpendStop]).await;
+    let worker =
+        AgentCommandWorker::new(store.clone(), execution, "removed-owner-worker".into()).unwrap();
+    worker
+        .run_one(&queued.receipt.envelope.command_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        sends.load(Ordering::SeqCst),
+        0,
+        "a previously valued command cannot dispatch under the current STOP"
+    );
+    let refused = store
+        .get_command(&queued.receipt.envelope.command_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refused.status, AgentResponseStatus::Failed);
+    assert_eq!(
+        refused.work.failure.unwrap().code,
+        CommandFailureCode::PlatformBudgetExhausted
+    );
+    client.database(&name).drop().await.unwrap();
+}
