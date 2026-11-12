@@ -2,18 +2,12 @@ import { ApiError, type Launch } from '@chronoai/cma-sdk';
 import type { PublicClient } from './client';
 import { type BrowserIntent, writeIntent } from './intent';
 import { publicCopy } from '../vocabulary/needs';
+import { settledAllowanceReset } from '../vocabulary/errors';
 
 const pending = new Map<string, Promise<Launch>>();
 
 export function isSettledQuotaRefusal(error: unknown): boolean {
-  return (
-    error instanceof ApiError &&
-    error.status === 429 &&
-    error.code === 'resource_quota' &&
-    error.extensions.resource === 'visitor_launches' &&
-    typeof error.extensions.reset_at === 'string' &&
-    !Number.isNaN(Date.parse(error.extensions.reset_at))
-  );
+  return settledAllowanceReset(error) !== undefined;
 }
 
 export function isUnsettledCommand(error: unknown): boolean {

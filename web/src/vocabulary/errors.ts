@@ -38,25 +38,30 @@ export const refusalSentences = {
   trigger_reference_not_public: 'The software for this page is not shared. Contact its publisher.',
 } as const;
 
+export function settledAllowanceReset(error: unknown): Date | undefined {
+  if (
+    !(error instanceof ApiError) ||
+    error.status !== 429 ||
+    error.code !== 'resource_quota' ||
+    error.extensions.resource !== 'visitor_launches' ||
+    typeof error.extensions.reset_at !== 'string'
+  )
+    return undefined;
+  const resetAt = new Date(error.extensions.reset_at);
+  return Number.isNaN(resetAt.getTime()) ? undefined : resetAt;
+}
+
 export function refusalSentence(error: unknown): string {
   if (error instanceof CredentialAccountError) return error.message;
-  if (
-    error instanceof ApiError &&
-    error.status === 429 &&
-    error.code === 'resource_quota' &&
-    error.extensions.resource === 'visitor_launches' &&
-    typeof error.extensions.reset_at === 'string'
-  ) {
-    const resetAt = new Date(error.extensions.reset_at);
-    if (!Number.isNaN(resetAt.getTime())) {
-      const resetTime = new Intl.DateTimeFormat(undefined, {
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-      }).format(resetAt);
-      return `You have used your daily allowance for starting agents. Try again after ${resetTime}.`;
-    }
+  const resetAt = settledAllowanceReset(error);
+  if (resetAt !== undefined) {
+    const resetTime = new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(resetAt);
+    return `You have used your daily allowance for starting agents. Try again after ${resetTime}.`;
   }
   if (
     error instanceof ApiError &&
