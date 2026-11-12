@@ -121,3 +121,6 @@ async fn deployments_without_colours_omit_the_field() {
     .await;
     assert!(detail.get("color").is_none());
 }
+
+#[path = "sandbox_enrichment_tests.rs"]
+mod enrichment;

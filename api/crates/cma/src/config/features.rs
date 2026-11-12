@@ -21,6 +21,8 @@ pub(crate) struct FeatureFlags {
     pub model_budget_writes_enabled: bool,
     pub model_request_budget_writes_enabled: bool,
     pub bounded_title_reads: bool,
+    pub access_snapshot_session: bool,
+    pub concurrent_sandbox_detail_enrichment: bool,
     pub sandbox_snapshot_reads: bool,
     pub sandbox_batched_reads: bool,
     pub sandbox_detail_timings: bool,
@@ -72,6 +74,11 @@ impl FeatureFlags {
             )?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
             agent_skill_upgrade_enabled: flag(lookup, "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")?,
+            access_snapshot_session: super::access_snapshot::enabled(lookup)?,
+            concurrent_sandbox_detail_enrichment: flag(
+                lookup,
+                "CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED",
+            )?,
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
             sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
             sandbox_detail_timings: match lookup("CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")? {
@@ -474,6 +481,10 @@ mod raw_output_tests;
 
 #[cfg(test)]
 mod retained_json_tests;
+
+#[cfg(test)]
+#[path = "sandbox_enrichment_tests.rs"]
+mod sandbox_enrichment_tests;
 
 #[cfg(test)]
 mod document_maintenance_tests;
