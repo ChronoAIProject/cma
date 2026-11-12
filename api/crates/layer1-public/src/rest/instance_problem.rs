@@ -18,6 +18,7 @@ pub(crate) enum InstanceProblem {
     WorkspaceNotFound,
     AgentProfileNotFound,
     InvalidQuery,
+    TranscriptPaginationRequired,
     InvalidRequest,
     WorkspaceNotReady,
     AgentNotReady,
@@ -117,6 +118,7 @@ impl From<AgentReadError> for InstanceProblem {
             AgentReadError::Forbidden => Self::Forbidden,
             AgentReadError::NotFound => Self::AgentNotFound,
             AgentReadError::InvalidPage => Self::InvalidQuery,
+            AgentReadError::TranscriptPaginationRequired => Self::TranscriptPaginationRequired,
             AgentReadError::CapabilityUnsupported { capability } => {
                 Self::CapabilityUnsupported { capability }
             }
@@ -205,6 +207,12 @@ impl IntoResponse for InstanceProblem {
                 "agent-profile-not-found",
                 "No usable Agent Profile revision matches this request.",
                 "agent_profile_not_found",
+            ),
+            Self::TranscriptPaginationRequired => (
+                StatusCode::BAD_REQUEST,
+                "transcript-pagination-required",
+                "Read this transcript with limit=32, then follow the returned next cursor. No history was truncated.",
+                "transcript_pagination_required",
             ),
             Self::InvalidQuery => (
                 StatusCode::BAD_REQUEST,
@@ -372,6 +380,19 @@ fn capability_name(capability: RuntimeCapability) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn transcript_budget_returns_a_typed_pagination_instruction() {
+        let response =
+            InstanceProblem::from(AgentReadError::TranscriptPaginationRequired).into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "transcript_pagination_required");
+        assert!(body["detail"].as_str().unwrap().contains("limit=32"));
+    }
 
     #[tokio::test]
     async fn exhausted_skill_admission_is_service_unavailable_without_a_busy_claim() {

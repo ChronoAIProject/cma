@@ -1,15 +1,56 @@
 use crate::store::agent_log_telemetry::ScanCaller;
-use layer2_core::sandbox::store::{
-    validate_checkpoint_mutation, SandboxCheckpointMutation, SandboxStoreError,
-};
+use layer2_core::sandbox::store::{validate_checkpoint_mutation, SandboxCheckpointMutation};
 use layer2_core::sandbox::Sandbox;
-use mongodb::bson::doc;
 
+use super::super::agent_capacity_recovery::source::{capture_segmented, fence_agent};
 use super::super::agent_log::scan_complete_log_with_session;
 use super::super::agent_log_integrity::TransactionLogError;
 use super::super::lifecycle_execution::load_sandbox_agents;
-use super::super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
+use super::super::sandbox_mongo::MongoSandboxStore;
 use super::PublishError;
+use crate::store::{
+    agent_capacity_recovery::{lineage, source::fence_filter_scoped},
+    agent_log_segments::{capture::capture_transaction, transaction_scope::TransactionScope},
+};
+
+pub(super) async fn validate_and_fence_scoped(
+    store: &MongoSandboxStore,
+    current: &Sandbox,
+    mutation: &SandboxCheckpointMutation,
+    scope: &mut TransactionScope<'_>,
+) -> Result<(), PublishError> {
+    if mutation.nonblocking {
+        return validate_checkpoint_mutation(current, &[], mutation).map_err(PublishError::Domain);
+    }
+    let agents = lineage::agents(store, &current.id, scope).await?;
+    let mut rows = Vec::with_capacity(agents.len());
+    for agent in agents {
+        let through = if agent.status.is_live() {
+            capture_transaction(store, &agent, scope).await?.through()
+        } else {
+            agent.conversation.last_seq
+        };
+        rows.push((agent, through));
+    }
+    validate_checkpoint_mutation(current, &rows, mutation).map_err(PublishError::Domain)?;
+    for (agent, _) in rows.iter().filter(|(agent, _)| agent.status.is_live()) {
+        let filter = fence_filter_scoped(store, agent, scope).await?;
+        let result = scope
+            .update_one(
+                &store.agents,
+                filter,
+                mongodb::bson::doc! {"$inc": {"checkpoint_publication_fence": 1_i64}},
+            )
+            .await
+            .map_err(PublishError::Driver)?;
+        if result.matched_count != 1 {
+            return Err(PublishError::Domain(
+                layer2_core::sandbox::store::SandboxStoreError::Conflict,
+            ));
+        }
+    }
+    Ok(())
+}
 
 pub(super) async fn validate_and_fence(
     store: &MongoSandboxStore,
@@ -26,16 +67,20 @@ pub(super) async fn validate_and_fence(
     let mut rows = Vec::with_capacity(agents.len());
     for agent in agents {
         let last_seq = if agent.status.is_live() {
-            scan_complete_log_with_session(
-                ScanCaller::Checkpoint,
-                store,
-                &agent.id,
-                agent.conversation.last_seq,
-                session,
-                |_| Ok(()),
-            )
-            .await?
-            .entry_count()
+            if let Some(source) = capture_segmented(store, &agent, session).await? {
+                source.through()
+            } else {
+                scan_complete_log_with_session(
+                    ScanCaller::Checkpoint,
+                    store,
+                    &agent.id,
+                    agent.conversation.last_seq,
+                    session,
+                    |_| Ok(()),
+                )
+                .await?
+                .entry_count()
+            }
         } else {
             agent.conversation.last_seq
         };
@@ -44,28 +89,8 @@ pub(super) async fn validate_and_fence(
     validate_checkpoint_mutation(current, &rows, mutation).map_err(PublishError::Domain)?;
 
     // Real writes serialize against Agent changes and log appends after our snapshot.
-    for (agent, last_seq) in rows.iter().filter(|(agent, _)| agent.status.is_live()) {
-        let revision = signed(agent.revision, "checkpoint agent revision")
-            .map_err(|detail| PublishError::Domain(SandboxStoreError::Corrupt(detail)))?;
-        let last_seq = signed(*last_seq, "checkpoint agent log sequence")
-            .map_err(|detail| PublishError::Domain(SandboxStoreError::Corrupt(detail)))?;
-        let result = store
-            .agents
-            .update_one(
-                doc! {
-                    "_id": agent.id.as_str(),
-                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                    "revision": revision,
-                    "last_seq": last_seq,
-                },
-                doc! { "$inc": { "checkpoint_publication_fence": 1_i64 } },
-            )
-            .session(&mut *session)
-            .await
-            .map_err(PublishError::Driver)?;
-        if result.matched_count != 1 {
-            return Err(PublishError::Domain(SandboxStoreError::Conflict));
-        }
+    for (agent, _) in rows.iter().filter(|(agent, _)| agent.status.is_live()) {
+        fence_agent(store, agent, "checkpoint_publication_fence", session).await?;
     }
     Ok(())
 }

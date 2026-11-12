@@ -14,12 +14,16 @@ pub(super) fn role_for(database: &str, apply: bool, step: Step) -> Document {
     for collection in step.collections() {
         let actions = if !apply {
             vec!["listIndexes"]
-        } else if step == Step::Activity {
+        } else if matches!(step, Step::Activity | Step::AgentLogSegments) {
             vec!["listIndexes", "createIndex", "createCollection"]
         } else {
             vec!["listIndexes", "createIndex"]
         };
         grants.push(doc! {"resource":{"db":database,"collection":collection}, "actions":actions});
+    }
+    if step == Step::AgentLogSegments {
+        grants
+            .push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});
     }
     doc! {"createRole":"cma_am_migrator","privileges":grants,"roles":[]}
 }
