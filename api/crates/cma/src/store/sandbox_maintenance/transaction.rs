@@ -17,7 +17,12 @@ use super::super::sandbox_events::{
 };
 use super::super::sandbox_mongo::{signed, unsigned, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
-use super::evidence::{fence_live_agents, live_activities, open_session};
+use super::evidence::{
+    fence_live_agents, live_activities_with_sources, open_session, scoped::CapturedActivities,
+};
+
+mod scoped;
+pub(super) use scoped::attempt;
 
 pub(super) enum MaintenanceRequest {
     Inactivity(SandboxInactivityPauseRequest),
@@ -84,6 +89,15 @@ pub(super) async fn apply(
     request: &MaintenanceRequest,
     session: &mut ClientSession,
 ) -> Result<MaintenanceReceipt, ApplyError> {
+    apply_with_sources(store, request, session, None).await
+}
+
+async fn apply_with_sources(
+    store: &MongoSandboxStore,
+    request: &MaintenanceRequest,
+    session: &mut ClientSession,
+    sources: Option<&CapturedActivities>,
+) -> Result<MaintenanceReceipt, ApplyError> {
     let document = store
         .sandboxes
         .find_one(doc! { "_id": request.sandbox_id().as_str() })
@@ -136,8 +150,14 @@ pub(super) async fn apply(
     let agents = load_sandbox_agents(store, &current.id, session).await?;
     let application = match request {
         MaintenanceRequest::Inactivity(request) => {
-            let activities =
-                live_activities(store, &agents, session, request.requested_at.as_str()).await?;
+            let activities = live_activities_with_sources(
+                store,
+                &agents,
+                session,
+                request.requested_at.as_str(),
+                sources,
+            )
+            .await?;
             if platform_stop
                 && activities.is_empty()
                 && open_session(store, &current, &request.requested_at, session).await?
